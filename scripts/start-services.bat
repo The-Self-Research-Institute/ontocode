@@ -11,15 +11,15 @@ if %errorlevel% neq 0 (
 
 echo.
 echo Starting Auth Service...
-start "Auth Service" cmd /k "cd /d %~dp0ontology-auth && mvn spring-boot:run"
+start "Auth Service" cmd /k "cd /d %~dp0..\ontology-auth && mvnd spring-boot:run"
 timeout /t 10 /nobreak
 
 echo Starting Gateway...
-start "Gateway" cmd /k "cd /d %~dp0ontology-gateway && mvn spring-boot:run"
+start "Gateway" cmd /k "cd /d %~dp0..\ontology-gateway && mvnd spring-boot:run"
 timeout /t 10 /nobreak
 
 echo Starting OWL Editor...
-start "OWL Editor" cmd /k "cd /d %~dp0ontology-editor && mvn spring-boot:run"
+start "OWL Editor" cmd /k "cd /d %~dp0..\ontology-editor && mvnd spring-boot:run"
 
 echo.
 echo ========================================
