@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:6.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+
+  gateway:
+    build: ./ontology-gateway
+    ports:
+      - "8082:8082"
+    depends_on:
+      - ontology-editor
+      - ontology-auth
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+
+  owl-editor-service:
+    build: ./ontology-editor
+    ports:
+      - "8086:8086"
+    depends_on:
+      - mongodb
+    environment:
+      - SPRING_DATA_MONGODB_URI=mongodb://mongodb:27017/ontology
+
+  swrl-service:
+    build: ./ontology-auth
+    ports:
+      - "8083:8083"
+    depends_on:
+      - mongodb
+    environment:
+      - SPRING_DATA_MONGODB_URI=mongodb://mongodb:27017/ontology_swrl
+      - OWL_EDITOR_SERVICE_URL=http://owl-editor-service:8083
+
+volumes:
+  mongodb_data:
