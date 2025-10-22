@@ -21,6 +21,9 @@ timeout /t 10 /nobreak
 echo Starting OWL Editor...
 start "OWL Editor" cmd /k "cd /d %~dp0..\ontology-editor && mvnd spring-boot:run"
 
+echo Starting Swrl Service...
+start "Swrl Service" cmd /k "cd /d %~dp0..\ontology-swrl && mvnd spring-boot:run"
+
 echo.
 echo ========================================
 echo All services starting!
@@ -30,5 +33,6 @@ echo Service URLs:
 echo    Auth:       http://localhost:8083
 echo    Gateway:    http://localhost:8082
 echo    OWL Editor: http://localhost:8086
+echo    SWRL Service: http://localhost:8084
 echo.
 pause

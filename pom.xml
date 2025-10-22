@@ -18,6 +18,7 @@
         <module>ontology-gateway</module>
         <module>ontology-editor</module>
         <module>ontology-auth</module>
+         <module>ontology-swrl</module>
     </modules>
 
     <properties>
