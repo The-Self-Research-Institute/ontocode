@@ -1,0 +1,127 @@
+{
+  "name": "ontocode-extension",
+  "displayName": "OntoCode OWL Editor",
+  "description": "Edit OWL files with authentication and web-based interface",
+  "version": "1.0.0",
+  "publisher": "self",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other",
+    "Languages",
+    "Formatters"
+  ],
+  "keywords": [
+    "owl",
+    "ontology",
+    "semantic web",
+    "rdf",
+    "knowledge graph"
+  ],
+  "main": "./out/extension.js",
+  "extensionDependencies": [
+    "SelfResearchInstitute.sci2code"
+  ],
+  "contributes": {
+    "webviews": [
+      {
+        "viewType": "ontocodeEditor",
+        "displayName": "OntoCode Editor",
+        "when": "true"
+      }
+    ],
+    "commands": [
+      {
+        "command": "ontocode.edit",
+        "title": "Edit with OntoCode",
+        "category": "OntoCode"
+      },
+      {
+        "command": "ontocode.editLargeFile",
+        "title": "OntoCode: Process Large OWL File",
+        "category": "OntoCode"
+      },
+      {
+        "command": "ontocode.logout",
+        "title": "OntoCode: Logout",
+        "category": "OntoCode"
+      },
+      {
+        "command": "ontocode.insertCitation",
+        "title": "Insert Citation",
+        "category": "OntoCode"
+      }
+    ],
+     "menus": {
+      "commandPalette": [
+        {
+          "command": "ontocode.edit",
+          "when": "resourceLangId == owl"
+        },
+        {
+          "command": "ontocode.editLargeFile",
+           "when": "resourceLangId == owl"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "ontocode.insertCitation",
+          "when": "resourceExtname =~ /\\.(owl|ttl|rdf|n3)$/",
+          "group": "ontocode"
+        },
+        {
+          "command": "ontocode.editLargeFile",
+          "when": "resourceFilename =~ /\\.owl$/i",
+          "group": "navigation"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "ontocode.insertCitation",
+        "key": "ctrl+shift+c",
+        "mac": "cmd+shift+c",
+        "when": "editorTextFocus && resourceExtname =~ /\\.(owl|ttl|rdf|n3)$/"
+      }
+    ],
+    "languages": [
+      {
+        "id": "owl",
+        "aliases": [
+          "OWL",
+          "owl"
+        ],
+        "extensions": [
+          ".owl"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js",
+    "build-webview": "cd webview && npm run build",
+    "dev-webview": "cd webview && npm run start"
+  },
+  "devDependencies": {
+    "@types/form-data": "^2.2.1",
+    "@types/node": "16.x",
+    "@types/vscode": "^1.74.0",
+    "@typescript-eslint/eslint-plugin": "^5.45.0",
+    "@typescript-eslint/parser": "^5.45.0",
+    "eslint": "^8.28.0",
+    "typescript": "^4.9.4"
+  },
+  "dependencies": {
+    "axios": "^1.10.0",
+    "form-data": "^4.0.3",
+    "fs-extra": "^11.1.0",
+    "lucide-react": "^0.525.0"
+  }
+}
