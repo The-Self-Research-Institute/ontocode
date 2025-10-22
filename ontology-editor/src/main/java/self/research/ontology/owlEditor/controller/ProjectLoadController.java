@@ -1,0 +1,402 @@
+package self.research.ontology.owlEditor.controller;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+import self.research.ontology.owlEditor.document.OntologyDocument;
+import self.research.ontology.owlEditor.dto.*;
+import self.research.ontology.owlEditor.service.OntologyIndexService;
+import self.research.ontology.owlEditor.service.OwlParsingService;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
+
+@RestController
+@RequestMapping("/api/ontology")
+public class ProjectLoadController {
+
+    private static final Logger logger = LoggerFactory.getLogger(ProjectLoadController.class);
+
+    @Autowired
+    private OntologyIndexService ontologyIndexService;
+
+    @Autowired
+    private OwlParsingService owlParsingService;
+
+    @Autowired
+    private MongoTemplate mongoTemplate;
+
+    // ==================== FILE UPLOAD ENDPOINT ====================
+    @PostMapping("/upload/{projectId}")
+    public ResponseEntity<Map<String, Object>> uploadOntology(
+            @PathVariable String projectId,
+            @RequestParam("file") MultipartFile file) {
+
+        logger.info("Receiving ontology file upload for project: {}", projectId);
+
+        try {
+            if (file.isEmpty()) {
+                return ResponseEntity.badRequest().body(createErrorResponse("File is empty"));
+            }
+
+            logger.info("File received: {} (size: {} bytes)", file.getOriginalFilename(), file.getSize());
+            String filename = file.getOriginalFilename();
+
+            createOrUpdateProject(projectId, filename, "PROCESSING", "Starting to process ontology...");
+
+            // FIX: Pass the input stream directly to the async service.
+            // This avoids saving a temporary file and is more efficient.
+            owlParsingService.parseAndIndexFromStream(projectId, file.getInputStream(), filename);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("message", "File uploaded successfully and processing started");
+            response.put("projectId", projectId);
+            response.put("filename", filename);
+            response.put("status", "PROCESSING");
+
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            logger.error("Error uploading ontology file", e);
+            createOrUpdateProject(projectId, file.getOriginalFilename(), "ERROR", "Failed to upload file: " + e.getMessage());
+            return ResponseEntity.status(500).body(createErrorResponse("Failed to upload file: " + e.getMessage()));
+        }
+    }
+
+    // ==================== STATUS CHECK ENDPOINT ====================
+    @GetMapping("/status/{projectId}")
+    public ResponseEntity<Map<String, Object>> getProcessingStatus(@PathVariable String projectId) {
+        logger.info("Checking processing status for project: {}", projectId);
+
+        try {
+            Query query = new Query(Criteria.where("_id").is(projectId));
+            Map projectData = mongoTemplate.findOne(query, Map.class, "projects");
+
+            Map<String, Object> response = new HashMap<>();
+            Map<String, Object> data = new HashMap<>();
+
+            if (projectData != null) {
+                data.put("status", projectData.get("status"));
+                data.put("statusMessage", projectData.get("statusMessage"));
+                data.put("filename", projectData.get("filename"));
+                data.put("lastUpdated", projectData.get("lastUpdated"));
+            } else {
+                // Check if ontology data exists
+                OntologyDocument doc = ontologyIndexService.getOntologyMetadata(projectId);
+                if (doc != null) {
+                    data.put("status", "COMPLETED");
+                    data.put("metadata", doc.getMetadata());
+                } else {
+                    data.put("status", "NOT_FOUND");
+                    data.put("statusMessage", "Project not found");
+                }
+            }
+
+            response.put("success", true);
+            response.put("data", data);
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            logger.error("Error checking status for project: {}", projectId, e);
+            return ResponseEntity.status(500).body(createErrorResponse("Failed to check status"));
+        }
+    }
+
+    // ==================== METADATA ENDPOINT ====================
+    @GetMapping("/metadata/{projectId}")
+    public ResponseEntity<Map<String, Object>> getMetadata(@PathVariable String projectId) {
+        logger.info("Fetching metadata for project: {}", projectId);
+        try {
+            OntologyDocument ontologyDoc = ontologyIndexService.getOntologyMetadata(projectId);
+            if (ontologyDoc == null) {
+                return ResponseEntity.status(404).body(createErrorResponse("Metadata not found"));
+            }
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("data", ontologyDoc);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            logger.error("Error fetching metadata for project: {}", projectId, e);
+            return ResponseEntity.status(500).body(createErrorResponse("Failed to fetch metadata"));
+        }
+    }
+
+    // ==================== CLASS HIERARCHY ENDPOINTS ====================
+    @GetMapping("/classes/tree/{projectId}")
+    public ResponseEntity<List<TreeNode>> getClassHierarchy(@PathVariable String projectId) {
+        logger.info("Fetching class hierarchy for project: {}", projectId);
+        try {
+            List<TreeNode> classHierarchy = ontologyIndexService.getClassHierarchy(projectId);
+            logger.info("Returning {} root nodes for project: {}", classHierarchy.size(), projectId);
+            return ResponseEntity.ok(classHierarchy);
+        } catch (Exception e) {
+            logger.error("Error fetching class hierarchy for project: {}", projectId, e);
+            return ResponseEntity.ok(new ArrayList<>());
+        }
+    }
+
+    @GetMapping("/classes/top-level/{projectId}")
+    public ResponseEntity<Map<String, Object>> getTopLevelClasses(
+            @PathVariable String projectId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "100") int size,
+            @RequestParam(required = false) String search) {
+
+        logger.info("Fetching top-level classes: page={}, size={}, search={}", page, size, search);
+
+        try {
+            Map<String, Object> result = ontologyIndexService.getTopLevelClassesPaginated(projectId, page, size, search);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            logger.error("Error fetching top-level classes for project: {}", projectId, e);
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("classes", new ArrayList<>());
+            errorResponse.put("total", 0);
+            errorResponse.put("page", page);
+            errorResponse.put("size", size);
+            errorResponse.put("hasMore", false);
+            return ResponseEntity.ok(errorResponse);
+        }
+    }
+
+    @GetMapping("/classes/children/{projectId}")
+    public ResponseEntity<List<TreeNode>> getClassChildren(
+            @PathVariable String projectId,
+            @RequestParam String parentIri) {
+
+        logger.info("Fetching children for parent: {} in project: {}", parentIri, projectId);
+
+        try {
+            List<TreeNode> children = ontologyIndexService.getClassChildren(projectId, parentIri);
+            logger.info("Returning {} children for parent: {}", children.size(), parentIri);
+            return ResponseEntity.ok(children);
+        } catch (Exception e) {
+            logger.error("Error fetching children for parent: {}", parentIri, e);
+            return ResponseEntity.ok(new ArrayList<>());
+        }
+    }
+
+    @GetMapping("/classes/search/{projectId}")
+    public ResponseEntity<List<TreeNode>> searchClasses(
+            @PathVariable String projectId,
+            @RequestParam String query) {
+        logger.info("Searching classes in project: {} with query: {}", projectId, query);
+        try {
+            List<TreeNode> results = ontologyIndexService.searchClasses2(projectId, query);
+            return ResponseEntity.ok(results);
+        } catch (Exception e) {
+            logger.error("Error searching classes", e);
+            return ResponseEntity.ok(new ArrayList<>());
+        }
+    }
+
+    @PostMapping("/classes/{projectId}")
+    public ResponseEntity<Map<String, String>> createClass(
+            @PathVariable String projectId,
+            @RequestBody Map<String, String> classData) {
+        logger.info("Creating class in project: {}", projectId);
+        try {
+            String className = classData.get("name");
+            String parentIri = classData.get("parentIri");
+            String classIri = ontologyIndexService.createClass(projectId, className, parentIri);
+            Map<String, String> response = new HashMap<>();
+            response.put("iri", classIri);
+            response.put("message", "Class created successfully");
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            logger.error("Error creating class", e);
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    @DeleteMapping("/classes/{projectId}/{classIri}")
+    public ResponseEntity<Map<String, String>> deleteClass(
+            @PathVariable String projectId,
+            @PathVariable String classIri) {
+        logger.info("Deleting class {} in project: {}", classIri, projectId);
+        try {
+            ontologyIndexService.deleteClass(projectId, classIri);
+            Map<String, String> response = new HashMap<>();
+            response.put("message", "Class deleted successfully");
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            logger.error("Error deleting class", e);
+            Map<String, String> errorResponse = new HashMap<>();
+            errorResponse.put("error", e.getMessage());
+            return ResponseEntity.badRequest().body(errorResponse);
+        }
+    }
+
+    // ==================== PROPERTY ENDPOINTS ====================
+    @GetMapping("/properties/{projectId}")
+    public ResponseEntity<Map<String, Object>> getAllProperties(@PathVariable String projectId) {
+        logger.info("Fetching all properties for project: {}", projectId);
+        try {
+            List<PropertyDto> properties = ontologyIndexService.getAllProperties(projectId);
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("data", properties);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            logger.error("Error fetching properties", e);
+            return ResponseEntity.status(500).body(createErrorResponse("Failed to fetch properties"));
+        }
+    }
+
+    @GetMapping("/object-properties/tree/{projectId}")
+    public ResponseEntity<List<PropertyDto>> getObjectPropertyHierarchy(@PathVariable String projectId) {
+        logger.info("Fetching object property hierarchy for project: {}", projectId);
+        try {
+            List<PropertyDto> hierarchy = ontologyIndexService.getObjectPropertyHierarchy(projectId);
+            return ResponseEntity.ok(hierarchy);
+        } catch (Exception e) {
+            logger.error("Error fetching object property hierarchy", e);
+            return ResponseEntity.ok(new ArrayList<>());
+        }
+    }
+
+    @GetMapping("/data-properties/tree/{projectId}")
+    public ResponseEntity<List<PropertyDto>> getDataPropertyHierarchy(@PathVariable String projectId) {
+        logger.info("Fetching data property hierarchy for project: {}", projectId);
+        try {
+            List<PropertyDto> hierarchy = ontologyIndexService.getDataPropertyHierarchy(projectId);
+            return ResponseEntity.ok(hierarchy);
+        } catch (Exception e) {
+            logger.error("Error fetching data property hierarchy", e);
+            return ResponseEntity.ok(new ArrayList<>());
+        }
+    }
+
+    // ==================== OTHER ENTITY ENDPOINTS ====================
+    @GetMapping("/individuals/{projectId}")
+    public ResponseEntity<Map<String, Object>> getAllIndividuals(@PathVariable String projectId) {
+        logger.info("Fetching all individuals for project: {}", projectId);
+        try {
+            List<IndividualDto> individuals = ontologyIndexService.getAllIndividuals(projectId);
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("data", individuals);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            logger.error("Error fetching individuals", e);
+            return ResponseEntity.status(500).body(createErrorResponse("Failed to fetch individuals"));
+        }
+    }
+
+    @GetMapping("/annotation-properties/{projectId}")
+    public ResponseEntity<Map<String, Object>> getAllAnnotationProperties(@PathVariable String projectId) {
+        logger.info("Fetching all annotation properties for project: {}", projectId);
+        try {
+            List<AnnotationPropertyDto> properties = ontologyIndexService.getAllAnnotationProperties(projectId);
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("data", properties);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            logger.error("Error fetching annotation properties", e);
+            return ResponseEntity.status(500).body(createErrorResponse("Failed to fetch annotation properties"));
+        }
+    }
+
+    @GetMapping("/datatypes/{projectId}")
+    public ResponseEntity<Map<String, Object>> getAllDatatypes(@PathVariable String projectId) {
+        logger.info("Fetching all datatypes for project: {}", projectId);
+        try {
+            List<DatatypeDto> datatypes = ontologyIndexService.getAllDatatypes(projectId);
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("data", datatypes);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            logger.error("Error fetching datatypes", e);
+            return ResponseEntity.status(500).body(createErrorResponse("Failed to fetch datatypes"));
+        }
+    }
+
+    @GetMapping("/classes/usage/{projectId}")
+    public ResponseEntity<UsageInfoDto> getClassUsage(
+            @PathVariable String projectId,
+            @RequestParam String classIri) {
+        logger.info("Fetching usage for class: {} in project: {}", classIri, projectId);
+        try {
+            UsageInfoDto usage = ontologyIndexService.getClassUsage(projectId, classIri);
+            return ResponseEntity.ok(usage);
+        } catch (Exception e) {
+            logger.error("Error fetching class usage", e);
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    // ==================== HELPER METHODS ====================
+    private void createOrUpdateProject(String projectId, String filename, String status, String message) {
+        try {
+            Query query = new Query(Criteria.where("_id").is(projectId));
+            Update update = new Update()
+                    .set("status", status)
+                    .set("statusMessage", message)
+                    .set("filename", filename)
+                    .set("lastUpdated", new Date())
+                    .setOnInsert("createdAt", new Date())
+                    .setOnInsert("projectId", projectId);
+
+            mongoTemplate.upsert(query, update, "projects");
+
+            logger.info("Created/Updated project document for: {}", projectId);
+        } catch (Exception e) {
+            logger.error("Failed to create/update project document for: {}", projectId, e);
+        }
+    }
+
+    private Map<String, Object> createErrorResponse(String message) {
+        Map<String, Object> error = new HashMap<>();
+        error.put("success", false);
+        error.put("error", message);
+        return error;
+    }
+
+    // ==================== TREE NODE CLASS ====================
+    public static class TreeNode {
+        private String id;
+        private String label;
+        private List<TreeNode> children;
+        private Map<String, String> annotations;
+
+        public TreeNode() {}
+
+        public TreeNode(String id, String label, List<TreeNode> children, Map<String, String> annotations) {
+            this.id = id;
+            this.label = label;
+            this.children = children;
+            this.annotations = annotations;
+        }
+
+        public String getId() { return id; }
+        public void setId(String id) { this.id = id; }
+        public String getLabel() { return label; }
+        public void setLabel(String label) { this.label = label; }
+        public List<TreeNode> getChildren() { return children; }
+        public void setChildren(List<TreeNode> children) { this.children = children; }
+        public Map<String, String> getAnnotations() { return annotations; }
+        public void setAnnotations(Map<String, String> annotations) { this.annotations = annotations; }
+
+        public void addChild(TreeNode child) {
+            if (this.children == null) {
+                this.children = new ArrayList<>();
+            }
+            this.children.add(child);
+        }
+    }
+
+}

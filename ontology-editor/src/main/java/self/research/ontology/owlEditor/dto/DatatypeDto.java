@@ -1,0 +1,42 @@
+package self.research.ontology.owlEditor.dto;
+
+import java.util.Map;
+
+public class DatatypeDto {
+    private String id;
+    private String iri;
+    private String label;
+    private Map<String, String> annotations;
+
+    public String getId() {
+        return id;
+    }
+
+    public void setId(String id) {
+        this.id = id;
+    }
+
+    public String getIri() {
+        return iri;
+    }
+
+    public void setIri(String iri) {
+        this.iri = iri;
+    }
+
+    public String getLabel() {
+        return label;
+    }
+
+    public void setLabel(String label) {
+        this.label = label;
+    }
+
+    public Map<String, String> getAnnotations() {
+        return annotations;
+    }
+
+    public void setAnnotations(Map<String, String> annotations) {
+        this.annotations = annotations;
+    }
+}
