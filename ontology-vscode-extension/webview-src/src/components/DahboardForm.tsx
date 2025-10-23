@@ -18,8 +18,11 @@ import {
   List,
   Code,
   Loader2,
+  Package,
 } from "lucide-react";
 import apiClient from "../services/apiClient";
+import { pluginManager } from '../plugins/PluginSystem';
+import { SWRLPlugin } from '../plugins/PluginRegistry';
 
 interface TreeNode {
   id: string;
@@ -976,12 +979,82 @@ const handleNavigateToClass = useCallback(async (classIri: string) => {
     }
   };
 
+  useEffect(() => {
+  if (projectId) {
+    // Register SWRL plugin
+    pluginManager.registerPlugin(SWRLPlugin);
+    
+    // Set plugin context
+    pluginManager.setContext({
+      projectId,
+      apiClient,
+      notificationService: {
+        success: (message: string) => {
+          console.log('✅', message);
+          // You can add toast notification here later
+        },
+        error: (message: string) => {
+          console.error('❌', message);
+          // You can add toast notification here later
+        },
+        info: (message: string) => {
+          console.info('ℹ️', message);
+        }
+      }
+    });
+  }
+}, [projectId]);
+
   const mainTabs = [
     { id: "ActiveOntology", label: "Active ontology", icon: FileText },
     { id: "Entities", label: "Entities", icon: List },
     { id: "IndividualsByClass", label: "Individuals by class", icon: Eye },
     { id: "DLQuery", label: "DL Query", icon: Code },
+    { id: "Plugins", label: "Plugins", icon: Package },
   ];
+
+ {pluginManager.getActivePlugins().map(plugin => {
+  const PluginComponent = plugin.component;
+  
+  return (
+    <div key={plugin.id}>
+      {mainTab === plugin.id && (
+        <PluginComponent 
+          projectId={projectId!} 
+          context={{
+            projectId: projectId!,
+            apiClient,
+            notificationService: {
+              success: (msg: string) => console.log('✅', msg),
+              error: (msg: string) => console.error('❌', msg),
+              info: (msg: string) => console.info('ℹ️', msg)
+            }
+          }} 
+        />
+      )}
+    </div>
+  );
+})}
+
+// Plugin tab buttons
+{pluginManager.getActivePlugins().map(plugin => {
+  const Icon = plugin.icon;
+  
+  return (
+    <button
+      key={plugin.id}
+      onClick={() => setMainTab(plugin.id)}
+      className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+        mainTab === plugin.id
+          ? 'bg-purple-100 text-purple-900'
+          : 'text-gray-700 hover:bg-gray-100'
+      }`}
+    >
+      {Icon && <Icon size={18} />}
+      {plugin.name}
+    </button>
+  );
+})}
 
   const entitiesTabs = [
     {
@@ -1216,6 +1289,15 @@ const handleNavigateToClass = useCallback(async (classIri: string) => {
       </div>
     ));
   };
+
+  useEffect(() => {
+  pluginManager.registerPlugin(SWRLPlugin);
+  
+  const activePlugins = JSON.parse(localStorage.getItem('activePlugins') || '[]');
+  if (activePlugins.includes('swrl-tab')) {
+    pluginManager.activatePlugin('swrl-tab');
+  }
+}, []);
 
   const renderMainContent = () => {
     if (mainTab === "ActiveOntology") {

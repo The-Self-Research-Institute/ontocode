@@ -9,7 +9,7 @@ import self.research.ontology.swrl.dto.*;
 import self.research.ontology.swrl.model.*;
 import self.research.ontology.swrl.service.SwrlEngineService;
 
-import javax.validation.Valid;
+import jakarta.validation.Valid; 
 import java.util.List;
 import java.util.Map;
 
