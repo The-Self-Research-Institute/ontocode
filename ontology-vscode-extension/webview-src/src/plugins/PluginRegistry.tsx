@@ -1,28 +1,37 @@
-import type { OntologyPlugin } from './PluginSystem';
-import { Code } from 'lucide-react';
-import SWRLEditor from './swrl/SWRLPlugin';
+
+import { Code, Share2 } from 'lucide-react';
+import { OntologyPlugin } from '../types';
+import SWRLEditor from '../components/SWRLEditor';
+import ReasoningVisualizer from '../components/ReasoningVisualizer';
 
 export const SWRLPlugin: OntologyPlugin = {
   id: 'swrl-tab',
-  name: 'SWRL Rules',
+  name: 'SWRL Rule Editor',
   version: '1.0.0',
-  description: 'Create and execute Semantic Web Rule Language (SWRL) rules for advanced ontology reasoning',
+  description: 'An editor for creating, managing, and executing SWRL rules and SQWRL queries.',
   author: 'OntoCode Team',
   icon: Code,
-  
   component: SWRLEditor,
-
-  async initialize() {
-    console.log('SWRL Plugin initialized');
+  activate: async () => {
+    console.log('SWRL Plugin is now active.');
   },
-
-  async activate() {
-    console.log('SWRL Plugin activated');
+  deactivate: async () => {
+    console.log('SWRL Plugin is now inactive.');
   },
+};
 
-  async deactivate() {
-    console.log('SWRL Plugin deactivated');
+export const ReasoningPlugin: OntologyPlugin = {
+  id: 'reasoning-graph',
+  name: 'Ontology Visualizer',
+  version: '1.0.0',
+  description: 'Provides an interactive graph visualization of the ontology structure.',
+  author: 'OntoCode Team',
+  icon: Share2,
+  component: ReasoningVisualizer,
+  activate: async () => {
+    console.log('Reasoning Visualizer is now active.');
   },
-
-  menuItems: []
+  deactivate: async () => {
+    console.log('Reasoning Visualizer is now inactive.');
+  },
 };

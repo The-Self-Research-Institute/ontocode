@@ -1,0 +1,21 @@
+
+
+import React, { createContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import axios from 'axios';
+
+const GATEWAY_URL = 'http://localhost:8082';
+
+interface User {
+    token: string;
+    username: string;
+}
+
+interface AuthContextType {
+    user: User | null;
+    loading: boolean;
+    login: (username: string, password: string) => Promise<void>;
+    signup: (username: string, email: string, password: string) => Promise<void>;
+    logout: () => void;
+}
+
+export const AuthContext = createContext<AuthContextType | undefined>(undefined);

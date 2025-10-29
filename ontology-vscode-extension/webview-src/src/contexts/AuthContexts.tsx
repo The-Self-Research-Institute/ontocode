@@ -1,146 +1,96 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { AuthContext } from '../custom-hook/useAuth';
-import apiClient from '../services/apiClient'; 
 
-declare global {
-    interface Window {
-        vscode?: {
-            postMessage: (message: unknown) => void;
-        };
-    }
-}
+import React, { useState, useEffect, useCallback, ReactNode } from 'react';
+import { AuthContext } from '../custom-hook/useAuth';
 
 interface User {
     id: number;
-    username: string;
     email: string;
+    token: string;
+    username: string;
 }
 
-const fetchUser = async (token: string): Promise<User | null> => {
-    try {
-
-        apiClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-
-        console.warn("Using mock user data. Please implement a '/api/auth/me' endpoint.");
-        return { id: 1, username: 'user_from_token', email: 'user@example.com' };
-
-    } catch (error) {
-        console.error("Failed to fetch user data:", error);
-        return null;
-    }
-};
-
-
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
 
-    const handleAuthentication = useCallback(async (token: string | null) => {
-        if (token) {
-            localStorage.setItem('authToken', token);
-            const userData = await fetchUser(token);
-            setUser(userData);
+    const requestTokenFromVSCode = useCallback(() => {
+        if (window.vscode) {
+            window.vscode.postMessage({ type: 'requestAuthToken' });
         } else {
-            localStorage.removeItem('authToken');
-            apiClient.defaults.headers.common['Authorization'] = '';
-            setUser(null);
+            console.warn("Not in a VSCode webview environment. Authentication will not persist.");
+            setLoading(false);
         }
-        setLoading(false);
     }, []);
 
     useEffect(() => {
+        requestTokenFromVSCode();
+
         const handleMessage = (event: MessageEvent) => {
             const message = event.data;
             switch (message.type) {
                 case 'storedAuthToken':
-                    handleAuthentication(message.token);
+                    if (message.token) {
+                        setUser({ token: message.token, username: 'vscode_user', id: 1, email: 'praneshkk1@gmail.com' });
+                    }
+                    setLoading(false);
+                    break;
+                case 'loggedOut':
+                    setUser(null);
                     break;
             }
         };
+
         window.addEventListener('message', handleMessage);
+        return () => {
+            window.removeEventListener('message', handleMessage);
+        };
+    }, [requestTokenFromVSCode]);
 
-        if (window.vscode) {
-            window.vscode.postMessage({ type: 'requestAuthToken' });
-        } else {
-            const token = localStorage.getItem('authToken');
-            handleAuthentication(token);
-        }
-        return () => window.removeEventListener('message', handleMessage);
-    }, [handleAuthentication]);
-
-    const login = async (username: string, password: string) => {
+    const login = async (username: string) => {
         try {
-            const response = await fetch('http://localhost:8082/api/auth/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password })
-            });
+            await new Promise(res => setTimeout(res, 500));
+            const token = `mock-token-for-${username}`;
 
-            if (response.ok) {
-                const data = await response.json();
-                const token = data.jwt;
-
-                if (window.vscode) {
-                    window.vscode.postMessage({ type: 'saveAuthToken', token: token });
-                    window.vscode.postMessage({ type: 'info', value: 'Login successful! Token sent to VS Code secure storage.' });
-                }
-                await handleAuthentication(token);
-
-            } else {
-                const errorData = await response.json();
-                throw new Error(errorData.message || 'Login failed');
-            }
-        } catch (error) {
             if (window.vscode) {
-                window.vscode.postMessage({ type: 'error', value: `Login failed: ${error instanceof Error ? error.message : String(error)}` });
+                window.vscode.postMessage({ type: 'saveAuthToken', token });
             }
-            throw error;
+            setUser({ token, username, id: 1, email: 'praneshkk1@gmail.com' });
+        } catch (error) {
+            console.error("Login failed:", error);
+            throw new Error("Invalid username or password.");
         }
     };
-
-    const signup = async (username: string, email: string, password: string) => {
+    
+    const signup = async (username: string) => {
         try {
-            const response = await fetch('http://localhost:8082/api/auth/signup', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, email, password })
-            });
+            await new Promise(res => setTimeout(res, 500));
+            const token = `mock-token-for-${username}`;
 
-            if (response.ok) {
-                const data = await response.json();
-                if (window.vscode) {
-                    window.vscode.postMessage({
-                        type: 'info',
-                        value: data.message || 'Signup successful! Please check your email to verify your account.'
-                    });
-                }
-            } else {
-                const errorData = await response.json();
-                throw new Error(errorData.message || 'Signup failed.');
-            }
-        } catch (error) {
             if (window.vscode) {
-                window.vscode.postMessage({
-                    type: 'error',
-                    value: `Signup failed: ${error instanceof Error ? error.message : String(error)}`
-                });
+                window.vscode.postMessage({ type: 'saveAuthToken', token });
             }
-            throw error;
+            setUser({ token, username, id: 1, email: 'praneshkk1@gmail.com' });
+        } catch (error) {
+            console.error("Signup failed:", error);
+            throw new Error("Could not create account. The username or email may already be taken.");
         }
     };
 
     const logout = () => {
-        handleAuthentication(null);
+        setUser(null);
         if (window.vscode) {
             window.vscode.postMessage({ type: 'logout' });
-            window.vscode.postMessage({ type: 'info', value: 'Logged out successfully' });
         }
     };
 
-    return (
-        <AuthContext.Provider value={{ user, loading, login, signup, logout }}>
-            {children}
-        </AuthContext.Provider>
-    );
+    const value = {
+        user,
+        loading,
+        login,
+        signup,
+        logout,
+    };
+
+    return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

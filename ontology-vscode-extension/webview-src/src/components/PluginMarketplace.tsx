@@ -3,15 +3,14 @@ import {
   Package, CheckCircle, XCircle,
   Search, Filter
 } from 'lucide-react';
-import type { OntologyPlugin } from '../plugins/PluginSystem';
 import { pluginManager } from '../plugins/PluginSystem';
 
 const PluginMarketplace = () => {
-  const [installedPlugins, setInstalledPlugins] = useState<OntologyPlugin[]>(
+  const [installedPlugins, setInstalledPlugins] = useState<any[]>(
     pluginManager.getAllPlugins()
   );
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedPlugin, setSelectedPlugin] = useState<OntologyPlugin | null>(null);
+  const [selectedPlugin, setSelectedPlugin] = useState<any | null>(null);
   const [activeTab, setActiveTab] = useState<'installed' | 'available'>('installed');
 
   const handleTogglePlugin = async (pluginId: string) => {
@@ -199,7 +198,7 @@ const PluginMarketplace = () => {
                   <div className="space-y-3">
                     {Object.entries(selectedPlugin.settings).map(([key, setting]) => (
                       <div key={key}>
-                        <label className="text-sm text-gray-600">{setting.label}</label>
+                        <label className="text-sm text-gray-600">{(setting as any).label}</label>
                         {/* Add settings controls here */}
                       </div>
                     ))}
