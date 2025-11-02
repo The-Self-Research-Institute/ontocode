@@ -41,8 +41,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         // Fix: Made command handler async to support async panel creation/file upload.
         vscode.commands.registerCommand('ontocode.edit', async () => {
-            // Fix: Use context.extension.extensionUri as a valid alternative to context.extensionUri.
-            const panel = await OntoCodePanel.createOrShow(context.extension.extensionUri, context);
+            const panel = await OntoCodePanel.createOrShow(context.extensionUri, context);
             await panel.triggerFileUpload();
         }),
         // Fix: Made command handler async to support async panel creation/file upload.
@@ -51,21 +50,18 @@ export function activate(context: vscode.ExtensionContext) {
                 vscode.window.showErrorMessage("This command should be run by right-clicking an OWL file in the explorer.");
                 return;
             }
-            // Fix: Use context.extension.extensionUri as a valid alternative to context.extensionUri.
-            const panel = await OntoCodePanel.createOrShow(context.extension.extensionUri, context);
+            const panel = await OntoCodePanel.createOrShow(context.extensionUri, context);
             await panel.triggerLargeFileUpload(uri);
         }),
         vscode.commands.registerCommand('ontocode.logout', async () => {
-            // Fix: Cast context to `any` to access the `secrets` property, bypassing outdated type definitions.
-            await (context as any).secrets.delete(TOKEN_KEY);
+            await context.secrets.delete(TOKEN_KEY);
             if (OntoCodePanel.currentPanel) {
                 OntoCodePanel.currentPanel.dispose();
             }
             vscode.window.showInformationMessage('You have been successfully logged out.');
         }),
         vscode.commands.registerCommand('ontocode.insertCitation', insertCitationCommand),
-        // Fix: Use context.extension.extensionUri as a valid alternative to context.extensionUri.
-        vscode.commands.registerCommand('ontocode.openCitationPicker', () => CitationPickerPanel.createOrShow(context.extension.extensionUri))
+        vscode.commands.registerCommand('ontocode.openCitationPicker', () => CitationPickerPanel.createOrShow(context.extensionUri))
     );
 }
 
@@ -96,8 +92,7 @@ class OntoCodePanel {
             {
                 enableScripts: true,
                 retainContextWhenHidden: true,
-                // Fix: Replace missing Uri.joinPath with Uri.parse and string interpolation for compatibility.
-                localResourceRoots: [vscode.Uri.parse(`${extensionUri.toString()}/webview-src/dist`)]
+                localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'webview-src', 'dist')]
             }
         );
 
@@ -124,19 +119,16 @@ class OntoCodePanel {
                         break;
                     case 'saveAuthToken':
                         if (message.token) {
-                            // Fix: Cast context to `any` to access the `secrets` property, bypassing outdated type definitions.
-                            await (this._context as any).secrets.store(TOKEN_KEY, message.token);
+                            await this._context.secrets.store(TOKEN_KEY, message.token);
                             vscode.window.showInformationMessage('Authentication successful.');
                         }
                         break;
                     case 'requestAuthToken':
-                        // Fix: Cast context to `any` to access the `secrets` property, bypassing outdated type definitions.
-                        const token = await (this._context as any).secrets.get(TOKEN_KEY);
+                        const token = await this._context.secrets.get(TOKEN_KEY);
                         this.postMessage({ type: 'storedAuthToken', token: token || null });
                         break;
                     case 'logout':
-                        // Fix: Cast context to `any` to access the `secrets` property, bypassing outdated type definitions.
-                        await (this._context as any).secrets.delete(TOKEN_KEY);
+                        await this._context.secrets.delete(TOKEN_KEY);
                         this.postMessage({ type: 'loggedOut' });
                         break;
                     // Fix: Added cases to handle API proxy requests from the webview
@@ -158,8 +150,7 @@ class OntoCodePanel {
      */
     private async handleApiRequest(message: Extract<ExtensionMessage, { type: 'apiGet' | 'apiPost' | 'apiDelete' }>) {
         const { requestId, type, url } = message;
-        // Fix: Cast context to `any` to access the `secrets` property, bypassing outdated type definitions.
-        const token = await (this._context as any).secrets.get(TOKEN_KEY);
+        const token = await this._context.secrets.get(TOKEN_KEY);
         // Do not proceed if unauthenticated, unless it's a login/signup endpoint
         // For simplicity, we assume all proxied requests need a token.
         if (!token) {
@@ -194,15 +185,11 @@ class OntoCodePanel {
             // Fix: Explicitly type errorResponse to allow for optional properties like status and data.
             // This prevents a TypeScript error when assigning a more complex error object from an AxiosError.
             let errorResponse: { message: string, status?: number, data?: any } = { message: 'An unknown error occurred in the API proxy.' };
-            // Fix: Correctly handle errors by casting `e` to AxiosError within the type guard.
-            // This resolves issues where `e` is not correctly type-narrowed to `AxiosError`,
-            // causing errors when accessing properties like `message` and `response`.
             if (axios.isAxiosError(e)) {
-                const axiosError = e as AxiosError;
                 errorResponse = {
-                    message: axiosError.message,
-                    status: axiosError.response?.status,
-                    data: axiosError.response?.data,
+                    message: e.message,
+                    status: e.response?.status,
+                    data: e.response?.data,
                 };
             } else if (e instanceof Error) {
                 errorResponse = { message: e.message };
@@ -224,8 +211,7 @@ class OntoCodePanel {
         console.log(`[OntoCode] Triggering large file upload for: ${fileUri.fsPath}`);
         const fullPath = fileUri.path;
         const fileName = fullPath.substring(fullPath.lastIndexOf('/') + 1);
-        // Fix: Cast workspace to `any` to access the `fs` property, bypassing outdated type definitions.
-        const fileData = await (vscode.workspace as any).fs.readFile(fileUri);
+        const fileData = await vscode.workspace.fs.readFile(fileUri);
         const projectId = fileName.endsWith('.owl') ? fileName.slice(0, -4) : fileName;
         
         // Delegate to the shared upload logic
@@ -266,8 +252,7 @@ class OntoCodePanel {
         console.log(`[OntoCode] Starting upload for project: ${projectId}, file: ${fileName}`);
         
         // 1. Check for authentication token
-        // Fix: Cast context to `any` to access the `secrets` property, bypassing outdated type definitions.
-        const token = await (this._context as any).secrets.get(TOKEN_KEY);
+        const token = await this._context.secrets.get(TOKEN_KEY);
         if (!token) {
             console.error('[OntoCode] No authentication token found');
             vscode.window.showErrorMessage("You must be logged in to process an ontology.");
@@ -382,11 +367,9 @@ class OntoCodePanel {
      */
     // Fix: Made async and used vscode.workspace.fs.readFile instead of fs.readFileSync.
     private async _getHtmlForWebview(webview: vscode.Webview): Promise<string> {
-        // Fix: Replace missing Uri.joinPath with Uri.parse and string interpolation for compatibility.
-        const buildPath = vscode.Uri.parse(`${this._extensionUri.toString()}/webview-src/dist`);
-        const indexPath = vscode.Uri.parse(`${buildPath.toString()}/index.html`);
-        // Fix: Cast workspace to `any` to access the `fs` property, bypassing outdated type definitions.
-        const fileBytes = await (vscode.workspace as any).fs.readFile(indexPath);
+        const buildPath = vscode.Uri.joinPath(this._extensionUri, 'webview-src', 'dist');
+        const indexPath = vscode.Uri.joinPath(buildPath, 'index.html');
+        const fileBytes = await vscode.workspace.fs.readFile(indexPath);
         let htmlContent = new TextDecoder('utf-8').decode(fileBytes);
         const nonce = getNonce();
 
@@ -406,10 +389,10 @@ class OntoCodePanel {
             `$1
             <meta http-equiv="Content-Security-Policy" content="
                 default-src 'none'; 
-                img-src ${(webview as any).cspSource} https: data: blob:; 
-                script-src 'nonce-${nonce}' https://cdn.tailwindcss.com https://unpkg.com;
-                style-src ${(webview as any).cspSource} 'unsafe-inline' https://unpkg.com;
-                font-src ${(webview as any).cspSource} data:; 
+                img-src ${webview.cspSource} https: data: blob:; 
+                script-src 'nonce-${nonce}'; 
+                style-src ${webview.cspSource} 'unsafe-inline'; 
+                font-src ${webview.cspSource} data:; 
                 connect-src ${GATEWAY_URL};
             ">
             ${vscodeApiInjectionScript}`
@@ -417,12 +400,11 @@ class OntoCodePanel {
         
         // Fix resource URIs
         htmlContent = htmlContent.replace(/(href|src)="([^"]+)"/g, (match, attr, rawPath) => {
-            // Fix: Replace missing Uri.joinPath with Uri.parse and string interpolation for compatibility.
-            const resourcePath = vscode.Uri.parse(
-                `${buildPath.toString()}/${rawPath.startsWith('/') ? rawPath.substring(1) : rawPath}`
+            const resourcePath = vscode.Uri.joinPath(
+                buildPath, 
+                rawPath.startsWith('/') ? rawPath.substring(1) : rawPath
             );
-            // Fix: Cast webview to `any` to access `asWebviewUri` method, bypassing outdated type definitions.
-            return `${attr}="${(webview as any).asWebviewUri(resourcePath)}"`;
+            return `${attr}="${webview.asWebviewUri(resourcePath)}"`;
         });
         
         // Add nonce to all script tags
