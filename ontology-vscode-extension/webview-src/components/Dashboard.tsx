@@ -647,15 +647,15 @@ const Dashboard = () => {
             const reasoningPlugin = pluginManager.getPlugin('reasoning-graph');
             if (reasoningPlugin && pluginManager.isPluginActive('reasoning-graph') && projectId) {
                 const PluginComponent = reasoningPlugin.component;
-                return <PluginComponent projectId={projectId} onNodeClick={handleGraphNodeClick} context={pluginManager.context!} />;
+                return <PluginComponent projectId={projectId} onNodeClick={handleGraphNodeClick} context={pluginManager.getContext()!} />;
             }
             return <div className="p-4">Enable the Graph View from the Reasoner menu.</div>;
         }
         case 'SWRL': {
             const swrlPlugin = pluginManager.getPlugin('swrl-tab');
-            if (swrlPlugin && pluginManager.isPluginActive('swrl-tab') && pluginManager.context) {
+            if (swrlPlugin && pluginManager.isPluginActive('swrl-tab') && pluginManager.getContext()) {
                 const PluginComponent = swrlPlugin.component;
-                return <PluginComponent projectId={projectId!} context={pluginManager.context} />;
+                return <PluginComponent projectId={projectId!} context={pluginManager.getContext()} />;
             }
             return <div className="p-4">Enable the SWRL tab from the Window menu.</div>;
         }

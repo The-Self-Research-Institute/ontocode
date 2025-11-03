@@ -15,7 +15,7 @@
   },
   "include": [
     "src/**/*.ts" // ONLY include TypeScript files in the 'src' directory
-  ],
+, "webview-src/services/swrlApiService.ts"  ],
   "exclude": [
     "node_modules",
     ".vscode-test",

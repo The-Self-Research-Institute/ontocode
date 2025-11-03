@@ -146,11 +146,20 @@ export interface AxiomUsage {
 
 // SWRL Types
 export interface SWRLRule {
-  id: string;
-  name: string;
-  ruleText: string;
-  comment?: string;
-  enabled: boolean;
+    id: string;
+    projectId: string;
+    ruleName: string;        
+    name: string;            
+    ruleText: string;
+    comment?: string;        
+    category?: string;      
+    enabled: boolean;
+    createdAt?: string;
+    updatedAt?: string;
+    createdBy?: string;
+    executionCount?: number;
+    lastExecutionTime?: number;
+    lastExecutedAt?: string;
 }
 
 export interface ValidationResult {
@@ -198,6 +207,21 @@ export interface OntologyPlugin {
   author: string;
   icon?: LucideIcon;
   component: ComponentType<{ context: PluginContext; [key: string]: any }>;
-  activate: () => Promise<void>;
-  deactivate: () => Promise<void>;
+  activate(context: PluginContext): boolean | Promise<boolean>;
+  deactivate(context: PluginContext): boolean | Promise<boolean>;  
+}
+
+export interface ExecutionResponse {
+    success: boolean;
+    executionTimeMs: number;
+    inferredAxiomsCount: number;
+    totalRulesExecuted: number;
+    inferredAxioms: InferredAxiom[];
+    errorMessage?: string;
+}
+
+export interface InferredAxiom {
+    axiomType: string;
+    description: string;
+    readable: string;
 }

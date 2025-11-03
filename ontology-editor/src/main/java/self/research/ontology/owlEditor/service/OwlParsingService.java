@@ -247,6 +247,9 @@ public class OwlParsingService {
         metadata.setIndividualCount(ontology.getIndividualsInSignature().size());
         metadata.setAxiomCount(ontology.getAxiomCount());
         metadata.setLogicalAxiomCount(ontology.getLogicalAxiomCount());
+
+        // **FIX:** The misplaced methods from lines 252-258 were removed from here.
+        
         metadata.setDeclarationAxiomsCount((int) ontology.getAxiomCount(AxiomType.DECLARATION));
         metadata.setImports(ontology.getImportsDeclarations().stream().map(decl -> decl.getIRI().toString()).collect(Collectors.toList()));
         Map<String, String> annotations = new HashMap<>();
@@ -468,6 +471,15 @@ public class OwlParsingService {
     public static class OntologyMetadata {
         private String filename, ontologyIRI, versionIRI; private int classCount, objectPropertyCount, dataPropertyCount, individualCount, axiomCount, logicalAxiomCount, declarationAxiomsCount, subClassOfAxiomCount, equivalentClassesAxiomCount, disjointClassesAxiomCount, gciCount, hiddenGciCount, subObjectPropertyOfCount, equivalentObjectPropertiesCount, inverseObjectPropertiesCount, objectPropertyDomainCount, objectPropertyRangeCount, functionalObjectPropertyCount, inverseFunctionalObjectPropertyCount, transitiveObjectPropertyCount, symmetricObjectPropertyCount, asymmetricObjectPropertyCount, reflexiveObjectPropertyCount, irreflexiveObjectPropertyCount, subDataPropertyOfCount, equivalentDataPropertiesCount, dataPropertyDomainCount, dataPropertyRangeCount, functionalDataPropertyCount; private List<String> imports, rootTerms; private Map<String, String> annotations;
         public String getFilename() { return filename; } public void setFilename(String f) { filename = f; } public String getOntologyIRI() { return ontologyIRI; } public void setOntologyIRI(String o) { ontologyIRI = o; } public String getVersionIRI() { return versionIRI; } public void setVersionIRI(String v) { versionIRI = v; } public int getClassCount() { return classCount; } public void setClassCount(int c) { classCount = c; } public int getObjectPropertyCount() { return objectPropertyCount; } public void setObjectPropertyCount(int o) { objectPropertyCount = o; } public int getDataPropertyCount() { return dataPropertyCount; } public void setDataPropertyCount(int d) { dataPropertyCount = d; } public int getIndividualCount() { return individualCount; } public void setIndividualCount(int i) { individualCount = i; } public int getAxiomCount() { return axiomCount; } public void setAxiomCount(int a) { axiomCount = a; } public List<String> getImports() { return imports; } public void setImports(List<String> i) { imports = i; } public Map<String, String> getAnnotations() { return annotations; } public void setAnnotations(Map<String, String> a) { annotations = a; } public int getLogicalAxiomCount() { return logicalAxiomCount; } public void setLogicalAxiomCount(int l) { logicalAxiomCount = l; } public int getGciCount() { return gciCount; } public void setGciCount(int g) { gciCount = g; } public int getSubClassOfAxiomCount() { return subClassOfAxiomCount; } public void setSubClassOfAxiomCount(int s) { subClassOfAxiomCount = s; } public int getEquivalentClassesAxiomCount() { return equivalentClassesAxiomCount; } public void setEquivalentClassesAxiomCount(int e) { equivalentClassesAxiomCount = e; } public int getDisjointClassesAxiomCount() { return disjointClassesAxiomCount; } public void setDisjointClassesAxiomCount(int d) { disjointClassesAxiomCount = d; } public int getObjectPropertyDomainCount() { return objectPropertyDomainCount; } public void setObjectPropertyDomainCount(int o) { objectPropertyDomainCount = o; } public int getObjectPropertyRangeCount() { return objectPropertyRangeCount; } public void setObjectPropertyRangeCount(int o) { objectPropertyRangeCount = o; } public int getDataPropertyDomainCount() { return dataPropertyDomainCount; } public void setDataPropertyDomainCount(int d) { dataPropertyDomainCount = d; } public int getDataPropertyRangeCount() { return dataPropertyRangeCount; } public void setDataPropertyRangeCount(int d) { dataPropertyRangeCount = d; }
+
+        // **FIX:** Added the two missing methods here
+        public void setDeclarationAxiomsCount(int d) {
+            this.declarationAxiomsCount = d;
+        }
+
+        public void setHiddenGciCount(int h) {
+            this.hiddenGciCount = h;
+        }
     }
     public static class ClassInfo {
         private String iri, localName; private Map<String, String> annotations; private List<String> superClasses, subClasses, equivalentClasses, disjointClasses, instances;

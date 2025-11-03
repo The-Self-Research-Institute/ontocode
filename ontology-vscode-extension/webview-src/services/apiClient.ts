@@ -85,6 +85,11 @@ const apiClient = {
         return postRequestToVscode({ type: 'apiPost', url, body });
     },
 
+    put: async <T>(url:string, body?: unknown): Promise<{ data: T }> => {
+        console.log(`[API] POST via Proxy: ${url}`, body);
+        return postRequestToVscode({ type: 'apiPut', url, body });
+    },
+
     /**
      * Performs a DELETE request by proxying it through the VS Code extension.
      */
