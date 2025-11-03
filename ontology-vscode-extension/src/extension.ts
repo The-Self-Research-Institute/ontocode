@@ -1,5 +1,3 @@
-
-
 // Fix: Removed triple-slash directive for node types as we are removing node-specific dependencies.
 
 import * as vscode from 'vscode';
@@ -31,7 +29,8 @@ type ExtensionMessage =
   // Fix: Added message types for API requests to the proxy
   | { type: 'apiGet'; requestId: string; url: string; params?: Record<string, unknown> }
   | { type: 'apiPost'; requestId: string; url: string; body?: unknown }
-  | { type: 'apiDelete'; requestId: string; url: string; params?: Record<string, unknown> };
+  | { type: 'apiDelete'; requestId: string; url: string; params?: Record<string, unknown> }
+  | { type: 'webviewReady' }; // <-- FIX: Add message from webview
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -41,9 +40,10 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         // Fix: Made command handler async to support async panel creation/file upload.
         vscode.commands.registerCommand('ontocode.edit', async () => {
-            // Fix: Use context.extension.extensionUri as a valid alternative to context.extensionUri.
-            const panel = await OntoCodePanel.createOrShow(context.extension.extensionUri, context);
-            await panel.triggerFileUpload();
+            // Fix: Use context.extensionUri to get the extension's URI.
+            const panel = await OntoCodePanel.createOrShow(context.extensionUri, context);
+            // FIX: Don't trigger upload here. Set it as pending.
+            panel.setPendingUpload(true);
         }),
         // Fix: Made command handler async to support async panel creation/file upload.
         vscode.commands.registerCommand('ontocode.editLargeFile', async (uri: vscode.Uri) => {
@@ -51,9 +51,10 @@ export function activate(context: vscode.ExtensionContext) {
                 vscode.window.showErrorMessage("This command should be run by right-clicking an OWL file in the explorer.");
                 return;
             }
-            // Fix: Use context.extension.extensionUri as a valid alternative to context.extensionUri.
-            const panel = await OntoCodePanel.createOrShow(context.extension.extensionUri, context);
-            await panel.triggerLargeFileUpload(uri);
+            // Fix: Use context.extensionUri to get the extension's URI.
+            const panel = await OntoCodePanel.createOrShow(context.extensionUri, context);
+            // FIX: Don't trigger upload here. Set it as pending.
+            panel.setPendingUpload(false, uri);
         }),
         vscode.commands.registerCommand('ontocode.logout', async () => {
             // Fix: Cast context to `any` to access the `secrets` property, bypassing outdated type definitions.
@@ -64,8 +65,8 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.window.showInformationMessage('You have been successfully logged out.');
         }),
         vscode.commands.registerCommand('ontocode.insertCitation', insertCitationCommand),
-        // Fix: Use context.extension.extensionUri as a valid alternative to context.extensionUri.
-        vscode.commands.registerCommand('ontocode.openCitationPicker', () => CitationPickerPanel.createOrShow(context.extension.extensionUri))
+        // Fix: Use context.extensionUri to get the extension's URI.
+        vscode.commands.registerCommand('ontocode.openCitationPicker', () => CitationPickerPanel.createOrShow(context.extensionUri))
     );
 }
 
@@ -79,6 +80,11 @@ class OntoCodePanel {
     private readonly _extensionUri: vscode.Uri;
     private readonly _context: vscode.ExtensionContext;
     private _disposables: vscode.Disposable[] = [];
+
+    // FIX: Add state to track webview readiness and pending uploads
+    private _isWebviewReady: boolean = false;
+    private _pendingFileUri: vscode.Uri | null = null;
+    private _isPendingRegularUpload: boolean = false;
 
     // Fix: Made createOrShow async to handle async webview content loading.
     public static async createOrShow(extensionUri: vscode.Uri, context: vscode.ExtensionContext): Promise<OntoCodePanel> {
@@ -119,6 +125,12 @@ class OntoCodePanel {
         this._panel.webview.onDidReceiveMessage(
             async (message: ExtensionMessage) => {
                 switch (message.type) {
+                    // FIX: Add a case to handle the webview's "ready" message
+                    case 'webviewReady':
+                        console.log('[OntoCode] Received webviewReady message.');
+                        this._isWebviewReady = true;
+                        this.triggerPendingUpload(); // Trigger any upload that was waiting
+                        break;
                     case 'error':
                         vscode.window.showErrorMessage(message.value);
                         break;
@@ -150,6 +162,34 @@ class OntoCodePanel {
             null,
             this._disposables
         );
+    }
+
+    // FIX: New method to check for and trigger pending uploads
+    private triggerPendingUpload() {
+        if (this._isPendingRegularUpload) {
+            this._isPendingRegularUpload = false;
+            console.log('[OntoCode] Webview is ready, triggering pending regular file upload.');
+            this.triggerFileUpload();
+        } else if (this._pendingFileUri) {
+            const uri = this._pendingFileUri;
+            this._pendingFileUri = null;
+            console.log('[OntoCode] Webview is ready, triggering pending large file upload.');
+            this.triggerLargeFileUpload(uri);
+        }
+    }
+
+    // FIX: New method to set a pending upload from the activate function
+    public setPendingUpload(isRegular: boolean, uri: vscode.Uri | null = null) {
+        if (isRegular) {
+            this._isPendingRegularUpload = true;
+        } else if (uri) {
+            this._pendingFileUri = uri;
+        }
+        
+        // If webview is *already* ready (e.g., panel was just revealed), trigger now.
+        if (this._isWebviewReady) {
+            this.triggerPendingUpload();
+        }
     }
     
     /**
@@ -309,6 +349,7 @@ class OntoCodePanel {
             // 5. Check if upload was successful
             if (response.status === 200 || response.status === 201) {
                 console.log(`[OntoCode] Upload successful for project: ${projectId}`);
+                this._isWebviewReady = false;
                 this.postMessage({ type: 'fileReady', projectId: projectId });
                 vscode.window.showInformationMessage(`Ontology "${fileName}" uploaded successfully. Processing started...`);
             } else {
@@ -380,16 +421,22 @@ class OntoCodePanel {
     /**
      * Generate HTML for the webview
      */
-    // Fix: Made async and used vscode.workspace.fs.readFile instead of fs.readFileSync.
     private async _getHtmlForWebview(webview: vscode.Webview): Promise<string> {
-        // Fix: Replace missing Uri.joinPath with Uri.parse and string interpolation for compatibility.
+        // Path to the build directory on disk
         const buildPath = vscode.Uri.parse(`${this._extensionUri.toString()}/webview-src/dist`);
+        
+        // Path to the index.html file
         const indexPath = vscode.Uri.parse(`${buildPath.toString()}/index.html`);
-        // Fix: Cast workspace to `any` to access the `fs` property, bypassing outdated type definitions.
+
+        // Get the base URI to use in the webview for resolving relative paths
+        const baseUri = (webview as any).asWebviewUri(buildPath).toString() + '/';
+        
+        // Read the template HTML
         const fileBytes = await (vscode.workspace as any).fs.readFile(indexPath);
         let htmlContent = new TextDecoder('utf-8').decode(fileBytes);
         const nonce = getNonce();
 
+        // The VSCode API script that needs to be injected
         const vscodeApiInjectionScript = `
             <script nonce="${nonce}">
                 const vscode = acquireVsCodeApi();
@@ -397,26 +444,31 @@ class OntoCodePanel {
             </script>
         `;
         
-        // Remove any existing CSP
+        // Remove any existing CSP meta tags to avoid conflicts
         htmlContent = htmlContent.replace(/<meta[^>]*Content-Security-Policy[^>]*>/gi, '');
         
-        // Add our CSP and VSCode API injection
+        // Inject our new CSP, a <base> tag, and the API script into the <head>
         htmlContent = htmlContent.replace(
             /(<head>)/,
             `$1
             <meta http-equiv="Content-Security-Policy" content="
                 default-src 'none'; 
                 img-src ${(webview as any).cspSource} https: data: blob:; 
-                script-src 'nonce-${nonce}' https://cdn.tailwindcss.com https://unpkg.com;
+                script-src 'nonce-${nonce}' https://cdn.tailwindcss.com https://unpkg.com ${(webview as any).cspSource};
                 style-src ${(webview as any).cspSource} 'unsafe-inline' https://unpkg.com;
                 font-src ${(webview as any).cspSource} data:; 
                 connect-src ${GATEWAY_URL};
             ">
+            <base href="${baseUri}">
             ${vscodeApiInjectionScript}`
         );
         
-        // Fix resource URIs
+        // Add nonce to our main application script. The <base> tag handles the path resolution,
+        // so we can change the src to be relative.
         htmlContent = htmlContent.replace(/(href|src)="([^"]+)"/g, (match, attr, rawPath) => {
+            if (rawPath.startsWith('https:') || rawPath.startsWith('http:') || rawPath.startsWith('data:')) {
+                return match; // Return the original string (e.g., 'href="https://cdn.tailwindcss.com"')
+            }
             // Fix: Replace missing Uri.joinPath with Uri.parse and string interpolation for compatibility.
             const resourcePath = vscode.Uri.parse(
                 `${buildPath.toString()}/${rawPath.startsWith('/') ? rawPath.substring(1) : rawPath}`
@@ -424,9 +476,9 @@ class OntoCodePanel {
             // Fix: Cast webview to `any` to access `asWebviewUri` method, bypassing outdated type definitions.
             return `${attr}="${(webview as any).asWebviewUri(resourcePath)}"`;
         });
-        
-        // Add nonce to all script tags
-        return htmlContent.replace(/<script/g, `<script nonce="${nonce}"`);
+
+
+        return htmlContent;
     }
 
     /**
@@ -449,7 +501,7 @@ class OntoCodePanel {
  */
 function getNonce(): string {
     let text = '';
-    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz01289';
     for (let i = 0; i < 32; i++) {
         text += possible.charAt(Math.floor(Math.random() * possible.length));
     }

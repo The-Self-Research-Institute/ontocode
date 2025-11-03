@@ -2,11 +2,8 @@ package self.research.ontology.owlEditor.service;
 
 import com.mongodb.client.gridfs.model.GridFSFile;
 import org.bson.types.ObjectId;
-import org.semanticweb.HermiT.ReasonerFactory;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.*;
-import org.semanticweb.owlapi.reasoner.OWLReasoner;
-import org.semanticweb.owlapi.reasoner.OWLReasonerFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,10 +36,7 @@ public class OwlParsingService {
     @Autowired
     private OntologyIndexService ontologyIndexService;
 
-    private final OWLReasonerFactory reasonerFactory;
-
     public OwlParsingService() {
-        this.reasonerFactory = new ReasonerFactory();
     }
 
     @Async
@@ -79,6 +73,16 @@ public class OwlParsingService {
             updateProjectStatus(projectId, "PROCESSING", "Starting OWL file processing...");
 
             OntologyParseResult result = parseOwlContent(owlStream, projectId, filename);
+            
+            if (result.getClasses().isEmpty() && result.getAnnotationProperties().isEmpty()) {
+                logger.error("Parsing finished but extracted 0 classes and 0 annotation properties for project: {}", projectId);
+                updateProjectStatus(projectId, "ERROR", "Parsing failed: File loaded but no entities were extracted.");
+                return CompletableFuture.failedFuture(new RuntimeException("No entities extracted from ontology."));
+            } else {
+                 logger.info("Parsing successful: {} classes, {} properties, {} annotation properties, {} individuals",
+                    result.getClasses().size(), result.getProperties().size(), result.getAnnotationProperties().size(), result.getIndividuals().size());
+            }
+
             indexOntologyData(projectId, result);
 
             updateProjectStatus(projectId, "COMPLETED",
@@ -104,18 +108,19 @@ public class OwlParsingService {
             ontology = ontologyManager.loadOntologyFromOntologyDocument(inputStream);
             logger.info("Successfully loaded ontology: {}", ontology.getOntologyID());
 
-            OWLReasoner reasoner = reasonerFactory.createReasoner(ontology);
-            reasoner.precomputeInferences();
-
             OntologyMetadata metadata = extractMetadata(ontology, filename);
-            List<ClassInfo> classInfos = extractClassInformation(ontology.getClassesInSignature(), ontology, reasoner);
-            List<PropertyInfo> propertyInfos = extractPropertyInformation(ontology, reasoner);
-            List<IndividualInfo> individualInfos = extractIndividualInformation(ontology.getIndividualsInSignature(), ontology, reasoner);
+            
+            List<ClassInfo> classInfos = extractClassInformation(ontology);
+            
+            List<PropertyInfo> propertyInfos = extractPropertyInformation(ontology);
+            
+            List<IndividualInfo> individualInfos = extractIndividualInformation(ontology);
+            
             List<AxiomInfo> axiomInfos = extractAxiomInformation(ontology);
-            List<AnnotationPropertyInfo> annotationPropertyInfos = extractAnnotationPropertyInformation(ontology.getAnnotationPropertiesInSignature(), ontology);
-            List<DatatypeInfo> datatypeInfos = extractDatatypeInformation(ontology.getDatatypesInSignature(), ontology);
-
-            reasoner.dispose();
+            
+            List<AnnotationPropertyInfo> annotationPropertyInfos = extractAnnotationPropertyInformation(ontology);
+            
+            List<DatatypeInfo> datatypeInfos = extractDatatypeInformation(ontology);
 
             return new OntologyParseResult(metadata, classInfos, propertyInfos, individualInfos, axiomInfos, annotationPropertyInfos, datatypeInfos);
 
@@ -129,89 +134,114 @@ public class OwlParsingService {
         }
     }
 
-    private List<PropertyInfo> extractPropertyInformation(OWLOntology ontology, OWLReasoner reasoner) {
+    private List<PropertyInfo> extractPropertyInformation(OWLOntology ontology) {
         List<PropertyInfo> propertyInfos = new ArrayList<>();
         OWLDataFactory dataFactory = ontology.getOWLOntologyManager().getOWLDataFactory();
 
-        // Process object properties
         for (OWLObjectProperty property : ontology.getObjectPropertiesInSignature()) {
             if (property.isBuiltIn()) continue;
-            PropertyInfo propInfo = new PropertyInfo();
-            propInfo.setIri(property.getIRI().toString());
-            propInfo.setLocalName(property.getIRI().getShortForm());
-            propInfo.setType("ObjectProperty");
-            propInfo.setAnnotations(extractAnnotations(property, ontology));
-            propInfo.setDomains(reasoner.getObjectPropertyDomains(property, true).getFlattened().stream()
-                    .filter(cls -> !cls.isBuiltIn()).map(c -> c.getIRI().toString()).collect(Collectors.toList()));
-            propInfo.setRanges(reasoner.getObjectPropertyRanges(property, true).getFlattened().stream()
-                    .filter(cls -> !cls.isBuiltIn()).map(c -> c.getIRI().toString()).collect(Collectors.toList()));
-            propInfo.setSuperProperties(reasoner.getSuperObjectProperties(property, true).getFlattened().stream()
-                    .filter(p -> p.isNamed() && !p.isOWLTopObjectProperty()).map(p -> p.asOWLObjectProperty().getIRI().toString()).collect(Collectors.toList()));
-            propInfo.setSubProperties(reasoner.getSubObjectProperties(property, true).getFlattened().stream()
-                    .filter(p -> p.isNamed() && !p.isOWLBottomObjectProperty()).map(p -> p.asOWLObjectProperty().getIRI().toString()).collect(Collectors.toList()));
-            propInfo.setCharacteristics(getPropertyCharacteristics(property, reasoner, dataFactory));
-            propertyInfos.add(propInfo);
+            try {
+                PropertyInfo propInfo = new PropertyInfo();
+                propInfo.setIri(property.getIRI().toString());
+                propInfo.setLocalName(property.getIRI().getShortForm());
+                propInfo.setType("ObjectProperty");
+                propInfo.setAnnotations(extractAnnotations(property, ontology));
+                
+                propInfo.setDomains(ontology.getObjectPropertyDomainAxioms(property).stream()
+                        .map(ax -> ax.getDomain().asOWLClass().getIRI().toString())
+                        .collect(Collectors.toList()));
+                
+                propInfo.setRanges(ontology.getObjectPropertyRangeAxioms(property).stream()
+                        .map(ax -> ax.getRange().asOWLClass().getIRI().toString())
+                        .collect(Collectors.toList()));
+                
+                // FIX [ERROR 1]: Using older API method
+                propInfo.setSuperProperties(ontology.getAxioms(AxiomType.SUB_OBJECT_PROPERTY).stream()
+                        .filter(ax -> ax.getSubProperty().equals(property) && !ax.getSuperProperty().isAnonymous())
+                        .map(ax -> ax.getSuperProperty().asOWLObjectProperty().getIRI().toString())
+                        .collect(Collectors.toList()));
+                
+                // FIX [ERROR 2]: Using older API method
+                propInfo.setSubProperties(ontology.getAxioms(AxiomType.SUB_OBJECT_PROPERTY).stream()
+                        .filter(ax -> ax.getSuperProperty().equals(property) && !ax.getSubProperty().isAnonymous())
+                        .map(ax -> ax.getSubProperty().asOWLObjectProperty().getIRI().toString())
+                        .collect(Collectors.toList()));
+                        
+                propInfo.setCharacteristics(getPropertyCharacteristics(property, ontology, dataFactory));
+                propertyInfos.add(propInfo);
+            } catch (Exception e) {
+                logger.warn("Failed to parse object property: {}. Skipping. Error: {}", property.getIRI(), e.getMessage());
+            }
         }
 
-        // Process data properties
         for (OWLDataProperty property : ontology.getDataPropertiesInSignature()) {
             if (property.isBuiltIn()) continue;
-            PropertyInfo propInfo = new PropertyInfo();
-            propInfo.setIri(property.getIRI().toString());
-            propInfo.setLocalName(property.getIRI().getShortForm());
-            propInfo.setType("DataProperty");
-            propInfo.setAnnotations(extractAnnotations(property, ontology));
-            propInfo.setDomains(reasoner.getDataPropertyDomains(property, true).getFlattened().stream()
-                    .filter(cls -> !cls.isBuiltIn()).map(c -> c.getIRI().toString()).collect(Collectors.toList()));
+            try {
+                PropertyInfo propInfo = new PropertyInfo();
+                propInfo.setIri(property.getIRI().toString());
+                propInfo.setLocalName(property.getIRI().getShortForm());
+                propInfo.setType("DataProperty");
+                propInfo.setAnnotations(extractAnnotations(property, ontology));
+                
+                propInfo.setDomains(ontology.getDataPropertyDomainAxioms(property).stream()
+                        .map(ax -> ax.getDomain().asOWLClass().getIRI().toString())
+                        .collect(Collectors.toList()));
 
-            // FIX: This call was causing a compile error. Replaced with a more robust method
-            // that gets asserted ranges directly from the ontology axioms.
-            propInfo.setRanges(ontology.getDataPropertyRangeAxioms(property).stream()
-                    .map(axiom -> axiom.getRange().asOWLDatatype().getIRI().toString())
-                    .collect(Collectors.toList()));
+                propInfo.setRanges(ontology.getDataPropertyRangeAxioms(property).stream()
+                        .map(axiom -> axiom.getRange().asOWLDatatype().getIRI().toString())
+                        .collect(Collectors.toList()));
 
-            propInfo.setSuperProperties(reasoner.getSuperDataProperties(property, true).getFlattened().stream()
-                    .filter(p -> !p.isOWLTopDataProperty()).map(p -> p.getIRI().toString()).collect(Collectors.toList()));
-            propInfo.setSubProperties(reasoner.getSubDataProperties(property, true).getFlattened().stream()
-                    .filter(p -> !p.isOWLBottomDataProperty()).map(p -> p.getIRI().toString()).collect(Collectors.toList()));
-            propInfo.setCharacteristics(getPropertyCharacteristics(property, reasoner, dataFactory));
-            propertyInfos.add(propInfo);
+                // FIX [ERROR 3]: Using older API method
+                propInfo.setSuperProperties(ontology.getAxioms(AxiomType.SUB_DATA_PROPERTY).stream()
+                        .filter(ax -> ax.getSubProperty().equals(property) && !ax.getSuperProperty().isAnonymous())
+                        .map(ax -> ax.getSuperProperty().asOWLDataProperty().getIRI().toString())
+                        .collect(Collectors.toList()));
+                
+                // FIX [ERROR 4]: Using older API method
+                propInfo.setSubProperties(ontology.getAxioms(AxiomType.SUB_DATA_PROPERTY).stream()
+                        .filter(ax -> ax.getSuperProperty().equals(property) && !ax.getSubProperty().isAnonymous())
+                        .map(ax -> ax.getSubProperty().asOWLDataProperty().getIRI().toString())
+                        .collect(Collectors.toList()));
+                        
+                propInfo.setCharacteristics(getPropertyCharacteristics(property, ontology, dataFactory));
+                propertyInfos.add(propInfo);
+            } catch (Exception e) {
+                logger.warn("Failed to parse data property: {}. Skipping. Error: {}", property.getIRI(), e.getMessage());
+            }
         }
 
         return propertyInfos;
     }
 
-    // FIX: Replaced direct reasoner calls (e.g., isFunctional) with the more compatible
-    // isEntailed(axiom) pattern. This resolves all the "cannot find symbol" errors
-    // related to property characteristics.
-    private List<String> getPropertyCharacteristics(OWLObjectProperty property, OWLReasoner reasoner, OWLDataFactory df) {
+    private List<String> getPropertyCharacteristics(OWLObjectProperty property, OWLOntology ontology, OWLDataFactory df) {
         List<String> characteristics = new ArrayList<>();
-        if (reasoner.isEntailed(df.getOWLFunctionalObjectPropertyAxiom(property))) characteristics.add("Functional");
-        if (reasoner.isEntailed(df.getOWLInverseFunctionalObjectPropertyAxiom(property))) characteristics.add("InverseFunctional");
-        if (reasoner.isEntailed(df.getOWLTransitiveObjectPropertyAxiom(property))) characteristics.add("Transitive");
-        if (reasoner.isEntailed(df.getOWLSymmetricObjectPropertyAxiom(property))) characteristics.add("Symmetric");
-        if (reasoner.isEntailed(df.getOWLAsymmetricObjectPropertyAxiom(property))) characteristics.add("Asymmetric");
-        if (reasoner.isEntailed(df.getOWLReflexiveObjectPropertyAxiom(property))) characteristics.add("Reflexive");
-        if (reasoner.isEntailed(df.getOWLIrreflexiveObjectPropertyAxiom(property))) characteristics.add("Irreflexive");
+        if (!ontology.getFunctionalObjectPropertyAxioms(property).isEmpty()) characteristics.add("Functional");
+        if (!ontology.getInverseFunctionalObjectPropertyAxioms(property).isEmpty()) characteristics.add("InverseFunctional");
+        if (!ontology.getTransitiveObjectPropertyAxioms(property).isEmpty()) characteristics.add("Transitive");
+        if (!ontology.getSymmetricObjectPropertyAxioms(property).isEmpty()) characteristics.add("Symmetric");
+        if (!ontology.getAsymmetricObjectPropertyAxioms(property).isEmpty()) characteristics.add("Asymmetric");
+        if (!ontology.getReflexiveObjectPropertyAxioms(property).isEmpty()) characteristics.add("Reflexive");
+        if (!ontology.getIrreflexiveObjectPropertyAxioms(property).isEmpty()) characteristics.add("Irreflexive");
         return characteristics;
     }
 
-    private List<String> getPropertyCharacteristics(OWLDataProperty property, OWLReasoner reasoner, OWLDataFactory df) {
+    private List<String> getPropertyCharacteristics(OWLDataProperty property, OWLOntology ontology, OWLDataFactory df) {
         List<String> characteristics = new ArrayList<>();
-        if (reasoner.isEntailed(df.getOWLFunctionalDataPropertyAxiom(property))) {
+        if (!ontology.getFunctionalDataPropertyAxioms(property).isEmpty()) {
             characteristics.add("Functional");
         }
         return characteristics;
     }
 
 
-    // ... The rest of the file is unchanged and correct ...
     private OntologyMetadata extractMetadata(OWLOntology ontology, String filename) {
         OntologyMetadata metadata = new OntologyMetadata();
         metadata.setFilename(filename);
         metadata.setOntologyIRI(ontology.getOntologyID().getOntologyIRI().map(IRI::toString).orElse(null));
         metadata.setVersionIRI(ontology.getOntologyID().getVersionIRI().map(IRI::toString).orElse(null));
+        
         metadata.setClassCount(ontology.getClassesInSignature().size());
+        
         metadata.setObjectPropertyCount(ontology.getObjectPropertiesInSignature().size());
         metadata.setDataPropertyCount(ontology.getDataPropertiesInSignature().size());
         metadata.setIndividualCount(ontology.getIndividualsInSignature().size());
@@ -236,32 +266,99 @@ public class OwlParsingService {
         metadata.setDataPropertyRangeCount((int) ontology.getAxiomCount(AxiomType.DATA_PROPERTY_RANGE));
         return metadata;
     }
-    private List<ClassInfo> extractClassInformation(Set<OWLClass> classes, OWLOntology ontology, OWLReasoner reasoner) {
-        return classes.stream().filter(owlClass -> !owlClass.isBuiltIn()).map(owlClass -> {
-            ClassInfo classInfo = new ClassInfo();
-            classInfo.setIri(owlClass.getIRI().toString());
-            classInfo.setLocalName(owlClass.getIRI().getShortForm());
-            classInfo.setAnnotations(extractAnnotations(owlClass, ontology));
-            classInfo.setSuperClasses(reasoner.getSuperClasses(owlClass, true).getFlattened().stream().filter(cls -> !cls.isBuiltIn()).map(cls -> cls.getIRI().toString()).collect(Collectors.toList()));
-            classInfo.setSubClasses(reasoner.getSubClasses(owlClass, true).getFlattened().stream().filter(cls -> !cls.isBuiltIn()).map(cls -> cls.getIRI().toString()).collect(Collectors.toList()));
-            classInfo.setEquivalentClasses(reasoner.getEquivalentClasses(owlClass).getEntities().stream().filter(cls -> !cls.equals(owlClass) && !cls.isBuiltIn()).map(cls -> cls.getIRI().toString()).collect(Collectors.toList()));
-            classInfo.setDisjointClasses(reasoner.getDisjointClasses(owlClass).getFlattened().stream().filter(cls -> !cls.isBuiltIn()).map(cls -> cls.getIRI().toString()).collect(Collectors.toList()));
-            classInfo.setInstances(reasoner.getInstances(owlClass, false).getFlattened().stream().map(ind -> ind.getIRI().toString()).collect(Collectors.toList()));
-            return classInfo;
-        }).collect(Collectors.toList());
+    
+    private List<ClassInfo> extractClassInformation(OWLOntology ontology) {
+        List<ClassInfo> classInfos = new ArrayList<>();
+        Set<OWLClass> classes = ontology.getClassesInSignature();
+        logger.info("Extracting info for {} classes in signature...", classes.size());
+        
+        for (OWLClass owlClass : classes) {
+            if (owlClass.isBuiltIn()) {
+                logger.info("Skipping built-in class: {}", owlClass.getIRI().getShortForm());
+                continue;
+            }
+            
+            try {
+                ClassInfo classInfo = new ClassInfo();
+                classInfo.setIri(owlClass.getIRI().toString());
+                classInfo.setLocalName(owlClass.getIRI().getShortForm());
+                classInfo.setAnnotations(extractAnnotations(owlClass, ontology));
+                
+                classInfo.setSuperClasses(ontology.getSubClassAxiomsForSubClass(owlClass).stream()
+                        .filter(ax -> !ax.getSuperClass().isAnonymous())
+                        .map(ax -> ax.getSuperClass().asOWLClass().getIRI().toString())
+                        .collect(Collectors.toList()));
+                        
+                classInfo.setSubClasses(ontology.getSubClassAxiomsForSuperClass(owlClass).stream()
+                        .filter(ax -> !ax.getSubClass().isAnonymous())
+                        .map(ax -> ax.getSubClass().asOWLClass().getIRI().toString())
+                        .collect(Collectors.toList()));
+                
+                classInfo.setEquivalentClasses(ontology.getEquivalentClassesAxioms(owlClass).stream()
+                        .flatMap(ax -> ax.getClassesInSignature().stream())
+                        .filter(cls -> !cls.equals(owlClass) && !cls.isBuiltIn())
+                        .map(cls -> cls.getIRI().toString())
+                        .collect(Collectors.toList()));
+
+                classInfo.setDisjointClasses(ontology.getDisjointClassesAxioms(owlClass).stream()
+                        .flatMap(ax -> ax.getClassesInSignature().stream())
+                        .filter(cls -> !cls.equals(owlClass) && !cls.isBuiltIn())
+                        .map(cls -> cls.getIRI().toString())
+                        .collect(Collectors.toList()));
+
+                classInfo.setInstances(ontology.getClassAssertionAxioms(owlClass).stream()
+                        .filter(ax -> !ax.getIndividual().isAnonymous())
+                        .map(ax -> ax.getIndividual().asOWLNamedIndividual().getIRI().toString())
+                        .collect(Collectors.toList()));
+                        
+                classInfos.add(classInfo);
+            } catch (Exception e) {
+                logger.warn("Failed to parse class: {}. Skipping. Error: {}", owlClass.getIRI(), e.getMessage());
+            }
+        }
+        logger.info("Successfully extracted {} classes.", classInfos.size());
+        return classInfos;
     }
-    private List<IndividualInfo> extractIndividualInformation(Set<OWLNamedIndividual> individuals, OWLOntology ontology, OWLReasoner reasoner) {
-        return individuals.stream().map(individual -> {
-            IndividualInfo info = new IndividualInfo();
-            info.setIri(individual.getIRI().toString());
-            info.setLocalName(individual.getIRI().getShortForm());
-            info.setAnnotations(extractAnnotations(individual, ontology));
-            info.setTypes(reasoner.getTypes(individual, true).getFlattened().stream().filter(cls -> !cls.isBuiltIn()).map(c -> c.getIRI().toString()).collect(Collectors.toList()));
-            info.setSameAs(reasoner.getSameIndividuals(individual).getEntities().stream().filter(ind -> !ind.equals(individual)).map(i -> i.getIRI().toString()).collect(Collectors.toList()));
-            info.setDifferentFrom(reasoner.getDifferentIndividuals(individual).getFlattened().stream().map(i -> i.getIRI().toString()).collect(Collectors.toList()));
-            return info;
-        }).collect(Collectors.toList());
+    
+    private List<IndividualInfo> extractIndividualInformation(OWLOntology ontology) {
+        List<IndividualInfo> individualInfos = new ArrayList<>();
+        Set<OWLNamedIndividual> individuals = ontology.getIndividualsInSignature();
+        
+        for (OWLNamedIndividual individual : individuals) {
+            try {
+                IndividualInfo info = new IndividualInfo();
+                info.setIri(individual.getIRI().toString());
+                info.setLocalName(individual.getIRI().getShortForm());
+                info.setAnnotations(extractAnnotations(individual, ontology));
+                
+                info.setTypes(ontology.getClassAssertionAxioms(individual).stream()
+                        .filter(ax -> !ax.getClassExpression().isAnonymous())
+                        .map(ax -> ax.getClassExpression().asOWLClass().getIRI().toString())
+                        .collect(Collectors.toList()));
+                
+                info.setSameAs(ontology.getSameIndividualAxioms(individual).stream()
+                        .flatMap(ax -> ax.getIndividualsInSignature().stream())
+                        .filter(ind -> !ind.equals(individual))
+                        .map(ind -> ind.getIRI().toString())
+                        .collect(Collectors.toList()));
+                
+                // FIX [ERROR 5]: Using older API method
+                info.setDifferentFrom(ontology.getAxioms(AxiomType.DIFFERENT_INDIVIDUALS).stream()
+                        .filter(ax -> ax.getIndividuals().contains(individual))
+                        .flatMap(ax -> ax.getIndividuals().stream())
+                        .filter(ind -> !ind.equals(individual) && !ind.isAnonymous())
+                        .map(ind -> ind.asOWLNamedIndividual().getIRI().toString())
+                        .distinct()
+                        .collect(Collectors.toList()));
+                        
+                individualInfos.add(info);
+            } catch (Exception e) {
+                logger.warn("Failed to parse individual: {}. Skipping. Error: {}", individual.getIRI(), e.getMessage());
+            }
+        }
+        return individualInfos;
     }
+    
     private List<AxiomInfo> extractAxiomInformation(OWLOntology ontology) {
         return ontology.getAxioms().stream().map(axiom -> {
             AxiomInfo axiomInfo = new AxiomInfo();
@@ -277,24 +374,53 @@ public class OwlParsingService {
             return axiomInfo;
         }).collect(Collectors.toList());
     }
-    private List<AnnotationPropertyInfo> extractAnnotationPropertyInformation(Set<OWLAnnotationProperty> properties, OWLOntology ontology) {
-        return properties.stream().filter(property -> !property.isBuiltIn()).map(property -> {
-            AnnotationPropertyInfo info = new AnnotationPropertyInfo();
-            info.setIri(property.getIRI().toString());
-            info.setLocalName(property.getIRI().getShortForm());
-            info.setAnnotations(extractAnnotations(property, ontology));
-            return info;
-        }).collect(Collectors.toList());
+    
+    private List<AnnotationPropertyInfo> extractAnnotationPropertyInformation(OWLOntology ontology) {
+        List<AnnotationPropertyInfo> infos = new ArrayList<>();
+        Set<OWLAnnotationProperty> properties = ontology.getAnnotationPropertiesInSignature();
+        logger.info("Extracting info for {} annotation properties in signature...", properties.size());
+        
+        for (OWLAnnotationProperty property : properties) {
+            if (property.isBuiltIn()) {
+                 logger.info("Skipping built-in annotation property: {}", property.getIRI().getShortForm());
+                continue;
+            }
+            
+            try {
+                AnnotationPropertyInfo info = new AnnotationPropertyInfo();
+                info.setIri(property.getIRI().toString());
+                info.setLocalName(property.getIRI().getShortForm());
+                info.setAnnotations(extractAnnotations(property, ontology));
+                infos.add(info);
+            } catch (Exception e) {
+                logger.warn("Failed to parse annotation property: {}. Skipping. Error: {}", property.getIRI(), e.getMessage());
+            }
+        }
+        logger.info("Successfully extracted {} custom annotation properties.", infos.size());
+        return infos;
     }
-    private List<DatatypeInfo> extractDatatypeInformation(Set<OWLDatatype> datatypes, OWLOntology ontology) {
-        return datatypes.stream().filter(datatype -> !datatype.isBuiltIn()).map(datatype -> {
-            DatatypeInfo info = new DatatypeInfo();
-            info.setIri(datatype.getIRI().toString());
-            info.setLocalName(datatype.getIRI().getShortForm());
-            info.setAnnotations(extractAnnotations(datatype, ontology));
-            return info;
-        }).collect(Collectors.toList());
+    
+    private List<DatatypeInfo> extractDatatypeInformation(OWLOntology ontology) {
+        List<DatatypeInfo> infos = new ArrayList<>();
+        Set<OWLDatatype> datatypes = ontology.getDatatypesInSignature();
+        
+        for (OWLDatatype datatype : datatypes) {
+            if (datatype.isBuiltIn()) {
+                continue;
+            }
+            try {
+                DatatypeInfo info = new DatatypeInfo();
+                info.setIri(datatype.getIRI().toString());
+                info.setLocalName(datatype.getIRI().getShortForm());
+                info.setAnnotations(extractAnnotations(datatype, ontology));
+                infos.add(info);
+            } catch (Exception e) {
+                logger.warn("Failed to parse datatype: {}. Skipping. Error: {}", datatype.getIRI(), e.getMessage());
+            }
+        }
+        return infos;
     }
+    
     private Map<String, String> extractAnnotations(OWLEntity entity, OWLOntology ontology) {
         Map<String, String> annotations = new HashMap<>();
         for (OWLAnnotationAssertionAxiom axiom : ontology.getAnnotationAssertionAxioms(entity.getIRI())) {
@@ -304,6 +430,7 @@ public class OwlParsingService {
         }
         return annotations;
     }
+    
     private String extractAnnotationValue(OWLAnnotationValue value) {
         if (value.isLiteral()) {
             return value.asLiteral().get().getLiteral();
@@ -312,10 +439,12 @@ public class OwlParsingService {
         }
         return value.toString();
     }
+    
     private void indexOntologyData(String projectId, OntologyParseResult result) {
         logger.info("Indexing ontology data for project: {}", projectId);
         ontologyIndexService.indexOntologyData(projectId, result);
     }
+    
     private void updateProjectStatus(String projectId, String status, String message) {
         try {
             Query query = new Query(Criteria.where("_id").is(projectId));
@@ -326,6 +455,7 @@ public class OwlParsingService {
             logger.error("Failed to update project status for project: {}", projectId, e);
         }
     }
+    
     public static class OntologyParseResult {
         private final OntologyMetadata metadata; private final List<ClassInfo> classes; private final List<PropertyInfo> properties; private final List<IndividualInfo> individuals; private final List<AxiomInfo> axioms; private final List<AnnotationPropertyInfo> annotationProperties; private final List<DatatypeInfo> datatypes;
         public OntologyParseResult(OntologyMetadata m, List<ClassInfo> c, List<PropertyInfo> p, List<IndividualInfo> i, List<AxiomInfo> a, List<AnnotationPropertyInfo> ap, List<DatatypeInfo> d) { this.metadata = m; this.classes = c; this.properties = p; this.individuals = i; this.axioms = a; this.annotationProperties = ap; this.datatypes = d; }

@@ -234,12 +234,13 @@ const Dashboard = () => {
             apiClient.get<{ data: AnnotationProperty[] }>(`/api/ontology/annotation-properties/${currentProjectId}`),
             apiClient.get<{ data: Datatype[] }>(`/api/ontology/datatypes/${currentProjectId}`),
         ]);
-
+        console.log([metadataRes, topLevelRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes]);
         setMetadata(metadataRes.data);
         const { classes } = topLevelRes.data;
         const topLevelNodes: TreeNode[] = classes.map((c: TopLevelClass) => ({
              ...c,
              children: c.hasChildren ? [] : null,
+             hasChildren: c.hasChildren,
              subClassOfAxioms: [{ id: 'sub1', type: 'SubClassOf', definition: 'Thing' }]
         }));
         const owlThingNode: TreeNode = {
@@ -274,43 +275,83 @@ const Dashboard = () => {
     }
   }, [classHierarchy, expandedNodes]);
 
-  const pollProcessingStatus = useCallback(async (projectIdToPoll: string) => {
-      setIsInitialLoading(true);
-      setTimeout(() => {
-          fetchData(projectIdToPoll);
-      }, 1000);
-  }, [fetchData]);
+  const pollProcessingStatus = useCallback((projectIdToPoll: string) => {
+    setIsInitialLoading(true);
+
+    const intervalId = setInterval(async () => {
+      try {
+        const response = await apiClient.get(`/api/ontology/status/${projectIdToPoll}`);
+        
+        const statusData = ((response.data) as any)?.data;
+        console.log('Poll Status:', statusData?.status);
+
+        if (statusData?.status === 'COMPLETED') {
+          clearInterval(intervalId);
+          console.log('Processing complete! Fetching all ontology data.');
+          await fetchData(projectIdToPoll);
+        } else if (statusData?.status === 'ERROR') {
+          clearInterval(intervalId);
+          setIsInitialLoading(false);
+          console.error('Backend processing failed:', statusData.statusMessage);
+        } else if (statusData?.status === 'PROCESSING') {
+          console.warn('Processing');
+        } else if (statusData?.status === 'NOT_FOUND') {
+          console.warn('Polling... project not found yet.');
+        }
+
+      } catch (error) {
+        clearInterval(intervalId);
+        setIsInitialLoading(false);
+        console.error('Failed to poll for status:', error);
+      }
+    }, 2000);
+
+    return () => clearInterval(intervalId);
+
+  }, [fetchData, setIsInitialLoading]);
+
+  // FIX: Add a new useEffect to send the 'webviewReady' message on mount
+  useEffect(() => {
+    if (window.vscode) {
+      console.log("React component mounted. Sending 'webviewReady'");
+      window.vscode.postMessage({ type: 'webviewReady' });
+    }
+  }, []); // Empty array ensures this runs only once on mount
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-        if (!projectId) {
-            if (window.vscode) {
-                // The VS Code extension will send 'fileReady' to trigger loading
-                // This branch is now the only one that can lead to data loading.
-            } else {
-                // Fallback for development in browser OR if vscode API is not ready yet.
-                // We simply wait for the 'fileReady' message and do not trigger a failing API call.
-                console.warn("Not in a VSCode webview environment or API not ready. Waiting for 'fileReady' message.");
-            }
-        }
-    }, 500);
-
+    let cleanupPolling = () => {}; 
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
+      console.log("Message received from extension:", message); // Better logging
       switch (message.type) {
-        case "showLoading": setIsInitialLoading(true); break;
-        case "fileReady": setProjectId(message.projectId); pollProcessingStatus(message.projectId); break;
-        case "loadingFailed": setIsInitialLoading(false); break;
-        case "switchView": if (message.view === 'swrl' && !visibleMainTabs.includes('SWRL')) { toggleSwrlTab(); } setMainTab('SWRL'); break;
+        case "showLoading": 
+          setIsInitialLoading(true); 
+          break;
+        case "fileReady": 
+          console.log("FileReady received, setting projectId:", message.projectId);
+          setProjectId(message.projectId); 
+          cleanupPolling = pollProcessingStatus(message.projectId); 
+          break;
+        case "loadingFailed": 
+          setIsInitialLoading(false); 
+          console.error("Loading failed:", message.error);
+          break;
+        case "switchView": 
+          if (message.view === 'swrl' && !visibleMainTabs.includes('SWRL')) { 
+            toggleSwrlTab(); 
+          } 
+          setMainTab('SWRL'); 
+          break;
       }
     };
     window.addEventListener("message", handleMessage);
+    
     return () => {
-        clearTimeout(timer);
-        window.removeEventListener("message", handleMessage)
+      window.removeEventListener("message", handleMessage);
+      cleanupPolling(); 
     };
-  }, [pollProcessingStatus, projectId, toggleSwrlTab, visibleMainTabs]);
-  
+  }, [pollProcessingStatus, toggleSwrlTab, visibleMainTabs]); // Removed projectId from dependencies
+
   useEffect(() => {
     let sourceData: SelectableItem[] = [];
     switch (entitiesTab) {
@@ -367,16 +408,21 @@ const Dashboard = () => {
   // #endregion
 
   // #region Event Handlers
-  const loadChildren = useCallback(async (nodeId: string) => {
+ const loadChildren = useCallback(async (nodeId: string) => {
       if (!projectId) return;
       try {
-        const { data } = await apiClient.get<{ children: TopLevelClass[] }>(`/api/ontology/classes/children/${projectId}`, { params: { parentIri: nodeId } });
-        const children = data.children;
+        const { data } = await apiClient.get<TopLevelClass[]>(`/api/ontology/classes/children/${projectId}`, { params: { parentIri: nodeId } });
+        
+        const children = data; 
         
         const updateTree = (nodes: TreeNode[]): TreeNode[] => {
             return nodes.map((n: TreeNode) => {
                 if (n.id === nodeId) {
-                    return { ...n, children: children.map((c: TopLevelClass) => ({ ...c, children: c.hasChildren ? [] : null })) };
+                    return { ...n, children: children.map((c: TopLevelClass) => ({ 
+                        ...c, 
+                        children: c.hasChildren ? [] : null,
+                        hasChildren: c.hasChildren 
+                    })) };
                 }
                 if (n.children) {
                     return { ...n, children: updateTree(n.children) };
@@ -389,6 +435,8 @@ const Dashboard = () => {
         console.error(`Failed to load children for ${nodeId}`, error);
       }
   }, [projectId]);
+
+
 
   const toggleNode = useCallback(async (nodeId: string) => {
     if (expandedNodes.includes(nodeId)) {
@@ -535,17 +583,17 @@ const Dashboard = () => {
     switch (entitiesTab) {
         case 'Classes': {
              const removeNodeRecursively = (nodes: TreeNode[], id: string): TreeNode[] => {
-                return nodes
-                    .filter(node => node.id !== id)
-                    .map(node => {
-                        if (node.children) {
-                            return { ...node, children: removeNodeRecursively(node.children, id) };
-                        }
-                        return node;
-                    });
-            };
-            setClassHierarchy(prev => removeNodeRecursively(prev, selectedItem.id));
-            break;
+                 return nodes
+                     .filter(node => node.id !== id)
+                     .map(node => {
+                         if (node.children) {
+                             return { ...node, children: removeNodeRecursively(node.children, id) };
+                         }
+                         return node;
+                     });
+             };
+             setClassHierarchy(prev => removeNodeRecursively(prev, selectedItem.id));
+             break;
         }
         case 'Individuals':
             setIndividuals(prev => prev.filter(ind => ind.id !== selectedItem.id));
@@ -689,10 +737,10 @@ const Dashboard = () => {
             const individualsForSelectedClass = selectedClassForIndividuals ? individuals.filter(ind => ind.types?.includes(selectedClassForIndividuals.id)) : [];
             return (
                 <div className="flex h-full">
-                     <aside className="w-80 bg-white border-r border-gray-200 flex flex-col">
-                         <div className="p-2 border-b text-sm font-semibold text-gray-700">Class hierarchy</div>
-                         <div className="flex-1 overflow-y-auto p-1">
-                            <EntityHierarchy
+                    <aside className="w-80 bg-white border-r border-gray-200 flex flex-col">
+                        <div className="p-2 border-b text-sm font-semibold text-gray-700">Class hierarchy</div>
+                        <div className="flex-1 overflow-y-auto p-1">
+                           <EntityHierarchy
                                 entitiesTab="Classes"
                                 filteredData={classHierarchy}
                                 selectedItem={selectedClassForIndividuals}
@@ -703,14 +751,14 @@ const Dashboard = () => {
                                 onToggleNode={toggleNode}
                                 onAddItem={() => {}}
                                 onDeleteItem={() => {}}
-                             />
-                         </div>
+                            />
+                        </div>
                     </aside>
                     <main className="flex-1 p-2 bg-gray-50">
                         <div className="border bg-white h-full flex flex-col">
                            <div className="flex text-xs border-b flex-shrink-0">
-                             <button className="px-3 py-1.5 bg-white border-r font-semibold">Direct instances</button>
-                             <button className="px-3 py-1.5 bg-gray-100 text-gray-500 hover:bg-gray-200">Individuals (inferred)</button>
+                               <button className="px-3 py-1.5 bg-white border-r font-semibold">Direct instances</button>
+                               <button className="px-3 py-1.5 bg-gray-100 text-gray-500 hover:bg-gray-200">Individuals (inferred)</button>
                            </div>
                            {selectedClassForIndividuals ? (
                                 <div className="p-1 flex-1 overflow-y-auto">
@@ -747,18 +795,18 @@ const Dashboard = () => {
                                  <button onClick={handleExecuteDlQuery} disabled={isDlQueryLoading} className="px-3 py-1 bg-purple-600 text-white text-xs rounded hover:bg-purple-700 disabled:bg-purple-300 flex items-center gap-2">
                                     {isDlQueryLoading ? <Loader2 size={14} className="animate-spin" /> : <Play size={14}/>}
                                     Execute
-                                </button>
+                                 </button>
                                  <button className="px-3 py-1 bg-gray-200 text-xs rounded hover:bg-gray-300">Add to ontology</button>
                              </div>
                         </div>
                          <div className="border bg-white p-2 mt-2 flex-1">
-                            <h3 className="text-xs font-semibold mb-2">Query results</h3>
-                            {isDlQueryLoading ? (
+                           <h3 className="text-xs font-semibold mb-2">Query results</h3>
+                           {isDlQueryLoading ? (
                                 <div className="flex items-center justify-center h-full text-gray-500 text-sm">
                                     <Loader2 size={20} className="animate-spin mr-2"/>
                                     Executing query...
                                 </div>
-                            ) : dlQueryResults ? (
+                           ) : dlQueryResults ? (
                                 dlQueryResults.length > 0 ? (
                                     <div className="overflow-y-auto h-full">
                                         {dlQueryResults.map(res => <div key={res} className="p-1 text-sm">{res}</div>)}
@@ -785,7 +833,7 @@ const Dashboard = () => {
                          <div>
                              <h3 className="text-xs font-semibold mb-1">Result filters</h3>
                              <input type="text" placeholder="Name contains" className="w-full border px-2 py-1 text-xs"/>
-                         </div>
+                        </div>
                     </aside>
                 </div>
             );

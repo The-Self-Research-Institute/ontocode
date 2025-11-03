@@ -58,7 +58,9 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
         >
           {isTreeNode ? (
             <button className="p-0.5 mr-1" onClick={(e) => { e.stopPropagation(); onToggleNode(item.id); }}>
-              {item.children === null ? <span className="w-5" /> : (isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />)}
+              {(item.children === null && !('hasChildren' in item && item.hasChildren)) ? 
+                <span className="w-5" /> : 
+                (isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />)}
             </button>
           ) : <span className="w-5" />}
            <div title={itemType.slice(0, -1)} className={`w-3.5 h-3.5 rounded-sm border ${iconClasses} mr-2 flex-shrink-0 flex items-center justify-center`}>

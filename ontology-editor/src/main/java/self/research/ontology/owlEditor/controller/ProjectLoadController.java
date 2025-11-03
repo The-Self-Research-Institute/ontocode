@@ -22,6 +22,7 @@ import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
+@CrossOrigin(origins = "*") 
 @RestController
 @RequestMapping("/api/ontology")
 public class ProjectLoadController {
@@ -37,7 +38,6 @@ public class ProjectLoadController {
     @Autowired
     private MongoTemplate mongoTemplate;
 
-    // ==================== FILE UPLOAD ENDPOINT ====================
     @PostMapping("/upload/{projectId}")
     public ResponseEntity<Map<String, Object>> uploadOntology(
             @PathVariable String projectId,
@@ -50,13 +50,11 @@ public class ProjectLoadController {
                 return ResponseEntity.badRequest().body(createErrorResponse("File is empty"));
             }
 
-            logger.info("File received: {} (size: {} bytes)", file.getOriginalFilename(), file.getSize());
             String filename = file.getOriginalFilename();
+            logger.info("File received: {} (size: {} bytes) for project: {}", filename, file.getSize(), projectId);
 
             createOrUpdateProject(projectId, filename, "PROCESSING", "Starting to process ontology...");
 
-            // FIX: Pass the input stream directly to the async service.
-            // This avoids saving a temporary file and is more efficient.
             owlParsingService.parseAndIndexFromStream(projectId, file.getInputStream(), filename);
 
             Map<String, Object> response = new HashMap<>();
@@ -69,13 +67,12 @@ public class ProjectLoadController {
             return ResponseEntity.ok(response);
 
         } catch (Exception e) {
-            logger.error("Error uploading ontology file", e);
-            createOrUpdateProject(projectId, file.getOriginalFilename(), "ERROR", "Failed to upload file: " + e.getMessage());
+            logger.error("Error uploading ontology file for project {}: {}", projectId, e.getMessage(), e);
+            createOrUpdateProject(projectId, (file != null ? file.getOriginalFilename() : "unknown"), "ERROR", "Failed to upload file: " + e.getMessage());
             return ResponseEntity.status(500).body(createErrorResponse("Failed to upload file: " + e.getMessage()));
         }
     }
 
-    // ==================== STATUS CHECK ENDPOINT ====================
     @GetMapping("/status/{projectId}")
     public ResponseEntity<Map<String, Object>> getProcessingStatus(@PathVariable String projectId) {
         logger.info("Checking processing status for project: {}", projectId);
@@ -93,11 +90,12 @@ public class ProjectLoadController {
                 data.put("filename", projectData.get("filename"));
                 data.put("lastUpdated", projectData.get("lastUpdated"));
             } else {
-                // Check if ontology data exists
                 OntologyDocument doc = ontologyIndexService.getOntologyMetadata(projectId);
                 if (doc != null) {
                     data.put("status", "COMPLETED");
-                    data.put("metadata", doc.getMetadata());
+                    data.put("statusMessage", "Processing complete (project status not found, but data exists).");
+                    data.put("filename", doc.getMetadata() != null ? doc.getMetadata().getFilename() : "Unknown");
+                    data.put("lastUpdated", doc.getUpdatedAt());
                 } else {
                     data.put("status", "NOT_FOUND");
                     data.put("statusMessage", "Project not found");
@@ -114,7 +112,6 @@ public class ProjectLoadController {
         }
     }
 
-    // ==================== METADATA ENDPOINT ====================
     @GetMapping("/metadata/{projectId}")
     public ResponseEntity<Map<String, Object>> getMetadata(@PathVariable String projectId) {
         logger.info("Fetching metadata for project: {}", projectId);
@@ -133,7 +130,6 @@ public class ProjectLoadController {
         }
     }
 
-    // ==================== CLASS HIERARCHY ENDPOINTS ====================
     @GetMapping("/classes/tree/{projectId}")
     public ResponseEntity<List<TreeNode>> getClassHierarchy(@PathVariable String projectId) {
         logger.info("Fetching class hierarchy for project: {}", projectId);
@@ -239,7 +235,6 @@ public class ProjectLoadController {
         }
     }
 
-    // ==================== PROPERTY ENDPOINTS ====================
     @GetMapping("/properties/{projectId}")
     public ResponseEntity<Map<String, Object>> getAllProperties(@PathVariable String projectId) {
         logger.info("Fetching all properties for project: {}", projectId);
@@ -279,7 +274,6 @@ public class ProjectLoadController {
         }
     }
 
-    // ==================== OTHER ENTITY ENDPOINTS ====================
     @GetMapping("/individuals/{projectId}")
     public ResponseEntity<Map<String, Object>> getAllIndividuals(@PathVariable String projectId) {
         logger.info("Fetching all individuals for project: {}", projectId);
@@ -339,7 +333,6 @@ public class ProjectLoadController {
         }
     }
 
-    // ==================== HELPER METHODS ====================
     private void createOrUpdateProject(String projectId, String filename, String status, String message) {
         try {
             Query query = new Query(Criteria.where("_id").is(projectId));
@@ -366,12 +359,12 @@ public class ProjectLoadController {
         return error;
     }
 
-    // ==================== TREE NODE CLASS ====================
     public static class TreeNode {
         private String id;
         private String label;
         private List<TreeNode> children;
         private Map<String, String> annotations;
+        private Boolean hasChildren;
 
         public TreeNode() {}
 
@@ -380,6 +373,14 @@ public class ProjectLoadController {
             this.label = label;
             this.children = children;
             this.annotations = annotations;
+        }
+        
+        public TreeNode(String id, String label, List<TreeNode> children, Map<String, String> annotations, Boolean hasChildren) {
+            this.id = id;
+            this.label = label;
+            this.children = children;
+            this.annotations = annotations;
+            this.hasChildren = hasChildren;
         }
 
         public String getId() { return id; }
@@ -390,6 +391,8 @@ public class ProjectLoadController {
         public void setChildren(List<TreeNode> children) { this.children = children; }
         public Map<String, String> getAnnotations() { return annotations; }
         public void setAnnotations(Map<String, String> annotations) { this.annotations = annotations; }
+        public Boolean getHasChildren() { return hasChildren; }
+        public void setHasChildren(Boolean hasChildren) { this.hasChildren = hasChildren; }
 
         public void addChild(TreeNode child) {
             if (this.children == null) {
@@ -398,5 +401,4 @@ public class ProjectLoadController {
             this.children.add(child);
         }
     }
-
 }

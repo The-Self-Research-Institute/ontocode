@@ -8,7 +8,6 @@ import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
-// FIX: Added the import for the nested TreeNode class
 import self.research.ontology.owlEditor.controller.ProjectLoadController.TreeNode;
 import self.research.ontology.owlEditor.document.*;
 import self.research.ontology.owlEditor.dto.*;
@@ -27,6 +26,13 @@ public class OntologyIndexService {
 
     public void indexOntologyData(String projectId, OwlParsingService.OntologyParseResult result) {
         logger.info("Starting indexing process for project: {}", projectId);
+        logger.info("Data received from parser: {} Classes, {} Properties, {} Annotation Properties, {} Individuals, {} Axioms",
+                result.getClasses().size(),
+                result.getProperties().size(),
+                result.getAnnotationProperties().size(),
+                result.getIndividuals().size(),
+                result.getAxioms().size());
+                
         try {
             OntologyDocument ontologyDoc = createOntologyDocument(projectId, result);
             saveOntologyMetadata(projectId, ontologyDoc);
@@ -46,10 +52,13 @@ public class OntologyIndexService {
 
     private void indexAnnotationProperties(String projectId, List<OwlParsingService.AnnotationPropertyInfo> properties) {
         logger.info("Indexing {} annotation properties for project: {}", properties.size(), projectId);
+        if (properties.isEmpty()) {
+            logger.warn("No annotation properties to index for project: {}", projectId);
+            return;
+        }
+        
         Query deleteQuery = new Query(Criteria.where("projectId").is(projectId));
         mongoTemplate.remove(deleteQuery, "ontology_annotation_properties");
-
-        if (properties.isEmpty()) return;
 
         List<AnnotationPropertyDocument> propertyDocuments = new ArrayList<>();
         for (OwlParsingService.AnnotationPropertyInfo propertyInfo : properties) {
@@ -63,6 +72,7 @@ public class OntologyIndexService {
             propertyDocuments.add(propertyDoc);
         }
         mongoTemplate.insert(propertyDocuments, "ontology_annotation_properties");
+        logger.info("Successfully inserted {} annotation property documents.", propertyDocuments.size());
     }
 
     private void indexDatatypes(String projectId, List<OwlParsingService.DatatypeInfo> datatypes) {
@@ -166,10 +176,14 @@ public class OntologyIndexService {
 
     private void indexClasses(String projectId, List<OwlParsingService.ClassInfo> classes) {
         logger.info("Indexing {} classes for project: {}", classes.size(), projectId);
+        if (classes.isEmpty()) {
+             logger.warn("No classes to index for project: {}", projectId);
+            return;
+        }
+        
         Query deleteQuery = new Query(Criteria.where("projectId").is(projectId));
         mongoTemplate.remove(deleteQuery, "ontology_classes");
-        if (classes.isEmpty()) return;
-
+        
         List<ClassDocument> classDocuments = new ArrayList<>();
         for (OwlParsingService.ClassInfo classInfo : classes) {
             ClassDocument classDoc = new ClassDocument();
@@ -187,6 +201,7 @@ public class OntologyIndexService {
             classDocuments.add(classDoc);
         }
         mongoTemplate.insert(classDocuments, "ontology_classes");
+        logger.info("Successfully inserted {} class documents.", classDocuments.size());
     }
 
     private void indexProperties(String projectId, List<OwlParsingService.PropertyInfo> properties) {
@@ -325,7 +340,12 @@ public class OntologyIndexService {
                 String label = (annotations != null && annotations.get("label") != null)
                         ? annotations.get("label").replaceAll("\"|\\^\\^xsd:string", "").trim()
                         : classDoc.getLocalName();
-                return new TreeNode(classDoc.getIri(), label, new ArrayList<>(), annotations);
+                
+                Query hasChildrenQuery = new Query(Criteria.where("projectId").is(projectId)
+                        .and("superClasses").in(classDoc.getIri()));
+                boolean hasChildren = mongoTemplate.exists(hasChildrenQuery, ClassDocument.class, "ontology_classes");
+                
+                return new TreeNode(classDoc.getIri(), label, hasChildren ? new ArrayList<>() : null, annotations, hasChildren);
             }).collect(Collectors.toList());
         } catch (Exception e) {
             logger.error("Error searching classes for project: {} with query: {}", projectId, query, e);
@@ -389,8 +409,13 @@ public class OntologyIndexService {
                     rootProperties.add(propertyMap.get(propDoc.getIri()));
                 }
             }
+            
+            if (rootProperties.isEmpty() && !allProperties.isEmpty()) {
+                 logger.info("No root object properties found (which may be correct). Returning empty list.");
+                 return new ArrayList<>();
+            }
 
-            if (rootProperties.size() > 1 || rootProperties.isEmpty()) {
+            if (rootProperties.size() > 1) {
                 PropertyDto topProperty = new PropertyDto();
                 topProperty.setId(topObjectPropertyIRI);
                 topProperty.setIri(topObjectPropertyIRI);
@@ -493,7 +518,12 @@ public class OntologyIndexService {
                             ? cleanLabel(c.getAnnotations().get("label"))
                             : c.getLocalName();
                     item.put("label", label);
-                    item.put("hasChildren", c.getSubClasses() != null && !c.getSubClasses().isEmpty());
+
+                    Query hasChildrenQuery = new Query(Criteria.where("projectId").is(projectId)
+                            .and("superClasses").in(c.getIri()));
+                    boolean hasChildren = mongoTemplate.exists(hasChildrenQuery, ClassDocument.class, "ontology_classes");
+                    
+                    item.put("hasChildren", hasChildren); 
                     item.put("annotations", c.getAnnotations());
                     return item;
                 })
@@ -553,8 +583,13 @@ public class OntologyIndexService {
                     rootProperties.add(propertyMap.get(propDoc.getIri()));
                 }
             }
+            
+            if (rootProperties.isEmpty() && !allProperties.isEmpty()) {
+                 logger.info("No root data properties found (which may be correct). Returning empty list.");
+                 return new ArrayList<>();
+            }
 
-            if (rootProperties.size() > 1 || rootProperties.isEmpty()) {
+            if (rootProperties.size() > 1) {
                 PropertyDto topProperty = new PropertyDto();
                 topProperty.setId(topDataPropertyIRI);
                 topProperty.setIri(topDataPropertyIRI);
@@ -629,24 +664,33 @@ public class OntologyIndexService {
                     owlThingIri,
                     "owl:Thing",
                     new ArrayList<>(),
-                    new HashMap<>()
+                    new HashMap<>(),
+                    true
             );
 
             List<TreeNode> topLevelClasses = new ArrayList<>();
             for (ClassDocument classDoc : allClasses) {
+                boolean isTopLevel = classDoc.getSuperClasses() == null || 
+                                     classDoc.getSuperClasses().isEmpty() ||
+                                     (classDoc.getSuperClasses().size() == 1 && classDoc.getSuperClasses().contains(owlThingIri));
+
                 if (!classesWithParents.contains(classDoc.getIri())) {
+                
                     Map<String, String> annotations = classDoc.getAnnotations();
                     String label = (annotations != null && annotations.get("label") != null)
                             ? cleanLabel(annotations.get("label"))
                             : classDoc.getLocalName();
 
-                    boolean hasChildren = classDoc.getSubClasses() != null && !classDoc.getSubClasses().isEmpty();
+                    Query hasChildrenQuery = new Query(Criteria.where("projectId").is(projectId)
+                            .and("superClasses").in(classDoc.getIri()));
+                    boolean hasChildren = mongoTemplate.exists(hasChildrenQuery, ClassDocument.class, "ontology_classes");
 
                     TreeNode node = new TreeNode(
                             classDoc.getIri(),
                             label,
                             hasChildren ? new ArrayList<>() : null,
-                            annotations
+                            annotations,
+                            hasChildren
                     );
 
                     topLevelClasses.add(node);
@@ -654,16 +698,14 @@ public class OntologyIndexService {
             }
 
             topLevelClasses.sort((a, b) -> a.getLabel().compareToIgnoreCase(b.getLabel()));
-
-            if (topLevelClasses.size() > 1000) {
-                logger.warn("Limiting top-level classes from {} to 1000", topLevelClasses.size());
-                topLevelClasses = topLevelClasses.subList(0, 1000);
+            
+            if (topLevelClasses.size() == 1) {
+                 logger.info("Found single root class: {}. Returning it as root.", topLevelClasses.get(0).getLabel());
+                 return topLevelClasses;
             }
 
             owlThingNode.setChildren(topLevelClasses);
-
-            logger.info("owl:Thing has {} direct children", topLevelClasses.size());
-
+            logger.info("Found {} top-level classes. Adding them under owl:Thing.", topLevelClasses.size());
             return Collections.singletonList(owlThingNode);
 
         } catch (Exception e) {
@@ -677,7 +719,7 @@ public class OntologyIndexService {
 
         try {
             Query query = new Query(Criteria.where("projectId").is(projectId)
-                    .and("superClasses").is(parentIri));
+                    .and("superClasses").in(parentIri));
 
             List<ClassDocument> childClasses = mongoTemplate.find(query, ClassDocument.class, "ontology_classes");
 
@@ -687,17 +729,21 @@ public class OntologyIndexService {
 
             for (ClassDocument classDoc : childClasses) {
                 Map<String, String> annotations = classDoc.getAnnotations();
+                
                 String label = (annotations != null && annotations.get("label") != null)
                         ? cleanLabel(annotations.get("label"))
                         : classDoc.getLocalName();
 
-                boolean hasChildren = classDoc.getSubClasses() != null && !classDoc.getSubClasses().isEmpty();
+                Query hasChildrenQuery = new Query(Criteria.where("projectId").is(projectId)
+                        .and("superClasses").in(classDoc.getIri()));
+                boolean hasChildren = mongoTemplate.exists(hasChildrenQuery, ClassDocument.class, "ontology_classes");
 
                 TreeNode node = new TreeNode(
                         classDoc.getIri(),
                         label,
                         hasChildren ? new ArrayList<>() : null,
-                        annotations
+                        annotations,
+                        hasChildren
                 );
 
                 children.add(node);
@@ -865,14 +911,13 @@ public class OntologyIndexService {
         if (label == null) return "";
         return label.replaceAll("\"|\\^\\^xsd:string", "").trim();
     }
-
+    
     public UsageInfoDto getClassUsage(String projectId, String classIri) {
         logger.info("Fetching usage information for class: {} in project: {}", classIri, projectId);
 
         try {
             List<UsageInfoDto.AxiomUsage> usages = new ArrayList<>();
 
-            // Get the class itself
             Query thisClassQuery = new Query(Criteria.where("projectId").is(projectId).and("iri").is(classIri));
             ClassDocument thisClass = mongoTemplate.findOne(thisClassQuery, ClassDocument.class, "ontology_classes");
 
@@ -883,9 +928,8 @@ public class OntologyIndexService {
 
             String classShortForm = getShortForm(classIri);
 
-            // 1. Check SubClass relationships (where other classes are subclass of this class)
             Query subClassQuery = new Query(Criteria.where("projectId").is(projectId)
-                    .and("superClasses").is(classIri));
+                    .and("superClasses").in(classIri));
             List<ClassDocument> subClasses = mongoTemplate.find(subClassQuery, ClassDocument.class, "ontology_classes");
 
             for (ClassDocument subClass : subClasses) {
@@ -898,7 +942,6 @@ public class OntologyIndexService {
                 ));
             }
 
-            // 2. Check SuperClass relationships (where this class is subclass of other classes)
             if (thisClass.getSuperClasses() != null) {
                 for (String superIri : thisClass.getSuperClasses()) {
                     if (!superIri.equals("http://www.w3.org/2002/07/owl#Thing")) {
@@ -912,7 +955,6 @@ public class OntologyIndexService {
                 }
             }
 
-            // 3. Check Equivalent Classes
             if (thisClass.getEquivalentClasses() != null) {
                 for (String equivIri : thisClass.getEquivalentClasses()) {
                     usages.add(new UsageInfoDto.AxiomUsage(
@@ -924,7 +966,6 @@ public class OntologyIndexService {
                 }
             }
 
-            // 4. Check Disjoint Classes
             if (thisClass.getDisjointClasses() != null) {
                 for (String disjointIri : thisClass.getDisjointClasses()) {
                     usages.add(new UsageInfoDto.AxiomUsage(
@@ -936,7 +977,6 @@ public class OntologyIndexService {
                 }
             }
 
-            // 5. Check Property Domains
             Query domainQuery = new Query(Criteria.where("projectId").is(projectId)
                     .and("domains").is(classIri));
             List<PropertyDocument> propertiesWithDomain = mongoTemplate.find(domainQuery, PropertyDocument.class, "ontology_properties");
@@ -951,7 +991,6 @@ public class OntologyIndexService {
                 ));
             }
 
-            // 6. Check Property Ranges
             Query rangeQuery = new Query(Criteria.where("projectId").is(projectId)
                     .and("ranges").is(classIri));
             List<PropertyDocument> propertiesWithRange = mongoTemplate.find(rangeQuery, PropertyDocument.class, "ontology_properties");
@@ -966,7 +1005,6 @@ public class OntologyIndexService {
                 ));
             }
 
-            // 7. Check Individual Types
             Query individualQuery = new Query(Criteria.where("projectId").is(projectId)
                     .and("types").is(classIri));
             List<IndividualDocument> individuals = mongoTemplate.find(individualQuery, IndividualDocument.class, "ontology_individuals");
@@ -981,8 +1019,6 @@ public class OntologyIndexService {
                 ));
             }
 
-            // ✅ 8. CRITICAL: Search through ALL axioms for complex class expressions
-            // This catches axioms like "SubClassOf overlaps some CL_0000118"
             Query axiomQuery = new Query(Criteria.where("projectId").is(projectId));
             List<AxiomDocument> allAxioms = mongoTemplate.find(axiomQuery, AxiomDocument.class, "ontology_axioms");
 
@@ -990,19 +1026,10 @@ public class OntologyIndexService {
 
             for (AxiomDocument axiomDoc : allAxioms) {
                 String axiomText = axiomDoc.getAxiom();
-
-                // Check if this axiom mentions our class (by IRI or short form)
                 if (axiomText != null && (axiomText.contains(classIri) || axiomText.contains("<" + classIri + ">"))) {
-
-                    // Parse the axiom to create a readable description
                     String readableAxiom = parseAxiomForDisplay(axiomText, classIri);
-
-                    // Determine category based on axiom type
                     String category = categorizeAxiom(axiomDoc.getType(), axiomText);
-
-                    // Extract related entity if possible
                     String relatedEntity = extractRelatedEntity(axiomText, classIri);
-
                     usages.add(new UsageInfoDto.AxiomUsage(
                             category,
                             readableAxiom,
@@ -1012,7 +1039,6 @@ public class OntologyIndexService {
                 }
             }
 
-            // Remove duplicates (same description)
             List<UsageInfoDto.AxiomUsage> uniqueUsages = usages.stream()
                     .collect(Collectors.toMap(
                             UsageInfoDto.AxiomUsage::getDescription,
@@ -1031,64 +1057,40 @@ public class OntologyIndexService {
             return new UsageInfoDto(classIri, 0, new ArrayList<>());
         }
     }
-
-    // Helper method to parse axiom text into readable format
-    // Enhanced axiom parser that converts to Manchester-like syntax
+    
     private String parseAxiomForDisplay(String axiomText, String targetClassIri) {
         try {
-            // Remove angle brackets
             axiomText = axiomText.replace("<", "").replace(">", "");
-
-            // Parse SubClassOf axioms
             if (axiomText.startsWith("SubClassOf(")) {
                 return parseSubClassOfAxiom(axiomText, targetClassIri);
             }
-
-            // Parse EquivalentClasses axioms
             if (axiomText.startsWith("EquivalentClasses(")) {
                 return parseEquivalentClassesAxiom(axiomText, targetClassIri);
             }
-
-            // Parse DisjointClasses axioms
             if (axiomText.startsWith("DisjointClasses(")) {
                 return parseDisjointClassesAxiom(axiomText, targetClassIri);
             }
-
-            // Parse Declaration axioms
             if (axiomText.startsWith("Declaration(")) {
                 return parseDeclarationAxiom(axiomText, targetClassIri);
             }
-
-            // Fallback: clean up the text
             return cleanAxiomText(axiomText);
-
         } catch (Exception e) {
             logger.warn("Failed to parse axiom: {}", axiomText, e);
             return cleanAxiomText(axiomText);
         }
     }
-
     private String parseSubClassOfAxiom(String axiomText, String targetClassIri) {
-        // Pattern: SubClassOf(SubClass SuperClass)
-        // Extract: SubClass SubClassOf SuperClass
-
         String content = extractContent(axiomText, "SubClassOf(");
         String[] parts = splitAxiomParts(content);
-
         if (parts.length >= 2) {
             String subClass = resolveClassLabel(parts[0]);
             String superClass = parseClassExpression(parts[1]);
-
             return subClass + " SubClassOf " + superClass;
         }
-
         return cleanAxiomText(axiomText);
     }
-
     private String parseClassExpression(String expression) {
         expression = expression.trim();
-
-        // ObjectSomeValuesFrom(Property Class) -> "Property some Class"
         if (expression.contains("ObjectSomeValuesFrom(")) {
             String content = extractContent(expression, "ObjectSomeValuesFrom(");
             String[] parts = splitAxiomParts(content);
@@ -1098,8 +1100,6 @@ public class OntologyIndexService {
                 return property + " some " + filler;
             }
         }
-
-        // ObjectAllValuesFrom(Property Class) -> "Property only Class"
         if (expression.contains("ObjectAllValuesFrom(")) {
             String content = extractContent(expression, "ObjectAllValuesFrom(");
             String[] parts = splitAxiomParts(content);
@@ -1109,8 +1109,6 @@ public class OntologyIndexService {
                 return property + " only " + filler;
             }
         }
-
-        // ObjectIntersectionOf -> "and"
         if (expression.contains("ObjectIntersectionOf(")) {
             String content = extractContent(expression, "ObjectIntersectionOf(");
             String[] parts = splitAxiomParts(content);
@@ -1120,8 +1118,6 @@ public class OntologyIndexService {
             }
             return "(" + String.join(" and ", resolved) + ")";
         }
-
-        // ObjectUnionOf -> "or"
         if (expression.contains("ObjectUnionOf(")) {
             String content = extractContent(expression, "ObjectUnionOf(");
             String[] parts = splitAxiomParts(content);
@@ -1131,76 +1127,56 @@ public class OntologyIndexService {
             }
             return "(" + String.join(" or ", resolved) + ")";
         }
-
-        // ObjectComplementOf -> "not"
         if (expression.contains("ObjectComplementOf(")) {
             String content = extractContent(expression, "ObjectComplementOf(");
             return "not " + parseClassExpression(content);
         }
-
-        // Simple class reference
         return resolveClassLabel(expression);
     }
-
     private String parseEquivalentClassesAxiom(String axiomText, String targetClassIri) {
         String content = extractContent(axiomText, "EquivalentClasses(");
         String[] parts = splitAxiomParts(content);
-
         if (parts.length >= 2) {
             String class1 = resolveClassLabel(parts[0]);
             String class2 = parseClassExpression(parts[1]);
             return class1 + " EquivalentTo " + class2;
         }
-
         return cleanAxiomText(axiomText);
     }
-
     private String parseDisjointClassesAxiom(String axiomText, String targetClassIri) {
         String content = extractContent(axiomText, "DisjointClasses(");
         String[] parts = splitAxiomParts(content);
-
         List<String> classes = new ArrayList<>();
         for (String part : parts) {
             classes.add(resolveClassLabel(part));
         }
-
         return String.join(" DisjointWith ", classes);
     }
-
     private String parseDeclarationAxiom(String axiomText, String targetClassIri) {
         String content = extractContent(axiomText, "Declaration(");
         return "Declaration";
     }
-
-    // Helper: Extract content between parentheses
     private String extractContent(String text, String prefix) {
         int start = text.indexOf(prefix);
         if (start == -1) return text;
-
         start += prefix.length();
         int depth = 1;
         int end = start;
-
         while (end < text.length() && depth > 0) {
             char c = text.charAt(end);
             if (c == '(') depth++;
             if (c == ')') depth--;
             end++;
         }
-
         return text.substring(start, end - 1).trim();
     }
-
-    // Helper: Split axiom parts respecting nested parentheses
     private String[] splitAxiomParts(String content) {
         List<String> parts = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         int depth = 0;
-
         for (char c : content.toCharArray()) {
             if (c == '(') depth++;
             if (c == ')') depth--;
-
             if (c == ' ' && depth == 0) {
                 if (current.length() > 0) {
                     parts.add(current.toString());
@@ -1210,26 +1186,16 @@ public class OntologyIndexService {
                 current.append(c);
             }
         }
-
         if (current.length() > 0) {
             parts.add(current.toString());
         }
-
         return parts.toArray(new String[0]);
     }
-
-    // Helper: Resolve class IRI to label
     private String resolveClassLabel(String iri) {
         iri = iri.trim();
-
-        // Remove common prefixes
         iri = iri.replace("http://purl.obolibrary.org/obo/", "");
         iri = iri.replace("http://www.w3.org/2002/07/owl#", "owl:");
-
-        // Convert underscores to spaces for OBO identifiers
         if (iri.matches("[A-Z]+_\\d+")) {
-            // This is an OBO identifier like UBERON_0002974
-            // Try to look up its label from the database
             try {
                 Query query = new Query(Criteria.where("localName").is(iri));
                 ClassDocument classDoc = mongoTemplate.findOne(query, ClassDocument.class, "ontology_classes");
@@ -1240,30 +1206,20 @@ public class OntologyIndexService {
                 logger.debug("Could not resolve label for: {}", iri);
             }
         }
-
         return iri.replace("_", " ");
     }
-
-    // Helper: Resolve property IRI to label
     private String resolvePropertyLabel(String iri) {
         iri = iri.trim();
-
-        // Remove common prefixes
         iri = iri.replace("http://purl.obolibrary.org/obo/", "");
         iri = iri.replace("http://www.w3.org/2002/07/owl#", "owl:");
-
-        // Convert common OBO relation codes to readable names
         Map<String, String> commonRelations = new HashMap<>();
         commonRelations.put("BFO_0000050", "part of");
         commonRelations.put("BFO_0000051", "has part");
         commonRelations.put("RO_0002131", "overlaps");
         commonRelations.put("RO_0002202", "develops from");
-
         if (commonRelations.containsKey(iri)) {
             return commonRelations.get(iri);
         }
-
-        // Try to look up property label
         try {
             Query query = new Query(Criteria.where("localName").is(iri));
             PropertyDocument propDoc = mongoTemplate.findOne(query, PropertyDocument.class, "ontology_properties");
@@ -1273,42 +1229,29 @@ public class OntologyIndexService {
         } catch (Exception e) {
             logger.debug("Could not resolve property label for: {}", iri);
         }
-
         return iri.replace("_", " ");
     }
-
-    // Helper: Clean axiom text as fallback
     private String cleanAxiomText(String text) {
         text = text.replace("http://purl.obolibrary.org/obo/", "");
         text = text.replace("http://www.w3.org/2002/07/owl#", "owl:");
         text = text.replace("_", " ");
         return text;
     }
-
-    // Replace IRIs with their short forms
     private String replaceIRIsWithShortForms(String text) {
-        // Match patterns like http://...#something or http://.../something
         java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("(https?://[^\\s<>]+[/#])([^\\s<>]+)");
         java.util.regex.Matcher matcher = pattern.matcher(text);
-
         StringBuffer sb = new StringBuffer();
         while (matcher.find()) {
             String shortForm = matcher.group(2);
-            // Replace underscores with spaces for readability
             shortForm = shortForm.replace("_", " ");
             matcher.appendReplacement(sb, shortForm);
         }
         matcher.appendTail(sb);
-
         return sb.toString();
     }
-
-    // Categorize axiom by type
     private String categorizeAxiom(String axiomType, String axiomText) {
         if (axiomType == null) return "Other";
-
         if (axiomType.contains("SubClassOf")) {
-            // Check if it's a complex expression
             if (axiomText.contains("ObjectSomeValuesFrom") ||
                     axiomText.contains("ObjectAllValuesFrom") ||
                     axiomText.contains("some") ||
@@ -1329,16 +1272,11 @@ public class OntologyIndexService {
         } else if (axiomType.contains("PropertyAssertion")) {
             return "Property Assertion";
         }
-
         return axiomType;
     }
-
-    // Extract the main related entity from an axiom
     private String extractRelatedEntity(String axiomText, String excludeIri) {
-        // Try to find another IRI in the axiom that's not the target class
         java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("<?(https?://[^\\s<>]+)>?");
         java.util.regex.Matcher matcher = pattern.matcher(axiomText);
-
         while (matcher.find()) {
             String foundIri = matcher.group(1);
             if (!foundIri.equals(excludeIri) &&
@@ -1347,31 +1285,26 @@ public class OntologyIndexService {
                 return foundIri;
             }
         }
-
         return "";
     }
-
     private String getClassLabel(ClassDocument classDoc) {
         if (classDoc.getAnnotations() != null && classDoc.getAnnotations().get("label") != null) {
             return cleanLabel(classDoc.getAnnotations().get("label"));
         }
         return classDoc.getLocalName();
     }
-
     private String getPropertyLabel(PropertyDocument prop) {
         if (prop.getAnnotations() != null && prop.getAnnotations().get("label") != null) {
             return cleanLabel(prop.getAnnotations().get("label"));
         }
         return prop.getLocalName();
     }
-
     private String getIndividualLabel(IndividualDocument ind) {
         if (ind.getAnnotations() != null && ind.getAnnotations().get("label") != null) {
             return cleanLabel(ind.getAnnotations().get("label"));
         }
         return ind.getLocalName();
     }
-
     private String getShortForm(String iri) {
         if (iri.contains("#")) {
             return iri.substring(iri.lastIndexOf('#') + 1);
