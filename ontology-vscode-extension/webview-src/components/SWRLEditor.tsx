@@ -241,16 +241,28 @@ const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) => {
     // FETCH RULES
     // ========================================================================
     
-    const fetchRules = useCallback(async () => {
-        try {
-            // ✅ FIXED: Correct endpoint path with projectId
-            const response = await apiClient.get<SWRLRule[]>(`/api/swrl/${projectId}/rules`);
+const fetchRules = useCallback(async () => {
+    try {
+        // Fetch rules from API
+        const response = await apiClient.get<any>(`/api/swrl/${projectId}/rules`);
+        
+        // Handle both paginated (Spring Data Page) and simple array responses
+        if (response.data.content) {
+            // Paginated response
+            setRules(response.data.content);
+        } else if (Array.isArray(response.data)) {
+            // Simple array response
             setRules(response.data);
-        } catch (error) {
-            console.error('Failed to fetch rules:', error);
-            context.notificationService.error('Failed to fetch SWRL rules.');
+        } else {
+            // Fallback
+            setRules([]);
         }
-    }, [projectId, context.notificationService]);
+    } catch (error) {
+        console.error('Failed to fetch rules:', error);
+        context.notificationService.error('Failed to fetch SWRL rules.');
+        setRules([]);  // Set empty array on error
+    }
+}, [projectId, context.notificationService]);
 
     useEffect(() => {
         fetchRules();

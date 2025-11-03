@@ -7,7 +7,7 @@ import org.springframework.test.context.TestPropertySource;
 @SpringBootTest
 @TestPropertySource(properties = {
     "spring.data.mongodb.host=localhost",
-    "ontology.editor.service.url=http://localhost:8086"
+    "ontology.editor.service.url=http://localhost:8083"
 })
 class SwrlServiceApplicationTests {
 
