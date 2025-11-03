@@ -235,7 +235,8 @@ const Dashboard = () => {
             apiClient.get<{ data: Datatype[] }>(`/api/ontology/datatypes/${currentProjectId}`),
         ]);
         console.log([metadataRes, topLevelRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes]);
-        setMetadata(metadataRes.data);
+        const ontologyDoc = ((metadataRes.data) as any).data || metadataRes.data;
+        setMetadata(ontologyDoc.metadata || ontologyDoc);
         const { classes } = topLevelRes.data;
         const topLevelNodes: TreeNode[] = classes.map((c: TopLevelClass) => ({
              ...c,
@@ -715,7 +716,13 @@ const Dashboard = () => {
                      <div className="w-80 bg-white p-4 overflow-y-auto space-y-4">
                          {[
                              { title: 'Ontology metrics', data: { Axiom: metadata?.axiomCount, 'Logical axiom': metadata?.logicalAxiomCount, 'Declaration axiom': metadata?.declarationAxiomCount, 'Class': metadata?.classCount, 'Object property': metadata?.objectPropertyCount, 'Data property': metadata?.dataPropertyCount, 'Individual': metadata?.individualCount, 'Annotation Property': annotationProperties.length } },
-                             { title: 'Class axioms', data: { SubClassOf: metadata?.subClassOfAxiomCount, EquivalentClasses: metadata?.equivalentClassesAxiomCount, DisjointClasses: metadata?.disjointClassesAxiomCount } },
+                             { title: 'Class axioms', data: { 
+                                SubClassOf: metadata?.subClassOfAxiomCount, 
+                                EquivalentClasses: metadata?.equivalentClassesAxiomCount, 
+                                DisjointClasses: metadata?.disjointClassesAxiomCount,
+                                'GCI count': metadata?.gciCount,
+                                'Hidden GCI Count': metadata?.hiddenGciCount
+                            } },
                              { title: 'Object property axioms', data: { SubObjectPropertyOf: metadata?.subObjectPropertyOfAxiomCount, InverseObjectProperties: metadata?.inverseObjectPropertiesAxiomCount } }
                          ].map(metricSection => (
                              <div key={metricSection.title}>

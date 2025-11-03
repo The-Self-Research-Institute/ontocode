@@ -247,6 +247,7 @@ public class OwlParsingService {
         metadata.setIndividualCount(ontology.getIndividualsInSignature().size());
         metadata.setAxiomCount(ontology.getAxiomCount());
         metadata.setLogicalAxiomCount(ontology.getLogicalAxiomCount());
+        metadata.setDeclarationAxiomsCount((int) ontology.getAxiomCount(AxiomType.DECLARATION));
         metadata.setImports(ontology.getImportsDeclarations().stream().map(decl -> decl.getIRI().toString()).collect(Collectors.toList()));
         Map<String, String> annotations = new HashMap<>();
         for (OWLAnnotation annotation : ontology.getAnnotations()) {
@@ -255,8 +256,11 @@ public class OwlParsingService {
             annotations.put(key, value);
         }
         metadata.setAnnotations(annotations);
-        long gciCount = ontology.getAxioms(AxiomType.SUBCLASS_OF).stream().filter(axiom -> axiom.getSubClass().isAnonymous()).count();
+        long gciCount = ontology.getAxioms(AxiomType.SUBCLASS_OF).stream()
+                .filter(axiom -> axiom.getSubClass().isAnonymous())
+                .count();
         metadata.setGciCount((int) gciCount);
+        metadata.setHiddenGciCount(0);
         metadata.setSubClassOfAxiomCount((int) ontology.getAxiomCount(AxiomType.SUBCLASS_OF));
         metadata.setEquivalentClassesAxiomCount((int) ontology.getAxiomCount(AxiomType.EQUIVALENT_CLASSES));
         metadata.setDisjointClassesAxiomCount((int) ontology.getAxiomCount(AxiomType.DISJOINT_CLASSES));
