@@ -1,71 +1,162 @@
-# ontology README
+# 🧩 Ontology VS Code Extension
 
-This is the README for your extension "ontology". After writing up a brief description, we recommend including the following sections.
-
-## Features
-
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
-
-For example if there is an image subfolder under your extension project workspace:
-
-\!\[feature X\]\(images/feature-x.png\)
-
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
-
-## Requirements
-
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
-
-## Extension Settings
-
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
-
-For example:
-
-This extension contributes the following settings:
-
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
-
-## Known Issues
-
-Calling out known issues can help limit users opening duplicate issues against your extension.
-
-## Release Notes
-
-Users appreciate release notes as you update your extension.
-
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
+A **VS Code extension** for ontology development, providing a **visual ontology editor** through a React-based webview.  
+This extension is part of the larger [Ontology Platform](../README.md) but can be built and run independently.
 
 ---
 
-## Following extension guidelines
+## 📚 Table of Contents
+- [Overview](#overview)
+- [Folder Structure](#folder-structure)
+- [Setup](#setup)
+- [Build](#build)
+- [Run and Debug](#run-and-debug)
+- [Usage](#usage)
+- [Commands](#commands)
+- [Development Notes](#development-notes)
+- [License](#license)
 
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
+---
 
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
+## 🧠 Overview
 
-## Working with Markdown
+The Ontology VS Code Extension allows users to:
+- Edit and visualize OWL ontologies directly in VS Code.
+- Use a custom web-based editor (built with React).
+- Interact with backend ontology services (Auth, Gateway, OWL Editor, SWRL).
 
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
+It provides an integrated development environment for ontology engineers and knowledge graph developers.
 
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
+---
 
-## For more information
+## 📁 Folder Structure
 
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
+```
+ontology-vscode-extension/
+├── src/
+│   ├── extension.ts          # Entry point for the extension
+│   ├── commands/             # VS Code command definitions
+│   └── utils/                # Helper utilities
+├── webview-src/              # React-based webview UI
+│   ├── src/
+│   ├── public/
+│   ├── package.json
+│   └── tsconfig.json
+├── package.json              # Extension metadata and dependencies
+├── tsconfig.json             # TypeScript configuration
+└── README.md                 # This file
+```
 
-**Enjoy!**
+---
+
+## ⚙️ Setup
+
+### Prerequisites
+- **Node.js 18+**
+- **npm**
+- **VS Code**
+- **Ontology Platform backend services** running (optional for UI testing)
+
+---
+
+### Install Dependencies
+
+From the `ontology-vscode-extension` directory:
+
+```bash
+npm install
+```
+
+---
+
+## 🏗️ Build
+
+### 1. Build the Webview (React App)
+
+Navigate to the webview source folder:
+
+```bash
+cd webview-src
+npm install
+npm run build
+```
+
+This compiles the React webview into a `dist/` folder used by the extension.
+
+---
+
+### 2. Build the Extension (TypeScript → JavaScript)
+
+From the root of `ontology-vscode-extension`:
+
+```bash
+npm run compile
+```
+
+---
+
+## 🚀 Run and Debug
+
+### Launch the Extension in VS Code
+
+1. Open the `ontology-vscode-extension` directory in **VS Code**.
+2. Open `extension.ts`.
+3. Press **F5** or go to **Run → Start Debugging**.
+
+A new **Extension Development Host** window will open.
+
+---
+
+## 🧩 Usage
+
+1. In the new window, open an `.owl` ontology file.
+2. Open the **Command Palette** (`Ctrl+Shift+P` / `Cmd+Shift+P`).
+3. Run the command:
+
+   ```
+   OntoCode: Edit
+   ```
+
+4. The **Ontology Web Editor UI** (React webview) will open in a new tab.
+5. You can now edit and visualize ontology content.
+
+---
+
+## 💡 Commands
+
+| Command | Description |
+|----------|-------------|
+| `OntoCode: Edit` | Opens the ontology web editor view for an `.owl` file. |
+| `OntoCode: Reload Webview` | Rebuilds and refreshes the webview content. |
+
+---
+
+## 🧰 Development Notes
+
+- The webview communicates with the backend via REST APIs through the **Gateway service**.
+- During local development, you can configure the backend URL in the webview’s `.env` file.
+- Make sure to rebuild (`npm run build`) the React webview after making UI changes.
+
+---
+
+## 🧱 Common Commands
+
+```bash
+# Build the React webview
+cd webview-src && npm run build
+
+# Compile the extension
+npm run compile
+
+# Run in debug mode
+code .
+
+# Lint and check
+npm run lint
+```
+
+---
+
+## 📄 License
+
+[MIT License](../LICENSE)
