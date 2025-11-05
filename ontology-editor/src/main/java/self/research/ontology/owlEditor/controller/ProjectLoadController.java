@@ -21,6 +21,16 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import org.springframework.data.mongodb.gridfs.GridFsTemplate;
+import org.springframework.data.mongodb.gridfs.GridFsResource;
+import com.mongodb.client.gridfs.model.GridFSFile;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.bson.types.ObjectId;
+import java.io.InputStream;
 
 @CrossOrigin(origins = "*") 
 @RestController
@@ -38,6 +48,9 @@ public class ProjectLoadController {
     @Autowired
     private MongoTemplate mongoTemplate;
 
+    @Autowired
+    private GridFsTemplate gridFsTemplate;
+
     @PostMapping("/upload/{projectId}")
     public ResponseEntity<Map<String, Object>> uploadOntology(
             @PathVariable String projectId,
@@ -51,24 +64,34 @@ public class ProjectLoadController {
             }
 
             String filename = file.getOriginalFilename();
+            String contentType = file.getContentType();
             logger.info("File received: {} (size: {} bytes) for project: {}", filename, file.getSize(), projectId);
 
-            createOrUpdateProject(projectId, filename, "PROCESSING", "Starting to process ontology...");
+            ObjectId fileId;
+            try (InputStream gridfsStream = file.getInputStream()) {
+                fileId = gridFsTemplate.store(gridfsStream, filename, contentType);
+            }
+            logger.info("Stored file in GridFS with ID: {} for project: {}", fileId, projectId);
 
-            owlParsingService.parseAndIndexFromStream(projectId, file.getInputStream(), filename);
+            createOrUpdateProject(projectId, filename, fileId.toString(), "PROCESSING", "Starting to process ontology...");
 
+            try (InputStream parseStream = file.getInputStream()) {
+                owlParsingService.parseAndIndexFromStream(projectId, parseStream, filename);
+            }
+            
             Map<String, Object> response = new HashMap<>();
             response.put("success", true);
             response.put("message", "File uploaded successfully and processing started");
             response.put("projectId", projectId);
             response.put("filename", filename);
+            response.put("fileId", fileId.toString());
             response.put("status", "PROCESSING");
 
             return ResponseEntity.ok(response);
 
         } catch (Exception e) {
             logger.error("Error uploading ontology file for project {}: {}", projectId, e.getMessage(), e);
-            createOrUpdateProject(projectId, (file != null ? file.getOriginalFilename() : "unknown"), "ERROR", "Failed to upload file: " + e.getMessage());
+            createOrUpdateProject(projectId, (file != null ? file.getOriginalFilename() : "unknown"), null, "ERROR", "Failed to upload file: " + e.getMessage());
             return ResponseEntity.status(500).body(createErrorResponse("Failed to upload file: " + e.getMessage()));
         }
     }
@@ -109,6 +132,52 @@ public class ProjectLoadController {
         } catch (Exception e) {
             logger.error("Error checking status for project: {}", projectId, e);
             return ResponseEntity.status(500).body(createErrorResponse("Failed to check status"));
+        }
+    }
+
+    @GetMapping("/export/{projectId}")
+    public ResponseEntity<byte[]> exportOntology(@PathVariable String projectId) {
+        logger.info("Handling export request for project: {}", projectId);
+        try {
+            Query projectQuery = new Query(Criteria.where("_id").is(projectId));
+            Map projectData = mongoTemplate.findOne(projectQuery, Map.class, "projects");
+
+            if (projectData == null || projectData.get("filename") == null) {
+                logger.warn("Project or filename not found for export: {}", projectId);
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(("Project not found or has no associated file: " + projectId).getBytes());
+            }
+            
+            String filename = (String) projectData.get("filename");
+            logger.info("Found filename: {} for project: {}", filename, projectId);
+
+            GridFSFile file = gridFsTemplate.findOne(new Query(Criteria.where("filename").is(filename)));
+            
+            if (file == null) {
+                logger.warn("File not found in GridFS: {}", filename);
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(("File not found in GridFS: " + filename).getBytes());
+            }
+
+            GridFsResource resource = gridFsTemplate.getResource(file);
+            byte[] data;
+            try (InputStream inputStream = resource.getInputStream()) {
+                data = inputStream.readAllBytes();
+            }
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+            headers.setContentDispositionFormData("attachment", filename);
+            headers.setContentLength(data.length);
+
+            logger.info("Successfully exporting {} bytes for file: {}", data.length, filename);
+            
+            return new ResponseEntity<>(data, headers, HttpStatus.OK);
+
+        } catch (Exception e) {
+            logger.error("Error exporting ontology for project: {}", projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(("Failed to export ontology: " + e.getMessage()).getBytes());
         }
     }
 
@@ -333,24 +402,28 @@ public class ProjectLoadController {
         }
     }
 
-    private void createOrUpdateProject(String projectId, String filename, String status, String message) {
-        try {
-            Query query = new Query(Criteria.where("_id").is(projectId));
-            Update update = new Update()
-                    .set("status", status)
-                    .set("statusMessage", message)
-                    .set("filename", filename)
-                    .set("lastUpdated", new Date())
-                    .setOnInsert("createdAt", new Date())
-                    .setOnInsert("projectId", projectId);
+private void createOrUpdateProject(String projectId, String filename, String gridfsFileId, String status, String message) {
+    try {
+        Query query = new Query(Criteria.where("_id").is(projectId));
+        Update update = new Update()
+                .set("status", status)
+                .set("statusMessage", message)
+                .set("filename", filename)
+                .set("lastUpdated", new Date())
+                .setOnInsert("createdAt", new Date())
+                .setOnInsert("projectId", projectId);
 
-            mongoTemplate.upsert(query, update, "projects");
-
-            logger.info("Created/Updated project document for: {}", projectId);
-        } catch (Exception e) {
-            logger.error("Failed to create/update project document for: {}", projectId, e);
+        if (gridfsFileId != null) {
+            update.set("gridfsFileId", gridfsFileId); // <-- This is the new part
         }
+
+        mongoTemplate.upsert(query, update, "projects");
+
+        logger.info("Created/Updated project document for: {}", projectId);
+    } catch (Exception e) {
+        logger.error("Failed to create/update project document for: {}", projectId, e);
     }
+}
 
     private Map<String, Object> createErrorResponse(String message) {
         Map<String, Object> error = new HashMap<>();
