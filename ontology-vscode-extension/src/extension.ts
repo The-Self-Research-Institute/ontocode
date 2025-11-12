@@ -9,28 +9,31 @@ import { CitationPickerPanel } from './webview/citationPicker';
 
 const TOKEN_KEY = 'ontocode.authToken';
 const GATEWAY_URL = 'http://localhost:8082'; // Gateway port
-
+type FileReference = vscode.TextEditor | vscode.TextDocument;
 // Type definitions for messages between VS Code and the webview
 type WebviewMessage =
-  | { type: 'storedAuthToken'; token: string | null }
-  | { type: 'loggedOut' }
-  | { type: 'showLogin' }
-  | { type: 'showLoading' }
-  | { type: 'fileReady'; projectId: string }
-  | { type: 'loadingFailed'; error: string }
-  // Fix: Added message type for API responses from the proxy
-  | { type: 'apiResponse'; requestId: string; response?: any; error?: any };
+    | { type: 'storedAuthToken'; token: string | null }
+    | { type: 'loggedOut' }
+    | { type: 'showLogin' }
+    | { type: 'showLoading' }
+    | { type: 'fileReady'; projectId: string }
+    | { type: 'loadingFailed'; error: string }
+    // Fix: Added message type for API responses from the proxy
+    | { type: 'apiResponse'; requestId: string; response?: any; error?: any };
 
 type ExtensionMessage =
-  | { type: 'error'; value: string }
-  | { type: 'saveAuthToken'; token: string }
-  | { type: 'requestAuthToken' }
-  | { type: 'logout' }
-  // Fix: Added message types for API requests to the proxy
-  | { type: 'apiGet'; requestId: string; url: string; params?: Record<string, unknown> }
-  | { type: 'apiPost'; requestId: string; url: string; body?: unknown }
-  | { type: 'apiDelete'; requestId: string; url: string; params?: Record<string, unknown> }
-  | { type: 'webviewReady' }; // <-- FIX: Add message from webview
+    | { type: 'error'; value: string }
+    | { type: 'saveAuthToken'; token: string }
+    | { type: 'requestAuthToken' }
+    | { type: 'logout' }
+    // Fix: Added message types for API requests to the proxy
+    | { type: 'apiGet'; requestId: string; url: string; params?: Record<string, unknown> }
+    | { type: 'apiPost'; requestId: string; url: string; body?: unknown }
+    | { type: 'apiDelete'; requestId: string; url: string; params?: Record<string, unknown> }
+    | { type: 'webviewReady' }
+    | { type: 'downloadOntology'; url: string; filename: string }
+    | { type: 'downloadCurrentOntology' }
+    | { type: 'fileLoaded'; projectId: string };
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -56,6 +59,7 @@ export function activate(context: vscode.ExtensionContext) {
             // FIX: Don't trigger upload here. Set it as pending.
             panel.setPendingUpload(false, uri);
         }),
+        vscode.commands.registerCommand('ontocode.saveCurrentFileLocal', () => OntoCodePanel.saveCurrentFileLocal()),
         vscode.commands.registerCommand('ontocode.logout', async () => {
             // Fix: Cast context to `any` to access the `secrets` property, bypassing outdated type definitions.
             await (context as any).secrets.delete(TOKEN_KEY);
@@ -126,6 +130,19 @@ class OntoCodePanel {
             async (message: ExtensionMessage) => {
                 switch (message.type) {
                     // FIX: Add a case to handle the webview's "ready" message
+                    case "downloadOntology":
+                        console.log("[OntoCode] Received downloadOntology message.", message);
+                        vscode.window.showInformationMessage("download started...");
+                        this.downloadOntologyToSaveAs(message.url, message.filename);
+                        break;
+                    case "downloadCurrentOntology":
+                        console.log("[OntoCode] Received downloadCurrentOntology message.", message);
+                        OntoCodePanel.saveCurrentFileLocal();
+                        break;
+                    case "fileLoaded":
+                        console.log("[OntoCode] Received fileLoaded message.", message);
+                        this.postMessage({ type: 'fileReady', projectId: message.projectId });
+                        break;
                     case 'webviewReady':
                         console.log('[OntoCode] Received webviewReady message.');
                         this._isWebviewReady = true;
@@ -185,13 +202,13 @@ class OntoCodePanel {
         } else if (uri) {
             this._pendingFileUri = uri;
         }
-        
+
         // If webview is *already* ready (e.g., panel was just revealed), trigger now.
         if (this._isWebviewReady) {
             this.triggerPendingUpload();
         }
     }
-    
+
     /**
      * Fix: New method to handle API requests from the webview, acting as a proxy.
      * This centralizes API calls, attaches auth tokens, and bypasses CORS issues.
@@ -203,10 +220,10 @@ class OntoCodePanel {
         // Do not proceed if unauthenticated, unless it's a login/signup endpoint
         // For simplicity, we assume all proxied requests need a token.
         if (!token) {
-            this.postMessage({ type: 'apiResponse', requestId, error: { message: 'User is not authenticated.', status: 401 }});
+            this.postMessage({ type: 'apiResponse', requestId, error: { message: 'User is not authenticated.', status: 401 } });
             return;
         }
-        
+
         const headers = {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
@@ -267,7 +284,7 @@ class OntoCodePanel {
         // Fix: Cast workspace to `any` to access the `fs` property, bypassing outdated type definitions.
         const fileData = await (vscode.workspace as any).fs.readFile(fileUri);
         const projectId = fileName.endsWith('.owl') ? fileName.slice(0, -4) : fileName;
-        
+
         // Delegate to the shared upload logic
         this._uploadOntology(projectId, fileName, fileData);
     }
@@ -297,6 +314,67 @@ class OntoCodePanel {
         this._uploadOntology(projectId, fileName, fileBuffer);
     }
 
+
+    public static async saveCurrentFileLocal() {
+        const fileRef = OntoCodePanel.findBestOwlReference();
+
+        if (!fileRef) {
+            vscode.window.showWarningMessage("No active .owl file found to save. Please open an ontology file and try again.");
+            return;
+        }
+
+        try {
+            const document = ('document' in fileRef) ? fileRef.document : fileRef;
+
+            const fileContent = document.getText();
+            const fullPath = document.uri.path;
+            const fileName = fullPath.substring(fullPath.lastIndexOf('/') + 1);
+            const uri = document.uri; 
+
+            const saveUri = await vscode.window.showSaveDialog({
+                saveLabel: "Save OWL Content",
+                defaultUri: uri.with({ path: uri.path.replace(fileName, `copy-${fileName}`) }),
+                filters: { "OWL/RDF": ["owl", "rdf", "xml", "ttl"] },
+            });
+
+            if (!saveUri) return; 
+            const fileBuffer = new TextEncoder().encode(fileContent);
+            await vscode.workspace.fs.writeFile(saveUri, fileBuffer);
+            vscode.window.showInformationMessage(`Current file saved to: ${saveUri.fsPath}`);
+        } catch (error) {
+            console.error("[OntoCode] Local save failed:", error);
+            vscode.window.showErrorMessage("Failed to save the current file content.");
+        }
+    }
+
+    public async downloadOntologyToSaveAs(url: string, suggestedName = "ontology.owl") {
+        try {
+            const saveUri = await vscode.window.showSaveDialog({
+                saveLabel: "Save OWL",
+                defaultUri: vscode.Uri.file(suggestedName),
+                filters: { "OWL/RDF": ["owl", "rdf", "xml", "ttl"] },
+            });
+            if (!saveUri) return;
+
+            const fullUrl = url.startsWith("http") ? url : `${GATEWAY_URL}${url}`;
+            const token = await (this._context as any).secrets.get(TOKEN_KEY);
+            const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+
+            await vscode.window.withProgress(
+                { location: vscode.ProgressLocation.Notification, title: "Downloading ontology…" },
+                async () => {
+                    const res = await axios.get(fullUrl, { responseType: "arraybuffer", headers });
+                    await vscode.workspace.fs.writeFile(saveUri, new Uint8Array(res.data));
+                }
+            );
+
+            vscode.window.showInformationMessage(`Saved: ${saveUri.fsPath}`);
+        } catch (err) {
+            console.error("[OntoCode] Download failed:", err);
+            vscode.window.showErrorMessage("Failed to download ontology");
+        }
+    }
+
     /**
      * Private helper method to handle the actual upload logic.
      * Uploads ontology file to the gateway which routes to the OWL Editor service.
@@ -322,7 +400,7 @@ class OntoCodePanel {
             // 3. Prepare the form data for multipart upload
             const formData = new FormData();
             formData.append('file', fileData, fileName);
-            
+
             const headers = {
                 'Authorization': `Bearer ${token}`,
                 ...formData.getHeaders()
@@ -333,7 +411,7 @@ class OntoCodePanel {
             console.log(`[OntoCode] Uploading to: ${uploadUrl}`);
             // Fix: Updated file size logging to work with Uint8Array instead of Buffer.
             console.log(`[OntoCode] File size: ${fileData.length} bytes`);
-            
+
             const response = await axios.post(uploadUrl, formData, {
                 headers,
                 maxRedirects: 0,  // Disable redirects to catch any redirect issues
@@ -358,16 +436,16 @@ class OntoCodePanel {
 
         } catch (e: unknown) {
             console.error('[OntoCode] Upload error:', e);
-            
+
             let errorMessage = 'An unknown error occurred';
-            
+
             if (axios.isAxiosError(e)) {
                 const error = e as AxiosError;
                 if (error.response) {
                     console.error('[OntoCode] Error response status:', error.response.status);
                     console.error('[OntoCode] Error response headers:', error.response.headers);
                     console.error('[OntoCode] Error response data:', error.response.data);
-                    
+
                     const responseData = error.response.data as { error?: string; message?: string };
                     errorMessage = responseData?.error || responseData?.message || `Server error: ${error.response.status}`;
                 } else if (error.request) {
@@ -377,7 +455,7 @@ class OntoCodePanel {
                     console.error('[OntoCode] Error setting up request:', error.message);
                     errorMessage = error.message;
                 }
-                
+
                 if (error.code === 'ECONNREFUSED') {
                     errorMessage = 'Cannot connect to gateway on port 8082. Please ensure the gateway is running.';
                 } else if (error.code === 'ETIMEDOUT') {
@@ -388,7 +466,7 @@ class OntoCodePanel {
             } else if (e instanceof Error) {
                 errorMessage = e.message;
             }
-            
+
             console.error(`[OntoCode] Final error message: ${errorMessage}`);
             vscode.window.showErrorMessage(`Failed to load ontology: ${errorMessage}`);
             
@@ -410,6 +488,22 @@ class OntoCodePanel {
         );
     }
 
+    private static findBestOwlReference(): FileReference | undefined {
+        const activeEditor = vscode.window.activeTextEditor;
+        if (activeEditor && activeEditor.document.fileName.toLowerCase().endsWith('.owl')) {
+            return activeEditor;
+        }
+
+        const firstOpenOwlDocument = vscode.workspace.textDocuments.find(
+            document => document.fileName.toLowerCase().endsWith('.owl')
+        );
+        if (firstOpenOwlDocument) {
+            return firstOpenOwlDocument;
+        }
+
+        return undefined;
+    }
+
     /**
      * Update the webview content
      */
@@ -417,20 +511,20 @@ class OntoCodePanel {
     private async _update() {
         this._panel.webview.html = await this._getHtmlForWebview(this._panel.webview);
     }
-    
+
     /**
      * Generate HTML for the webview
      */
     private async _getHtmlForWebview(webview: vscode.Webview): Promise<string> {
         // Path to the build directory on disk
         const buildPath = vscode.Uri.parse(`${this._extensionUri.toString()}/webview-src/dist`);
-        
+
         // Path to the index.html file
         const indexPath = vscode.Uri.parse(`${buildPath.toString()}/index.html`);
 
         // Get the base URI to use in the webview for resolving relative paths
         const baseUri = (webview as any).asWebviewUri(buildPath).toString() + '/';
-        
+
         // Read the template HTML
         const fileBytes = await (vscode.workspace as any).fs.readFile(indexPath);
         let htmlContent = new TextDecoder('utf-8').decode(fileBytes);
@@ -443,10 +537,10 @@ class OntoCodePanel {
                 window.vscode = vscode;
             </script>
         `;
-        
+
         // Remove any existing CSP meta tags to avoid conflicts
         htmlContent = htmlContent.replace(/<meta[^>]*Content-Security-Policy[^>]*>/gi, '');
-        
+
         // Inject our new CSP, a <base> tag, and the API script into the <head>
         htmlContent = htmlContent.replace(
             /(<head>)/,
@@ -462,7 +556,7 @@ class OntoCodePanel {
             <base href="${baseUri}">
             ${vscodeApiInjectionScript}`
         );
-        
+
         // Add nonce to our main application script. The <base> tag handles the path resolution,
         // so we can change the src to be relative.
         htmlContent = htmlContent.replace(/(href|src)="([^"]+)"/g, (match, attr, rawPath) => {
@@ -488,7 +582,7 @@ class OntoCodePanel {
         console.log('[OntoCode] Disposing panel');
         OntoCodePanel.currentPanel = undefined;
         this._panel.dispose();
-        
+
         while (this._disposables.length) {
             const disposable = this._disposables.pop();
             disposable?.dispose();

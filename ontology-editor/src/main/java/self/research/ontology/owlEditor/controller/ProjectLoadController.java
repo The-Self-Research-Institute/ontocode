@@ -96,6 +96,89 @@ public class ProjectLoadController {
         }
     }
 
+    @GetMapping("/files")
+    public ResponseEntity<?> listFiles(
+            @RequestParam(required = false) String projectId,
+            @RequestParam(required = false) String search,
+            @RequestParam(defaultValue = "false") boolean caseSensitive
+    ) {
+        try {
+            Query q = new Query();
+
+            if (projectId != null && !projectId.isBlank()) {
+                q.addCriteria(Criteria.where("metadata.projectId").is(projectId));
+            }
+
+            if (search != null && !search.isBlank()) {
+                String regexOptions = caseSensitive ? "" : "i";
+
+                q.addCriteria(new Criteria().orOperator(
+                        Criteria.where("filename").regex(search, regexOptions),
+                        Criteria.where("metadata.description").regex(search, regexOptions),
+                        Criteria.where("metadata.tags").regex(search, regexOptions)
+                ));
+            }
+
+            logger.info("Searching files: projectId={}, search='{}', caseSensitive={}", projectId, search, caseSensitive);
+
+            List<GridFSFile> found = new ArrayList<>();
+            gridFsTemplate.find(q).into(found);
+
+            List<Map<String, Object>> items = new ArrayList<>();
+            for (GridFSFile f : found) {
+                Map<String, Object> m = new HashMap<>();
+                m.put("id", f.getObjectId().toHexString());
+                m.put("filename", f.getFilename());
+                m.put("length", f.getLength());
+                m.put("uploadDate", f.getUploadDate());
+                m.put("contentType", f.getMetadata() != null ? f.getMetadata().getString("_contentType") : null);
+                m.put("projectId", f.getMetadata() != null ? f.getMetadata().getString("projectId") : null);
+                items.add(m);
+            }
+
+            Map<String, Object> res = new HashMap<>();
+            res.put("success", true);
+            res.put("count", items.size());
+            res.put("files", items);
+
+            return ResponseEntity.ok(res);
+
+        } catch (Exception e) {
+            logger.error("Error listing files: {}", e.getMessage(), e);
+            return ResponseEntity.status(500).body(createErrorResponse("Failed to list files: " + e.getMessage()));
+        }
+    }
+
+    @GetMapping("/files/{fileId}/download")
+    public ResponseEntity<?> downloadOwl(@PathVariable String fileId) {
+        try {
+            GridFSFile file = gridFsTemplate.findOne(
+                Query.query(Criteria.where("_id").is(new ObjectId(fileId)))
+            );
+            if (file == null) return ResponseEntity.status(404).body(createErrorResponse("File not found"));
+
+            GridFsResource resource = gridFsTemplate.getResource(file);
+
+            String contentType = "application/rdf+xml";
+            String name = file.getFilename();
+            if (name == null || !name.toLowerCase().endsWith(".owl")) {
+                name = (name == null ? "ontology" : name).replace("\"", "") + ".owl";
+            }
+
+            return ResponseEntity.ok()
+                    .contentType(MediaType.parseMediaType(contentType))
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + name + "\"")
+                    .contentLength(file.getLength())
+                    .body(resource);
+
+        } catch (IllegalArgumentException badId) {
+            return ResponseEntity.badRequest().body(createErrorResponse("Invalid file id"));
+        } catch (Exception e) {
+            logger.error("Error downloading file {}: {}", fileId, e.getMessage(), e);
+            return ResponseEntity.status(500).body(createErrorResponse("Failed to download file: " + e.getMessage()));
+        }
+    }
+
     @GetMapping("/status/{projectId}")
     public ResponseEntity<Map<String, Object>> getProcessingStatus(@PathVariable String projectId) {
         logger.info("Checking processing status for project: {}", projectId);

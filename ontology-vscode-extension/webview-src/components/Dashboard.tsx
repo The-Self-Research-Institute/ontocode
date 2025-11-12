@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
-  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, DatabaseZap
+  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, DatabaseZap,
+  Download
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import { pluginManager } from '../plugins/PluginSystem';
@@ -16,6 +17,20 @@ import SparqlQueryEditor from './SparqlQueryEditor';
 
 
 type TopLevelClass = TreeNode & { hasChildren: boolean };
+type FileInfo = {
+  id: string;
+  filename: string;
+  contentType?: string | null;
+  length: number;
+  uploadDate: string; // ISO
+  projectId?: string | null;
+};
+
+type FilesListResponse = {
+  success: boolean;
+  count: number;
+  files: FileInfo[];
+};
 
 // #region Helper Components
 
@@ -35,56 +50,183 @@ const LoadingDialog = ({ isOpen, message }: { isOpen: boolean; message?: string 
 };
 
 
-const TopMenuBar = ({ onToggleSwrlTab, isSwrlVisible, onToggleGraphTab, isGraphVisible }: { onToggleSwrlTab: () => void, isSwrlVisible: boolean, onToggleGraphTab: () => void, isGraphVisible: boolean }) => {
-    const [openMenu, setOpenMenu] = useState<string | null>(null);
-    const menuRef = useRef<HTMLDivElement>(null);
+const TopMenuBar = ({
+  onToggleSwrlTab,
+  isSwrlVisible,
+  onToggleGraphTab,
+  isGraphVisible,
+  fileList,
+}: {
+  onToggleSwrlTab: () => void;
+  isSwrlVisible: boolean;
+  onToggleGraphTab: () => void;
+  isGraphVisible: boolean;
+  fileList: FilesListResponse[];
+}) => {
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [searchFile, setSearchFile] = useState("");
+  const [files, setFiles] = useState<FilesListResponse[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const onSearchFileChange = (value: string) => {
+    setSearchFile(value);
+
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+
+    timeoutRef.current = setTimeout(async () => {
+      setIsLoading(true);
+      try {
+        const { data } = await apiClient.get<{ files: FilesListResponse[] }>(`/api/ontology/files`, {
+          params: { search: searchFile, caseSensitive: true },
+        });
+
+        setFiles(data.files);
+      } catch (error) {
+        console.error("Failed to fetch data:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    }, 1000);
+  };
 
     useEffect(() => {
+        setFiles(fileList);
         const handleClickOutside = (event: MouseEvent) => {
             if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-                setOpenMenu(null);
+              setOpenMenu(null);
             }
         };
         document.addEventListener("mousedown", handleClickOutside);
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
-    const menuItems = ['File', 'Edit', 'View', 'Reasoner', 'Tools', 'Window', 'Help'];
-    
-    return (
-        <header ref={menuRef} className="bg-gray-200 text-gray-800 text-xs flex items-center px-2 relative border-b border-gray-300 h-8 flex-shrink-0">
-            <div className="flex items-center gap-1 p-2 mr-2">
-                <Package size={16} className="text-purple-600"/>
-            </div>
-            <div className="flex items-center">
-                {menuItems.map(item => (
-                    <div key={item} className="relative">
-                        <button onClick={() => setOpenMenu(openMenu === item ? null : item)} className="px-3 py-1 hover:bg-gray-300 rounded-sm">{item}</button>
-                        {openMenu === item && (
-                            <div className="absolute left-0 mt-1 w-48 bg-white border border-gray-300 rounded-md shadow-lg z-20">
-                                {item === 'Window' ? (
-                                    <div className="py-1">
-                                        <div className="px-3 py-1 text-gray-400 text-xs">Tabs</div>
-                                        <a href="#" onClick={(e) => { e.preventDefault(); onToggleSwrlTab(); setOpenMenu(null); }} className="flex justify-between items-center px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100">
-                                            SWRL Tab {isSwrlVisible && <Check size={14} className="text-purple-600"/>}
-                                        </a>
-                                    </div>
-                                ) : item === 'Reasoner' ? (
-                                    <div className="py-1">
-                                         <a href="#" onClick={(e) => { e.preventDefault(); onToggleGraphTab(); setOpenMenu(null); }} className="flex justify-between items-center px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100">
-                                            Graph View {isGraphVisible && <Check size={14} className="text-purple-600"/>}
-                                        </a>
-                                    </div>
-                                ) : (
-                                    <div className="p-2 text-xs text-gray-400">No actions available</div>
-                                )}
-                            </div>
-                        )}
+  const displayedFiles = searchFile ? files : fileList;
+
+  const menuItems = ['File', 'Edit', 'View', 'Reasoner', 'Tools', 'Window', 'Help'];
+
+  const downloadFile = (file: FileInfo) => {
+    if (window.vscode) {
+      window.vscode.postMessage({
+        type: "downloadOntology",
+        url: `/api/ontology/files/${file.id}/download`,
+        filename: `${file.filename}-${file.id}`,
+      });
+    }
+  };
+
+  return (
+    <header ref={menuRef} className="bg-gray-200 text-gray-800 text-xs flex items-center px-2 relative border-b border-gray-300 h-8 flex-shrink-0">
+      <div className="flex items-center gap-1 p-2 mr-2">
+        <Package size={16} className="text-purple-600" />
+      </div>
+      <div className="flex items-center">
+        {menuItems.map((item) => (
+          <div key={item} className="relative">
+            <button
+              onClick={() => {
+                if (item === "Download") {
+                  if (window.vscode) {
+                    window.vscode.postMessage({ type: "downloadCurrentOntology" });
+                  }
+                } else {
+                  setOpenMenu(openMenu === item ? null : item);
+                }
+              }}
+              className="px-3 py-1 hover:bg-gray-300 rounded-sm"
+            >
+              {item}
+            </button>
+            {openMenu === item && (
+              <div className="absolute left-0 mt-1 w-100 bg-white border border-gray-300 rounded-md shadow-lg z-20">
+                {item === "Window" ? (
+                  <div className="py-1">
+                    <div className="px-3 py-1 text-gray-400 text-xs">Tabs</div>
+                    <a
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        onToggleSwrlTab();
+                        setOpenMenu(null);
+                      }}
+                      className="flex justify-between items-center px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100"
+                    >
+                      SWRL Tab {isSwrlVisible && <Check size={14} className="text-purple-600" />}
+                    </a>
+                  </div>
+                ) : item === "Reasoner" ? (
+                  <div className="py-1">
+                    <a
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        onToggleGraphTab();
+                        setOpenMenu(null);
+                      }}
+                      className="flex justify-between items-center px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100"
+                    >
+                      Graph View {isGraphVisible && <Check size={14} className="text-purple-600" />}
+                    </a>
+                  </div>
+                ) : item === "File" ? (
+                  <div className="p-3 space-y-1">
+                    <div className="p-2 border-b border-gray-200 flex-shrink-0">
+                      <div className="relative">
+                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                        <input
+                          type="text"
+                          placeholder={`Search Files...`}
+                          value={searchFile}
+                          onChange={(e) => onSearchFileChange(e.target.value)}
+                          className="w-full pl-8 pr-3 py-1.5 border border-gray-300 rounded-md focus:ring-1 focus:ring-purple-500 text-sm bg-white"
+                        />
+                      </div>
                     </div>
-                ))}
-            </div>
-        </header>
-    );
+                    {isLoading && (
+                      <div className="px-3 py-1 text-gray-500 text-xs flex items-center gap-2">
+                        <Loader2 size={14} className="animate-spin" /> Searching...
+                      </div>
+                    )}
+                    {displayedFiles?.length > 0
+                      ? displayedFiles.map((file) => (
+                          <div className="flex justify-between items-center gap-2" key={file.id}>
+                            <span
+                              className="truncate min-w-0"
+                              title={`${file.filename}`}
+                              onClick={() => {
+                                if (window.vscode) {
+                                  window.vscode.postMessage({
+                                    type: "fileLoaded",
+                                    projectId: file.filename.slice(0, -4),
+                                  });
+                                }
+                              }}
+                            >
+                              {file.filename}
+                            </span>
+                            <button
+                              title="Download"
+                              onClick={() => downloadFile(file)}
+                              className="p-1 hover:bg-gray-100 rounded"
+                            >
+                              <Download className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))
+                      : !isLoading && <div className="px-3 py-1 text-gray-500">No Files</div>}
+                  </div>
+                ) : (
+                  <div className="p-2 text-xs text-gray-400">No actions available</div>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </header>
+);
 };
 
 
@@ -205,9 +347,10 @@ const Dashboard = () => {
   const [annotationProperties, setAnnotationProperties] = useState<AnnotationProperty[]>([]);
   const [individuals, setIndividuals] = useState<Individual[]>([]);
   const [datatypes, setDatatypes] = useState<Datatype[]>([]);
-  
+
   const [filteredData, setFilteredData] = useState<SelectableItem[]>([]);
-  
+  const [listOfFiles, setListOfFiles] = useState<FileInfo[]>([]);
+
   const [visibleMainTabs, setVisibleMainTabs] = useState(['ActiveOntology', 'Entities', 'IndividualsByClass', 'DLQuery', 'SPARQL']);
   // #endregion
 
@@ -224,15 +367,16 @@ const Dashboard = () => {
     setIsInitialLoading(true);
     setSelectedItem(null);
     setSearchQuery("");
-    
+
     try {
-        const [metadataRes, topLevelRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes] = await Promise.all([
-            apiClient.get<OntologyMetadata>(`/api/ontology/metadata/${currentProjectId}`),
-            apiClient.get<{ classes: TopLevelClass[] }>(`/api/ontology/classes/top-level/${currentProjectId}`),
-            apiClient.get<{ data: Property[] }>(`/api/ontology/properties/${currentProjectId}`),
-            apiClient.get<{ data: Individual[] }>(`/api/ontology/individuals/${currentProjectId}`),
-            apiClient.get<{ data: AnnotationProperty[] }>(`/api/ontology/annotation-properties/${currentProjectId}`),
-            apiClient.get<{ data: Datatype[] }>(`/api/ontology/datatypes/${currentProjectId}`),
+      const [metadataRes, topLevelRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes, filesRes] = await Promise.all([
+          apiClient.get<OntologyMetadata>(`/api/ontology/metadata/${currentProjectId}`),
+          apiClient.get<{ classes: TopLevelClass[] }>(`/api/ontology/classes/top-level/${currentProjectId}`),
+          apiClient.get<{ data: Property[] }>(`/api/ontology/properties/${currentProjectId}`),
+          apiClient.get<{ data: Individual[] }>(`/api/ontology/individuals/${currentProjectId}`),
+          apiClient.get<{ data: AnnotationProperty[] }>(`/api/ontology/annotation-properties/${currentProjectId}`),
+          apiClient.get<{ data: Datatype[] }>(`/api/ontology/datatypes/${currentProjectId}`),
+          apiClient.get<{ files: FileInfo[] }>(`/api/ontology/files`),
         ]);
         console.log([metadataRes, topLevelRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes]);
         const ontologyDoc = ((metadataRes.data) as any).data || metadataRes.data;
@@ -253,13 +397,13 @@ const Dashboard = () => {
         setClassHierarchy([owlThingNode]);
 
         const allProps = propertiesRes.data.data || [];
-        setObjectProperties(allProps.filter((p: Property) => p.type === 'ObjectProperty'));
-        setDataProperties(allProps.filter((p: Property) => p.type === 'DataProperty'));
-        
+        setObjectProperties(allProps.filter((p: Property) => p.type === "ObjectProperty"));
+        setDataProperties(allProps.filter((p: Property) => p.type === "DataProperty"));
+
         setIndividuals(individualsRes.data.data || []);
         setAnnotationProperties(annotationPropsRes.data.data || []);
         setDatatypes(datatypesRes.data.data || []);
-        
+        setListOfFiles(filesRes.data.files || []);
     } catch (error) {
       console.error("Failed to fetch data:", error);
     } finally {
@@ -895,7 +1039,7 @@ const Dashboard = () => {
       <CreateIndividualModal isOpen={isCreateIndividualModalOpen} onClose={() => setCreateIndividualModalOpen(false)} onCreate={handleAddIndividual} />
 
       <div className="h-screen bg-gray-50 flex flex-col text-sm max-h-screen">
-        <TopMenuBar onToggleSwrlTab={toggleSwrlTab} isSwrlVisible={visibleMainTabs.includes('SWRL')} onToggleGraphTab={toggleGraphTab} isGraphVisible={visibleMainTabs.includes('Graph')} />
+        <TopMenuBar onToggleSwrlTab={toggleSwrlTab} isSwrlVisible={visibleMainTabs.includes('SWRL')} onToggleGraphTab={toggleGraphTab} isGraphVisible={visibleMainTabs.includes('Graph')} fileList={listOfFiles} />
         
         <div className="bg-white border-b border-gray-200 flex-shrink-0">
             <div className="flex items-center justify-between px-4 h-10">
