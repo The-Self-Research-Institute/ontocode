@@ -1,477 +1,263 @@
 package self.research.ontology.owlEditor.controller;
 
+import com.mongodb.client.gridfs.model.GridFSFile;
+import org.bson.types.ObjectId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Update;
-import org.springframework.http.ResponseEntity;
+import org.springframework.data.mongodb.gridfs.GridFsResource;
+import org.springframework.data.mongodb.gridfs.GridFsTemplate;
+import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-import self.research.ontology.owlEditor.document.OntologyDocument;
-import self.research.ontology.owlEditor.dto.*;
-import self.research.ontology.owlEditor.service.OntologyIndexService;
+import reactor.core.publisher.Mono;
+import self.research.ontology.owlEditor.dto.OntologyDtos.*;
+import self.research.ontology.owlEditor.service.OntologySparqlService;
 import self.research.ontology.owlEditor.service.OwlParsingService;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import org.springframework.data.mongodb.gridfs.GridFsTemplate;
-import org.springframework.data.mongodb.gridfs.GridFsResource;
-import com.mongodb.client.gridfs.model.GridFSFile;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
-import org.bson.types.ObjectId;
 import java.io.InputStream;
+import java.util.*;
 
-@CrossOrigin(origins = "*") 
 @RestController
 @RequestMapping("/api/ontology")
+@CrossOrigin(origins = "*")
 public class ProjectLoadController {
-
-    private static final Logger logger = LoggerFactory.getLogger(ProjectLoadController.class);
-
+    
+    private static final Logger log = LoggerFactory.getLogger(ProjectLoadController.class);
+    
     @Autowired
-    private OntologyIndexService ontologyIndexService;
-
+    private MongoTemplate mongo;
+    
     @Autowired
-    private OwlParsingService owlParsingService;
-
+    private GridFsTemplate gridfs;
+    
     @Autowired
-    private MongoTemplate mongoTemplate;
-
+    private OwlParsingService parser;
+    
     @Autowired
-    private GridFsTemplate gridFsTemplate;
+    private OntologySparqlService sparql;
+
+    // ========== UPLOAD & STATUS ==========
 
     @PostMapping("/upload/{projectId}")
-    public ResponseEntity<Map<String, Object>> uploadOntology(
+    public ResponseEntity<Map<String,Object>> upload(
             @PathVariable String projectId,
             @RequestParam("file") MultipartFile file) {
-
-        logger.info("Receiving ontology file upload for project: {}", projectId);
-
+        
+        log.info("Received upload request for project: {}, filename: {}", 
+                projectId, file.getOriginalFilename());
+        
         try {
-            if (file.isEmpty()) {
-                return ResponseEntity.badRequest().body(createErrorResponse("File is empty"));
-            }
-
-            String filename = file.getOriginalFilename();
-            String contentType = file.getContentType();
-            logger.info("File received: {} (size: {} bytes) for project: {}", filename, file.getSize(), projectId);
-
-            ObjectId fileId;
-            try (InputStream gridfsStream = file.getInputStream()) {
-                fileId = gridFsTemplate.store(gridfsStream, filename, contentType);
-            }
-            logger.info("Stored file in GridFS with ID: {} for project: {}", fileId, projectId);
-
-            createOrUpdateProject(projectId, filename, fileId.toString(), "PROCESSING", "Starting to process ontology...");
-
-            try (InputStream parseStream = file.getInputStream()) {
-                owlParsingService.parseAndIndexFromStream(projectId, parseStream, filename);
-            }
+            // Save file to GridFS
+            ObjectId fileId = gridfs.store(
+                file.getInputStream(),
+                file.getOriginalFilename(),
+                file.getContentType()
+            );
+            
+            log.info("Stored file in GridFS with ID: {}", fileId);
+            
+            // Create/update project document
+            Map<String, Object> projectDoc = new HashMap<>();
+            projectDoc.put("_id", projectId);
+            projectDoc.put("filename", file.getOriginalFilename());
+            projectDoc.put("gridfsFileId", fileId.toString());
+            projectDoc.put("status", "UPLOADED");
+            projectDoc.put("statusMessage", "File uploaded, starting processing...");
+            projectDoc.put("createdAt", new Date());
+            projectDoc.put("updatedAt", new Date());
+            
+            mongo.save(projectDoc, "projects");
+            
+            // Start async parsing
+            parser.parseAndIndex(projectId, fileId);
             
             Map<String, Object> response = new HashMap<>();
             response.put("success", true);
-            response.put("message", "File uploaded successfully and processing started");
             response.put("projectId", projectId);
-            response.put("filename", filename);
-            response.put("fileId", fileId.toString());
-            response.put("status", "PROCESSING");
-
+            response.put("message", "File uploaded successfully, processing started");
+            
             return ResponseEntity.ok(response);
-
+            
         } catch (Exception e) {
-            logger.error("Error uploading ontology file for project {}: {}", projectId, e.getMessage(), e);
-            createOrUpdateProject(projectId, (file != null ? file.getOriginalFilename() : "unknown"), null, "ERROR", "Failed to upload file: " + e.getMessage());
-            return ResponseEntity.status(500).body(createErrorResponse("Failed to upload file: " + e.getMessage()));
+            log.error("Failed to upload file for project: {}", projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("success", false, "error", "File upload failed: " + e.getMessage()));
         }
     }
 
     @GetMapping("/status/{projectId}")
-    public ResponseEntity<Map<String, Object>> getProcessingStatus(@PathVariable String projectId) {
-        logger.info("Checking processing status for project: {}", projectId);
-
-        try {
-            Query query = new Query(Criteria.where("_id").is(projectId));
-            Map projectData = mongoTemplate.findOne(query, Map.class, "projects");
-
-            Map<String, Object> response = new HashMap<>();
-            Map<String, Object> data = new HashMap<>();
-
-            if (projectData != null) {
-                data.put("status", projectData.get("status"));
-                data.put("statusMessage", projectData.get("statusMessage"));
-                data.put("filename", projectData.get("filename"));
-                data.put("lastUpdated", projectData.get("lastUpdated"));
-            } else {
-                OntologyDocument doc = ontologyIndexService.getOntologyMetadata(projectId);
-                if (doc != null) {
-                    data.put("status", "COMPLETED");
-                    data.put("statusMessage", "Processing complete (project status not found, but data exists).");
-                    data.put("filename", doc.getMetadata() != null ? doc.getMetadata().getFilename() : "Unknown");
-                    data.put("lastUpdated", doc.getUpdatedAt());
-                } else {
-                    data.put("status", "NOT_FOUND");
-                    data.put("statusMessage", "Project not found");
-                }
-            }
-
-            response.put("success", true);
-            response.put("data", data);
-            return ResponseEntity.ok(response);
-
-        } catch (Exception e) {
-            logger.error("Error checking status for project: {}", projectId, e);
-            return ResponseEntity.status(500).body(createErrorResponse("Failed to check status"));
+    public ResponseEntity<Map<String,Object>> status(@PathVariable String projectId) {
+        Map<?, ?> project = mongo.findOne(
+            new Query(Criteria.where("_id").is(projectId)), 
+            Map.class, 
+            "projects"
+        );
+        
+        if (project == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("success", false, "error", "Project not found"));
         }
+        
+        Map<String,Object> statusData = new HashMap<>();
+        statusData.put("status", project.getOrDefault("status", "UNKNOWN"));
+        statusData.put("statusMessage", project.getOrDefault("statusMessage", ""));
+        statusData.put("updatedAt", project.getOrDefault("updatedAt", new Date()));
+        
+        return ResponseEntity.ok(Map.of("success", true, "data", statusData));
     }
 
     @GetMapping("/export/{projectId}")
-    public ResponseEntity<byte[]> exportOntology(@PathVariable String projectId) {
-        logger.info("Handling export request for project: {}", projectId);
+    public ResponseEntity<byte[]> export(@PathVariable String projectId) {
+        log.info("Export request for project: {}", projectId);
+        
         try {
-            Query projectQuery = new Query(Criteria.where("_id").is(projectId));
-            Map projectData = mongoTemplate.findOne(projectQuery, Map.class, "projects");
-
-            if (projectData == null || projectData.get("filename") == null) {
-                logger.warn("Project or filename not found for export: {}", projectId);
+            Map<?, ?> projectData = mongo.findOne(
+                new Query(Criteria.where("_id").is(projectId)), 
+                Map.class, 
+                "projects"
+            );
+            
+            if (projectData == null || projectData.get("gridfsFileId") == null) {
+                log.warn("Project or file not found: {}", projectId);
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                        .body(("Project not found or has no associated file: " + projectId).getBytes());
+                        .body(("Project not found: " + projectId).getBytes());
             }
             
-            String filename = (String) projectData.get("filename");
-            logger.info("Found filename: {} for project: {}", filename, projectId);
-
-            GridFSFile file = gridFsTemplate.findOne(new Query(Criteria.where("filename").is(filename)));
+            String fileIdStr = (String) projectData.get("gridfsFileId");
+            String filename = (String) projectData.getOrDefault("filename", "ontology.owl");
+            
+            GridFSFile file = gridfs.findOne(
+                new Query(Criteria.where("_id").is(new ObjectId(fileIdStr)))
+            );
             
             if (file == null) {
-                logger.warn("File not found in GridFS: {}", filename);
+                log.warn("File not found in GridFS: {}", fileIdStr);
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                        .body(("File not found in GridFS: " + filename).getBytes());
+                        .body(("File not found: " + fileIdStr).getBytes());
             }
-
-            GridFsResource resource = gridFsTemplate.getResource(file);
+            
+            GridFsResource resource = gridfs.getResource(file);
             byte[] data;
             try (InputStream inputStream = resource.getInputStream()) {
                 data = inputStream.readAllBytes();
             }
-
+            
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
             headers.setContentDispositionFormData("attachment", filename);
             headers.setContentLength(data.length);
-
-            logger.info("Successfully exporting {} bytes for file: {}", data.length, filename);
             
+            log.info("Successfully exported {} bytes for file: {}", data.length, filename);
             return new ResponseEntity<>(data, headers, HttpStatus.OK);
-
+            
         } catch (Exception e) {
-            logger.error("Error exporting ontology for project: {}", projectId, e);
+            log.error("Error exporting ontology: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(("Failed to export ontology: " + e.getMessage()).getBytes());
+                    .body(("Export failed: " + e.getMessage()).getBytes());
         }
     }
+
+    // ========== METADATA ==========
 
     @GetMapping("/metadata/{projectId}")
-    public ResponseEntity<Map<String, Object>> getMetadata(@PathVariable String projectId) {
-        logger.info("Fetching metadata for project: {}", projectId);
-        try {
-            OntologyDocument ontologyDoc = ontologyIndexService.getOntologyMetadata(projectId);
-            if (ontologyDoc == null) {
-                return ResponseEntity.status(404).body(createErrorResponse("Metadata not found"));
-            }
-            Map<String, Object> response = new HashMap<>();
-            response.put("success", true);
-            response.put("data", ontologyDoc);
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            logger.error("Error fetching metadata for project: {}", projectId, e);
-            return ResponseEntity.status(500).body(createErrorResponse("Failed to fetch metadata"));
-        }
+    public Mono<ResponseEntity<Map<String,Object>>> metadata(@PathVariable String projectId) {
+        return sparql.getMetadata(projectId)
+                .map(m -> ResponseEntity.ok(Map.of("success", true, "data", m)))
+                .defaultIfEmpty(ResponseEntity.ok(Map.of("success", false, "error", "Metadata not found")));
     }
 
-    @GetMapping("/classes/tree/{projectId}")
-    public ResponseEntity<List<TreeNode>> getClassHierarchy(@PathVariable String projectId) {
-        logger.info("Fetching class hierarchy for project: {}", projectId);
-        try {
-            List<TreeNode> classHierarchy = ontologyIndexService.getClassHierarchy(projectId);
-            logger.info("Returning {} root nodes for project: {}", classHierarchy.size(), projectId);
-            return ResponseEntity.ok(classHierarchy);
-        } catch (Exception e) {
-            logger.error("Error fetching class hierarchy for project: {}", projectId, e);
-            return ResponseEntity.ok(new ArrayList<>());
-        }
-    }
+    // ========== CLASSES ==========
 
     @GetMapping("/classes/top-level/{projectId}")
-    public ResponseEntity<Map<String, Object>> getTopLevelClasses(
-            @PathVariable String projectId,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "100") int size,
-            @RequestParam(required = false) String search) {
-
-        logger.info("Fetching top-level classes: page={}, size={}, search={}", page, size, search);
-
-        try {
-            Map<String, Object> result = ontologyIndexService.getTopLevelClassesPaginated(projectId, page, size, search);
-            return ResponseEntity.ok(result);
-        } catch (Exception e) {
-            logger.error("Error fetching top-level classes for project: {}", projectId, e);
-            Map<String, Object> errorResponse = new HashMap<>();
-            errorResponse.put("classes", new ArrayList<>());
-            errorResponse.put("total", 0);
-            errorResponse.put("page", page);
-            errorResponse.put("size", size);
-            errorResponse.put("hasMore", false);
-            return ResponseEntity.ok(errorResponse);
-        }
+    public Mono<ResponseEntity<Map<String,Object>>> topLevel(@PathVariable String projectId) {
+        return sparql.getTopLevelClasses(projectId)
+                .map(classes -> ResponseEntity.ok(Map.of("success", true, "classes", classes)))
+                .defaultIfEmpty(ResponseEntity.ok(Map.of("success", true, "classes", Collections.emptyList())));
     }
 
     @GetMapping("/classes/children/{projectId}")
-    public ResponseEntity<List<TreeNode>> getClassChildren(
+    public Mono<ResponseEntity<List<TreeNode>>> children(
             @PathVariable String projectId,
             @RequestParam String parentIri) {
-
-        logger.info("Fetching children for parent: {} in project: {}", parentIri, projectId);
-
-        try {
-            List<TreeNode> children = ontologyIndexService.getClassChildren(projectId, parentIri);
-            logger.info("Returning {} children for parent: {}", children.size(), parentIri);
-            return ResponseEntity.ok(children);
-        } catch (Exception e) {
-            logger.error("Error fetching children for parent: {}", parentIri, e);
-            return ResponseEntity.ok(new ArrayList<>());
-        }
+        return sparql.getClassChildren(projectId, parentIri)
+                .map(ResponseEntity::ok)
+                .defaultIfEmpty(ResponseEntity.ok(Collections.emptyList()));
     }
 
-    @GetMapping("/classes/search/{projectId}")
-    public ResponseEntity<List<TreeNode>> searchClasses(
-            @PathVariable String projectId,
-            @RequestParam String query) {
-        logger.info("Searching classes in project: {} with query: {}", projectId, query);
-        try {
-            List<TreeNode> results = ontologyIndexService.searchClasses2(projectId, query);
-            return ResponseEntity.ok(results);
-        } catch (Exception e) {
-            logger.error("Error searching classes", e);
-            return ResponseEntity.ok(new ArrayList<>());
-        }
+    @GetMapping("/all-classes")
+    public Mono<ResponseEntity<Map<String,Object>>> allClasses(@RequestParam String projectId) {
+        return sparql.getAllClassesWithParent(projectId)
+                .map(classes -> ResponseEntity.ok(Map.of("success", true, "classes", classes)))
+                .defaultIfEmpty(ResponseEntity.ok(Map.of("success", true, "classes", Collections.emptyList())));
     }
 
-    @PostMapping("/classes/{projectId}")
-    public ResponseEntity<Map<String, String>> createClass(
-            @PathVariable String projectId,
-            @RequestBody Map<String, String> classData) {
-        logger.info("Creating class in project: {}", projectId);
-        try {
-            String className = classData.get("name");
-            String parentIri = classData.get("parentIri");
-            String classIri = ontologyIndexService.createClass(projectId, className, parentIri);
-            Map<String, String> response = new HashMap<>();
-            response.put("iri", classIri);
-            response.put("message", "Class created successfully");
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            logger.error("Error creating class", e);
-            return ResponseEntity.internalServerError().build();
-        }
-    }
-
-    @DeleteMapping("/classes/{projectId}/{classIri}")
-    public ResponseEntity<Map<String, String>> deleteClass(
-            @PathVariable String projectId,
-            @PathVariable String classIri) {
-        logger.info("Deleting class {} in project: {}", classIri, projectId);
-        try {
-            ontologyIndexService.deleteClass(projectId, classIri);
-            Map<String, String> response = new HashMap<>();
-            response.put("message", "Class deleted successfully");
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            logger.error("Error deleting class", e);
-            Map<String, String> errorResponse = new HashMap<>();
-            errorResponse.put("error", e.getMessage());
-            return ResponseEntity.badRequest().body(errorResponse);
-        }
-    }
+    // ========== PROPERTIES ==========
 
     @GetMapping("/properties/{projectId}")
-    public ResponseEntity<Map<String, Object>> getAllProperties(@PathVariable String projectId) {
-        logger.info("Fetching all properties for project: {}", projectId);
-        try {
-            List<PropertyDto> properties = ontologyIndexService.getAllProperties(projectId);
-            Map<String, Object> response = new HashMap<>();
-            response.put("success", true);
-            response.put("data", properties);
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            logger.error("Error fetching properties", e);
-            return ResponseEntity.status(500).body(createErrorResponse("Failed to fetch properties"));
-        }
+    public Mono<ResponseEntity<Map<String,Object>>> properties(@PathVariable String projectId) {
+        return sparql.getProperties(projectId)
+                .map(properties -> ResponseEntity.ok(Map.of("success", true, "data", properties)))
+                .defaultIfEmpty(ResponseEntity.ok(Map.of("success", true, "data", Collections.emptyList())));
     }
 
-    @GetMapping("/object-properties/tree/{projectId}")
-    public ResponseEntity<List<PropertyDto>> getObjectPropertyHierarchy(@PathVariable String projectId) {
-        logger.info("Fetching object property hierarchy for project: {}", projectId);
-        try {
-            List<PropertyDto> hierarchy = ontologyIndexService.getObjectPropertyHierarchy(projectId);
-            return ResponseEntity.ok(hierarchy);
-        } catch (Exception e) {
-            logger.error("Error fetching object property hierarchy", e);
-            return ResponseEntity.ok(new ArrayList<>());
-        }
-    }
-
-    @GetMapping("/data-properties/tree/{projectId}")
-    public ResponseEntity<List<PropertyDto>> getDataPropertyHierarchy(@PathVariable String projectId) {
-        logger.info("Fetching data property hierarchy for project: {}", projectId);
-        try {
-            List<PropertyDto> hierarchy = ontologyIndexService.getDataPropertyHierarchy(projectId);
-            return ResponseEntity.ok(hierarchy);
-        } catch (Exception e) {
-            logger.error("Error fetching data property hierarchy", e);
-            return ResponseEntity.ok(new ArrayList<>());
-        }
-    }
+    // ========== INDIVIDUALS ==========
 
     @GetMapping("/individuals/{projectId}")
-    public ResponseEntity<Map<String, Object>> getAllIndividuals(@PathVariable String projectId) {
-        logger.info("Fetching all individuals for project: {}", projectId);
-        try {
-            List<IndividualDto> individuals = ontologyIndexService.getAllIndividuals(projectId);
-            Map<String, Object> response = new HashMap<>();
-            response.put("success", true);
-            response.put("data", individuals);
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            logger.error("Error fetching individuals", e);
-            return ResponseEntity.status(500).body(createErrorResponse("Failed to fetch individuals"));
-        }
+    public Mono<ResponseEntity<Map<String,Object>>> individuals(@PathVariable String projectId) {
+        return sparql.getIndividuals(projectId)
+                .map(individuals -> ResponseEntity.ok(Map.of("success", true, "data", individuals)))
+                .defaultIfEmpty(ResponseEntity.ok(Map.of("success", true, "data", Collections.emptyList())));
     }
+
+    // ========== ANNOTATION PROPERTIES ==========
 
     @GetMapping("/annotation-properties/{projectId}")
-    public ResponseEntity<Map<String, Object>> getAllAnnotationProperties(@PathVariable String projectId) {
-        logger.info("Fetching all annotation properties for project: {}", projectId);
-        try {
-            List<AnnotationPropertyDto> properties = ontologyIndexService.getAllAnnotationProperties(projectId);
-            Map<String, Object> response = new HashMap<>();
-            response.put("success", true);
-            response.put("data", properties);
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            logger.error("Error fetching annotation properties", e);
-            return ResponseEntity.status(500).body(createErrorResponse("Failed to fetch annotation properties"));
-        }
+    public Mono<ResponseEntity<Map<String,Object>>> annProps(@PathVariable String projectId) {
+        return sparql.getAnnotationProperties(projectId)
+                .map(props -> ResponseEntity.ok(Map.of("success", true, "data", props)))
+                .defaultIfEmpty(ResponseEntity.ok(Map.of("success", true, "data", Collections.emptyList())));
     }
+
+    // ========== DATATYPES ==========
 
     @GetMapping("/datatypes/{projectId}")
-    public ResponseEntity<Map<String, Object>> getAllDatatypes(@PathVariable String projectId) {
-        logger.info("Fetching all datatypes for project: {}", projectId);
-        try {
-            List<DatatypeDto> datatypes = ontologyIndexService.getAllDatatypes(projectId);
-            Map<String, Object> response = new HashMap<>();
-            response.put("success", true);
-            response.put("data", datatypes);
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            logger.error("Error fetching datatypes", e);
-            return ResponseEntity.status(500).body(createErrorResponse("Failed to fetch datatypes"));
-        }
+    public Mono<ResponseEntity<Map<String,Object>>> datatypes(@PathVariable String projectId) {
+        return sparql.getDatatypes(projectId)
+                .map(datatypes -> ResponseEntity.ok(Map.of("success", true, "data", datatypes)))
+                .defaultIfEmpty(ResponseEntity.ok(Map.of("success", true, "data", Collections.emptyList())));
     }
 
-    @GetMapping("/classes/usage/{projectId}")
-    public ResponseEntity<UsageInfoDto> getClassUsage(
+    // ========== SEARCH ==========
+
+    @GetMapping("/search/{projectId}")
+    public Mono<ResponseEntity<Map<String,Object>>> search(
             @PathVariable String projectId,
-            @RequestParam String classIri) {
-        logger.info("Fetching usage for class: {} in project: {}", classIri, projectId);
-        try {
-            UsageInfoDto usage = ontologyIndexService.getClassUsage(projectId, classIri);
-            return ResponseEntity.ok(usage);
-        } catch (Exception e) {
-            logger.error("Error fetching class usage", e);
-            return ResponseEntity.internalServerError().build();
-        }
+            @RequestParam String q,
+            @RequestParam(required = false) String type) {
+        return sparql.searchEntities(projectId, q, type != null ? type : "")
+                .map(results -> ResponseEntity.ok(Map.of("success", true, "data", results)))
+                .defaultIfEmpty(ResponseEntity.ok(Map.of("success", true, "data", Collections.emptyList())));
     }
 
-private void createOrUpdateProject(String projectId, String filename, String gridfsFileId, String status, String message) {
-    try {
-        Query query = new Query(Criteria.where("_id").is(projectId));
-        Update update = new Update()
-                .set("status", status)
-                .set("statusMessage", message)
-                .set("filename", filename)
-                .set("lastUpdated", new Date())
-                .setOnInsert("createdAt", new Date())
-                .setOnInsert("projectId", projectId);
+    // ========== NAMESPACES ==========
 
-        if (gridfsFileId != null) {
-            update.set("gridfsFileId", gridfsFileId); // <-- This is the new part
-        }
-
-        mongoTemplate.upsert(query, update, "projects");
-
-        logger.info("Created/Updated project document for: {}", projectId);
-    } catch (Exception e) {
-        logger.error("Failed to create/update project document for: {}", projectId, e);
-    }
-}
-
-    private Map<String, Object> createErrorResponse(String message) {
-        Map<String, Object> error = new HashMap<>();
-        error.put("success", false);
-        error.put("error", message);
-        return error;
+    @GetMapping("/namespaces/{projectId}")
+    public Mono<ResponseEntity<Map<String,Object>>> namespaces(@PathVariable String projectId) {
+        return sparql.getNamespaces(projectId)
+                .map(ns -> ResponseEntity.ok(Map.of("success", true, "data", ns)))
+                .defaultIfEmpty(ResponseEntity.ok(Map.of("success", true, "data", Collections.emptyList())));
     }
 
-    public static class TreeNode {
-        private String id;
-        private String label;
-        private List<TreeNode> children;
-        private Map<String, String> annotations;
-        private Boolean hasChildren;
+    // ========== STATISTICS ==========
 
-        public TreeNode() {}
-
-        public TreeNode(String id, String label, List<TreeNode> children, Map<String, String> annotations) {
-            this.id = id;
-            this.label = label;
-            this.children = children;
-            this.annotations = annotations;
-        }
-        
-        public TreeNode(String id, String label, List<TreeNode> children, Map<String, String> annotations, Boolean hasChildren) {
-            this.id = id;
-            this.label = label;
-            this.children = children;
-            this.annotations = annotations;
-            this.hasChildren = hasChildren;
-        }
-
-        public String getId() { return id; }
-        public void setId(String id) { this.id = id; }
-        public String getLabel() { return label; }
-        public void setLabel(String label) { this.label = label; }
-        public List<TreeNode> getChildren() { return children; }
-        public void setChildren(List<TreeNode> children) { this.children = children; }
-        public Map<String, String> getAnnotations() { return annotations; }
-        public void setAnnotations(Map<String, String> annotations) { this.annotations = annotations; }
-        public Boolean getHasChildren() { return hasChildren; }
-        public void setHasChildren(Boolean hasChildren) { this.hasChildren = hasChildren; }
-
-        public void addChild(TreeNode child) {
-            if (this.children == null) {
-                this.children = new ArrayList<>();
-            }
-            this.children.add(child);
-        }
+    @GetMapping("/statistics/{projectId}")
+    public Mono<ResponseEntity<Map<String,Object>>> statistics(@PathVariable String projectId) {
+        return sparql.getStatistics(projectId)
+                .map(stats -> ResponseEntity.ok(Map.of("success", true, "data", stats)))
+                .defaultIfEmpty(ResponseEntity.ok(Map.of("success", true, "data", Map.of())));
     }
 }
