@@ -56,12 +56,14 @@ const TopMenuBar = ({
   onToggleGraphTab,
   isGraphVisible,
   fileList,
+  projectId
 }: {
   onToggleSwrlTab: () => void;
   isSwrlVisible: boolean;
   onToggleGraphTab: () => void;
   isGraphVisible: boolean;
   fileList: FilesListResponse[];
+  projectId: string;
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -105,7 +107,7 @@ const TopMenuBar = ({
 
   const displayedFiles = searchFile ? files : fileList;
 
-  const menuItems = ['File', 'Edit', 'View', 'Reasoner', 'Tools', 'Window', 'Help'];
+  const menuItems = ['File', 'Edit', 'View', 'Reasoner', 'Tools', 'Window', 'Help', 'Download'];
 
   const downloadFile = (file: FileInfo) => {
     if (window.vscode) {
@@ -128,9 +130,8 @@ const TopMenuBar = ({
             <button
               onClick={() => {
                 if (item === "Download") {
-                  if (window.vscode) {
-                    window.vscode.postMessage({ type: "downloadCurrentOntology" });
-                  }
+                  const currentFile = displayedFiles.find(f => f.projectId === projectId);
+                  downloadFile(currentFile);
                 } else {
                   setOpenMenu(openMenu === item ? null : item);
                 }
@@ -171,8 +172,8 @@ const TopMenuBar = ({
                     </a>
                   </div>
                 ) : item === "File" ? (
-                  <div className="p-3 space-y-1">
-                    <div className="p-2 border-b border-gray-200 flex-shrink-0">
+                  <div className="space-y-1 min-w-[270px]">
+                    <div className="p-3 border-b border-gray-200 flex-shrink-0">
                       <div className="relative">
                         <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                         <input
@@ -184,6 +185,7 @@ const TopMenuBar = ({
                         />
                       </div>
                     </div>
+                    <div className="max-h-80 overflow-y-auto">
                     {isLoading && (
                       <div className="px-3 py-1 text-gray-500 text-xs flex items-center gap-2">
                         <Loader2 size={14} className="animate-spin" /> Searching...
@@ -191,9 +193,9 @@ const TopMenuBar = ({
                     )}
                     {displayedFiles?.length > 0
                       ? displayedFiles.map((file) => (
-                          <div className="flex justify-between items-center gap-2" key={file.id}>
+                          <div className={`px-3 py-2 flex justify-between items-center gap-2 ${projectId === file.filename.slice(0,-4) ? "bg-purple-600 text-white p-4" : ""}`} key={file.id}>
                             <span
-                              className="truncate min-w-0"
+                              className="truncate min-w-0 cursor-pointer hover:underline"
                               title={`${file.filename}`}
                               onClick={() => {
                                 if (window.vscode) {
@@ -206,16 +208,11 @@ const TopMenuBar = ({
                             >
                               {file.filename}
                             </span>
-                            <button
-                              title="Download"
-                              onClick={() => downloadFile(file)}
-                              className="p-1 hover:bg-gray-100 rounded"
-                            >
-                              <Download className="w-4 h-4" />
-                            </button>
                           </div>
                         ))
-                      : !isLoading && <div className="px-3 py-1 text-gray-500">No Files</div>}
+                      : !isLoading && <div className="px-3 py-1 text-gray-500">No Files</div>
+                      }
+                      </div>
                   </div>
                 ) : (
                   <div className="p-2 text-xs text-gray-400">No actions available</div>
@@ -1039,7 +1036,7 @@ const Dashboard = () => {
       <CreateIndividualModal isOpen={isCreateIndividualModalOpen} onClose={() => setCreateIndividualModalOpen(false)} onCreate={handleAddIndividual} />
 
       <div className="h-screen bg-gray-50 flex flex-col text-sm max-h-screen">
-        <TopMenuBar onToggleSwrlTab={toggleSwrlTab} isSwrlVisible={visibleMainTabs.includes('SWRL')} onToggleGraphTab={toggleGraphTab} isGraphVisible={visibleMainTabs.includes('Graph')} fileList={listOfFiles} />
+        <TopMenuBar onToggleSwrlTab={toggleSwrlTab} isSwrlVisible={visibleMainTabs.includes('SWRL')} onToggleGraphTab={toggleGraphTab} isGraphVisible={visibleMainTabs.includes('Graph')} fileList={listOfFiles} projectId={projectId}/>
         
         <div className="bg-white border-b border-gray-200 flex-shrink-0">
             <div className="flex items-center justify-between px-4 h-10">
@@ -1057,6 +1054,7 @@ const Dashboard = () => {
                     })}
                 </div>
                  <div className="flex items-center gap-4">
+                    <span className="font-medium text-xs text-gray-600">{projectId}</span>
                     <span className="text-xs text-gray-600">Welcome, {user?.username || 'Guest'}</span>
                     <button onClick={logout} className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-md">
                         <LogOut size={14} />

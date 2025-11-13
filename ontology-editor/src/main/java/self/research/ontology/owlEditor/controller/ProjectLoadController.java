@@ -15,10 +15,12 @@ import self.research.ontology.owlEditor.dto.*;
 import self.research.ontology.owlEditor.service.OntologyIndexService;
 import self.research.ontology.owlEditor.service.OwlParsingService;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.MessageDigest;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import org.springframework.data.mongodb.gridfs.GridFsTemplate;
@@ -63,27 +65,73 @@ public class ProjectLoadController {
                 return ResponseEntity.badRequest().body(createErrorResponse("File is empty"));
             }
 
-            String filename = file.getOriginalFilename();
+            String originalFilename = file.getOriginalFilename();
             String contentType = file.getContentType();
-            logger.info("File received: {} (size: {} bytes) for project: {}", filename, file.getSize(), projectId);
+
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            byte[] fileBytes = file.getBytes();
+            String fileMd5 = java.util.HexFormat.of().formatHex(md.digest(fileBytes)).toLowerCase();
+
+            Query existingQuery = new Query(new Criteria().andOperator(
+                    Criteria.where("metadata.projectId").is(projectId),
+                    new Criteria().orOperator(
+                            Criteria.where("metadata.checksum").is(fileMd5),
+                            Criteria.where("filename").is(originalFilename)
+                    )
+            ));
+            GridFSFile existingFile = gridFsTemplate.findOne(existingQuery);
 
             ObjectId fileId;
-            try (InputStream gridfsStream = file.getInputStream()) {
-                fileId = gridFsTemplate.store(gridfsStream, filename, contentType);
-            }
-            logger.info("Stored file in GridFS with ID: {} for project: {}", fileId, projectId);
+            String storedFilename = originalFilename;
 
-            createOrUpdateProject(projectId, filename, fileId.toString(), "PROCESSING", "Starting to process ontology...");
+            if (existingFile != null) {
+                // Replace existing file ---
+                logger.info("Existing file found for project {} — updating file: {}", projectId, storedFilename);
 
-            try (InputStream parseStream = file.getInputStream()) {
-                owlParsingService.parseAndIndexFromStream(projectId, parseStream, filename);
+                // Delete old file from GridFS
+                gridFsTemplate.delete(Query.query(Criteria.where("_id").is(existingFile.getObjectId())));
+
+                // Upload new version
+                org.bson.Document metadata = new org.bson.Document("projectId", projectId)
+                        .append("uploadTime", new java.util.Date())
+                        .append("checksum", fileMd5)
+                        .append("version", existingFile.getMetadata() != null && existingFile.getMetadata().get("version") != null
+                                ? ((Integer) existingFile.getMetadata().get("version")) + 1
+                                : 1);
+
+                try (InputStream gridfsStream = new ByteArrayInputStream(fileBytes)) {
+                    fileId = gridFsTemplate.store(gridfsStream, storedFilename, contentType, metadata);
+                }
+
+                logger.info("Updated existing file in GridFS with ID: {}", fileId);
+                createOrUpdateProject(projectId, storedFilename, fileId.toString(),
+                        "PROCESSING", "Updated existing ontology file — reprocessing...");
+
+            } else {
+                // --- 🆕 Store new file ---
+                org.bson.Document metadata = new org.bson.Document("projectId", projectId)
+                        .append("uploadTime", new java.util.Date())
+                        .append("checksum", fileMd5)
+                        .append("version", 1);
+
+                try (InputStream gridfsStream = new ByteArrayInputStream(fileBytes)) {
+                    fileId = gridFsTemplate.store(gridfsStream, storedFilename, contentType, metadata);
+                }
+
+                logger.info("Stored new file in GridFS with ID: {} for project: {}", fileId, projectId);
+                createOrUpdateProject(projectId, storedFilename, fileId.toString(),
+                        "PROCESSING", "Starting to process ontology...");
             }
-            
+
+            try (InputStream parseStream = new ByteArrayInputStream(fileBytes)) {
+                owlParsingService.parseAndIndexFromStream(projectId, parseStream, storedFilename);
+            }
+
             Map<String, Object> response = new HashMap<>();
             response.put("success", true);
-            response.put("message", "File uploaded successfully and processing started");
+            response.put("message", "File uploaded/updated successfully and processing started");
             response.put("projectId", projectId);
-            response.put("filename", filename);
+            response.put("filename", storedFilename);
             response.put("fileId", fileId.toString());
             response.put("status", "PROCESSING");
 
@@ -91,8 +139,13 @@ public class ProjectLoadController {
 
         } catch (Exception e) {
             logger.error("Error uploading ontology file for project {}: {}", projectId, e.getMessage(), e);
-            createOrUpdateProject(projectId, (file != null ? file.getOriginalFilename() : "unknown"), null, "ERROR", "Failed to upload file: " + e.getMessage());
-            return ResponseEntity.status(500).body(createErrorResponse("Failed to upload file: " + e.getMessage()));
+            createOrUpdateProject(projectId,
+                    (file != null ? file.getOriginalFilename() : "unknown"),
+                    null,
+                    "ERROR",
+                    "Failed to upload or process file: " + e.getMessage());
+            return ResponseEntity.status(500)
+                    .body(createErrorResponse("Failed to upload or process file: " + e.getMessage()));
         }
     }
 

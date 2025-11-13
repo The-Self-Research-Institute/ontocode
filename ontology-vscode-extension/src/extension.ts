@@ -59,7 +59,6 @@ export function activate(context: vscode.ExtensionContext) {
             // FIX: Don't trigger upload here. Set it as pending.
             panel.setPendingUpload(false, uri);
         }),
-        vscode.commands.registerCommand('ontocode.saveCurrentFileLocal', () => OntoCodePanel.saveCurrentFileLocal()),
         vscode.commands.registerCommand('ontocode.logout', async () => {
             // Fix: Cast context to `any` to access the `secrets` property, bypassing outdated type definitions.
             await (context as any).secrets.delete(TOKEN_KEY);
@@ -129,15 +128,10 @@ class OntoCodePanel {
         this._panel.webview.onDidReceiveMessage(
             async (message: ExtensionMessage) => {
                 switch (message.type) {
-                    // FIX: Add a case to handle the webview's "ready" message
                     case "downloadOntology":
-                        console.log("[OntoCode] Received downloadOntology message.", message);
-                        vscode.window.showInformationMessage("download started...");
+                        console.log("[OntoCode] Received download Ontology message.", message);
+                        vscode.window.showInformationMessage("Download Initiated...");
                         this.downloadOntologyToSaveAs(message.url, message.filename);
-                        break;
-                    case "downloadCurrentOntology":
-                        console.log("[OntoCode] Received downloadCurrentOntology message.", message);
-                        OntoCodePanel.saveCurrentFileLocal();
                         break;
                     case "fileLoaded":
                         console.log("[OntoCode] Received fileLoaded message.", message);
@@ -315,37 +309,6 @@ class OntoCodePanel {
     }
 
 
-    public static async saveCurrentFileLocal() {
-        const fileRef = OntoCodePanel.findBestOwlReference();
-
-        if (!fileRef) {
-            vscode.window.showWarningMessage("No active .owl file found to save. Please open an ontology file and try again.");
-            return;
-        }
-
-        try {
-            const document = ('document' in fileRef) ? fileRef.document : fileRef;
-
-            const fileContent = document.getText();
-            const fullPath = document.uri.path;
-            const fileName = fullPath.substring(fullPath.lastIndexOf('/') + 1);
-            const uri = document.uri; 
-
-            const saveUri = await vscode.window.showSaveDialog({
-                saveLabel: "Save OWL Content",
-                defaultUri: uri.with({ path: uri.path.replace(fileName, `copy-${fileName}`) }),
-                filters: { "OWL/RDF": ["owl", "rdf", "xml", "ttl"] },
-            });
-
-            if (!saveUri) return; 
-            const fileBuffer = new TextEncoder().encode(fileContent);
-            await vscode.workspace.fs.writeFile(saveUri, fileBuffer);
-            vscode.window.showInformationMessage(`Current file saved to: ${saveUri.fsPath}`);
-        } catch (error) {
-            console.error("[OntoCode] Local save failed:", error);
-            vscode.window.showErrorMessage("Failed to save the current file content.");
-        }
-    }
 
     public async downloadOntologyToSaveAs(url: string, suggestedName = "ontology.owl") {
         try {
@@ -429,7 +392,7 @@ class OntoCodePanel {
                 console.log(`[OntoCode] Upload successful for project: ${projectId}`);
                 this._isWebviewReady = false;
                 this.postMessage({ type: 'fileReady', projectId: projectId });
-                vscode.window.showInformationMessage(`Ontology "${fileName}" uploaded successfully. Processing started...`);
+                vscode.window.showInformationMessage(`Ontology "${fileName}" Opened successfully. Processing started...`);
             } else {
                 throw new Error(`Upload failed with status ${response.status}: ${JSON.stringify(response.data)}`);
             }
@@ -469,7 +432,7 @@ class OntoCodePanel {
 
             console.error(`[OntoCode] Final error message: ${errorMessage}`);
             vscode.window.showErrorMessage(`Failed to load ontology: ${errorMessage}`);
-            
+
             // 6. Notify webview of failure, including the error message
             this.postMessage({ type: 'loadingFailed', error: errorMessage });
         }
@@ -488,21 +451,6 @@ class OntoCodePanel {
         );
     }
 
-    private static findBestOwlReference(): FileReference | undefined {
-        const activeEditor = vscode.window.activeTextEditor;
-        if (activeEditor && activeEditor.document.fileName.toLowerCase().endsWith('.owl')) {
-            return activeEditor;
-        }
-
-        const firstOpenOwlDocument = vscode.workspace.textDocuments.find(
-            document => document.fileName.toLowerCase().endsWith('.owl')
-        );
-        if (firstOpenOwlDocument) {
-            return firstOpenOwlDocument;
-        }
-
-        return undefined;
-    }
 
     /**
      * Update the webview content
