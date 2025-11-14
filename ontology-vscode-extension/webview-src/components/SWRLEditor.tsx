@@ -1,13 +1,128 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Trash2, Play, Save, Check, X, AlertCircle, Loader2, Eye, EyeOff, ChevronDown, ChevronRight } from 'lucide-react';
 import apiClient from '../services/apiClient';
-import type { SwrlRule, ValidationResult as SwrlValidationResult, ExecutionResponse } from '../types';
+import type { SwrlRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext } from '../types'; //
 
-interface SWRLEditorProps {
-  projectId: string;
+// Debounce hook to prevent excessive validation API calls
+function useDebounce(value: string, delay: number) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => { 
+    const t = setTimeout(() => setDebounced(value), delay); 
+    return () => clearTimeout(t); 
+  }, [value, delay]);
+  return debounced;
 }
 
-const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId }) => {
+const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext }> = ({ projectId, context }) => {
+  const [query, setQuery] = useState('Pizza(?p) ^ hasTopping(?p, ?t) -> sqWrl:select(?p, ?t)');
+  const [results, setResults] = useState<{ columns: string[], rows: Record<string, any>[] } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const execute = useCallback(async () => {
+    setLoading(true);
+    try {
+      // This component is already wired to the correct API endpoint
+      const res = await apiClient.post<{ columns: string[], rows: Record<string, any>[] }>(
+        `/api/sqwrl/${projectId}/query`, 
+        { query }
+      );
+      setResults(res);
+      // context.notificationService.success('Query executed successfully');
+    } catch (e) {
+      console.error(e); 
+      // context.notificationService.error('Failed to execute query');
+    } finally { setLoading(false); }
+  }, [projectId, query, context]);
+
+  return (
+    <div className="flex flex-col h-full bg-gray-50">
+      <div className="p-4 border-b"><h3 className="text-lg font-semibold text-gray-800">SQWRL Query</h3></div>
+      <div className="p-4 flex-grow flex flex-col gap-4">
+        <textarea className="w-full h-32 p-3 font-mono text-sm border rounded-lg bg-white focus:ring-2 focus:ring-purple-500"
+                  value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Enter SQWRL query…" />
+        <button onClick={execute} disabled={loading} className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-purple-300 text-sm">
+          {loading ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />} Execute Query
+        </button>
+        <div className="flex-grow overflow-auto border rounded-lg bg-white">
+          {!results ? <div className="h-full flex items-center justify-center text-gray-400">Query results will appear here.</div> : (
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-100"><tr>{results.columns.map(c => <th key={c} className="p-2 text-left font-semibold text-gray-600">{c}</th>)}</tr></thead>
+              <tbody className="divide-y divide-gray-200">
+              {results.rows.map((row, i) => (
+                <tr key={i} className="hover:bg-gray-50">{results.columns.map(c => <td key={c} className="p-2 text-gray-700 whitespace-nowrap">{String(row[c] ?? '')}</td>)}</tr>
+              ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = ({ results }) => {
+  const [showInferredAxioms, setShowInferredAxioms] = useState(true);
+
+  if (!results) return (
+    <div className="p-8 text-center text-gray-400">
+      <AlertCircle size={48} className="mx-auto mb-4 opacity-50" />
+      <p>Run rule execution to see results.</p>
+    </div>
+  );
+
+  return (
+    <div className="p-4 space-y-4">
+      <div className="bg-white rounded-lg border p-4">
+        <h3 className="font-semibold text-gray-800 mb-3">Execution Summary</h3>
+        <div className="grid grid-cols-3 gap-4 text-sm">
+          <div><div className="text-gray-500">Status</div><div className={`font-semibold ${results.success ? 'text-green-600' : 'text-red-600'}`}>{results.success ? '✓ Success' : '✗ Failed'}</div></div>
+          <div><div className="text-gray-500">Execution Time</div><div className="font-semibold text-gray-800">{results.executionTimeMs}ms</div></div>
+          <div><div className="text-gray-500">Rules Executed</div><div className="font-semibold text-gray-800">{results.totalRulesExecuted}</div></div>
+        </div>
+      </div>
+      {!results.success && results.errorMessage && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <div className="flex items-start gap-2">
+            <AlertCircle size={20} className="text-red-600 mt-0.5" />
+            <div><div className="font-semibold text-red-800">Execution Failed</div>
+              <div className="text-sm text-red-700 mt-1">{results.errorMessage}</div></div>
+          </div>
+        </div>
+      )}
+      {results.success && results.inferredAxioms.length > 0 && (
+        <div className="bg-white rounded-lg border">
+          <div className="p-4 border-b flex justify-between items-center">
+            <h3 className="font-semibold text-gray-800">Inferred Axioms ({results.inferredAxiomsCount})</h3>
+            <button
+                onClick={() => setShowInferredAxioms(!showInferredAxioms)}
+                className="text-sm text-purple-600 hover:underline flex items-center gap-1"
+              >
+                {showInferredAxioms ? <EyeOff size={14} /> : <Eye size={14} />}
+                {showInferredAxioms ? 'Hide' : 'Show'}
+              </button>
+          </div>
+          {showInferredAxioms && (
+            <div className="max-h-96 overflow-y-auto">
+              {results.inferredAxioms.map((ax, i) => (
+                <div key={i} className="p-3 border-b border-gray-100 hover:bg-gray-50">
+                  <span className="text-xs font-mono bg-purple-100 text-purple-800 px-2 py-1 rounded">{ax.axiomType}</span>
+                  <p className="text-sm text-gray-800 font-mono mt-1">{ax.readable}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {results.success && results.inferredAxiomsCount === 0 && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-center">
+          <p className="text-yellow-800">No new axioms were inferred from the rules.</p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ projectId, context }) => {
   const [rules, setRules] = useState<SwrlRule[]>([]);
   const [selectedRule, setSelectedRule] = useState<SwrlRule | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -23,24 +138,47 @@ const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId }) => {
   const [executionResult, setExecutionResult] = useState<ExecutionResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
-  const [showInferredAxioms, setShowInferredAxioms] = useState(false);
+  const [activeTab, setActiveTab] = useState<'editor' | 'query' | 'results'>('editor');
+
+  const debouncedRuleText = useDebounce(editForm.ruleText, 500);
 
   // Load rules on mount
-  useEffect(() => {
-    loadRules();
-  }, [projectId]);
-
-  const loadRules = async () => {
+  const loadRules = useCallback(async () => {
+    if (!projectId) return;
     setIsLoading(true);
     try {
-      const response = await apiClient.get<SwrlRule[]>(`/api/swrl/${projectId}/rules`);
-      setRules(response.data);
+      const response = await apiClient.get<SwrlRule[]>(`/api/swrl/${projectId}/rules`); //
+      setRules(response);
     } catch (error) {
       console.error('Failed to load SWRL rules:', error);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [projectId]);
+
+  useEffect(() => {
+    loadRules();
+  }, [loadRules]);
+
+  // Validate debounced rule text
+  useEffect(() => {
+    const validate = async () => {
+      if (!isEditing || !debouncedRuleText.trim()) {
+        setValidationResult(null);
+        return;
+      }
+      try {
+        const response = await apiClient.post<SwrlValidationResult>(
+          `/api/swrl/${projectId}/validate`, //
+          { ruleText: debouncedRuleText }
+        );
+        setValidationResult(response);
+      } catch (error) {
+        console.error('Validation failed:', error);
+      }
+    };
+    validate();
+  }, [debouncedRuleText, projectId, isEditing]);
 
   const handleSelectRule = (rule: SwrlRule) => {
     setSelectedRule(rule);
@@ -68,52 +206,26 @@ const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId }) => {
     setValidationResult(null);
   };
 
-  const handleValidate = async () => {
-    if (!editForm.ruleText.trim()) return;
-    
-    try {
-      const response = await apiClient.post<SwrlValidationResult>(
-        `/api/swrl/${projectId}/validate`,
-        { ruleText: editForm.ruleText }
-      );
-      setValidationResult(response.data);
-    } catch (error) {
-      console.error('Validation failed:', error);
-    }
-  };
-
   const handleSave = async () => {
     try {
       if (selectedRule) {
         // Update existing rule
         const response = await apiClient.put<SwrlRule>(
-          `/api/swrl/${projectId}/rules/${selectedRule.id}`,
-          {
-            ruleName: editForm.ruleName,
-            ruleText: editForm.ruleText,
-            comment: editForm.comment,
-            category: editForm.category,
-            enabled: editForm.enabled
-          }
+          `/api/swrl/${projectId}/rules/${selectedRule.id}`, //
+          editForm
         );
         
-        setRules(rules.map(r => r.id === selectedRule.id ? response.data : r));
-        setSelectedRule(response.data);
+        setRules(rules.map(r => r.id === selectedRule.id ? response : r));
+        setSelectedRule(response);
       } else {
         // Create new rule
         const response = await apiClient.post<SwrlRule>(
-          `/api/swrl/${projectId}/rules`,
-          {
-            ruleName: editForm.ruleName,
-            ruleText: editForm.ruleText,
-            comment: editForm.comment,
-            category: editForm.category,
-            enabled: editForm.enabled
-          }
+          `/api/swrl/${projectId}/rules`, //
+          editForm
         );
         
-        setRules([...rules, response.data]);
-        setSelectedRule(response.data);
+        setRules([...rules, response]);
+        setSelectedRule(response);
       }
       
       setIsEditing(false);
@@ -130,7 +242,7 @@ const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId }) => {
     if (!confirm(`Delete rule "${selectedRule.ruleName}"?`)) return;
     
     try {
-      await apiClient.delete(`/api/swrl/${projectId}/rules/${selectedRule.id}`);
+      await apiClient.delete(`/api/swrl/${projectId}/rules/${selectedRule.id}`); //
       setRules(rules.filter(r => r.id !== selectedRule.id));
       setSelectedRule(null);
       setIsEditing(false);
@@ -143,15 +255,15 @@ const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId }) => {
   const handleToggleEnabled = async (rule: SwrlRule) => {
     try {
       const response = await apiClient.put<SwrlRule>(
-        `/api/swrl/${projectId}/rules/${rule.id}`,
-        { enabled: !rule.enabled }
+        `/api/swrl/${projectId}/rules/${rule.id}`, //
+        { enabled: !rule.enabled } // Send only the changed field
       );
       
-      setRules(rules.map(r => r.id === rule.id ? response.data : r));
+      setRules(rules.map(r => r.id === rule.id ? response : r));
       
       if (selectedRule?.id === rule.id) {
-        setSelectedRule(response.data);
-        setEditForm(prev => ({ ...prev, enabled: response.data.enabled }));
+        setSelectedRule(response);
+        setEditForm(prev => ({ ...prev, enabled: response.enabled }));
       }
     } catch (error) {
       console.error('Failed to toggle rule:', error);
@@ -164,10 +276,10 @@ const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId }) => {
     
     try {
       const response = await apiClient.post<ExecutionResponse>(
-        `/api/swrl/${projectId}/execute`
+        `/api/swrl/${projectId}/execute` //
       );
-      setExecutionResult(response.data);
-      setShowInferredAxioms(response.data.inferredAxiomsCount > 0);
+      setExecutionResult(response);
+      setActiveTab('results'); // Switch to results tab on execution
     } catch (error) {
       console.error('Rule execution failed:', error);
       alert('Failed to execute rules');
@@ -176,16 +288,7 @@ const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId }) => {
     }
   };
 
-  const handleClearCache = async () => {
-    try {
-      await apiClient.post(`/api/swrl/${projectId}/cache/clear`);
-      console.log('Cache cleared successfully');
-    } catch (error) {
-      console.error('Failed to clear cache:', error);
-    }
-  };
-
-  const categories = Array.from(new Set(rules.map(r => r.category).filter(Boolean)));
+  const categories = Array.from(new Set(rules.map(r => r.category).filter((s): s is string => !!s)));
   const enabledCount = rules.filter(r => r.enabled).length;
 
   return (
@@ -223,71 +326,11 @@ const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId }) => {
             </button>
           </div>
         </div>
-
-        {executionResult && (
-          <div className={`mt-4 p-3 rounded-lg ${
-            executionResult.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'
-          }`}>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                {executionResult.success ? (
-                  <Check className="text-green-600" size={20} />
-                ) : (
-                  <AlertCircle className="text-red-600" size={20} />
-                )}
-                <span className={`font-medium ${
-                  executionResult.success ? 'text-green-800' : 'text-red-800'
-                }`}>
-                  {executionResult.success ? 'Execution Successful' : 'Execution Failed'}
-                </span>
-              </div>
-              <div className="flex items-center gap-4 text-sm">
-                <span className="text-gray-700">
-                  {executionResult.totalRulesExecuted} rules executed
-                </span>
-                <span className="text-gray-700">
-                  {executionResult.inferredAxiomsCount} axioms inferred
-                </span>
-                <span className="text-gray-700">
-                  {executionResult.executionTimeMs}ms
-                </span>
-              </div>
-            </div>
-            
-            {executionResult.errorMessage && (
-              <p className="mt-2 text-sm text-red-700">{executionResult.errorMessage}</p>
-            )}
-            
-            {executionResult.inferredAxiomsCount > 0 && (
-              <button
-                onClick={() => setShowInferredAxioms(!showInferredAxioms)}
-                className="mt-2 text-sm text-purple-600 hover:underline flex items-center gap-1"
-              >
-                {showInferredAxioms ? <EyeOff size={14} /> : <Eye size={14} />}
-                {showInferredAxioms ? 'Hide' : 'Show'} inferred axioms
-              </button>
-            )}
-          </div>
-        )}
-
-        {showInferredAxioms && executionResult?.inferredAxioms && (
-          <div className="mt-2 p-3 bg-purple-50 border border-purple-200 rounded-lg max-h-48 overflow-y-auto">
-            <h3 className="text-sm font-semibold text-purple-800 mb-2">Inferred Axioms:</h3>
-            <div className="space-y-1">
-              {executionResult.inferredAxioms.map((axiom, idx) => (
-                <div key={idx} className="text-xs font-mono bg-white p-2 rounded border border-purple-100">
-                  <span className="text-purple-600 font-semibold">{axiom.axiomType}</span>
-                  <span className="text-gray-600 ml-2">{axiom.readable}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden p-4 gap-4">
         {/* Rules List */}
-        <aside className="w-80 bg-white border-r border-gray-200 flex flex-col">
+        <aside className="w-80 bg-white border border-gray-200 rounded-lg flex flex-col">
           <div className="p-2 border-b border-gray-200">
             <button
               onClick={handleNewRule}
@@ -346,19 +389,16 @@ const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId }) => {
                     </span>
                   )}
                   <p className="text-xs text-gray-500 truncate font-mono">{rule.ruleText}</p>
-                  {rule.comment && (
-                    <p className="text-xs text-gray-400 mt-1 truncate">{rule.comment}</p>
-                  )}
                 </div>
               ))
             )}
           </div>
         </aside>
 
-        {/* Rule Editor */}
-        <main className="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
+        {/* Rule Editor & Panels */}
+        <main className="flex-1 flex flex-col gap-4 overflow-hidden">
           {!selectedRule && !isEditing ? (
-            <div className="flex items-center justify-center h-full text-gray-400">
+            <div className="flex items-center justify-center h-full text-gray-400 bg-white border border-gray-200 rounded-lg">
               <div className="text-center">
                 <AlertCircle size={64} className="mx-auto mb-4 opacity-20" />
                 <p className="text-lg font-medium">No rule selected</p>
@@ -366,193 +406,141 @@ const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId }) => {
               </div>
             </div>
           ) : (
-            <>
-              <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3 flex-shrink-0">
-                <div className="flex items-center justify-between">
+            <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3 flex flex-col flex-1 overflow-hidden">
+              <div className="flex items-center justify-between">
+                <input
+                  type="text"
+                  value={editForm.ruleName}
+                  onChange={(e) => setEditForm({ ...editForm, ruleName: e.target.value })}
+                  disabled={!isEditing}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-lg font-semibold focus:ring-2 focus:ring-purple-500 focus:outline-none disabled:bg-gray-50"
+                  placeholder="Rule Name"
+                />
+                {!isEditing && (
+                  <button
+                    onClick={() => setIsEditing(true)}
+                    className="ml-2 px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <input
+                  type="text"
+                  value={editForm.category}
+                  onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
+                  disabled={!isEditing}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:outline-none disabled:bg-gray-50"
+                  placeholder="Category (optional)"
+                  list="categories"
+                />
+                <datalist id="categories">
+                  {categories.map(cat => <option key={cat} value={cat} />)}
+                </datalist>
+
+                <label className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg">
                   <input
-                    type="text"
-                    value={editForm.ruleName}
-                    onChange={(e) => setEditForm({ ...editForm, ruleName: e.target.value })}
+                    type="checkbox"
+                    checked={editForm.enabled}
+                    onChange={(e) => setEditForm({ ...editForm, enabled: e.target.checked })}
                     disabled={!isEditing}
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-lg font-semibold focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:bg-gray-50"
-                    placeholder="Rule Name"
+                    className="rounded"
                   />
-                  {!isEditing && (
-                    <button
-                      onClick={() => setIsEditing(true)}
-                      className="ml-2 px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
-                    >
-                      Edit
-                    </button>
+                  <span className="text-sm">Enabled</span>
+                </label>
+              </div>
+
+              <textarea
+                value={editForm.comment}
+                onChange={(e) => setEditForm({ ...editForm, comment: e.target.value })}
+                disabled={!isEditing}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:outline-none disabled:bg-gray-50"
+                placeholder="Comment (optional)"
+                rows={2}
+              />
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Rule Text (SWRL Syntax)
+                </label>
+                <textarea
+                  value={editForm.ruleText}
+                  onChange={(e) => setEditForm({ ...editForm, ruleText: e.target.value })}
+                  disabled={!isEditing}
+                  className="w-full h-32 p-3 font-mono text-sm border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none disabled:bg-gray-50"
+                  placeholder="Example: Person(?p) ^ hasAge(?p, ?age) ^ swrlb:greaterThan(?age, 18) -> Adult(?p)"
+                />
+              </div>
+
+              {validationResult && (
+                <div className={`p-3 rounded-lg ${
+                  validationResult.valid
+                    ? 'bg-green-50 border border-green-200'
+                    : 'bg-red-50 border border-red-200'
+                }`}>
+                  <div className="flex items-center gap-2">
+                    {validationResult.valid ? <Check className="text-green-600" size={20} /> : <AlertCircle className="text-red-600" size={20} />}
+                    <span className={`text-sm font-medium ${validationResult.valid ? 'text-green-800' : 'text-red-800'}`}>
+                      {validationResult.valid ? 'Valid SWRL Rule' : 'Invalid SWRL Rule'}
+                    </span>
+                  </div>
+                  {validationResult.errorMessage && (
+                    <p className="mt-2 text-sm text-red-700">{validationResult.errorMessage}</p>
                   )}
                 </div>
+              )}
 
-                <div className="grid grid-cols-2 gap-3">
-                  <input
-                    type="text"
-                    value={editForm.category}
-                    onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
-                    disabled={!isEditing}
-                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:bg-gray-50"
-                    placeholder="Category (optional)"
-                    list="categories"
-                  />
-                  <datalist id="categories">
-                    {categories.map(cat => <option key={cat} value={cat} />)}
-                  </datalist>
-
-                  <label className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg">
-                    <input
-                      type="checkbox"
-                      checked={editForm.enabled}
-                      onChange={(e) => setEditForm({ ...editForm, enabled: e.target.checked })}
-                      disabled={!isEditing}
-                      className="rounded"
-                    />
-                    <span className="text-sm">Enabled</span>
-                  </label>
+              {isEditing && (
+                <div className="flex items-center justify-end gap-2 pt-3 border-t border-gray-200">
+                  <button
+                    onClick={handleDelete}
+                    disabled={!selectedRule}
+                    className="px-4 py-2 text-sm text-red-600 bg-red-50 hover:bg-red-100 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Trash2 size={16} className="inline mr-1" />
+                    Delete
+                  </button>
+                  <div className="flex-grow" />
+                  <button
+                    onClick={() => {
+                      setIsEditing(false);
+                      if (selectedRule) {
+                        handleSelectRule(selectedRule);
+                      }
+                    }}
+                    className="px-4 py-2 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSave}
+                    disabled={!editForm.ruleText.trim()}
+                    className="px-4 py-2 text-sm text-white bg-purple-600 hover:bg-purple-700 rounded-lg disabled:bg-purple-300 disabled:cursor-not-allowed"
+                  >
+                    <Save size={16} className="inline mr-1" />
+                    Save
+                  </button>
                 </div>
-
-                <textarea
-                  value={editForm.comment}
-                  onChange={(e) => setEditForm({ ...editForm, comment: e.target.value })}
-                  disabled={!isEditing}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:bg-gray-50"
-                  placeholder="Comment (optional)"
-                  rows={2}
-                />
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Rule Text (SWRL Syntax)
-                  </label>
-                  <textarea
-                    value={editForm.ruleText}
-                    onChange={(e) => setEditForm({ ...editForm, ruleText: e.target.value })}
-                    disabled={!isEditing}
-                    className="w-full h-32 p-3 font-mono text-sm border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:bg-gray-50"
-                    placeholder="Example: Person(?p) ^ hasAge(?p, ?age) ^ swrlb:greaterThan(?age, 18) -> Adult(?p)"
-                  />
-                </div>
-
-                {validationResult && (
-                  <div className={`p-3 rounded-lg ${
-                    validationResult.valid
-                      ? 'bg-green-50 border border-green-200'
-                      : 'bg-red-50 border border-red-200'
-                  }`}>
-                    <div className="flex items-center gap-2">
-                      {validationResult.valid ? (
-                        <Check className="text-green-600" size={20} />
-                      ) : (
-                        <AlertCircle className="text-red-600" size={20} />
-                      )}
-                      <span className={`text-sm font-medium ${
-                        validationResult.valid ? 'text-green-800' : 'text-red-800'
-                      }`}>
-                        {validationResult.valid ? 'Valid SWRL Rule' : 'Invalid SWRL Rule'}
-                      </span>
-                    </div>
-                    {validationResult.errorMessage && (
-                      <p className="mt-2 text-sm text-red-700">{validationResult.errorMessage}</p>
-                    )}
-                  </div>
-                )}
-
-                {isEditing && (
-                  <div className="flex items-center justify-end gap-2 pt-3 border-t border-gray-200">
-                    <button
-                      onClick={handleValidate}
-                      className="px-4 py-2 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg"
-                    >
-                      Validate
-                    </button>
-                    
-                    {selectedRule && (
-                      <button
-                        onClick={handleDelete}
-                        className="px-4 py-2 text-sm text-red-600 bg-red-50 hover:bg-red-100 rounded-lg"
-                      >
-                        <Trash2 size={16} className="inline mr-1" />
-                        Delete
-                      </button>
-                    )}
-                    
-                    <button
-                      onClick={() => {
-                        setIsEditing(false);
-                        if (selectedRule) {
-                          handleSelectRule(selectedRule);
-                        }
-                      }}
-                      className="px-4 py-2 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg"
-                    >
-                      Cancel
-                    </button>
-                    
-                    <button
-                      onClick={handleSave}
-                      disabled={!editForm.ruleText.trim()}
-                      className="px-4 py-2 text-sm text-white bg-purple-600 hover:bg-purple-700 rounded-lg disabled:bg-purple-300 disabled:cursor-not-allowed"
-                    >
-                      <Save size={16} className="inline mr-1" />
-                      Save
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* SWRL Syntax Help */}
-              <div className="bg-white rounded-lg border border-gray-200 p-4 overflow-y-auto">
-                <h3 className="font-semibold text-gray-800 mb-3">SWRL Syntax Reference</h3>
-                
-                <div className="space-y-3 text-sm">
-                  <div>
-                    <h4 className="font-medium text-gray-700 mb-1">Basic Structure</h4>
-                    <code className="block bg-gray-100 p-2 rounded font-mono text-xs">
-                      antecedent -&gt; consequent
-                    </code>
-                  </div>
-
-                  <div>
-                    <h4 className="font-medium text-gray-700 mb-1">Examples</h4>
-                    <div className="space-y-2">
-                      <div>
-                        <p className="text-gray-600 text-xs mb-1">All parents are adults:</p>
-                        <code className="block bg-gray-100 p-2 rounded font-mono text-xs">
-                          Person(?x) ^ hasChild(?x, ?y) -&gt; Adult(?x)
-                        </code>
-                      </div>
-                      <div>
-                        <p className="text-gray-600 text-xs mb-1">People over 18 are adults:</p>
-                        <code className="block bg-gray-100 p-2 rounded font-mono text-xs">
-                          Person(?p) ^ hasAge(?p, ?age) ^ swrlb:greaterThan(?age, 18) -&gt; Adult(?p)
-                        </code>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <h4 className="font-medium text-gray-700 mb-1">Operators</h4>
-                    <ul className="list-disc list-inside text-gray-600 text-xs space-y-1">
-                      <li>^ - AND (conjunction)</li>
-                      <li>-&gt; - implies</li>
-                      <li>?x, ?y - variables</li>
-                    </ul>
-                  </div>
-
-                  <div>
-                    <h4 className="font-medium text-gray-700 mb-1">Built-ins (swrlb:)</h4>
-                    <ul className="list-disc list-inside text-gray-600 text-xs space-y-1">
-                      <li>greaterThan, lessThan, equal</li>
-                      <li>add, subtract, multiply, divide</li>
-                      <li>stringConcat, stringLength</li>
-                    </ul>
-                  </div>
-                </div>
-              </div>
-            </>
+              )}
+            </div>
           )}
+          
+          {/* Tabs for SQWRL/Results */}
+          <div className="flex-1 flex flex-col bg-white border border-gray-200 rounded-lg overflow-hidden min-h-0">
+            <div className="flex items-center gap-2 text-xs p-2 border-b bg-gray-50">
+              <button onClick={() => setActiveTab('query')} className={`px-3 py-1 rounded ${activeTab === 'query' ? 'bg-purple-100 text-purple-700' : 'text-gray-600 hover:bg-gray-100'}`}>SQWRL Query</button>
+              <button onClick={() => setActiveTab('results')} className={`px-3 py-1 rounded ${activeTab === 'results' ? 'bg-purple-100 text-purple-700' : 'text-gray-600 hover:bg-gray-100'}`}>Execution Results</button>
+            </div>
+
+            <div className="flex-1 overflow-auto">
+              {activeTab === 'query'
+                ? <SQWRLQueryPanel projectId={projectId} context={context} />
+                : <ExecutionResultsPanel results={executionResult} />
+              }
+            </div>
+          </div>
         </main>
       </div>
     </div>

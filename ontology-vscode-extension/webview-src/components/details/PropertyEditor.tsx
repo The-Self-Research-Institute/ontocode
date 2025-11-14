@@ -9,7 +9,12 @@ const MultiSelectItem: React.FC<{
 }> = ({ item, onDelete }) => (
     <div className="group flex justify-between items-center bg-gray-50 p-1.5 rounded-sm text-xs">
         <span>{item.split('#').pop() || item}</span>
-        <button onClick={() => onDelete(item)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200">
+        <button 
+          onClick={() => onDelete(item)} 
+          className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200"
+          title={`Remove ${item.split('#').pop()}`}
+          aria-label={`Remove ${item.split('#').pop()}`}
+        >
             <Trash2 size={12} className="text-red-600"/>
         </button>
     </div>
@@ -37,7 +42,14 @@ const MultiSelectSection: React.FC<{
          <div className="border border-gray-200 rounded-sm">
              <div className="p-1 text-xs bg-gray-100 border-b flex justify-between items-center">
                  <span>{title}</span>
-                 <button onClick={() => setIsAdding(true)} className="p-0.5 hover:bg-gray-300 rounded"><Plus size={14}/></button>
+                 <button 
+                   onClick={() => setIsAdding(true)} 
+                   className="p-0.5 hover:bg-gray-300 rounded"
+                   title={`Add ${title.slice(0, -1)}`}
+                   aria-label={`Add ${title.slice(0, -1)}`}
+                 >
+                    <Plus size={14}/>
+                 </button>
              </div>
              <div className="p-1.5 space-y-1">
                  {items?.map(item => <MultiSelectItem key={item} item={item} onDelete={onDelete} />)}
@@ -74,7 +86,9 @@ const PropertyEditor: React.FC<{
   activeTheme?: string;
 }> = ({ item, onUpdate, onAddAnnotation, onDeleteAnnotation, activeTheme }) => {
     const isObjectProperty = item.type === 'ObjectProperty';
-    const characteristics = isObjectProperty ? ['Functional', 'Inverse functional', 'Transitive', 'Symmetric', 'Asymmetric', 'Reflexive', 'Irreflexive'] : ['Functional'];
+    const characteristics = isObjectProperty 
+        ? ['Functional', 'Inverse functional', 'Transitive', 'Symmetric', 'Asymmetric', 'Reflexive', 'Irreflexive'] 
+        : ['Functional'];
     
     const handleCharacteristicChange = (char: string, checked: boolean) => {
         const currentChars = item.characteristics || [];
@@ -85,7 +99,16 @@ const PropertyEditor: React.FC<{
     return (
         <div className="flex gap-2 h-full">
             <div className="w-1/3 flex flex-col gap-2">
-                <Panel title={`Annotations: ${item.label}`} actions={<button onClick={onAddAnnotation} className="p-0.5 hover:bg-black/20 rounded-full"><Plus size={14}/></button>} themeColor={activeTheme}>
+                <Panel 
+                  title={`Annotations: ${item.label}`} 
+                  actions={<button 
+                              onClick={onAddAnnotation} 
+                              className="p-0.5 hover:bg-black/20 rounded-full"
+                              title="Add annotation"
+                              aria-label="Add annotation"
+                            ><Plus size={14}/></button>} 
+                  themeColor={activeTheme}
+                >
                     <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} />
                 </Panel>
                 <Panel title="Characteristics" themeColor={activeTheme}>

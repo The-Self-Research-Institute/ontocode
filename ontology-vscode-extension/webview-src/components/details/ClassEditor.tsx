@@ -53,7 +53,8 @@ const ClassEditor: React.FC<{
   onUpdate: (updatedItem: TreeNode) => void;
   onAddAnnotation: () => void;
   onDeleteAnnotation: (key: string) => void;
-}> = ({ item, onUpdate, onAddAnnotation, onDeleteAnnotation }) => {
+  activeTheme?: string; // This prop was in your file
+}> = ({ item, onUpdate, onAddAnnotation, onDeleteAnnotation, activeTheme }) => {
 
   const handleAddAxiom = (type: AxiomType, definition: string) => {
     const newAxiom: Axiom = { id: `axiom-${Date.now()}`, type, definition };
@@ -95,11 +96,12 @@ const ClassEditor: React.FC<{
       <Panel
         title={`Annotations: ${item.label}`}
         actions={<button onClick={onAddAnnotation} className="p-0.5 hover:bg-black/20 rounded-full"><Plus size={14} /></button>}
+        themeColor={activeTheme}
       >
         <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} />
       </Panel>
 
-      <Panel title={`Description: ${item.label}`} defaultOpen={true}>
+      <Panel title={`Description: ${item.label}`} defaultOpen={true} themeColor={activeTheme}>
         <div className="space-y-1 p-1">
           <AxiomSection
             title="Equivalent To"

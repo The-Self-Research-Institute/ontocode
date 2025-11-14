@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   Upload, Download, Save, Settings, Play, CheckCircle, AlertTriangle, 
   FileText, Search, BarChart3, Loader2, Package, GitBranch, Database, 
@@ -18,7 +18,8 @@ import { pluginManager } from '../plugins/PluginSystem';
 import { SWRLPlugin, ReasoningPlugin } from '../plugins/PluginRegistry';
 import type { 
   TreeNode, Property, Individual, SelectableItem, OntologyMetadata, 
-  OntologyPrefix, ProjectStatus, ValidationResult, OntologyStatistics 
+  OntologyPrefix, ProjectStatus, ValidationResult, OntologyStatistics, 
+  OntologyClassNode
 } from '../types';
 
 type TabType = 'Entities' | 'SPARQL' | 'Validation' | 'Statistics' | string;
@@ -29,13 +30,11 @@ const Dashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('Entities');
   const [entitiesTab, setEntitiesTab] = useState<EntitiesTabType>('Classes');
   
-  // Project state
   const [projectStatus, setProjectStatus] = useState<ProjectStatus | null>(null);
   const [metadata, setMetadata] = useState<OntologyMetadata | null>(null);
   const [prefixes, setPrefixes] = useState<OntologyPrefix[]>([]);
   const [statistics, setStatistics] = useState<OntologyStatistics | null>(null);
   
-  // Entity data
   const [classes, setClasses] = useState<TreeNode[]>([]);
   const [objectProperties, setObjectProperties] = useState<Property[]>([]);
   const [dataProperties, setDataProperties] = useState<Property[]>([]);
@@ -43,7 +42,6 @@ const Dashboard: React.FC = () => {
   const [individuals, setIndividuals] = useState<Individual[]>([]);
   const [datatypes, setDatatypes] = useState<string[]>([]);
   
-  // UI state
   const [selectedItem, setSelectedItem] = useState<SelectableItem | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -51,10 +49,10 @@ const Dashboard: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   
-  // Active plugins
   const [activePlugins, setActivePlugins] = useState<string[]>([]);
+  
+  const pollIntervalRef = useRef<number | null>(null);
 
-  // Initialize plugin system
   useEffect(() => {
     pluginManager.registerPlugins([SWRLPlugin, ReasoningPlugin]);
     
@@ -68,31 +66,34 @@ const Dashboard: React.FC = () => {
     
     return () => {
       pluginManager.clearAll();
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
     };
   }, []);
 
-  // Update plugin context when project changes
   useEffect(() => {
     if (projectId) {
       pluginManager.setContext({ projectId, ontology: metadata });
     }
   }, [projectId, metadata]);
 
-  // Load project data
   const loadProject = useCallback(async (pid: string) => {
     setIsLoading(true);
     try {
-      // Load project status
       const statusRes = await apiClient.get<{ data: ProjectStatus }>(`/api/ontology/status/${pid}`);
-      setProjectStatus(statusRes.data.data);
+      setProjectStatus(statusRes.data);
       
-      if (statusRes.data.data.status !== 'COMPLETED') {
-        // Poll for completion
-        setTimeout(() => loadProject(pid), 2000);
+      if (statusRes.data.status !== 'COMPLETED') {
+        pollIntervalRef.current = window.setTimeout(() => loadProject(pid), 2000);
         return;
       }
       
-      // Load all data in parallel
+      if (pollIntervalRef.current) {
+        clearTimeout(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+      
       const [metadataRes, prefixesRes, statsRes, classesRes, objPropsRes, dataPropsRes, annPropsRes, individualsRes, datatypesRes] = 
         await Promise.all([
           apiClient.get<{ data: OntologyMetadata }>(`/api/ontology/metadata/${pid}`),
@@ -100,25 +101,24 @@ const Dashboard: React.FC = () => {
           apiClient.get<{ data: OntologyStatistics }>(`/api/ontology/statistics/${pid}`),
           apiClient.get<{ classes: TreeNode[] }>(`/api/ontology/all-classes?projectId=${pid}`),
           apiClient.get<{ data: Property[] }>(`/api/ontology/properties/${pid}`),
-          apiClient.get<{ data: Property[] }>(`/api/ontology/properties/${pid}`),
+          apiClient.get<{ data: Property[] }>(`/api/ontology/properties/${pid}`), // This seems redundant, but keeping as is
           apiClient.get<{ data: Property[] }>(`/api/ontology/annotation-properties/${pid}`),
           apiClient.get<{ data: Individual[] }>(`/api/ontology/individuals/${pid}`),
           apiClient.get<{ data: string[] }>(`/api/ontology/datatypes/${pid}`)
         ]);
       
-      setMetadata(metadataRes.data.data);
-      setPrefixes(prefixesRes.data.data);
-      setStatistics(statsRes.data.data);
-      setClasses(classesRes.data.classes);
+      setMetadata(metadataRes.data);
+      setPrefixes(prefixesRes.data);
+      setStatistics(statsRes.data);
+      setClasses(classesRes.classes);
       
-      // Filter properties by type
-      const allProps = objPropsRes.data.data;
+      const allProps = objPropsRes.data;
       setObjectProperties(allProps.filter(p => p.type === 'ObjectProperty'));
-      setDataProperties(dataPropsRes.data.data.filter(p => p.type === 'DatatypeProperty'));
-      setAnnotationProperties(annPropsRes.data.data);
+      setDataProperties(dataPropsRes.data.filter(p => p.type === 'DatatypeProperty'));
+      setAnnotationProperties(annPropsRes.data);
       
-      setIndividuals(individualsRes.data.data);
-      setDatatypes(datatypesRes.data.data);
+      setIndividuals(individualsRes.data);
+      setDatatypes(datatypesRes.data);
       
     } catch (error) {
       console.error('Failed to load project:', error);
@@ -127,7 +127,49 @@ const Dashboard: React.FC = () => {
     }
   }, []);
 
-  // Handle file upload
+  useEffect(() => {
+    if (window.vscode) {
+      window.vscode.postMessage({ type: 'webviewReady' });
+    }
+
+    const handleMessage = (event: MessageEvent) => {
+      const message = event.data;
+      if (!message) return;
+
+      switch (message.type) {
+        case 'fileReady':
+          console.log("Flow: Received 'fileReady', starting to poll.", message.projectId);
+          setProjectId(message.projectId);
+          setIsLoading(true);
+          
+          if (pollIntervalRef.current) {
+             clearInterval(pollIntervalRef.current);
+          }
+          pollIntervalRef.current = window.setInterval(() => {
+            loadProject(message.projectId); // This component's poll logic calls loadProject directly
+          }, 2000);
+          break;
+        
+        case 'showLogin':
+          console.log("Flow: Received 'showLogin'. UI should show login form.");
+          break;
+        
+        case 'loadingFailed':
+          setIsLoading(false);
+          console.error("Flow: Received 'loadingFailed'", message.error);
+          break;
+      }
+    };
+    
+    window.addEventListener('message', handleMessage);
+    return () => {
+      window.removeEventListener('message', handleMessage);
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, [loadProject]); // Added loadProject as dependency
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -154,13 +196,12 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  // Handle export
   const handleExport = async () => {
     if (!projectId) return;
     
     try {
       const response = await apiClient.get<Blob>(`/api/ontology/export/${projectId}`);
-      const blob = new Blob([response.data]);
+      const blob = new Blob([response]);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -173,33 +214,29 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  // Handle save
   const handleSave = async () => {
     if (!projectId || !selectedItem) return;
     
     setIsSaving(true);
     try {
       if ('children' in selectedItem) {
-        // Class
         await apiClient.put(`/api/ontology/classes/${projectId}`, {
           iri: selectedItem.id,
           label: selectedItem.label,
-          parentIri: selectedItem.parent
+          parentIri: (selectedItem as TreeNode).parent
         });
       } else if ('type' in selectedItem && (selectedItem.type === 'ObjectProperty' || selectedItem.type === 'DatatypeProperty')) {
-        // Property
         await apiClient.put(`/api/ontology/properties/${projectId}`, {
           iri: selectedItem.id,
           label: selectedItem.label,
-          domains: selectedItem.domains,
-          ranges: selectedItem.ranges
+          domains: (selectedItem as Property).domains,
+          ranges: (selectedItem as Property).ranges
         });
       } else if ('types' in selectedItem) {
-        // Individual
         await apiClient.put(`/api/ontology/individuals/${projectId}`, {
           iri: selectedItem.id,
           label: selectedItem.label,
-          types: selectedItem.types
+          types: (selectedItem as Individual).types
         });
       }
       
@@ -212,7 +249,6 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  // Handle validation
   const handleValidate = async () => {
     if (!projectId) return;
     
@@ -221,7 +257,7 @@ const Dashboard: React.FC = () => {
       const response = await apiClient.post<{ validation: ValidationResult }>(
         `/api/ontology/validate/${projectId}`
       );
-      setValidationResult(response.data.validation);
+      setValidationResult(response.validation);
       setActiveTab('Validation');
     } catch (error) {
       console.error('Validation failed:', error);
@@ -230,7 +266,6 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  // Handle reasoner execution
   const handleRunReasoner = async () => {
     if (!projectId) return;
     
@@ -246,10 +281,12 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  // Handle search using Neo4j fast search
   const handleSearch = async (query: string) => {
     if (!projectId || !query.trim()) {
       setSearchQuery('');
+      // Note: This does not reload the original tree, it just clears the search query.
+      // The original data is still in the 'classes' state, etc.
+      // We rely on the filter logic below.
       return;
     }
     
@@ -260,10 +297,11 @@ const Dashboard: React.FC = () => {
         `/api/graph/${projectId}/search?query=${encodeURIComponent(query)}`
       );
       
-      // Update the current tab data with search results
+      // We assume the search endpoint returns results appropriate for the current tab.
+      // This implementation sets the main data array to the search results.
       switch (entitiesTab) {
         case 'Classes':
-          setClasses(response.data as TreeNode[]);
+          setClasses(response as TreeNode[]);
           break;
         // Add other cases as needed
       }
@@ -272,7 +310,6 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  // Get filtered data based on current tab and search
   const getFilteredData = (): SelectableItem[] => {
     let data: SelectableItem[] = [];
     
@@ -293,24 +330,24 @@ const Dashboard: React.FC = () => {
         data = individuals;
         break;
       case 'Datatypes':
-        data = datatypes.map(dt => ({ id: dt, label: dt.split('#').pop() || dt }));
+        data = datatypes.map(dt => ({ id: dt, label: dt.split('#').pop() || dt, annotations: {} }));
         break;
     }
     
-    if (searchQuery && !data.length) {
-      // If search is active and we have no data, it means search returned empty
+    // This logic is slightly different from the previous file.
+    // If search is active, we assume 'data' already *is* the search results
+    // from handleSearch. If no search is active, we just return the full data.
+    if (searchQuery && data.length === 0) {
       return [];
     }
     
     return data;
   };
 
-  // Handle entity selection
   const handleSelectItem = (item: SelectableItem) => {
     setSelectedItem(item);
   };
 
-  // Handle node expansion (load children from Neo4j)
   const handleToggleNode = async (nodeId: string) => {
     const index = expandedNodes.indexOf(nodeId);
     
@@ -319,18 +356,16 @@ const Dashboard: React.FC = () => {
     } else {
       setExpandedNodes([...expandedNodes, nodeId]);
       
-      // Load children from Neo4j if not already loaded
       if (entitiesTab === 'Classes') {
         try {
           const response = await apiClient.get<TreeNode[]>(
             `/api/graph/${projectId}/hierarchy/children?parentIri=${encodeURIComponent(nodeId)}`
           );
           
-          // Update the tree with children
           const updateTreeWithChildren = (nodes: TreeNode[]): TreeNode[] => {
             return nodes.map(node => {
               if (node.id === nodeId) {
-                return { ...node, children: response.data };
+                return { ...node, children: response };
               }
               if (node.children) {
                 return { ...node, children: updateTreeWithChildren(node.children) };
@@ -347,7 +382,6 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  // Handle adding items
   const handleAddItem = async (type: 'subclass' | 'sibling' | 'individual') => {
     if (!projectId) return;
     
@@ -367,10 +401,10 @@ const Dashboard: React.FC = () => {
         await apiClient.post(`/api/ontology/classes/${projectId}`, {
           iri,
           label,
-          parentIri: selectedItem.parent
+          parentIri: (selectedItem as TreeNode).parent
         });
       } else if (type === 'individual') {
-        const classIri = selectedItem ? selectedItem.id : 'owl:Thing';
+        const classIri = (selectedItem && 'children' in selectedItem) ? selectedItem.id : 'http://www.w3.org/2002/07/owl#Thing';
         await apiClient.post(`/api/ontology/individuals/${projectId}`, {
           iri,
           label,
@@ -385,18 +419,17 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  // Handle deleting items
   const handleDeleteItem = async () => {
     if (!projectId || !selectedItem) return;
     
     if (!confirm(`Delete "${selectedItem.label}"?`)) return;
     
     try {
-      if ('children' in selectedItem) {
+      if (entitiesTab === 'Classes') {
         await apiClient.delete(`/api/ontology/classes/${projectId}?iri=${encodeURIComponent(selectedItem.id)}`);
-      } else if ('types' in selectedItem) {
+      } else if (entitiesTab === 'Individuals') {
         await apiClient.delete(`/api/ontology/individuals/${projectId}?iri=${encodeURIComponent(selectedItem.id)}`);
-      } else if ('type' in selectedItem) {
+      } else if (entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties' || entitiesTab === 'AnnotationProperties') {
         await apiClient.delete(`/api/ontology/properties/${projectId}?iri=${encodeURIComponent(selectedItem.id)}`);
       }
       
@@ -408,7 +441,6 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  // Render entity editor
   const renderEditor = () => {
     if (!selectedItem) {
       return (
@@ -421,28 +453,28 @@ const Dashboard: React.FC = () => {
       );
     }
     
-    if ('children' in selectedItem) {
+    if (entitiesTab === 'Classes') {
       return (
         <ClassEditor
-          item={selectedItem}
+          item={selectedItem as TreeNode}
           onUpdate={setSelectedItem}
           onAddAnnotation={() => {}}
           onDeleteAnnotation={() => {}}
         />
       );
-    } else if ('type' in selectedItem && (selectedItem.type === 'ObjectProperty' || selectedItem.type === 'DatatypeProperty')) {
+    } else if (entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties') {
       return (
         <PropertyEditor
-          item={selectedItem}
+          item={selectedItem as Property}
           onUpdate={setSelectedItem}
           onAddAnnotation={() => {}}
           onDeleteAnnotation={() => {}}
         />
       );
-    } else if ('types' in selectedItem) {
+    } else if (entitiesTab === 'Individuals') {
       return (
         <IndividualEditor
-          item={selectedItem}
+          item={selectedItem as Individual}
           onUpdate={setSelectedItem}
           onAddAnnotation={() => {}}
           onDeleteAnnotation={() => {}}
@@ -453,44 +485,76 @@ const Dashboard: React.FC = () => {
     return null;
   };
 
-  // Render main content based on active tab
   const renderContent = () => {
-    if (activeTab === 'Entities') {
+    if (isLoading && !projectId) {
       return (
-        <div className="flex h-full">
-          <EntityHierarchy
-            entitiesTab={entitiesTab}
-            filteredData={getFilteredData()}
-            selectedItem={selectedItem}
-            expandedNodes={expandedNodes}
-            searchQuery={searchQuery}
-            onSearchQueryChange={handleSearch}
-            onSelectItem={handleSelectItem}
-            onToggleNode={handleToggleNode}
-            onAddItem={handleAddItem}
-            onDeleteItem={handleDeleteItem}
-          />
-          <div className="flex-1 p-4 overflow-y-auto bg-gray-50">
-            {renderEditor()}
+        <div className="flex items-center justify-center h-full">
+          <div className="text-center">
+            <Loader2 size={48} className="animate-spin text-purple-600 mx-auto mb-4" />
+            <p className="text-gray-600">Loading ontology...</p>
+            {projectStatus && (
+              <p className="text-sm text-gray-500 mt-2">{projectStatus.statusMessage}</p>
+            )}
           </div>
         </div>
       );
-    } else if (activeTab === 'SPARQL') {
-      return <SparqlQueryEditor projectId={projectId} prefixes={prefixes} />;
-    } else if (activeTab === 'Validation') {
-      return <ValidationPanel projectId={projectId} validationResult={validationResult} onValidate={handleValidate} />;
-    } else if (activeTab === 'Statistics') {
-      return <StatisticsPanel projectId={projectId} statistics={statistics} />;
+    } else if (!projectId) {
+      return (
+        <div className="flex items-center justify-center h-full">
+          <div className="text-center">
+            <Package size={64} className="mx-auto mb-4 text-gray-300" />
+            <h2 className="text-xl font-semibold text-gray-700 mb-2">No Ontology Loaded</h2>
+            <p className="text-gray-500 mb-6">Upload an OWL file to get started</p>
+            <label className="inline-flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 cursor-pointer transition-colors">
+              <Upload size={20} />
+              <span>Upload Ontology</span>
+              <input
+                type="file"
+                accept=".owl,.rdf,.xml"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+            </label>
+          </div>
+        </div>
+      );
     } else {
-      // Plugin tabs
-      const plugin = pluginManager.getPlugin(activeTab);
-      if (plugin?.component) {
-        const PluginComponent = plugin.component;
-        return <PluginComponent projectId={projectId} onNodeClick={handleSelectItem} />;
+      switch(activeTab) {
+        case 'Entities':
+          return (
+            <div className="flex h-full">
+              <EntityHierarchy
+                entitiesTab={entitiesTab}
+                filteredData={getFilteredData()}
+                selectedItem={selectedItem}
+                expandedNodes={expandedNodes}
+                searchQuery={searchQuery}
+                onSearchQueryChange={handleSearch}
+                onSelectItem={handleSelectItem}
+                onToggleNode={handleToggleNode}
+                onAddItem={handleAddItem}
+                onDeleteItem={handleDeleteItem}
+              />
+              <div className="flex-1 p-4 overflow-y-auto bg-gray-50">
+                {renderEditor()}
+              </div>
+            </div>
+          );
+        case 'SPARQL':
+          return <SparqlQueryEditor projectId={projectId} prefixes={prefixes} />;
+        case 'Validation':
+          return <ValidationPanel projectId={projectId} validationResult={validationResult} onValidate={handleValidate} />;
+        case 'Statistics':
+          return <StatisticsPanel projectId={projectId} statistics={statistics} />;
+        default:
+          const plugin = pluginManager.getPlugin(activeTab);
+          if (plugin?.component) {
+            const PluginComponent = plugin.component;
+            return <PluginComponent projectId={projectId} onNodeClick={handleSelectItem} />;
+          }
+          return null;
       }
     }
-    
-    return null;
   };
 
   const entitiesTabsConfig = [
@@ -504,7 +568,6 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className="h-screen flex flex-col bg-gray-100">
-      {/* Header */}
       <header className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white p-4 shadow-lg">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -572,7 +635,6 @@ const Dashboard: React.FC = () => {
         </div>
       </header>
 
-      {/* Main Tabs */}
       <div className="bg-white border-b border-gray-200 flex items-center px-4">
         <button
           onClick={() => setActiveTab('Entities')}
@@ -647,7 +709,6 @@ const Dashboard: React.FC = () => {
         </button>
       </div>
 
-      {/* Entity Sub-Tabs */}
       {activeTab === 'Entities' && (
         <div className="bg-gray-50 border-b border-gray-200 flex items-center px-4 gap-1">
           {entitiesTabsConfig.map(tab => (
@@ -667,39 +728,8 @@ const Dashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Main Content */}
       <div className="flex-1 overflow-hidden">
-        {isLoading && !projectId ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center">
-              <Loader2 size={48} className="animate-spin text-purple-600 mx-auto mb-4" />
-              <p className="text-gray-600">Loading ontology...</p>
-              {projectStatus && (
-                <p className="text-sm text-gray-500 mt-2">{projectStatus.statusMessage}</p>
-              )}
-            </div>
-          </div>
-        ) : !projectId ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center">
-              <Package size={64} className="mx-auto mb-4 text-gray-300" />
-              <h2 className="text-xl font-semibold text-gray-700 mb-2">No Ontology Loaded</h2>
-              <p className="text-gray-500 mb-6">Upload an OWL file to get started</p>
-              <label className="inline-flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 cursor-pointer transition-colors">
-                <Upload size={20} />
-                <span>Upload Ontology</span>
-                <input
-                  type="file"
-                  accept=".owl,.rdf,.xml"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                />
-              </label>
-            </div>
-          </div>
-        ) : (
-          renderContent()
-        )}
+        {renderContent()}
       </div>
     </div>
   );

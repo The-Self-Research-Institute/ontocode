@@ -1,102 +1,204 @@
-// Helper to generate unique IDs for requests
-const generateRequestId = () => `req-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+// services/apiClient.ts
+import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from 'axios';
 
-// A map to store pending requests with their promise resolve/reject functions
-const pendingRequests = new Map<string, { resolve: (value: any) => void; reject: (reason?: any) => void }>();
+const BASE_URL = 'http://localhost:8082'; // Your backend gateway
+const TIMEOUT = 60_000; // 60-second timeout for requests
 
-// A single, global message listener to handle responses from the VS Code extension
-window.addEventListener('message', (event) => {
-    const message = event.data;
-    // We only care about messages that are API responses
-    if (message.type === 'apiResponse') {
-        const { requestId, response, error } = message;
-        const promise = pendingRequests.get(requestId);
-
-        if (promise) {
-            if (error) {
-                console.error(`[API Client] Error for request ${requestId}:`, error);
-                // Create an error object that resembles an Axios error for better compatibility
-                // with existing catch blocks in the application.
-                const proxyError = new Error(error.message || 'API request failed via proxy');
-                (proxyError as any).isAxiosError = true;
-                (proxyError as any).response = { data: error.data, status: error.status };
-                promise.reject(proxyError);
-            } else {
-                // The response from the proxy is expected to have the same shape as an Axios response
-                promise.resolve(response);
-            }
-            // Clean up the request from the map once it's handled
-            pendingRequests.delete(requestId);
-        }
-    }
-});
-
-/**
- * Sends a request to the VS Code extension via postMessage and returns a promise
- * that resolves or rejects when the extension sends a response back.
- * @param payload The request details to send to the extension.
- * @returns A promise that resolves with the API response.
- */
-function postRequestToVscode(payload: { type: string, [key: string]: any }): Promise<{ data: any }> {
-    return new Promise((resolve, reject) => {
-        // Ensure the vscode API is available
-        if (!window.vscode) {
-            const error = new Error("Not in a VSCode webview environment. Cannot make API calls.");
-            console.error(error.message);
-            // This is a hard failure as the proxy mechanism is unavailable.
-            return reject(error);
-        }
-
-        const requestId = generateRequestId();
-        pendingRequests.set(requestId, { resolve, reject });
-        
-        // Send the message to the extension, including the unique request ID
-        window.vscode.postMessage({ ...payload, requestId });
-
-        // Set a timeout to prevent memory leaks for requests that never get a response
-        setTimeout(() => {
-            if (pendingRequests.has(requestId)) {
-                pendingRequests.get(requestId)?.reject(new Error(`Request ${requestId} timed out after 60 seconds.`));
-                pendingRequests.delete(requestId);
-            }
-        }, 60000); // 60-second timeout
-    });
+// VS Code API detection
+declare global {
+  interface Window {
+    vscode?: { postMessage: (message: any) => void };
+  }
 }
 
 /**
- * apiClient provides a proxied interface for all API calls. It maintains the same
- * function signatures as the previous Axios-based implementation, so no components
- * need to be changed.
+ * Custom error class to normalize backend and proxy errors.
+ *
  */
-const apiClient = {
-    /**
-     * Performs a GET request by proxying it through the VS Code extension.
-     */
-    get: async <T>(url: string, config?: { params?: Record<string, unknown> }): Promise<{ data: T }> => {
-        console.log(`[API] GET via Proxy: ${url}`);
-        return postRequestToVscode({ type: 'apiGet', url, params: config?.params });
-    },
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public status?: number,
+    public data?: any,
+    public code?: string
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
 
-    /**
-     * Performs a POST request by proxying it through the VS Code extension.
-     */
-    post: async <T>(url:string, body?: unknown): Promise<{ data: T }> => {
-        console.log(`[API] POST via Proxy: ${url}`, body);
-        return postRequestToVscode({ type: 'apiPost', url, body });
-    },
+// Generates a unique ID for proxy requests
+const genReqId = () => `req-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
-    put: async <T>(url:string, body?: unknown): Promise<{ data: T }> => {
-        console.log(`[API] POST via Proxy: ${url}`, body);
-        return postRequestToVscode({ type: 'apiPut', url, body });
-    },
+// Map to track pending requests sent to the VS Code proxy
+const pending = new Map<
+  string,
+  { resolve: (v: any) => void; reject: (r?: any) => void; timeout: ReturnType<typeof setTimeout> }
+>();
 
-    /**
-     * Performs a DELETE request by proxying it through the VS Code extension.
-     */
-    delete: async <T>(url: string, config?: { params?: Record<string, unknown> }): Promise<{ data: T }> => {
-        console.log(`[API] DELETE via Proxy: ${url}`);
-        return postRequestToVscode({ type: 'apiDelete', url, params: config?.params });
-    },
-};
+/**
+ * A singleton ApiClient that handles both standard web and VS Code proxy communication.
+ *
+ */
+class ApiClient {
+  private static _instance: ApiClient;
+  private axiosClient: AxiosInstance | null = null;
+  private isVSCode = typeof window !== 'undefined' && !!window.vscode; //
+  private listenerAttached = false;
 
+  static getInstance() {
+    if (!this._instance) this._instance = new ApiClient();
+    return this._instance;
+  }
+
+  private constructor() {
+    if (this.isVSCode) {
+      // If in VS Code, set up the message listener
+      this.attachVSCodeListener();
+    } else {
+      // If in browser, set up a standard Axios client
+      this.setupAxios();
+    }
+  }
+
+  // ---------- VS Code proxy mode ----------
+
+  /**
+   * Listens for 'apiResponse' messages from the extension.
+   *
+   */
+  private attachVSCodeListener() {
+    if (this.listenerAttached) return;
+    window.addEventListener('message', (event) => {
+      const msg = event.data;
+      if (msg?.type !== 'apiResponse') return; //
+
+      const { requestId, response, error } = msg;
+      const p = pending.get(requestId);
+      if (!p) return;
+
+      clearTimeout(p.timeout);
+      if (error) {
+        p.reject(new ApiError(error.message || 'API request failed via proxy', error.status, error.data, error.code));
+      } else {
+        p.resolve(response);
+      }
+      pending.delete(requestId);
+    });
+    this.listenerAttached = true;
+  }
+
+  /**
+   * Sends a request to the extension proxy and waits for an 'apiResponse' message.
+   *
+   */
+  private postViaVSCode<T>(payload: { type: string; url: string; [k: string]: any }): Promise<T> {
+    return new Promise((resolve, reject) => {
+      if (!window.vscode) {
+        reject(new ApiError('No VSCode webview detected', 0, null, 'VSCODE_NOT_AVAILABLE'));
+        return;
+      }
+      const requestId = genReqId();
+      const timeout = setTimeout(() => {
+        if (pending.has(requestId)) {
+          pending.get(requestId)?.reject(new ApiError(`Request ${requestId} timed out after ${TIMEOUT / 1000}s`, 408, null, 'TIMEOUT'));
+          pending.delete(requestId);
+        }
+      }, TIMEOUT);
+
+      pending.set(requestId, { resolve, reject, timeout });
+
+      // Get auth token from localStorage (managed by useAuth hook)
+      const token = localStorage.getItem('authToken');
+      window.vscode.postMessage({
+        ...payload,
+        requestId,
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined
+      });
+    });
+  }
+
+  // ---------- Axios (browser) mode ----------
+
+  /**
+   * Creates a standard Axios client for browser use.
+   *
+   */
+  private setupAxios() {
+    this.axiosClient = axios.create({
+      baseURL: BASE_URL,
+      headers: { 'Content-Type': 'application/json' },
+      timeout: TIMEOUT
+    });
+
+    // Request interceptor to add auth token
+    this.axiosClient.interceptors.request.use((config) => {
+      const token = localStorage.getItem('authToken');
+      if (token && config.headers) config.headers.Authorization = `Bearer ${token}`;
+      return config;
+    });
+
+    // Response interceptor to normalize errors
+    this.axiosClient.interceptors.response.use(
+      (resp) => resp,
+      (err: AxiosError) => {
+        const data = err.response?.data as any;
+        const msg =
+          (data && (data.message || data.error)) ||
+          (typeof data === 'string' ? data : undefined) ||
+          (err.response?.status === 401 ? 'Unauthorized' : err.message || 'Unexpected error');
+        throw new ApiError(msg, err.response?.status, data, err.code);
+      }
+    );
+  }
+
+  // ---------- Public API Methods ----------
+
+  async get<T = any>(url: string, params?: any, config?: AxiosRequestConfig): Promise<T> {
+    if (this.isVSCode) {
+      // Send 'apiGet' message to the extension
+      return this.postViaVSCode<T>({ type: 'apiGet', url, params, headers: config?.headers });
+    }
+    const resp = await this.axiosClient!.get(url, { ...config, params });
+    return resp.data as T;
+  }
+
+  async post<T = any>(url: string, body?: any, config?: AxiosRequestConfig): Promise<T> {
+    if (this.isVSCode) {
+      // Send 'apiPost' message to the extension
+      return this.postViaVSCode<T>({ type: 'apiPost', url, body, headers: config?.headers });
+    }
+    const resp = await this.axiosClient!.post(url, body, config);
+    return resp.data as T;
+  }
+
+  async put<T = any>(url: string, body?: any, config?: AxiosRequestConfig): Promise<T> {
+    if (this.isVSCode) {
+      return this.postViaVSCode<T>({ type: 'apiPut', url, body, headers: config?.headers });
+    }
+    const resp = await this.axiosClient!.put(url, body, config);
+    return resp.data as T;
+  }
+
+  async patch<T = any>(url: string, body?: any, config?: AxiosRequestConfig): Promise<T> {
+    if (this.isVSCode) {
+      return this.postViaVSCode<T>({ type: 'apiPatch', url, body, headers: config?.headers });
+    }
+    const resp = await this.axiosClient!.patch(url, body, config);
+    return resp.data as T;
+  }
+
+  async delete<T = any>(url: string, params?: any, config?: AxiosRequestConfig): Promise<T> {
+    if (this.isVSCode) {
+      // Send 'apiDelete' message to the extension
+      return this.postViaVSCode<T>({ type: 'apiDelete', url, params, headers: config?.headers });
+    }
+    const resp = await this.axiosClient!.delete(url, { ...config, params });
+    return resp.data as T;
+  }
+}
+
+// Export a singleton instance
+const apiClient = ApiClient.getInstance();
 export default apiClient;
+export type { AxiosRequestConfig };

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, Play, Save, CheckCircle, XCircle, FileCode, Search, BrainCircuit, Loader2, DatabaseZap, ChevronDown, ChevronRight } from 'lucide-react';
+import { Plus, Trash2, Play, Save, Loader2, ChevronDown, ChevronRight, Download } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import type { SparqlQuery, SparqlQueryResult, OntologyPrefix } from '../types';
 
@@ -12,15 +12,17 @@ const SparqlQueryEditor: React.FC<{ projectId: string; prefixes: OntologyPrefix[
     const [isLoading, setIsLoading] = useState(false);
     const [isPrefixesVisible, setPrefixesVisible] = useState(false);
 
+    // ========================================================================
+    //                          *** BUG FIX ***
+    // Replaced all mock data with live apiClient calls.
+    //
+    // ========================================================================
+
     const fetchQueries = useCallback(async () => {
+        if (!projectId) return;
         try {
-            // Mocking API call
-            await new Promise(res => setTimeout(res, 300));
-            const mockQueries: SparqlQuery[] = [
-                { id: 'q1', name: 'All Pizzas', queryText: 'SELECT ?pizza ?label WHERE { ?pizza a :Pizza ; rdfs:label ?label . }' },
-                { id: 'q2', name: 'Pizzas with Mozzarella', queryText: 'SELECT ?pizza ?label WHERE { ?pizza a :Pizza ; rdfs:label ?label ; :hasTopping :MozzarellaTopping . }' },
-            ];
-            setQueries(mockQueries);
+            const response = await apiClient.get<SparqlQuery[]>(`/api/sparql/${projectId}/queries`); //
+            setQueries(response);
         } catch (error) {
             console.error('Failed to fetch SPARQL queries:', error);
         }
@@ -39,7 +41,7 @@ const SparqlQueryEditor: React.FC<{ projectId: string; prefixes: OntologyPrefix[
     
     const handleNewQuery = () => {
         setSelectedQuery(null);
-        setQueryText('');
+        setQueryText('SELECT ?s ?p ?o WHERE {\n  ?s ?p ?o\n} LIMIT 10');
         setQueryName('New Query');
         setResults(null);
     };
@@ -49,12 +51,12 @@ const SparqlQueryEditor: React.FC<{ projectId: string; prefixes: OntologyPrefix[
         try {
             if (selectedQuery) {
                 // Update
-                const updatedQuery = { ...selectedQuery, ...queryData };
+                const updatedQuery = await apiClient.put<SparqlQuery>(`/api/sparql/${projectId}/queries/${selectedQuery.id}`, queryData); //
                 setQueries(queries.map(q => q.id === updatedQuery.id ? updatedQuery : q));
                 setSelectedQuery(updatedQuery);
             } else {
                 // Create
-                const newQuery = { ...queryData, id: `q${Date.now()}`};
+                const newQuery = await apiClient.post<SparqlQuery>(`/api/sparql/${projectId}/queries`, queryData); //
                 setQueries([...queries, newQuery]);
                 setSelectedQuery(newQuery);
             }
@@ -67,8 +69,13 @@ const SparqlQueryEditor: React.FC<{ projectId: string; prefixes: OntologyPrefix[
     const handleDeleteQuery = async () => {
         if (!selectedQuery) return;
         if (window.confirm(`Are you sure you want to delete "${selectedQuery.name}"?`)) {
-            setQueries(queries.filter(q => q.id !== selectedQuery.id));
-            handleNewQuery();
+            try {
+                await apiClient.delete(`/api/sparql/${projectId}/queries/${selectedQuery.id}`); //
+                setQueries(queries.filter(q => q.id !== selectedQuery.id));
+                handleNewQuery();
+            } catch (error) {
+                console.error("Failed to delete query.");
+            }
         }
     };
 
@@ -76,32 +83,59 @@ const SparqlQueryEditor: React.FC<{ projectId: string; prefixes: OntologyPrefix[
         setIsLoading(true);
         setResults(null);
         try {
-            // Mocking API call for query execution
-            await new Promise(resolve => setTimeout(resolve, 1500));
-            const mockResults: SparqlQueryResult = {
-                head: { vars: ["pizza", "label"] },
-                results: {
-                    bindings: [
-                        { pizza: { type: 'uri', value: 'http://...#Margherita' }, label: { type: 'literal', value: 'Margherita' } },
-                        { pizza: { type: 'uri', value: 'http://...#Americana' }, label: { type: 'literal', value: 'Americana' } },
-                    ]
-                }
-            };
-            setResults(mockResults);
+            const response = await apiClient.post<SparqlQueryResult>(
+                `/api/sparql/${projectId}/execute`, //
+                { queryText }
+            );
+            setResults(response);
         } catch (error) {
             console.error('Failed to execute SPARQL query:', error);
         } finally {
             setIsLoading(false);
         }
     };
+    
+    const downloadCsv = () => {
+        if (!results) return;
+        const cols = results.head.vars;
+        
+        // Helper to escape CSV fields
+        const escapeCsv = (val: string) => {
+            if (val == null) return '""';
+            const str = String(val);
+            if (str.includes('"') || str.includes(',') || str.includes('\n')) {
+                return `"${str.replace(/"/g, '""')}"`;
+            }
+            return str;
+        };
+        
+        const header = cols.map(escapeCsv).join(',');
+        const rows = results.results.bindings.map(b =>
+            cols.map(c => escapeCsv(b[c]?.value ?? '')).join(',')
+        );
+        
+        const csv = [header, ...rows].join('\n');
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${queryName.replace(/\s+/g, '_') || 'query-results'}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
 
     return (
         <div className="h-full flex flex-col bg-gray-100">
+            {/* Header */}
             <header className="bg-white p-4 border-b border-gray-200">
                 <h1 className="text-xl font-bold text-gray-800">SPARQL Query Editor</h1>
                 <p className="text-sm text-gray-500">Execute SPARQL queries against your ontology.</p>
             </header>
+            
             <div className="flex flex-1 overflow-hidden">
+                {/* Sidebar */}
                 <aside className="w-80 bg-white border-r border-gray-200 flex flex-col">
                     <div className="p-2 border-b border-gray-200 flex">
                         <button onClick={handleNewQuery} className="flex-1 flex items-center justify-center gap-2 text-xs text-white bg-purple-600 hover:bg-purple-700 px-3 py-2 rounded-md transition-colors shadow-sm">
@@ -117,9 +151,11 @@ const SparqlQueryEditor: React.FC<{ projectId: string; prefixes: OntologyPrefix[
                         ))}
                     </div>
                 </aside>
-                <main className="flex-1 flex flex-col p-4 gap-4">
+                
+                {/* Main Editor */}
+                <main className="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
                     <div className="bg-white border border-gray-200 rounded-lg p-4 space-y-3 flex-shrink-0">
-                        <input type="text" value={queryName} onChange={(e) => setQueryName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-lg font-semibold focus:ring-2 focus:ring-purple-500 focus:border-transparent" placeholder="Query Name" />
+                        <input type="text" value={queryName} onChange={(e) => setQueryName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-lg font-semibold focus:ring-2 focus:ring-purple-500 focus:outline-none" placeholder="Query Name" />
                         <div className="border rounded-md">
                             <button onClick={() => setPrefixesVisible(!isPrefixesVisible)} className="w-full flex items-center justify-between p-2 bg-gray-50 text-xs font-medium text-gray-600 hover:bg-gray-100">
                                 <span>Ontology Prefixes</span>
@@ -128,20 +164,23 @@ const SparqlQueryEditor: React.FC<{ projectId: string; prefixes: OntologyPrefix[
                             {isPrefixesVisible && (
                                 <div className="p-2 border-t bg-white max-h-24 overflow-y-auto">
                                     <pre className="text-xs text-gray-700 font-mono">
-                                        {prefixes.map(p => `PREFIX ${p.prefix} <${p.namespace}>`).join('\n')}
+                                        {prefixes.map(p => `PREFIX ${p.prefix}: <${p.namespace}>`).join('\n')}
                                     </pre>
                                 </div>
                             )}
                         </div>
                         <textarea
-                            className="w-full h-48 p-3 font-mono text-sm border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                            className="w-full h-48 p-3 font-mono text-sm border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none"
                             value={queryText}
                             onChange={(e) => setQueryText(e.target.value)}
                             placeholder="Enter SPARQL query... e.g., SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10"
                         />
                         <div className="flex items-center justify-end gap-2">
-                            <button onClick={handleDeleteQuery} disabled={!selectedQuery} className="px-4 py-2 text-sm bg-gray-200 rounded-lg hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed">
-                                <Trash2 size={16} className="text-gray-600" />
+                            <button onClick={downloadCsv} disabled={!results} className="flex items-center gap-2 px-4 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg disabled:opacity-40">
+                                <Download size={16} /> CSV
+                            </button>
+                            <button onClick={handleDeleteQuery} disabled={!selectedQuery} className="px-4 py-2 text-sm bg-red-100 text-red-600 rounded-lg hover:bg-red-200 disabled:opacity-50 disabled:cursor-not-allowed">
+                                <Trash2 size={16} />
                             </button>
                             <button onClick={handleSaveQuery} className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg">
                                 <Save size={16} /> Save
@@ -151,7 +190,9 @@ const SparqlQueryEditor: React.FC<{ projectId: string; prefixes: OntologyPrefix[
                             </button>
                         </div>
                     </div>
-                    <div className="flex-grow bg-white border border-gray-200 rounded-lg overflow-hidden flex flex-col">
+                    
+                    {/* Results Panel */}
+                    <div className="flex-grow bg-white border border-gray-200 rounded-lg overflow-hidden flex flex-col min-h-0">
                         <div className="p-3 border-b text-sm font-semibold text-gray-700 bg-gray-50">Query Results</div>
                         {isLoading ? (
                              <div className="flex-1 flex items-center justify-center text-gray-500">

@@ -36,7 +36,7 @@ public class OwlParsingService {
     private MongoTemplate mongo;
 
     @Autowired
-    private Neo4jSyncService neo4jSyncService;
+    private Neo4jSyncService neo4jSyncService; //
     
     @Autowired
     private GridFsTemplate gridfs;
@@ -61,14 +61,14 @@ public class OwlParsingService {
     /**
      * Parse ontology file from GridFS and index to triple store
      */
-    @Async("owlParsingExecutor")
+    @Async("owlParsingExecutor") //
     public CompletableFuture<Void> parseAndIndex(String projectId, ObjectId fileId) {
         log.info("Starting async parsing for project: {}, fileId: {}", projectId, fileId);
         updateStatus(projectId, "PROCESSING", "Parsing ontology...");
         
         try {
             // Retrieve file from GridFS
-            GridFSFile gf = gridfs.findOne(new Query(Criteria.where("_id").is(fileId)));
+            GridFSFile gf = gridfs.findOne(new Query(Criteria.where("_id").is(fileId))); //
             if (gf == null) {
                 throw new RuntimeException("File not found in GridFS: " + fileId);
             }
@@ -78,19 +78,22 @@ public class OwlParsingService {
             try (InputStream inputStream = resource.getInputStream()) {
                 // Parse with OWL API
                 OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
-                OWLOntology ontology = manager.loadOntologyFromOntologyDocument(inputStream);
+                OWLOntology ontology = manager.loadOntologyFromOntologyDocument(inputStream); //
                 
                 log.info("Successfully parsed ontology for project: {}", projectId);
                 log.info("Ontology IRI: {}", ontology.getOntologyID().getOntologyIRI().orElse(null));
                 log.info("Axiom count: {}", ontology.getAxiomCount());
                 
                 // Extract metadata for MongoDB
-                Map<String, Object> metadata = extractMetadata(ontology);
-                saveMetadataToMongo(projectId, metadata);
+                Map<String, Object> metadata = extractMetadata(ontology); //
+                saveMetadataToMongo(projectId, metadata); //
                 
                 // Write to triple store
-                writeToTripleStore(projectId, ontology);
-                neo4jSyncService.syncOntologyToNeo4j(projectId, ontology);
+                writeToTripleStore(projectId, ontology); //
+                
+                // Sync to Neo4j
+                neo4jSyncService.syncOntologyToNeo4j(projectId, ontology); //
+                
                 updateStatus(projectId, "COMPLETED", "Ontology processed successfully.");
                 log.info("Completed processing for project: {}", projectId);
             }
@@ -107,36 +110,36 @@ public class OwlParsingService {
         Map<String, Object> metadata = new HashMap<>();
         
         // Basic counts
-        metadata.put("classCount", ontology.getClassesInSignature().size());
-        metadata.put("objectPropertyCount", ontology.getObjectPropertiesInSignature().size());
-        metadata.put("dataPropertyCount", ontology.getDataPropertiesInSignature().size());
-        metadata.put("individualCount", ontology.getIndividualsInSignature().size());
-        metadata.put("axiomCount", ontology.getAxiomCount());
-        metadata.put("logicalAxiomCount", ontology.getLogicalAxiomCount());
+        metadata.put("classCount", ontology.getClassesInSignature().size()); //
+        metadata.put("objectPropertyCount", ontology.getObjectPropertiesInSignature().size()); //
+        metadata.put("dataPropertyCount", ontology.getDataPropertiesInSignature().size()); //
+        metadata.put("individualCount", ontology.getIndividualsInSignature().size()); //
+        metadata.put("axiomCount", ontology.getAxiomCount()); //
+        metadata.put("logicalAxiomCount", ontology.getLogicalAxiomCount()); //
         
         // Ontology IRIs
         ontology.getOntologyID().getOntologyIRI()
-                .ifPresent(iri -> metadata.put("ontologyIRI", iri.toString()));
+                .ifPresent(iri -> metadata.put("ontologyIRI", iri.toString())); //
         ontology.getOntologyID().getVersionIRI()
-                .ifPresent(iri -> metadata.put("versionIRI", iri.toString()));
+                .ifPresent(iri -> metadata.put("versionIRI", iri.toString())); //
         
         // Axiom type counts
-        metadata.put("declarationAxiomCount", ontology.getAxiomCount(AxiomType.DECLARATION));
-        metadata.put("subClassOfAxiomCount", ontology.getAxiomCount(AxiomType.SUBCLASS_OF));
-        metadata.put("equivalentClassesAxiomCount", ontology.getAxiomCount(AxiomType.EQUIVALENT_CLASSES));
-        metadata.put("disjointClassesAxiomCount", ontology.getAxiomCount(AxiomType.DISJOINT_CLASSES));
+        metadata.put("declarationAxiomCount", ontology.getAxiomCount(AxiomType.DECLARATION)); //
+        metadata.put("subClassOfAxiomCount", ontology.getAxiomCount(AxiomType.SUBCLASS_OF)); //
+        metadata.put("equivalentClassesAxiomCount", ontology.getAxiomCount(AxiomType.EQUIVALENT_CLASSES)); //
+        metadata.put("disjointClassesAxiomCount", ontology.getAxiomCount(AxiomType.DISJOINT_CLASSES)); //
         
         // GCI count (General Class Inclusions - anonymous subclass axioms)
         long gciCount = ontology.getAxioms(AxiomType.SUBCLASS_OF).stream()
                 .filter(axiom -> axiom.getSubClass().isAnonymous())
-                .count();
+                .count(); //
         metadata.put("gciCount", (int) gciCount);
         metadata.put("hiddenGciCount", 0); // Placeholder for reasoning results
         
         // Annotation properties (excluding built-in)
         long annPropCount = ontology.getAnnotationPropertiesInSignature().stream()
                 .filter(ap -> !ap.isBuiltIn())
-                .count();
+                .count(); //
         metadata.put("annotationPropertyCount", (int) annPropCount);
         
         return metadata;
@@ -148,7 +151,7 @@ public class OwlParsingService {
                 .set("metadata", metadata)
                 .set("updatedAt", new Date());
         
-        mongo.upsert(query, update, "projects");
+        mongo.upsert(query, update, "projects"); //
         log.info("Saved metadata to MongoDB for project: {}", projectId);
     }
     
@@ -158,25 +161,25 @@ public class OwlParsingService {
         // Convert ontology to RDF/XML
         ByteArrayOutputStream rdfStream = new ByteArrayOutputStream();
         OWLOntologyManager manager = ontology.getOWLOntologyManager();
-        manager.saveOntology(ontology, new RDFXMLDocumentFormat(), rdfStream);
+        manager.saveOntology(ontology, new RDFXMLDocumentFormat(), rdfStream); //
         byte[] rdfBytes = rdfStream.toByteArray();
         
         log.info("Converted ontology to RDF/XML: {} bytes", rdfBytes.length);
         
         // Get named graph URI
-        String graphUri = props.getProjectGraphUri(projectId);
+        String graphUri = props.getProjectGraphUri(projectId); //
         
         // Clear existing data in graph (best effort)
-        clearGraph(graphUri);
+        clearGraph(graphUri); //
         
         // POST RDF data to triple store
         // For GraphDB: POST to /repositories/{repo}/statements?context={graph}
         // For Fuseki: POST to /{dataset}/data?graph={graph}
         String response = updateClient.post()
                 .uri(uriBuilder -> uriBuilder
-                        .queryParam("context", graphUri)
+                        .queryParam("context", graphUri) //
                         .build())
-                .header(HttpHeaders.CONTENT_TYPE, "application/rdf+xml")
+                .header(HttpHeaders.CONTENT_TYPE, "application/rdf+xml") //
                 .bodyValue(rdfBytes)
                 .retrieve()
                 .bodyToMono(String.class)
@@ -188,12 +191,12 @@ public class OwlParsingService {
     private void clearGraph(String graphUri) {
         log.info("Clearing graph: {}", graphUri);
         
-        String deleteQuery = String.format("CLEAR GRAPH <%s>", graphUri);
+        String deleteQuery = String.format("CLEAR GRAPH <%s>", graphUri); //
         
         try {
             updateClient.post()
                     .uri("")
-                    .header(HttpHeaders.CONTENT_TYPE, "application/sparql-update")
+                    .header(HttpHeaders.CONTENT_TYPE, "application/sparql-update") //
                     .bodyValue(deleteQuery)
                     .retrieve()
                     .bodyToMono(String.class)
@@ -212,7 +215,7 @@ public class OwlParsingService {
                 .set("statusMessage", message)
                 .set("updatedAt", new Date());
         
-        mongo.updateFirst(query, update, "projects");
+        mongo.updateFirst(query, update, "projects"); //
         log.info("Updated project status: {} - {}", projectId, status);
     }
 }

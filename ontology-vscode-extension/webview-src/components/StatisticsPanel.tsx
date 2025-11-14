@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { BarChart3, TrendingUp, Package, GitBranch, Database, Users, FileText, AlertCircle } from 'lucide-react';
+import { BarChart3, TrendingUp, Package, GitBranch, Database, Users, FileText, AlertCircle, Loader2 } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import type { OntologyStatistics } from '../types';
 
@@ -12,17 +12,13 @@ const StatisticsPanel: React.FC<StatisticsPanelProps> = ({ projectId, statistics
   const [statistics, setStatistics] = useState<OntologyStatistics | null>(initialStats);
   const [isLoading, setIsLoading] = useState(false);
 
-  useEffect(() => {
-    if (!initialStats && projectId) {
-      loadStatistics();
-    }
-  }, [projectId, initialStats]);
-
   const loadStatistics = async () => {
     setIsLoading(true);
     try {
+      // This call expects the backend to return { data: OntologyStatistics }
       const response = await apiClient.get<{ data: OntologyStatistics }>(`/api/ontology/statistics/${projectId}`);
-      setStatistics(response.data.data);
+      // This correctly accesses response.data.data (one .data from apiClient, one .data from the API shape)
+      setStatistics(response.data);
     } catch (error) {
       console.error('Failed to load statistics:', error);
     } finally {
@@ -30,11 +26,22 @@ const StatisticsPanel: React.FC<StatisticsPanelProps> = ({ projectId, statistics
     }
   };
 
+  useEffect(() => {
+    // If stats are passed as a prop from Dashboard, use them
+    if (initialStats) {
+      setStatistics(initialStats);
+    } 
+    // Otherwise, if no stats were passed but we have a project ID, fetch them
+    else if (!initialStats && projectId) {
+      loadStatistics();
+    }
+  }, [projectId, initialStats]); // Re-run if props change
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center">
-          <BarChart3 size={48} className="animate-pulse text-purple-600 mx-auto mb-4" />
+          <Loader2 size={48} className="animate-pulse text-purple-600 mx-auto mb-4" />
           <p className="text-gray-600">Loading statistics...</p>
         </div>
       </div>

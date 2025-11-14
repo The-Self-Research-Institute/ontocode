@@ -1,10 +1,86 @@
 package self.research.ontology.owlEditor.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.util.List;
+import java.util.Map;
 
-public class OntologyDtos {
+// Based on your types.ts file
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class OntologyDto {
 
-    public static class OntologyMetadataDto {
+    // For EntityHierarchy.tsx
+    public static class TreeNode {
+        private String id;
+        private String label;
+        private String parent;
+        private List<TreeNode> children;
+        private Boolean hasChildren;
+        private Map<String, String> annotations;
+        
+        // Getters & Setters
+        public String getId() { return id; }
+        public void setId(String id) { this.id = id; }
+        public String getLabel() { return label; }
+        public void setLabel(String label) { this.label = label; }
+        public String getParent() { return parent; }
+        public void setParent(String parent) { this.parent = parent; }
+        public List<TreeNode> getChildren() { return children; }
+        public void setChildren(List<TreeNode> children) { this.children = children; }
+        public Boolean getHasChildren() { return hasChildren; }
+        public void setHasChildren(Boolean hasChildren) { this.hasChildren = hasChildren; }
+        public Map<String, String> getAnnotations() { return annotations; }
+        public void setAnnotations(Map<String, String> annotations) { this.annotations = annotations; }
+    }
+
+    // For PropertyEditor.tsx
+    public static class PropertyDto {
+        private String id;
+        private String label;
+        private String type; // ObjectProperty, DatatypeProperty, AnnotationProperty
+        private List<String> domains;
+        private List<String> ranges;
+        private List<String> superProperties;
+        private List<String> characteristics;
+        private Map<String, String> annotations;
+        
+        // Getters & Setters
+        public String getId() { return id; }
+        public void setId(String id) { this.id = id; }
+        public String getLabel() { return label; }
+        public void setLabel(String label) { this.label = label; }
+        public String getType() { return type; }
+        public void setType(String type) { this.type = type; }
+        public List<String> getDomains() { return domains; }
+        public void setDomains(List<String> domains) { this.domains = domains; }
+        public List<String> getRanges() { return ranges; }
+        public void setRanges(List<String> ranges) { this.ranges = ranges; }
+        public List<String> getSuperProperties() { return superProperties; }
+        public void setSuperProperties(List<String> superProperties) { this.superProperties = superProperties; }
+        public List<String> getCharacteristics() { return characteristics; }
+        public void setCharacteristics(List<String> characteristics) { this.characteristics = characteristics; }
+        public Map<String, String> getAnnotations() { return annotations; }
+        public void setAnnotations(Map<String, String> annotations) { this.annotations = annotations; }
+    }
+
+    // For IndividualEditor.tsx
+    public static class IndividualDto {
+        private String id;
+        private String label;
+        private List<String> types;
+        private Map<String, String> annotations;
+        
+        // Getters & Setters
+        public String getId() { return id; }
+        public void setId(String id) { this.id = id; }
+        public String getLabel() { return label; }
+        public void setLabel(String label) { this.label = label; }
+        public List<String> getTypes() { return types; }
+        public void setTypes(List<String> types) { this.types = types; }
+        public Map<String, String> getAnnotations() { return annotations; }
+        public void setAnnotations(Map<String, String> annotations) { this.annotations = annotations; }
+    }
+    
+       public static class OntologyMetadataDto {
         private String ontologyIRI;
         private String versionIRI;
         private int classCount;
@@ -44,86 +120,40 @@ public class OntologyDtos {
         public void setLogicalAxiomCount(int logicalAxiomCount) { this.logicalAxiomCount = logicalAxiomCount; }
     }
 
-    public static class TreeNode {
-        private String id;
-        private String label;
-        private boolean hasChildren;
 
-        public String getId() { return id; }
-        public void setId(String id) { this.id = id; }
-        
-        public String getLabel() { return label; }
-        public void setLabel(String label) { this.label = label; }
-        
-        public boolean isHasChildren() { return hasChildren; }
-        public void setHasChildren(boolean hasChildren) { this.hasChildren = hasChildren; }
+    
+    // For Dashboard.tsx
+    public static class OntologyPrefixDto {
+        private String prefix;
+        private String namespace;
+        // ... Getters & Setters
+        public String getPrefix() { return prefix; }
+        public void setPrefix(String prefix) { this.prefix = prefix; }
+        public String getNamespace() { return namespace; }
+        public void setNamespace(String namespace) { this.namespace = namespace; }
     }
 
-    public static class TreeNodeWithParent extends TreeNode {
-        private String parent;
-
-        public String getParent() { return parent; }
-        public void setParent(String parent) { this.parent = parent; }
+    // For StatisticsPanel.tsx
+    public static class OntologyStatisticsDto {
+        // ... (add all fields from OntologyStatistics in types.ts)
+        private int classCount;
+        private int objectPropertyCount;
+        // ... Getters & Setters
+        public int getClassCount() { return classCount; }
+        public void setClassCount(int classCount) { this.classCount = classCount; }
+        public int getObjectPropertyCount() { return objectPropertyCount; }
+        public void setObjectPropertyCount(int objectPropertyCount) { this.objectPropertyCount = objectPropertyCount; }
     }
 
-    public static class PropertyDto {
-        private String iri;
-        private String label;
-        private String localName;
-        private String type; // "ObjectProperty" or "DataProperty"
-        private List<String> domains;
-        private List<String> ranges;
-
-        public String getIri() { return iri; }
-        public void setIri(String iri) { this.iri = iri; }
-        
-        public String getLabel() { return label; }
-        public void setLabel(String label) { this.label = label; }
-        
-        public String getLocalName() { return localName; }
-        public void setLocalName(String localName) { this.localName = localName; }
-        
-        public String getType() { return type; }
-        public void setType(String type) { this.type = type; }
-        
-        public List<String> getDomains() { return domains; }
-        public void setDomains(List<String> domains) { this.domains = domains; }
-        
-        public List<String> getRanges() { return ranges; }
-        public void setRanges(List<String> ranges) { this.ranges = ranges; }
-    }
-
-    public static class IndividualDto {
-        private String iri;
-        private String label;
-        private String localName;
-        private List<String> types;
-
-        public String getIri() { return iri; }
-        public void setIri(String iri) { this.iri = iri; }
-        
-        public String getLabel() { return label; }
-        public void setLabel(String label) { this.label = label; }
-        
-        public String getLocalName() { return localName; }
-        public void setLocalName(String localName) { this.localName = localName; }
-        
-        public List<String> getTypes() { return types; }
-        public void setTypes(List<String> types) { this.types = types; }
-    }
-
-    public static class SimpleEntityDto {
-        private String iri;
-        private String label;
-        private String localName;
-
-        public String getIri() { return iri; }
-        public void setIri(String iri) { this.iri = iri; }
-        
-        public String getLabel() { return label; }
-        public void setLabel(String label) { this.label = label; }
-        
-        public String getLocalName() { return localName; }
-        public void setLocalName(String localName) { this.localName = localName; }
+    // For ValidationPanel.tsx
+    public static class ValidationResultDto {
+        // ... (add all fields from ValidationResult in types.ts)
+        private boolean isValid;
+        private List<String> orphanClasses;
+        // ... Getters & Setters
+        public boolean getIsValid() { return isValid; }
+        public void setIsValid(boolean isValid) { this.isValid = isValid; }
+        public List<String> getOrphanClasses() { return orphanClasses; }
+        public void setOrphanClasses(List<String> orphanClasses) { this.orphanClasses = orphanClasses; }
     }
 }

@@ -9,14 +9,15 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "react-dom": "^19.2.0",
-    "lucide-react": "^0.546.0",
-    "react": "^19.2.0",
-    "vis-network": "latest",
-    "path": "^0.12.7",
     "axios": "^1.12.2",
-    "fs": "^0.0.1-security",
+    "d3": "^7.9.0",
     "form-data": "^4.0.4",
+    "fs": "^0.0.1-security",
+    "lucide-react": "^0.546.0",
+    "path": "^0.12.7",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "vis-network": "latest",
     "vscode": "^1.1.37"
   },
   "devDependencies": {

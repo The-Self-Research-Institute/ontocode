@@ -1,23 +1,22 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import type { TreeNode, Property, Individual } from '../types';
+import type { TreeNode, Property, Individual, OntologyClassNode } from '../types';
 import apiClient from '../services/apiClient';
 
-// Minimal interface for the vis.js Network instance to avoid using `any`.
+// Minimal interface for the vis.js Network instance
 interface VisNetwork {
     on(event: string, callback: (params: any) => void): void;
     destroy(): void;
 }
 
-// Add a declaration for the global `vis` object provided by the UMD script
+// Add a declaration for the global `vis` object
 declare global {
     interface Window {
-        vis: {
+        vis?: { // Make it optional in case script fails to load
             Network: new (container: HTMLElement, data: object, options: object) => VisNetwork; 
         };
     }
 }
-
 
 interface ReasoningVisualizerProps {
     projectId: string;
@@ -27,27 +26,45 @@ interface ReasoningVisualizerProps {
 const ReasoningVisualizer: React.FC<ReasoningVisualizerProps> = ({ projectId, onNodeClick }) => {
     const visJsRef = useRef<HTMLDivElement>(null);
     const [isLoading, setIsLoading] = useState(true);
-    const [network, setNetwork] = useState<VisNetwork | null>(null);
+    
+    // ========================================================================
+    //                          *** BUG FIX ***
+    // Store the network instance in a ref, not state.
+    // This prevents the "create/destroy" loop.
+    //
+    // ========================================================================
+    const networkRef = useRef<VisNetwork | null>(null);
 
     useEffect(() => {
+        let cancelled = false;
+
         const fetchDataAndRenderGraph = async () => {
-            if (!visJsRef.current || !window.vis?.Network) return;
+            if (!visJsRef.current || !window.vis?.Network) {
+                console.warn("vis.js is not loaded or the container ref is not set.");
+                return;
+            }
             setIsLoading(true);
 
             try {
+                // We will load all data for the graph.
+                // We call the Neo4j endpoint for class hierarchy and SPARQL for the rest.
                 const [classesRes, individualsRes, propertiesRes] = await Promise.all([
-                    apiClient.get<{ classes: (TreeNode & { parent?: string })[] }>(`/api/ontology/all-classes?projectId=${projectId}`),
-                    apiClient.get<{ data: Individual[] }>(`/api/ontology/individuals?projectId=${projectId}`),
-                    apiClient.get<{ data: Property[] }>(`/api/ontology/properties?projectId=${projectId}`)
+                    // Use the Neo4j endpoint for the class hierarchy
+                    apiClient.get<{ classes: OntologyClassNode[] }>(`/api/graph/${projectId}/all-classes-flat`), //
+                    // Use the SPARQL endpoints for entity lists
+                    apiClient.get<{ data: Individual[] }>(`/api/ontology/individuals/${projectId}`), //
+                    apiClient.get<{ data: Property[] }>(`/api/ontology/properties/${projectId}`) //
                 ]);
 
-                const classes: (TreeNode & {parent?: string})[] = classesRes.data.classes || [];
-                const individuals: Individual[] = individualsRes.data.data || [];
-                const properties: Property[] = propertiesRes.data.data || [];
+                if (cancelled) return;
+
+                const classes: OntologyClassNode[] = classesRes.classes || [];
+                const individuals: Individual[] = individualsRes.data || [];
+                const properties: Property[] = propertiesRes.data || [];
 
                 const nodes = [
                     ...classes.map(c => ({ 
-                        id: c.id, 
+                        id: c.iri, 
                         label: c.label, 
                         group: 'class',
                         title: `Class: ${c.label}`
@@ -61,20 +78,24 @@ const ReasoningVisualizer: React.FC<ReasoningVisualizerProps> = ({ projectId, on
                 ];
 
                 const allEdges = [
-                    // SubClassOf relationships
-                    ...classes.filter(c => c.parent).map(c => ({
-                        from: c.id,
-                        to: c.parent,
-                        dashes: true,
-                        title: 'subClassOf'
-                    })),
+                    // SubClassOf relationships (from Neo4j 'parents' field)
+                    ...classes.flatMap(c => 
+                        (c.parents || []).map(parent => ({
+                            from: c.iri,
+                            to: parent.iri,
+                            dashes: true,
+                            title: 'subClassOf'
+                        }))
+                    ),
+                    
                     // rdf:type relationships
                     ...individuals.flatMap(i => (i.types || []).map(typeIri => ({
                         from: i.id,
                         to: typeIri,
                         title: 'rdf:type'
                     }))),
-                    // Object Property relationships
+                    
+                    // Object Property relationships (simple heuristic)
                     ...properties
                         .filter(p => p.type === 'ObjectProperty' && p.domains && p.ranges)
                         .flatMap(p => 
@@ -82,7 +103,8 @@ const ReasoningVisualizer: React.FC<ReasoningVisualizerProps> = ({ projectId, on
                                 (ind.types && p.domains?.some(d => ind.types?.includes(d)))
                                 ? [{
                                     from: ind.id,
-                                    to: individuals.find(i2 => i2.types?.includes(p.ranges![0]))?.id, // Simple link for demo
+                                    // Link to the first individual found that matches the range
+                                    to: individuals.find(i2 => i2.types?.includes(p.ranges![0]))?.id,
                                     label: p.label,
                                     title: `property: ${p.label}`
                                 }]
@@ -124,29 +146,42 @@ const ReasoningVisualizer: React.FC<ReasoningVisualizerProps> = ({ projectId, on
                     },
                 };
 
+                // --- BUG FIX ---
+                // Destroy the *previous* network (if it exists) before creating a new one
+                if (networkRef.current) {
+                    networkRef.current.destroy();
+                }
+
                 const net = new window.vis.Network(visJsRef.current, data, options);
                 net.on('click', (params) => {
                     if (params.nodes.length > 0) {
                         onNodeClick(params.nodes[0]);
                     }
                 });
-                setNetwork(net);
+                
+                // Store the new network instance in the ref
+                networkRef.current = net;
 
             } catch (error) {
                 console.error("Failed to load graph data:", error);
             } finally {
-                setIsLoading(false);
+                if (!cancelled) {
+                    setIsLoading(false);
+                }
             }
         };
 
         fetchDataAndRenderGraph();
 
         return () => {
-            if (network) {
-                network.destroy();
+            cancelled = true;
+            // Clean up the network when the component unmounts
+            if (networkRef.current) {
+                networkRef.current.destroy();
+                networkRef.current = null;
             }
         };
-    }, [projectId, onNodeClick, network]);
+    }, [projectId, onNodeClick]); // <-- Dependency array is stable (no 'network' state)
 
     return (
         <div className="h-full w-full relative">

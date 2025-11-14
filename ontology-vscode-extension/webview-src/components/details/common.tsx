@@ -1,6 +1,11 @@
 import React, { useState } from "react";
 import { ChevronRight, ChevronDown, Plus, Trash2 } from "lucide-react";
 
+/**
+ * A component to safely render an annotation value, stripping
+ * common RDF literal suffixes like "^^xsd:string".
+ *
+ */
 export const AnnotationValue = ({ value }: { value: string }) => {
   let cleanedValue = value.toString();
   if (cleanedValue.startsWith('"')) cleanedValue = cleanedValue.substring(1);
@@ -10,6 +15,11 @@ export const AnnotationValue = ({ value }: { value: string }) => {
   return <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{cleanedValue}</p>;
 };
 
+/**
+ * A component that displays a list of annotations (key-value pairs)
+ * and provides a delete button for each.
+ *
+ */
 export const AnnotationsDisplay = ({ annotations, onDelete }: { annotations?: Record<string, string>, onDelete: (key: string) => void }) => {
   if (!annotations || Object.keys(annotations).length === 0) {
     return (
@@ -23,7 +33,12 @@ export const AnnotationsDisplay = ({ annotations, onDelete }: { annotations?: Re
             <div className="w-1/3 text-xs font-medium text-gray-600 pr-2 break-words">{key}</div>
             <div className="w-2/3 text-xs text-gray-800 break-words flex justify-between items-start">
               <AnnotationValue value={value} />
-              <button onClick={() => onDelete(key)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200 ml-2">
+              <button 
+                onClick={() => onDelete(key)} 
+                className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200 ml-2"
+                title={`Delete annotation ${key}`}
+                aria-label={`Delete annotation ${key}`}
+              >
                 <Trash2 size={12} className="text-red-600" />
               </button>
             </div>
@@ -33,22 +48,46 @@ export const AnnotationsDisplay = ({ annotations, onDelete }: { annotations?: Re
   );
 };
 
-
-export const Panel = ({ title, children, actions, defaultOpen = true, themeColor }: { title: string, children?: React.ReactNode, actions?: React.ReactNode, defaultOpen?: boolean, themeColor?: string }) => {
+/**
+ * The main collapsible panel component used in all editors.
+ *
+ */
+export const Panel = ({ 
+  title, 
+  children, 
+  actions, 
+  defaultOpen = true, 
+  themeColor 
+}: { 
+  title: string, 
+  children?: React.ReactNode, 
+  actions?: React.ReactNode, 
+  defaultOpen?: boolean, 
+  themeColor?: string 
+}) => {
     const [isOpen, setIsOpen] = useState(defaultOpen);
     const themeClasses = themeColor || 'bg-gradient-to-b from-[#F5F0E6] to-[#E1C688] text-black border-[#D6C9AD]';
+    
     return (
         <div className={`border bg-white rounded-sm flex flex-col ${themeColor?.split(' ')[2] || 'border-[#D6C9AD]'}`}>
             <div className={`text-xs font-semibold p-1.5 flex items-center justify-between border-b ${themeClasses}`}>
                 <div className="flex items-center">
-                    <button onClick={() => setIsOpen(!isOpen)} className="mr-1 p-0.5 rounded hover:bg-black/10">
+                    <button 
+                      onClick={() => setIsOpen(!isOpen)} 
+                      className="mr-1 p-0.5 rounded hover:bg-black/10"
+                      aria-expanded={isOpen}
+                      aria-controls={`panel-content-${title}`}
+                    >
                         {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                     </button>
                     <span>{title}</span>
                 </div>
                 <div className="flex items-center gap-1">{actions}</div>
             </div>
-            <div className={`transition-all duration-300 ease-in-out overflow-hidden ${isOpen ? 'max-h-[1000px]' : 'max-h-0'}`}>
+            <div 
+              id={`panel-content-${title}`}
+              className={`transition-all duration-300 ease-in-out overflow-hidden ${isOpen ? 'max-h-[1000px]' : 'max-h-0'}`}
+            >
                 {isOpen && <div className="bg-white overflow-y-auto">{children}</div>}
             </div>
         </div>

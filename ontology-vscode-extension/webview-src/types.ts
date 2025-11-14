@@ -44,6 +44,7 @@ export interface PropertyAssertion {
   targetLabel?: string;
   targetLiteral?: string;
   isObjectProperty: boolean;
+  datatypeIri?: string;
 }
 
 export interface Axiom {
@@ -158,6 +159,12 @@ export interface ValidationResult {
   valid: boolean;
   errorMessage: string | null;
   suggestions?: string[];
+  
+  isValid: boolean;
+  orphanClasses?: string[];
+  unusedProperties?: string[];
+  missingLabels?: string[];
+  circularDependencies?: string[];
 }
 
 export interface InferredAxiom {
@@ -175,16 +182,6 @@ export interface ExecutionResponse {
   errorMessage: string | null;
 }
 
-// ============ Validation Types ============
-
-export interface ValidationResult {
-  isValid: boolean;
-  orphanClasses?: string[];
-  unusedProperties?: string[];
-  missingLabels?: string[];
-  circularDependencies?: string[];
-}
-
 // ============ Neo4j Graph Types ============
 
 export interface OntologyClassNode {
@@ -194,6 +191,8 @@ export interface OntologyClassNode {
   comment?: string;
   deprecated: boolean;
   superClasses?: OntologyClassNode[];
+  parents?: OntologyClassNode[]; 
+  hasChildren?: boolean;
 }
 
 export interface PropertyNode {
@@ -218,7 +217,7 @@ export interface ClassStatistics {
 
 export interface PluginContext {
   projectId: string;
-  ontology?: OntologyMetadata;
+  ontology?: OntologyMetadata | null;
 }
 
 export interface OntologyPlugin {
@@ -245,7 +244,7 @@ export interface PluginSettings {
 
 // ============ UI Types ============
 
-export type SelectableItem = TreeNode | Property | Individual | { id: string; label: string };
+export type SelectableItem = TreeNode | Property | Individual | { id: string; label: string, annotations?: Record<string, string> };
 
 export interface TabConfig {
   id: string;

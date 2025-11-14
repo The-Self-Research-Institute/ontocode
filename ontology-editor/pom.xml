@@ -23,6 +23,7 @@
         <neo4j-ogm.version>4.0.10</neo4j-ogm.version>
     </properties>
     
+    
     <dependencies>
         <!-- ========== SPRING BOOT STARTERS ========== -->
         
@@ -93,6 +94,19 @@
             <artifactId>jena-arq</artifactId>
             <version>${jena.version}</version>
         </dependency>
+
+        <dependency>
+            <groupId>org.semanticweb.elk</groupId>
+            <artifactId>elk-owlapi</artifactId>
+            <version>0.4.3</version>
+            <optional>true</optional>
+        </dependency>
+
+        <dependency>
+            <groupId>com.github.galigator.openllet</groupId>
+            <artifactId>openllet-owlapi</artifactId>
+            <version>2.6.5</version>
+        </dependency>
         
         <!-- ========== UTILITIES ========== -->
         
@@ -143,10 +157,11 @@
         </dependency>
         
         <!-- Neosemantics (optional - for RDF import) -->
-        <dependency>
+       <dependency>
             <groupId>com.graphaware.neo4j</groupId>
-            <artifactId>neo4j-nlp</artifactId>
-            <version>4.0.0</version>
+            <artifactId>nlp</artifactId>
+            <version>3.5.4.53.18</version>
+            <scope>provided</scope>
         </dependency>
     </dependencies>
     
