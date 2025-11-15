@@ -7,6 +7,7 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
+import com.mongodb.client.result.UpdateResult;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.controller.ProjectLoadController.TreeNode;
 import self.research.ontology.owlEditor.document.*;
@@ -297,6 +298,21 @@ public class OntologyIndexService {
         Query deleteQuery = new Query(Criteria.where("projectId").is(projectId));
         mongoTemplate.remove(deleteQuery, "ontology_search_index");
         mongoTemplate.save(searchIndex, "ontology_search_index");
+    }
+
+    public boolean updateAnnotationProperty(String projectId, AnnotationPropertyDto annotationPropertyDto) {
+        Query query = new Query(Criteria.where("projectId").is(projectId).and("iri").is(annotationPropertyDto.getIri()));
+        Update update = new Update();
+        if (annotationPropertyDto.getLabel() != null) {
+            update.set("annotations.label", annotationPropertyDto.getLabel());
+        }
+        if (annotationPropertyDto.getAnnotations() != null) {
+            for (Map.Entry<String, String> entry : annotationPropertyDto.getAnnotations().entrySet()) {
+                update.set("annotations." + entry.getKey(), entry.getValue());
+            }
+        }
+        UpdateResult result = mongoTemplate.updateFirst(query, update, "ontology_annotation_properties");
+        return result.getModifiedCount() > 0;
     }
 
     private String buildSearchText(String localName, Map<String, String> annotations) {
@@ -1312,5 +1328,186 @@ public class OntologyIndexService {
             return iri.substring(iri.lastIndexOf('/') + 1);
         }
         return iri;
+    }
+
+    /**
+     * Generate OWL/RDF-XML from database contents for a project
+     */
+    public String generateOwlFromDatabase(String projectId) {
+        logger.info("Generating OWL file from database for project: {}", projectId);
+        
+        try {
+            Query metaQuery = new Query(Criteria.where("projectId").is(projectId));
+            OntologyDocument ontologyDoc = mongoTemplate.findOne(metaQuery, OntologyDocument.class);
+            
+            if (ontologyDoc == null) {
+                throw new RuntimeException("No ontology document found for project: " + projectId);
+            }
+            
+            Query classQuery = new Query(Criteria.where("projectId").is(projectId));
+            List<ClassDocument> classes = mongoTemplate.find(classQuery, ClassDocument.class, "ontology_classes");
+            
+            Query propQuery = new Query(Criteria.where("projectId").is(projectId));
+            List<PropertyDocument> properties = mongoTemplate.find(propQuery, PropertyDocument.class, "ontology_properties");
+            
+            Query indQuery = new Query(Criteria.where("projectId").is(projectId));
+            List<IndividualDocument> individuals = mongoTemplate.find(indQuery, IndividualDocument.class, "ontology_individuals");
+            
+            Query annoPropQuery = new Query(Criteria.where("projectId").is(projectId));
+            List<AnnotationPropertyDocument> annotationProperties = mongoTemplate.find(annoPropQuery, AnnotationPropertyDocument.class, "ontology_annotation_properties");
+            
+            StringBuilder owl = new StringBuilder();
+            owl.append("<?xml version=\"1.0\"?>\n");
+            String ontologyIRI = ontologyDoc.getMetadata() != null && ontologyDoc.getMetadata().getOntologyIRI() != null 
+                ? ontologyDoc.getMetadata().getOntologyIRI() : "http://example.org/ontology";
+            
+            owl.append("<rdf:RDF xmlns=\"").append(ontologyIRI).append("#\"\n");
+            owl.append("     xml:base=\"").append(ontologyIRI).append("\"\n");
+            owl.append("     xmlns:owl=\"http://www.w3.org/2002/07/owl#\"\n");
+            owl.append("     xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"\n");
+            owl.append("     xmlns:xml=\"http://www.w3.org/XML/1998/namespace\"\n");
+            owl.append("     xmlns:xsd=\"http://www.w3.org/2001/XMLSchema#\"\n");
+            owl.append("     xmlns:rdfs=\"http://www.w3.org/2000/01/rdf-schema#\">\n");
+            
+            owl.append("    <owl:Ontology rdf:about=\"").append(ontologyIRI).append("\">\n");
+            if (ontologyDoc.getMetadata() != null && ontologyDoc.getMetadata().getVersionIRI() != null) {
+                owl.append("        <owl:versionIRI rdf:resource=\"").append(ontologyDoc.getMetadata().getVersionIRI()).append("\"/>\n");
+            }
+            owl.append("    </owl:Ontology>\n\n");
+            
+            logger.info("Appending {} annotation properties to OWL", annotationProperties.size());
+            for (AnnotationPropertyDocument annoProp : annotationProperties) {
+                if (!annoProp.getIri().startsWith("http://www.w3.org/")) {
+                    owl.append("    <owl:AnnotationProperty rdf:about=\"").append(annoProp.getIri()).append("\"/>\n");
+                }
+            }
+            owl.append("\n");
+            
+            logger.info("Appending {} classes to OWL", classes.size());
+            for (ClassDocument cls : classes) {
+                if (!cls.getIri().contains("owl#Thing") && !cls.getIri().contains("rdf-syntax-ns#")) {
+                    owl.append("    <owl:Class rdf:about=\"").append(cls.getIri()).append("\">\n");
+                    
+                    if (cls.getSuperClasses() != null && !cls.getSuperClasses().isEmpty()) {
+                        for (String parentIri : cls.getSuperClasses()) {
+                            owl.append("        <rdfs:subClassOf rdf:resource=\"").append(parentIri).append("\"/>\n");
+                        }
+                    }
+                    
+                    if (cls.getAnnotations() != null) {
+                        for (Map.Entry<String, String> annotation : cls.getAnnotations().entrySet()) {
+                            String propIri = annotation.getKey();
+                            if (!propIri.startsWith("http://") && !propIri.startsWith("https://")) {
+                                propIri = ontologyIRI + "#" + propIri;
+                            }
+                            owl.append("        <").append(getShortForm(propIri)).append(">")
+                               .append(escapeXml(annotation.getValue()))
+                               .append("</").append(getShortForm(propIri)).append(">\n");
+                        }
+                    }
+                    
+                    owl.append("    </owl:Class>\n");
+                }
+            }
+            owl.append("\n");
+            
+            for (PropertyDocument prop : properties) {
+                if ("ObjectProperty".equals(prop.getType())) {
+                    owl.append("    <owl:ObjectProperty rdf:about=\"").append(prop.getIri()).append("\">\n");
+                    
+                    if (prop.getDomains() != null && !prop.getDomains().isEmpty()) {
+                        for (String domain : prop.getDomains()) {
+                            owl.append("        <rdfs:domain rdf:resource=\"").append(domain).append("\"/>\n");
+                        }
+                    }
+                    if (prop.getRanges() != null && !prop.getRanges().isEmpty()) {
+                        for (String range : prop.getRanges()) {
+                            owl.append("        <rdfs:range rdf:resource=\"").append(range).append("\"/>\n");
+                        }
+                    }
+                    
+                    if (prop.getAnnotations() != null) {
+                        for (Map.Entry<String, String> annotation : prop.getAnnotations().entrySet()) {
+                            owl.append("        <").append(getShortForm(annotation.getKey())).append(">")
+                               .append(escapeXml(annotation.getValue()))
+                               .append("</").append(getShortForm(annotation.getKey())).append(">\n");
+                        }
+                    }
+                    
+                    owl.append("    </owl:ObjectProperty>\n");
+                }
+            }
+            
+            for (PropertyDocument prop : properties) {
+                if ("DataProperty".equals(prop.getType())) {
+                    owl.append("    <owl:DatatypeProperty rdf:about=\"").append(prop.getIri()).append("\">\n");
+                    
+                    if (prop.getDomains() != null && !prop.getDomains().isEmpty()) {
+                        for (String domain : prop.getDomains()) {
+                            owl.append("        <rdfs:domain rdf:resource=\"").append(domain).append("\"/>\n");
+                        }
+                    }
+                    if (prop.getRanges() != null && !prop.getRanges().isEmpty()) {
+                        for (String range : prop.getRanges()) {
+                            owl.append("        <rdfs:range rdf:resource=\"").append(range).append("\"/>\n");
+                        }
+                    }
+                    
+                    if (prop.getAnnotations() != null) {
+                        for (Map.Entry<String, String> annotation : prop.getAnnotations().entrySet()) {
+                            owl.append("        <").append(getShortForm(annotation.getKey())).append(">")
+                               .append(escapeXml(annotation.getValue()))
+                               .append("</").append(getShortForm(annotation.getKey())).append(">\n");
+                        }
+                    }
+                    
+                    owl.append("    </owl:DatatypeProperty>\n");
+                }
+            }
+            owl.append("\n");
+            
+            for (IndividualDocument ind : individuals) {
+                String type = ind.getTypes() != null && !ind.getTypes().isEmpty() 
+                    ? ind.getTypes().get(0) : "owl:NamedIndividual";
+                
+                owl.append("    <").append(getShortForm(type)).append(" rdf:about=\"").append(ind.getIri()).append("\">\n");
+                
+                if (ind.getTypes() != null) {
+                    for (String typeIri : ind.getTypes()) {
+                        if (!typeIri.equals(type)) {
+                            owl.append("        <rdf:type rdf:resource=\"").append(typeIri).append("\"/>\n");
+                        }
+                    }
+                }
+                
+                if (ind.getAnnotations() != null) {
+                    for (Map.Entry<String, String> annotation : ind.getAnnotations().entrySet()) {
+                        owl.append("        <").append(getShortForm(annotation.getKey())).append(">")
+                           .append(escapeXml(annotation.getValue()))
+                           .append("</").append(getShortForm(annotation.getKey())).append(">\n");
+                    }
+                }
+                
+                owl.append("    </").append(getShortForm(type)).append(">\n");
+            }
+            
+            owl.append("</rdf:RDF>");
+            
+            logger.info("Successfully generated OWL file ({} bytes) for project: {}", owl.length(), projectId);
+            return owl.toString();
+            
+        } catch (Exception e) {
+            logger.error("Failed to generate OWL from database for project: {}", projectId, e);
+            throw new RuntimeException("Failed to generate OWL file", e);
+        }
+    }
+    
+    private String escapeXml(String text) {
+        if (text == null) return "";
+        return text.replace("&", "&amp;")
+                   .replace("<", "&lt;")
+                   .replace(">", "&gt;")
+                   .replace("\"", "&quot;")
+                   .replace("'", "&apos;");
     }
 }

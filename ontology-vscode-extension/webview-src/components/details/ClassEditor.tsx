@@ -53,7 +53,8 @@ const ClassEditor: React.FC<{
   onUpdate: (updatedItem: TreeNode) => void;
   onAddAnnotation: () => void;
   onDeleteAnnotation: (key: string) => void;
-}> = ({ item, onUpdate, onAddAnnotation, onDeleteAnnotation }) => {
+  onEditAnnotation: (key: string, value: string) => void;
+}> = ({ item, onUpdate, onAddAnnotation, onDeleteAnnotation,onEditAnnotation }) => {
 
   const handleAddAxiom = (type: AxiomType, definition: string) => {
     const newAxiom: Axiom = { id: `axiom-${Date.now()}`, type, definition };
@@ -96,7 +97,7 @@ const ClassEditor: React.FC<{
         title={`Annotations: ${item.label}`}
         actions={<button onClick={onAddAnnotation} className="p-0.5 hover:bg-black/20 rounded-full"><Plus size={14} /></button>}
       >
-        <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} />
+        <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} onUpdate={onUpdate}/>
       </Panel>
 
       <Panel title={`Description: ${item.label}`} defaultOpen={true}>

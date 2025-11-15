@@ -9,7 +9,8 @@ const IndividualEditor: React.FC<{
   onAddAnnotation: () => void;
   onDeleteAnnotation: (key: string) => void;
   activeTheme?: string;
-}> = ({ item, onUpdate, onAddAnnotation, onDeleteAnnotation, activeTheme }) => {
+  onEditAnnotation: (key: string, value: string) => void;
+}> = ({ item, onUpdate, onAddAnnotation, onDeleteAnnotation, activeTheme,onEditAnnotation }) => {
   const [isAddingAssertion, setIsAddingAssertion] = useState(false);
   const [newAssertion, setNewAssertion] = useState({ propertyLabel: '', targetLabel: '', isObjectProperty: true });
 
@@ -38,7 +39,7 @@ const IndividualEditor: React.FC<{
   return (
     <div className="flex flex-col gap-2 h-full">
       <Panel title={`Annotations: ${item.label}`} actions={<button onClick={onAddAnnotation} className="p-0.5 hover:bg-black/20 rounded-full"><Plus size={14} /></button>} themeColor={activeTheme}>
-        <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} />
+        <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation}/>
       </Panel>
       <Panel title="Types" defaultOpen={true} themeColor={activeTheme}>
         <div className="p-1.5 space-y-1">

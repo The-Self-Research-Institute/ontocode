@@ -1,3 +1,5 @@
+const pd = (require('pretty-data') as any).pd;
+import { XMLParser, XMLBuilder } from 'fast-xml-parser';
 // Fix: Removed triple-slash directive for node types as we are removing node-specific dependencies.
 
 import * as vscode from 'vscode';
@@ -29,11 +31,13 @@ type ExtensionMessage =
     // Fix: Added message types for API requests to the proxy
     | { type: 'apiGet'; requestId: string; url: string; params?: Record<string, unknown> }
     | { type: 'apiPost'; requestId: string; url: string; body?: unknown }
+    | { type: 'apiPut'; requestId: string; url: string; body?: unknown }
     | { type: 'apiDelete'; requestId: string; url: string; params?: Record<string, unknown> }
     | { type: 'webviewReady' }
     | { type: 'downloadOntology'; url: string; filename: string }
     | { type: 'downloadCurrentOntology' }
-    | { type: 'fileLoaded'; projectId: string };
+    | { type: 'fileLoaded'; projectId: string }
+    | { type: 'triggerFileUpload'; content: string };
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -133,6 +137,10 @@ class OntoCodePanel {
                         vscode.window.showInformationMessage("Download Initiated...");
                         this.downloadOntologyToSaveAs(message.url, message.filename);
                         break;
+                    case 'triggerFileUpload':
+                        console.log('[OntoCode] Received triggerFileUpload message from webview.');
+                        await this.saveCurrentEditorToFile(message.content);
+                        break;
                     case "fileLoaded":
                         console.log("[OntoCode] Received fileLoaded message.", message);
                         this.postMessage({ type: 'fileReady', projectId: message.projectId });
@@ -165,8 +173,9 @@ class OntoCodePanel {
                     // Fix: Added cases to handle API proxy requests from the webview
                     case 'apiGet':
                     case 'apiPost':
+                    case 'apiPut':
                     case 'apiDelete':
-                        this.handleApiRequest(message);
+                        this.handleApiRequest(message as Extract<ExtensionMessage, { type: 'apiGet' | 'apiPost' | 'apiPut' | 'apiDelete' }>);
                         break;
                 }
             },
@@ -203,11 +212,220 @@ class OntoCodePanel {
         }
     }
 
+    private async saveCurrentEditorToFile(updatedContent?: string) {
+        try {
+            // Step 1: Get target file
+            const targetUri = await this.getTargetFileUri();
+            if (!targetUri) return;
+
+            // Step 2: Get content to save
+            const content = await this.getContentToSave(updatedContent, targetUri);
+            if (!content) return;
+
+            // Step 3: Determine if JSON from webview needs merging
+            const isJsonFromWebview = updatedContent?.trim().startsWith('{');
+            
+            if (isJsonFromWebview) {
+                // Merge JSON into existing OWL
+                await this.mergeJsonToOwl(content, targetUri);
+            } else {
+                // Direct save (RDF/XML or plain editor content)
+                await this.saveDirectly(content, targetUri);
+            }
+        } catch (error: any) {
+            console.error('[OntoCode] Save error:', error);
+            vscode.window.showErrorMessage(`Save failed: ${error.message}`);
+        }
+    }
+
+    private async getTargetFileUri(): Promise<vscode.Uri | null> {
+        const editor = vscode.window.activeTextEditor;
+        
+        if (editor?.document.fileName.toLowerCase().endsWith('.owl')) {
+            return editor.document.uri;
+        }
+        
+        if (this._pendingFileUri) {
+            return this._pendingFileUri;
+        }
+        
+        const picked = await vscode.window.showOpenDialog({
+            canSelectMany: false,
+            openLabel: 'Select OWL file',
+            filters: { 'OWL Files': ['owl'] }
+        });
+        
+        return picked?.[0] || null;
+    }
+
+    private async getContentToSave(webviewContent: string | undefined, targetUri: vscode.Uri): Promise<string | null> {
+        if (webviewContent?.trim()) {
+            console.log('[OntoCode] Using webview content');
+            return webviewContent;
+        }
+        
+        const editor = vscode.window.activeTextEditor;
+        if (editor?.document.uri.toString() === targetUri.toString()) {
+            console.log('[OntoCode] Using editor content');
+            return editor.document.getText();
+        }
+        
+        console.log('[OntoCode] Reading from disk');
+        const bytes = await vscode.workspace.fs.readFile(targetUri);
+        return new TextDecoder('utf-8').decode(bytes);
+    }
+
+    private async saveDirectly(content: string, uri: vscode.Uri) {
+        await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(content));
+        console.log('[OntoCode] File saved directly');
+        vscode.window.showInformationMessage('File saved.');
+    }
+
+    private async mergeJsonToOwl(jsonContent: string, targetUri: vscode.Uri) {
+        console.log('[OntoCode] Merging JSON into OWL file');
+        
+        const data = JSON.parse(jsonContent);
+        
+        // Read existing OWL file
+        const owlBytes = await vscode.workspace.fs.readFile(targetUri);
+        const owlXml = new TextDecoder('utf-8').decode(owlBytes);
+        
+        // Parse OWL XML
+        const parser = new XMLParser({
+            ignoreAttributes: false,
+            attributeNamePrefix: '@_',
+            parseTagValue: false,
+            processEntities: true
+        });
+        
+        const owlDoc = parser.parse(owlXml);
+        const rdf = owlDoc['rdf:RDF'];
+        
+        if (!rdf) {
+            throw new Error('Invalid OWL file - missing rdf:RDF');
+        }
+        
+        // Get classes array
+        let owlClasses = rdf['owl:Class'];
+        if (!owlClasses) {
+            owlClasses = [];
+        } else if (!Array.isArray(owlClasses)) {
+            owlClasses = [owlClasses];
+            rdf['owl:Class'] = owlClasses;
+        }
+        
+        console.log(`[OntoCode] Processing ${owlClasses.length} OWL classes`);
+        
+        // Extract classes from JSON (handle nested structure)
+        const jsonClasses = this.extractClassesFromJson(data);
+        console.log(`[OntoCode] Found ${jsonClasses.length} classes in JSON`);
+        
+        let updateCount = 0;
+        
+        for (const jsonClass of jsonClasses) {
+            const iri = jsonClass.id;
+            
+            // Skip OWL built-ins
+            if (!iri || iri.includes('owl#Thing') || iri.includes('rdf-syntax-ns#')) {
+                continue;
+            }
+            
+            // Find matching OWL class
+            const owlClass = owlClasses.find((c: any) => c['@_rdf:about'] === iri);
+            
+            if (!owlClass) {
+                console.log(`[OntoCode] Class not in OWL: ${iri}`);
+                continue;
+            }
+            
+            console.log(`[OntoCode] Updating: ${jsonClass.label || iri}`);
+            
+            // Update label
+            if (jsonClass.label && owlClass['rdfs:label'] !== jsonClass.label) {
+                owlClass['rdfs:label'] = jsonClass.label;
+                updateCount++;
+                console.log(`[OntoCode]   label → ${jsonClass.label}`);
+            }
+            
+            // Update annotations
+            if (jsonClass.annotations && typeof jsonClass.annotations === 'object') {
+                for (const [key, value] of Object.entries(jsonClass.annotations)) {
+                    if (!value || value === '') continue;
+                    
+                    const fullKey = key.includes(':') ? key : `untitled-ontology-55:${key}`;
+                    const current = owlClass[fullKey];
+                    
+                    if (current !== value) {
+                        owlClass[fullKey] = value;
+                        updateCount++;
+                        console.log(`[OntoCode]   ${key} → ${String(value).substring(0, 40)}`);
+                    }
+                }
+            }
+        }
+        
+        console.log(`[OntoCode] Applied ${updateCount} changes`);
+        
+        // Build XML
+        const builder = new XMLBuilder({
+            ignoreAttributes: false,
+            attributeNamePrefix: '@_',
+            format: true,
+            indentBy: '  '
+        });
+        
+        const xml = builder.build(owlDoc);
+        const prettyXml = pd.xml(xml);
+        
+        // Write file
+        await vscode.workspace.fs.writeFile(targetUri, new TextEncoder().encode(prettyXml));
+        vscode.window.showInformationMessage(`Saved with ${updateCount} changes.`);
+    }
+
+    private extractClassesFromJson(data: any): any[] {
+        const classes: any[] = [];
+        
+        // Handle nested "classes" property
+        if (data.classes && Array.isArray(data.classes)) {
+            for (const item of data.classes) {
+                if (item.classes && Array.isArray(item.classes)) {
+                    // Nested structure like classes[0].classes[0].children
+                    for (const nestedClass of item.classes) {
+                        classes.push(nestedClass);
+                        if (nestedClass.children) {
+                            classes.push(...this.flattenChildren(nestedClass.children));
+                        }
+                    }
+                } else {
+                    // Direct class item
+                    classes.push(item);
+                    if (item.children) {
+                        classes.push(...this.flattenChildren(item.children));
+                    }
+                }
+            }
+        }
+        
+        return classes;
+    }
+
+    private flattenChildren(children: any[]): any[] {
+        const result: any[] = [];
+        for (const child of children) {
+            result.push(child);
+            if (child.children && Array.isArray(child.children)) {
+                result.push(...this.flattenChildren(child.children));
+            }
+        }
+        return result;
+    }
+
+
     /**
      * Fix: New method to handle API requests from the webview, acting as a proxy.
      * This centralizes API calls, attaches auth tokens, and bypasses CORS issues.
      */
-    private async handleApiRequest(message: Extract<ExtensionMessage, { type: 'apiGet' | 'apiPost' | 'apiDelete' }>) {
+    private async handleApiRequest(message: Extract<ExtensionMessage, { type: 'apiGet' | 'apiPost' | 'apiPut' | 'apiDelete' }>) {
         const { requestId, type, url } = message;
         // Fix: Cast context to `any` to access the `secrets` property, bypassing outdated type definitions.
         const token = await (this._context as any).secrets.get(TOKEN_KEY);
@@ -234,6 +452,9 @@ class OntoCodePanel {
                     break;
                 case 'apiPost':
                     response = await axios.post(fullUrl, message.body, { headers });
+                    break;
+                case 'apiPut':
+                    response = await axios.put(fullUrl, message.body, { headers });
                     break;
                 case 'apiDelete':
                     response = await axios.delete(fullUrl, { headers, params: message.params });

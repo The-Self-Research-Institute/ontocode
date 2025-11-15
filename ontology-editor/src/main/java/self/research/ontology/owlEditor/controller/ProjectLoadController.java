@@ -1,3 +1,4 @@
+
 package self.research.ontology.owlEditor.controller;
 
 import org.slf4j.Logger;
@@ -202,6 +203,236 @@ public class ProjectLoadController {
         }
     }
 
+        @PutMapping("/annotation-properties/{projectId}")
+    public ResponseEntity<Map<String, Object>> updateAnnotationProperty(
+            @PathVariable String projectId,
+            @RequestBody AnnotationPropertyDto annotationPropertyDto) {
+        logger.info("Updating annotation property for project: {}", projectId);
+        try {
+            boolean updated = ontologyIndexService.updateAnnotationProperty(projectId, annotationPropertyDto);
+            if (updated) {
+                Map<String, Object> response = new HashMap<>();
+                response.put("success", true);
+                response.put("message", "Annotation property updated successfully");
+                return ResponseEntity.ok(response);
+            } else {
+                return ResponseEntity.status(404).body(createErrorResponse("Annotation property not found or not updated"));
+            }
+        } catch (Exception e) {
+            logger.error("Error updating annotation property", e);
+            return ResponseEntity.status(500).body(createErrorResponse("Failed to update annotation property"));
+        }
+    }
+
+    @PutMapping("/classes/{projectId}")
+    public ResponseEntity<Map<String, Object>> updateClassAnnotations(
+            @PathVariable String projectId,
+            @RequestBody List<Map<String, Object>> updates) {
+        logger.info("Updating class annotations for project: {}", projectId);
+        try {
+            int updated = 0;
+            for (Map<String, Object> classUpdate : updates) {
+                String classIri = (String) classUpdate.get("iri");
+                @SuppressWarnings("unchecked")
+                Map<String, String> annotations = (Map<String, String>) classUpdate.get("annotations");
+                
+                if (classIri != null && annotations != null) {
+                    ontologyIndexService.updateClassAnnotations(projectId, classIri, annotations);
+                    updated++;
+                }
+            }
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("updated", updated);
+            response.put("message", updated + " class(es) updated successfully");
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            logger.error("Error updating class annotations", e);
+            return ResponseEntity.status(500).body(createErrorResponse("Failed to update classes: " + e.getMessage()));
+        }
+    }
+    
+    @PutMapping("/update/{projectId}")
+    public ResponseEntity<Map<String, Object>> updateCompleteOntology(
+            @PathVariable String projectId,
+            @RequestBody Map<String, Object> ontologyUpdate) {
+        logger.info("========================================");
+        logger.info("Updating complete ontology for project: {}", projectId);
+        logger.info("Received payload with keys: {}", ontologyUpdate.keySet());
+        try {
+            int totalUpdated = 0;
+            
+            // Update classes with all their properties
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> classes = (List<Map<String, Object>>) ontologyUpdate.get("classes");
+            if (classes != null) {
+                for (Map<String, Object> classData : classes) {
+                    String classIri = (String) classData.get("iri");
+                    @SuppressWarnings("unchecked")
+                    Map<String, String> annotations = (Map<String, String>) classData.get("annotations");
+                    
+                    if (classIri != null && annotations != null) {
+                        ontologyIndexService.updateClassAnnotations(projectId, classIri, annotations);
+                        totalUpdated++;
+                    }
+                }
+                logger.info("Updated {} classes", classes.size());
+            }
+            
+            // Update object properties
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> objectProperties = (List<Map<String, Object>>) ontologyUpdate.get("objectProperties");
+            if (objectProperties != null) {
+                for (Map<String, Object> propData : objectProperties) {
+                    String propIri = (String) propData.get("iri");
+                    @SuppressWarnings("unchecked")
+                    Map<String, String> annotations = (Map<String, String>) propData.get("annotations");
+                    
+                    if (propIri != null && annotations != null) {
+                        // Update property annotations in database
+                        Query query = new Query(Criteria.where("projectId").is(projectId));
+                        Update update = new Update();
+                        
+                        // Find and update the specific property in the properties array
+                        annotations.forEach((key, value) -> {
+                            update.set("objectProperties.$[prop].annotations." + key, value);
+                        });
+                        
+                        update.filterArray(Criteria.where("prop.iri").is(propIri));
+                        mongoTemplate.updateFirst(query, update, OntologyDocument.class);
+                    }
+                }
+                logger.info("Updated {} object properties", objectProperties.size());
+            }
+            
+            // Update data properties
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> dataProperties = (List<Map<String, Object>>) ontologyUpdate.get("dataProperties");
+            if (dataProperties != null) {
+                for (Map<String, Object> propData : dataProperties) {
+                    String propIri = (String) propData.get("iri");
+                    @SuppressWarnings("unchecked")
+                    Map<String, String> annotations = (Map<String, String>) propData.get("annotations");
+                    
+                    if (propIri != null && annotations != null) {
+                        Query query = new Query(Criteria.where("projectId").is(projectId));
+                        Update update = new Update();
+                        
+                        annotations.forEach((key, value) -> {
+                            update.set("dataProperties.$[prop].annotations." + key, value);
+                        });
+                        
+                        update.filterArray(Criteria.where("prop.iri").is(propIri));
+                        mongoTemplate.updateFirst(query, update, OntologyDocument.class);
+                    }
+                }
+                logger.info("Updated {} data properties", dataProperties.size());
+            }
+            
+            // Update individuals
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> individuals = (List<Map<String, Object>>) ontologyUpdate.get("individuals");
+            if (individuals != null) {
+                for (Map<String, Object> indData : individuals) {
+                    String indIri = (String) indData.get("iri");
+                    @SuppressWarnings("unchecked")
+                    Map<String, String> annotations = (Map<String, String>) indData.get("annotations");
+                    
+                    if (indIri != null && annotations != null) {
+                        Query query = new Query(Criteria.where("projectId").is(projectId));
+                        Update update = new Update();
+                        
+                        annotations.forEach((key, value) -> {
+                            update.set("individuals.$[ind].annotations." + key, value);
+                        });
+                        
+                        update.filterArray(Criteria.where("ind.iri").is(indIri));
+                        mongoTemplate.updateFirst(query, update, OntologyDocument.class);
+                    }
+                }
+                logger.info("Updated {} individuals", individuals.size());
+            }
+            
+            // Regenerate and reupload OWL file to GridFS
+            logger.info("========================================");
+            logger.info("Starting OWL file regeneration and reupload");
+            logger.info("========================================");
+            
+            try {
+                logger.info("Starting OWL file regeneration for project: {}", projectId);
+                String regeneratedOwl = ontologyIndexService.generateOwlFromDatabase(projectId);
+                logger.info("Generated OWL file size: {} bytes", regeneratedOwl.length());
+                
+                // Find existing file and replace it
+                Query fileQuery = new Query(Criteria.where("metadata.projectId").is(projectId));
+                GridFSFile existingFile = gridFsTemplate.findOne(fileQuery);
+                logger.info("Existing file found: {}", existingFile != null);
+                
+                if (existingFile != null) {
+                    String filename = existingFile.getFilename();
+                    logger.info("Replacing existing OWL file: {}", filename);
+                    
+                    // Delete old file
+                    gridFsTemplate.delete(fileQuery);
+                    logger.info("Deleted old file");
+                    
+                    // Upload new version
+                    byte[] fileBytes = regeneratedOwl.getBytes("UTF-8");
+                    java.security.MessageDigest md = java.security.MessageDigest.getInstance("MD5");
+                    String newChecksum = java.util.HexFormat.of().formatHex(md.digest(fileBytes)).toLowerCase();
+                    
+                    int version = existingFile.getMetadata() != null && existingFile.getMetadata().get("version") != null
+                            ? ((Integer) existingFile.getMetadata().get("version")) + 1 : 1;
+                    
+                    logger.info("New version will be: {}", version);
+                    
+                    org.bson.Document metadata = new org.bson.Document("projectId", projectId)
+                            .append("uploadTime", new Date())
+                            .append("checksum", newChecksum)
+                            .append("version", version);
+                    
+                    ObjectId newFileId = gridFsTemplate.store(
+                            new ByteArrayInputStream(fileBytes),
+                            filename,
+                            "application/rdf+xml",
+                            metadata
+                    );
+                    
+                    logger.info("✓ Successfully reuploaded OWL file with id: {} (version: {})", newFileId, version);
+                    logger.info("========================================");
+                } else {
+                    logger.warn("No existing file found for project: {}. Creating new file.", projectId);
+                    byte[] fileBytes = regeneratedOwl.getBytes("UTF-8");
+                    org.bson.Document metadata = new org.bson.Document("projectId", projectId)
+                            .append("uploadTime", new Date())
+                            .append("version", 1);
+                    
+                    ObjectId newFileId = gridFsTemplate.store(
+                            new ByteArrayInputStream(fileBytes),
+                            projectId + ".owl",
+                            "application/rdf+xml",
+                            metadata
+                    );
+                    logger.info("Created new OWL file with id: {}", newFileId);
+                }
+            } catch (Exception fileError) {
+                logger.error("Failed to regenerate/reupload OWL file, but database updates were successful", fileError);
+                // Continue - database is updated even if file regeneration fails
+            }
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("updated", totalUpdated);
+            response.put("message", "Ontology updated and file reuploaded successfully");
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            logger.error("Error updating complete ontology", e);
+            return ResponseEntity.status(500).body(createErrorResponse("Failed to update ontology: " + e.getMessage()));
+        }
+    }
+    
     @GetMapping("/files/{fileId}/download")
     public ResponseEntity<?> downloadOwl(@PathVariable String fileId) {
         try {

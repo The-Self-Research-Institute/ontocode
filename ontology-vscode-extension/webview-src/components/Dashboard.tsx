@@ -56,7 +56,9 @@ const TopMenuBar = ({
   onToggleGraphTab,
   isGraphVisible,
   fileList,
-  projectId
+  projectId,
+  handleSaveToDatabase,
+  serializeOntology
 }: {
   onToggleSwrlTab: () => void;
   isSwrlVisible: boolean;
@@ -64,6 +66,8 @@ const TopMenuBar = ({
   isGraphVisible: boolean;
   fileList: FilesListResponse[];
   projectId: string;
+  handleSaveToDatabase: () => void;
+  serializeOntology: () => string;
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -107,7 +111,7 @@ const TopMenuBar = ({
 
   const displayedFiles = searchFile ? files : fileList;
 
-  const menuItems = ['File', 'Edit', 'View', 'Reasoner', 'Tools', 'Window', 'Help', 'Download'];
+  const menuItems = ['File', 'Edit', 'View', 'Reasoner', 'Tools', 'Window', 'Help', 'Save', 'Download'];
 
   const downloadFile = (file: FileInfo) => {
     if (window.vscode) {
@@ -132,11 +136,17 @@ const TopMenuBar = ({
                 if (item === "Download") {
                   const currentFile = displayedFiles.find(f => f.projectId === projectId);
                   downloadFile(currentFile);
+                } else if (item === "Save") {
+                  handleSaveToDatabase();
+                  if (window.vscode) {
+                    const updatedOntologyString = serializeOntology();
+                    window.vscode.postMessage({ type: "triggerFileUpload", content: updatedOntologyString });
+                  }
                 } else {
                   setOpenMenu(openMenu === item ? null : item);
                 }
               }}
-              className="px-3 py-1 hover:bg-gray-300 rounded-sm"
+              className={`px-3 py-1 hover:bg-gray-300 rounded-sm ${item === "Save" ? "text-green-700 font-bold" : ""}`}
             >
               {item}
             </button>
@@ -267,13 +277,14 @@ const CreateIndividualModal = ({ isOpen, onClose, onCreate }: { isOpen: boolean,
 // #endregion
 
 // #region Details Panel
-const DetailsPanel = ({ selectedItem, entitiesTab, activeTheme, onUpdate, onAddAnnotation, onDeleteAnnotation }: {
+const DetailsPanel = ({ selectedItem, entitiesTab, activeTheme, onUpdate, onAddAnnotation, onDeleteAnnotation,onEditAnnotation }: {
     selectedItem: SelectableItem | null;
     entitiesTab: string;
     activeTheme?: string;
     onUpdate: (item: SelectableItem) => void;
     onAddAnnotation: () => void;
     onDeleteAnnotation: (key: string) => void;
+    onEditAnnotation: (key: string, value: string) => void;
 }) => {
     if (!selectedItem) {
         return (
@@ -288,6 +299,7 @@ const DetailsPanel = ({ selectedItem, entitiesTab, activeTheme, onUpdate, onAddA
     const sharedProps = {
         onAddAnnotation,
         onDeleteAnnotation,
+        onEditAnnotation,
         activeTheme
     };
 
@@ -307,19 +319,37 @@ const DetailsPanel = ({ selectedItem, entitiesTab, activeTheme, onUpdate, onAddA
             const item = selectedItem as AnnotationProperty;
             return (
                  <div className="flex-1 flex flex-col gap-2">
-                     <Panel title={`Annotations: ${item.label}`} {...sharedProps}><AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} /></Panel>
+                     <Panel title={`Annotations: ${item.label}`} {...sharedProps}><AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation}/></Panel>
                  </div>
             );
         }
         case 'Datatypes':
-            return <Panel title={`Annotations: ${selectedItem.label}`} {...sharedProps}><AnnotationsDisplay annotations={selectedItem.annotations} onDelete={onDeleteAnnotation} /></Panel>;
+            return <Panel title={`Annotations: ${selectedItem.label}`} {...sharedProps}><AnnotationsDisplay annotations={selectedItem.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation}/></Panel>;
         default:
-             return <div className="bg-white rounded-lg border p-4"><AnnotationsDisplay annotations={selectedItem.annotations} onDelete={onDeleteAnnotation} /></div>;
+             return <div className="bg-white rounded-lg border p-4"><AnnotationsDisplay annotations={selectedItem.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation}/></div>;
     }
 }
 // #endregion
 
 const Dashboard = () => {
+    // Serialize the main ontology state as JSON (safe default for now)
+    // You can replace this with RDF/XML, Turtle, etc. if needed
+    function serializeOntology() {
+      try {
+        return JSON.stringify({
+          classes: classHierarchy,
+          objectProperties,
+          dataProperties,
+          annotationProperties,
+          individuals,
+          datatypes,
+          metadata
+        }, null, 2);
+      } catch (e) {
+        return '';
+      }
+    }
+
   // #region State
   const { user, logout } = useAuth();
   const [projectId, setProjectId] = useState<string | null>(null);
@@ -352,6 +382,161 @@ const Dashboard = () => {
   // #endregion
 
   // #region Data Fetching and Initialization
+  
+  // Save changes to database - updates the complete ontology file
+  const handleSaveToDatabase = useCallback(async () => {
+    console.log('[Dashboard] ========== SAVE BUTTON CLICKED ==========');
+    console.log('[Dashboard] projectId:', projectId);
+    
+    if (!projectId) {
+      alert('No project loaded');
+      console.log('[Dashboard] Save aborted - no projectId');
+      return;
+    }
+
+    try {
+      console.log('[Dashboard] Starting full ontology save to database...');
+
+      // Extract all classes with their complete data
+      const classUpdates: Array<{ 
+        iri: string; 
+        label?: string;
+        annotations: Record<string, string>;
+        subClasses?: string[];
+      }> = [];
+      
+      const extractClasses = (nodes: TreeNode[], parentIri?: string) => {
+        for (const node of nodes) {
+          // Skip built-in OWL classes
+          if (node.id && !node.id.includes('owl#Thing') && !node.id.includes('rdf-syntax-ns#')) {
+            const classData: any = {
+              iri: node.id,
+              label: node.label,
+              annotations: node.annotations || {}
+            };
+            
+            // Add parent relationship
+            if (parentIri) {
+              classData.parentIri = parentIri;
+            }
+            
+            // Add subclasses if they exist
+            if (node.children && node.children.length > 0) {
+              classData.subClasses = node.children
+                .filter(child => !child.id.includes('owl#Thing') && !child.id.includes('rdf-syntax-ns#'))
+                .map(child => child.id);
+            }
+            
+            classUpdates.push(classData);
+          }
+          
+          if (node.children && node.children.length > 0) {
+            extractClasses(node.children, node.id);
+          }
+        }
+      };
+      
+      extractClasses(classHierarchy);
+
+      // Prepare complete ontology update payload
+      const ontologyUpdate = {
+        classes: classUpdates,
+        objectProperties: objectProperties.map(prop => ({
+          iri: prop.iri,
+          label: prop.label,
+          annotations: prop.annotations || {},
+          domain: prop.domain,
+          range: prop.range
+        })),
+        dataProperties: dataProperties.map(prop => ({
+          iri: prop.iri,
+          label: prop.label,
+          annotations: prop.annotations || {},
+          domain: prop.domain,
+          range: prop.range
+        })),
+        annotationProperties: annotationProperties.map(prop => ({
+          iri: prop.iri,
+          label: prop.label,
+          annotations: prop.annotations || {}
+        })),
+        individuals: individuals.map(ind => ({
+          iri: ind.iri,
+          label: ind.label,
+          types: ind.types,
+          annotations: ind.annotations || {}
+        })),
+        datatypes: datatypes.map(dt => ({
+          iri: dt.iri,
+          label: dt.label
+        }))
+      };
+
+      console.log(`[Dashboard] Saving complete ontology: ${classUpdates} classes, ${objectProperties.length} object properties, ${dataProperties.length} data properties, ${individuals.length} individuals`);
+
+      // Send to API to update the ontology file in database
+      console.log('[Dashboard] Sending PUT request to /api/ontology/update/' + projectId);
+      const response = await apiClient.put<{ success: boolean; updated: number; message: string }>(
+        `/api/ontology/update/${projectId}`, 
+        ontologyUpdate
+      );
+      
+      console.log('[Dashboard] Response received:', response.data);
+      
+      if (response.data.success) {
+        console.log(`Successfully saved ontology to database:\n- ${classUpdates.length} classes\n- ${objectProperties.length} object properties\n- ${dataProperties.length} data properties\n- ${individuals.length} individuals\n- ${annotationProperties.length} annotation properties`);
+      } else {
+        console.log(`Save completed with warnings: ${response.data.message}`);
+      }
+    } catch (error: any) {
+      console.error('Save to database failed:', error);
+      console.error('Error details:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status
+      });
+      
+      // Fallback to classes-only update if full update endpoint doesn't exist
+      if (error.response?.status === 404) {
+        console.log('[Dashboard] Full update endpoint not found, falling back to classes-only update');
+        try {
+          const classUpdates: Array<{ iri: string; annotations: Record<string, string> }> = [];
+          
+          const extractClasses = (nodes: TreeNode[]) => {
+            for (const node of nodes) {
+              if (node.id && !node.id.includes('owl#Thing') && !node.id.includes('rdf-syntax-ns#')) {
+                if (node.annotations && Object.keys(node.annotations).length > 0) {
+                  classUpdates.push({
+                    iri: node.id,
+                    annotations: node.annotations
+                  });
+                }
+              }
+              if (node.children && node.children.length > 0) {
+                extractClasses(node.children);
+              }
+            }
+          };
+          
+          extractClasses(classHierarchy);
+          
+          const response = await apiClient.put<{ success: boolean; updated: number; message: string }>(
+            `/api/ontology/classes/${projectId}`, 
+            classUpdates
+          );
+          
+          if (response.data.success) {
+            console.log(`Successfully saved ${response.data.updated} class annotation(s) to database`);
+          }
+        } catch (fallbackError: any) {
+          console.log(`Save failed: ${fallbackError.response?.data?.error || fallbackError.message}`);
+        }
+      } else {
+        console.log(`Save failed: ${error.response?.data?.error || error.message}`);
+      }
+    }
+  }, [projectId, classHierarchy, objectProperties, dataProperties, annotationProperties, individuals, datatypes]);
+
   const toggleSwrlTab = useCallback(() => {
     setVisibleMainTabs(prev => prev.includes('SWRL') ? prev.filter(t => t !== 'SWRL') : [...prev, 'SWRL']);
   }, []);
@@ -654,13 +839,36 @@ const Dashboard = () => {
   
   const handleDeleteAnnotation = useCallback((key: string) => {
       if (!selectedItem || !selectedItem.annotations) return;
-      if (!confirm(`Are you sure you want to delete the annotation "${key}"?`)) return;
+      // if (!window.confirm(`Are you sure you want to delete the annotation "${key}"?`)) return;
 
       const remainingAnnotations = { ...selectedItem.annotations };
       delete remainingAnnotations[key];
       const updatedItem = { ...selectedItem, annotations: remainingAnnotations };
       updateItemInState(updatedItem);
   }, [selectedItem, updateItemInState]);
+
+  const handleEditAnnotation = useCallback(async (key: string, value: string) => {
+    if (!selectedItem || !projectId) return;
+    // Update local state optimistically
+    const updatedAnnotations = { ...selectedItem.annotations, [key]: value };
+    const updatedItem = { ...selectedItem, annotations: updatedAnnotations };
+    updateItemInState(updatedItem);
+
+    // Only send to backend for AnnotationProperties
+    if (entitiesTab === 'AnnotationProperties') {
+      try {
+        await apiClient.put(`/api/ontology/annotation-properties/${projectId}`, {
+          id: selectedItem.id,
+          iri: selectedItem.iri,
+          label: selectedItem.label,
+          annotations: updatedAnnotations
+        });
+      } catch (e) {
+        // Optionally show error/rollback
+        console.error('Failed to update annotation property', e);
+      }
+    }
+  }, [selectedItem, projectId, entitiesTab, updateItemInState]);
 
   const handleAddItem = useCallback(async (type: 'subclass' | 'sibling' | 'individual') => {
       if(type === 'individual') {
@@ -719,9 +927,10 @@ const Dashboard = () => {
 
 
   const handleDeleteItem = useCallback(() => {
+    console.log(selectedItem,"selectedItem")
+
     if (!selectedItem) return;
     if (!confirm(`Are you sure you want to delete "${selectedItem.label}"? This action cannot be undone.`)) return;
-    
     switch (entitiesTab) {
         case 'Classes': {
              const removeNodeRecursively = (nodes: TreeNode[], id: string): TreeNode[] => {
@@ -819,7 +1028,8 @@ const Dashboard = () => {
                          </div>
                          <div className="flex-1 overflow-y-auto p-4">
                              <h3 className="text-xs font-semibold text-gray-700 mb-2">Annotations</h3>
-                             <AnnotationsDisplay annotations={metadata?.annotations} onDelete={() => alert('Cannot delete ontology annotation here.')} />
+                             <AnnotationsDisplay annotations={metadata?.annotations} onDelete={() => console.log('Cannot delete ontology annotation here.')}   onEdit={()=>console.log('Cannot edit ontology annotation here.')}
+ />
                          </div>
                          <div className="border-t border-gray-200">
                              <div className="flex bg-gray-100 text-xs border-b border-gray-200">
@@ -1036,7 +1246,16 @@ const Dashboard = () => {
       <CreateIndividualModal isOpen={isCreateIndividualModalOpen} onClose={() => setCreateIndividualModalOpen(false)} onCreate={handleAddIndividual} />
 
       <div className="h-screen bg-gray-50 flex flex-col text-sm max-h-screen">
-        <TopMenuBar onToggleSwrlTab={toggleSwrlTab} isSwrlVisible={visibleMainTabs.includes('SWRL')} onToggleGraphTab={toggleGraphTab} isGraphVisible={visibleMainTabs.includes('Graph')} fileList={listOfFiles} projectId={projectId}/>
+        <TopMenuBar 
+          onToggleSwrlTab={toggleSwrlTab}
+          isSwrlVisible={visibleMainTabs.includes('SWRL')}
+          onToggleGraphTab={toggleGraphTab}
+          isGraphVisible={visibleMainTabs.includes('Graph')}
+          fileList={listOfFiles}
+          projectId={projectId}
+          handleSaveToDatabase={handleSaveToDatabase}
+          serializeOntology={serializeOntology}
+        />
         
         <div className="bg-white border-b border-gray-200 flex-shrink-0">
             <div className="flex items-center justify-between px-4 h-10">
@@ -1104,6 +1323,7 @@ const Dashboard = () => {
                   onUpdate={updateItemInState}
                   onAddAnnotation={handleAddAnnotation} 
                   onDeleteAnnotation={handleDeleteAnnotation}
+                  onEditAnnotation={handleEditAnnotation}
                 />
               </section>
             </>

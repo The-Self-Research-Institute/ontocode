@@ -72,7 +72,8 @@ const PropertyEditor: React.FC<{
   onAddAnnotation: () => void;
   onDeleteAnnotation: (key: string) => void;
   activeTheme?: string;
-}> = ({ item, onUpdate, onAddAnnotation, onDeleteAnnotation, activeTheme }) => {
+  onEditAnnotation: (key: string, value: string) => void;
+}> = ({ item, onUpdate, onAddAnnotation, onDeleteAnnotation, activeTheme,onEditAnnotation }) => {
     const isObjectProperty = item.type === 'ObjectProperty';
     const characteristics = isObjectProperty ? ['Functional', 'Inverse functional', 'Transitive', 'Symmetric', 'Asymmetric', 'Reflexive', 'Irreflexive'] : ['Functional'];
     
@@ -86,7 +87,7 @@ const PropertyEditor: React.FC<{
         <div className="flex gap-2 h-full">
             <div className="w-1/3 flex flex-col gap-2">
                 <Panel title={`Annotations: ${item.label}`} actions={<button onClick={onAddAnnotation} className="p-0.5 hover:bg-black/20 rounded-full"><Plus size={14}/></button>} themeColor={activeTheme}>
-                    <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} />
+                    <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} />
                 </Panel>
                 <Panel title="Characteristics" themeColor={activeTheme}>
                    <div className="p-2 space-y-1.5 text-xs">
