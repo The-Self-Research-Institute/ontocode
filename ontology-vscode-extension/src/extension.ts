@@ -376,7 +376,7 @@ class OntoCodePanel {
             }
         }
         
-        console.log(`[OntoCode] Applied ${updateCount} changes`);
+        console.log(`[OntoCode] Applied changes`);
         
         // Build XML
         const builder = new XMLBuilder({
@@ -391,7 +391,7 @@ class OntoCodePanel {
         
         // Write file
         await vscode.workspace.fs.writeFile(targetUri, new TextEncoder().encode(prettyXml));
-        vscode.window.showInformationMessage(`Saved with ${updateCount} changes.`);
+        vscode.window.showInformationMessage(`Saved with changes.`);
     }
 
     private extractClassesFromJson(data: any): any[] {
@@ -628,7 +628,7 @@ class OntoCodePanel {
             // Save to the target file
             await vscode.workspace.fs.writeFile(targetUri, new Uint8Array(response.data));
             console.log(`[OntoCode] File saved successfully to: ${targetUri.fsPath}`);
-            vscode.window.showInformationMessage(`Saved with ${response.data.byteLength} bytes to ${targetUri.fsPath.split(/[\\/]/).pop()}`);
+            // vscode.window.showInformationMessage(`Saved with ${response.data.byteLength} bytes to ${targetUri.fsPath.split(/[\\/]/).pop()}`);
             
         } catch (error: any) {
             console.error('[OntoCode] Download and save error:', error);

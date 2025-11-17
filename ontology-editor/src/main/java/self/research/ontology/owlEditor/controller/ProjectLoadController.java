@@ -275,36 +275,49 @@ public class ProjectLoadController {
             // Update classes with all their properties
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> classes = (List<Map<String, Object>>) ontologyUpdate.get("classes");
-            if (classes != null) {
+            if (classes != null && !classes.isEmpty()) {
+                logger.info("Sample class: {}", classes.get(0));
                 for (Map<String, Object> classData : classes) {
                     String classIri = (String) classData.get("iri");
+                    String label = (String) classData.get("label");
                     @SuppressWarnings("unchecked")
                     Map<String, String> annotations = (Map<String, String>) classData.get("annotations");
                     
-                    if (classIri != null && annotations != null) {
+                    logger.info("Processing class: iri={}, label={}, annotations={}", 
+                        classIri, label, annotations != null ? annotations.keySet() : "null");
+                    
+                    if (classIri != null && annotations != null && !annotations.isEmpty()) {
                         ontologyIndexService.updateClassAnnotations(projectId, classIri, annotations);
                         totalUpdated++;
+                        logger.info("  ✓ Updated class {}", classIri);
+                    } else {
+                        logger.info("  ⊘ Skipped class {} (annotations null or empty)", classIri);
                     }
                 }
-                logger.info("Updated {} classes", classes.size());
+                logger.info("Updated {} classes with non-empty annotations", totalUpdated);
+            } else {
+                logger.warn("NO CLASSES RECEIVED IN UPDATE PAYLOAD!");
             }
             
             // Update object properties
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> objectProperties = (List<Map<String, Object>>) ontologyUpdate.get("objectProperties");
             if (objectProperties != null) {
+                logger.info("Processing {} object properties", objectProperties.size());
                 for (Map<String, Object> propData : objectProperties) {
                     String propIri = (String) propData.get("iri");
                     @SuppressWarnings("unchecked")
                     Map<String, String> annotations = (Map<String, String>) propData.get("annotations");
                     
-                    if (propIri != null && annotations != null) {
+                    if (propIri != null && annotations != null && !annotations.isEmpty()) {
                         Query query = new Query(Criteria.where("projectId").is(projectId)
                                 .and("iri").is(propIri));
                         Update update = new Update();
                         
                         annotations.forEach((key, value) -> {
-                            update.set("annotations." + key, value);
+                            if (value != null && !value.isEmpty()) {
+                                update.set("annotations." + key, value);
+                            }
                         });
                         
                         UpdateResult result = mongoTemplate.updateFirst(query, update, "ontology_properties");
@@ -320,18 +333,21 @@ public class ProjectLoadController {
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> dataProperties = (List<Map<String, Object>>) ontologyUpdate.get("dataProperties");
             if (dataProperties != null) {
+                logger.info("Processing {} data properties", dataProperties.size());
                 for (Map<String, Object> propData : dataProperties) {
                     String propIri = (String) propData.get("iri");
                     @SuppressWarnings("unchecked")
                     Map<String, String> annotations = (Map<String, String>) propData.get("annotations");
                     
-                    if (propIri != null && annotations != null) {
+                    if (propIri != null && annotations != null && !annotations.isEmpty()) {
                         Query query = new Query(Criteria.where("projectId").is(projectId)
                                 .and("iri").is(propIri));
                         Update update = new Update();
                         
                         annotations.forEach((key, value) -> {
-                            update.set("annotations." + key, value);
+                            if (value != null && !value.isEmpty()) {
+                                update.set("annotations." + key, value);
+                            }
                         });
                         
                         UpdateResult result = mongoTemplate.updateFirst(query, update, "ontology_properties");

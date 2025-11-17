@@ -1346,6 +1346,12 @@ public class OntologyIndexService {
             
             Query classQuery = new Query(Criteria.where("projectId").is(projectId));
             List<ClassDocument> classes = mongoTemplate.find(classQuery, ClassDocument.class, "ontology_classes");
+            logger.info("Found {} classes for project {}", classes.size(), projectId);
+            if (classes.isEmpty()) {
+                logger.warn("NO CLASSES FOUND! Checking database...");
+                long classCount = mongoTemplate.count(new Query(), "ontology_classes");
+                logger.warn("Total classes in ontology_classes collection: {}", classCount);
+            }
             
             Query propQuery = new Query(Criteria.where("projectId").is(projectId));
             List<PropertyDocument> properties = mongoTemplate.find(propQuery, PropertyDocument.class, "ontology_properties");
