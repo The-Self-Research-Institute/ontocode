@@ -97,7 +97,7 @@ const ClassEditor: React.FC<{
         title={`Annotations: ${item.label}`}
         actions={<button onClick={onAddAnnotation} className="p-0.5 hover:bg-black/20 rounded-full"><Plus size={14} /></button>}
       >
-        <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} onUpdate={onUpdate}/>
+        <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation}/>
       </Panel>
 
       <Panel title={`Description: ${item.label}`} defaultOpen={true}>

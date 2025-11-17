@@ -92,8 +92,13 @@ public class ProjectLoadController {
                 // Delete old file from GridFS
                 gridFsTemplate.delete(Query.query(Criteria.where("_id").is(existingFile.getObjectId())));
 
-                // Upload new version
+                // Upload new version - preserve createDate from original file
+                Date createDate = existingFile.getMetadata() != null && existingFile.getMetadata().get("createDate") != null
+                        ? (Date) existingFile.getMetadata().get("createDate")
+                        : (existingFile.getUploadDate() != null ? existingFile.getUploadDate() : new java.util.Date());
+                
                 org.bson.Document metadata = new org.bson.Document("projectId", projectId)
+                        .append("createDate", createDate)
                         .append("uploadTime", new java.util.Date())
                         .append("checksum", fileMd5)
                         .append("version", existingFile.getMetadata() != null && existingFile.getMetadata().get("version") != null
@@ -110,8 +115,10 @@ public class ProjectLoadController {
 
             } else {
                 // --- 🆕 Store new file ---
+                Date now = new java.util.Date();
                 org.bson.Document metadata = new org.bson.Document("projectId", projectId)
-                        .append("uploadTime", new java.util.Date())
+                        .append("createDate", now)
+                        .append("uploadTime", now)
                         .append("checksum", fileMd5)
                         .append("version", 1);
 
@@ -185,6 +192,7 @@ public class ProjectLoadController {
                 m.put("filename", f.getFilename());
                 m.put("length", f.getLength());
                 m.put("uploadDate", f.getUploadDate());
+                m.put("createDate", f.getMetadata() != null ? f.getMetadata().get("createDate") : f.getUploadDate());
                 m.put("contentType", f.getMetadata() != null ? f.getMetadata().getString("_contentType") : null);
                 m.put("projectId", f.getMetadata() != null ? f.getMetadata().getString("projectId") : null);
                 items.add(m);
@@ -203,7 +211,7 @@ public class ProjectLoadController {
         }
     }
 
-        @PutMapping("/annotation-properties/{projectId}")
+    @PutMapping("/annotation-properties/{projectId}")
     public ResponseEntity<Map<String, Object>> updateAnnotationProperty(
             @PathVariable String projectId,
             @RequestBody AnnotationPropertyDto annotationPropertyDto) {
@@ -385,9 +393,15 @@ public class ProjectLoadController {
                     int version = existingFile.getMetadata() != null && existingFile.getMetadata().get("version") != null
                             ? ((Integer) existingFile.getMetadata().get("version")) + 1 : 1;
                     
+                    // Preserve createDate from original file
+                    Date createDate = existingFile.getMetadata() != null && existingFile.getMetadata().get("createDate") != null
+                            ? (Date) existingFile.getMetadata().get("createDate")
+                            : (existingFile.getUploadDate() != null ? existingFile.getUploadDate() : new Date());
+                    
                     logger.info("New version will be: {}", version);
                     
                     org.bson.Document metadata = new org.bson.Document("projectId", projectId)
+                            .append("createDate", createDate)
                             .append("uploadTime", new Date())
                             .append("checksum", newChecksum)
                             .append("version", version);
@@ -404,8 +418,10 @@ public class ProjectLoadController {
                 } else {
                     logger.warn("No existing file found for project: {}. Creating new file.", projectId);
                     byte[] fileBytes = regeneratedOwl.getBytes("UTF-8");
+                    Date now = new Date();
                     org.bson.Document metadata = new org.bson.Document("projectId", projectId)
-                            .append("uploadTime", new Date())
+                            .append("createDate", now)
+                            .append("uploadTime", now)
                             .append("version", 1);
                     
                     ObjectId newFileId = gridFsTemplate.store(

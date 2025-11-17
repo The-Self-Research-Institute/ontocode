@@ -82,11 +82,17 @@ const TopMenuBar = ({
 
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
 
+    if (!value.trim()) {
+      setFiles(fileList);
+      setIsLoading(false);
+      return;
+    }
+
     timeoutRef.current = setTimeout(async () => {
       setIsLoading(true);
       try {
         const { data } = await apiClient.get<{ files: FilesListResponse[] }>(`/api/ontology/files`, {
-          params: { search: searchFile, caseSensitive: true },
+          params: { search: searchFile, caseSensitive: false },
         });
 
         setFiles(data.files);
@@ -98,18 +104,25 @@ const TopMenuBar = ({
     }, 1000);
   };
 
-    useEffect(() => {
+  useEffect(() => {
+      if (files.length === 0 && fileList.length > 0) {
         setFiles(fileList);
-        const handleClickOutside = (event: MouseEvent) => {
-            if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-              setOpenMenu(null);
-            }
-        };
-        document.addEventListener("mousedown", handleClickOutside);
-        return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, []);
+      }
+      
+      const handleClickOutside = (event: MouseEvent) => {
+          if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+            setOpenMenu(null);
+          }
+      };
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [fileList]);
 
-  const displayedFiles = searchFile ? files : fileList;
+  const displayedFiles = (searchFile ? files : fileList).sort((a, b) => {
+    const aCreateDate = a.createDate || a.uploadDate;
+    const bCreateDate = b.createDate || b.uploadDate;
+    return new Date(bCreateDate).getTime() - new Date(aCreateDate).getTime();
+  });
 
   const menuItems = ['File', 'Edit', 'View', 'Reasoner', 'Tools', 'Window', 'Help', 'Save', 'Download'];
 
@@ -151,9 +164,9 @@ const TopMenuBar = ({
               {item}
             </button>
             {openMenu === item && (
-              <div className="absolute left-0 mt-1 w-100 bg-white border border-gray-300 rounded-md shadow-lg z-20">
+              <div className="absolute left-0 mt-1 bg-white border border-gray-300 rounded-md shadow-lg z-20">
                 {item === "Window" ? (
-                  <div className="py-1">
+                  <div className="py-1 min-w-[150px]">
                     <div className="px-3 py-1 text-gray-400 text-xs">Tabs</div>
                     <a
                       href="#"
@@ -168,7 +181,7 @@ const TopMenuBar = ({
                     </a>
                   </div>
                 ) : item === "Reasoner" ? (
-                  <div className="py-1">
+                  <div className="py-1 min-w-[150px]">
                     <a
                       href="#"
                       onClick={(e) => {
@@ -176,7 +189,7 @@ const TopMenuBar = ({
                         onToggleGraphTab();
                         setOpenMenu(null);
                       }}
-                      className="flex justify-between items-center px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100"
+                      className="flex justify-between items-center px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100 whitespace-nowrap"
                     >
                       Graph View {isGraphVisible && <Check size={14} className="text-purple-600" />}
                     </a>
@@ -197,7 +210,7 @@ const TopMenuBar = ({
                     </div>
                     <div className="max-h-80 overflow-y-auto">
                     {isLoading && (
-                      <div className="px-3 py-1 text-gray-500 text-xs flex items-center gap-2">
+                      <div className="px-3 py-1.5 text-gray-500 text-xs flex items-center gap-2 bg-blue-50 border-b border-blue-100">
                         <Loader2 size={14} className="animate-spin" /> Searching...
                       </div>
                     )}
@@ -213,6 +226,7 @@ const TopMenuBar = ({
                                     type: "fileLoaded",
                                     projectId: file.filename.slice(0, -4),
                                   });
+                                  setOpenMenu(null);
                                 }
                               }}
                             >
@@ -225,7 +239,7 @@ const TopMenuBar = ({
                       </div>
                   </div>
                 ) : (
-                  <div className="p-2 text-xs text-gray-400">No actions available</div>
+                  <div className="p-2 text-xs text-gray-400 min-w-[150px]">No actions available</div>
                 )}
               </div>
             )}

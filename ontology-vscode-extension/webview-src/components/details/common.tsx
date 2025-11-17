@@ -59,13 +59,11 @@ export const AnnotationValue = ({
 export const AnnotationsDisplay = ({
   annotations,
   onDelete,
-  onEdit,
-  onUpdate
+  onEdit
 }: {
   annotations?: Record<string, string>;
   onDelete: (key: string) => void;
   onEdit: (key: string, value: string) => void;
-  onUpdate?: (key: string, value: string) => void;
 }) => {
   if (!annotations || Object.keys(annotations).length === 0) {
     return <div className="p-2 text-xs text-gray-400 italic">No annotations</div>;
