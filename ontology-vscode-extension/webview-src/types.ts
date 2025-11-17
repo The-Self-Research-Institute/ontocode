@@ -30,11 +30,24 @@ export interface Property {
 
 export interface Individual {
   id: string;
+  iri?: string;
   label: string;
   types?: string[];
   annotations?: Record<string, string>;
   propertyAssertions?: PropertyAssertion[];
 }
+
+export type AnnotationProperty = {
+  id: string;
+  label: string;
+  annotations?: Record<string, string>;
+};
+
+export type Datatype = {
+  id: string;
+  label: string;
+  annotations?: Record<string, string>;
+};
 
 export interface PropertyAssertion {
   id: string;
