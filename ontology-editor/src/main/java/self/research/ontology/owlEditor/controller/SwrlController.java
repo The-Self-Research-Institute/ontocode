@@ -13,8 +13,8 @@ import org.springframework.data.mongodb.gridfs.GridFsResource;
 import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import self.research.ontology.owlEditor.service.SWRLService;
-import self.research.ontology.owlEditor.service.SWRLService.ValidationResult;
+import self.research.ontology.owlEditor.service.SwrlService;
+import self.research.ontology.owlEditor.service.SwrlService.ValidationResult;
 
 import java.io.InputStream;
 import java.util.*;
@@ -26,15 +26,15 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/ontology")
 @CrossOrigin(origins = "*")
-public class SWRLController {
+public class SwrlController {
 
-    private static final Logger log = LoggerFactory.getLogger(SWRLController.class);
+    private static final Logger log = LoggerFactory.getLogger(SwrlController.class);
 
     @Autowired
     private GridFsTemplate gridfs;
 
     @Autowired
-    private SWRLService swrlService;
+    private SwrlService swrlService;
 
     private final Map<String, OWLOntology> ontologyCache = new HashMap<>();
 

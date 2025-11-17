@@ -13,9 +13,9 @@ import java.util.stream.Collectors;
  * Converts OWL ontology structure into nodes and edges for visualization.
  */
 @Service
-public class GraphGenerationService {
+public class GraphGeneratingService {
 
-    private static final Logger log = LoggerFactory.getLogger(GraphGenerationService.class);
+    private static final Logger log = LoggerFactory.getLogger(GraphGeneratingService.class);
 
     /**
      * Node in the ontology graph

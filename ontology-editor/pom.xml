@@ -26,8 +26,6 @@
     
     <dependencies>
         <!-- ========== SPRING BOOT STARTERS ========== -->
-        
-        <!-- Web MVC -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
@@ -75,23 +73,24 @@
         </dependency>
         
         <!-- ========== APACHE JENA (SPARQL) ========== -->
-        
         <dependency>
             <groupId>org.apache.jena</groupId>
-            <artifactId>apache-jena-libs</artifactId>
+            <artifactId>jena-tdb2</artifactId>
             <version>${jena.version}</version>
-            <type>pom</type>
         </dependency>
-        
+        <dependency>
+            <groupId>org.apache.jena</groupId>
+            <artifactId>jena-arq</artifactId>
+            <version>${jena.version}</version>
+        </dependency>
         <dependency>
             <groupId>org.apache.jena</groupId>
             <artifactId>jena-core</artifactId>
             <version>${jena.version}</version>
         </dependency>
-        
         <dependency>
             <groupId>org.apache.jena</groupId>
-            <artifactId>jena-arq</artifactId>
+            <artifactId>jena-rdfconnection</artifactId>
             <version>${jena.version}</version>
         </dependency>
 
@@ -101,7 +100,11 @@
             <version>0.4.3</version>
             <optional>true</optional>
         </dependency>
-
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+            <version>2.17.0</version>
+        </dependency>
         <dependency>
             <groupId>com.github.galigator.openllet</groupId>
             <artifactId>openllet-owlapi</artifactId>
@@ -145,10 +148,10 @@
         </dependency>
 
         <dependency>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-data-neo4j</artifactId>
-    </dependency>
-    
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-neo4j</artifactId>
+        </dependency>
+        
         <!-- Neo4j Driver -->
         <dependency>
             <groupId>org.neo4j.driver</groupId>
@@ -157,7 +160,7 @@
         </dependency>
         
         <!-- Neosemantics (optional - for RDF import) -->
-       <dependency>
+        <dependency>
             <groupId>com.graphaware.neo4j</groupId>
             <artifactId>nlp</artifactId>
             <version>3.5.4.53.18</version>

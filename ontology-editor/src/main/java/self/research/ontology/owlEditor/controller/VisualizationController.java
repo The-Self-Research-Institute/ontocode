@@ -15,8 +15,8 @@ import org.springframework.data.mongodb.gridfs.GridFsResource;
 import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import self.research.ontology.owlEditor.service.GraphGenerationService;
-import self.research.ontology.owlEditor.service.GraphGenerationService.Graph;
+import self.research.ontology.owlEditor.service.GraphGeneratingService;
+import self.research.ontology.owlEditor.service.GraphGeneratingService.Graph;
 
 import java.io.InputStream;
 import java.util.HashMap;
@@ -36,7 +36,7 @@ public class VisualizationController {
     private GridFsTemplate gridfs;
 
     @Autowired
-    private GraphGenerationService graphService;
+    private GraphGeneratingService graphService;
 
     private final Map<String, OWLOntology> ontologyCache = new HashMap<>();
 

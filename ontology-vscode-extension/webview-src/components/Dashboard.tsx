@@ -5,6 +5,7 @@ import {
   Download
 } from "lucide-react";
 import apiClient from "../services/apiClient";
+import ontologyMutationService from "../services/ontologyMutationService";
 import { pluginManager } from '../plugins/PluginSystem';
 import { SWRLPlugin, ReasoningPlugin } from '../plugins/PluginRegistry';
 import type { TreeNode, Property, Individual, OntologyMetadata, SelectableItem, AnnotationProperty, Datatype } from '../types';
@@ -15,6 +16,7 @@ import PropertyEditor from './details/PropertyEditor';
 import IndividualEditor from './details/IndividualEditor';
 import { Panel, AnnotationsDisplay } from './details/common';
 import SparqlQueryEditor from './SparqlQueryEditor';
+import { ProjectSelector } from './ProjectSelector';
 
 type TopLevelClass = TreeNode & { hasChildren: boolean };
 
@@ -50,12 +52,14 @@ const TopMenuBar = ({
   onToggleGraphTab,
   isGraphVisible,
   fileList,
+  currentProjectId,
 }: {
   onToggleSwrlTab: () => void;
   isSwrlVisible: boolean;
   onToggleGraphTab: () => void;
   isGraphVisible: boolean;
   fileList: FileInfo[];
+  currentProjectId: string | null;
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -73,10 +77,11 @@ const TopMenuBar = ({
     timeoutRef.current = setTimeout(async () => {
       setIsLoading(true);
       try {
-        const { files } = await apiClient.get<{ files: FileInfo[] }>(`/api/ontology/files`, {
-          params: { search: value, caseSensitive: true },
-        });
-        setFiles(files ?? []);
+        // Build URL with proper query parameters
+        const url = `/api/ontology/files?search=${encodeURIComponent(value)}&caseSensitive=true`;
+        const response = await apiClient.get<{ files: FileInfo[] }>(url);
+        const files = response?.files || response?.data?.files || [];
+        setFiles(files);
       } catch (error) {
         console.error("Failed to fetch data:", error);
       } finally {
@@ -97,17 +102,7 @@ const TopMenuBar = ({
   }, [fileList]);
 
   const displayedFiles = searchFile ? files : fileList;
-  const menuItems = ['File', 'Edit', 'View', 'Reasoner', 'Tools', 'Window', 'Help'];
-
-  const downloadFile = (file: FileInfo) => {
-    if (window.vscode) {
-      window.vscode.postMessage({
-        type: "downloadOntology",
-        url: `/api/ontology/files/${file.id}/download`,
-        filename: `${file.filename}-${file.id}`,
-      });
-    }
-  };
+  const menuItems = ['File', 'Edit', 'View', 'Reasoner', 'Tools', 'Window', 'Download', 'Help'];
 
   return (
     <header ref={menuRef} className="bg-gray-200 text-gray-800 text-xs flex items-center px-2 relative border-b border-gray-300 h-8 flex-shrink-0">
@@ -120,8 +115,22 @@ const TopMenuBar = ({
             <button
               onClick={() => {
                 if (item === "Download") {
-                  if (window.vscode) {
-                    window.vscode.postMessage({ type: "downloadCurrentOntology" });
+                  console.log('[TopMenuBar] Download clicked, projectId:', currentProjectId);
+                  if (window.vscode && currentProjectId) {
+                    window.vscode.postMessage({ 
+                      type: "downloadOntology",
+                      url: `/api/ontology/export/${currentProjectId}`,
+                      filename: `${currentProjectId}.owl`
+                    });
+                  } else if (!currentProjectId) {
+                    console.warn('[TopMenuBar] No project loaded to download');
+                    // Show user-friendly message
+                    if (window.vscode) {
+                      window.vscode.postMessage({
+                        type: 'error',
+                        value: 'No ontology loaded. Please open an ontology file first.'
+                      });
+                    }
                   }
                 } else {
                   setOpenMenu(openMenu === item ? null : item);
@@ -132,7 +141,7 @@ const TopMenuBar = ({
               {item}
             </button>
             {openMenu === item && (
-              <div className="absolute left-0 mt-1 w-100 bg-white border border-gray-300 rounded-md shadow-lg z-20">
+              <div className={`absolute left-0 mt-1 ${item === 'File' ? 'w-96' : 'w-100'} bg-white border border-gray-300 rounded-md shadow-lg z-20`}>
                 {item === "Window" ? (
                   <div className="py-1">
                     <div className="px-3 py-1 text-gray-400 text-xs">Tabs</div>
@@ -183,31 +192,28 @@ const TopMenuBar = ({
                     )}
                     {displayedFiles?.length > 0
                       ? displayedFiles.map((file) => (
-                          <div className="flex justify-between items-center gap-2" key={file.id}>
+                          <div 
+                            className="flex justify-between items-center gap-2 hover:bg-blue-50 px-2 py-1 rounded cursor-pointer transition-colors" 
+                            key={file.id}
+                            onClick={() => {
+                              if (window.vscode) {
+                                window.vscode.postMessage({
+                                  type: "fileLoaded",
+                                  projectId: file.filename.slice(0, -4),
+                                });
+                                setOpenMenu(null);
+                              }
+                            }}
+                          >
                             <span
-                              className="truncate min-w-0"
-                              title={`${file.filename}`}
-                              onClick={() => {
-                                if (window.vscode) {
-                                  window.vscode.postMessage({
-                                    type: "fileLoaded",
-                                    projectId: file.filename.slice(0, -4),
-                                  });
-                                }
-                              }}
+                              className="truncate min-w-0 flex-1 text-black"
+                              title={`Click to load: ${file.filename}`}
                             >
                               {file.filename}
                             </span>
-                            <button
-                              title="Download"
-                              onClick={() => downloadFile(file)}
-                              className="p-1 hover:bg-gray-100 rounded"
-                            >
-                              <Download className="w-4 h-4" />
-                            </button>
                           </div>
                         ))
-                      : !isLoading && <div className="px-3 py-1 text-gray-500">No Files</div>}
+                      : !isLoading && <div className="px-3 py-1 text-black">No Files</div>}
                   </div>
                 ) : (
                   <div className="p-2 text-xs text-gray-400">No actions available</div>
@@ -221,6 +227,127 @@ const TopMenuBar = ({
   );
 };
 
+const ConfirmDialog = ({
+  isOpen,
+  onClose,
+  onConfirm,
+  title,
+  message
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  title: string;
+  message: string;
+}) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4" onClick={e => e.stopPropagation()}>
+        <h3 className="text-lg font-semibold text-black mb-4">{title}</h3>
+        <p className="text-sm text-gray-700 mb-6">{message}</p>
+        <div className="flex justify-end gap-3">
+          <button 
+            onClick={onClose} 
+            className="px-4 py-2 text-sm bg-gray-200 text-black rounded-md hover:bg-gray-300"
+          >
+            Cancel
+          </button>
+          <button 
+            onClick={() => {
+              onConfirm();
+              onClose();
+            }} 
+            className="px-4 py-2 text-sm bg-red-600 text-white rounded-md hover:bg-red-700"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const AddClassDialog = ({ 
+  isOpen, 
+  onClose, 
+  onCreate,
+  type 
+}: { 
+  isOpen: boolean;
+  onClose: () => void;
+  onCreate: (name: string) => void;
+  type: 'subclass' | 'sibling';
+}) => {
+  const [name, setName] = useState('');
+  
+  if (!isOpen) return null;
+
+  const handleCreate = () => {
+    if (name.trim()) {
+      onCreate(name.trim());
+      setName('');
+      onClose();
+    } else {
+      showNotification("Class name cannot be empty.", 'warning');
+    }
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleCreate();
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4" onClick={e => e.stopPropagation()}>
+        <h3 className="text-lg font-semibold text-black mb-4">
+          Create New {type === 'subclass' ? 'Subclass' : 'Sibling Class'}
+        </h3>
+        <div className="space-y-4 text-sm">
+          <div>
+            <label className="font-medium text-black block mb-2">Class Name</label>
+            <input 
+              type="text" 
+              value={name} 
+              onChange={e => setName(e.target.value)}
+              onKeyPress={handleKeyPress}
+              placeholder="Enter class name" 
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-black"
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="font-medium text-black block mb-2">IRI</label>
+            <input 
+              type="text" 
+              disabled 
+              value="(auto-generated from ontology IRI + class name)" 
+              className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-md text-gray-500 text-xs" 
+            />
+          </div>
+        </div>
+        <div className="mt-6 flex justify-end gap-3">
+          <button 
+            onClick={onClose} 
+            className="px-4 py-2 text-sm bg-gray-200 text-black rounded-md hover:bg-gray-300"
+          >
+            Cancel
+          </button>
+          <button 
+            onClick={handleCreate} 
+            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
+          >
+            Create
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const CreateIndividualModal = ({ isOpen, onClose, onCreate }: { isOpen: boolean, onClose: () => void, onCreate: (name: string) => void }) => {
   const [name, setName] = useState('');
   if (!isOpen) return null;
@@ -231,7 +358,7 @@ const CreateIndividualModal = ({ isOpen, onClose, onCreate }: { isOpen: boolean,
       setName('');
       onClose();
     } else {
-      alert("Name cannot be empty.");
+      showNotification("Name cannot be empty.", 'warning');
     }
   };
 
@@ -257,13 +384,181 @@ const CreateIndividualModal = ({ isOpen, onClose, onCreate }: { isOpen: boolean,
     </div>
   );
 };
+
+const AddAnnotationDialog = ({ 
+  isOpen, 
+  onClose, 
+  onAdd, 
+  availableProperties 
+}: { 
+  isOpen: boolean;
+  onClose: () => void;
+  onAdd: (propertyIri: string, value: string, datatype?: string) => void;
+  availableProperties: AnnotationProperty[];
+}) => {
+  const [selectedProperty, setSelectedProperty] = useState('');
+  const [customProperty, setCustomProperty] = useState('');
+  const [value, setValue] = useState('');
+  const [datatype, setDatatype] = useState('xsd:string');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [useCustom, setUseCustom] = useState(false);
+
+  if (!isOpen) return null;
+
+  // Common annotation properties
+  const commonProperties = [
+    { iri: 'http://www.w3.org/2000/01/rdf-schema#label', label: 'rdfs:label' },
+    { iri: 'http://www.w3.org/2000/01/rdf-schema#comment', label: 'rdfs:comment' },
+    { iri: 'http://www.w3.org/2000/01/rdf-schema#seeAlso', label: 'rdfs:seeAlso' },
+    { iri: 'http://www.w3.org/2000/01/rdf-schema#isDefinedBy', label: 'rdfs:isDefinedBy' },
+  ];
+
+  // Merge with available properties from ontology
+  const allProperties = [
+    ...commonProperties,
+    ...availableProperties.map(p => ({ iri: p.id, label: p.label || p.id.split('#').pop() || p.id }))
+  ];
+
+  // Filter properties based on search
+  const filteredProperties = allProperties.filter(p => 
+    p.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    p.iri.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const handleAdd = () => {
+    const propertyIri = useCustom ? customProperty : selectedProperty;
+    if (!propertyIri.trim() || !value.trim()) {
+      showNotification("Property and value are required.", 'warning');
+      return;
+    }
+    onAdd(propertyIri, value, datatype);
+    // Reset form
+    setSelectedProperty('');
+    setCustomProperty('');
+    setValue('');
+    setDatatype('xsd:string');
+    setSearchQuery('');
+    setUseCustom(false);
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-white rounded-lg shadow-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <h3 className="text-lg font-semibold text-black mb-4">Add Annotation</h3>
+        
+        <div className="space-y-4 text-sm">
+          {/* Property Selection */}
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <label className="font-medium text-black">Annotation Property</label>
+              <label className="flex items-center gap-1 text-xs text-black">
+                <input 
+                  type="checkbox" 
+                  checked={useCustom} 
+                  onChange={(e) => setUseCustom(e.target.checked)}
+                  className="w-3 h-3"
+                />
+                Custom IRI
+              </label>
+            </div>
+            
+            {useCustom ? (
+              <input
+                type="text"
+                value={customProperty}
+                onChange={e => setCustomProperty(e.target.value)}
+                placeholder="http://example.com/ontology#customProperty"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-black"
+              />
+            ) : (
+              <>
+                <div className="relative mb-2">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    placeholder="Search properties..."
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-black"
+                  />
+                </div>
+                <select
+                  value={selectedProperty}
+                  onChange={e => setSelectedProperty(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 max-h-40 text-black"
+                  size={Math.min(filteredProperties.length + 1, 8)}
+                >
+                  <option value="" className="text-black">-- Select a property --</option>
+                  {filteredProperties.map(prop => (
+                    <option key={prop.iri} value={prop.iri} title={prop.iri} className="text-black">
+                      {prop.label}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
+          </div>
+
+          {/* Value Input */}
+          <div>
+            <label className="font-medium text-black block mb-2">Value</label>
+            <textarea
+              value={value}
+              onChange={e => setValue(e.target.value)}
+              placeholder="Enter annotation value..."
+              rows={4}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-black"
+            />
+          </div>
+
+          {/* Datatype Selection */}
+          <div>
+            <label className="font-medium text-black block mb-2">Datatype</label>
+            <select
+              value={datatype}
+              onChange={e => setDatatype(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-black"
+            >
+              <option value="xsd:string" className="text-black">xsd:string</option>
+              <option value="xsd:integer" className="text-black">xsd:integer</option>
+              <option value="xsd:decimal" className="text-black">xsd:decimal</option>
+              <option value="xsd:boolean" className="text-black">xsd:boolean</option>
+              <option value="xsd:date" className="text-black">xsd:date</option>
+              <option value="xsd:dateTime" className="text-black">xsd:dateTime</option>
+              <option value="xsd:anyURI" className="text-black">xsd:anyURI</option>
+              <option value="" className="text-black">Plain literal (no datatype)</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="mt-6 flex justify-end gap-3">
+          <button 
+            onClick={onClose} 
+            className="px-4 py-2 text-sm bg-gray-200 text-black rounded-md hover:bg-gray-300"
+          >
+            Cancel
+          </button>
+          <button 
+            onClick={handleAdd} 
+            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
+          >
+            Add
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // #endregion
 
 // #region Details Panel
-const DetailsPanel = ({ selectedItem, entitiesTab, activeTheme, onUpdate, onAddAnnotation, onDeleteAnnotation }: {
+const DetailsPanel = ({ selectedItem, entitiesTab, activeTheme, projectId, onUpdate, onAddAnnotation, onDeleteAnnotation }: {
   selectedItem: SelectableItem | null;
   entitiesTab: string;
   activeTheme?: string;
+  projectId: string | null;
   onUpdate: (item: SelectableItem) => void;
   onAddAnnotation: () => void;
   onDeleteAnnotation: (key: string) => void;
@@ -281,7 +576,8 @@ const DetailsPanel = ({ selectedItem, entitiesTab, activeTheme, onUpdate, onAddA
   const sharedProps = {
     onAddAnnotation,
     onDeleteAnnotation,
-    activeTheme
+    activeTheme,
+    projectId: projectId || ''
   };
 
   switch (entitiesTab) {
@@ -312,10 +608,24 @@ const DetailsPanel = ({ selectedItem, entitiesTab, activeTheme, onUpdate, onAddA
 };
 // #endregion
 
+// Helper function to show notifications
+const showNotification = (message: string, type: 'info' | 'error' | 'warning' = 'info') => {
+  console.log(`[${type.toUpperCase()}]`, message);
+  if (window.vscode) {
+    window.vscode.postMessage({
+      type: 'notification',
+      level: type,
+      message: message
+    });
+  }
+};
+
 const Dashboard = () => {
   // #region State
   const { user, logout } = useAuth();
   const [projectId, setProjectId] = useState<string | null>(null);
+  const [availableProjects, setAvailableProjects] = useState<any[]>([]);
+  const [showProjectSelector, setShowProjectSelector] = useState(false);
   const [metadata, setMetadata] = useState<OntologyMetadata | null>(null);
   const [mainTab, setMainTab] = useState("Entities");
   const [entitiesTab, setEntitiesTab] = useState("Classes");
@@ -325,6 +635,22 @@ const Dashboard = () => {
   const [isInitialLoading, setIsInitialLoading] = useState(false);
   const [activeOntologySubTab, setActiveOntologySubTab] = useState('prefixes');
   const [isCreateIndividualModalOpen, setCreateIndividualModalOpen] = useState(false);
+  const [isAddAnnotationDialogOpen, setAddAnnotationDialogOpen] = useState(false);
+  const [isAddClassDialogOpen, setAddClassDialogOpen] = useState(false);
+  const [addClassType, setAddClassType] = useState<'subclass' | 'sibling'>('subclass');
+  
+  // Confirm dialog state
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {}
+  });
 
   const [selectedClassForIndividuals, setSelectedClassForIndividuals] = useState<TreeNode | null>(null);
   const [dlQuery, setDlQuery] = useState('Pizza and hasTopping some MozzarellaTopping');
@@ -360,21 +686,47 @@ const Dashboard = () => {
 
     try {
       const [metadataRes, topLevelRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes, filesRes] = await Promise.all([
-        apiClient.get<OntologyMetadata>(`/api/ontology/metadata/${currentProjectId}`),
-        apiClient.get<{ classes: TopLevelClass[] }>(`/api/ontology/classes/top-level/${currentProjectId}`),
-        apiClient.get<{ data: Property[] }>(`/api/ontology/properties/${currentProjectId}`),
-        apiClient.get<{ data: Individual[] }>(`/api/ontology/individuals/${currentProjectId}`),
-        apiClient.get<{ data: AnnotationProperty[] }>(`/api/ontology/annotation-properties/${currentProjectId}`),
-        apiClient.get<{ data: Datatype[] }>(`/api/ontology/datatypes/${currentProjectId}`),
-        apiClient.get<{ files: FileInfo[] }>(`/api/ontology/files`),
+        apiClient.get<any>(`/api/ontology/metadata/${currentProjectId}`),
+        apiClient.get<any>(`/api/ontology/classes/top-level/${currentProjectId}`),
+        apiClient.get<any>(`/api/ontology/properties/${currentProjectId}`),
+        apiClient.get<any>(`/api/ontology/individuals/${currentProjectId}`),
+        apiClient.get<any>(`/api/ontology/annotation-properties/${currentProjectId}`),
+        apiClient.get<any>(`/api/ontology/datatypes/${currentProjectId}`),
+        apiClient.get<any>(`/api/ontology/files`),
       ]);
-      const ontologyDoc = ((metadataRes) as any).data || metadataRes;
-      setMetadata(ontologyDoc.metadata || ontologyDoc);
+      
+      // Handle metadata response - backend returns {success: true, data: {counts: {...}, prefixes: [...], ontologyIRI: "...", ...}}
+      console.log("Metadata response:", metadataRes);
+      const metadataData = metadataRes?.data || metadataRes;
+      // Keep all metadata fields from backend (axiom counts, ontologyIRI, etc.)
+      const transformedMetadata = {
+        ...metadataData,
+        // Also add flat structure for backward compatibility
+        classCount: metadataData?.classCount || metadataData?.counts?.classes || 0,
+        objectPropertyCount: metadataData?.objectPropertyCount || metadataData?.counts?.objectProperties || 0,
+        dataPropertyCount: metadataData?.dataPropertyCount || metadataData?.counts?.dataProperties || 0,
+        individualCount: metadataData?.individualCount || metadataData?.counts?.individuals || 0,
+        annotationPropertyCount: metadataData?.annotationPropertyCount || metadataData?.counts?.annotationProperties || 0,
+        tripleCount: metadataData?.tripleCount || metadataData?.counts?.triples || 0,
+        prefixes: metadataData?.prefixes || []
+      };
+      console.log("Transformed metadata:", transformedMetadata);
+      setMetadata(transformedMetadata);
 
-      const { classes } = topLevelRes;
+      // Handle classes response - backend returns {success: true, classes: [...]}
+      console.log("Classes response:", topLevelRes);
+      console.log("Classes response keys:", Object.keys(topLevelRes || {}));
+      console.log("topLevelRes?.classes:", topLevelRes?.classes);
+      console.log("topLevelRes?.data?.classes:", topLevelRes?.data?.classes);
+      console.log("topLevelRes?.data:", topLevelRes?.data);
+      const classes = Array.isArray(topLevelRes?.classes) ? topLevelRes.classes :
+                     Array.isArray(topLevelRes?.data?.classes) ? topLevelRes.data.classes :
+                     Array.isArray(topLevelRes?.data) ? topLevelRes.data : [];
+      console.log("Extracted classes:", classes);
+      console.log("Extracted classes length:", classes.length);
       const topLevelNodes: TreeNode[] = classes.map((c: TopLevelClass) => ({
         ...c,
-        children: c.hasChildren ? [] : null,
+        children: c.hasChildren ? undefined : undefined, // Use undefined to trigger lazy loading
         hasChildren: c.hasChildren,
         subClassOfAxioms: [{ id: 'sub1', type: 'SubClassOf', definition: 'Thing' }]
       }));
@@ -382,18 +734,29 @@ const Dashboard = () => {
         id: "http://www.w3.org/2002/07/owl#Thing",
         label: "owl:Thing",
         children: topLevelNodes,
+        hasChildren: topLevelNodes.length > 0,
         annotations: {}
       };
       setClassHierarchy([owlThingNode]);
 
-      const allProps = propertiesRes.data || [];
+      // Handle properties response
+      console.log("Properties response:", propertiesRes);
+      const allProps = Array.isArray(propertiesRes?.data) ? propertiesRes.data : 
+                       Array.isArray(propertiesRes?.properties) ? propertiesRes.properties : 
+                       Array.isArray(propertiesRes) ? propertiesRes : [];
+      console.log("All props after extraction:", allProps);
       setObjectProperties(allProps.filter((p: Property) => p.type === "ObjectProperty"));
       setDataProperties(allProps.filter((p: Property) => p.type === "DatatypeProperty"));
 
-      setIndividuals(individualsRes.data || []);
-      setAnnotationProperties(annotationPropsRes.data || []);
-      setDatatypes(datatypesRes.data || []);
-      setListOfFiles(filesRes.files || []);
+      // Handle other responses with fallbacks
+      setIndividuals(Array.isArray(individualsRes?.data) ? individualsRes.data : 
+                    Array.isArray(individualsRes?.individuals) ? individualsRes.individuals : []);
+      setAnnotationProperties(Array.isArray(annotationPropsRes?.data) ? annotationPropsRes.data :
+                              Array.isArray(annotationPropsRes?.annotationProperties) ? annotationPropsRes.annotationProperties : []);
+      setDatatypes(Array.isArray(datatypesRes?.data) ? datatypesRes.data :
+                  Array.isArray(datatypesRes?.datatypes) ? datatypesRes.datatypes : []);
+      setListOfFiles(Array.isArray(filesRes?.files) ? filesRes.files :
+                    Array.isArray(filesRes?.data?.files) ? filesRes.data.files : []);
     } catch (error) {
       console.error("Failed to fetch data:", error);
     } finally {
@@ -401,14 +764,45 @@ const Dashboard = () => {
     }
   }, []);
 
+  const fetchProjects = useCallback(async () => {
+    try {
+      const response = await apiClient.get<{ success: boolean; projects: any[] }>('/api/projects');
+      if (response.success && response.projects) {
+        setAvailableProjects(response.projects);
+        
+        // If no project selected and projects exist, show selector
+        if (!projectId && response.projects.length > 0) {
+          setShowProjectSelector(true);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to fetch projects:", error);
+    }
+  }, [projectId]);
+
+  const handleProjectSelection = useCallback((selectedProjectId: string) => {
+    setProjectId(selectedProjectId);
+    setShowProjectSelector(false);
+    fetchData(selectedProjectId);
+  }, [fetchData]);
+
   useEffect(() => {
     if (classHierarchy.length > 0 && classHierarchy[0].id === "http://www.w3.org/2002/07/owl#Thing") {
       const owlThingId = classHierarchy[0].id;
+      console.log('[Dashboard] Class hierarchy loaded, owl:Thing has', classHierarchy[0].children?.length || 0, 'top-level children');
       if (!expandedNodes.includes(owlThingId)) {
+        console.log('[Dashboard] Auto-expanding owl:Thing');
         setExpandedNodes(prev => [...prev, owlThingId]);
       }
     }
   }, [classHierarchy, expandedNodes]);
+
+  // Fetch projects on mount when no projectId is set
+  useEffect(() => {
+    if (!projectId) {
+      fetchProjects();
+    }
+  }, [projectId, fetchProjects]);
 
   const pollProcessingStatus = useCallback((projectIdToPoll: string) => {
     setIsInitialLoading(true);
@@ -416,20 +810,28 @@ const Dashboard = () => {
     const intervalId = setInterval(async () => {
       try {
         const response = await apiClient.get(`/api/ontology/status/${projectIdToPoll}`);
-        const statusData = ((response.data) as any)?.data;
+        // Backend wraps response in {success: true, data: {status: "COMPLETED", ...}}
+        const statusData = response.data?.data || response.data || response;
+        
+        console.log('[Dashboard] Poll status response:', statusData);
 
         if (statusData?.status === 'COMPLETED') {
+          console.log('[Dashboard] Processing complete, loading data...');
           clearInterval(intervalId);
           await fetchData(projectIdToPoll);
         } else if (statusData?.status === 'ERROR') {
+          console.log('[Dashboard] Processing error:', statusData.statusMessage);
           clearInterval(intervalId);
           setIsInitialLoading(false);
-          console.error('Backend processing failed:', statusData.statusMessage);
+          showNotification(`Processing failed: ${statusData.statusMessage}`, 'error');
+        } else {
+          console.log('[Dashboard] Still processing, status:', statusData?.status);
         }
       } catch (error) {
+        console.error('[Dashboard] Failed to poll for status:', error);
         clearInterval(intervalId);
         setIsInitialLoading(false);
-        console.error('Failed to poll for status:', error);
+        showNotification('Failed to check processing status. Please try reloading.', 'error');
       }
     }, 2000);
 
@@ -447,17 +849,35 @@ const Dashboard = () => {
     let cleanupPolling = () => { };
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
+      console.log('[Dashboard] Received message:', message.type, message);
       switch (message.type) {
         case "showLoading":
           setIsInitialLoading(true);
           break;
         case "fileReady":
+          // Always load the new file, regardless of current state
+          console.log('[Dashboard] Loading new project:', message.projectId);
           setProjectId(message.projectId);
+          setSelectedItem(null); // Clear selection
           cleanupPolling = pollProcessingStatus(message.projectId);
+          break;
+        case "fileLoaded":
+          // Handle file selection from File menu
+          console.log('[Dashboard] File selected from menu:', message.projectId);
+          const newProjectId = message.projectId;
+          setProjectId(newProjectId);
+          setSelectedItem(null); // Clear selection
+          setIsInitialLoading(true);
+          // Directly fetch data if already processed, otherwise poll
+          fetchData(newProjectId).catch(() => {
+            console.log('[Dashboard] Fetch failed, starting polling for:', newProjectId);
+            cleanupPolling = pollProcessingStatus(newProjectId);
+          });
           break;
         case "loadingFailed":
           setIsInitialLoading(false);
           console.error("Loading failed:", message.error);
+          showNotification(`Loading failed: ${message.error}`, 'error');
           break;
         case "switchView":
           if (message.view === 'swrl' && !visibleMainTabs.includes('SWRL')) {
@@ -473,7 +893,7 @@ const Dashboard = () => {
       window.removeEventListener("message", handleMessage);
       cleanupPolling();
     };
-  }, [pollProcessingStatus, toggleSwrlTab, visibleMainTabs]);
+  }, [pollProcessingStatus, toggleSwrlTab, visibleMainTabs, fetchData]);
 
   useEffect(() => {
     let sourceData: SelectableItem[] = [];
@@ -538,8 +958,15 @@ const Dashboard = () => {
   const loadChildren = useCallback(async (nodeId: string) => {
     if (!projectId) return;
     try {
-      const data = await apiClient.get<TopLevelClass[]>(`/api/ontology/classes/children/${projectId}`, { params: { parentIri: nodeId } });
-      const children = data || [];
+      console.log(`Loading children for node: ${nodeId}`);
+      const response = await apiClient.get<any>(`/api/ontology/classes/children/${projectId}?parentIri=${encodeURIComponent(nodeId)}`);
+      console.log('Children response:', response);
+      
+      // Extract array from response - handle both direct array and wrapped responses
+      const children = Array.isArray(response) ? response : 
+                      Array.isArray(response?.data) ? response.data : 
+                      Array.isArray(response?.classes) ? response.classes : [];
+      console.log('Extracted children:', children);
 
       const updateTree = (nodes: TreeNode[]): TreeNode[] =>
         nodes.map((n: TreeNode) => {
@@ -548,8 +975,9 @@ const Dashboard = () => {
               ...n,
               children: children.map((c: TopLevelClass) => ({
                 ...c,
-                children: c.hasChildren ? [] : null,
-                hasChildren: c.hasChildren
+                children: c.hasChildren ? undefined : undefined, // Use undefined for consistency
+                hasChildren: c.hasChildren,
+                subClassOfAxioms: [{ id: nodeId, type: 'SubClassOf', definition: n.label }]
               }))
             };
           }
@@ -580,7 +1008,10 @@ const Dashboard = () => {
         return null;
       };
       const node = findNode(classHierarchy, nodeId);
-      if (node && node.children && node.children.length === 0) {
+      console.log(node, 'here')
+      // Load children if node is expandable but children are not loaded yet (undefined or empty)
+      if (node && node.hasChildren && (!node.children || node.children.length === 0)) {
+        console.log(`Node ${nodeId} needs children loaded`);
         await loadChildren(nodeId);
       }
       setExpandedNodes(prev => [...prev, nodeId]);
@@ -625,70 +1056,143 @@ const Dashboard = () => {
     }
   }, [entitiesTab, selectedItem]);
 
-  const handleAddAnnotation = useCallback(() => {
-    if (!selectedItem) return;
-    const key = prompt("Enter annotation property IRI:", "rdfs:comment");
-    if (!key) return;
-    const value = prompt(`Enter value for ${key}:`);
-    if (value === null) return;
+  const handleAddAnnotation = useCallback(async () => {
+    if (!selectedItem || !projectId) return;
+    setAddAnnotationDialogOpen(true);
+  }, [selectedItem, projectId]);
 
-    const updatedAnnotations = { ...selectedItem.annotations, [key]: value };
-    const updatedItem = { ...selectedItem, annotations: updatedAnnotations };
-    updateItemInState(updatedItem);
-  }, [selectedItem, updateItemInState]);
+  const handleAnnotationDialogAdd = useCallback(async (propertyIri: string, value: string, datatype?: string) => {
+    if (!selectedItem || !projectId) return;
 
-  const handleDeleteAnnotation = useCallback((key: string) => {
-    if (!selectedItem || !selectedItem.annotations) return;
-    if (!confirm(`Are you sure you want to delete the annotation "${key}"?`)) return;
+    try {
+      // Call backend API
+      await ontologyMutationService.addAnnotation(projectId, selectedItem.id, propertyIri, value);
+      
+      // Update local state
+      const updatedAnnotations = { ...selectedItem.annotations, [propertyIri]: value };
+      const updatedItem = { ...selectedItem, annotations: updatedAnnotations };
+      updateItemInState(updatedItem);
+      showNotification('Annotation added successfully!', 'info');
+    } catch (error) {
+      console.error('Failed to add annotation:', error);
+      showNotification('Failed to add annotation. See console for details.', 'error');
+    }
+  }, [selectedItem, updateItemInState, projectId]);
 
-    const remainingAnnotations = { ...selectedItem.annotations };
-    delete remainingAnnotations[key];
-    const updatedItem = { ...selectedItem, annotations: remainingAnnotations };
-    updateItemInState(updatedItem);
-  }, [selectedItem, updateItemInState]);
+  const handleDeleteAnnotation = useCallback(async (key: string) => {
+    if (!selectedItem || !selectedItem.annotations || !projectId) return;
+    
+    // Show confirm dialog instead of using confirm()
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Annotation',
+      message: `Are you sure you want to delete the annotation "${key}"?`,
+      onConfirm: async () => {
+        try {
+          const value = selectedItem.annotations[key];
+          // Call backend API
+          await ontologyMutationService.deleteAnnotation(projectId, selectedItem.id, key, value);
+          
+          // Update local state
+          const remainingAnnotations = { ...selectedItem.annotations };
+          delete remainingAnnotations[key];
+          const updatedItem = { ...selectedItem, annotations: remainingAnnotations };
+          updateItemInState(updatedItem);
+          showNotification('Annotation deleted successfully!', 'info');
+        } catch (error) {
+          console.error('Failed to delete annotation:', error);
+          showNotification('Failed to delete annotation. See console for details.', 'error');
+        }
+      }
+    });
+  }, [selectedItem, updateItemInState, projectId]);
 
   const handleAddItem = useCallback(async (type: 'subclass' | 'sibling' | 'individual') => {
+    if (!projectId) return;
+    
     if (type === 'individual') {
       setCreateIndividualModalOpen(true);
       return;
     }
 
     if ((type === 'subclass' || type === 'sibling') && !selectedItem) {
-      alert("Please select a class first.");
+      showNotification("Please select a class first.", 'warning');
       return;
     }
-    const name = prompt("Enter new class name:");
-    if (!name) return;
+    
+    // Open dialog instead of using prompt
+    setAddClassType(type);
+    setAddClassDialogOpen(true);
+  }, [projectId, selectedItem]);
 
-    const newNode: TreeNode = {
-      id: `${(metadata as any)?.ontologyIRI || 'http://example.com/onto'}#${name.replace(/\s+/g, '_')}`,
-      label: name,
-      children: [],
-      annotations: { 'rdfs:label': name }
-    };
+  const handleCreateClass = useCallback(async (name: string) => {
+    if (!projectId || !selectedItem) return;
 
-    if (type === 'subclass' && selectedItem?.id && !expandedNodes.includes(selectedItem.id)) {
-      setExpandedNodes(prev => [...prev, selectedItem.id!]);
+    const type = addClassType;
+
+    try {
+      const baseIri = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
+      const newIri = `${baseIri}#${name.replace(/\s+/g, '_')}`;
+      
+      // Determine parent IRI based on type
+      let parentIri = 'http://www.w3.org/2002/07/owl#Thing';
+      if (type === 'subclass' && selectedItem?.id) {
+        parentIri = selectedItem.id;
+      } else if (type === 'sibling' && selectedItem?.id) {
+        // Find parent of selected item
+        const findParent = (nodes: TreeNode[], targetId: string, parent: TreeNode | null = null): TreeNode | null => {
+          for (const node of nodes) {
+            if (node.id === targetId) return parent;
+            if (node.children) {
+              const found = findParent(node.children, targetId, node);
+              if (found) return found;
+            }
+          }
+          return null;
+        };
+        const parent = findParent(classHierarchy, selectedItem.id);
+        parentIri = parent?.id || 'http://www.w3.org/2002/07/owl#Thing';
+      }
+
+      // Call backend API
+      await ontologyMutationService.createClass(projectId, newIri, name, parentIri);
+
+      // Update local state
+      const newNode: TreeNode = {
+        id: newIri,
+        label: name,
+        children: undefined,
+        hasChildren: false,
+        annotations: { 'rdfs:label': name }
+      };
+
+      if (type === 'subclass' && selectedItem?.id && !expandedNodes.includes(selectedItem.id)) {
+        setExpandedNodes(prev => [...prev, selectedItem.id!]);
+      }
+
+      const addNodeRecursively = (nodes: TreeNode[]): TreeNode[] => {
+        return nodes.map(node => {
+          if (type === 'subclass' && node.id === selectedItem?.id) {
+            const children = node.children ? [...node.children, newNode] : [newNode];
+            return { ...node, children, hasChildren: true };
+          }
+          if (type === 'sibling' && node.children?.some((child: TreeNode) => child.id === selectedItem?.id)) {
+            return { ...node, children: [...(node.children || []), newNode] };
+          }
+          if (node.children) {
+            return { ...node, children: addNodeRecursively(node.children) };
+          }
+          return node;
+        });
+      };
+
+      setClassHierarchy(prev => addNodeRecursively(prev));
+      showNotification(`Class "${name}" created successfully!`, 'info');
+    } catch (error) {
+      console.error('Failed to create class:', error);
+      showNotification('Failed to create class. See console for details.', 'error');
     }
-
-    const addNodeRecursively = (nodes: TreeNode[]): TreeNode[] => {
-      return nodes.map(node => {
-        if (type === 'subclass' && node.id === selectedItem?.id) {
-          const children = node.children === null ? [newNode] : [...(node.children || []), newNode];
-          return { ...node, children };
-        }
-        if (type === 'sibling' && node.children?.some((child: TreeNode) => child.id === selectedItem?.id)) {
-          return { ...node, children: [...(node.children || []), newNode] };
-        }
-        if (node.children) {
-          return { ...node, children: addNodeRecursively(node.children) };
-        }
-        return node;
-      });
-    };
-
-    setClassHierarchy(prev => addNodeRecursively(prev));
-  }, [selectedItem, expandedNodes, metadata]);
+  }, [selectedItem, expandedNodes, metadata, projectId, classHierarchy, addClassType]);
 
   const handleAddIndividual = useCallback((name: string) => {
     const base = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
@@ -703,37 +1207,62 @@ const Dashboard = () => {
     setIndividuals(prev => [...prev, newIndividual]);
   }, [metadata]);
 
-  const handleDeleteItem = useCallback(() => {
-    if (!selectedItem) return;
-    if (!confirm(`Are you sure you want to delete "${selectedItem.label}"? This action cannot be undone.`)) return;
+  const handleDeleteItem = useCallback(async () => {
+    if (!selectedItem || !projectId) return;
+    
+    // Show confirm dialog instead of using confirm()
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Item',
+      message: `Are you sure you want to delete "${selectedItem.label}"? This action cannot be undone.`,
+      onConfirm: async () => {
+        try {
+          // Call backend API based on entity type
+          switch (entitiesTab) {
+            case 'Classes':
+              await ontologyMutationService.deleteClass(projectId, selectedItem.id);
+              break;
+            case 'Individuals':
+              await ontologyMutationService.deleteIndividual(projectId, selectedItem.id);
+              break;
+            // Add other entity types as needed
+          }
 
-    switch (entitiesTab) {
-      case 'Classes': {
-        const removeNodeRecursively = (nodes: TreeNode[], id: string): TreeNode[] =>
-          nodes
-            .filter(node => node.id !== id)
-            .map(node => node.children ? { ...node, children: removeNodeRecursively(node.children, id) } : node);
-        setClassHierarchy(prev => removeNodeRecursively(prev, selectedItem.id));
-        break;
+          // Update local state
+          switch (entitiesTab) {
+            case 'Classes': {
+              const removeNodeRecursively = (nodes: TreeNode[], id: string): TreeNode[] =>
+                nodes
+                  .filter(node => node.id !== id)
+                  .map(node => node.children ? { ...node, children: removeNodeRecursively(node.children, id) } : node);
+              setClassHierarchy(prev => removeNodeRecursively(prev, selectedItem.id));
+              break;
+            }
+            case 'Individuals':
+              setIndividuals(prev => prev.filter(ind => ind.id !== selectedItem.id));
+              break;
+            case 'ObjectProperties':
+              setObjectProperties(prev => prev.filter(p => p.id !== selectedItem.id));
+              break;
+            case 'DataProperties':
+              setDataProperties(prev => prev.filter(p => p.id !== selectedItem.id));
+              break;
+        case 'AnnotationProperties':
+          setAnnotationProperties(prev => prev.filter(p => p.id !== selectedItem.id));
+          break;
+            case 'Datatypes':
+              setDatatypes(prev => prev.filter(d => d.id !== selectedItem.id));
+              break;
+          }
+          setSelectedItem(null);
+          showNotification(`"${selectedItem.label}" deleted successfully!`, 'info');
+        } catch (error) {
+          console.error('Failed to delete item:', error);
+          showNotification('Failed to delete item. See console for details.', 'error');
+        }
       }
-      case 'Individuals':
-        setIndividuals(prev => prev.filter(ind => ind.id !== selectedItem.id));
-        break;
-      case 'ObjectProperties':
-        setObjectProperties(prev => prev.filter(p => p.id !== selectedItem.id));
-        break;
-      case 'DataProperties':
-        setDataProperties(prev => prev.filter(p => p.id !== selectedItem.id));
-        break;
-      case 'AnnotationProperties':
-        setAnnotationProperties(prev => prev.filter(p => p.id !== selectedItem.id));
-        break;
-      case 'Datatypes':
-        setDatatypes(prev => prev.filter(d => d.id !== selectedItem.id));
-        break;
-    }
-    setSelectedItem(null);
-  }, [selectedItem, entitiesTab]);
+    });
+  }, [selectedItem, entitiesTab, projectId]);
 
   const handleGraphNodeClick = useCallback((nodeId: string) => {
     const flatten = (nodes: TreeNode[]): TreeNode[] =>
@@ -821,7 +1350,7 @@ const Dashboard = () => {
               </div>
               <div className="flex-1 overflow-y-auto p-4">
                 <h3 className="text-xs font-semibold text-gray-700 mb-2">Annotations</h3>
-                <AnnotationsDisplay annotations={(metadata as any)?.annotations} onDelete={() => alert('Cannot delete ontology annotation here.')} />
+                <AnnotationsDisplay annotations={(metadata as any)?.annotations} onDelete={() => showNotification('Cannot delete ontology annotation here.', 'warning')} />
               </div>
               <div className="border-t border-gray-200">
                 <div className="flex bg-gray-100 text-xs border-b border-gray-200">
@@ -1054,6 +1583,25 @@ const Dashboard = () => {
     <>
       <LoadingDialog isOpen={isInitialLoading} />
       <CreateIndividualModal isOpen={isCreateIndividualModalOpen} onClose={() => setCreateIndividualModalOpen(false)} onCreate={handleAddIndividual} />
+      <AddClassDialog 
+        isOpen={isAddClassDialogOpen} 
+        onClose={() => setAddClassDialogOpen(false)} 
+        onCreate={handleCreateClass}
+        type={addClassType}
+      />
+      <AddAnnotationDialog 
+        isOpen={isAddAnnotationDialogOpen} 
+        onClose={() => setAddAnnotationDialogOpen(false)} 
+        onAdd={handleAnnotationDialogAdd}
+        availableProperties={annotationProperties}
+      />
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        onClose={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+        onConfirm={confirmDialog.onConfirm}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+      />
 
       <div className="h-screen bg-gray-50 flex flex-col text-sm max-h-screen">
         <TopMenuBar
@@ -1062,6 +1610,7 @@ const Dashboard = () => {
           onToggleGraphTab={toggleGraphTab}
           isGraphVisible={visibleMainTabs.includes('Graph')}
           fileList={listOfFiles}
+          currentProjectId={projectId}
         />
 
         <div className="bg-white border-b border-gray-200 flex-shrink-0">
@@ -1082,6 +1631,16 @@ const Dashboard = () => {
               })}
             </div>
             <div className="flex items-center gap-4">
+              {projectId && (
+                <button
+                  onClick={() => setShowProjectSelector(true)}
+                  className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-800 hover:bg-gray-100 p-2 rounded-md"
+                  title="Switch Project"
+                >
+                  <Database size={14} />
+                  <span className="max-w-[200px] truncate">{projectId}</span>
+                </button>
+              )}
               <span className="text-xs text-gray-600">Welcome, {user?.username || 'Guest'}</span>
               <button onClick={logout} className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-md">
                 <LogOut size={14} />
@@ -1131,6 +1690,7 @@ const Dashboard = () => {
                   selectedItem={selectedItem}
                   entitiesTab={entitiesTab}
                   activeTheme={activeTheme}
+                  projectId={projectId}
                   onUpdate={updateItemInState}
                   onAddAnnotation={handleAddAnnotation}
                   onDeleteAnnotation={handleDeleteAnnotation}
@@ -1144,6 +1704,15 @@ const Dashboard = () => {
           )}
         </main>
       </div>
+
+      {/* Project Selector Modal */}
+      {showProjectSelector && (
+        <ProjectSelector
+          projects={availableProjects}
+          onSelectProject={handleProjectSelection}
+          onClose={() => setShowProjectSelector(false)}
+        />
+      )}
     </>
   );
 };

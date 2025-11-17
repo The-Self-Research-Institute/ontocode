@@ -156,10 +156,11 @@ class ApiClient {
 
   async get<T = any>(url: string, params?: any, config?: AxiosRequestConfig): Promise<T> {
     if (this.isVSCode) {
-      // Send 'apiGet' message to the extension
+      console.log(url, 'post via vs')
       return this.postViaVSCode<T>({ type: 'apiGet', url, params, headers: config?.headers });
     }
     const resp = await this.axiosClient!.get(url, { ...config, params });
+    console.log(resp.data, url);
     return resp.data as T;
   }
 
