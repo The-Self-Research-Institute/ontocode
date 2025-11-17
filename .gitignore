@@ -12,6 +12,8 @@ pom.xml.versionsBackup
 
 # Logs
 *.log
+*.gz
+data/
 
 # Node
 node_modules/

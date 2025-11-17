@@ -84,7 +84,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
            </div>
           
           {/* Label */}
-          <span className={`text-xs select-none ${isSelected ? "font-semibold" : ""}`}>{item.label}</span>
+          <span className={`text-xs select-none text-black ${isSelected ? "font-semibold" : ""}`}>{item.label}</span>
         </div>
         
         {/* Render Children Recursively */}

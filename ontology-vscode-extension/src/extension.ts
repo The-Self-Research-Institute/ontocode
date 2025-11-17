@@ -30,7 +30,10 @@ type ExtensionMessage =
   | { type: 'apiGet'; requestId: string; url: string; params?: Record<string, unknown> }
   | { type: 'apiPost'; requestId: string; url: string; body?: unknown }
   | { type: 'apiDelete'; requestId: string; url: string; params?: Record<string, unknown> }
-  | { type: 'webviewReady' }; // <-- FIX: Add message from webview
+  | { type: 'webviewReady' }
+  | { type: 'downloadOntology'; url: string; filename: string }
+  | { type: 'downloadCurrentOntology' }
+  | { type: 'fileLoaded'; projectId: string }; // File selected from menu
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -157,6 +160,17 @@ class OntoCodePanel {
                     case 'apiDelete':
                         this.handleApiRequest(message);
                         break;
+                    case 'downloadOntology':
+                        this.handleDownload(message.url, message.filename);
+                        break;
+                    case 'downloadCurrentOntology':
+                        this.handleDownloadCurrent();
+                        break;
+                    case 'fileLoaded':
+                        // User selected a file from the File menu
+                        console.log('[OntoCode] File loaded from menu:', message.projectId);
+                        this.postMessage({ type: 'fileReady', projectId: message.projectId });
+                        break;
                 }
             },
             null,
@@ -229,7 +243,7 @@ class OntoCodePanel {
                     break;
             }
 
-            this.postMessage({ type: 'apiResponse', requestId, response: { data: response.data, status: response.status } });
+            this.postMessage({ type: 'apiResponse', requestId, response: response.data });
         } catch (e: unknown) {
             // Fix: Explicitly type errorResponse to allow for optional properties like status and data.
             // This prevents a TypeScript error when assigning a more complex error object from an AxiosError.
@@ -394,6 +408,119 @@ class OntoCodePanel {
             
             // 6. Notify webview of failure, including the error message
             this.postMessage({ type: 'loadingFailed', error: errorMessage });
+        }
+    }
+
+    /**
+     * Handle download request for a specific file
+     */
+    private async handleDownload(url: string, filename: string) {
+        try {
+            console.log(`[OntoCode] Downloading file from: ${url}`);
+            console.log(`[OntoCode] Filename: ${filename}`);
+            
+            // Get auth token
+            const token = await (this._context as any).secrets.get(TOKEN_KEY);
+            if (!token) {
+                vscode.window.showErrorMessage('You must be logged in to download files.');
+                return;
+            }
+
+            // Make request to download file
+            const fullUrl = `${GATEWAY_URL}${url}`;
+            console.log(`[OntoCode] Full URL: ${fullUrl}`);
+            
+            // Show progress notification for large ontologies
+            vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: `Downloading ${filename}...`,
+                cancellable: false
+            }, async (progress) => {
+                progress.report({ message: 'This may take several minutes for large ontologies' });
+                
+                const response = await axios.get(fullUrl, {
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    responseType: 'arraybuffer',
+                    timeout: 300000 // 5 minutes for large files like go-plus.owl
+                });
+
+                console.log(`[OntoCode] Response status: ${response.status}`);
+                console.log(`[OntoCode] Response data length: ${response.data.byteLength} bytes`);
+
+                // Show save dialog
+                const saveUri = await vscode.window.showSaveDialog({
+                    defaultUri: vscode.Uri.file(filename),
+                    filters: {
+                        'OWL Files': ['owl'],
+                        'All Files': ['*']
+                    }
+                });
+
+                if (saveUri) {
+                    console.log(`[OntoCode] Saving to: ${saveUri.fsPath}`);
+                    // Save file
+                    await (vscode.workspace as any).fs.writeFile(saveUri, new Uint8Array(response.data));
+                    vscode.window.showInformationMessage(`File saved successfully to ${saveUri.fsPath}`);
+                } else {
+                    console.log(`[OntoCode] User cancelled save dialog`);
+                }
+            });
+        } catch (error) {
+            console.error('[OntoCode] Download error:', error);
+            if (axios.isAxiosError(error)) {
+                const axiosError = error as AxiosError;
+                if (axiosError.response) {
+                    console.error('[OntoCode] Error response:', axiosError.response.status, axiosError.response.data);
+                    vscode.window.showErrorMessage(`Download failed: ${axiosError.response.status} - ${JSON.stringify(axiosError.response.data)}`);
+                } else if (axiosError.request) {
+                    console.error('[OntoCode] No response received');
+                    vscode.window.showErrorMessage('Download failed: No response from server. The file may be too large or the server is taking too long to export it.');
+                } else {
+                    console.error('[OntoCode] Error:', axiosError.message);
+                    vscode.window.showErrorMessage(`Download failed: ${axiosError.message}`);
+                }
+            } else {
+                vscode.window.showErrorMessage('Failed to download file. See console for details.');
+            }
+        }
+    }
+
+    /**
+     * Handle download of currently loaded ontology
+     */
+    private async handleDownloadCurrent() {
+        try {
+            const activeEditor = this.findBestOwlEditor();
+            if (!activeEditor) {
+                vscode.window.showWarningMessage('No active .owl file found.');
+                return;
+            }
+
+            const fileName = activeEditor.document.uri.path.substring(
+                activeEditor.document.uri.path.lastIndexOf('/') + 1
+            );
+            
+            // Show save dialog
+            const saveUri = await vscode.window.showSaveDialog({
+                defaultUri: vscode.Uri.file(fileName),
+                filters: {
+                    'OWL Files': ['owl'],
+                    'All Files': ['*']
+                }
+            });
+
+            if (saveUri) {
+                // Copy file content
+                const content = activeEditor.document.getText();
+                await (vscode.workspace as any).fs.writeFile(
+                    saveUri, 
+                    new TextEncoder().encode(content)
+                );
+                vscode.window.showInformationMessage(`File saved successfully to ${saveUri.fsPath}`);
+            }
+        } catch (error) {
+            console.error('[OntoCode] Download error:', error);
+            vscode.window.showErrorMessage('Failed to save file. See console for details.');
         }
     }
 

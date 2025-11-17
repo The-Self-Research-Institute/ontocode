@@ -46,7 +46,7 @@ public class ReasonerService {
         
         if (reasonerCache.containsKey(cacheKey)) {
             OWLReasoner cached = reasonerCache.get(cacheKey);
-            if (cached != null && !cached.isDisposed()) {
+            if (cached != null) {
                 return cached;
             }
         }
@@ -283,11 +283,9 @@ public class ReasonerService {
         OWLReasoner reasoner = getReasoner(ontology, type);
         
         try {
-            // Get all axioms that reference this class
-            Set<OWLAxiom> explanation = ontology.getAxioms(owlClass);
-            
+            Set<OWLClassAxiom> explanation = ontology.getAxioms(owlClass);
             log.info("Found {} axioms in explanation for {}", explanation.size(), owlClass.getIRI());
-            return explanation;
+            return new HashSet<>(explanation);
             
         } catch (Exception e) {
             log.error("Error explaining unsatisfiability", e);
@@ -303,7 +301,7 @@ public class ReasonerService {
         
         reasonerCache.values().forEach(reasoner -> {
             try {
-                if (reasoner != null && !reasoner.isDisposed()) {
+                if (reasoner != null) {
                     reasoner.dispose();
                 }
             } catch (Exception e) {
@@ -321,7 +319,7 @@ public class ReasonerService {
         String cacheKey = ontologyId + "-" + type.name();
         OWLReasoner reasoner = reasonerCache.remove(cacheKey);
         
-        if (reasoner != null && !reasoner.isDisposed()) {
+        if (reasoner != null) {
             try {
                 reasoner.dispose();
                 log.info("Disposed {} reasoner for ontology {}", type.getDisplayName(), ontologyId);

@@ -1,73 +1,71 @@
 package self.research.ontology.owlEditor.controller;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.apache.jena.query.QuerySolution;
+import org.apache.jena.query.ResultSet;
+import org.apache.jena.rdf.model.RDFNode;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-import reactor.core.publisher.Mono;
-import self.research.ontology.owlEditor.model.SparqlQueryEntity;
-import self.research.ontology.owlEditor.service.SparqlQueryService;
+import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+import self.research.ontology.owlEditor.service.Tdb2DatasetService;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/api/sparql/{projectId}")
-@CrossOrigin(origins = "*")
+@RequestMapping("/api/sparql")
+@CrossOrigin
 public class SparqlQueryController {
 
-    private static final Logger log = LoggerFactory.getLogger(SparqlQueryController.class);
-    
-    @Autowired
-    private SparqlQueryService service;
+    private final Tdb2DatasetService datasetService;
 
-    @GetMapping("/queries")
-    public ResponseEntity<List<SparqlQueryEntity>> listQueries(@PathVariable String projectId) {
-        return ResponseEntity.ok(service.list(projectId));
+    public SparqlQueryController(Tdb2DatasetService datasetService) {
+        this.datasetService = datasetService;
     }
 
-    @PostMapping("/queries")
-    public ResponseEntity<SparqlQueryEntity> createQuery(
-            @PathVariable String projectId,
-            @RequestBody Map<String,String> body) {
-        String name = body.getOrDefault("name", "New Query");
-        String queryText = body.getOrDefault("queryText", "");
-        return ResponseEntity.ok(service.create(projectId, name, queryText));
-    }
-
-    @PutMapping("/queries/{id}")
-    public ResponseEntity<SparqlQueryEntity> updateQuery(
-            @PathVariable String projectId,
-            @PathVariable String id,
-            @RequestBody Map<String,String> body) {
-        try {
-            String name = body.getOrDefault("name", "Query");
-            String queryText = body.getOrDefault("queryText", "");
-            SparqlQueryEntity updated = service.update(id, name, queryText);
-            return ResponseEntity.ok(updated);
-        } catch (RuntimeException e) {
-            log.error("Failed to update query: {}", id, e);
-            return ResponseEntity.notFound().build();
+    @PostMapping("/query/{projectId}")
+    public ResponseEntity<?> query(@PathVariable String projectId,
+                                   @RequestBody SparqlRequest request) {
+        ResultSet rs = datasetService.execSelect(projectId, request.query());
+        List<String> vars = rs.getResultVars();
+        List<Map<String, String>> rows = new ArrayList<>();
+        while (rs.hasNext()) {
+            QuerySolution sol = rs.next();
+            Map<String, String> row = new LinkedHashMap<>();
+            for (String var : vars) {
+                row.put(var, toValue(sol.get(var)));
+            }
+            rows.add(row);
         }
+        return ResponseEntity.ok(Map.of(
+                "head", Map.of("vars", vars),
+                "results", rows));
     }
 
-    @DeleteMapping("/queries/{id}")
-    public ResponseEntity<Void> deleteQuery(
-            @PathVariable String projectId,
-            @PathVariable String id) {
-        service.delete(id);
-        return ResponseEntity.ok().build();
+    @PostMapping("/update/{projectId}")
+    public ResponseEntity<?> update(@PathVariable String projectId,
+                                    @RequestBody SparqlRequest request) {
+        datasetService.execUpdate(projectId, request.query());
+        return ResponseEntity.ok(Map.of("success", true));
     }
 
-    @PostMapping("/execute")
-    public Mono<ResponseEntity<JsonNode>> executeQuery(
-            @PathVariable String projectId,
-            @RequestBody Map<String,String> body) {
-        String queryText = body.getOrDefault("queryText", "SELECT * WHERE { ?s ?p ?o } LIMIT 10");
-        return service.execute(projectId, queryText)
-                .map(ResponseEntity::ok)
-                .defaultIfEmpty(ResponseEntity.internalServerError().build());
+    private String toValue(RDFNode node) {
+        if (node == null) {
+            return null;
+        }
+        if (node.isLiteral()) {
+            return node.asLiteral().getString();
+        }
+        if (node.isResource()) {
+            return node.asResource().getURI();
+        }
+        return node.toString();
     }
+
+    public record SparqlRequest(String query) {}
 }

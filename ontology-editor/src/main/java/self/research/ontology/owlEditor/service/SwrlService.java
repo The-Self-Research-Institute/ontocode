@@ -2,7 +2,6 @@ package self.research.ontology.owlEditor.service;
 
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.model.parameters.Imports;
-import org.semanticweb.owlapi.util.SWRLVariableExtractor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -15,9 +14,9 @@ import java.util.stream.Collectors;
  * Supports creating, parsing, validating, and executing SWRL rules.
  */
 @Service
-public class SWRLService {
+public class SwrlService {
 
-    private static final Logger log = LoggerFactory.getLogger(SWRLService.class);
+    private static final Logger log = LoggerFactory.getLogger(SwrlService.class);
 
     /**
      * Get all SWRL rules from an ontology
@@ -160,8 +159,9 @@ public class SWRLService {
      * Get all variables used in a rule
      */
     public Set<SWRLVariable> getVariables(SWRLRule rule) {
-        SWRLVariableExtractor extractor = new SWRLVariableExtractor();
-        return rule.accept(extractor);
+        Set<SWRLVariable> vars = new HashSet<>(variablesFromAtoms(rule.getBody()));
+        vars.addAll(variablesFromAtoms(rule.getHead()));
+        return vars;
     }
 
     /**
@@ -193,15 +193,8 @@ public class SWRLService {
             }
 
             // Check if variables in head are used in body
-            Set<SWRLVariable> bodyVars = new HashSet<>();
-            for (SWRLAtom atom : rule.getBody()) {
-                bodyVars.addAll(atom.accept(new SWRLVariableExtractor()));
-            }
-
-            Set<SWRLVariable> headVars = new HashSet<>();
-            for (SWRLAtom atom : rule.getHead()) {
-                headVars.addAll(atom.accept(new SWRLVariableExtractor()));
-            }
+            Set<SWRLVariable> bodyVars = variablesFromAtoms(rule.getBody());
+            Set<SWRLVariable> headVars = variablesFromAtoms(rule.getHead());
 
             for (SWRLVariable headVar : headVars) {
                 if (!bodyVars.contains(headVar)) {
@@ -247,24 +240,73 @@ public class SWRLService {
         return sb.toString();
     }
 
+    private Set<SWRLVariable> variablesFromAtoms(Collection<SWRLAtom> atoms) {
+        Set<SWRLVariable> vars = new HashSet<>();
+        for (SWRLAtom atom : atoms) {
+            if (atom instanceof SWRLClassAtom classAtom) {
+                addIArgument(classAtom.getArgument(), vars);
+            } else if (atom instanceof SWRLObjectPropertyAtom objAtom) {
+                addIArgument(objAtom.getFirstArgument(), vars);
+                addIArgument(objAtom.getSecondArgument(), vars);
+            } else if (atom instanceof SWRLDataPropertyAtom dataAtom) {
+                addIArgument(dataAtom.getFirstArgument(), vars);
+                addDArgument(dataAtom.getSecondArgument(), vars);
+            } else if (atom instanceof SWRLBuiltInAtom builtIn) {
+                builtIn.getArguments().forEach(arg -> {
+                    if (arg instanceof SWRLVariable variable) {
+                        vars.add(variable);
+                    }
+                });
+            } else if (atom instanceof SWRLSameIndividualAtom sameAtom) {
+                addIArgument(sameAtom.getFirstArgument(), vars);
+                addIArgument(sameAtom.getSecondArgument(), vars);
+            } else if (atom instanceof SWRLDifferentIndividualsAtom diffAtom) {
+                addIArgument(diffAtom.getFirstArgument(), vars);
+                addIArgument(diffAtom.getSecondArgument(), vars);
+            }
+        }
+        return vars;
+    }
+
+    private void addIArgument(SWRLIArgument argument, Set<SWRLVariable> vars) {
+        if (argument instanceof SWRLVariable variable) {
+            vars.add(variable);
+        }
+    }
+
+    private void addDArgument(SWRLDArgument argument, Set<SWRLVariable> vars) {
+        if (argument instanceof SWRLVariable variable) {
+            vars.add(variable);
+        }
+    }
+
     /**
      * Format individual atom to string
      */
     private String formatAtom(SWRLAtom atom) {
         if (atom instanceof SWRLClassAtom) {
             SWRLClassAtom classAtom = (SWRLClassAtom) atom;
-            return classAtom.getPredicate().getIRI().getShortForm() + 
+            String name = classAtom.getPredicate().isNamed()
+                    ? classAtom.getPredicate().asOWLClass().getIRI().getShortForm()
+                    : classAtom.getPredicate().toString();
+            return name +
                    "(" + formatArgument(classAtom.getArgument()) + ")";
         }
         else if (atom instanceof SWRLObjectPropertyAtom) {
             SWRLObjectPropertyAtom propAtom = (SWRLObjectPropertyAtom) atom;
-            return propAtom.getPredicate().getNamedProperty().getIRI().getShortForm() + 
+            String name = propAtom.getPredicate().isNamed()
+                    ? propAtom.getPredicate().asOWLObjectProperty().getIRI().getShortForm()
+                    : propAtom.getPredicate().toString();
+            return name +
                    "(" + formatArgument(propAtom.getFirstArgument()) + ", " + 
                    formatArgument(propAtom.getSecondArgument()) + ")";
         }
         else if (atom instanceof SWRLDataPropertyAtom) {
             SWRLDataPropertyAtom propAtom = (SWRLDataPropertyAtom) atom;
-            return propAtom.getPredicate().getIRI().getShortForm() + 
+            String name = propAtom.getPredicate().isNamed()
+                    ? propAtom.getPredicate().asOWLDataProperty().getIRI().getShortForm()
+                    : propAtom.getPredicate().toString();
+            return name +
                    "(" + formatArgument(propAtom.getFirstArgument()) + ", " + 
                    formatDArgument(propAtom.getSecondArgument()) + ")";
         }
