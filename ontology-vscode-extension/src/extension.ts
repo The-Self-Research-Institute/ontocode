@@ -37,7 +37,8 @@ type ExtensionMessage =
     | { type: 'downloadOntology'; url: string; filename: string }
     | { type: 'downloadCurrentOntology' }
     | { type: 'fileLoaded'; projectId: string }
-    | { type: 'triggerFileUpload'; content: string };
+    | { type: 'triggerFileUpload'; content: string }
+    | { type: 'downloadAndSaveToLocal'; projectId: string };
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -92,6 +93,7 @@ class OntoCodePanel {
     private _isWebviewReady: boolean = false;
     private _pendingFileUri: vscode.Uri | null = null;
     private _isPendingRegularUpload: boolean = false;
+    private _currentProjectFileUri: vscode.Uri | null = null; // Track current file for saves
 
     // Fix: Made createOrShow async to handle async webview content loading.
     public static async createOrShow(extensionUri: vscode.Uri, context: vscode.ExtensionContext): Promise<OntoCodePanel> {
@@ -140,6 +142,10 @@ class OntoCodePanel {
                     case 'triggerFileUpload':
                         console.log('[OntoCode] Received triggerFileUpload message from webview.');
                         await this.saveCurrentEditorToFile(message.content);
+                        break;
+                    case 'downloadAndSaveToLocal':
+                        console.log('[OntoCode] Received downloadAndSaveToLocal message from webview.');
+                        await this.downloadAndSaveToLocalFile(message.projectId);
                         break;
                     case "fileLoaded":
                         console.log("[OntoCode] Received fileLoaded message.", message);
@@ -243,6 +249,12 @@ class OntoCodePanel {
         
         if (editor?.document.fileName.toLowerCase().endsWith('.owl')) {
             return editor.document.uri;
+        }
+        
+        // Use stored current project file URI
+        if (this._currentProjectFileUri) {
+            console.log('[OntoCode] Using stored project file URI:', this._currentProjectFileUri.fsPath);
+            return this._currentProjectFileUri;
         }
         
         if (this._pendingFileUri) {
@@ -494,6 +506,7 @@ class OntoCodePanel {
     // Fix: Refactored to use async vscode.workspace.fs.readFile instead of node 'fs'.
     public async triggerLargeFileUpload(fileUri: vscode.Uri) {
         console.log(`[OntoCode] Triggering large file upload for: ${fileUri.fsPath}`);
+        this._currentProjectFileUri = fileUri; // Store for later saves
         const fullPath = fileUri.path;
         const fileName = fullPath.substring(fullPath.lastIndexOf('/') + 1);
         // Fix: Cast workspace to `any` to access the `fs` property, bypassing outdated type definitions.
@@ -518,6 +531,7 @@ class OntoCodePanel {
 
         await vscode.window.showTextDocument(targetEditor.document, targetEditor.viewColumn);
 
+        this._currentProjectFileUri = targetEditor.document.uri; // Store for later saves
         const fileContent = targetEditor.document.getText();
         // Fix: Replaced path.basename with string manipulation on the URI path.
         const fileName = targetEditor.document.uri.path.substring(targetEditor.document.uri.path.lastIndexOf('/') + 1);
@@ -556,6 +570,73 @@ class OntoCodePanel {
         } catch (err) {
             console.error("[OntoCode] Download failed:", err);
             vscode.window.showErrorMessage("Failed to download ontology");
+        }
+    }
+
+    /**
+     * Download the regenerated OWL file from the server and save it to the local file
+     */
+    private async downloadAndSaveToLocalFile(projectId: string) {
+        try {
+            console.log(`[OntoCode] Downloading regenerated file for project: ${projectId}`);
+            
+            // Download the file from the server first
+            const token = await (this._context as any).secrets.get(TOKEN_KEY);
+            if (!token) {
+                console.error('[OntoCode] No authentication token found');
+                return;
+            }
+            
+            const downloadUrl = `${GATEWAY_URL}/api/ontology/download/${projectId}`;
+            console.log(`[OntoCode] Downloading from: ${downloadUrl}`);
+            
+            const headers = { 'Authorization': `Bearer ${token}` };
+            const response = await axios.get(downloadUrl, { 
+                responseType: 'arraybuffer',
+                headers 
+            });
+            
+            console.log(`[OntoCode] Downloaded ${response.data.byteLength} bytes`);
+            
+            // Get the target file URI
+            let targetUri = this._currentProjectFileUri;
+            
+            // If no stored URI, try to find an open .owl file
+            if (!targetUri) {
+                const editor = vscode.window.activeTextEditor;
+                if (editor?.document.fileName.toLowerCase().endsWith('.owl')) {
+                    targetUri = editor.document.uri;
+                    console.log('[OntoCode] Using active editor file:', targetUri.fsPath);
+                }
+            }
+            
+            // If still no URI, prompt user
+            if (!targetUri) {
+                console.log('[OntoCode] No file URI found, prompting user');
+                const picked = await vscode.window.showSaveDialog({
+                    defaultUri: vscode.Uri.file(`${projectId}.owl`),
+                    filters: { 'OWL Files': ['owl'] },
+                    saveLabel: 'Save Ontology'
+                });
+                if (!picked) {
+                    console.log('[OntoCode] User cancelled save dialog');
+                    return;
+                }
+                targetUri = picked;
+            }
+            
+            // Save to the target file
+            await vscode.workspace.fs.writeFile(targetUri, new Uint8Array(response.data));
+            console.log(`[OntoCode] File saved successfully to: ${targetUri.fsPath}`);
+            vscode.window.showInformationMessage(`Saved with ${response.data.byteLength} bytes to ${targetUri.fsPath.split(/[\\/]/).pop()}`);
+            
+        } catch (error: any) {
+            console.error('[OntoCode] Download and save error:', error);
+            if (error.response) {
+                console.error('[OntoCode] Response status:', error.response.status);
+                console.error('[OntoCode] Response data:', error.response.data);
+            }
+            vscode.window.showErrorMessage(`Failed to save local file: ${error.message}`);
         }
     }
 

@@ -486,7 +486,8 @@ const Dashboard = () => {
         }))
       };
 
-      console.log(`[Dashboard] Saving complete ontology: ${classUpdates} classes, ${objectProperties.length} object properties, ${dataProperties.length} data properties, ${individuals.length} individuals`);
+      console.log(`[Dashboard] Saving complete ontology: ${classUpdates} classes, ${objectProperties.length} object properties, ${dataProperties.length} data properties, ${individuals.length} individuals, ${annotationProperties.length} annotation properties`);
+      console.log('[Dashboard] Sample annotation properties:', annotationProperties.slice(0, 2).map(ap => ({ iri: ap.iri, annotations: ap.annotations })));
 
       // Send to API to update the ontology file in database
       console.log('[Dashboard] Sending PUT request to /api/ontology/update/' + projectId);
@@ -499,6 +500,13 @@ const Dashboard = () => {
       
       if (response.data.success) {
         console.log(`Successfully saved ontology to database:\n- ${classUpdates.length} classes\n- ${objectProperties.length} object properties\n- ${dataProperties.length} data properties\n- ${individuals.length} individuals\n- ${annotationProperties.length} annotation properties`);
+        
+        // Trigger download and save to local file
+        console.log('[Dashboard] Triggering downloadAndSaveToLocal');
+        window.vscode.postMessage({ 
+          type: 'downloadAndSaveToLocal', 
+          projectId: projectId 
+        });
       } else {
         console.log(`Save completed with warnings: ${response.data.message}`);
       }

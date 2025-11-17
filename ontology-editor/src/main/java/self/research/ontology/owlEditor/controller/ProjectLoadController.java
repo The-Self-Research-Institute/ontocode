@@ -8,6 +8,7 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
+import com.mongodb.client.result.UpdateResult;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -298,17 +299,18 @@ public class ProjectLoadController {
                     Map<String, String> annotations = (Map<String, String>) propData.get("annotations");
                     
                     if (propIri != null && annotations != null) {
-                        // Update property annotations in database
-                        Query query = new Query(Criteria.where("projectId").is(projectId));
+                        Query query = new Query(Criteria.where("projectId").is(projectId)
+                                .and("iri").is(propIri));
                         Update update = new Update();
                         
-                        // Find and update the specific property in the properties array
                         annotations.forEach((key, value) -> {
-                            update.set("objectProperties.$[prop].annotations." + key, value);
+                            update.set("annotations." + key, value);
                         });
                         
-                        update.filterArray(Criteria.where("prop.iri").is(propIri));
-                        mongoTemplate.updateFirst(query, update, OntologyDocument.class);
+                        UpdateResult result = mongoTemplate.updateFirst(query, update, "ontology_properties");
+                        if (result.getModifiedCount() > 0) {
+                            totalUpdated++;
+                        }
                     }
                 }
                 logger.info("Updated {} object properties", objectProperties.size());
@@ -324,15 +326,18 @@ public class ProjectLoadController {
                     Map<String, String> annotations = (Map<String, String>) propData.get("annotations");
                     
                     if (propIri != null && annotations != null) {
-                        Query query = new Query(Criteria.where("projectId").is(projectId));
+                        Query query = new Query(Criteria.where("projectId").is(projectId)
+                                .and("iri").is(propIri));
                         Update update = new Update();
                         
                         annotations.forEach((key, value) -> {
-                            update.set("dataProperties.$[prop].annotations." + key, value);
+                            update.set("annotations." + key, value);
                         });
                         
-                        update.filterArray(Criteria.where("prop.iri").is(propIri));
-                        mongoTemplate.updateFirst(query, update, OntologyDocument.class);
+                        UpdateResult result = mongoTemplate.updateFirst(query, update, "ontology_properties");
+                        if (result.getModifiedCount() > 0) {
+                            totalUpdated++;
+                        }
                     }
                 }
                 logger.info("Updated {} data properties", dataProperties.size());
@@ -348,18 +353,76 @@ public class ProjectLoadController {
                     Map<String, String> annotations = (Map<String, String>) indData.get("annotations");
                     
                     if (indIri != null && annotations != null) {
-                        Query query = new Query(Criteria.where("projectId").is(projectId));
+                        Query query = new Query(Criteria.where("projectId").is(projectId)
+                                .and("iri").is(indIri));
                         Update update = new Update();
                         
                         annotations.forEach((key, value) -> {
-                            update.set("individuals.$[ind].annotations." + key, value);
+                            update.set("annotations." + key, value);
                         });
                         
-                        update.filterArray(Criteria.where("ind.iri").is(indIri));
-                        mongoTemplate.updateFirst(query, update, OntologyDocument.class);
+                        UpdateResult result = mongoTemplate.updateFirst(query, update, "ontology_individuals");
+                        if (result.getModifiedCount() > 0) {
+                            totalUpdated++;
+                        }
                     }
                 }
                 logger.info("Updated {} individuals", individuals.size());
+            }
+            
+            // Update annotation properties
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> annotationProperties = 
+                (List<Map<String, Object>>) ontologyUpdate.get("annotationProperties");
+            if (annotationProperties != null && !annotationProperties.isEmpty()) {
+                logger.info("========== ANNOTATION PROPERTIES UPDATE ==========");
+                logger.info("Processing {} annotation properties", annotationProperties.size());
+                
+                // Log ALL annotation properties being sent
+                for (int i = 0; i < Math.min(5, annotationProperties.size()); i++) {
+                    logger.info("AnnoProp[{}]: {}", i, annotationProperties.get(i));
+                }
+                
+                int updated = 0;
+                for (Map<String, Object> annoPropData : annotationProperties) {
+                    String annoPropIri = (String) annoPropData.get("iri");
+                    @SuppressWarnings("unchecked")
+                    Map<String, String> annotations = 
+                        (Map<String, String>) annoPropData.get("annotations");
+                    
+                    logger.info("→ Updating IRI: {}", annoPropIri);
+                    logger.info("  Annotations to set: {}", annotations);
+                    
+                    if (annoPropIri != null && annotations != null && !annotations.isEmpty()) {
+                        Query query = new Query(Criteria.where("projectId").is(projectId)
+                                .and("iri").is(annoPropIri));
+                        
+                        // Create a NEW update object for each annotation property
+                        Update update = new Update();
+                        
+                        // Set each annotation individually
+                        for (Map.Entry<String, String> entry : annotations.entrySet()) {
+                            String key = entry.getKey();
+                            String value = entry.getValue();
+                            logger.info("    Setting annotations.{} = '{}'", key, value);
+                            update.set("annotations." + key, value);
+                        }
+                        
+                        UpdateResult result = mongoTemplate.updateFirst(query, update, "ontology_annotation_properties");
+                        logger.info("  ✓ Result: matched={}, modified={}", 
+                            result.getMatchedCount(), result.getModifiedCount());
+                        
+                        if (result.getModifiedCount() > 0) {
+                            updated++;
+                            totalUpdated++;
+                        }
+                    } else {
+                        logger.info("  ⊘ Skipped (null or empty annotations)");
+                    }
+                }
+                logger.info("========== COMPLETED {} ANNOTATION PROPERTY UPDATES ==========", updated);
+            } else {
+                logger.info("No annotation properties to update");
             }
             
             // Regenerate and reupload OWL file to GridFS
@@ -475,6 +538,41 @@ public class ProjectLoadController {
             return ResponseEntity.badRequest().body(createErrorResponse("Invalid file id"));
         } catch (Exception e) {
             logger.error("Error downloading file {}: {}", fileId, e.getMessage(), e);
+            return ResponseEntity.status(500).body(createErrorResponse("Failed to download file: " + e.getMessage()));
+        }
+    }
+
+    @GetMapping("/download/{projectId}")
+    public ResponseEntity<?> downloadByProjectId(@PathVariable String projectId) {
+        try {
+            logger.info("Download request for project: {}", projectId);
+            
+            // Find the file by projectId in metadata
+            Query fileQuery = new Query(Criteria.where("metadata.projectId").is(projectId));
+            GridFSFile file = gridFsTemplate.findOne(fileQuery);
+            
+            if (file == null) {
+                logger.error("File not found for project: {}", projectId);
+                return ResponseEntity.status(404).body(createErrorResponse("File not found for project: " + projectId));
+            }
+
+            logger.info("Found file: {} for project: {}", file.getFilename(), projectId);
+            GridFsResource resource = gridFsTemplate.getResource(file);
+
+            String contentType = "application/rdf+xml";
+            String name = file.getFilename();
+            if (name == null || !name.toLowerCase().endsWith(".owl")) {
+                name = (name == null ? "ontology" : name).replace("\"", "") + ".owl";
+            }
+
+            return ResponseEntity.ok()
+                    .contentType(MediaType.parseMediaType(contentType))
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + name + "\"")
+                    .contentLength(file.getLength())
+                    .body(resource);
+
+        } catch (Exception e) {
+            logger.error("Error downloading file for project {}: {}", projectId, e.getMessage(), e);
             return ResponseEntity.status(500).body(createErrorResponse("Failed to download file: " + e.getMessage()));
         }
     }
