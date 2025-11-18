@@ -681,5 +681,195 @@ public class OntologyQueryService {
         
         return details;
     }
+
+    /**
+     * Get data property hierarchy with top-level properties
+     */
+    public List<PropertyDto> dataPropertyHierarchy(String projectId) {
+        String query = PREFIXES + """
+            SELECT DISTINCT ?prop ?label (EXISTS { ?child rdfs:subPropertyOf ?prop . FILTER(?child != ?prop) } AS ?hasChildren)
+            WHERE {
+              ?prop a owl:DatatypeProperty .
+              FILTER NOT EXISTS { ?prop rdfs:subPropertyOf ?super . FILTER(?super != ?prop) }
+              OPTIONAL { ?prop rdfs:label ?label }
+            }
+            ORDER BY COALESCE(LCASE(?label), STR(?prop))
+            """;
+        
+        ResultSet rs = datasetService.execSelect(projectId, query);
+        List<PropertyDto> properties = new ArrayList<>();
+        
+        while (rs.hasNext()) {
+            QuerySolution sol = rs.next();
+            String iri = resource(sol, "prop");
+            if (iri != null) {
+                PropertyDto dto = new PropertyDto();
+                dto.setId(iri);
+                dto.setIri(iri);
+                String label = literal(sol, "label");
+                dto.setLabel(label.isEmpty() ? localName(iri) : label);
+                dto.setType("DatatypeProperty");
+                dto.setHasChildren(sol.getLiteral("hasChildren") != null && sol.getLiteral("hasChildren").getBoolean());
+                properties.add(dto);
+            }
+        }
+        
+        return properties;
+    }
+
+    /**
+     * Get children of a data property
+     */
+    public List<PropertyDto> dataPropertyChildren(String projectId, String parentIri) {
+        String query = PREFIXES + """
+            SELECT DISTINCT ?prop ?label (EXISTS { ?child rdfs:subPropertyOf ?prop . FILTER(?child != ?prop) } AS ?hasChildren)
+            WHERE {
+              ?prop rdfs:subPropertyOf <%s> .
+              FILTER(?prop != <%s>)
+              OPTIONAL { ?prop rdfs:label ?label }
+            }
+            ORDER BY COALESCE(LCASE(?label), STR(?prop))
+            """.formatted(parentIri, parentIri);
+        
+        ResultSet rs = datasetService.execSelect(projectId, query);
+        List<PropertyDto> properties = new ArrayList<>();
+        
+        while (rs.hasNext()) {
+            QuerySolution sol = rs.next();
+            String iri = resource(sol, "prop");
+            if (iri != null) {
+                PropertyDto dto = new PropertyDto();
+                dto.setId(iri);
+                dto.setIri(iri);
+                String label = literal(sol, "label");
+                dto.setLabel(label.isEmpty() ? localName(iri) : label);
+                dto.setType("DatatypeProperty");
+                dto.setHasChildren(sol.getLiteral("hasChildren") != null && sol.getLiteral("hasChildren").getBoolean());
+                properties.add(dto);
+            }
+        }
+        
+        return properties;
+    }
+
+    /**
+     * Execute a DL query (Description Logic query)
+     * Supports: subclasses, superclasses, equivalentClasses, instances
+     */
+    public Map<String, Object> executeDLQuery(String projectId, String classExpression, String queryType) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        
+        // For simple class IRI queries
+        if (classExpression.startsWith("http://") || classExpression.startsWith("https://")) {
+            String classIri = classExpression;
+            List<OntologyDto.TreeNode> classes = new ArrayList<>();
+            
+            switch (queryType.toLowerCase()) {
+                case "subclasses":
+                    classes = getSubclasses(projectId, classIri, false);
+                    break;
+                case "directsubclasses":
+                    classes = getSubclasses(projectId, classIri, true);
+                    break;
+                case "superclasses":
+                    classes = getSuperclasses(projectId, classIri, false);
+                    break;
+                case "directsuperclasses":
+                    classes = getSuperclasses(projectId, classIri, true);
+                    break;
+                case "equivalentclasses":
+                    classes = getEquivalentClasses(projectId, classIri);
+                    break;
+                case "instances":
+                    classes = getInstances(projectId, classIri);
+                    break;
+            }
+            
+            result.put("classes", classes);
+            result.put("queryType", queryType);
+        } else {
+            // For complex class expressions, return empty for now
+            // Full DL query parser would be needed for complex expressions
+            result.put("classes", new ArrayList<>());
+            result.put("queryType", queryType);
+            result.put("message", "Complex class expressions are not yet supported. Please use a class IRI.");
+        }
+        
+        return result;
+    }
+
+    private List<OntologyDto.TreeNode> getSubclasses(String projectId, String classIri, boolean direct) {
+        String query = PREFIXES + """
+            SELECT DISTINCT ?c ?label (EXISTS { ?child rdfs:subClassOf ?c . FILTER(?child != ?c) } AS ?hasChildren)
+            WHERE {
+              ?c rdfs:subClassOf%s <%s> .
+              FILTER(?c != <%s>)
+              OPTIONAL { ?c rdfs:label ?label }
+            }
+            ORDER BY COALESCE(LCASE(?label), STR(?c))
+            """.formatted(direct ? "" : "+", classIri, classIri);
+        
+        return mapTreeNodes(projectId, query, classIri);
+    }
+
+    private List<OntologyDto.TreeNode> getSuperclasses(String projectId, String classIri, boolean direct) {
+        String query = PREFIXES + """
+            SELECT DISTINCT ?c ?label (EXISTS { ?child rdfs:subClassOf ?c . FILTER(?child != ?c) } AS ?hasChildren)
+            WHERE {
+              <%s> rdfs:subClassOf%s ?c .
+              FILTER(?c != <%s>)
+              OPTIONAL { ?c rdfs:label ?label }
+            }
+            ORDER BY COALESCE(LCASE(?label), STR(?c))
+            """.formatted(classIri, direct ? "" : "+", classIri);
+        
+        return mapTreeNodes(projectId, query, null);
+    }
+
+    private List<OntologyDto.TreeNode> getEquivalentClasses(String projectId, String classIri) {
+        String query = PREFIXES + """
+            SELECT DISTINCT ?c ?label (EXISTS { ?child rdfs:subClassOf ?c . FILTER(?child != ?c) } AS ?hasChildren)
+            WHERE {
+              { <%s> owl:equivalentClass ?c }
+              UNION
+              { ?c owl:equivalentClass <%s> }
+              FILTER(?c != <%s>)
+              OPTIONAL { ?c rdfs:label ?label }
+            }
+            ORDER BY COALESCE(LCASE(?label), STR(?c))
+            """.formatted(classIri, classIri, classIri);
+        
+        return mapTreeNodes(projectId, query, null);
+    }
+
+    private List<OntologyDto.TreeNode> getInstances(String projectId, String classIri) {
+        String query = PREFIXES + """
+            SELECT DISTINCT ?c ?label
+            WHERE {
+              ?c a <%s> .
+              OPTIONAL { ?c rdfs:label ?label }
+            }
+            ORDER BY COALESCE(LCASE(?label), STR(?c))
+            """.formatted(classIri);
+        
+        ResultSet rs = datasetService.execSelect(projectId, query);
+        List<OntologyDto.TreeNode> nodes = new ArrayList<>();
+        
+        while (rs.hasNext()) {
+            QuerySolution sol = rs.next();
+            String iri = resource(sol, "c");
+            if (iri != null) {
+                OntologyDto.TreeNode node = new OntologyDto.TreeNode();
+                node.setId(iri);
+                String label = literal(sol, "label");
+                node.setLabel(label.isEmpty() ? localName(iri) : label);
+                node.setHasChildren(false);
+                nodes.add(node);
+            }
+        }
+        
+        return nodes;
+    }
 }
+
 

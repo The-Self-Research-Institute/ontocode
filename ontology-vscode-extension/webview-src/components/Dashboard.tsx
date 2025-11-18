@@ -17,6 +17,11 @@ import IndividualEditor from './details/IndividualEditor';
 import { Panel, AnnotationsDisplay } from './details/common';
 import SparqlQueryEditor from './SparqlQueryEditor';
 import { ProjectSelector } from './ProjectSelector';
+import { DataPropertyHierarchy } from './DataPropertyHierarchy';
+import { AnnotationPropertyList } from './AnnotationPropertyList';
+import { DatatypesList } from './DatatypesList';
+import { DLQueryPanel } from './DLQueryPanel';
+import DatatypeEditor from './details/DatatypeEditor';
 
 type TopLevelClass = TreeNode & { hasChildren: boolean };
 
@@ -596,12 +601,22 @@ const DetailsPanel = ({ selectedItem, entitiesTab, activeTheme, projectId, onUpd
       const item = selectedItem as AnnotationProperty;
       return (
         <div className="flex-1 flex flex-col gap-2">
-          <Panel title={`Annotations: ${item.label}`} {...sharedProps}><AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} /></Panel>
+          <Panel title={`Annotations: ${item.label || 'Annotation Property'}`} {...sharedProps}>
+            <div className="space-y-2">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">IRI</label>
+                <div className="p-2 bg-gray-50 rounded border border-gray-200 font-mono text-xs break-all">
+                  {item.iri}
+                </div>
+              </div>
+              <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} />
+            </div>
+          </Panel>
         </div>
       );
     }
     case 'Datatypes':
-      return <Panel title={`Annotations: ${selectedItem.label}`} {...sharedProps}><AnnotationsDisplay annotations={selectedItem.annotations} onDelete={onDeleteAnnotation} /></Panel>;
+      return <DatatypeEditor datatype={selectedItem as Datatype} activeTheme={activeTheme} />;
     default:
       return <div className="bg-white rounded-lg border p-4"><AnnotationsDisplay annotations={selectedItem.annotations} onDelete={onDeleteAnnotation} /></div>;
   }
@@ -660,6 +675,7 @@ const Dashboard = () => {
   const [classHierarchy, setClassHierarchy] = useState<TreeNode[]>([]);
   const [objectProperties, setObjectProperties] = useState<Property[]>([]);
   const [dataProperties, setDataProperties] = useState<Property[]>([]);
+  const [dataPropertyHierarchy, setDataPropertyHierarchy] = useState<any[]>([]);
   const [annotationProperties, setAnnotationProperties] = useState<AnnotationProperty[]>([]);
   const [individuals, setIndividuals] = useState<Individual[]>([]);
   const [datatypes, setDatatypes] = useState<Datatype[]>([]);
@@ -685,13 +701,14 @@ const Dashboard = () => {
     setSearchQuery("");
 
     try {
-      const [metadataRes, topLevelRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes, filesRes] = await Promise.all([
+      const [metadataRes, topLevelRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes, dataPropertyHierarchyRes, filesRes] = await Promise.all([
         apiClient.get<any>(`/api/ontology/metadata/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/classes/top-level/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/properties/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/individuals/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/annotation-properties/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/datatypes/${currentProjectId}`),
+        apiClient.get<any>(`/api/ontology/properties/data-hierarchy/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/files`),
       ]);
       
@@ -748,6 +765,11 @@ const Dashboard = () => {
       setObjectProperties(allProps.filter((p: Property) => p.type === "ObjectProperty"));
       setDataProperties(allProps.filter((p: Property) => p.type === "DatatypeProperty"));
 
+      // Handle data property hierarchy
+      const dataPropsHierarchy = Array.isArray(dataPropertyHierarchyRes?.properties) ? dataPropertyHierarchyRes.properties :
+                                 Array.isArray(dataPropertyHierarchyRes?.data?.properties) ? dataPropertyHierarchyRes.data.properties : [];
+      setDataPropertyHierarchy(dataPropsHierarchy);
+
       // Handle other responses with fallbacks
       setIndividuals(Array.isArray(individualsRes?.data) ? individualsRes.data : 
                     Array.isArray(individualsRes?.individuals) ? individualsRes.individuals : []);
@@ -785,6 +807,32 @@ const Dashboard = () => {
     setShowProjectSelector(false);
     fetchData(selectedProjectId);
   }, [fetchData]);
+
+  // Fetch data property children for hierarchy
+  const fetchDataPropertyChildren = useCallback(async (propertyId: string): Promise<any[]> => {
+    if (!projectId) return [];
+    try {
+      const response = await apiClient.get(`/api/ontology/properties/data-children/${projectId}?parentIri=${encodeURIComponent(propertyId)}`);
+      return response?.children || response?.data?.children || [];
+    } catch (error) {
+      console.error('Failed to fetch data property children:', error);
+      return [];
+    }
+  }, [projectId]);
+
+  // Execute DL Query
+  const executeDLQuery = useCallback(async (projectId: string, query: string, queryType: string) => {
+    try {
+      const response = await apiClient.post(`/api/ontology/dl-query/${projectId}`, {
+        query,
+        queryType
+      });
+      return response?.data || response || { classes: [], queryType };
+    } catch (error) {
+      console.error('Failed to execute DL query:', error);
+      return { classes: [], queryType };
+    }
+  }, []);
 
   useEffect(() => {
     if (classHierarchy.length > 0 && classHierarchy[0].id === "http://www.w3.org/2002/07/owl#Thing") {
@@ -1672,31 +1720,98 @@ const Dashboard = () => {
         <main className="flex flex-1 overflow-hidden">
           {mainTab === "Entities" ? (
             <>
-              <EntityHierarchy
-                entitiesTab={entitiesTab}
-                filteredData={filteredData}
-                selectedItem={selectedItem}
-                expandedNodes={expandedNodes}
-                searchQuery={searchQuery}
-                onSearchQueryChange={setSearchQuery}
-                onSelectItem={setSelectedItem}
-                onToggleNode={toggleNode}
-                onAddItem={handleAddItem}
-                onDeleteItem={handleDeleteItem}
-              />
+              {entitiesTab === "DataProperties" ? (
+                <>
+                  <DataPropertyHierarchy
+                    properties={dataPropertyHierarchy}
+                    onSelectProperty={(prop) => setSelectedItem({ ...prop, type: 'DataProperty' } as SelectableItem)}
+                    selectedPropertyId={selectedItem?.id}
+                    fetchChildren={fetchDataPropertyChildren}
+                  />
+                  <section className="flex-1 overflow-y-auto p-2 bg-slate-200">
+                    <DetailsPanel
+                      selectedItem={selectedItem}
+                      entitiesTab={entitiesTab}
+                      activeTheme={activeTheme}
+                      projectId={projectId}
+                      onUpdate={updateItemInState}
+                      onAddAnnotation={handleAddAnnotation}
+                      onDeleteAnnotation={handleDeleteAnnotation}
+                    />
+                  </section>
+                </>
+              ) : entitiesTab === "AnnotationProperties" ? (
+                <>
+                  <AnnotationPropertyList
+                    properties={annotationProperties}
+                    onSelectProperty={(prop) => setSelectedItem({ ...prop, type: 'AnnotationProperty' } as SelectableItem)}
+                    selectedPropertyId={selectedItem?.id}
+                  />
+                  <section className="flex-1 overflow-y-auto p-2 bg-slate-200">
+                    <DetailsPanel
+                      selectedItem={selectedItem}
+                      entitiesTab={entitiesTab}
+                      activeTheme={activeTheme}
+                      projectId={projectId}
+                      onUpdate={updateItemInState}
+                      onAddAnnotation={handleAddAnnotation}
+                      onDeleteAnnotation={handleDeleteAnnotation}
+                    />
+                  </section>
+                </>
+              ) : entitiesTab === "Datatypes" ? (
+                <>
+                  <DatatypesList
+                    datatypes={datatypes}
+                    onSelectDatatype={(dt) => setSelectedItem({ ...dt, type: 'Datatype' } as SelectableItem)}
+                    selectedDatatypeId={selectedItem?.id}
+                  />
+                  <section className="flex-1 overflow-y-auto p-2 bg-slate-200">
+                    <DetailsPanel
+                      selectedItem={selectedItem}
+                      entitiesTab={entitiesTab}
+                      activeTheme={activeTheme}
+                      projectId={projectId}
+                      onUpdate={updateItemInState}
+                      onAddAnnotation={handleAddAnnotation}
+                      onDeleteAnnotation={handleDeleteAnnotation}
+                    />
+                  </section>
+                </>
+              ) : (
+                <>
+                  <EntityHierarchy
+                    entitiesTab={entitiesTab}
+                    filteredData={filteredData}
+                    selectedItem={selectedItem}
+                    expandedNodes={expandedNodes}
+                    searchQuery={searchQuery}
+                    onSearchQueryChange={setSearchQuery}
+                    onSelectItem={setSelectedItem}
+                    onToggleNode={toggleNode}
+                    onAddItem={handleAddItem}
+                    onDeleteItem={handleDeleteItem}
+                  />
 
-              <section className="flex-1 overflow-y-auto p-2 bg-slate-200">
-                <DetailsPanel
-                  selectedItem={selectedItem}
-                  entitiesTab={entitiesTab}
-                  activeTheme={activeTheme}
-                  projectId={projectId}
-                  onUpdate={updateItemInState}
-                  onAddAnnotation={handleAddAnnotation}
-                  onDeleteAnnotation={handleDeleteAnnotation}
-                />
-              </section>
+                  <section className="flex-1 overflow-y-auto p-2 bg-slate-200">
+                    <DetailsPanel
+                      selectedItem={selectedItem}
+                      entitiesTab={entitiesTab}
+                      activeTheme={activeTheme}
+                      projectId={projectId}
+                      onUpdate={updateItemInState}
+                      onAddAnnotation={handleAddAnnotation}
+                      onDeleteAnnotation={handleDeleteAnnotation}
+                    />
+                  </section>
+                </>
+              )}
             </>
+          ) : mainTab === "DLQuery" ? (
+            <DLQueryPanel
+              projectId={projectId!}
+              executeDLQuery={executeDLQuery}
+            />
           ) : (
             <section className="flex-1 overflow-y-auto bg-white">
               {renderMainContent()}

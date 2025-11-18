@@ -15,6 +15,7 @@ public class PropertyDto {
     private List<String> superProperties;
     private List<String> subProperties;
     private List<PropertyDto> children;  // NEW - for tree structure
+    private Boolean hasChildren;  // NEW - indicates if there are sub-properties
 
     // Getters and Setters
     public String getId() {
@@ -103,5 +104,13 @@ public class PropertyDto {
 
     public void setChildren(List<PropertyDto> children) {
         this.children = children;
+    }
+
+    public Boolean getHasChildren() {
+        return hasChildren;
+    }
+
+    public void setHasChildren(Boolean hasChildren) {
+        this.hasChildren = hasChildren;
     }
 }

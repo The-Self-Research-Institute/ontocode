@@ -4,6 +4,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -89,6 +91,29 @@ public class OntologyQueryController {
                                        @RequestParam(defaultValue = "0") int offset) {
         return ResponseEntity.ok(Map.of("success", true, "data",
                 queryService.datatypes(projectId, limit, offset)));
+    }
+
+    @GetMapping("/properties/data-hierarchy/{projectId}")
+    public ResponseEntity<?> dataPropertyHierarchy(@PathVariable String projectId) {
+        return ResponseEntity.ok(Map.of("success", true, "properties",
+                queryService.dataPropertyHierarchy(projectId)));
+    }
+
+    @GetMapping("/properties/data-children/{projectId}")
+    public ResponseEntity<?> dataPropertyChildren(@PathVariable String projectId,
+                                                  @RequestParam String parentIri) {
+        return ResponseEntity.ok(Map.of("success", true, "children",
+                queryService.dataPropertyChildren(projectId, parentIri)));
+    }
+
+    @PostMapping("/dl-query/{projectId}")
+    public ResponseEntity<?> executeDLQuery(@PathVariable String projectId,
+                                           @RequestBody Map<String, String> request) {
+        String query = request.get("query");
+        String queryType = request.getOrDefault("queryType", "subclasses");
+        
+        return ResponseEntity.ok(Map.of("success", true, "data",
+                queryService.executeDLQuery(projectId, query, queryType)));
     }
 
     @GetMapping("/classes/usage/{projectId}")

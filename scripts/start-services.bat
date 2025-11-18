@@ -1,3 +1,5 @@
+del /q "%USERPROFILE%\.m2\repository\.locks\*"
+
 @echo off
 setlocal enabledelayedexpansion
 
