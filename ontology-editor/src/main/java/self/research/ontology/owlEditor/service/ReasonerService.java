@@ -9,7 +9,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * Service for ontology reasoning operations.
@@ -234,7 +233,6 @@ public class ReasonerService {
      * Get all inferred axioms
      */
     public Set<OWLAxiom> getInferredAxioms(OWLOntology ontology, ReasonerType type) {
-        OWLReasoner reasoner = getReasoner(ontology, type);
         Set<OWLAxiom> inferredAxioms = new HashSet<>();
         
         try {
@@ -280,8 +278,6 @@ public class ReasonerService {
      * Explain why a class is unsatisfiable
      */
     public Set<OWLAxiom> explainUnsatisfiability(OWLOntology ontology, OWLClass owlClass, ReasonerType type) {
-        OWLReasoner reasoner = getReasoner(ontology, type);
-        
         try {
             Set<OWLClassAxiom> explanation = ontology.getAxioms(owlClass);
             log.info("Found {} axioms in explanation for {}", explanation.size(), owlClass.getIRI());

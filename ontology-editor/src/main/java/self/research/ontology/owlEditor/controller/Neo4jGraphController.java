@@ -6,7 +6,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.model.neo4j.OntologyClassNode;
 import self.research.ontology.owlEditor.repository.neo4j.OntologyClassRepository;
-import self.research.ontology.owlEditor.repository.neo4j.PropertyRepository;
 
 import java.util.List;
 import java.util.Map;
@@ -18,9 +17,6 @@ public class Neo4jGraphController {
 
     @Autowired
     private OntologyClassRepository classRepository;
-
-    @Autowired
-    private PropertyRepository propertyRepository;
 
     /**
      * Fast hierarchy navigation using Neo4j

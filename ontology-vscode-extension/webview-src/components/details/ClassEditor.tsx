@@ -1,52 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Search } from 'lucide-react';
-import { Panel, AnnotationsDisplay } from './common';
-import ManchesterSyntaxEditor from './ManchesterSyntaxEditor';
+import { Plus, Trash2, Search, ExternalLink, AlertCircle } from 'lucide-react';
+import { Panel, AnnotationsDisplay, AxiomSubsection } from './common';
 import apiClient from '../../services/apiClient';
 import type { TreeNode, Axiom, ClassUsage, AxiomUsage } from '../../types';
 
 type AxiomType = 'EquivalentTo' | 'SubClassOf' | 'DisjointWith';
-
-const AxiomSection: React.FC<{
-  title: string;
-  axioms: Axiom[] | undefined;
-  onAdd: (definition: string) => void;
-  onDelete: (id: string) => void;
-}> = ({ title, axioms, onAdd, onDelete }) => {
-  const [isAdding, setIsAdding] = useState(false);
-
-  const handleSave = (definition: string) => {
-    onAdd(definition);
-    setIsAdding(false);
-  };
-
-  return (
-    <div className="border border-gray-200 rounded-sm">
-      <div className="p-1 text-xs bg-gray-100 border-b flex justify-between items-center">
-        <span className="font-semibold">{title}</span>
-        <button onClick={() => setIsAdding(true)} className="p-0.5 hover:bg-gray-300 rounded" title={`Add ${title}`}>
-          <Plus size={14} />
-        </button>
-      </div>
-      <div className="p-1.5 space-y-1">
-        {axioms?.map(axiom => (
-          <div key={axiom.id} className="group flex justify-between items-center bg-gray-50 p-1.5 rounded-sm text-xs font-mono hover:bg-gray-100">
-            <span className="text-purple-700">{axiom.definition}</span>
-            <button onClick={() => onDelete(axiom.id)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200" title="Delete axiom">
-                <Trash2 size={12} className="text-red-600"/>
-            </button>
-          </div>
-        ))}
-        {isAdding && <ManchesterSyntaxEditor onSave={handleSave} onCancel={() => setIsAdding(false)} />}
-        {!isAdding && (!axioms || axioms.length === 0) && (
-             <button onClick={() => setIsAdding(true)} className="text-xs text-gray-400 italic hover:text-purple-600 hover:underline">
-                Add...
-             </button>
-        )}
-      </div>
-    </div>
-  );
-};
 
 interface UsageItem {
   type: string;
@@ -291,90 +249,83 @@ const ClassEditor: React.FC<{
   return (
     <div className="flex flex-col h-full bg-white">
       {loadingDetails && (
-        <div className="absolute top-0 left-0 right-0 bg-yellow-100 text-xs text-gray-700 px-3 py-1 z-10">
+        <div className="absolute top-0 left-0 right-0 bg-yellow-100 text-xs text-gray-700 px-3 py-1 z-10 flex items-center justify-center">
+          <div className="animate-spin mr-2 h-3 w-3 border-2 border-yellow-600 border-t-transparent rounded-full"></div>
           Loading class details...
         </div>
       )}
-      {/* Tab Navigation */}
-      <div className="flex border-b border-gray-300">
-        <button
-          onClick={() => setActiveTab('annotations')}
-          className={`flex-1 px-4 py-2 text-xs font-medium transition-colors ${
-            activeTab === 'annotations'
-              ? 'bg-yellow-100 text-gray-900 border-b-2 border-yellow-600'
-              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-          }`}
-        >
-          Annotations {annotationCount > 0 && `(${annotationCount})`}
-        </button>
-        <button
-          onClick={() => setActiveTab('usage')}
-          className={`flex-1 px-4 py-2 text-xs font-medium transition-colors ${
-            activeTab === 'usage'
-              ? 'bg-yellow-100 text-gray-900 border-b-2 border-yellow-600'
-              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-          }`}
-        >
-          Usage
-        </button>
-        <button
-          onClick={() => setActiveTab('description')}
-          className={`flex-1 px-4 py-2 text-xs font-medium transition-colors ${
-            activeTab === 'description'
-              ? 'bg-yellow-100 text-gray-900 border-b-2 border-yellow-600'
-              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-          }`}
-        >
-          Description
-        </button>
+      
+      {/* Header with IRI */}
+      <div className="bg-gray-100 border-b border-gray-200 p-3 flex items-center justify-between">
+        <div className="flex items-center gap-2 overflow-hidden">
+          <div className="bg-yellow-200 text-yellow-800 p-1 rounded text-xs font-bold">C</div>
+          <div className="flex flex-col min-w-0">
+            <span className="font-bold text-sm truncate">{item.label}</span>
+            <span className="text-xs text-gray-500 truncate font-mono">{item.id}</span>
+          </div>
+        </div>
+        <div className="flex gap-1">
+           <button 
+             onClick={() => setActiveTab(activeTab === 'usage' ? 'description' : 'usage')}
+             className={`px-3 py-1 text-xs rounded border ${activeTab === 'usage' ? 'bg-blue-100 text-blue-700 border-blue-300' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}
+           >
+             {activeTab === 'usage' ? 'Back to Description' : 'Show Usage'}
+           </button>
+        </div>
       </div>
 
-      {/* Tab Content */}
-      <div className="flex-1 overflow-hidden">
-        {activeTab === 'annotations' && (
-          <div className="h-full overflow-y-auto p-3">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-semibold text-gray-700">Annotations: {item.label}</h3>
-              <button onClick={onAddAnnotation} className="p-1 hover:bg-gray-200 rounded" title="Add annotation">
-                <Plus size={16} />
-              </button>
-            </div>
-            {loadingDetails ? (
-              <div className="text-sm text-gray-500 italic">Loading annotations...</div>
-            ) : (
-              <AnnotationsDisplay annotations={displayAnnotations} onDelete={onDeleteAnnotation} />
-            )}
-          </div>
-        )}
-
-        {activeTab === 'usage' && (
+      {/* Main Content */}
+      <div className="flex-1 overflow-y-auto bg-gray-50 p-3 space-y-4">
+        {activeTab === 'usage' ? (
           <UsageTab classIri={item.id} projectId={projectId} label={item.label} />
-        )}
+        ) : (
+          <>
+            {/* Annotations Section */}
+            <Panel title={`Annotations (${annotationCount})`} defaultOpen={true} themeColor="bg-gradient-to-b from-gray-50 to-gray-100 text-gray-800 border-gray-200" 
+              actions={
+                <button onClick={onAddAnnotation} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600" title="Add annotation">
+                  <Plus size={14} />
+                </button>
+              }
+            >
+              <div className="p-2">
+                <AnnotationsDisplay annotations={displayAnnotations} onDelete={onDeleteAnnotation} />
+              </div>
+            </Panel>
 
-        {activeTab === 'description' && (
-          <div className="h-full overflow-y-auto p-3">
-            <h3 className="text-sm font-semibold text-gray-700 mb-2">Description: {item.label}</h3>
-            <div className="space-y-2">
-              <AxiomSection
-                title="Equivalent To"
-                axioms={item.equivalentClassesAxioms}
-                onAdd={(def) => handleAddAxiom('EquivalentTo', def)}
-                onDelete={(id) => handleDeleteAxiom('EquivalentTo', id)}
-              />
-              <AxiomSection
-                title="SubClass Of"
-                axioms={item.subClassOfAxioms}
-                onAdd={(def) => handleAddAxiom('SubClassOf', def)}
-                onDelete={(id) => handleDeleteAxiom('SubClassOf', id)}
-              />
-              <AxiomSection
-                title="Disjoint With"
-                axioms={item.disjointClassesAxioms}
-                onAdd={(def) => handleAddAxiom('DisjointWith', def)}
-                onDelete={(id) => handleDeleteAxiom('DisjointWith', id)}
-              />
-            </div>
-          </div>
+            {/* Description Section */}
+            <Panel title="Description" defaultOpen={true} themeColor="bg-gradient-to-b from-[#F5F0E6] to-[#E1C688] text-black border-[#D6C9AD]">
+              <div className="p-3 space-y-4">
+                <AxiomSubsection
+                  title="Equivalent To"
+                  axioms={item.equivalentClassesAxioms}
+                  onAdd={(def) => handleAddAxiom('EquivalentTo', def)}
+                  onDelete={(id) => handleDeleteAxiom('EquivalentTo', id)}
+                />
+                
+                <AxiomSubsection
+                  title="SubClass Of"
+                  axioms={item.subClassOfAxioms}
+                  onAdd={(def) => handleAddAxiom('SubClassOf', def)}
+                  onDelete={(id) => handleDeleteAxiom('SubClassOf', id)}
+                />
+                
+                <AxiomSubsection
+                  title="Disjoint With"
+                  axioms={item.disjointClassesAxioms}
+                  onAdd={(def) => handleAddAxiom('DisjointWith', def)}
+                  onDelete={(id) => handleDeleteAxiom('DisjointWith', id)}
+                />
+              </div>
+            </Panel>
+
+            {/* Members Section (Placeholder for now, could fetch instances) */}
+            <Panel title="Members" defaultOpen={false} themeColor="bg-gradient-to-b from-purple-50 to-purple-100 text-purple-900 border-purple-200">
+               <div className="p-3 text-xs text-gray-500 italic">
+                 Instances of this class are listed in the "Individuals by class" tab.
+               </div>
+            </Panel>
+          </>
         )}
       </div>
     </div>

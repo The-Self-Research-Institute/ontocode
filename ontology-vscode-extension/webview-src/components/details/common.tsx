@@ -1,5 +1,73 @@
 import React, { useState } from "react";
 import { ChevronRight, ChevronDown, Plus, Trash2 } from "lucide-react";
+import ManchesterSyntaxEditor from './ManchesterSyntaxEditor';
+import type { Axiom } from '../../types';
+
+export const AxiomRow: React.FC<{
+  axiom: Axiom;
+  onDelete: (id: string) => void;
+}> = ({ axiom, onDelete }) => (
+  <div className="group flex justify-between items-start bg-white p-1.5 border-b border-gray-100 last:border-0 hover:bg-blue-50 transition-colors">
+    <div className="text-sm font-mono text-gray-800 break-all leading-relaxed">
+      {axiom.definition}
+    </div>
+    <button 
+      onClick={() => onDelete(axiom.id)} 
+      className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600 transition-all" 
+      title="Delete axiom"
+    >
+        <Trash2 size={14} />
+    </button>
+  </div>
+);
+
+export const AxiomSubsection: React.FC<{
+  title: string;
+  axioms: Axiom[] | undefined;
+  onAdd: (definition: string) => void;
+  onDelete: (id: string) => void;
+  emptyMessage?: string;
+}> = ({ title, axioms, onAdd, onDelete, emptyMessage }) => {
+  const [isAdding, setIsAdding] = useState(false);
+
+  const handleSave = (definition: string) => {
+    onAdd(definition);
+    setIsAdding(false);
+  };
+
+  return (
+    <div className="mb-4 last:mb-0">
+      <div className="flex justify-between items-center mb-1">
+        <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">{title}</h4>
+        <button 
+          onClick={() => setIsAdding(true)} 
+          className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors" 
+          title={`Add ${title}`}
+        >
+          <Plus size={14} />
+        </button>
+      </div>
+      <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm">
+        {axioms && axioms.length > 0 ? (
+          axioms.map(axiom => (
+            <AxiomRow key={axiom.id} axiom={axiom} onDelete={onDelete} />
+          ))
+        ) : (
+          !isAdding && (
+            <div className="p-2 text-xs text-gray-400 italic bg-gray-50">
+              {emptyMessage || "No axioms defined"}
+            </div>
+          )
+        )}
+        {isAdding && (
+          <div className="p-2 bg-gray-50 border-t border-gray-200">
+            <ManchesterSyntaxEditor onSave={handleSave} onCancel={() => setIsAdding(false)} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 /**
  * A component to safely render an annotation value, stripping

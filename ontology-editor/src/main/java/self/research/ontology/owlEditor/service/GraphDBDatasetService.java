@@ -1,6 +1,5 @@
 package self.research.ontology.owlEditor.service;
 
-import org.eclipse.rdf4j.model.Model;
 import org.eclipse.rdf4j.query.*;
 import org.eclipse.rdf4j.repository.Repository;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
@@ -15,7 +14,6 @@ import org.springframework.stereotype.Service;
 import javax.annotation.PreDestroy;
 import java.io.InputStream;
 import java.io.StringWriter;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.HashMap;
@@ -54,9 +52,22 @@ public class GraphDBDatasetService {
     public void init() {
         if (repository == null) {
             log.info("Initializing GraphDB repository connection: {} / {}", graphdbUrl, repositoryId);
-            repository = new HTTPRepository(graphdbUrl, repositoryId);
-            repository.init();
-            log.info("Successfully connected to GraphDB repository");
+            try {
+                repository = new HTTPRepository(graphdbUrl, repositoryId);
+                repository.init();
+                
+                // Test connection
+                try (RepositoryConnection conn = repository.getConnection()) {
+                    log.info("Successfully connected to GraphDB repository at {}", graphdbUrl);
+                }
+            } catch (Exception e) {
+                log.error("Failed to connect to GraphDB at {} with repository '{}'", graphdbUrl, repositoryId, e);
+                log.error("Please ensure:");
+                log.error("  1. GraphDB is running on {}", graphdbUrl);
+                log.error("  2. Repository '{}' exists in GraphDB", repositoryId);
+                log.error("  3. You can access GraphDB Workbench at {}/webapi", graphdbUrl);
+                throw new RuntimeException("GraphDB connection failed: " + e.getMessage(), e);
+            }
         }
     }
     
@@ -167,7 +178,6 @@ public class GraphDBDatasetService {
      */
     public void execUpdate(String projectId, String sparqlUpdate) {
         Repository repo = getRepository();
-        String graphUri = getGraphUri(projectId);
         
         try (RepositoryConnection conn = repo.getConnection()) {
             
@@ -188,28 +198,39 @@ public class GraphDBDatasetService {
      * Supports: RDF/XML, Turtle, N-Triples, JSON-LD
      */
     public void bulkLoad(String projectId, InputStream inputStream, RDFFormat rdfFormat) {
-        Repository repo = getRepository();
-        String graphUri = getGraphUri(projectId);
-        
-        log.info("Starting bulk load for project: {} with format: {}", projectId, rdfFormat);
-        
-        try (RepositoryConnection conn = repo.getConnection()) {
+        try {
+            Repository repo = getRepository();
+            String graphUri = getGraphUri(projectId);
             
-            // Clear existing data for this project
-            conn.clear(conn.getValueFactory().createIRI(graphUri));
+            log.info("Starting bulk load for project: {} with format: {}", projectId, rdfFormat);
             
-            // Load new data into named graph
-            conn.add(inputStream, graphUri, rdfFormat, 
-                    conn.getValueFactory().createIRI(graphUri));
+            try (RepositoryConnection conn = repo.getConnection()) {
+                
+                // Clear existing data for this project
+                conn.clear(conn.getValueFactory().createIRI(graphUri));
+                
+                // Load new data into named graph
+                conn.add(inputStream, graphUri, rdfFormat, 
+                        conn.getValueFactory().createIRI(graphUri));
+                
+                // Get size after loading
+                long tripleCount = conn.size(conn.getValueFactory().createIRI(graphUri));
+                
+                log.info("Bulk load completed for project: {} - loaded {} triples", projectId, tripleCount);
+            }
             
-            // Get size after loading
-            long tripleCount = conn.size(conn.getValueFactory().createIRI(graphUri));
-            
-            log.info("Bulk load completed for project: {} - loaded {} triples", projectId, tripleCount);
-            
+        } catch (org.eclipse.rdf4j.repository.RepositoryException e) {
+            if (e.getMessage().contains("404") || e.getMessage().contains("not found")) {
+                log.error("GraphDB repository '{}' not found at {}", repositoryId, graphdbUrl);
+                log.error("Please create the repository via GraphDB Workbench: {}/repository", graphdbUrl);
+                throw new RuntimeException("GraphDB repository '" + repositoryId + "' not found. Please create it first.", e);
+            } else {
+                log.error("Bulk load failed for project: {}", projectId, e);
+                throw new RuntimeException("Bulk load failed: " + e.getMessage(), e);
+            }
         } catch (Exception e) {
-            log.error("Bulk load failed for project: {}", projectId, e);
-            throw new RuntimeException("Bulk load failed", e);
+            log.error("Unexpected error during bulk load for project: {}", projectId, e);
+            throw new RuntimeException("Bulk load failed: " + e.getMessage(), e);
         }
     }
     
@@ -217,20 +238,32 @@ public class GraphDBDatasetService {
      * Clear all data for a project
      */
     public void clearDataset(String projectId) {
-        Repository repo = getRepository();
-        String graphUri = getGraphUri(projectId);
-        
-        log.info("Clearing dataset for project: {}", projectId);
-        
-        try (RepositoryConnection conn = repo.getConnection()) {
+        try {
+            Repository repo = getRepository();
+            String graphUri = getGraphUri(projectId);
             
-            conn.clear(conn.getValueFactory().createIRI(graphUri));
+            log.info("Clearing dataset for project: {} (graph: {})", projectId, graphUri);
             
-            log.info("Dataset cleared for project: {}", projectId);
+            try (RepositoryConnection conn = repo.getConnection()) {
+                // Clear specific named graph
+                conn.clear(conn.getValueFactory().createIRI(graphUri));
+                log.info("Dataset cleared for project: {}", projectId);
+            }
             
+        } catch (org.eclipse.rdf4j.repository.RepositoryException e) {
+            if (e.getMessage().contains("404") || e.getMessage().contains("not found")) {
+                log.error("GraphDB repository not found. Please ensure:");
+                log.error("  1. GraphDB is running: {}", graphdbUrl);
+                log.error("  2. Repository '{}' exists", repositoryId);
+                log.error("  3. Create repository via GraphDB Workbench: {}/repository", graphdbUrl);
+                throw new RuntimeException("GraphDB repository '" + repositoryId + "' not found at " + graphdbUrl + ". Please create it first.", e);
+            } else {
+                log.error("Failed to clear dataset for project: {}", projectId, e);
+                throw new RuntimeException("Failed to clear dataset: " + e.getMessage(), e);
+            }
         } catch (Exception e) {
-            log.error("Failed to clear dataset for project: {}", projectId, e);
-            throw new RuntimeException("Failed to clear dataset", e);
+            log.error("Unexpected error clearing dataset for project: {}", projectId, e);
+            throw new RuntimeException("Failed to clear dataset: " + e.getMessage(), e);
         }
     }
     
@@ -243,10 +276,7 @@ public class GraphDBDatasetService {
         try (RepositoryConnection conn = getRepository().getConnection()) {
             
             // GraphDB typically stores prefixes in the repository namespace
-            org.eclipse.rdf4j.model.Namespace[] namespaces = 
-                conn.getNamespaces().stream().toArray(org.eclipse.rdf4j.model.Namespace[]::new);
-            
-            for (org.eclipse.rdf4j.model.Namespace ns : namespaces) {
+            for (org.eclipse.rdf4j.model.Namespace ns : conn.getNamespaces()) {
                 prefixes.put(ns.getPrefix(), ns.getName());
             }
             
