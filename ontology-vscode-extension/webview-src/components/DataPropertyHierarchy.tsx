@@ -56,36 +56,40 @@ export const DataPropertyHierarchy: React.FC<DataPropertyHierarchyProps> = ({
     return (
       <div key={node.id}>
         <div
-          className={`flex items-center px-2 py-0.5 rounded cursor-pointer ${
-            isSelected ? 'bg-blue-200' : 'hover:bg-slate-100'
+          className={`flex items-center gap-2 py-1 px-2 cursor-pointer border-b border-gray-100 ${
+            isSelected 
+              ? 'bg-blue-100' 
+              : 'hover:bg-gray-50'
           }`}
-          style={{ paddingLeft: `${level * 16 + 4}px` }}
+          style={{ paddingLeft: `${level * 16 + 8}px` }}
           onClick={() => onSelectProperty(node)}
         >
           {/* Expander Arrow */}
           <button 
-            className="p-0.5 mr-1" 
+            className="w-4 h-4 flex items-center justify-center flex-shrink-0 hover:bg-gray-200 rounded" 
             onClick={(e) => { 
               e.stopPropagation(); 
               if (hasChildren) toggleExpand(node.id, hasChildren);
             }}
             disabled={!hasChildren} 
           >
-            {!hasChildren ? 
-              <span className="w-5" /> : 
-              (isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />)}
+            {hasChildren && (
+              isExpanded ? <ChevronDown size={14} className="text-gray-600" /> : <ChevronRight size={14} className="text-gray-600" />
+            )}
           </button>
           
           {/* Entity Icon */}
           <div 
             title="Data property" 
-            className="w-3.5 h-3.5 rounded-sm border bg-green-400 border-green-600 mr-2 flex-shrink-0 flex items-center justify-center"
+            className="w-4 h-4 rounded border bg-green-500 border-green-600 flex-shrink-0 flex items-center justify-center"
           >
-            <Database size={10} className="text-white"/>
+            <Database size={10} className="text-white" strokeWidth={2} />
           </div>
           
           {/* Label */}
-          <span className={`text-xs select-none text-black ${isSelected ? 'font-semibold' : ''}`}>
+          <span className={`text-xs truncate text-gray-900 ${
+            isSelected ? 'font-semibold' : 'font-normal'
+          }`}>
             {node.label || node.iri.split(/[/#]/).pop()}
           </span>
         </div>
@@ -95,16 +99,16 @@ export const DataPropertyHierarchy: React.FC<DataPropertyHierarchyProps> = ({
   };
 
   return (
-    <aside className="w-80 bg-white border-r border-gray-200 flex flex-col h-full">
+    <aside className="w-80 bg-white border-r border-gray-300 flex flex-col h-full">
       {/* Header */}
-      <div className="text-xs font-semibold p-1.5 flex items-center justify-between border-b">
+      <div className="text-xs font-normal text-gray-700 px-2 py-2 border-b border-gray-300 bg-gradient-to-b from-gray-50 to-white">
         <span>Data properties hierarchy</span>
       </div>
       
       {/* List View */}
-      <div className="flex-1 overflow-y-auto p-1">
+      <div className="flex-1 overflow-y-auto bg-white">
         {properties.length === 0 ? (
-          <div className="p-4 text-center text-gray-400">No data properties found.</div>
+          <div className="p-4 text-center text-gray-400 text-xs">No data properties found.</div>
         ) : (
           properties.map(prop => renderPropertyNode(prop))
         )}

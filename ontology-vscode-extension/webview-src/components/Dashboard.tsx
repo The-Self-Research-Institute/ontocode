@@ -600,18 +600,26 @@ const DetailsPanel = ({ selectedItem, entitiesTab, activeTheme, projectId, onUpd
     case 'AnnotationProperties': {
       const item = selectedItem as AnnotationProperty;
       return (
-        <div className="flex-1 flex flex-col gap-2">
-          <Panel title={`Annotations: ${item.label || 'Annotation Property'}`} {...sharedProps}>
-            <div className="space-y-2">
+        <div className="flex-1 flex flex-col p-2 bg-gray-50">
+          <div className="bg-white border border-gray-300 rounded">
+            <div className="px-3 py-2 border-b border-gray-300 bg-gradient-to-b from-amber-50 to-white">
+              <h3 className="text-sm font-semibold text-gray-800">Annotations: {item.label || item.iri.split(/[/#]/).pop()}</h3>
+            </div>
+            <div className="p-3 space-y-3">
               <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">IRI</label>
-                <div className="p-2 bg-gray-50 rounded border border-gray-200 font-mono text-xs break-all">
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">IRI</label>
+                <div className="px-2 py-1.5 bg-gray-50 border border-gray-200 rounded font-mono text-xs text-gray-700 break-all">
                   {item.iri}
                 </div>
               </div>
-              <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} />
+              {item.annotations && Object.keys(item.annotations).length > 0 && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1.5">Annotations</label>
+                  <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} />
+                </div>
+              )}
             </div>
-          </Panel>
+          </div>
         </div>
       );
     }
