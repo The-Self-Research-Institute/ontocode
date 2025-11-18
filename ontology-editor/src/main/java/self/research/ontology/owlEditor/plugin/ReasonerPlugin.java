@@ -3,9 +3,6 @@ package self.research.ontology.owlEditor.plugin;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.reasoner.OWLReasoner;
 
-import java.util.List;
-import java.util.Set;
-
 /**
  * Interface for reasoner plugins.
  * Allows custom reasoning engines to be integrated.

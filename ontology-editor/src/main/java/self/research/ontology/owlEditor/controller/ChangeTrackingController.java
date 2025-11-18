@@ -7,7 +7,6 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.model.OntologyChange;
-import self.research.ontology.owlEditor.model.OntologyChange.ChangeType;
 import self.research.ontology.owlEditor.service.ChangeTrackingService;
 
 import java.time.LocalDateTime;

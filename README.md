@@ -78,8 +78,32 @@ These include **Gateway**, **Auth**, **OWL Editor**, and **SWRL Service**.
 #### Prerequisites
 - **JDK 21** (Java Development Kit)
 - **Maven 3.8+**
-- **MongoDB 5.0+**
-- **GraphDB 10.0+** (Ontotext GraphDB or GraphDB Free)
+- **MongoDB 5.0+** (for metadata and version control)
+- **GraphDB 10.0+** (Ontotext GraphDB or GraphDB Free Edition)
+  - **⚠️ REQUIRED**: GraphDB must be running with a repository named `ontocode`
+  - See [GRAPHDB_SETUP.md](GRAPHDB_SETUP.md) for detailed setup instructions
+
+#### Setup GraphDB (Required)
+
+Before running the application, you must set up GraphDB:
+
+```bash
+# Option 1: Download and run GraphDB Free Edition
+# Visit: https://www.ontotext.com/products/graphdb/download/
+
+# Option 2: Using Docker
+docker run -d -p 7200:7200 --name graphdb ontotext/graphdb:10.7.0-free
+```
+
+Then create the `ontocode` repository:
+1. Open GraphDB Workbench: http://localhost:7200
+2. Navigate to **Setup → Repositories**
+3. Click **Create new repository**
+4. Set Repository ID: `ontocode`
+5. Set Ruleset: `OWL2-RL (Optimized)`
+6. Click **Create**
+
+For complete instructions, see [GRAPHDB_SETUP.md](GRAPHDB_SETUP.md)
 
 #### Build All Services
 

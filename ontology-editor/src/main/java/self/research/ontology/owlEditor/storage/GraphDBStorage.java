@@ -1,11 +1,9 @@
 package self.research.ontology.owlEditor.storage;
 
-import org.eclipse.rdf4j.model.Statement;
 import org.eclipse.rdf4j.query.*;
 import org.eclipse.rdf4j.query.resultio.text.tsv.SPARQLResultsTSVWriter;
 import org.eclipse.rdf4j.repository.Repository;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
-import org.eclipse.rdf4j.repository.RepositoryResult;
 import org.eclipse.rdf4j.repository.http.HTTPRepository;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.eclipse.rdf4j.rio.RDFWriter;

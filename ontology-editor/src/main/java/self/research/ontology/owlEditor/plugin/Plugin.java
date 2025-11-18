@@ -1,7 +1,5 @@
 package self.research.ontology.owlEditor.plugin;
 
-import org.semanticweb.owlapi.model.OWLOntology;
-
 import java.util.List;
 import java.util.Map;
 

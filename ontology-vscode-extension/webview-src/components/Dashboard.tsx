@@ -687,14 +687,13 @@ const Dashboard = () => {
     setSearchQuery("");
 
     try {
-      const [metadataRes, topLevelRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes, filesRes] = await Promise.all([
+      const [metadataRes, topLevelRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes] = await Promise.all([
         apiClient.get<any>(`/api/ontology/metadata/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/classes/top-level/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/properties/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/individuals/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/annotation-properties/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/datatypes/${currentProjectId}`),
-        apiClient.get<any>(`/api/ontology/files`),
       ]);
       
       // Handle metadata response - backend returns {success: true, data: {counts: {...}, prefixes: [...], ontologyIRI: "...", ...}}
@@ -757,8 +756,22 @@ const Dashboard = () => {
                               Array.isArray(annotationPropsRes?.annotationProperties) ? annotationPropsRes.annotationProperties : []);
       setDatatypes(Array.isArray(datatypesRes?.data) ? datatypesRes.data :
                   Array.isArray(datatypesRes?.datatypes) ? datatypesRes.datatypes : []);
-      setListOfFiles(Array.isArray(filesRes?.files) ? filesRes.files :
-                    Array.isArray(filesRes?.data?.files) ? filesRes.data.files : []);
+      
+      // Fetch files list separately (not in parallel to avoid blocking main data load)
+      try {
+        const filesRes = await apiClient.get<any>(`/api/projects`);
+        const projects = Array.isArray(filesRes?.projects) ? filesRes.projects : [];
+        setListOfFiles(projects.map((p: any) => ({
+          id: p.id,
+          filename: p.filename || p.name || p.id,
+          contentType: 'application/rdf+xml',
+          uploadDate: p.updatedAt || new Date().toISOString(),
+          length: 0
+        })));
+      } catch (fileError) {
+        console.error("Failed to fetch files:", fileError);
+        setListOfFiles([]);
+      }
     } catch (error) {
       console.error("Failed to fetch data:", error);
     } finally {
