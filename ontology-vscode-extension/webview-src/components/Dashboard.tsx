@@ -124,14 +124,15 @@ const TopMenuBar = ({
     return new Date(bCreateDate).getTime() - new Date(aCreateDate).getTime();
   });
 
-  const menuItems = ['File', 'Edit', 'View', 'Reasoner', 'Tools', 'Window', 'Help', 'Save', 'Download'];
+  const menuItems = ['File', 'Edit', 'View', 'Reasoner', 'Tools', 'Window', 'Help', 'save', 'Download'];
 
   const downloadFile = (file: FileInfo) => {
     if (window.vscode) {
+      const baseFilename = file.filename.replace(/\.owl$/i, '');
       window.vscode.postMessage({
         type: "downloadOntology",
         url: `/api/ontology/files/${file.id}/download`,
-        filename: `${file.filename}-${file.id}`,
+        filename: `${baseFilename}-downloaded.owl`,
       });
     }
   };

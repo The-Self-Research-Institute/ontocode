@@ -3,7 +3,8 @@ import { XMLParser, XMLBuilder } from 'fast-xml-parser';
 // Fix: Removed triple-slash directive for node types as we are removing node-specific dependencies.
 
 import * as vscode from 'vscode';
-// Fix: Removed 'path' and 'fs' imports to use VSCode's API and web standards.
+import * as path from 'path';
+// Fix: Removed 'fs' import to use VSCode's API and web standards.
 import FormData from 'form-data';
 import axios, { AxiosError } from 'axios';
 import { insertCitationCommand } from './features/citationInsertion';
@@ -566,7 +567,7 @@ class OntoCodePanel {
                 }
             );
 
-            vscode.window.showInformationMessage(`Saved: ${saveUri.fsPath}`);
+            vscode.window.showInformationMessage(`file saved to ${saveUri.fsPath}`);
         } catch (err) {
             console.error("[OntoCode] Download failed:", err);
             vscode.window.showErrorMessage("Failed to download ontology");
@@ -625,9 +626,46 @@ class OntoCodePanel {
                 targetUri = picked;
             }
             
+            // Check if file exists and find next available version number
+            const originalPath = targetUri.fsPath;
+            const dir = path.dirname(originalPath);
+            const ext = path.extname(originalPath);
+            const basename = path.basename(originalPath, ext);
+            
+            let finalUri = targetUri;
+            let version = 1;
+            
+            try {
+                await vscode.workspace.fs.stat(targetUri);
+                // File exists, need to find next version
+                console.log(`[OntoCode] File exists: ${originalPath}, finding next version...`);
+                
+                while (true) {
+                    const versionedPath = path.join(dir, `${basename} (${version})${ext}`);
+                    const versionedUri = vscode.Uri.file(versionedPath);
+                    
+                    try {
+                        await vscode.workspace.fs.stat(versionedUri);
+                        // This version exists, try next
+                        version++;
+                    } catch {
+                        // This version doesn't exist, use it
+                        finalUri = versionedUri;
+                        console.log(`[OntoCode] Will save as version ${version}: ${versionedPath}`);
+                        break;
+                    }
+                }
+            } catch {
+                // File doesn't exist, use original path
+                console.log(`[OntoCode] File doesn't exist yet, using original path`);
+            }
+            
             // Save to the target file
-            await vscode.workspace.fs.writeFile(targetUri, new Uint8Array(response.data));
-            console.log(`[OntoCode] File saved successfully to: ${targetUri.fsPath}`);
+            await vscode.workspace.fs.writeFile(finalUri, new Uint8Array(response.data));
+            console.log(`[OntoCode] File saved successfully to: ${finalUri.fsPath}`);
+            
+            // Show success message with file path
+            vscode.window.showInformationMessage(`Ontology saved to: ${path.basename(finalUri.fsPath)}`);
             // vscode.window.showInformationMessage(`Saved with ${response.data.byteLength} bytes to ${targetUri.fsPath.split(/[\\/]/).pop()}`);
             
         } catch (error: any) {
