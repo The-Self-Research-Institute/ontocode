@@ -76,9 +76,10 @@ Follow these steps to run services manually for local development.
 These include **Gateway**, **Auth**, **OWL Editor**, and **SWRL Service**.
 
 #### Prerequisites
-- **JDK** (Java Development Kit)
-- **Maven (mvn)**
-- **MongoDB**
+- **JDK 21** (Java Development Kit)
+- **Maven 3.8+**
+- **MongoDB 5.0+**
+- **GraphDB 10.0+** (Ontotext GraphDB or GraphDB Free)
 
 #### Build All Services
 

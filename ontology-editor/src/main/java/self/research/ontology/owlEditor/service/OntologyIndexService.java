@@ -1,7 +1,7 @@
 package self.research.ontology.owlEditor.service;
 
-import org.apache.jena.query.QuerySolution;
-import org.apache.jena.query.ResultSet;
+import org.eclipse.rdf4j.query.BindingSet;
+import org.eclipse.rdf4j.query.TupleQueryResult;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -60,17 +60,17 @@ public class OntologyIndexService {
         }
         """;
 
-    private final Tdb2DatasetService datasetService;
+    private final GraphDBDatasetService datasetService;
 
-    public OntologyIndexService(Tdb2DatasetService datasetService) {
+    public OntologyIndexService(GraphDBDatasetService datasetService) {
         this.datasetService = datasetService;
     }
 
     public Map<String, Object> computeMetadata(String projectId) {
-        ResultSet rs = datasetService.execSelect(projectId, METRICS_QUERY);
+        TupleQueryResult rs = datasetService.execSelect(projectId, METRICS_QUERY);
         Map<String, Object> counts = new LinkedHashMap<>();
         if (rs.hasNext()) {
-            QuerySolution sol = rs.next();
+            BindingSet sol = rs.next();
             counts.put("classes", literalToInt(sol, "classCount"));
             counts.put("objectProperties", literalToInt(sol, "objectPropertyCount"));
             counts.put("dataProperties", literalToInt(sol, "dataPropertyCount"));
@@ -83,14 +83,14 @@ public class OntologyIndexService {
         String ontologyIri = null;
         String versionIri = null;
         String ontQuery = PREFIXES + "SELECT ?ont ?version WHERE { ?ont a owl:Ontology . OPTIONAL { ?ont owl:versionIRI ?version } } LIMIT 1";
-        ResultSet ontRs = datasetService.execSelect(projectId, ontQuery);
+        TupleQueryResult ontRs = datasetService.execSelect(projectId, ontQuery);
         if (ontRs.hasNext()) {
-            QuerySolution sol = ontRs.next();
-            if (sol.contains("ont")) {
-                ontologyIri = sol.getResource("ont").getURI();
+            BindingSet sol = ontRs.next();
+            if (sol.hasBinding("ont")) {
+                ontologyIri = sol.getValue("ont").stringValue();
             }
-            if (sol.contains("version")) {
-                versionIri = sol.getResource("version").getURI();
+            if (sol.hasBinding("version")) {
+                versionIri = sol.getValue("version").stringValue();
             }
         }
 
@@ -153,11 +153,11 @@ public class OntologyIndexService {
     }
     
     private int querySingleCount(String projectId, String query) {
-        ResultSet rs = datasetService.execSelect(projectId, query);
+        TupleQueryResult rs = datasetService.execSelect(projectId, query);
         if (rs.hasNext()) {
-            QuerySolution sol = rs.next();
-            if (sol.contains("count")) {
-                return sol.getLiteral("count").getInt();
+            BindingSet sol = rs.next();
+            if (sol.hasBinding("count")) {
+                return Integer.parseInt(sol.getValue("count").stringValue());
             }
         }
         return 0;
@@ -175,9 +175,9 @@ public class OntologyIndexService {
                 .collect(Collectors.toCollection(ArrayList::new));
     }
 
-    private int literalToInt(QuerySolution sol, String var) {
-        if (sol.contains(var) && sol.get(var).isLiteral()) {
-            return sol.getLiteral(var).getInt();
+    private int literalToInt(BindingSet sol, String var) {
+        if (sol.hasBinding(var) && sol.getValue(var) != null) {
+            return Integer.parseInt(sol.getValue(var).stringValue());
         }
         return 0;
     }

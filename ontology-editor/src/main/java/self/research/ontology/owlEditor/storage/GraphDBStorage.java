@@ -1,15 +1,17 @@
 package self.research.ontology.owlEditor.storage;
 
-import org.apache.jena.query.*;
-import org.apache.jena.rdf.model.Model;
-import org.apache.jena.rdf.model.ModelFactory;
-import org.apache.jena.rdfconnection.RDFConnection;
-import org.apache.jena.rdfconnection.RDFConnectionFactory;
-import org.apache.jena.riot.RDFDataMgr;
-import org.apache.jena.riot.RDFFormat;
+import org.eclipse.rdf4j.model.Statement;
+import org.eclipse.rdf4j.query.*;
+import org.eclipse.rdf4j.query.resultio.text.tsv.SPARQLResultsTSVWriter;
+import org.eclipse.rdf4j.repository.Repository;
+import org.eclipse.rdf4j.repository.RepositoryConnection;
+import org.eclipse.rdf4j.repository.RepositoryResult;
+import org.eclipse.rdf4j.repository.http.HTTPRepository;
+import org.eclipse.rdf4j.rio.RDFFormat;
+import org.eclipse.rdf4j.rio.RDFWriter;
+import org.eclipse.rdf4j.rio.Rio;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.*;
-import org.semanticweb.owlapi.rio.RioOWLRDFParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -17,31 +19,36 @@ import java.io.*;
 import java.util.*;
 
 /**
- * Apache Jena Fuseki storage implementation.
+ * GraphDB storage implementation using RDF4J API.
  * Handles large ontologies (millions of triples) with SPARQL support.
  */
-public class JenaFusekiStorage implements OntologyStorage {
+public class GraphDBStorage implements OntologyStorage {
 
-    private static final Logger log = LoggerFactory.getLogger(JenaFusekiStorage.class);
+    private static final Logger log = LoggerFactory.getLogger(GraphDBStorage.class);
 
-    private final String fusekiUrl;
-    private final String dataset;
+    private final String graphdbUrl;
+    private final String repositoryId;
+    private final Repository repository;
     private final long maxTripleCount;
 
-    public JenaFusekiStorage(String fusekiUrl, String dataset) {
-        this.fusekiUrl = fusekiUrl;
-        this.dataset = dataset;
-        this.maxTripleCount = 50_000_000; // 50M triples max
+    public GraphDBStorage(String graphdbUrl, String repositoryId) {
+        this.graphdbUrl = graphdbUrl;
+        this.repositoryId = repositoryId;
+        this.maxTripleCount = 100_000_000; // 100M triples max
+        
+        // Initialize HTTP repository connection to GraphDB
+        this.repository = new HTTPRepository(graphdbUrl, repositoryId);
+        this.repository.init();
     }
 
     @Override
     public StorageType getStorageType() {
-        return StorageType.JENA_FUSEKI;
+        return StorageType.GRAPHDB;
     }
 
     @Override
     public boolean canHandle(long tripleCount) {
-        // Can handle from 100K to 50M triples
+        // Can handle from 100K to 100M triples
         return tripleCount >= 100_000 && tripleCount <= maxTripleCount;
     }
 
@@ -49,56 +56,64 @@ public class JenaFusekiStorage implements OntologyStorage {
     public String store(OWLOntology ontology, String ontologyId, Map<String, Object> metadata) 
             throws StorageException {
         try {
-            log.info("Storing ontology {} in Jena Fuseki ({} axioms)", 
+            log.info("Storing ontology {} in GraphDB ({} axioms)", 
                 ontologyId, ontology.getAxiomCount());
 
-            // Convert OWL to RDF model
-            Model model = convertOWLToJenaModel(ontology);
+            // Convert OWL to RDF
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            OWLOntologyManager manager = ontology.getOWLOntologyManager();
+            manager.saveOntology(ontology, baos);
 
             // Create named graph URI
             String graphUri = getGraphUri(ontologyId);
 
-            // Store in Fuseki
-            try (RDFConnection conn = RDFConnectionFactory.connect(fusekiUrl + "/" + dataset)) {
+            // Store in GraphDB
+            try (RepositoryConnection conn = repository.getConnection()) {
                 // Clear existing data for this graph
-                conn.update("CLEAR GRAPH <" + graphUri + ">");
+                conn.clear(conn.getValueFactory().createIRI(graphUri));
 
-                // Load new data
-                conn.load(graphUri, model);
+                // Load new data into named graph
+                try (InputStream inputStream = new ByteArrayInputStream(baos.toByteArray())) {
+                    conn.add(inputStream, graphUri, RDFFormat.RDFXML, 
+                            conn.getValueFactory().createIRI(graphUri));
+                }
 
                 // Store metadata
                 storeMetadata(conn, ontologyId, metadata, ontology.getAxiomCount());
             }
 
-            log.info("Successfully stored ontology {} with {} triples", 
-                ontologyId, model.size());
+            log.info("Successfully stored ontology {} in GraphDB", ontologyId);
 
             return ontologyId;
 
         } catch (Exception e) {
-            throw new StorageException("Failed to store ontology in Jena Fuseki: " + ontologyId, e);
+            throw new StorageException("Failed to store ontology in GraphDB: " + ontologyId, e);
         }
     }
 
     @Override
     public OWLOntology load(String ontologyId) throws StorageException {
         try {
-            log.info("Loading ontology {} from Jena Fuseki", ontologyId);
+            log.info("Loading ontology {} from GraphDB", ontologyId);
 
             String graphUri = getGraphUri(ontologyId);
 
-            // Fetch RDF model from Fuseki
-            Model model;
-            try (RDFConnection conn = RDFConnectionFactory.connect(fusekiUrl + "/" + dataset)) {
-                model = conn.fetch(graphUri);
+            // Fetch RDF data from GraphDB
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            
+            try (RepositoryConnection conn = repository.getConnection()) {
+                RDFWriter writer = Rio.createWriter(RDFFormat.RDFXML, baos);
+                conn.export(writer, conn.getValueFactory().createIRI(graphUri));
             }
 
-            if (model == null || model.isEmpty()) {
+            if (baos.size() == 0) {
                 throw new StorageException("Ontology not found: " + ontologyId);
             }
 
-            // Convert RDF model to OWL ontology
-            OWLOntology ontology = convertJenaModelToOWL(model);
+            // Convert RDF to OWL ontology
+            OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+            OWLOntology ontology = manager.loadOntologyFromOntologyDocument(
+                new ByteArrayInputStream(baos.toByteArray()));
 
             log.info("Successfully loaded ontology {} with {} axioms", 
                 ontologyId, ontology.getAxiomCount());
@@ -106,7 +121,7 @@ public class JenaFusekiStorage implements OntologyStorage {
             return ontology;
 
         } catch (Exception e) {
-            throw new StorageException("Failed to load ontology from Jena Fuseki: " + ontologyId, e);
+            throw new StorageException("Failed to load ontology from GraphDB: " + ontologyId, e);
         }
     }
 
@@ -115,9 +130,10 @@ public class JenaFusekiStorage implements OntologyStorage {
         try {
             String graphUri = getGraphUri(ontologyId);
             
-            try (RDFConnection conn = RDFConnectionFactory.connect(fusekiUrl + "/" + dataset)) {
+            try (RepositoryConnection conn = repository.getConnection()) {
                 String query = "ASK { GRAPH <" + graphUri + "> { ?s ?p ?o } }";
-                return conn.queryAsk(query);
+                BooleanQuery booleanQuery = conn.prepareBooleanQuery(query);
+                return booleanQuery.evaluate();
             }
         } catch (Exception e) {
             log.error("Error checking ontology existence: " + ontologyId, e);
@@ -128,13 +144,13 @@ public class JenaFusekiStorage implements OntologyStorage {
     @Override
     public void delete(String ontologyId) throws StorageException {
         try {
-            log.info("Deleting ontology {} from Jena Fuseki", ontologyId);
+            log.info("Deleting ontology {} from GraphDB", ontologyId);
 
             String graphUri = getGraphUri(ontologyId);
 
-            try (RDFConnection conn = RDFConnectionFactory.connect(fusekiUrl + "/" + dataset)) {
+            try (RepositoryConnection conn = repository.getConnection()) {
                 // Delete the named graph
-                conn.update("CLEAR GRAPH <" + graphUri + ">");
+                conn.clear(conn.getValueFactory().createIRI(graphUri));
                 
                 // Delete metadata
                 deleteMetadata(conn, ontologyId);
@@ -152,7 +168,7 @@ public class JenaFusekiStorage implements OntologyStorage {
         try {
             Map<String, Object> metadata = new HashMap<>();
             
-            try (RDFConnection conn = RDFConnectionFactory.connect(fusekiUrl + "/" + dataset)) {
+            try (RepositoryConnection conn = repository.getConnection()) {
                 String query = String.format("""
                     PREFIX meta: <http://ontocode.org/metadata/>
                     SELECT ?key ?value
@@ -161,12 +177,12 @@ public class JenaFusekiStorage implements OntologyStorage {
                     }
                     """, ontologyId);
 
-                try (QueryExecution qexec = conn.query(query)) {
-                    ResultSet results = qexec.execSelect();
-                    while (results.hasNext()) {
-                        QuerySolution soln = results.nextSolution();
-                        String key = soln.get("key").toString();
-                        String value = soln.get("value").toString();
+                TupleQuery tupleQuery = conn.prepareTupleQuery(query);
+                try (TupleQueryResult result = tupleQuery.evaluate()) {
+                    while (result.hasNext()) {
+                        BindingSet bindings = result.next();
+                        String key = bindings.getValue("key").stringValue();
+                        String value = bindings.getValue("value").stringValue();
                         metadata.put(key, value);
                     }
                 }
@@ -184,14 +200,14 @@ public class JenaFusekiStorage implements OntologyStorage {
         try {
             String graphUri = getGraphUri(ontologyId);
 
-            try (RDFConnection conn = RDFConnectionFactory.connect(fusekiUrl + "/" + dataset)) {
+            try (RepositoryConnection conn = repository.getConnection()) {
                 String query = "SELECT (COUNT(*) as ?count) WHERE { GRAPH <" + graphUri + "> { ?s ?p ?o } }";
                 
-                try (QueryExecution qexec = conn.query(query)) {
-                    ResultSet results = qexec.execSelect();
-                    if (results.hasNext()) {
-                        QuerySolution soln = results.nextSolution();
-                        return soln.getLiteral("count").getLong();
+                TupleQuery tupleQuery = conn.prepareTupleQuery(query);
+                try (TupleQueryResult result = tupleQuery.evaluate()) {
+                    if (result.hasNext()) {
+                        BindingSet bindings = result.next();
+                        return Long.parseLong(bindings.getValue("count").stringValue());
                     }
                 }
             }
@@ -207,14 +223,14 @@ public class JenaFusekiStorage implements OntologyStorage {
     public List<String> listOntologies() {
         List<String> ontologyIds = new ArrayList<>();
 
-        try (RDFConnection conn = RDFConnectionFactory.connect(fusekiUrl + "/" + dataset)) {
+        try (RepositoryConnection conn = repository.getConnection()) {
             String query = "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } FILTER(STRSTARTS(STR(?g), 'http://ontocode.org/ontology/')) }";
             
-            try (QueryExecution qexec = conn.query(query)) {
-                ResultSet results = qexec.execSelect();
-                while (results.hasNext()) {
-                    QuerySolution soln = results.nextSolution();
-                    String graphUri = soln.getResource("g").getURI();
+            TupleQuery tupleQuery = conn.prepareTupleQuery(query);
+            try (TupleQueryResult result = tupleQuery.evaluate()) {
+                while (result.hasNext()) {
+                    BindingSet bindings = result.next();
+                    String graphUri = bindings.getValue("g").stringValue();
                     String ontologyId = extractOntologyIdFromUri(graphUri);
                     ontologyIds.add(ontologyId);
                 }
@@ -236,20 +252,41 @@ public class JenaFusekiStorage implements OntologyStorage {
                 query = query.replaceFirst("(?i)WHERE", "FROM <" + graphUri + "> WHERE");
             }
 
-            try (RDFConnection conn = RDFConnectionFactory.connect(fusekiUrl + "/" + dataset)) {
-                try (QueryExecution qexec = conn.query(query)) {
-                    if (query.toUpperCase().contains("SELECT")) {
-                        ResultSet results = qexec.execSelect();
-                        return ResultSetFormatter.asText(results);
-                    } else if (query.toUpperCase().contains("CONSTRUCT") || query.toUpperCase().contains("DESCRIBE")) {
-                        Model model = qexec.execConstruct();
-                        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                        RDFDataMgr.write(baos, model, RDFFormat.TURTLE);
-                        return baos.toString();
-                    } else if (query.toUpperCase().contains("ASK")) {
-                        boolean result = qexec.execAsk();
-                        return Boolean.toString(result);
+            try (RepositoryConnection conn = repository.getConnection()) {
+                if (query.toUpperCase().contains("SELECT")) {
+                    TupleQuery tupleQuery = conn.prepareTupleQuery(query);
+                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                    SPARQLResultsTSVWriter writer = new SPARQLResultsTSVWriter(baos);
+                    
+                    try (TupleQueryResult result = tupleQuery.evaluate()) {
+                        writer.startQueryResult(result.getBindingNames());
+                        while (result.hasNext()) {
+                            writer.handleSolution(result.next());
+                        }
+                        writer.endQueryResult();
                     }
+                    
+                    return baos.toString();
+                    
+                } else if (query.toUpperCase().contains("CONSTRUCT") || query.toUpperCase().contains("DESCRIBE")) {
+                    GraphQuery graphQuery = conn.prepareGraphQuery(query);
+                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                    RDFWriter writer = Rio.createWriter(RDFFormat.TURTLE, baos);
+                    
+                    try (GraphQueryResult result = graphQuery.evaluate()) {
+                        writer.startRDF();
+                        while (result.hasNext()) {
+                            writer.handleStatement(result.next());
+                        }
+                        writer.endRDF();
+                    }
+                    
+                    return baos.toString();
+                    
+                } else if (query.toUpperCase().contains("ASK")) {
+                    BooleanQuery booleanQuery = conn.prepareBooleanQuery(query);
+                    boolean result = booleanQuery.evaluate();
+                    return Boolean.toString(result);
                 }
             }
 
@@ -284,7 +321,7 @@ public class JenaFusekiStorage implements OntologyStorage {
             OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
             OWLOntology ontology = manager.loadOntologyFromOntologyDocument(inputStream);
 
-            // Store in Jena
+            // Store in GraphDB
             return store(ontology, ontologyId, metadata);
 
         } catch (Exception e) {
@@ -299,10 +336,11 @@ public class JenaFusekiStorage implements OntologyStorage {
             String sourceGraphUri = getGraphUri(ontologyId);
             String versionGraphUri = getGraphUri(versionId);
 
-            try (RDFConnection conn = RDFConnectionFactory.connect(fusekiUrl + "/" + dataset)) {
+            try (RepositoryConnection conn = repository.getConnection()) {
                 // Copy graph to version
                 String update = "ADD <" + sourceGraphUri + "> TO <" + versionGraphUri + ">";
-                conn.update(update);
+                Update updateQuery = conn.prepareUpdate(update);
+                updateQuery.execute();
             }
 
             log.info("Created version {} for ontology {}", versionLabel, ontologyId);
@@ -317,15 +355,15 @@ public class JenaFusekiStorage implements OntologyStorage {
     public List<String> listVersions(String ontologyId) throws StorageException {
         List<String> versions = new ArrayList<>();
 
-        try (RDFConnection conn = RDFConnectionFactory.connect(fusekiUrl + "/" + dataset)) {
+        try (RepositoryConnection conn = repository.getConnection()) {
             String pattern = "http://ontocode.org/ontology/" + ontologyId + "_v";
             String query = "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } FILTER(STRSTARTS(STR(?g), '" + pattern + "')) }";
             
-            try (QueryExecution qexec = conn.query(query)) {
-                ResultSet results = qexec.execSelect();
-                while (results.hasNext()) {
-                    QuerySolution soln = results.nextSolution();
-                    String graphUri = soln.getResource("g").getURI();
+            TupleQuery tupleQuery = conn.prepareTupleQuery(query);
+            try (TupleQueryResult result = tupleQuery.evaluate()) {
+                while (result.hasNext()) {
+                    BindingSet bindings = result.next();
+                    String graphUri = bindings.getValue("g").stringValue();
                     versions.add(extractOntologyIdFromUri(graphUri));
                 }
             }
@@ -346,22 +384,24 @@ public class JenaFusekiStorage implements OntologyStorage {
         try {
             StorageStatistics stats = new StorageStatistics();
 
-            try (RDFConnection conn = RDFConnectionFactory.connect(fusekiUrl + "/" + dataset)) {
+            try (RepositoryConnection conn = repository.getConnection()) {
                 // Count total graphs (ontologies)
                 String graphQuery = "SELECT (COUNT(DISTINCT ?g) as ?count) WHERE { GRAPH ?g { ?s ?p ?o } }";
-                try (QueryExecution qexec = conn.query(graphQuery)) {
-                    ResultSet results = qexec.execSelect();
-                    if (results.hasNext()) {
-                        stats.setTotalOntologies(results.nextSolution().getLiteral("count").getLong());
+                TupleQuery tupleQuery = conn.prepareTupleQuery(graphQuery);
+                try (TupleQueryResult result = tupleQuery.evaluate()) {
+                    if (result.hasNext()) {
+                        BindingSet bindings = result.next();
+                        stats.setTotalOntologies(Long.parseLong(bindings.getValue("count").stringValue()));
                     }
                 }
 
                 // Count total triples
                 String tripleQuery = "SELECT (COUNT(*) as ?count) WHERE { ?s ?p ?o }";
-                try (QueryExecution qexec = conn.query(tripleQuery)) {
-                    ResultSet results = qexec.execSelect();
-                    if (results.hasNext()) {
-                        stats.setTotalTriples(results.nextSolution().getLiteral("count").getLong());
+                tupleQuery = conn.prepareTupleQuery(tripleQuery);
+                try (TupleQueryResult result = tupleQuery.evaluate()) {
+                    if (result.hasNext()) {
+                        BindingSet bindings = result.next();
+                        stats.setTotalTriples(Long.parseLong(bindings.getValue("count").stringValue()));
                     }
                 }
             }
@@ -383,30 +423,7 @@ public class JenaFusekiStorage implements OntologyStorage {
         return graphUri.replace("http://ontocode.org/ontology/", "");
     }
 
-    private Model convertOWLToJenaModel(OWLOntology ontology) throws OWLOntologyStorageException, IOException {
-        // Convert OWL to RDF/XML
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        OWLOntologyManager manager = ontology.getOWLOntologyManager();
-        manager.saveOntology(ontology, baos);
-
-        // Parse RDF/XML into Jena model
-        Model model = ModelFactory.createDefaultModel();
-        model.read(new ByteArrayInputStream(baos.toByteArray()), null);
-        
-        return model;
-    }
-
-    private OWLOntology convertJenaModelToOWL(Model model) throws OWLOntologyCreationException, IOException {
-        // Convert Jena model to RDF/XML
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        RDFDataMgr.write(baos, model, RDFFormat.RDFXML);
-
-        // Parse RDF/XML into OWL
-        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
-        return manager.loadOntologyFromOntologyDocument(new ByteArrayInputStream(baos.toByteArray()));
-    }
-
-    private void storeMetadata(RDFConnection conn, String ontologyId, Map<String, Object> metadata, int axiomCount) {
+    private void storeMetadata(RepositoryConnection conn, String ontologyId, Map<String, Object> metadata, int axiomCount) {
         // Store metadata as RDF triples
         String metadataUri = "http://ontocode.org/metadata/" + ontologyId;
         
@@ -423,23 +440,33 @@ public class JenaFusekiStorage implements OntologyStorage {
         update.append("<http://ontocode.org/meta/axiomCount> ").append(axiomCount).append(" . ");
         update.append("}");
         
-        conn.update(update.toString());
+        Update updateQuery = conn.prepareUpdate(update.toString());
+        updateQuery.execute();
     }
 
-    private void deleteMetadata(RDFConnection conn, String ontologyId) {
+    private void deleteMetadata(RepositoryConnection conn, String ontologyId) {
         String metadataUri = "http://ontocode.org/metadata/" + ontologyId;
         String update = "DELETE WHERE { <" + metadataUri + "> ?p ?o }";
-        conn.update(update);
+        Update updateQuery = conn.prepareUpdate(update);
+        updateQuery.execute();
     }
 
     private OWLDocumentFormat getOWLFormat(String format) {
-        // Return appropriate format based on string
-        // This is simplified - add more formats as needed
         return switch (format.toLowerCase()) {
             case "rdf", "rdfxml" -> new org.semanticweb.owlapi.formats.RDFXMLDocumentFormat();
             case "turtle", "ttl" -> new org.semanticweb.owlapi.formats.TurtleDocumentFormat();
             case "owlxml" -> new org.semanticweb.owlapi.formats.OWLXMLDocumentFormat();
             default -> new org.semanticweb.owlapi.formats.RDFXMLDocumentFormat();
         };
+    }
+
+    /**
+     * Close repository connection
+     */
+    public void shutdown() {
+        if (repository != null && repository.isInitialized()) {
+            repository.shutDown();
+            log.info("GraphDB repository connection closed");
+        }
     }
 }

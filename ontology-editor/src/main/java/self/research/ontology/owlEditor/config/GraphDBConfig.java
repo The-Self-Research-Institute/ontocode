@@ -1,20 +1,18 @@
 package self.research.ontology.owlEditor.config;
 
-import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
-import org.springframework.stereotype.Component;
 
 import java.util.concurrent.Executor;
 
 /**
- * Configuration for TDB2 embedded triple store
+ * Configuration for GraphDB triple store
  */
 @Configuration
 @EnableAsync
-public class Tdb2Config {
+public class GraphDBConfig {
     
     /**
      * Thread pool executor for metadata computation
@@ -26,6 +24,20 @@ public class Tdb2Config {
         executor.setMaxPoolSize(4);
         executor.setQueueCapacity(50);
         executor.setThreadNamePrefix("metadata-");
+        executor.initialize();
+        return executor;
+    }
+    
+    /**
+     * Thread pool executor for SPARQL queries
+     */
+    @Bean(name = "sparqlExecutor")
+    public Executor sparqlExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(4);
+        executor.setMaxPoolSize(8);
+        executor.setQueueCapacity(100);
+        executor.setThreadNamePrefix("sparql-");
         executor.initialize();
         return executor;
     }

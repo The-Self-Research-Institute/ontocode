@@ -1,4 +1,4 @@
-package self.research.ontocode.gateway.filter;
+package self.research.ontocode.gateway.utils;
 
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
