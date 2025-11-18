@@ -1,6 +1,6 @@
 package self.research.ontology.owlEditor.service;
 
-import org.apache.jena.riot.Lang;
+import org.eclipse.rdf4j.rio.RDFFormat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -10,7 +10,6 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -20,11 +19,11 @@ public class StorageManager {
 
     private static final Logger log = LoggerFactory.getLogger(StorageManager.class);
 
-    private final Tdb2DatasetService datasetService;
+    private final GraphDBDatasetService datasetService;
     private final Path projectsRoot;
 
     public StorageManager(@Value("${ontocode.data.dir:./data}") String rootDir,
-                          Tdb2DatasetService datasetService) throws IOException {
+                          GraphDBDatasetService datasetService) throws IOException {
         this.datasetService = datasetService;
         this.projectsRoot = Path.of(rootDir).toAbsolutePath().normalize().resolve("projects");
         Files.createDirectories(this.projectsRoot);
@@ -45,24 +44,25 @@ public class StorageManager {
     }
 
     public Path exportOntology(String projectId, String format) throws IOException {
-        Lang lang = resolveLang(format);
+        RDFFormat rdfFormat = resolveLang(format);
         String extension = extensionFor(format);
         Path exportPath = projectDir(projectId).resolve("ontology.current." + extension);
         Files.createDirectories(exportPath.getParent());
-        datasetService.exportToFile(projectId, exportPath, lang);
+        String content = datasetService.exportDataset(projectId, rdfFormat);
+        Files.writeString(exportPath, content);
         return exportPath;
     }
 
-    private Lang resolveLang(String format) {
+    private RDFFormat resolveLang(String format) {
         if (format == null) {
-            return Lang.RDFXML;
+            return org.eclipse.rdf4j.rio.RDFFormat.RDFXML;
         }
         return switch (format.toLowerCase()) {
-            case "ttl", "turtle" -> Lang.TURTLE;
-            case "nt", "ntriples" -> Lang.NTRIPLES;
-            case "jsonld" -> Lang.JSONLD;
-            case "rdfxml", "owl", "xml" -> Lang.RDFXML;
-            default -> Lang.RDFXML;
+            case "ttl", "turtle" -> org.eclipse.rdf4j.rio.RDFFormat.TURTLE;
+            case "nt", "ntriples" -> org.eclipse.rdf4j.rio.RDFFormat.NTRIPLES;
+            case "jsonld" -> org.eclipse.rdf4j.rio.RDFFormat.JSONLD;
+            case "rdfxml", "owl", "xml" -> org.eclipse.rdf4j.rio.RDFFormat.RDFXML;
+            default -> org.eclipse.rdf4j.rio.RDFFormat.RDFXML;
         };
     }
 

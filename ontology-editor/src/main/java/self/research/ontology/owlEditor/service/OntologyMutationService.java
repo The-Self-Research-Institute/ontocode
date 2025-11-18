@@ -19,12 +19,12 @@ public class OntologyMutationService {
         PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
         """;
 
-    private final Tdb2DatasetService datasetService;
+    private final GraphDBDatasetService datasetService;
     private final OntologyIndexService indexService;
     private final ProjectMetadataService metadataService;
     private final Executor metadataExecutor;
 
-    public OntologyMutationService(Tdb2DatasetService datasetService,
+    public OntologyMutationService(GraphDBDatasetService datasetService,
                                    OntologyIndexService indexService,
                                    ProjectMetadataService metadataService,
                                    @Qualifier("metadataExecutor") Executor metadataExecutor) {

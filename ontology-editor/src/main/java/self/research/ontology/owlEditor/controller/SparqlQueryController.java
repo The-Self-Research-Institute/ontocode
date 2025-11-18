@@ -1,8 +1,8 @@
 package self.research.ontology.owlEditor.controller;
 
-import org.apache.jena.query.QuerySolution;
-import org.apache.jena.query.ResultSet;
-import org.apache.jena.rdf.model.RDFNode;
+import org.eclipse.rdf4j.query.BindingSet;
+import org.eclipse.rdf4j.query.TupleQueryResult;
+import org.eclipse.rdf4j.model.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import self.research.ontology.owlEditor.service.Tdb2DatasetService;
+import self.research.ontology.owlEditor.service.GraphDBDatasetService;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -22,23 +22,23 @@ import java.util.Map;
 @CrossOrigin
 public class SparqlQueryController {
 
-    private final Tdb2DatasetService datasetService;
+    private final GraphDBDatasetService datasetService;
 
-    public SparqlQueryController(Tdb2DatasetService datasetService) {
+    public SparqlQueryController(GraphDBDatasetService datasetService) {
         this.datasetService = datasetService;
     }
 
     @PostMapping("/query/{projectId}")
     public ResponseEntity<?> query(@PathVariable String projectId,
                                    @RequestBody SparqlRequest request) {
-        ResultSet rs = datasetService.execSelect(projectId, request.query());
-        List<String> vars = rs.getResultVars();
+        TupleQueryResult rs = datasetService.execSelect(projectId, request.query());
+        List<String> vars = rs.getBindingNames();
         List<Map<String, String>> rows = new ArrayList<>();
         while (rs.hasNext()) {
-            QuerySolution sol = rs.next();
+            BindingSet sol = rs.next();
             Map<String, String> row = new LinkedHashMap<>();
             for (String var : vars) {
-                row.put(var, toValue(sol.get(var)));
+                row.put(var, toValue(sol.hasBinding(var) ? sol.getValue(var) : null));
             }
             rows.add(row);
         }
@@ -54,15 +54,15 @@ public class SparqlQueryController {
         return ResponseEntity.ok(Map.of("success", true));
     }
 
-    private String toValue(RDFNode node) {
+    private String toValue(Value node) {
         if (node == null) {
             return null;
         }
         if (node.isLiteral()) {
-            return node.asLiteral().getString();
+            return node.stringValue();
         }
-        if (node.isResource()) {
-            return node.asResource().getURI();
+        if (node.isIRI()) {
+            return node.stringValue();
         }
         return node.toString();
     }

@@ -1,8 +1,8 @@
 package self.research.ontology.owlEditor.service;
 
-import org.apache.jena.query.QuerySolution;
-import org.apache.jena.query.ResultSet;
-import org.apache.jena.rdf.model.RDFNode;
+import org.eclipse.rdf4j.query.BindingSet;
+import org.eclipse.rdf4j.query.TupleQueryResult;
+import org.eclipse.rdf4j.model.Value;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
@@ -14,9 +14,9 @@ import java.util.Map;
 @Service
 public class OntologyValidationService {
 
-    private final Tdb2DatasetService datasetService;
+    private final GraphDBDatasetService datasetService;
 
-    public OntologyValidationService(Tdb2DatasetService datasetService) {
+    public OntologyValidationService(GraphDBDatasetService datasetService) {
         this.datasetService = datasetService;
     }
 
@@ -89,25 +89,27 @@ public class OntologyValidationService {
 
     private Mono<List<String>> runSelect(String projectId, String query, String varName) {
         return Mono.fromCallable(() -> {
-            ResultSet rs = datasetService.execSelect(projectId, query);
+            TupleQueryResult rs = datasetService.execSelect(projectId, query);
             List<String> values = new ArrayList<>();
             while (rs.hasNext()) {
-                QuerySolution solution = rs.next();
-                RDFNode node = solution.get(varName);
-                if (node != null) {
-                    values.add(formatValue(node));
+                BindingSet solution = rs.next();
+                if (solution.hasBinding(varName)) {
+                    Value node = solution.getValue(varName);
+                    if (node != null) {
+                        values.add(formatValue(node));
+                    }
                 }
             }
             return values;
         });
     }
 
-    private String formatValue(RDFNode node) {
-        if (node.isResource()) {
-            return node.asResource().getURI();
+    private String formatValue(Value node) {
+        if (node.isIRI()) {
+            return node.stringValue();
         }
         if (node.isLiteral()) {
-            return node.asLiteral().getString();
+            return node.stringValue();
         }
         return node.toString();
     }

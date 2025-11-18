@@ -79,7 +79,9 @@ const TopMenuBar = ({
       try {
         // Build URL with proper query parameters
         const url = `/api/ontology/files?search=${encodeURIComponent(value)}&caseSensitive=true`;
-        const response = await apiClient.get<{ files: FileInfo[] }>(url);
+        const response = await apiClient.get<{
+          data: any; files: FileInfo[] 
+}>(url);
         const files = response?.files || response?.data?.files || [];
         setFiles(files);
       } catch (error) {

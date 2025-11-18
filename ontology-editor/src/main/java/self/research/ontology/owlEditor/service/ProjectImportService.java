@@ -1,7 +1,6 @@
 package self.research.ontology.owlEditor.service;
 
-import org.apache.jena.riot.Lang;
-import org.apache.jena.riot.RDFDataMgr;
+import org.eclipse.rdf4j.rio.RDFFormat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -25,13 +24,13 @@ public class ProjectImportService {
     private static final Logger log = LoggerFactory.getLogger(ProjectImportService.class);
 
     private final Executor owlParsingExecutor;
-    private final Tdb2DatasetService datasetService;
+    private final GraphDBDatasetService datasetService;
     private final OntologyIndexService indexService;
     private final ProjectMetadataService metadataService;
     private final StorageManager storageManager;
 
     public ProjectImportService(@Qualifier("owlParsingExecutor") Executor owlParsingExecutor,
-                                Tdb2DatasetService datasetService,
+                                GraphDBDatasetService datasetService,
                                 OntologyIndexService indexService,
                                 ProjectMetadataService metadataService,
                                 StorageManager storageManager) {
@@ -53,13 +52,13 @@ public class ProjectImportService {
 
         metadataService.writeStatus(projectId, ProjectStatus.processing(filename));
         try {
-            Lang lang = detectLang(owlFile);
+            RDFFormat format = detectFormat(owlFile);
             datasetService.clearDataset(projectId);
             try (InputStream in = Files.newInputStream(owlFile)) {
-                datasetService.bulkLoad(projectId, in, lang);
+                datasetService.bulkLoad(projectId, in, format);
             }
 
-            Path current = storageManager.resolveProjectFile(projectId, "ontology.current." + extensionFor(lang));
+            Path current = storageManager.resolveProjectFile(projectId, "ontology.current." + extensionFor(format));
             Files.createDirectories(current.getParent());
             Files.copy(owlFile, current, StandardCopyOption.REPLACE_EXISTING);
 
@@ -73,22 +72,31 @@ public class ProjectImportService {
         }
     }
 
-    private Lang detectLang(Path file) {
-        Lang lang = RDFDataMgr.determineLang(file.getFileName().toString(), null, null);
-        return lang != null ? lang : Lang.RDFXML;
+    private RDFFormat detectFormat(Path file) {
+        String fileName = file.getFileName().toString().toLowerCase();
+        if (fileName.endsWith(".ttl") || fileName.endsWith(".turtle")) {
+            return RDFFormat.TURTLE;
+        } else if (fileName.endsWith(".nt") || fileName.endsWith(".ntriples")) {
+            return RDFFormat.NTRIPLES;
+        } else if (fileName.endsWith(".jsonld")) {
+            return RDFFormat.JSONLD;
+        } else if (fileName.endsWith(".n3")) {
+            return RDFFormat.N3;
+        }
+        return RDFFormat.RDFXML; // default
     }
 
-    private String extensionFor(Lang lang) {
-        if (lang == null) {
+    private String extensionFor(RDFFormat format) {
+        if (format == null) {
             return "owl";
         }
-        if (Lang.TURTLE.equals(lang)) {
+        if (RDFFormat.TURTLE.equals(format)) {
             return "ttl";
         }
-        if (Lang.NTRIPLES.equals(lang)) {
+        if (RDFFormat.NTRIPLES.equals(format)) {
             return "nt";
         }
-        if (Lang.JSONLD.equals(lang)) {
+        if (RDFFormat.JSONLD.equals(format)) {
             return "jsonld";
         }
         return "owl";

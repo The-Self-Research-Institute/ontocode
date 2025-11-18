@@ -1,12 +1,12 @@
 package self.research.ontology.owlEditor.controller;
 
-import org.apache.jena.query.QuerySolution;
-import org.apache.jena.query.ResultSet;
-import org.apache.jena.rdf.model.RDFNode;
+import org.eclipse.rdf4j.query.BindingSet;
+import org.eclipse.rdf4j.query.TupleQueryResult;
+import org.eclipse.rdf4j.model.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
-import self.research.ontology.owlEditor.service.Tdb2DatasetService;
+import self.research.ontology.owlEditor.service.GraphDBDatasetService;
 
 import java.util.*;
 import java.util.regex.Matcher;
@@ -17,9 +17,9 @@ import java.util.regex.Pattern;
 @CrossOrigin(origins = "*")
 public class SqwrlController {
 
-    private final Tdb2DatasetService datasetService;
+    private final GraphDBDatasetService datasetService;
 
-    public SqwrlController(Tdb2DatasetService datasetService) {
+    public SqwrlController(GraphDBDatasetService datasetService) {
         this.datasetService = datasetService;
     }
 
@@ -61,15 +61,15 @@ public class SqwrlController {
     }
 
     private ResultSetPayload execute(String projectId, String sparql) {
-        ResultSet rs = datasetService.execSelect(projectId, sparql);
-        List<String> columns = rs.getResultVars();
+        TupleQueryResult rs = datasetService.execSelect(projectId, sparql);
+        List<String> columns = rs.getBindingNames();
         List<Map<String, Object>> rows = new ArrayList<>();
 
         while (rs.hasNext()) {
-            QuerySolution solution = rs.next();
+            BindingSet solution = rs.next();
             Map<String, Object> row = new LinkedHashMap<>();
             for (String column : columns) {
-                RDFNode node = solution.get(column);
+                Value node = solution.hasBinding(column) ? solution.getValue(column) : null;
                 row.put(column, node == null ? "" : formatValue(node));
             }
             rows.add(row);
@@ -77,12 +77,12 @@ public class SqwrlController {
         return new ResultSetPayload(columns, rows);
     }
 
-    private String formatValue(RDFNode node) {
-        if (node.isResource()) {
-            return node.asResource().getURI();
+    private String formatValue(Value node) {
+        if (node.isIRI()) {
+            return node.stringValue();
         }
         if (node.isLiteral()) {
-            return node.asLiteral().getString();
+            return node.stringValue();
         }
         return node.toString();
     }

@@ -36,13 +36,21 @@ echo Checking MongoDB...
 curl -s http://localhost:27017 >nul 2>&1
 if %errorlevel% neq 0 (
     echo %YELLOW%Warning: MongoDB is not reachable on port 27017%NC%
-    echo   Mongo is optional now; the platform can run without it.
+    echo   MongoDB is required for ontology metadata storage.
 ) else (
     echo %GREEN%MongoDB is running!%NC%
 )
 
-:: Embedded TDB2 is used for SPARQL storage, so no external Fuseki/GraphDB check is required.
-echo Using embedded Apache Jena TDB2 (no external SPARQL server needed).
+:: Check GraphDB
+echo Checking GraphDB...
+curl -s http://localhost:7200/rest/repositories/ontocode >nul 2>&1
+if %errorlevel% neq 0 (
+    echo %YELLOW%Warning: GraphDB is not reachable on port 7200%NC%
+    echo   GraphDB is required for SPARQL triple store.
+    echo   Start GraphDB and create 'ontocode' repository before proceeding.
+) else (
+    echo %GREEN%GraphDB is running with 'ontocode' repository!%NC%
+)
 
 :: ========================================
 :: Build All Modules
@@ -178,8 +186,9 @@ echo    OWL Editor:      http://localhost:8083
 echo    SWRL Service:    http://localhost:8084
 echo.
 echo %YELLOW%Infrastructure:%NC%
-echo    MongoDB (optional): http://localhost:27017
-echo    Embedded SPARQL: Apache Jena TDB2 (local disk)
+echo    MongoDB:         http://localhost:27017
+echo    GraphDB:         http://localhost:7200
+echo    GraphDB Repo:    http://localhost:7200/repositories/ontocode
 echo.
 echo %YELLOW%API Documentation:%NC%
 echo    Gateway Swagger: http://localhost:8082/swagger-ui.html
