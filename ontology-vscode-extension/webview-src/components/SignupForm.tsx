@@ -12,13 +12,32 @@ const SignupForm = ({ onToggleForm }: { onToggleForm: () => void }) => {
     const [error, setError] = useState('');
     const { signup } = useAuth();
 
+    const validatePassword = (pwd: string): string | null => {
+        if (pwd.length < 8) return 'Password must be at least 8 characters';
+        if (!/[A-Z]/.test(pwd)) return 'Password must contain an uppercase letter';
+        if (!/[a-z]/.test(pwd)) return 'Password must contain a lowercase letter';
+        if (!/[0-9]/.test(pwd)) return 'Password must contain a number';
+        if (!/[@#$%^&+=!]/.test(pwd)) return 'Password must contain a special character (@#$%^&+=!)';
+        if (/\s/.test(pwd)) return 'Password cannot contain whitespace';
+        return null;
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
+        
+        // Validate password
+        const passwordError = validatePassword(password);
+        if (passwordError) {
+            setError(passwordError);
+            return;
+        }
+        
         if (password !== confirmPassword) {
             setError("Passwords don't match.");
             return;
         }
+        
         setIsLoading(true);
         try {
             await signup(username, email, password);
@@ -71,15 +90,20 @@ const SignupForm = ({ onToggleForm }: { onToggleForm: () => void }) => {
                         className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 text-white"
                         placeholder="Email Address"
                     />
-                    <input
-                        type="password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        required
-                        disabled={isLoading}
-                        className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 text-white"
-                        placeholder="Password"
-                    />
+                    <div>
+                        <input
+                            type="password"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            required
+                            disabled={isLoading}
+                            className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 text-white"
+                            placeholder="Password"
+                        />
+                        <p className="mt-1 text-xs text-gray-400">
+                            Min 8 chars, with uppercase, lowercase, number, and special char (@#$%^&+=!)
+                        </p>
+                    </div>
                      <input
                         type="password"
                         value={confirmPassword}

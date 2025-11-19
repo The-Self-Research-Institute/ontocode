@@ -10,6 +10,7 @@ import { pluginManager } from '../plugins/PluginSystem';
 import { SWRLPlugin, ReasoningPlugin } from '../plugins/PluginRegistry';
 import type { TreeNode, Property, Individual, OntologyMetadata, SelectableItem, AnnotationProperty, Datatype } from '../types';
 import { useAuth } from '../custom-hook/useAuth';
+import { useCollaboration } from '../contexts/CollaborationContext';
 import EntityHierarchy from './EntityHierarchy';
 import ClassEditor from './details/ClassEditor';
 import PropertyEditor from './details/PropertyEditor';
@@ -17,6 +18,8 @@ import IndividualEditor from './details/IndividualEditor';
 import { Panel, AnnotationsDisplay } from './details/common';
 import SparqlQueryEditor from './SparqlQueryEditor';
 import { ProjectSelector } from './ProjectSelector';
+import CollaborationPanel from './CollaborationPanel';
+import ToastNotification from './ToastNotification';
 import { 
   ClassSelectorDialog, 
   PropertySelectorDialog, 
@@ -388,6 +391,7 @@ const showNotification = (message: string, type: 'info' | 'error' | 'warning' = 
 const Dashboard = () => {
   // #region State
   const { user, logout } = useAuth();
+  const collaboration = useCollaboration();
   const [projectId, setProjectId] = useState<string | null>(null);
   const [availableProjects, setAvailableProjects] = useState<any[]>([]);
   const [showProjectSelector, setShowProjectSelector] = useState(false);
@@ -1849,6 +1853,23 @@ const Dashboard = () => {
           onClose={() => setShowProjectSelector(false)}
         />
       )}
+
+      {/* Collaboration Panel */}
+      <CollaborationPanel />
+
+      {/* Toast Notifications */}
+      <div className="fixed top-4 right-4 z-[9999] space-y-2">
+        {collaboration.state.notifications.map(notification => (
+          <ToastNotification
+            key={notification.id}
+            type={notification.type}
+            message={notification.message}
+            username={notification.username}
+            userColor={notification.userColor}
+            onDismiss={() => collaboration.removeNotification(notification.id)}
+          />
+        ))}
+      </div>
     </>
   );
 };
