@@ -216,7 +216,7 @@ public class AuthController {
         user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.setEmail(request.getEmail());
         user.setRoles(Set.of("ROLE_USER"));
-        user.setEnabled(false); // Disabled until email verified
+        user.setEnabled(true); // Enable immediately for development (skip email verification)
 
         // Generate verification token (expires in 24 hours)
         String verificationToken = UUID.randomUUID().toString();
@@ -225,18 +225,24 @@ public class AuthController {
 
         userRepository.save(user);
 
-        // Send verification email
-        try {
-            emailService.sendVerificationEmail(user.getEmail(), verificationToken);
-        } catch (Exception e) {
-            log.error("Failed to send verification email", e);
-            // Don't fail registration if email fails
-        }
+        // Skip sending verification email for development
+        // try {
+        //     emailService.sendVerificationEmail(user.getEmail(), verificationToken);
+        // } catch (Exception e) {
+        //     log.error("Failed to send verification email", e);
+        //     // Don't fail registration if email fails
+        // }
 
         auditService.logSignup(request.getUsername(), request.getEmail());
 
+        // Generate JWT token for immediate login
+        UserDetails userDetails = userDetailsService.loadUserByUsername(request.getUsername());
+        String jwt = jwtUtil.generateToken(userDetails);
+
         return ResponseEntity.ok(Map.of(
-            "message", "Registration successful! Please check your email to verify your account."
+            "jwt", jwt,
+            "username", user.getUsername(),
+            "message", "Registration successful!"
         ));
     }
 

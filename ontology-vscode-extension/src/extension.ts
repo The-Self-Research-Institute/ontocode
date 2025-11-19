@@ -6,9 +6,58 @@ import FormData from 'form-data';
 import axios, { AxiosError } from 'axios';
 import { insertCitationCommand } from './features/citationInsertion';
 import { CitationPickerPanel } from './webview/citationPicker';
+import { CollaborationManager } from './collaboration/CollaborationManager';
+import { EditCapture } from './collaboration/EditCapture';
+import { RemoteEditApplier } from './collaboration/RemoteEditApplier';
 
 const TOKEN_KEY = 'ontocode.authToken';
 const GATEWAY_URL = 'http://localhost:8082'; // Gateway port
+const OWL_EDITOR_URL = 'http://localhost:8083'; // OWL Editor service (WebSocket endpoint)
+
+/**
+ * Parse JWT token to extract user information
+ * @param token JWT token string
+ * @returns Decoded token payload or null if invalid
+ */
+function parseJwtToken(token: string): { userId?: string; username?: string; sub?: string } | null {
+    try {
+        console.log('[OntoCode] 🔍 Parsing JWT token...');
+        console.log('[OntoCode] Token length:', token?.length || 0);
+        console.log('[OntoCode] Token preview:', token?.substring(0, 50) + '...');
+        
+        if (!token || typeof token !== 'string') {
+            console.error('[OntoCode] ❌ Token is null or not a string');
+            return null;
+        }
+        
+        // JWT tokens have three parts separated by dots: header.payload.signature
+        const parts = token.split('.');
+        console.log('[OntoCode] Token parts count:', parts.length);
+        
+        if (parts.length !== 3) {
+            console.error('[OntoCode] ❌ Invalid JWT token format - expected 3 parts, got', parts.length);
+            console.error('[OntoCode] Token value:', token);
+            return null;
+        }
+        
+        // Decode the payload (second part)
+        const payload = parts[1];
+        console.log('[OntoCode] Payload part length:', payload.length);
+        
+        // JWT uses base64url encoding, convert to standard base64
+        const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+        const jsonPayload = atob(base64);
+        const decoded = JSON.parse(jsonPayload);
+        
+        console.log('[OntoCode] ✅ JWT Token Decoded Successfully:', JSON.stringify(decoded, null, 2));
+        
+        return decoded;
+    } catch (error) {
+        console.error('[OntoCode] ❌ Error parsing JWT token:', error);
+        console.error('[OntoCode] Token that failed:', token);
+        return null;
+    }
+}
 
 // Type definitions for messages between VS Code and the webview
 type WebviewMessage =
@@ -19,7 +68,12 @@ type WebviewMessage =
   | { type: 'fileReady'; projectId: string }
   | { type: 'loadingFailed'; error: string }
   // Fix: Added message type for API responses from the proxy
-  | { type: 'apiResponse'; requestId: string; response?: any; error?: any };
+  | { type: 'apiResponse'; requestId: string; response?: any; error?: any }
+  // Collaborative editing messages
+  | { type: 'remoteEdit'; edit: any }
+  | { type: 'presenceUpdate'; presence: any }
+  | { type: 'lockUpdate'; lock: any }
+  | { type: 'collaborationStatus'; connected: boolean };
 
 type ExtensionMessage =
   | { type: 'error'; value: string }
@@ -33,7 +87,8 @@ type ExtensionMessage =
   | { type: 'webviewReady' }
   | { type: 'downloadOntology'; url: string; filename: string }
   | { type: 'downloadCurrentOntology' }
-  | { type: 'fileLoaded'; projectId: string }; // File selected from menu
+  | { type: 'fileLoaded'; projectId: string } // File selected from menu
+  | { type: 'requestCollaborationStatus' }; // Request current collaboration status
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -45,8 +100,34 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('ontocode.edit', async () => {
             // Fix: Use context.extensionUri to get the extension's URI.
             const panel = await OntoCodePanel.createOrShow(context.extensionUri, context);
-            // FIX: Don't trigger upload here. Set it as pending.
-            panel.setPendingUpload(true);
+            
+            // Check if there's an active OWL file
+            const activeEditor = vscode.window.activeTextEditor;
+            const hasActiveOwl = activeEditor && activeEditor.document.fileName.toLowerCase().endsWith('.owl');
+            
+            if (hasActiveOwl) {
+                // Upload the active OWL file
+                panel.setPendingUpload(true);
+            } else {
+                // No active OWL file, show file picker
+                console.log('[OntoCode] No active OWL file, prompting user to select one...');
+                const fileUri = await vscode.window.showOpenDialog({
+                    canSelectMany: false,
+                    openLabel: 'Open OWL File',
+                    filters: {
+                        'OWL Files': ['owl'],
+                        'All Files': ['*']
+                    }
+                });
+                
+                if (fileUri && fileUri[0]) {
+                    console.log('[OntoCode] User selected file:', fileUri[0].fsPath);
+                    panel.setPendingUpload(false, fileUri[0]);
+                } else {
+                    console.log('[OntoCode] User cancelled file selection');
+                    vscode.window.showInformationMessage('Please select an OWL file to edit.');
+                }
+            }
         }),
         // Fix: Made command handler async to support async panel creation/file upload.
         vscode.commands.registerCommand('ontocode.editLargeFile', async (uri: vscode.Uri) => {
@@ -66,6 +147,40 @@ export function activate(context: vscode.ExtensionContext) {
                 OntoCodePanel.currentPanel.dispose();
             }
             vscode.window.showInformationMessage('You have been successfully logged out.');
+        }),
+        vscode.commands.registerCommand('ontocode.showCollaborationStatus', async () => {
+            console.log('[OntoCode] 📊 Showing collaboration status...');
+            const token = await (context as any).secrets.get(TOKEN_KEY);
+            
+            if (!token) {
+                const msg = '❌ Not logged in - No authentication token found';
+                vscode.window.showWarningMessage(msg);
+                console.log('[OntoCode]', msg);
+                return;
+            }
+            
+            console.log('[OntoCode] Token retrieved from secrets');
+            const tokenData = parseJwtToken(token);
+            
+            if (!tokenData) {
+                const msg = '❌ Invalid token - Please logout and login again';
+                vscode.window.showErrorMessage(msg);
+                console.error('[OntoCode]', msg);
+                return;
+            }
+            
+            const userId = tokenData?.userId || tokenData?.sub || 'unknown';
+            const username = tokenData?.username || tokenData?.sub || 'User';
+            
+            const panel = OntoCodePanel.currentPanel;
+            const isConnected = panel?.getCollaborationStatus() ?? false;
+            
+            const message = `✅ USERNAME: ${username}\n📝 User ID: ${userId}\n🔌 Connected: ${isConnected}`;
+            vscode.window.showInformationMessage(message, { modal: true });
+            console.log('[OntoCode] Collaboration Status:');
+            console.log('  Username:', username);
+            console.log('  User ID:', userId);
+            console.log('  Connected:', isConnected);
         }),
         vscode.commands.registerCommand('ontocode.insertCitation', insertCitationCommand),
         // Fix: Use context.extensionUri to get the extension's URI.
@@ -88,6 +203,12 @@ class OntoCodePanel {
     private _isWebviewReady: boolean = false;
     private _pendingFileUri: vscode.Uri | null = null;
     private _isPendingRegularUpload: boolean = false;
+
+    // Collaborative editing
+    private collaborationManager: CollaborationManager | null = null;
+    private editCapture: EditCapture;
+    private remoteEditApplier: RemoteEditApplier;
+    private currentProjectId: string | null = null;
 
     // Fix: Made createOrShow async to handle async webview content loading.
     public static async createOrShow(extensionUri: vscode.Uri, context: vscode.ExtensionContext): Promise<OntoCodePanel> {
@@ -120,6 +241,10 @@ class OntoCodePanel {
         this._panel = panel;
         this._extensionUri = extensionUri;
         this._context = context;
+
+        // Initialize collaborative editing components
+        this.editCapture = new EditCapture();
+        this.remoteEditApplier = new RemoteEditApplier();
 
         // Fix: Removed synchronous _update() call from constructor. It's now called from createOrShow.
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
@@ -170,6 +295,24 @@ class OntoCodePanel {
                         // User selected a file from the File menu
                         console.log('[OntoCode] File loaded from menu:', message.projectId);
                         this.postMessage({ type: 'fileReady', projectId: message.projectId });
+                        
+                        // Initialize collaboration for the loaded file
+                        const fileToken = await (this._context as any).secrets.get(TOKEN_KEY);
+                        if (fileToken) {
+                            await this.initializeCollaborationForProject(message.projectId, fileToken);
+                        }
+                        break;
+                    case 'requestCollaborationStatus':
+                        // Webview is requesting current collaboration status
+                        const isConnected = this.collaborationManager?.isConnected() ?? false;
+                        console.log('[OntoCode] 📊 Collaboration status requested');
+                        console.log('[OntoCode]   - Manager exists:', !!this.collaborationManager);
+                        console.log('[OntoCode]   - Is connected:', isConnected);
+                        this.postMessage({
+                            type: 'collaborationStatus',
+                            connected: isConnected
+                        });
+                        console.log('[OntoCode] Status response sent:', isConnected);
                         break;
                 }
             },
@@ -212,24 +355,34 @@ class OntoCodePanel {
      */
     private async handleApiRequest(message: Extract<ExtensionMessage, { type: 'apiGet' | 'apiPost' | 'apiDelete' }>) {
         const { requestId, type, url } = message;
+        
+        // Check if this is a public endpoint (login/signup) that doesn't require authentication
+        const isPublicEndpoint = url.includes('/api/auth/login') || url.includes('/api/auth/signup');
+        
         // Fix: Cast context to `any` to access the `secrets` property, bypassing outdated type definitions.
         const token = await (this._context as any).secrets.get(TOKEN_KEY);
+        
         // Do not proceed if unauthenticated, unless it's a login/signup endpoint
-        // For simplicity, we assume all proxied requests need a token.
-        if (!token) {
+        if (!token && !isPublicEndpoint) {
+            console.log('[Proxy] Request to', url, 'requires authentication');
             this.postMessage({ type: 'apiResponse', requestId, error: { message: 'User is not authenticated.', status: 401 }});
             return;
         }
         
-        const headers = {
-            'Authorization': `Bearer ${token}`,
+        const headers: any = {
+            
             'Content-Type': 'application/json'
         };
+        
+        // Only add Authorization header if we have a token
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
 
         try {
             let response;
             const fullUrl = `${GATEWAY_URL}${url}`;
-            console.log(`[Proxy] ${type.replace('api', '').toUpperCase()}: ${fullUrl}`);
+            console.log(`[Proxy] ${type.replace('api', '').toUpperCase()}: ${fullUrl}`, isPublicEndpoint ? '(public)' : '(authenticated)');
 
             switch (type) {
                 case 'apiGet':
@@ -245,6 +398,7 @@ class OntoCodePanel {
 
             this.postMessage({ type: 'apiResponse', requestId, response: response.data });
         } catch (e: unknown) {
+            const fullUrl = `${GATEWAY_URL}${url}`; // Redeclare for error logging
             // Fix: Explicitly type errorResponse to allow for optional properties like status and data.
             // This prevents a TypeScript error when assigning a more complex error object from an AxiosError.
             let errorResponse: { message: string, status?: number, data?: any } = { message: 'An unknown error occurred in the API proxy.' };
@@ -258,10 +412,18 @@ class OntoCodePanel {
                     status: axiosError.response?.status,
                     data: axiosError.response?.data,
                 };
+                console.error('[Proxy] API Request Error:', {
+                    url: fullUrl,
+                    status: axiosError.response?.status,
+                    statusText: axiosError.response?.statusText,
+                    data: axiosError.response?.data,
+                    message: axiosError.message,
+                    requestBody: type === 'apiPost' ? message.body : undefined
+                });
             } else if (e instanceof Error) {
                 errorResponse = { message: e.message };
+                console.error('[Proxy] API Request Error:', e.message);
             }
-            console.error('[Proxy] API Request Error:', errorResponse);
             this.postMessage({ type: 'apiResponse', requestId, error: errorResponse });
         }
     }
@@ -366,6 +528,9 @@ class OntoCodePanel {
                 this._isWebviewReady = false;
                 this.postMessage({ type: 'fileReady', projectId: projectId });
                 vscode.window.showInformationMessage(`Ontology "${fileName}" uploaded successfully. Processing started...`);
+                
+                // 6. Initialize collaborative editing
+                await this.initializeCollaborationForProject(projectId, token);
             } else {
                 throw new Error(`Upload failed with status ${response.status}: ${JSON.stringify(response.data)}`);
             }
@@ -613,12 +778,176 @@ class OntoCodePanel {
      */
     public dispose() {
         console.log('[OntoCode] Disposing panel');
+        
+        // Disconnect collaboration
+        if (this.collaborationManager) {
+            this.collaborationManager.disconnect().catch(err => {
+                console.error('[OntoCode] Error disconnecting collaboration:', err);
+            });
+        }
+        
+        this.editCapture.dispose();
+        
         OntoCodePanel.currentPanel = undefined;
         this._panel.dispose();
         
         while (this._disposables.length) {
             const disposable = this._disposables.pop();
             disposable?.dispose();
+        }
+    }
+
+    /**
+     * Get current collaboration connection status.
+     */
+    public getCollaborationStatus(): boolean {
+        return this.collaborationManager?.isConnected() ?? false;
+    }
+
+    /**
+     * Initialize collaborative editing for a project.
+     */
+    /**
+     * Initialize collaboration for a project using the auth token.
+     * Extracts user info from JWT and calls initializeCollaboration.
+     */
+    private async initializeCollaborationForProject(projectId: string, token: string): Promise<void> {
+        try {
+            // Parse JWT token to extract user info
+            const tokenData = parseJwtToken(token);
+            if (!tokenData) {
+                console.error('[OntoCode] Failed to parse JWT token for collaboration');
+                return;
+            }
+            
+            // Extract userId and username from token
+            // JWT tokens typically have 'sub' (subject) for userId and 'username' or 'name' field
+            const userId = tokenData.userId || tokenData.sub || 'unknown';
+            const username = tokenData.username || tokenData.sub || 'User';
+            
+            console.log(`[OntoCode] Extracted user info - userId: ${userId}, username: ${username}`);
+            
+            // Call the main initialization method
+            await this.initializeCollaboration(projectId, userId, username);
+        } catch (error) {
+            console.error('[OntoCode] Error initializing collaboration for project:', error);
+            // Don't throw - collaboration is optional, file upload should still work
+        }
+    }
+
+    private async initializeCollaboration(projectId: string, userId: string, username: string): Promise<void> {
+        try {
+            console.log('[OntoCode] ========================================');
+            console.log('[OntoCode] Initializing Collaboration');
+            console.log('[OntoCode] Project ID:', projectId);
+            console.log('[OntoCode] User ID:', userId);
+            console.log('[OntoCode] USERNAME:', username);
+            console.log('[OntoCode] WebSocket URL:', OWL_EDITOR_URL);
+            console.log('[OntoCode] ========================================');
+            
+            // Create collaboration manager (connects to OWL Editor WebSocket)
+            this.collaborationManager = new CollaborationManager(OWL_EDITOR_URL, userId, username);
+            this.editCapture.setCollaborationManager(this.collaborationManager);
+
+            // Set up event handlers
+            this.collaborationManager.setHandlers({
+                onEditReceived: async (edit) => {
+                    console.log('[OntoCode] Received remote edit:', edit);
+                    this.editCapture.setApplyingRemoteEdit(true);
+                    await this.remoteEditApplier.applyRemoteEdit(edit);
+                    this.editCapture.setApplyingRemoteEdit(false);
+                    
+                    // Notify webview of remote edit
+                    this.postMessage({
+                        type: 'remoteEdit',
+                        edit
+                    });
+                },
+                
+                onPresenceUpdate: (presence) => {
+                    console.log('[OntoCode] Presence update:', presence);
+                    
+                    // Notify webview of presence change
+                    this.postMessage({
+                        type: 'presenceUpdate',
+                        presence
+                    });
+                },
+                
+                onLockUpdate: (lock) => {
+                    console.log('[OntoCode] Lock update:', lock);
+                    
+                    // Notify webview of lock change
+                    this.postMessage({
+                        type: 'lockUpdate',
+                        lock
+                    });
+                },
+                
+                onConnectionChange: (connected) => {
+                    console.log('[OntoCode] 🔄 Connection status changed:', connected);
+                    console.log('[OntoCode] Sending collaborationStatus message to webview...');
+                    
+                    // Notify webview of connection status
+                    this.postMessage({
+                        type: 'collaborationStatus',
+                        connected
+                    });
+                    
+                    console.log('[OntoCode] ✅ collaborationStatus message sent to webview');
+                    
+                    vscode.window.showInformationMessage(
+                        connected ? 'Connected to collaborative editing' : 'Disconnected from collaborative editing'
+                    );
+                },
+                
+                onError: (error) => {
+                    console.error('[OntoCode] Collaboration error:', error);
+                    vscode.window.showErrorMessage(`Collaboration error: ${error}`);
+                }
+            });
+
+            // Set up remote edit applier
+            this.remoteEditApplier.setEditHandler(async (edit) => {
+                // This will be called to apply remote edits
+                // The actual UI update is handled by the webview
+                console.log('[OntoCode] Applying remote edit to state:', edit.type);
+            });
+
+            this.remoteEditApplier.setConflictHandler((edit, reason) => {
+                console.warn('[OntoCode] Edit conflict:', reason, edit);
+                vscode.window.showWarningMessage(`Edit conflict: ${reason}`);
+            });
+
+            // Connect to server
+            await this.collaborationManager.connect();
+            
+            // Join the project
+            await this.collaborationManager.joinProject(projectId);
+            
+            this.currentProjectId = projectId;
+            
+            console.log('[OntoCode] Collaboration initialized successfully');
+            
+        } catch (error) {
+            console.error('[OntoCode] Failed to initialize collaboration:', error);
+            vscode.window.showErrorMessage(`Failed to enable collaborative editing: ${error}`);
+        }
+    }
+
+    /**
+     * Disconnect from collaborative editing.
+     */
+    private async disconnectCollaboration(): Promise<void> {
+        if (this.collaborationManager) {
+            try {
+                await this.collaborationManager.disconnect();
+                this.collaborationManager = null;
+                this.currentProjectId = null;
+                console.log('[OntoCode] Disconnected from collaboration');
+            } catch (error) {
+                console.error('[OntoCode] Error disconnecting:', error);
+            }
         }
     }
 }
