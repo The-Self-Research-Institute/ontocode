@@ -11,6 +11,7 @@ import self.research.ontology.owlEditor.service.ProjectMetadataService;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -69,9 +70,21 @@ public class ProjectController {
 
             // Sort by update time (most recent first)
             projects.sort((a, b) -> {
-                String timeA = (String) a.getOrDefault("updatedAt", "");
-                String timeB = (String) b.getOrDefault("updatedAt", "");
-                return timeB.compareTo(timeA);
+                Object timeA = a.getOrDefault("updatedAt", null);
+                Object timeB = b.getOrDefault("updatedAt", null);
+                
+                // Handle null cases
+                if (timeA == null && timeB == null) return 0;
+                if (timeA == null) return 1;
+                if (timeB == null) return -1;
+                
+                // Compare Instant objects directly
+                if (timeA instanceof Instant && timeB instanceof Instant) {
+                    return ((Instant) timeB).compareTo((Instant) timeA);
+                }
+                
+                // Fallback to string comparison
+                return timeB.toString().compareTo(timeA.toString());
             });
 
             return ResponseEntity.ok(Map.of("success", true, "projects", projects));
