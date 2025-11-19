@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Plus, Trash2, CheckSquare, Square } from 'lucide-react';
 import { Panel, AnnotationsDisplay } from './common';
+import ontologyMutationService from '../../services/ontologyMutationService';
 import type { Property } from '../../types';
 
 const MultiSelectItem: React.FC<{
@@ -24,57 +25,31 @@ const MultiSelectItem: React.FC<{
 const MultiSelectSection: React.FC<{
     title: string;
     items: string[] | undefined;
-    onAdd: (item: string) => void;
+    onAddClick?: () => void;
     onDelete: (item: string) => void;
-}> = ({ title, items, onAdd, onDelete }) => {
-    const [isAdding, setIsAdding] = useState(false);
-    const [value, setValue] = useState('');
-
-    const handleAdd = () => {
-        if (value.trim()) {
-            onAdd(value.trim());
-            setValue('');
-            setIsAdding(false);
-        }
-    };
-
+}> = ({ title, items, onAddClick, onDelete }) => {
     return (
          <div className="mb-4 last:mb-0">
              <div className="flex justify-between items-center mb-1">
                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">{title}</h4>
-                 <button 
-                   onClick={() => setIsAdding(true)} 
-                   className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors"
-                   title={`Add ${title.slice(0, -1)}`}
-                   aria-label={`Add ${title.slice(0, -1)}`}
-                 >
-                    <Plus size={14}/>
-                 </button>
+                 {onAddClick && (
+                    <button 
+                    onClick={onAddClick} 
+                    className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors"
+                    title={`Add ${title.slice(0, -1)}`}
+                    aria-label={`Add ${title.slice(0, -1)}`}
+                    >
+                        <Plus size={14}/>
+                    </button>
+                 )}
              </div>
              <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm">
                  {items && items.length > 0 ? (
                     items.map(item => <MultiSelectItem key={item} item={item} onDelete={onDelete} />)
                  ) : (
-                    !isAdding && (
-                        <div className="p-2 text-xs text-gray-400 italic bg-gray-50">
-                          No {title.toLowerCase()} defined
-                        </div>
-                    )
-                 )}
-                 {isAdding && (
-                     <div className="p-2 bg-gray-50 border-t border-gray-200 flex gap-1">
-                         <input
-                           type="text"
-                           value={value}
-                           onChange={e => setValue(e.target.value)}
-                           className="flex-grow w-full px-2 py-1 text-xs border border-gray-300 rounded-md focus:ring-1 focus:ring-purple-500 focus:border-purple-500 outline-none"
-                           placeholder={`Enter ${title.slice(0, -1)} IRI...`}
-                           autoFocus
-                           onKeyDown={e => e.key === 'Enter' && handleAdd()}
-                         />
-                         <button onClick={handleAdd} className="px-3 py-1 bg-purple-600 text-white rounded-md text-xs hover:bg-purple-700">Add</button>
-                         <button onClick={() => setIsAdding(false)} className="px-3 py-1 bg-gray-200 text-gray-700 rounded-md text-xs hover:bg-gray-300">Cancel</button>
-                     </div>
+                    <div className="p-2 text-xs text-gray-400 italic bg-gray-50">
+                        No {title.toLowerCase()} defined
+                    </div>
                  )}
              </div>
          </div>
@@ -88,16 +63,123 @@ const PropertyEditor: React.FC<{
   onAddAnnotation: () => void;
   onDeleteAnnotation: (key: string) => void;
   activeTheme?: string;
-}> = ({ item, onUpdate, onAddAnnotation, onDeleteAnnotation, activeTheme }) => {
+  projectId: string;
+  onAddDomainClick?: () => void;
+  onAddRangeClick?: () => void;
+  onAddSubPropertyClick?: () => void;
+  onAddInverseClick?: () => void;
+  onAddDisjointClick?: () => void;
+  onAddEquivalentClick?: () => void;
+}> = ({ 
+    item, 
+    onUpdate, 
+    onAddAnnotation, 
+    onDeleteAnnotation, 
+    activeTheme, 
+    projectId,
+    onAddDomainClick,
+    onAddRangeClick,
+    onAddSubPropertyClick,
+    onAddInverseClick,
+    onAddDisjointClick,
+    onAddEquivalentClick
+}) => {
     const isObjectProperty = item.type === 'ObjectProperty';
     const characteristics = isObjectProperty 
-        ? ['Functional', 'Inverse functional', 'Transitive', 'Symmetric', 'Asymmetric', 'Reflexive', 'Irreflexive'] 
-        : ['Functional'];
+        ? [
+            { key: 'Functional', label: 'Functional' },
+            { key: 'InverseFunctional', label: 'Inverse functional' },
+            { key: 'Transitive', label: 'Transitive' },
+            { key: 'Symmetric', label: 'Symmetric' },
+            { key: 'Asymmetric', label: 'Asymmetric' },
+            { key: 'Reflexive', label: 'Reflexive' },
+            { key: 'Irreflexive', label: 'Irreflexive' }
+          ] 
+        : [{ key: 'Functional', label: 'Functional' }];
     
-    const handleCharacteristicChange = (char: string, checked: boolean) => {
+    const handleCharacteristicChange = async (char: string, checked: boolean) => {
         const currentChars = item.characteristics || [];
         const newChars = checked ? [...currentChars, char] : currentChars.filter(c => c !== char);
+        
+        // Optimistic update
         onUpdate({ ...item, characteristics: newChars });
+
+        try {
+            if (checked) {
+                await ontologyMutationService.addCharacteristic(projectId, item.id, `http://www.w3.org/2002/07/owl#${char}Property`);
+            } else {
+                await ontologyMutationService.deleteCharacteristic(projectId, item.id, `http://www.w3.org/2002/07/owl#${char}Property`);
+            }
+        } catch (error) {
+            console.error("Failed to update characteristic", error);
+            // Revert on error
+            onUpdate({ ...item, characteristics: currentChars });
+        }
+    };
+
+    const handleAddRelation = async (relation: 'domain' | 'range' | 'subProperty' | 'inverse' | 'disjoint' | 'equivalent', target: string) => {
+        try {
+            switch (relation) {
+                case 'domain':
+                    await ontologyMutationService.addPropertyDomain(projectId, item.id, target);
+                    onUpdate({ ...item, domains: [...(item.domains || []), target] });
+                    break;
+                case 'range':
+                    await ontologyMutationService.addPropertyRange(projectId, item.id, target);
+                    onUpdate({ ...item, ranges: [...(item.ranges || []), target] });
+                    break;
+                case 'subProperty':
+                    await ontologyMutationService.addSubPropertyOf(projectId, item.id, target);
+                    onUpdate({ ...item, superProperties: [...(item.superProperties || []), target] });
+                    break;
+                case 'inverse':
+                    await ontologyMutationService.addInverseProperty(projectId, item.id, target);
+                    onUpdate({ ...item, inverseProperties: [...(item.inverseProperties || []), target] });
+                    break;
+                case 'disjoint':
+                    await ontologyMutationService.addDisjointProperty(projectId, item.id, target);
+                    onUpdate({ ...item, disjointProperties: [...(item.disjointProperties || []), target] });
+                    break;
+                case 'equivalent':
+                    await ontologyMutationService.addEquivalentProperty(projectId, item.id, target);
+                    // Assuming we add an equivalentProperties field to Property type or reuse one
+                    break;
+            }
+        } catch (error) {
+            console.error(`Failed to add ${relation}`, error);
+        }
+    };
+
+    const handleDeleteRelation = async (relation: 'domain' | 'range' | 'subProperty' | 'inverse' | 'disjoint' | 'equivalent', target: string) => {
+        try {
+            switch (relation) {
+                case 'domain':
+                    await ontologyMutationService.deletePropertyDomain(projectId, item.id, target);
+                    onUpdate({ ...item, domains: item.domains?.filter(d => d !== target) });
+                    break;
+                case 'range':
+                    await ontologyMutationService.deletePropertyRange(projectId, item.id, target);
+                    onUpdate({ ...item, ranges: item.ranges?.filter(r => r !== target) });
+                    break;
+                case 'subProperty':
+                    await ontologyMutationService.deleteSubPropertyOf(projectId, item.id, target);
+                    onUpdate({ ...item, superProperties: item.superProperties?.filter(p => p !== target) });
+                    break;
+                case 'inverse':
+                    await ontologyMutationService.deleteInverseProperty(projectId, item.id, target);
+                    onUpdate({ ...item, inverseProperties: item.inverseProperties?.filter(p => p !== target) });
+                    break;
+                case 'disjoint':
+                    await ontologyMutationService.deleteDisjointProperty(projectId, item.id, target);
+                    onUpdate({ ...item, disjointProperties: item.disjointProperties?.filter(p => p !== target) });
+                    break;
+                 case 'equivalent':
+                    await ontologyMutationService.deleteEquivalentProperty(projectId, item.id, target);
+                    break;
+            }
+        } catch (error) {
+            console.error(`Failed to delete ${relation}`, error);
+        }
     };
 
     return (
@@ -136,61 +218,68 @@ const PropertyEditor: React.FC<{
                         <div className="mb-4">
                             <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Characteristics</h4>
                             <div className="grid grid-cols-2 gap-2 bg-white p-2 border border-gray-200 rounded-md">
-                                {characteristics.map(char => (
-                                    <label key={char} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 p-1 rounded">
+                                {characteristics.map(({ key, label }) => (
+                                    <label key={key} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 p-1 rounded">
                                         <input 
                                             type="checkbox" 
-                                            checked={item.characteristics?.includes(char)} 
-                                            onChange={e => handleCharacteristicChange(char, e.target.checked)}
+                                            checked={item.characteristics?.includes(key)} 
+                                            onChange={e => handleCharacteristicChange(key, e.target.checked)}
                                             className="hidden"
                                         />
-                                        {item.characteristics?.includes(char) ? (
+                                        {item.characteristics?.includes(key) ? (
                                             <CheckSquare size={16} className="text-purple-600" />
                                         ) : (
                                             <Square size={16} className="text-gray-300" />
                                         )}
-                                        <span className={item.characteristics?.includes(char) ? 'text-gray-900 font-medium' : 'text-gray-500'}>{char}</span>
+                                        <span className={item.characteristics?.includes(key) ? 'text-gray-900 font-medium' : 'text-gray-500'}>{label}</span>
                                     </label>
                                 ))}
                             </div>
                         </div>
 
                         <MultiSelectSection
-                            title="Domains"
-                            items={item.domains}
-                            onAdd={domain => onUpdate({ ...item, domains: [...(item.domains || []), domain] })}
-                            onDelete={domain => onUpdate({ ...item, domains: item.domains?.filter(d => d !== domain) })}
+                            title="Equivalent To"
+                            items={item.equivalentProperties}
+                            onAddClick={onAddEquivalentClick}
+                            onDelete={prop => handleDeleteRelation('equivalent', prop)}
                         />
 
                         <MultiSelectSection
-                            title="Ranges"
-                            items={item.ranges}
-                            onAdd={range => onUpdate({ ...item, ranges: [...(item.ranges || []), range] })}
-                            onDelete={range => onUpdate({ ...item, ranges: item.ranges?.filter(r => r !== range) })}
-                        />
-                        
-                        <MultiSelectSection
                             title="SubProperty Of"
                             items={item.superProperties}
-                            onAdd={prop => onUpdate({ ...item, superProperties: [...(item.superProperties || []), prop] })}
-                            onDelete={prop => onUpdate({ ...item, superProperties: item.superProperties?.filter(p => p !== prop) })}
+                            onAddClick={onAddSubPropertyClick}
+                            onDelete={prop => handleDeleteRelation('subProperty', prop)}
+                        />
+
+                        {isObjectProperty && (
+                            <MultiSelectSection
+                                title="Inverse Of"
+                                items={item.inverseProperties}
+                                onAddClick={onAddInverseClick}
+                                onDelete={prop => handleDeleteRelation('inverse', prop)}
+                            />
+                        )}
+
+                        <MultiSelectSection
+                            title="Domains (Intersection)"
+                            items={item.domains}
+                            onAddClick={onAddDomainClick}
+                            onDelete={domain => handleDeleteRelation('domain', domain)}
+                        />
+
+                        <MultiSelectSection
+                            title="Ranges (Intersection)"
+                            items={item.ranges}
+                            onAddClick={onAddRangeClick}
+                            onDelete={range => handleDeleteRelation('range', range)}
                         />
 
                         <MultiSelectSection
                             title="Disjoint With"
                             items={item.disjointProperties}
-                            onAdd={prop => onUpdate({ ...item, disjointProperties: [...(item.disjointProperties || []), prop] })}
-                            onDelete={prop => onUpdate({ ...item, disjointProperties: item.disjointProperties?.filter(p => p !== prop) })}
+                            onAddClick={onAddDisjointClick}
+                            onDelete={prop => handleDeleteRelation('disjoint', prop)}
                         />
-                        
-                        {isObjectProperty && (
-                            <MultiSelectSection
-                                title="Inverse Of"
-                                items={item.inverseProperties}
-                                onAdd={prop => onUpdate({ ...item, inverseProperties: [...(item.inverseProperties || []), prop] })}
-                                onDelete={prop => onUpdate({ ...item, inverseProperties: item.inverseProperties?.filter(p => p !== prop) })}
-                            />
-                        )}
                     </div>
                 </Panel>
             </div>

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ChevronRight, ChevronDown, PlusCircle, Trash2, Search, Package, GitBranch, Database, Tag, User, Type, Binary } from "lucide-react";
 import type { SelectableItem, TreeNode } from '../types';
 
@@ -13,6 +13,7 @@ interface EntityHierarchyProps {
   onToggleNode: (nodeId: string) => void;
   onAddItem: (type: 'subclass' | 'sibling' | 'individual') => void;
   onDeleteItem: () => void;
+  onMakeSiblingsDisjoint?: () => void;
 }
 
 const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
@@ -26,13 +27,36 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
   onToggleNode,
   onAddItem,
   onDeleteItem,
+  onMakeSiblingsDisjoint,
 }) => {
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: SelectableItem } | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close context menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(event.target as Node)) {
+        setContextMenu(null);
+      }
+    };
+
+    if (contextMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [contextMenu]);
+
+  const handleContextMenu = (e: React.MouseEvent, item: SelectableItem) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY, item });
+  };
 
   const renderItem = (item: SelectableItem, level = 0): React.JSX.Element => {
     const isSelected = selectedItem?.id === item.id;
-    // An item is a "TreeNode" if it's in the Classes tab.
+    // An item is a "TreeNode" if it's in the Classes or ObjectProperties tab.
     // We check 'hasChildren' to know if it's expandable.
-    const isTreeNode = entitiesTab === 'Classes';
+    const isTreeNode = entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties';
     const hasChildren = 'hasChildren' in item && item.hasChildren;
     const isExpanded = isTreeNode && hasChildren && expandedNodes.includes(item.id);
 
@@ -57,6 +81,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
           className={`flex items-center px-2 py-0.5 rounded cursor-pointer ${isSelected ? "bg-blue-200" : "hover:bg-slate-100"}`}
           style={{ paddingLeft: `${level * 16 + 4}px` }}
           onClick={() => onSelectItem(item)}
+          onContextMenu={(e) => handleContextMenu(e, item)}
         >
           {/* Expander Arrow */}
           {isTreeNode ? (
@@ -132,6 +157,28 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
                  </button>
                  </>
               )}
+              {entitiesTab === 'ObjectProperties' && (
+                 <>
+                 <button 
+                    title="Add sub property" 
+                    aria-label="Add sub property"
+                    disabled={!selectedItem} 
+                    onClick={() => onAddItem('subclass')} // Reusing 'subclass' type for sub-property
+                    className="p-0.5 hover:bg-black/20 rounded disabled:opacity-30"
+                 >
+                      <PlusCircle size={14} />
+                 </button>
+                 <button 
+                    title="Add sibling property" 
+                    aria-label="Add sibling property"
+                    disabled={!selectedItem} 
+                    onClick={() => onAddItem('sibling')} // Reusing 'sibling' type for sibling property
+                    className="p-0.5 hover:bg-black/20 rounded disabled:opacity-30"
+                 >
+                      <Binary size={14} />
+                 </button>
+                 </>
+              )}
               {entitiesTab === 'Individuals' && (
                    <button 
                       title="Add individual" 
@@ -176,6 +223,29 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
           ) : <div className="p-4 text-center text-gray-400">No items found.</div>)
         }
       </div>
+
+      {/* Context Menu */}
+      {contextMenu && entitiesTab === 'Classes' && (
+        <div
+          ref={contextMenuRef}
+          className="fixed bg-white border border-gray-300 rounded shadow-lg py-1 z-50"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          <button
+            className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
+            onClick={() => {
+              onSelectItem(contextMenu.item);
+              if (onMakeSiblingsDisjoint) {
+                onMakeSiblingsDisjoint();
+              }
+              setContextMenu(null);
+            }}
+          >
+            <Binary size={14} />
+            Make Siblings Disjoint
+          </button>
+        </div>
+      )}
     </aside>
   );
 };

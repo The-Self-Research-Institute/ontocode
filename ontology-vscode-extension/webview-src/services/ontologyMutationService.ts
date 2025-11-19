@@ -162,6 +162,86 @@ export const ontologyMutationService = {
       type: 'deleteIndividual',
       iri
     }]);
+  },
+
+  /**
+   * Create a new object property
+   */
+  async createObjectProperty(projectId: string, iri: string, label: string, parentIri: string): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'createObjectProperty',
+      iri,
+      label,
+      parent: parentIri
+    }]);
+  },
+
+  /**
+   * Delete an object property
+   */
+  async deleteObjectProperty(projectId: string, iri: string): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'deleteObjectProperty',
+      iri
+    }]);
+  },
+
+  // --- Property Mutations ---
+
+  async addPropertyDomain(projectId: string, propertyIri: string, domainIri: string): Promise<void> {
+    await this.applyMutations(projectId, [{ type: 'addPropertyDomain', iri: propertyIri, target: domainIri }]);
+  },
+  async deletePropertyDomain(projectId: string, propertyIri: string, domainIri: string): Promise<void> {
+    await this.applyMutations(projectId, [{ type: 'deletePropertyDomain', iri: propertyIri, target: domainIri }]);
+  },
+
+  async addPropertyRange(projectId: string, propertyIri: string, rangeIri: string): Promise<void> {
+    await this.applyMutations(projectId, [{ type: 'addPropertyRange', iri: propertyIri, target: rangeIri }]);
+  },
+  async deletePropertyRange(projectId: string, propertyIri: string, rangeIri: string): Promise<void> {
+    await this.applyMutations(projectId, [{ type: 'deletePropertyRange', iri: propertyIri, target: rangeIri }]);
+  },
+
+  async addSubPropertyOf(projectId: string, propertyIri: string, superPropertyIri: string): Promise<void> {
+    await this.applyMutations(projectId, [{ type: 'addSubPropertyOf', iri: propertyIri, target: superPropertyIri }]);
+  },
+  async deleteSubPropertyOf(projectId: string, propertyIri: string, superPropertyIri: string): Promise<void> {
+    await this.applyMutations(projectId, [{ type: 'deleteSubPropertyOf', iri: propertyIri, target: superPropertyIri }]);
+  },
+
+  async addInverseProperty(projectId: string, propertyIri: string, inversePropertyIri: string): Promise<void> {
+    await this.applyMutations(projectId, [{ type: 'addInverseProperty', iri: propertyIri, target: inversePropertyIri }]);
+  },
+  async deleteInverseProperty(projectId: string, propertyIri: string, inversePropertyIri: string): Promise<void> {
+    await this.applyMutations(projectId, [{ type: 'deleteInverseProperty', iri: propertyIri, target: inversePropertyIri }]);
+  },
+
+  async addDisjointProperty(projectId: string, propertyIri: string, disjointPropertyIri: string): Promise<void> {
+    await this.applyMutations(projectId, [{ type: 'addDisjointProperty', iri: propertyIri, target: disjointPropertyIri }]);
+  },
+  async deleteDisjointProperty(projectId: string, propertyIri: string, disjointPropertyIri: string): Promise<void> {
+    await this.applyMutations(projectId, [{ type: 'deleteDisjointProperty', iri: propertyIri, target: disjointPropertyIri }]);
+  },
+
+  async addEquivalentProperty(projectId: string, propertyIri: string, equivalentPropertyIri: string): Promise<void> {
+    await this.applyMutations(projectId, [{ type: 'addEquivalentProperty', iri: propertyIri, target: equivalentPropertyIri }]);
+  },
+  async deleteEquivalentProperty(projectId: string, propertyIri: string, equivalentPropertyIri: string): Promise<void> {
+    await this.applyMutations(projectId, [{ type: 'deleteEquivalentProperty', iri: propertyIri, target: equivalentPropertyIri }]);
+  },
+
+  async addCharacteristic(projectId: string, propertyIri: string, characteristicIri: string): Promise<void> {
+    await this.applyMutations(projectId, [{ type: 'addCharacteristic', iri: propertyIri, target: characteristicIri }]);
+  },
+  async deleteCharacteristic(projectId: string, propertyIri: string, characteristicIri: string): Promise<void> {
+    await this.applyMutations(projectId, [{ type: 'deleteCharacteristic', iri: propertyIri, target: characteristicIri }]);
+  },
+
+  /**
+   * Make siblings disjoint - adds pairwise disjointWith axioms
+   */
+  async makeSiblingsDisjoint(projectId: string, classIds: string[]): Promise<void> {
+    await apiClient.post(`/api/ontology/make-siblings-disjoint/${projectId}`, { classIds });
   }
 };
 

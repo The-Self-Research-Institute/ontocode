@@ -23,6 +23,9 @@ export interface Property {
   domains?: string[];
   ranges?: string[];
   superProperties?: string[];
+  inverseProperties?: string[];
+  disjointProperties?: string[];
+  equivalentProperties?: string[];
   characteristics?: string[];
   annotations?: Record<string, string>;
   usage?: PropertyUsage;

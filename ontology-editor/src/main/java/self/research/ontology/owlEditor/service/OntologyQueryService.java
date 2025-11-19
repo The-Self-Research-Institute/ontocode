@@ -75,6 +75,11 @@ public class OntologyQueryService {
             SELECT ?prop (SAMPLE(?lbl) AS ?label) ?kind
                    (GROUP_CONCAT(DISTINCT ?domain; SEPARATOR="|") AS ?domains)
                    (GROUP_CONCAT(DISTINCT ?range; SEPARATOR="|") AS ?ranges)
+                   (GROUP_CONCAT(DISTINCT ?super; SEPARATOR="|") AS ?superProperties)
+                   (GROUP_CONCAT(DISTINCT ?inverse; SEPARATOR="|") AS ?inverseProperties)
+                   (GROUP_CONCAT(DISTINCT ?disjoint; SEPARATOR="|") AS ?disjointProperties)
+                   (GROUP_CONCAT(DISTINCT ?equiv; SEPARATOR="|") AS ?equivalentProperties)
+                   (GROUP_CONCAT(DISTINCT ?char; SEPARATOR="|") AS ?characteristics)
             WHERE {
               ?prop a ?kind .
               VALUES ?kind { owl:ObjectProperty owl:DatatypeProperty }
@@ -82,6 +87,22 @@ public class OntologyQueryService {
               OPTIONAL { ?prop rdfs:label ?lbl }
               OPTIONAL { ?prop rdfs:domain ?domain . FILTER(isIRI(?domain)) }
               OPTIONAL { ?prop rdfs:range ?range . FILTER(isIRI(?range)) }
+              OPTIONAL { ?prop rdfs:subPropertyOf ?super . FILTER(isIRI(?super) && ?super != ?prop) }
+              OPTIONAL { ?prop owl:inverseOf ?inverse . FILTER(isIRI(?inverse)) }
+              OPTIONAL { ?prop owl:propertyDisjointWith ?disjoint . FILTER(isIRI(?disjoint)) }
+              OPTIONAL { ?prop owl:equivalentProperty ?equiv . FILTER(isIRI(?equiv) && ?equiv != ?prop) }
+              OPTIONAL { 
+                ?prop a ?char . 
+                FILTER(?char IN (
+                  owl:FunctionalProperty, 
+                  owl:InverseFunctionalProperty, 
+                  owl:TransitiveProperty, 
+                  owl:SymmetricProperty, 
+                  owl:AsymmetricProperty, 
+                  owl:ReflexiveProperty, 
+                  owl:IrreflexiveProperty
+                )) 
+              }
             }
             GROUP BY ?prop ?kind
             ORDER BY COALESCE(LCASE(?label), STR(?prop))
@@ -108,6 +129,22 @@ public class OntologyQueryService {
             dto.setType(localName(resource(sol, "kind")));
             dto.setDomains(splitPipe(literal(sol, "domains")));
             dto.setRanges(splitPipe(literal(sol, "ranges")));
+            dto.setSuperProperties(splitPipe(literal(sol, "superProperties")));
+            dto.setInverseProperties(splitPipe(literal(sol, "inverseProperties")));
+            dto.setDisjointProperties(splitPipe(literal(sol, "disjointProperties")));
+            dto.setEquivalentProperties(splitPipe(literal(sol, "equivalentProperties")));
+            
+            // Map full IRIs to simple names for characteristics (e.g. owl:FunctionalProperty -> Functional)
+            List<String> chars = splitPipe(literal(sol, "characteristics"));
+            if (chars != null) {
+                dto.setCharacteristics(chars.stream()
+                    .map(charIri -> {
+                        String name = localName(charIri);
+                        return name.replace("Property", ""); // FunctionalProperty -> Functional
+                    })
+                    .toList());
+            }
+            
             results.add(dto);
         }
         System.out.println("=== PROPERTIES QUERY RETURNED " + count + " ROWS, " + results.size() + " PROPERTIES ===");
