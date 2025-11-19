@@ -1,6 +1,7 @@
 
 import React, { useState } from 'react';
 import { useAuth } from './custom-hook/useAuth';
+import { CollaborationProvider } from './contexts/CollaborationContext';
 import Dashboard from './components/Dashboard';
 import LoginForm from './components/LoginForm';
 import SignupForm from './components/SignupForm';
@@ -42,7 +43,11 @@ const AppContent = () => {
 };
 
 const App = () => {
-    return <AppContent />;
+    return (
+        <CollaborationProvider>
+            <AppContent />
+        </CollaborationProvider>
+    );
 };
 
 export default App;
