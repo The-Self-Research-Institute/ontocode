@@ -1,0 +1,247 @@
+import React, { createContext, useState, useEffect, useCallback, ReactNode } from 'react';
+
+// Types matching the collaboration types from extension
+export interface ActiveUser {
+    userId: string;
+    username: string;
+    color: string;
+    lastActivity: number;
+    cursorPosition?: string;
+    selectedNodes?: string[];
+}
+
+export interface NodeLock {
+    nodeId: string;
+    userId: string;
+    username: string;
+    expiresAt: number;
+    timestamp: number;
+}
+
+export interface EditNotification {
+    id: string;
+    type: 'success' | 'error' | 'info' | 'warning';
+    message: string;
+    userId: string;
+    username: string;
+    userColor: string;
+    timestamp: number;
+}
+
+export interface CollaborationState {
+    connected: boolean;
+    activeUsers: Map<string, ActiveUser>;
+    locks: Map<string, NodeLock>;
+    notifications: EditNotification[];
+}
+
+interface CollaborationContextType {
+    state: CollaborationState;
+    addNotification: (notification: Omit<EditNotification, 'id'>) => void;
+    removeNotification: (id: string) => void;
+    clearNotifications: () => void;
+}
+
+export const CollaborationContext = createContext<CollaborationContextType | undefined>(undefined);
+
+export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+    const [state, setState] = useState<CollaborationState>({
+        connected: false,
+        activeUsers: new Map(),
+        locks: new Map(),
+        notifications: [],
+    });
+
+    // Listen to messages from the VS Code extension
+    useEffect(() => {
+        const handleMessage = (event: MessageEvent) => {
+            const message = event.data;
+            
+            console.log('[CollaborationContext] 📨 Received message:', message.type, message);
+            
+            switch (message.type) {
+                case 'collaborationStatus':
+                    console.log('[CollaborationContext] ✅ Updating connection status to:', message.connected);
+                    setState(prev => ({
+                        ...prev,
+                        connected: message.connected,
+                    }));
+                    break;
+
+                case 'presenceUpdate':
+                    handlePresenceUpdate(message.presence);
+                    break;
+
+                case 'lockUpdate':
+                    handleLockUpdate(message.lock);
+                    break;
+
+                case 'remoteEdit':
+                    handleRemoteEdit(message.edit);
+                    break;
+            }
+        };
+
+        window.addEventListener('message', handleMessage);
+        
+        console.log('[CollaborationContext] 🚀 Component mounted, requesting collaboration status...');
+        
+        // Request current collaboration status when component mounts
+        if (window.vscode) {
+            window.vscode.postMessage({ type: 'requestCollaborationStatus' });
+        }
+        
+        return () => {
+            window.removeEventListener('message', handleMessage);
+        };
+    }, []);
+
+    const handlePresenceUpdate = useCallback((presence: any) => {
+        setState(prev => {
+            const newUsers = new Map(prev.activeUsers);
+            
+            switch (presence.type) {
+                case 'USER_JOINED':
+                case 'USER_ACTIVE':
+                case 'CURSOR_MOVED':
+                case 'SELECTION_CHANGED':
+                    newUsers.set(presence.userId, {
+                        userId: presence.userId,
+                        username: presence.username,
+                        color: presence.color || '#888888',
+                        lastActivity: presence.timestamp,
+                        cursorPosition: presence.cursorPosition,
+                        selectedNodes: presence.selectedNodes,
+                    });
+                    break;
+
+                case 'USER_LEFT':
+                    newUsers.delete(presence.userId);
+                    break;
+            }
+
+            return {
+                ...prev,
+                activeUsers: newUsers,
+            };
+        });
+    }, []);
+
+    const handleLockUpdate = useCallback((lock: any) => {
+        setState(prev => {
+            const newLocks = new Map(prev.locks);
+            
+            switch (lock.type) {
+                case 'LOCK_ACQUIRED':
+                    newLocks.set(lock.nodeId, {
+                        nodeId: lock.nodeId,
+                        userId: lock.userId,
+                        username: lock.username,
+                        expiresAt: lock.expiresAt,
+                        timestamp: lock.timestamp,
+                    });
+                    break;
+
+                case 'LOCK_RELEASED':
+                case 'LOCK_EXPIRED':
+                    newLocks.delete(lock.nodeId);
+                    break;
+            }
+
+            return {
+                ...prev,
+                locks: newLocks,
+            };
+        });
+    }, []);
+
+    const handleRemoteEdit = useCallback((edit: any) => {
+        // Add notification for remote edits
+        const notification: Omit<EditNotification, 'id'> = {
+            type: 'info',
+            message: `${edit.username} ${getEditActionDescription(edit.type)}`,
+            userId: edit.userId,
+            username: edit.username,
+            userColor: '#888888', // Will be updated from activeUsers
+            timestamp: edit.timestamp,
+        };
+
+        addNotification(notification);
+    }, []);
+
+    const getEditActionDescription = (operationType: string): string => {
+        const actionMap: Record<string, string> = {
+            CLASS_ADDED: 'added a class',
+            CLASS_MODIFIED: 'modified a class',
+            CLASS_DELETED: 'deleted a class',
+            CLASS_RENAMED: 'renamed a class',
+            PROPERTY_ADDED: 'added a property',
+            PROPERTY_MODIFIED: 'modified a property',
+            PROPERTY_DELETED: 'deleted a property',
+            ANNOTATION_ADDED: 'added an annotation',
+            ANNOTATION_MODIFIED: 'modified an annotation',
+            ANNOTATION_DELETED: 'deleted an annotation',
+            SUBCLASS_ADDED: 'added a subclass relationship',
+            SUBCLASS_REMOVED: 'removed a subclass relationship',
+        };
+        return actionMap[operationType] || 'made a change';
+    };
+
+    const addNotification = useCallback((notification: Omit<EditNotification, 'id'>) => {
+        const id = `notif-${Date.now()}-${Math.random()}`;
+        setState(prev => {
+            // Get user color from activeUsers
+            const user = prev.activeUsers.get(notification.userId);
+            const userColor = user?.color || notification.userColor;
+
+            return {
+                ...prev,
+                notifications: [
+                    ...prev.notifications,
+                    { ...notification, id, userColor },
+                ],
+            };
+        });
+
+        // Auto-remove after 5 seconds
+        setTimeout(() => {
+            removeNotification(id);
+        }, 5000);
+    }, []);
+
+    const removeNotification = useCallback((id: string) => {
+        setState(prev => ({
+            ...prev,
+            notifications: prev.notifications.filter(n => n.id !== id),
+        }));
+    }, []);
+
+    const clearNotifications = useCallback(() => {
+        setState(prev => ({
+            ...prev,
+            notifications: [],
+        }));
+    }, []);
+
+    const value: CollaborationContextType = {
+        state,
+        addNotification,
+        removeNotification,
+        clearNotifications,
+    };
+
+    return (
+        <CollaborationContext.Provider value={value}>
+            {children}
+        </CollaborationContext.Provider>
+    );
+};
+
+// Custom hook for using collaboration context
+export const useCollaboration = (): CollaborationContextType => {
+    const context = React.useContext(CollaborationContext);
+    if (!context) {
+        throw new Error('useCollaboration must be used within a CollaborationProvider');
+    }
+    return context;
+};
