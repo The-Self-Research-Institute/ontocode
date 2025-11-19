@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, Search, ExternalLink, AlertCircle } from 'lucide-react';
 import { Panel, AnnotationsDisplay, AxiomSubsection } from './common';
+import { ManchesterSyntaxEditor, MultiClassSelectorDialog } from '../dialogs';
 import apiClient from '../../services/apiClient';
+import ontologyMutationService from '../../services/ontologyMutationService';
 import type { TreeNode, Axiom, ClassUsage, AxiomUsage } from '../../types';
 
 type AxiomType = 'EquivalentTo' | 'SubClassOf' | 'DisjointWith';
@@ -178,10 +180,19 @@ const ClassEditor: React.FC<{
   onAddAnnotation: () => void;
   onDeleteAnnotation: (key: string) => void;
   activeTheme?: string;
-}> = ({ item, projectId, onUpdate, onAddAnnotation, onDeleteAnnotation, activeTheme }) => {
+  classHierarchy?: TreeNode[];
+}> = ({ item, projectId, onUpdate, onAddAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [] }) => {
   const [activeTab, setActiveTab] = useState<'annotations' | 'usage' | 'description'>('annotations');
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [classDetails, setClassDetails] = useState<any>(null);
+  
+  // Manchester Syntax Editor State
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [editorType, setEditorType] = useState<AxiomType | null>(null);
+  const [editorTitle, setEditorTitle] = useState("");
+
+  // Disjoint Union State
+  const [isDisjointUnionOpen, setIsDisjointUnionOpen] = useState(false);
 
   // Load class details including annotations when component mounts
   useEffect(() => {
@@ -209,27 +220,40 @@ const ClassEditor: React.FC<{
     }
   };
 
-  const handleAddAxiom = (type: AxiomType, definition: string) => {
-    const newAxiom: Axiom = { id: `axiom-${Date.now()}`, type, definition };
-    let updatedAxioms;
-    
-    switch (type) {
-        case 'EquivalentTo':
-            updatedAxioms = [...(item.equivalentClassesAxioms || []), newAxiom];
-            onUpdate({ ...item, equivalentClassesAxioms: updatedAxioms });
-            break;
-        case 'SubClassOf':
-            updatedAxioms = [...(item.subClassOfAxioms || []), newAxiom];
-            onUpdate({ ...item, subClassOfAxioms: updatedAxioms });
-            break;
-        case 'DisjointWith':
-            updatedAxioms = [...(item.disjointClassesAxioms || []), newAxiom];
-            onUpdate({ ...item, disjointClassesAxioms: updatedAxioms });
-            break;
+  const openEditor = (type: AxiomType, title: string) => {
+    setEditorType(type);
+    setEditorTitle(title);
+    setIsEditorOpen(true);
+  };
+
+  const handleEditorConfirm = (expression: string) => {
+    if (editorType) {
+      handleAddAxiom(editorType, expression);
+    }
+    setIsEditorOpen(false);
+    setEditorType(null);
+  };
+
+  const handleAddAxiom = async (type: AxiomType, definition: string) => {
+    try {
+      await ontologyMutationService.addAxiom(projectId, item.id, type, definition);
+      // Reload details to get the updated axioms (assuming backend processed it)
+      await loadClassDetails();
+      // Also notify parent to update tree if needed (though axioms usually don't change tree structure unless it's subclassof)
+      // onUpdate(item); // We might not need this if we reload details
+    } catch (error) {
+      console.error('Failed to add axiom:', error);
+      // You might want to show a notification here
     }
   };
 
-  const handleDeleteAxiom = (type: AxiomType, id: string) => {
+  const handleDeleteAxiom = async (type: AxiomType, id: string) => {
+    // For deletion, we need the axiom ID or the definition. 
+    // The current backend API for delete might need the definition if IDs are not persistent/consistent.
+    // For now, let's assume we can't easily delete complex axioms without more backend support.
+    console.warn("Delete axiom not fully implemented for complex expressions");
+    
+    // Optimistic update for UI
     switch (type) {
         case 'EquivalentTo':
             onUpdate({ ...item, equivalentClassesAxioms: item.equivalentClassesAxioms?.filter(a => a.id !== id) });
@@ -241,6 +265,26 @@ const ClassEditor: React.FC<{
             onUpdate({ ...item, disjointClassesAxioms: item.disjointClassesAxioms?.filter(a => a.id !== id) });
             break;
     }
+  };
+
+  const handleDisjointUnionConfirm = async (nodes: TreeNode[]) => {
+    try {
+      const expression = nodes.map(n => n.label || n.id).join(", ");
+      // We treat Disjoint Union as a special axiom type or just use addAxiom with a specific flag if backend supported it.
+      // For now, let's assume we send it as a "DisjointUnion" axiom type (which we need to add to AxiomType or handle loosely)
+      // But AxiomType is strict. Let's cast or extend it.
+      // Actually, DisjointUnion is usually a set of classes.
+      // We can format it as "DisjointUnionOf(A, B, C)" or just "A, B, C" and let the backend handle it.
+      
+      // Since we don't have a specific "DisjointUnion" type in AxiomType, we might need to extend it or use a custom call.
+      // Let's use addAxiom with a custom type string if possible, or just log it for now as backend support is partial.
+      
+      await ontologyMutationService.addAxiom(projectId, item.id, 'DisjointUnion' as any, expression);
+      await loadClassDetails();
+    } catch (error) {
+      console.error('Failed to add disjoint union:', error);
+    }
+    setIsDisjointUnionOpen(false);
   };
 
   const annotationCount = Object.keys(item.annotations || {}).length;
@@ -316,6 +360,7 @@ const ClassEditor: React.FC<{
                   axioms={item.equivalentClassesAxioms}
                   onAdd={(def) => handleAddAxiom('EquivalentTo', def)}
                   onDelete={(id) => handleDeleteAxiom('EquivalentTo', id)}
+                  onAddClick={() => openEditor('EquivalentTo', 'Edit Equivalent Class Expression')}
                 />
                 
                 <AxiomSubsection
@@ -323,6 +368,7 @@ const ClassEditor: React.FC<{
                   axioms={item.subClassOfAxioms}
                   onAdd={(def) => handleAddAxiom('SubClassOf', def)}
                   onDelete={(id) => handleDeleteAxiom('SubClassOf', id)}
+                  onAddClick={() => openEditor('SubClassOf', 'Edit SubClass Expression')}
                 />
                 
                 <AxiomSubsection
@@ -330,6 +376,25 @@ const ClassEditor: React.FC<{
                   axioms={item.disjointClassesAxioms}
                   onAdd={(def) => handleAddAxiom('DisjointWith', def)}
                   onDelete={(id) => handleDeleteAxiom('DisjointWith', id)}
+                  onAddClick={() => openEditor('DisjointWith', 'Edit Disjoint Class Expression')}
+                />
+                
+                <AxiomSubsection
+                  title="Disjoint Union Of"
+                  axioms={item.disjointUnionAxioms}
+                  onAdd={() => {}}
+                  onDelete={(id) => handleDeleteAxiom('DisjointUnion' as any, id)}
+                  onAddClick={() => setIsDisjointUnionOpen(true)}
+                  emptyMessage="No disjoint unions defined"
+                />
+
+                <AxiomSubsection
+                  title="Has Key"
+                  axioms={item.hasKeyAxioms}
+                  onAdd={(def) => handleAddAxiom('HasKey' as any, def)}
+                  onDelete={(id) => handleDeleteAxiom('HasKey' as any, id)}
+                  onAddClick={() => openEditor('HasKey' as any, 'Edit Has Key (Properties)')}
+                  emptyMessage="No keys defined"
                 />
                 
                 {/* Members Section (Placeholder for now, could fetch instances) */}
@@ -343,6 +408,24 @@ const ClassEditor: React.FC<{
             </Panel>
         )}
       </div>
+
+      {/* Manchester Syntax Editor Modal */}
+      <ManchesterSyntaxEditor
+        isOpen={isEditorOpen}
+        onClose={() => setIsEditorOpen(false)}
+        onConfirm={handleEditorConfirm}
+        title={editorTitle}
+        projectId={projectId}
+      />
+
+      {/* Disjoint Union Selector */}
+      <MultiClassSelectorDialog
+        isOpen={isDisjointUnionOpen}
+        onClose={() => setIsDisjointUnionOpen(false)}
+        onConfirm={handleDisjointUnionConfirm}
+        classHierarchy={classHierarchy}
+        title="Select Classes for Disjoint Union"
+      />
     </div>
   );
 };

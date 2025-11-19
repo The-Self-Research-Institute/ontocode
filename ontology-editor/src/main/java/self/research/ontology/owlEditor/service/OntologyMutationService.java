@@ -232,6 +232,13 @@ public class OntologyMutationService {
                   <%s> a <%s> .
                 }
                 """.formatted(op.iri(), op.target());
+            case "addAxiom" -> {
+                // Placeholder for Manchester Syntax parsing
+                // op.target() contains the expression
+                // op.value() contains the axiom type (SubClassOf, EquivalentTo, etc.)
+                // For now, we just log or ignore because we lack the parser
+                yield ""; 
+            }
 
             default -> throw new IllegalArgumentException("Unsupported op " + op.type());
         };

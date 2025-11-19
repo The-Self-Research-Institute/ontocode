@@ -296,7 +296,8 @@ const DetailsPanel = ({
   onAddSubPropertyClick,
   onAddInverseClick,
   onAddDisjointClick,
-  onAddEquivalentClick
+  onAddEquivalentClick,
+  classHierarchy
 }: {
   selectedItem: SelectableItem | null;
   entitiesTab: string;
@@ -311,6 +312,7 @@ const DetailsPanel = ({
   onAddInverseClick?: () => void;
   onAddDisjointClick?: () => void;
   onAddEquivalentClick?: () => void;
+  classHierarchy: TreeNode[];
 }) => {
   if (!selectedItem) {
     return (
@@ -334,6 +336,7 @@ const DetailsPanel = ({
       return <ClassEditor
         item={selectedItem as TreeNode}
         onUpdate={onUpdate}
+        classHierarchy={classHierarchy}
         {...sharedProps}
       />;
     case 'ObjectProperties':
@@ -425,6 +428,7 @@ const Dashboard = () => {
   const [objectProperties, setObjectProperties] = useState<Property[]>([]);
   const [objectPropertyHierarchy, setObjectPropertyHierarchy] = useState<any[]>([]);
   const [dataProperties, setDataProperties] = useState<Property[]>([]);
+  const [dataPropertyHierarchy, setDataPropertyHierarchy] = useState<any[]>([]);
   const [annotationProperties, setAnnotationProperties] = useState<AnnotationProperty[]>([]);
   const [individuals, setIndividuals] = useState<Individual[]>([]);
   const [datatypes, setDatatypes] = useState<Datatype[]>([]);
@@ -565,7 +569,51 @@ const Dashboard = () => {
       
       setObjectPropertyHierarchy([topObjectProperty]);
 
-      setDataProperties(allProps.filter((p: Property) => p.type === "DatatypeProperty"));
+      const dpList = allProps.filter((p: Property) => p.type === "DatatypeProperty");
+      setDataProperties(dpList);
+
+      // Build Data Property Hierarchy
+      const dpMap = new Map<string, any>();
+      dpList.forEach((p: Property) => {
+        dpMap.set(p.id, { ...p, children: [], hasChildren: false });
+      });
+
+      const topDataProperty = {
+        id: 'http://www.w3.org/2002/07/owl#topDataProperty',
+        label: 'owl:topDataProperty',
+        type: 'DatatypeProperty',
+        children: [] as any[],
+        hasChildren: false,
+        annotations: {}
+      };
+
+      dpList.forEach((p: Property) => {
+        const node = dpMap.get(p.id);
+        if (p.superProperties && p.superProperties.length > 0) {
+          let added = false;
+          p.superProperties.forEach(superId => {
+             if (superId === topDataProperty.id) {
+                 topDataProperty.children.push(node);
+                 topDataProperty.hasChildren = true;
+                 added = true;
+             } else if (dpMap.has(superId)) {
+                 const parent = dpMap.get(superId);
+                 parent.children.push(node);
+                 parent.hasChildren = true;
+                 added = true;
+             }
+          });
+          if (!added) {
+             topDataProperty.children.push(node);
+             topDataProperty.hasChildren = true;
+          }
+        } else {
+          topDataProperty.children.push(node);
+          topDataProperty.hasChildren = true;
+        }
+      });
+
+      setDataPropertyHierarchy([topDataProperty]);
 
       // Handle other responses with fallbacks
       setIndividuals(Array.isArray(individualsRes?.data) ? individualsRes.data : 
@@ -733,7 +781,7 @@ const Dashboard = () => {
     switch (entitiesTab) {
       case "Classes": sourceData = classHierarchy; break;
       case "ObjectProperties": sourceData = objectPropertyHierarchy; break;
-      case "DataProperties": sourceData = dataProperties; break;
+      case "DataProperties": sourceData = dataPropertyHierarchy; break;
       case "AnnotationProperties": sourceData = annotationProperties; break;
       case "Individuals": sourceData = individuals; break;
       case "Datatypes": sourceData = datatypes; break;
@@ -765,7 +813,7 @@ const Dashboard = () => {
       setFilteredData(sourceData);
     }
 
-  }, [searchQuery, entitiesTab, classHierarchy, objectProperties, objectPropertyHierarchy, dataProperties, annotationProperties, individuals, datatypes]);
+  }, [searchQuery, entitiesTab, classHierarchy, objectProperties, objectPropertyHierarchy, dataProperties, dataPropertyHierarchy, annotationProperties, individuals, datatypes]);
 
   useEffect(() => {
     pluginManager.registerPlugin(SWRLPlugin);
@@ -1752,6 +1800,7 @@ const Dashboard = () => {
                     onAddInverseClick={() => handleOpenPropertySelector('inverse')}
                     onAddDisjointClick={() => handleOpenPropertySelector('disjoint')}
                     onAddEquivalentClick={() => handleOpenPropertySelector('equivalent')}
+                    classHierarchy={classHierarchy}
                   />
                 </div>
               </section>

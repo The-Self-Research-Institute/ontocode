@@ -13,6 +13,8 @@ export interface TreeNode {
   equivalentClassesAxioms?: Axiom[];
   subClassOfAxioms?: Axiom[];
   disjointClassesAxioms?: Axiom[];
+  disjointUnionAxioms?: Axiom[];
+  hasKeyAxioms?: Axiom[];
   usage?: ClassUsage;
 }
 
@@ -26,6 +28,7 @@ export interface Property {
   inverseProperties?: string[];
   disjointProperties?: string[];
   equivalentProperties?: string[];
+  propertyChains?: string[];
   characteristics?: string[];
   annotations?: Record<string, string>;
   usage?: PropertyUsage;
@@ -38,6 +41,8 @@ export interface Individual {
   types?: string[];
   annotations?: Record<string, string>;
   propertyAssertions?: PropertyAssertion[];
+  sameIndividualAs?: string[];
+  differentIndividualFrom?: string[];
 }
 
 export type AnnotationProperty = {

@@ -27,7 +27,8 @@ export const AxiomSubsection: React.FC<{
   onAdd: (definition: string) => void;
   onDelete: (id: string) => void;
   emptyMessage?: string;
-}> = ({ title, axioms, onAdd, onDelete, emptyMessage }) => {
+  onAddClick?: () => void;
+}> = ({ title, axioms, onAdd, onDelete, emptyMessage, onAddClick }) => {
   const [isAdding, setIsAdding] = useState(false);
 
   const handleSave = (definition: string) => {
@@ -35,12 +36,20 @@ export const AxiomSubsection: React.FC<{
     setIsAdding(false);
   };
 
+  const handleAddButtonClick = () => {
+    if (onAddClick) {
+      onAddClick();
+    } else {
+      setIsAdding(true);
+    }
+  };
+
   return (
     <div className="mb-4 last:mb-0">
       <div className="flex justify-between items-center mb-1">
         <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">{title}</h4>
         <button 
-          onClick={() => setIsAdding(true)} 
+          onClick={handleAddButtonClick} 
           className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors" 
           title={`Add ${title}`}
         >
@@ -189,5 +198,56 @@ export const Panel = ({
                 {isOpen && <div className="bg-white overflow-y-auto">{children}</div>}
             </div>
         </div>
+    );
+};
+
+export const MultiSelectItem: React.FC<{
+  item: string;
+  onDelete: (item: string) => void;
+}> = ({ item, onDelete }) => (
+    <div className="group flex justify-between items-center bg-white p-1.5 border-b border-gray-100 last:border-0 hover:bg-blue-50 transition-colors">
+        <span className="text-sm text-gray-800">{item.split('#').pop() || item}</span>
+        <button 
+          onClick={() => onDelete(item)} 
+          className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600 transition-all"
+          title={`Remove ${item.split('#').pop()}`}
+          aria-label={`Remove ${item.split('#').pop()}`}
+        >
+            <Trash2 size={14} />
+        </button>
+    </div>
+);
+
+export const MultiSelectSection: React.FC<{
+    title: string;
+    items: string[] | undefined;
+    onAddClick?: () => void;
+    onDelete: (item: string) => void;
+}> = ({ title, items, onAddClick, onDelete }) => {
+    return (
+         <div className="mb-4 last:mb-0">
+             <div className="flex justify-between items-center mb-1">
+                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">{title}</h4>
+                 {onAddClick && (
+                    <button 
+                    onClick={onAddClick} 
+                    className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors"
+                    title={`Add ${title.slice(0, -1)}`}
+                    aria-label={`Add ${title.slice(0, -1)}`}
+                    >
+                        <Plus size={14}/>
+                    </button>
+                 )}
+             </div>
+             <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm">
+                 {items && items.length > 0 ? (
+                    items.map(item => <MultiSelectItem key={item} item={item} onDelete={onDelete} />)
+                 ) : (
+                    <div className="p-2 text-xs text-gray-400 italic bg-gray-50">
+                        No {title.toLowerCase()} defined
+                    </div>
+                 )}
+             </div>
+         </div>
     );
 };

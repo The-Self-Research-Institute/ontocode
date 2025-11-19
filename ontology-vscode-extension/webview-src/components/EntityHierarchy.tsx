@@ -54,9 +54,9 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
 
   const renderItem = (item: SelectableItem, level = 0): React.JSX.Element => {
     const isSelected = selectedItem?.id === item.id;
-    // An item is a "TreeNode" if it's in the Classes or ObjectProperties tab.
+    // An item is a "TreeNode" if it's in the Classes, ObjectProperties, or DataProperties tab.
     // We check 'hasChildren' to know if it's expandable.
-    const isTreeNode = entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties';
+    const isTreeNode = entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties';
     const hasChildren = 'hasChildren' in item && item.hasChildren;
     const isExpanded = isTreeNode && hasChildren && expandedNodes.includes(item.id);
 
