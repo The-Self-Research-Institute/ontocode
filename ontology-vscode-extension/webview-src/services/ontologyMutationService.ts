@@ -242,7 +242,19 @@ export const ontologyMutationService = {
    */
   async makeSiblingsDisjoint(projectId: string, classIds: string[]): Promise<void> {
     await apiClient.post(`/api/ontology/make-siblings-disjoint/${projectId}`, { classIds });
-  }
+  },
+
+  /**
+   * Add an axiom using Manchester Syntax
+   */
+  async addAxiom(projectId: string, classIri: string, type: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith', expression: string): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'addAxiom',
+      classIri,
+      target: expression, // We use 'target' for the expression
+      value: type // We use 'value' for the axiom type
+    }]);
+  },
 };
 
 export default ontologyMutationService;

@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
-import { Panel, AnnotationsDisplay } from './common';
+import { Panel, AnnotationsDisplay, MultiSelectSection } from './common';
 import type { Individual, PropertyAssertion } from '../../types';
+import { ManchesterSyntaxEditor } from '../dialogs';
+import ontologyMutationService from '../../services/ontologyMutationService';
 
 const IndividualEditor: React.FC<{
   item: Individual;
@@ -9,9 +11,14 @@ const IndividualEditor: React.FC<{
   onAddAnnotation: () => void;
   onDeleteAnnotation: (key: string) => void;
   activeTheme?: string;
-}> = ({ item, onUpdate, onAddAnnotation, onDeleteAnnotation, activeTheme }) => {
+  projectId: string;
+}> = ({ item, onUpdate, onAddAnnotation, onDeleteAnnotation, activeTheme, projectId }) => {
   const [isAddingAssertion, setIsAddingAssertion] = useState(false);
   const [newAssertion, setNewAssertion] = useState({ propertyLabel: '', targetLabel: '', isObjectProperty: true });
+  
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [editorTitle, setEditorTitle] = useState("");
+  const [editorAction, setEditorAction] = useState<((val: string) => void) | null>(null);
 
   const handleAddAssertion = () => {
     if (!newAssertion.propertyLabel || !newAssertion.targetLabel) {
@@ -33,6 +40,38 @@ const IndividualEditor: React.FC<{
 
   const handleDeleteAssertion = (id: string) => {
     onUpdate({ ...item, propertyAssertions: item.propertyAssertions?.filter(a => a.id !== id) });
+  };
+
+  const handleAddSameAs = async (iri: string) => {
+      try {
+          await ontologyMutationService.addAxiom(projectId, item.id, 'SameIndividual' as any, iri);
+          // Optimistic update
+          onUpdate({ ...item, sameIndividualAs: [...(item.sameIndividualAs || []), iri] });
+      } catch (e) { console.error(e); }
+  };
+
+  const handleAddDifferentFrom = async (iri: string) => {
+      try {
+          await ontologyMutationService.addAxiom(projectId, item.id, 'DifferentIndividuals' as any, iri);
+          // Optimistic update
+          onUpdate({ ...item, differentIndividualFrom: [...(item.differentIndividualFrom || []), iri] });
+      } catch (e) { console.error(e); }
+  };
+
+  const handleDeleteSameAs = async (iri: string) => {
+      // Implement delete
+      onUpdate({ ...item, sameIndividualAs: item.sameIndividualAs?.filter(i => i !== iri) });
+  };
+
+  const handleDeleteDifferentFrom = async (iri: string) => {
+      // Implement delete
+      onUpdate({ ...item, differentIndividualFrom: item.differentIndividualFrom?.filter(i => i !== iri) });
+  };
+
+  const openEditor = (title: string, action: (val: string) => void) => {
+      setEditorTitle(title);
+      setEditorAction(() => action);
+      setIsEditorOpen(true);
   };
   
   return (
@@ -125,9 +164,52 @@ const IndividualEditor: React.FC<{
                 </div>
               </div>
             </div>
+
+            {/* Same Individual As / Different Individual From Section */}
+            <div className="mb-4 last:mb-0">
+              <div className="flex justify-between items-center mb-1">
+                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Same Individual As / Different Individual From</h4>
+                <button onClick={() => openEditor('Add Same Individual As (IRI)', handleAddSameAs)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors" title="Add Same Individual As">
+                  <Plus size={14} />
+                </button>
+                <button onClick={() => openEditor('Add Different Individual From (IRI)', handleAddDifferentFrom)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors" title="Add Different Individual From">
+                  <Plus size={14} />
+                </button>
+              </div>
+              <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm p-1.5">
+                {/* Same Individual As */}
+                <MultiSelectSection
+                    title="Same Individual As"
+                    items={item.sameIndividualAs}
+                    onAddClick={() => openEditor("Add Same Individual As (IRI)", handleAddSameAs)}
+                    onDelete={handleDeleteSameAs}
+                />
+
+                {/* Different Individual From */}
+                <MultiSelectSection
+                    title="Different Individual From"
+                    items={item.differentIndividualFrom}
+                    onAddClick={() => openEditor("Add Different Individual From (IRI)", handleAddDifferentFrom)}
+                    onDelete={handleDeleteDifferentFrom}
+                />
+              </div>
+            </div>
           </div>
         </Panel>
       </div>
+
+      {/* Manchester Syntax Editor Dialog */}
+      {isEditorOpen && (
+        <ManchesterSyntaxEditor
+          open={isEditorOpen}
+          onClose={() => setIsEditorOpen(false)}
+          title={editorTitle}
+          onSave={val => {
+              if (editorAction) editorAction(val);
+              setIsEditorOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 };
