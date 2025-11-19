@@ -47,7 +47,7 @@ const ClassSelectorDialog: React.FC<ClassSelectorDialogProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={handleClose}>
-      <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full mx-4 flex flex-col max-h-[75vh]" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-lg shadow-xl max-w-5xl w-full mx-4 flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
         <div className="px-4 py-3 border-b bg-gray-50 flex justify-between items-center">
           <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
           <button onClick={handleClose} className="text-gray-400 hover:text-gray-600">
