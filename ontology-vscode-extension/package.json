@@ -7,6 +7,7 @@
   "engines": {
     "vscode": "^1.74.0"
   },
+  "browser": "./dist/web/extension.js",
   "categories": [
     "Other",
     "Languages",
@@ -53,7 +54,7 @@
         "category": "OntoCode"
       }
     ],
-     "menus": {
+    "menus": {
       "commandPalette": [
         {
           "command": "ontocode.edit",
@@ -61,7 +62,7 @@
         },
         {
           "command": "ontocode.editLargeFile",
-           "when": "resourceLangId == owl"
+          "when": "resourceLangId == owl"
         }
       ],
       "editor/context": [
@@ -107,6 +108,8 @@
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js",
     "build-webview": "cd webview && npm run build",
+    "compile-web": "webpack --config webpack.config.js --mode development --watch",
+    "test-web": "vscode-test-web --browserType=chromium --extensionDevelopmentPath=./",
     "dev-webview": "cd webview && npm run start"
   },
   "devDependencies": {
@@ -115,13 +118,28 @@
     "@types/vscode": "^1.74.0",
     "@typescript-eslint/eslint-plugin": "^5.45.0",
     "@typescript-eslint/parser": "^5.45.0",
+    "@vscode/test-web": "^0.0.75",
+    "assert": "^2.1.0",
+    "buffer": "^6.0.3",
     "eslint": "^8.28.0",
-    "typescript": "^4.9.4"
+    "https-browserify": "^1.0.0",
+    "process": "^0.11.10",
+    "stream-browserify": "^3.0.0",
+    "stream-http": "^3.2.0",
+    "ts-loader": "^9.5.4",
+    "typescript": "^4.9.4",
+    "url": "^0.11.4",
+    "util": "^0.12.5",
+    "webpack": "^5.103.0",
+    "webpack-cli": "^6.0.1"
   },
   "dependencies": {
+    "-": "^0.0.1",
     "axios": "^1.10.0",
+    "crypto-browserify": "^3.12.1",
     "form-data": "^4.0.3",
     "fs-extra": "^11.1.0",
-    "lucide-react": "^0.525.0"
+    "lucide-react": "^0.525.0",
+    "path-browserify": "^1.0.1"
   }
 }
