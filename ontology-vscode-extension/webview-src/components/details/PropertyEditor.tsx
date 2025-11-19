@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Plus, Trash2, CheckSquare, Square } from 'lucide-react';
 import { Panel, AnnotationsDisplay, MultiSelectSection } from './common';
-import { ManchesterSyntaxEditor } from '../dialogs';
+import { ManchesterSyntaxEditor, PropertyChainDialog } from '../dialogs';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import type { Property } from '../../types';
 
@@ -19,6 +19,7 @@ const PropertyEditor: React.FC<{
   onAddInverseClick?: () => void;
   onAddDisjointClick?: () => void;
   onAddEquivalentClick?: () => void;
+  objectProperties?: Property[];
 }> = ({ 
     item, 
     onUpdate, 
@@ -31,11 +32,13 @@ const PropertyEditor: React.FC<{
     onAddSubPropertyClick,
     onAddInverseClick,
     onAddDisjointClick,
-    onAddEquivalentClick
+    onAddEquivalentClick,
+    objectProperties = []
 }) => {
     const [isEditorOpen, setIsEditorOpen] = useState(false);
     const [editorTitle, setEditorTitle] = useState("");
     const [editorAction, setEditorAction] = useState<((val: string) => void) | null>(null);
+    const [isChainDialogOpen, setIsChainDialogOpen] = useState(false);
 
     const isObjectProperty = item.type === 'ObjectProperty';
     const characteristics = isObjectProperty 
@@ -154,10 +157,18 @@ const PropertyEditor: React.FC<{
         console.log("Delete property chain:", chain);
     };
 
+    const handlePropertyChainConfirm = async (chain: string[]) => {
+        try {
+            const expression = chain.join(' ∘ ');
+            await ontologyMutationService.addAxiom(projectId, item.id, 'PropertyChain' as any, expression);
+            console.log("Property chain added:", expression);
+        } catch (error) {
+            console.error("Failed to add property chain:", error);
+        }
+    };
+
     const openChainEditor = () => {
-        setEditorTitle("Add Property Chain");
-        setEditorAction(() => handleAddPropertyChain);
-        setIsEditorOpen(true);
+        setIsChainDialogOpen(true);
     };
 
     return (
@@ -281,6 +292,14 @@ const PropertyEditor: React.FC<{
                 title={editorTitle}
                 projectId={projectId}
                 initialValue=""
+            />
+
+            <PropertyChainDialog
+                isOpen={isChainDialogOpen}
+                onClose={() => setIsChainDialogOpen(false)}
+                onConfirm={handlePropertyChainConfirm}
+                properties={objectProperties}
+                title="Create Property Chain"
             />
         </div>
     );

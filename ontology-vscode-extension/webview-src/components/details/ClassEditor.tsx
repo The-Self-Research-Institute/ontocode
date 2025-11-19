@@ -36,7 +36,8 @@ const UsageTab: React.FC<{
     equivalent: true,
     union: true,
     intersection: true,
-    annotation: true
+    annotation: true,
+    annotation_on_class: true
   });
 
   useEffect(() => {
@@ -74,7 +75,8 @@ const UsageTab: React.FC<{
     equivalent: filteredUsages.filter(u => u.type === 'equivalent'),
     union: filteredUsages.filter(u => u.type === 'union'),
     intersection: filteredUsages.filter(u => u.type === 'intersection'),
-    annotation: filteredUsages.filter(u => u.type === 'annotation')
+    annotation: filteredUsages.filter(u => u.type === 'annotation'),
+    annotation_on_class: filteredUsages.filter(u => u.type === 'annotation_on_class')
   };
 
   if (loading) {
@@ -145,6 +147,10 @@ const UsageTab: React.FC<{
           <label className="flex items-center gap-1 cursor-pointer">
             <input type="checkbox" checked={showTypes.annotation} onChange={(e) => setShowTypes({...showTypes, annotation: e.target.checked})} className="w-3 h-3" />
             <span>annotations ({usagesByType.annotation.length})</span>
+          </label>
+          <label className="flex items-center gap-1 cursor-pointer">
+            <input type="checkbox" checked={showTypes.annotation_on_class} onChange={(e) => setShowTypes({...showTypes, annotation_on_class: e.target.checked})} className="w-3 h-3" />
+            <span>class annotations ({usagesByType.annotation_on_class.length})</span>
           </label>
         </div>
       </div>
