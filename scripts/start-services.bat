@@ -15,7 +15,7 @@ echo ========================================
 echo.
 
 :: Check if Maven daemon is available
-where mvn >nul 2>&1
+where mvnd >nul 2>&1
 if %errorlevel% equ 0 (
     set MVN_CMD=mvnd
     echo Using Maven Daemon for faster builds...
@@ -59,8 +59,8 @@ echo.
 echo %BLUE%[2/7] Building all modules...%NC%
 echo.
 cd /d %~dp0..
-%MVN_CMD% clean install -DskipTests -T 1C
-if %errorlevel% neq 0 (
+call %MVN_CMD% clean install -DskipTests -T 1C -B
+if errorlevel 1 (
     echo %RED%Build failed! Check logs above.%NC%
     pause
     exit /b 1
