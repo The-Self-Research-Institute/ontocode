@@ -706,6 +706,46 @@ public class OntologyQueryService {
             }
         }
         
+        // 11. Find all annotation properties ON this class (annotations declared on the class itself)
+        String classAnnotationsQuery = PREFIXES + """
+            SELECT DISTINCT ?prop ?value ?propLabel WHERE {
+              <%s> ?prop ?value .
+              ?prop a owl:AnnotationProperty .
+              OPTIONAL { ?prop rdfs:label ?propLabel }
+            }
+            """.formatted(classIri);
+        TupleQueryResult classAnnotations = datasetService.execSelect(projectId, classAnnotationsQuery);
+        while (classAnnotations.hasNext()) {
+            BindingSet sol = classAnnotations.next();
+            Map<String, String> usage = new LinkedHashMap<>();
+            usage.put("type", "annotation_on_class");
+            String propIri = resource(sol, "prop");
+            if (propIri != null) {
+                // Skip standard RDF/RDFS/OWL properties that aren't custom annotations
+                if (propIri.startsWith("http://www.w3.org/2000/01/rdf-schema#") && 
+                    (propIri.endsWith("#label") || propIri.endsWith("#comment"))) {
+                    continue;
+                }
+                if (propIri.startsWith("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")) {
+                    continue;
+                }
+                
+                usage.put("subject", classIri);
+                String propLabel = sol.hasBinding("propLabel") ? literal(sol, "propLabel") : localName(propIri);
+                String value = sol.hasBinding("value") ? sol.getValue("value").stringValue() : "";
+                
+                // Truncate long values for display
+                if (value.length() > 100) {
+                    value = value.substring(0, 97) + "...";
+                }
+                
+                usage.put("subjectLabel", propLabel);
+                usage.put("context", value);
+                usage.put("annotationProperty", propIri);
+                usages.add(usage);
+            }
+        }
+        
         return usages;
     }
 

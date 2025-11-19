@@ -297,7 +297,8 @@ const DetailsPanel = ({
   onAddInverseClick,
   onAddDisjointClick,
   onAddEquivalentClick,
-  classHierarchy
+  classHierarchy,
+  objectProperties
 }: {
   selectedItem: SelectableItem | null;
   entitiesTab: string;
@@ -313,6 +314,7 @@ const DetailsPanel = ({
   onAddDisjointClick?: () => void;
   onAddEquivalentClick?: () => void;
   classHierarchy: TreeNode[];
+  objectProperties: Property[];
 }) => {
   if (!selectedItem) {
     return (
@@ -351,6 +353,7 @@ const DetailsPanel = ({
         onAddInverseClick={onAddInverseClick}
         onAddDisjointClick={onAddDisjointClick}
         onAddEquivalentClick={onAddEquivalentClick}
+        objectProperties={objectProperties}
       />;
     case 'Individuals':
       return <IndividualEditor item={selectedItem as Individual} onUpdate={onUpdate} {...sharedProps} />;
@@ -1801,6 +1804,7 @@ const Dashboard = () => {
                     onAddDisjointClick={() => handleOpenPropertySelector('disjoint')}
                     onAddEquivalentClick={() => handleOpenPropertySelector('equivalent')}
                     classHierarchy={classHierarchy}
+                    objectProperties={objectProperties}
                   />
                 </div>
               </section>

@@ -5,3 +5,4 @@ export { default as AddAnnotationDialog } from './AddAnnotationDialog';
 export { default as AddClassDialog } from './AddClassDialog';
 export { default as ManchesterSyntaxEditor } from './ManchesterSyntaxEditor';
 export { default as MultiClassSelectorDialog } from './MultiClassSelectorDialog';
+export { default as PropertyChainDialog } from './PropertyChainDialog';
