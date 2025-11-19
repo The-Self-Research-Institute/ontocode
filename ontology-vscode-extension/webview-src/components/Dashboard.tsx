@@ -17,6 +17,13 @@ import IndividualEditor from './details/IndividualEditor';
 import { Panel, AnnotationsDisplay } from './details/common';
 import SparqlQueryEditor from './SparqlQueryEditor';
 import { ProjectSelector } from './ProjectSelector';
+import { 
+  ClassSelectorDialog, 
+  PropertySelectorDialog, 
+  CreateIndividualModal, 
+  AddAnnotationDialog, 
+  AddClassDialog 
+} from './dialogs';
 
 type TopLevelClass = TreeNode & { hasChildren: boolean };
 
@@ -271,292 +278,26 @@ const ConfirmDialog = ({
   );
 };
 
-const AddClassDialog = ({ 
-  isOpen, 
-  onClose, 
-  onCreate,
-  type 
-}: { 
-  isOpen: boolean;
-  onClose: () => void;
-  onCreate: (name: string) => void;
-  type: 'subclass' | 'sibling';
-}) => {
-  const [name, setName] = useState('');
-  
-  if (!isOpen) return null;
-
-  const handleCreate = () => {
-    if (name.trim()) {
-      onCreate(name.trim());
-      setName('');
-      onClose();
-    } else {
-      showNotification("Class name cannot be empty.", 'warning');
-    }
-  };
-
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handleCreate();
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4" onClick={e => e.stopPropagation()}>
-        <h3 className="text-lg font-semibold text-black mb-4">
-          Create New {type === 'subclass' ? 'Subclass' : 'Sibling Class'}
-        </h3>
-        <div className="space-y-4 text-sm">
-          <div>
-            <label className="font-medium text-black block mb-2">Class Name</label>
-            <input 
-              type="text" 
-              value={name} 
-              onChange={e => setName(e.target.value)}
-              onKeyPress={handleKeyPress}
-              placeholder="Enter class name" 
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-black"
-              autoFocus
-            />
-          </div>
-          <div>
-            <label className="font-medium text-black block mb-2">IRI</label>
-            <input 
-              type="text" 
-              disabled 
-              value="(auto-generated from ontology IRI + class name)" 
-              className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-md text-gray-500 text-xs" 
-            />
-          </div>
-        </div>
-        <div className="mt-6 flex justify-end gap-3">
-          <button 
-            onClick={onClose} 
-            className="px-4 py-2 text-sm bg-gray-200 text-black rounded-md hover:bg-gray-300"
-          >
-            Cancel
-          </button>
-          <button 
-            onClick={handleCreate} 
-            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
-          >
-            Create
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const CreateIndividualModal = ({ isOpen, onClose, onCreate }: { isOpen: boolean, onClose: () => void, onCreate: (name: string) => void }) => {
-  const [name, setName] = useState('');
-  if (!isOpen) return null;
-
-  const handleCreate = () => {
-    if (name.trim()) {
-      onCreate(name.trim());
-      setName('');
-      onClose();
-    } else {
-      showNotification("Name cannot be empty.", 'warning');
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4" onClick={e => e.stopPropagation()}>
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Create a new Named Individual</h3>
-        <div className="space-y-4 text-sm">
-          <div>
-            <label className="font-medium text-gray-700">Name</label>
-            <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Short name or full IRI" className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500" />
-          </div>
-          <div>
-            <label className="font-medium text-gray-700">IRI</label>
-            <input type="text" disabled value="(auto-generated)" className="mt-1 w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-md text-gray-500" />
-          </div>
-        </div>
-        <div className="mt-6 flex justify-end gap-3">
-          <button onClick={onClose} className="px-4 py-2 text-sm bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300">Cancel</button>
-          <button onClick={handleCreate} className="px-4 py-2 text-sm bg-purple-600 text-white rounded-md hover:bg-purple-700">OK</button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const AddAnnotationDialog = ({ 
-  isOpen, 
-  onClose, 
-  onAdd, 
-  availableProperties 
-}: { 
-  isOpen: boolean;
-  onClose: () => void;
-  onAdd: (propertyIri: string, value: string, datatype?: string) => void;
-  availableProperties: AnnotationProperty[];
-}) => {
-  const [selectedProperty, setSelectedProperty] = useState('');
-  const [customProperty, setCustomProperty] = useState('');
-  const [value, setValue] = useState('');
-  const [datatype, setDatatype] = useState('xsd:string');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [useCustom, setUseCustom] = useState(false);
-
-  if (!isOpen) return null;
-
-  // Common annotation properties
-  const commonProperties = [
-    { iri: 'http://www.w3.org/2000/01/rdf-schema#label', label: 'rdfs:label' },
-    { iri: 'http://www.w3.org/2000/01/rdf-schema#comment', label: 'rdfs:comment' },
-    { iri: 'http://www.w3.org/2000/01/rdf-schema#seeAlso', label: 'rdfs:seeAlso' },
-    { iri: 'http://www.w3.org/2000/01/rdf-schema#isDefinedBy', label: 'rdfs:isDefinedBy' },
-  ];
-
-  // Merge with available properties from ontology
-  const allProperties = [
-    ...commonProperties,
-    ...availableProperties.map(p => ({ iri: p.id, label: p.label || p.id.split('#').pop() || p.id }))
-  ];
-
-  // Filter properties based on search
-  const filteredProperties = allProperties.filter(p => 
-    p.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    p.iri.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  const handleAdd = () => {
-    const propertyIri = useCustom ? customProperty : selectedProperty;
-    if (!propertyIri.trim() || !value.trim()) {
-      showNotification("Property and value are required.", 'warning');
-      return;
-    }
-    onAdd(propertyIri, value, datatype);
-    // Reset form
-    setSelectedProperty('');
-    setCustomProperty('');
-    setValue('');
-    setDatatype('xsd:string');
-    setSearchQuery('');
-    setUseCustom(false);
-    onClose();
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-white rounded-lg shadow-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <h3 className="text-lg font-semibold text-black mb-4">Add Annotation</h3>
-        
-        <div className="space-y-4 text-sm">
-          {/* Property Selection */}
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <label className="font-medium text-black">Annotation Property</label>
-              <label className="flex items-center gap-1 text-xs text-black">
-                <input 
-                  type="checkbox" 
-                  checked={useCustom} 
-                  onChange={(e) => setUseCustom(e.target.checked)}
-                  className="w-3 h-3"
-                />
-                Custom IRI
-              </label>
-            </div>
-            
-            {useCustom ? (
-              <input
-                type="text"
-                value={customProperty}
-                onChange={e => setCustomProperty(e.target.value)}
-                placeholder="http://example.com/ontology#customProperty"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-black"
-              />
-            ) : (
-              <>
-                <div className="relative mb-2">
-                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                  <input
-                    type="text"
-                    placeholder="Search properties..."
-                    value={searchQuery}
-                    onChange={e => setSearchQuery(e.target.value)}
-                    className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-black"
-                  />
-                </div>
-                <select
-                  value={selectedProperty}
-                  onChange={e => setSelectedProperty(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 max-h-40 text-black"
-                  size={Math.min(filteredProperties.length + 1, 8)}
-                >
-                  <option value="" className="text-black">-- Select a property --</option>
-                  {filteredProperties.map(prop => (
-                    <option key={prop.iri} value={prop.iri} title={prop.iri} className="text-black">
-                      {prop.label}
-                    </option>
-                  ))}
-                </select>
-              </>
-            )}
-          </div>
-
-          {/* Value Input */}
-          <div>
-            <label className="font-medium text-black block mb-2">Value</label>
-            <textarea
-              value={value}
-              onChange={e => setValue(e.target.value)}
-              placeholder="Enter annotation value..."
-              rows={4}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-black"
-            />
-          </div>
-
-          {/* Datatype Selection */}
-          <div>
-            <label className="font-medium text-black block mb-2">Datatype</label>
-            <select
-              value={datatype}
-              onChange={e => setDatatype(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-black"
-            >
-              <option value="xsd:string" className="text-black">xsd:string</option>
-              <option value="xsd:integer" className="text-black">xsd:integer</option>
-              <option value="xsd:decimal" className="text-black">xsd:decimal</option>
-              <option value="xsd:boolean" className="text-black">xsd:boolean</option>
-              <option value="xsd:date" className="text-black">xsd:date</option>
-              <option value="xsd:dateTime" className="text-black">xsd:dateTime</option>
-              <option value="xsd:anyURI" className="text-black">xsd:anyURI</option>
-              <option value="" className="text-black">Plain literal (no datatype)</option>
-            </select>
-          </div>
-        </div>
-
-        <div className="mt-6 flex justify-end gap-3">
-          <button 
-            onClick={onClose} 
-            className="px-4 py-2 text-sm bg-gray-200 text-black rounded-md hover:bg-gray-300"
-          >
-            Cancel
-          </button>
-          <button 
-            onClick={handleAdd} 
-            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
-          >
-            Add
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
+// Dialog components moved to separate files
 
 // #endregion
 
 // #region Details Panel
-const DetailsPanel = ({ selectedItem, entitiesTab, activeTheme, projectId, onUpdate, onAddAnnotation, onDeleteAnnotation }: {
+const DetailsPanel = ({ 
+  selectedItem, 
+  entitiesTab, 
+  activeTheme, 
+  projectId, 
+  onUpdate, 
+  onAddAnnotation, 
+  onDeleteAnnotation,
+  onAddDomainClick,
+  onAddRangeClick,
+  onAddSubPropertyClick,
+  onAddInverseClick,
+  onAddDisjointClick,
+  onAddEquivalentClick
+}: {
   selectedItem: SelectableItem | null;
   entitiesTab: string;
   activeTheme?: string;
@@ -564,6 +305,12 @@ const DetailsPanel = ({ selectedItem, entitiesTab, activeTheme, projectId, onUpd
   onUpdate: (item: SelectableItem) => void;
   onAddAnnotation: () => void;
   onDeleteAnnotation: (key: string) => void;
+  onAddDomainClick?: () => void;
+  onAddRangeClick?: () => void;
+  onAddSubPropertyClick?: () => void;
+  onAddInverseClick?: () => void;
+  onAddDisjointClick?: () => void;
+  onAddEquivalentClick?: () => void;
 }) => {
   if (!selectedItem) {
     return (
@@ -591,7 +338,17 @@ const DetailsPanel = ({ selectedItem, entitiesTab, activeTheme, projectId, onUpd
       />;
     case 'ObjectProperties':
     case 'DataProperties':
-      return <PropertyEditor item={selectedItem as Property} onUpdate={onUpdate} {...sharedProps} />;
+      return <PropertyEditor 
+        item={selectedItem as Property} 
+        onUpdate={onUpdate} 
+        {...sharedProps} 
+        onAddDomainClick={onAddDomainClick}
+        onAddRangeClick={onAddRangeClick}
+        onAddSubPropertyClick={onAddSubPropertyClick}
+        onAddInverseClick={onAddInverseClick}
+        onAddDisjointClick={onAddDisjointClick}
+        onAddEquivalentClick={onAddEquivalentClick}
+      />;
     case 'Individuals':
       return <IndividualEditor item={selectedItem as Individual} onUpdate={onUpdate} {...sharedProps} />;
     case 'AnnotationProperties': {
@@ -641,6 +398,11 @@ const Dashboard = () => {
   const [isAddClassDialogOpen, setAddClassDialogOpen] = useState(false);
   const [addClassType, setAddClassType] = useState<'subclass' | 'sibling'>('subclass');
   
+  // Selector Dialog State
+  const [isClassSelectorOpen, setIsClassSelectorOpen] = useState(false);
+  const [isPropertySelectorOpen, setIsPropertySelectorOpen] = useState(false);
+  const [selectorTarget, setSelectorTarget] = useState<'domain' | 'range' | 'subProperty' | 'inverse' | 'disjoint' | 'equivalent' | null>(null);
+  
   // Confirm dialog state
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
@@ -661,6 +423,7 @@ const Dashboard = () => {
 
   const [classHierarchy, setClassHierarchy] = useState<TreeNode[]>([]);
   const [objectProperties, setObjectProperties] = useState<Property[]>([]);
+  const [objectPropertyHierarchy, setObjectPropertyHierarchy] = useState<any[]>([]);
   const [dataProperties, setDataProperties] = useState<Property[]>([]);
   const [annotationProperties, setAnnotationProperties] = useState<AnnotationProperty[]>([]);
   const [individuals, setIndividuals] = useState<Individual[]>([]);
@@ -746,7 +509,62 @@ const Dashboard = () => {
                        Array.isArray(propertiesRes?.properties) ? propertiesRes.properties : 
                        Array.isArray(propertiesRes) ? propertiesRes : [];
       console.log("All props after extraction:", allProps);
-      setObjectProperties(allProps.filter((p: Property) => p.type === "ObjectProperty"));
+      const opList = allProps.filter((p: Property) => p.type === "ObjectProperty");
+      setObjectProperties(opList);
+
+      // Build Object Property Hierarchy
+      const opMap = new Map<string, any>();
+      // Create nodes
+      opList.forEach((p: Property) => {
+        opMap.set(p.id, { ...p, children: [], hasChildren: false });
+      });
+
+      const topObjectProperty = {
+        id: 'http://www.w3.org/2002/07/owl#topObjectProperty',
+        label: 'owl:topObjectProperty',
+        type: 'ObjectProperty',
+        children: [] as any[],
+        hasChildren: false,
+        annotations: {}
+      };
+      
+      // If topObjectProperty is not in the list (it usually isn't), we use our created one.
+      // If it IS in the list, we should use that one but ensure it's the root.
+      // Typically backend doesn't return built-in top properties in the list of user properties.
+      
+      opList.forEach((p: Property) => {
+        const node = opMap.get(p.id);
+        if (p.superProperties && p.superProperties.length > 0) {
+          let added = false;
+          p.superProperties.forEach(superId => {
+             if (superId === topObjectProperty.id) {
+                 topObjectProperty.children.push(node);
+                 topObjectProperty.hasChildren = true;
+                 added = true;
+             } else if (opMap.has(superId)) {
+                 const parent = opMap.get(superId);
+                 parent.children.push(node);
+                 parent.hasChildren = true;
+                 added = true;
+             }
+          });
+          // If has super properties but none found in map (e.g. external), add to top?
+          // Or if it has super properties, it shouldn't be at top level unless explicitly under top.
+          // If we didn't add it to any parent, and it's not explicitly under top, what to do?
+          // For now, if not added to any known parent, add to topObjectProperty as fallback
+          if (!added) {
+             topObjectProperty.children.push(node);
+             topObjectProperty.hasChildren = true;
+          }
+        } else {
+          // No super properties -> child of topObjectProperty
+          topObjectProperty.children.push(node);
+          topObjectProperty.hasChildren = true;
+        }
+      });
+      
+      setObjectPropertyHierarchy([topObjectProperty]);
+
       setDataProperties(allProps.filter((p: Property) => p.type === "DatatypeProperty"));
 
       // Handle other responses with fallbacks
@@ -914,7 +732,7 @@ const Dashboard = () => {
     let sourceData: SelectableItem[] = [];
     switch (entitiesTab) {
       case "Classes": sourceData = classHierarchy; break;
-      case "ObjectProperties": sourceData = objectProperties; break;
+      case "ObjectProperties": sourceData = objectPropertyHierarchy; break;
       case "DataProperties": sourceData = dataProperties; break;
       case "AnnotationProperties": sourceData = annotationProperties; break;
       case "Individuals": sourceData = individuals; break;
@@ -927,11 +745,12 @@ const Dashboard = () => {
         const results: SelectableItem[] = [];
         for (const item of items) {
           let matches = item.label?.toLowerCase().includes(lowercasedQuery);
-          const treeNode = item as TreeNode;
-          if (treeNode.children) {
-            const childResults = filterRecursively(treeNode.children);
+          // Check for children in both TreeNode and our extended Property objects
+          const children = (item as any).children;
+          if (children) {
+            const childResults = filterRecursively(children);
             if (childResults.length > 0) {
-              results.push({ ...item, children: childResults as any });
+              results.push({ ...item, children: childResults } as any);
               matches = true;
             }
           }
@@ -946,7 +765,7 @@ const Dashboard = () => {
       setFilteredData(sourceData);
     }
 
-  }, [searchQuery, entitiesTab, classHierarchy, objectProperties, dataProperties, annotationProperties, individuals, datatypes]);
+  }, [searchQuery, entitiesTab, classHierarchy, objectProperties, objectPropertyHierarchy, dataProperties, annotationProperties, individuals, datatypes]);
 
   useEffect(() => {
     pluginManager.registerPlugin(SWRLPlugin);
@@ -1131,7 +950,7 @@ const Dashboard = () => {
     }
 
     if ((type === 'subclass' || type === 'sibling') && !selectedItem) {
-      showNotification("Please select a class first.", 'warning');
+      showNotification("Please select an item first.", 'warning');
       return;
     }
     
@@ -1151,63 +970,126 @@ const Dashboard = () => {
       
       // Determine parent IRI based on type
       let parentIri = 'http://www.w3.org/2002/07/owl#Thing';
-      if (type === 'subclass' && selectedItem?.id) {
-        parentIri = selectedItem.id;
-      } else if (type === 'sibling' && selectedItem?.id) {
-        // Find parent of selected item
-        const findParent = (nodes: TreeNode[], targetId: string, parent: TreeNode | null = null): TreeNode | null => {
-          for (const node of nodes) {
-            if (node.id === targetId) return parent;
-            if (node.children) {
-              const found = findParent(node.children, targetId, node);
-              if (found) return found;
-            }
+      
+      if (entitiesTab === 'Classes') {
+          if (type === 'subclass' && selectedItem?.id) {
+            parentIri = selectedItem.id;
+          } else if (type === 'sibling' && selectedItem?.id) {
+            // Find parent of selected item
+            const findParent = (nodes: TreeNode[], targetId: string, parent: TreeNode | null = null): TreeNode | null => {
+              for (const node of nodes) {
+                if (node.id === targetId) return parent;
+                if (node.children) {
+                  const found = findParent(node.children, targetId, node);
+                  if (found) return found;
+                }
+              }
+              return null;
+            };
+            const parent = findParent(classHierarchy, selectedItem.id);
+            parentIri = parent?.id || 'http://www.w3.org/2002/07/owl#Thing';
           }
-          return null;
-        };
-        const parent = findParent(classHierarchy, selectedItem.id);
-        parentIri = parent?.id || 'http://www.w3.org/2002/07/owl#Thing';
+
+          // Call backend API
+          await ontologyMutationService.createClass(projectId, newIri, name, parentIri);
+
+          // Update local state
+          const newNode: TreeNode = {
+            id: newIri,
+            label: name,
+            children: undefined,
+            hasChildren: false,
+            annotations: { 'rdfs:label': name }
+          };
+
+          if (type === 'subclass' && selectedItem?.id && !expandedNodes.includes(selectedItem.id)) {
+            setExpandedNodes(prev => [...prev, selectedItem.id!]);
+          }
+
+          const addNodeRecursively = (nodes: TreeNode[]): TreeNode[] => {
+            return nodes.map(node => {
+              if (type === 'subclass' && node.id === selectedItem?.id) {
+                const children = node.children ? [...node.children, newNode] : [newNode];
+                return { ...node, children, hasChildren: true };
+              }
+              if (type === 'sibling' && node.children?.some((child: TreeNode) => child.id === selectedItem?.id)) {
+                return { ...node, children: [...(node.children || []), newNode] };
+              }
+              if (node.children) {
+                return { ...node, children: addNodeRecursively(node.children) };
+              }
+              return node;
+            });
+          };
+          
+          // If adding sibling at root level
+          if (type === 'sibling' && classHierarchy.some(node => node.id === selectedItem.id)) {
+             setClassHierarchy(prev => [...prev, newNode]);
+          } else {
+             setClassHierarchy(prev => addNodeRecursively(prev));
+          }
+      } else if (entitiesTab === 'ObjectProperties') {
+          // Handle Object Property Creation
+          parentIri = 'http://www.w3.org/2002/07/owl#topObjectProperty';
+          if (type === 'subclass' && selectedItem?.id) {
+              parentIri = selectedItem.id;
+          } else if (type === 'sibling' && selectedItem?.id) {
+              // Find parent of selected item in hierarchy
+              const findParent = (nodes: any[], targetId: string, parent: any | null = null): any | null => {
+                  for (const node of nodes) {
+                      if (node.id === targetId) return parent;
+                      if (node.children) {
+                          const found = findParent(node.children, targetId, node);
+                          if (found) return found;
+                      }
+                  }
+                  return null;
+              };
+              const parent = findParent(objectPropertyHierarchy, selectedItem.id);
+              parentIri = parent?.id || 'http://www.w3.org/2002/07/owl#topObjectProperty';
+          }
+          
+          await ontologyMutationService.createObjectProperty(projectId, newIri, name, parentIri);
+          
+          const newProp: any = {
+              id: newIri,
+              label: name,
+              type: 'ObjectProperty',
+              annotations: { 'rdfs:label': name },
+              children: [],
+              hasChildren: false
+          };
+          
+          setObjectProperties(prev => [...prev, newProp]);
+
+          // Update Hierarchy
+          const addNodeRecursively = (nodes: any[]): any[] => {
+            return nodes.map(node => {
+              if (node.id === parentIri) {
+                const children = node.children ? [...node.children, newProp] : [newProp];
+                return { ...node, children, hasChildren: true };
+              }
+              if (node.children) {
+                return { ...node, children: addNodeRecursively(node.children) };
+              }
+              return node;
+            });
+          };
+          
+          setObjectPropertyHierarchy(prev => addNodeRecursively(prev));
+          
+          if (parentIri && !expandedNodes.includes(parentIri)) {
+             setExpandedNodes(prev => [...prev, parentIri]);
+          }
       }
 
-      // Call backend API
-      await ontologyMutationService.createClass(projectId, newIri, name, parentIri);
-
-      // Update local state
-      const newNode: TreeNode = {
-        id: newIri,
-        label: name,
-        children: undefined,
-        hasChildren: false,
-        annotations: { 'rdfs:label': name }
-      };
-
-      if (type === 'subclass' && selectedItem?.id && !expandedNodes.includes(selectedItem.id)) {
-        setExpandedNodes(prev => [...prev, selectedItem.id!]);
-      }
-
-      const addNodeRecursively = (nodes: TreeNode[]): TreeNode[] => {
-        return nodes.map(node => {
-          if (type === 'subclass' && node.id === selectedItem?.id) {
-            const children = node.children ? [...node.children, newNode] : [newNode];
-            return { ...node, children, hasChildren: true };
-          }
-          if (type === 'sibling' && node.children?.some((child: TreeNode) => child.id === selectedItem?.id)) {
-            return { ...node, children: [...(node.children || []), newNode] };
-          }
-          if (node.children) {
-            return { ...node, children: addNodeRecursively(node.children) };
-          }
-          return node;
-        });
-      };
-
-      setClassHierarchy(prev => addNodeRecursively(prev));
-      showNotification(`Class "${name}" created successfully!`, 'info');
+      showNotification(`${entitiesTab === 'Classes' ? 'Class' : 'Property'} created successfully!`, 'info');
+      setAddClassDialogOpen(false);
     } catch (error) {
-      console.error('Failed to create class:', error);
-      showNotification('Failed to create class. See console for details.', 'error');
+      console.error('Failed to create entity:', error);
+      showNotification('Failed to create entity. See console for details.', 'error');
     }
-  }, [selectedItem, expandedNodes, metadata, projectId, classHierarchy, addClassType]);
+  }, [projectId, selectedItem, addClassType, entitiesTab, classHierarchy, expandedNodes, metadata]);
 
   const handleAddIndividual = useCallback((name: string) => {
     const base = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
@@ -1221,6 +1103,59 @@ const Dashboard = () => {
     };
     setIndividuals(prev => [...prev, newIndividual]);
   }, [metadata]);
+
+  const handleMakeSiblingsDisjoint = useCallback(async () => {
+    if (!projectId || !selectedItem || entitiesTab !== 'Classes') return;
+    
+    // Find siblings of selected class
+    const findSiblings = (nodes: TreeNode[], targetId: string, parent: TreeNode | null = null): TreeNode[] => {
+      for (const node of nodes) {
+        if (node.id === targetId && parent && parent.children) {
+          // Return all children of parent except the target
+          return parent.children.filter((child: TreeNode) => child.id !== targetId);
+        }
+        if (node.children) {
+          const siblings = findSiblings(node.children, targetId, node);
+          if (siblings.length > 0) return siblings;
+        }
+      }
+      return [];
+    };
+    
+    const siblings = findSiblings(classHierarchy, selectedItem.id);
+    
+    if (siblings.length === 0) {
+      showNotification('No siblings found for the selected class.', 'info');
+      return;
+    }
+    
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Make Siblings Disjoint',
+      message: `This will make ${siblings.length + 1} sibling classes pairwise disjoint. Continue?`,
+      onConfirm: async () => {
+        try {
+          // Include the selected class itself in the disjoint set
+          const allClasses = [selectedItem as TreeNode, ...siblings];
+          const classIds = allClasses.map(c => c.id);
+          
+          // Call backend to create pairwise disjoint axioms
+          await ontologyMutationService.makeSiblingsDisjoint(projectId, classIds);
+          
+          showNotification(`Successfully made ${classIds.length} classes pairwise disjoint.`, 'info');
+          
+          // Optionally refresh the selected item to show updated axioms
+          if (selectedItem) {
+            const updated = { ...selectedItem, disjointClassesAxioms: [] };
+            updateItemInState(updated);
+          }
+        } catch (error) {
+          console.error('Failed to make siblings disjoint:', error);
+          showNotification('Failed to make siblings disjoint. See console for details.', 'error');
+        }
+      }
+    });
+  }, [projectId, selectedItem, entitiesTab, classHierarchy, updateItemInState]);
 
   const handleDeleteItem = useCallback(async () => {
     if (!selectedItem || !projectId) return;
@@ -1240,6 +1175,9 @@ const Dashboard = () => {
             case 'Individuals':
               await ontologyMutationService.deleteIndividual(projectId, selectedItem.id);
               break;
+            case 'ObjectProperties':
+              await ontologyMutationService.deleteObjectProperty(projectId, selectedItem.id);
+              break;
             // Add other entity types as needed
           }
 
@@ -1258,6 +1196,11 @@ const Dashboard = () => {
               break;
             case 'ObjectProperties':
               setObjectProperties(prev => prev.filter(p => p.id !== selectedItem.id));
+              const removeOpRecursively = (nodes: any[], id: string): any[] =>
+                nodes
+                  .filter(node => node.id !== id)
+                  .map(node => node.children ? { ...node, children: removeOpRecursively(node.children, id) } : node);
+              setObjectPropertyHierarchy(prev => removeOpRecursively(prev, selectedItem.id));
               break;
             case 'DataProperties':
               setDataProperties(prev => prev.filter(p => p.id !== selectedItem.id));
@@ -1297,6 +1240,33 @@ const Dashboard = () => {
       setMainTab('Entities');
     }
   }, [classHierarchy, individuals]);
+
+  // Keyboard shortcuts (Protégé-style) - must be after handleAddItem and handleDeleteItem
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only handle shortcuts when Entities tab is active and Classes tab is selected
+      if (mainTab !== 'Entities' || entitiesTab !== 'Classes') return;
+      
+      // Ctrl+\ or Cmd+\ - Add Subclass
+      if ((e.ctrlKey || e.metaKey) && e.key === '\\') {
+        e.preventDefault();
+        handleAddItem('subclass');
+      }
+      // Ctrl+/ or Cmd+/ - Add Sibling
+      else if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+        e.preventDefault();
+        handleAddItem('sibling');
+      }
+      // Ctrl+Backspace or Cmd+Backspace - Delete
+      else if ((e.ctrlKey || e.metaKey) && e.key === 'Backspace') {
+        e.preventDefault();
+        handleDeleteItem();
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [mainTab, entitiesTab, handleAddItem, handleDeleteItem]);
 
   const handleExecuteDlQuery = () => {
     setIsDlQueryLoading(true);
@@ -1430,6 +1400,7 @@ const Dashboard = () => {
                   }
                 }
               ].map(metricSection => (
+               
                 <div key={metricSection.title}>
                   <h3 className="font-semibold text-sm mb-2 border-b pb-1">{metricSection.title}</h3>
                   <div className="space-y-1 text-xs">
@@ -1552,6 +1523,70 @@ const Dashboard = () => {
         );
       default:
         return <div className="p-6 text-gray-400">Select a tab</div>;
+    }
+  };
+  // #endregion
+
+  // #region Selector Handlers
+  const handleOpenClassSelector = (target: 'domain' | 'range') => {
+    setSelectorTarget(target);
+    setIsClassSelectorOpen(true);
+  };
+
+  const handleOpenPropertySelector = (target: 'subProperty' | 'inverse' | 'disjoint' | 'equivalent') => {
+    setSelectorTarget(target);
+    setIsPropertySelectorOpen(true);
+  };
+
+  const handleClassSelected = async (node: TreeNode) => {
+    if (!selectedItem || !projectId || !selectorTarget) return;
+
+    try {
+      switch (selectorTarget) {
+        case 'domain':
+          await ontologyMutationService.addPropertyDomain(projectId, selectedItem.id, node.id);
+          updateItemInState({ ...selectedItem, domains: [...((selectedItem as Property).domains || []), node.id] });
+          break;
+        case 'range':
+          await ontologyMutationService.addPropertyRange(projectId, selectedItem.id, node.id);
+          updateItemInState({ ...selectedItem, ranges: [...((selectedItem as Property).ranges || []), node.id] });
+          break;
+      }
+    } catch (error) {
+      console.error(`Failed to add ${selectorTarget}`, error);
+    } finally {
+      setIsClassSelectorOpen(false);
+      setSelectorTarget(null);
+    }
+  };
+
+  const handlePropertySelected = async (node: TreeNode) => {
+    if (!selectedItem || !projectId || !selectorTarget) return;
+
+    try {
+      switch (selectorTarget) {
+        case 'subProperty':
+          await ontologyMutationService.addSubPropertyOf(projectId, selectedItem.id, node.id);
+          updateItemInState({ ...selectedItem, superProperties: [...((selectedItem as Property).superProperties || []), node.id] });
+          break;
+        case 'inverse':
+          await ontologyMutationService.addInverseProperty(projectId, selectedItem.id, node.id);
+          updateItemInState({ ...selectedItem, inverseProperties: [...((selectedItem as Property).inverseProperties || []), node.id] });
+          break;
+        case 'disjoint':
+          await ontologyMutationService.addDisjointProperty(projectId, selectedItem.id, node.id);
+          updateItemInState({ ...selectedItem, disjointProperties: [...((selectedItem as Property).disjointProperties || []), node.id] });
+          break;
+        case 'equivalent':
+           await ontologyMutationService.addEquivalentProperty(projectId, selectedItem.id, node.id);
+           // update state if we had a field for it
+           break;
+      }
+    } catch (error) {
+      console.error(`Failed to add ${selectorTarget}`, error);
+    } finally {
+      setIsPropertySelectorOpen(false);
+      setSelectorTarget(null);
     }
   };
   // #endregion
@@ -1698,18 +1733,27 @@ const Dashboard = () => {
                 onToggleNode={toggleNode}
                 onAddItem={handleAddItem}
                 onDeleteItem={handleDeleteItem}
+                onMakeSiblingsDisjoint={handleMakeSiblingsDisjoint}
               />
 
-              <section className="flex-1 overflow-y-auto p-2 bg-slate-200">
-                <DetailsPanel
-                  selectedItem={selectedItem}
-                  entitiesTab={entitiesTab}
-                  activeTheme={activeTheme}
-                  projectId={projectId}
-                  onUpdate={updateItemInState}
-                  onAddAnnotation={handleAddAnnotation}
-                  onDeleteAnnotation={handleDeleteAnnotation}
-                />
+              <section className="flex-1 overflow-hidden p-2 bg-slate-200 flex flex-col">
+                <div className="flex-1 overflow-hidden flex flex-col">
+                  <DetailsPanel
+                    selectedItem={selectedItem}
+                    entitiesTab={entitiesTab}
+                    activeTheme={activeTheme}
+                    projectId={projectId}
+                    onUpdate={updateItemInState}
+                    onAddAnnotation={handleAddAnnotation}
+                    onDeleteAnnotation={handleDeleteAnnotation}
+                    onAddDomainClick={() => handleOpenClassSelector('domain')}
+                    onAddRangeClick={() => handleOpenClassSelector('range')}
+                    onAddSubPropertyClick={() => handleOpenPropertySelector('subProperty')}
+                    onAddInverseClick={() => handleOpenPropertySelector('inverse')}
+                    onAddDisjointClick={() => handleOpenPropertySelector('disjoint')}
+                    onAddEquivalentClick={() => handleOpenPropertySelector('equivalent')}
+                  />
+                </div>
               </section>
             </>
           ) : (
@@ -1719,6 +1763,30 @@ const Dashboard = () => {
           )}
         </main>
       </div>
+
+      {/* Class Selector Dialog */}
+      <ClassSelectorDialog
+        isOpen={isClassSelectorOpen}
+        onClose={() => {
+          setIsClassSelectorOpen(false);
+          setSelectorTarget(null);
+        }}
+        onSelect={handleClassSelected}
+        classHierarchy={classHierarchy}
+        title={`Select ${selectorTarget === 'domain' ? 'Domain' : 'Range'} Class`}
+      />
+
+      {/* Property Selector Dialog */}
+      <PropertySelectorDialog
+        isOpen={isPropertySelectorOpen}
+        onClose={() => {
+          setIsPropertySelectorOpen(false);
+          setSelectorTarget(null);
+        }}
+        onSelect={handlePropertySelected}
+        propertyHierarchy={objectPropertyHierarchy}
+        title={`Select ${selectorTarget ? selectorTarget.charAt(0).toUpperCase() + selectorTarget.slice(1) : 'Property'}`}
+      />
 
       {/* Project Selector Modal */}
       {showProjectSelector && (

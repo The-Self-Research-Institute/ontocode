@@ -14,6 +14,9 @@ public class PropertyDto {
     private List<String> characteristics;
     private List<String> superProperties;
     private List<String> subProperties;
+    private List<String> inverseProperties;
+    private List<String> disjointProperties;
+    private List<String> equivalentProperties;
     private List<PropertyDto> children;  // NEW - for tree structure
 
     // Getters and Setters
@@ -95,6 +98,30 @@ public class PropertyDto {
 
     public void setSubProperties(List<String> subProperties) {
         this.subProperties = subProperties;
+    }
+
+    public List<String> getInverseProperties() {
+        return inverseProperties;
+    }
+
+    public void setInverseProperties(List<String> inverseProperties) {
+        this.inverseProperties = inverseProperties;
+    }
+
+    public List<String> getDisjointProperties() {
+        return disjointProperties;
+    }
+
+    public void setDisjointProperties(List<String> disjointProperties) {
+        this.disjointProperties = disjointProperties;
+    }
+
+    public List<String> getEquivalentProperties() {
+        return equivalentProperties;
+    }
+
+    public void setEquivalentProperties(List<String> equivalentProperties) {
+        this.equivalentProperties = equivalentProperties;
     }
 
     public List<PropertyDto> getChildren() {

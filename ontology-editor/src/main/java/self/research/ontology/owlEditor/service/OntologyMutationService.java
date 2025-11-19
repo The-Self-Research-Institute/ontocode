@@ -50,6 +50,35 @@ public class OntologyMutationService {
         }, metadataExecutor);
     }
 
+    public void makeSiblingsDisjoint(String projectId, List<String> classIds) {
+        if (classIds == null || classIds.size() < 2) {
+            return;
+        }
+
+        // Create pairwise disjoint axioms
+        StringBuilder sparqlBuilder = new StringBuilder(PREFIXES);
+        sparqlBuilder.append("\nINSERT DATA {\n");
+        
+        for (int i = 0; i < classIds.size(); i++) {
+            for (int j = i + 1; j < classIds.size(); j++) {
+                sparqlBuilder.append("  <")
+                    .append(classIds.get(i))
+                    .append("> owl:disjointWith <")
+                    .append(classIds.get(j))
+                    .append("> .\n");
+            }
+        }
+        
+        sparqlBuilder.append("}");
+        
+        datasetService.execUpdate(projectId, sparqlBuilder.toString());
+
+        CompletableFuture.runAsync(() -> {
+            Map<String, Object> meta = indexService.computeMetadata(projectId);
+            metadataService.writeMeta(projectId, meta);
+        }, metadataExecutor);
+    }
+
     private String toUpdate(MutationOp op) {
         return switch (op.type()) {
             case "createClass" -> """
@@ -119,6 +148,91 @@ public class OntologyMutationService {
                 DELETE { <%s> ?p ?o } WHERE { <%s> ?p ?o };
                 DELETE { ?s ?p <%s> } WHERE { ?s ?p <%s> }
                 """.formatted(op.iri(), op.iri(), op.iri(), op.iri());
+            
+            case "createObjectProperty" -> """
+                INSERT DATA {
+                  <%s> a owl:ObjectProperty .
+                  %s
+                  <%s> rdfs:subPropertyOf <%s> .
+                }
+                """.formatted(op.iri(), optionalLabel(op.iri(), op.label()), op.iri(), op.parent());
+            case "deleteObjectProperty" -> """
+                DELETE { <%s> ?p ?o } WHERE { <%s> ?p ?o };
+                DELETE { ?s ?p <%s> } WHERE { ?s ?p <%s> }
+                """.formatted(op.iri(), op.iri(), op.iri(), op.iri());
+
+            // --- Property Mutations ---
+            case "addPropertyDomain" -> """
+                INSERT DATA {
+                  <%s> rdfs:domain <%s> .
+                }
+                """.formatted(op.iri(), op.target());
+            case "deletePropertyDomain" -> """
+                DELETE DATA {
+                  <%s> rdfs:domain <%s> .
+                }
+                """.formatted(op.iri(), op.target());
+            case "addPropertyRange" -> """
+                INSERT DATA {
+                  <%s> rdfs:range <%s> .
+                }
+                """.formatted(op.iri(), op.target());
+            case "deletePropertyRange" -> """
+                DELETE DATA {
+                  <%s> rdfs:range <%s> .
+                }
+                """.formatted(op.iri(), op.target());
+            case "addSubPropertyOf" -> """
+                INSERT DATA {
+                  <%s> rdfs:subPropertyOf <%s> .
+                }
+                """.formatted(op.iri(), op.target());
+            case "deleteSubPropertyOf" -> """
+                DELETE DATA {
+                  <%s> rdfs:subPropertyOf <%s> .
+                }
+                """.formatted(op.iri(), op.target());
+            case "addInverseProperty" -> """
+                INSERT DATA {
+                  <%s> owl:inverseOf <%s> .
+                }
+                """.formatted(op.iri(), op.target());
+            case "deleteInverseProperty" -> """
+                DELETE DATA {
+                  <%s> owl:inverseOf <%s> .
+                }
+                """.formatted(op.iri(), op.target());
+            case "addDisjointProperty" -> """
+                INSERT DATA {
+                  <%s> owl:propertyDisjointWith <%s> .
+                }
+                """.formatted(op.iri(), op.target());
+            case "deleteDisjointProperty" -> """
+                DELETE DATA {
+                  <%s> owl:propertyDisjointWith <%s> .
+                }
+                """.formatted(op.iri(), op.target());
+            case "addEquivalentProperty" -> """
+                INSERT DATA {
+                  <%s> owl:equivalentProperty <%s> .
+                }
+                """.formatted(op.iri(), op.target());
+            case "deleteEquivalentProperty" -> """
+                DELETE DATA {
+                  <%s> owl:equivalentProperty <%s> .
+                }
+                """.formatted(op.iri(), op.target());
+            case "addCharacteristic" -> """
+                INSERT DATA {
+                  <%s> a <%s> .
+                }
+                """.formatted(op.iri(), op.target());
+            case "deleteCharacteristic" -> """
+                DELETE DATA {
+                  <%s> a <%s> .
+                }
+                """.formatted(op.iri(), op.target());
+
             default -> throw new IllegalArgumentException("Unsupported op " + op.type());
         };
     }

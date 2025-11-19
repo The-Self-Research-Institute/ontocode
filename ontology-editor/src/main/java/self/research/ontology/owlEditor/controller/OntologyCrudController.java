@@ -30,5 +30,13 @@ public class OntologyCrudController {
         return ResponseEntity.ok(Map.of("success", true));
     }
 
+    @PostMapping("/make-siblings-disjoint/{projectId}")
+    public ResponseEntity<?> makeSiblingsDisjoint(@PathVariable String projectId,
+                                                  @RequestBody MakeSiblingsDisjointRequest request) {
+        mutationService.makeSiblingsDisjoint(projectId, request.classIds());
+        return ResponseEntity.ok(Map.of("success", true));
+    }
+
     public record MutationRequest(List<OntologyMutationService.MutationOp> ops) {}
+    public record MakeSiblingsDisjointRequest(List<String> classIds) {}
 }
