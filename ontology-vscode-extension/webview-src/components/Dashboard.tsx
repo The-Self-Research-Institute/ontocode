@@ -1289,13 +1289,13 @@ const Dashboard = () => {
         return null;
       };
       const node = findNode(classHierarchy, nodeId);
-      console.log(node, 'here')
-      // Load children if node is expandable but children are not loaded yet (undefined or empty)
+      
+      setExpandedNodes(prev => [...prev, nodeId]);
+      
       if (node && node.hasChildren && (!node.children || node.children.length === 0)) {
         console.log(`Node ${nodeId} needs children loaded`);
         await loadChildren(nodeId);
       }
-      setExpandedNodes(prev => [...prev, nodeId]);
     }
   }, [expandedNodes, classHierarchy, loadChildren]);
 
