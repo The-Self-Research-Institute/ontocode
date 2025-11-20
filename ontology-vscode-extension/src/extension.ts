@@ -89,7 +89,8 @@ type ExtensionMessage =
   | { type: 'downloadCurrentOntology' }
   | { type: 'fileLoaded'; projectId: string } // File selected from menu
   | { type: 'requestCollaborationStatus' } // Request current collaboration status
-  | { type: 'showNotification'; notification: { type: string; title: string; message: string; actions?: string[] } }; // System notification
+  | { type: 'showNotification'; notification: { type: string; title: string; message: string; actions?: string[] } } // System notification
+  | { type: 'cursorMoved'; nodeId: string; nodeName: string }; // User moved cursor to a node
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -298,13 +299,17 @@ class OntoCodePanel {
                         break;
                     case 'fileLoaded':
                         // User selected a file from the File menu
-                        console.log('[OntoCode] File loaded from menu:', message.projectId);
+                        console.log('[OntoCode] 📂 File loaded from menu:', message.projectId);
+                        console.log('[OntoCode] 🔄 Posting fileReady message to webview');
                         this.postMessage({ type: 'fileReady', projectId: message.projectId });
                         
-                        // Initialize collaboration for the loaded file
+                        // Initialize collaboration for the loaded file (works for both owned and shared files)
                         const fileToken = await (this._context as any).secrets.get(TOKEN_KEY);
                         if (fileToken) {
+                            console.log('[OntoCode] 🤝 Initializing collaboration for project:', message.projectId);
                             await this.initializeCollaborationForProject(message.projectId, fileToken);
+                        } else {
+                            console.warn('[OntoCode] ⚠️ No auth token found, cannot initialize collaboration');
                         }
                         break;
                     case 'requestCollaborationStatus':
@@ -321,6 +326,18 @@ class OntoCodePanel {
                         break;
                     case 'showNotification':
                         this.handleNotification(message.notification);
+                        break;
+                    case 'cursorMoved':
+                        // User moved cursor to a node in the tree
+                        if (this.editCapture && this.currentProjectId) {
+                            console.log('[OntoCode] 👆 Cursor moved to node:', message.nodeName);
+                            const selectedNodes = message.nodeId ? [message.nodeId] : [];
+                            this.editCapture.captureCursorMoved(
+                                this.currentProjectId, 
+                                message.nodeId,
+                                selectedNodes
+                            );
+                        }
                         break;
                 }
             },
@@ -537,6 +554,20 @@ class OntoCodePanel {
             const file = new File([fileBlob], fileName, { type: 'application/rdf+xml' });
             const formData = new FormData();
             formData.append('file', file);
+            
+            // Extract user email from JWT token
+            try {
+                const tokenParts = token.split('.');
+                if (tokenParts.length === 3) {
+                    const payload = JSON.parse(Buffer.from(tokenParts[1], 'base64').toString());
+                    if (payload.email) {
+                        formData.append('ownerEmail', payload.email);
+                        console.log(`[OntoCode] Adding owner email: ${payload.email}`);
+                    }
+                }
+            } catch (tokenError) {
+                console.warn('[OntoCode] Could not extract email from token:', tokenError);
+            }
             
             const headers = {
                 'Authorization': `Bearer ${token}`,
