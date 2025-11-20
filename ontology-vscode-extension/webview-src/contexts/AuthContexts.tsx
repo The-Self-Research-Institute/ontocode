@@ -14,13 +14,54 @@ interface AuthContextType {
     login: (username: string, password: string) => Promise<void>;
     signup: (username: string, email: string, password: string) => Promise<void>;
     logout: () => void;
+    sessionExpiredMessage: string | null;
 }
+
+// Decode JWT token to check expiration
+const isTokenExpired = (token: string): boolean => {
+    try {
+        const parts = token.split('.');
+        if (parts.length !== 3) return true;
+        
+        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+        const exp = payload.exp;
+        
+        if (!exp) return false; // No expiration set
+        
+        // Check if token is expired (exp is in seconds, Date.now() is in milliseconds)
+        return Date.now() >= exp * 1000;
+    } catch (error) {
+        console.error('[AuthContext] Error decoding token:', error);
+        return true; // If we can't decode, assume expired
+    }
+};
 
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
+    const [sessionExpiredMessage, setSessionExpiredMessage] = useState<string | null>(null);
+
+    const logout = useCallback((showExpiredMessage = false) => {
+        console.log('[AuthContext] Logging out...');
+        setUser(null);
+        if (showExpiredMessage) {
+            setSessionExpiredMessage('Session expired. Please login again.');
+        }
+        if (window.vscode) {
+            window.vscode.postMessage({ type: 'logout' });
+        }
+        console.log('[AuthContext] ✅ Logout successful');
+    }, []);
+
+    // Register unauthorized callback with apiClient
+    useEffect(() => {
+        apiClient.setUnauthorizedCallback(() => {
+            console.log('[AuthContext] API returned 401 - Auto logout');
+            logout(true);
+        });
+    }, [logout]);
 
     const requestTokenFromVSCode = useCallback(() => {
         if (window.vscode) {
@@ -39,8 +80,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             switch (message.type) {
                 case 'storedAuthToken':
                     if (message.token) {
+                        // Check if token is expired
+                        if (isTokenExpired(message.token)) {
+                            console.log('[AuthContext] ⚠️ Stored token is expired, logging out');
+                            logout(true);
+                            setLoading(false);
+                            return;
+                        }
                         // In a real app, decode JWT to get user info. For now, we'll mock it.
                         setUser({ token: message.token, username: 'vscode_user' });
+                        // Clear expired message on successful login
+                        setSessionExpiredMessage(null);
                     }
                     setLoading(false);
                     break;
@@ -55,6 +105,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             window.removeEventListener('message', handleMessage);
         };
     }, [requestTokenFromVSCode]);
+
+    // Check token expiration every minute
+    useEffect(() => {
+        if (!user?.token) return;
+
+        const interval = setInterval(() => {
+            if (isTokenExpired(user.token)) {
+                console.log('[AuthContext] ⚠️ Token expired, logging out');
+                logout(true);
+            }
+        }, 60000); // Check every 60 seconds
+
+        return () => clearInterval(interval);
+    }, [user?.token, logout]);
 
     const login = async (username: string, password: string) => {
         try {
@@ -84,6 +148,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
             
             setUser({ token, username });
+            // Clear expired message on successful login
+            setSessionExpiredMessage(null);
             console.log('[AuthContext] ✅ Login successful');
         } catch (error: any) {
             console.error('[AuthContext] ❌ Login failed:', error);
@@ -130,6 +196,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
             
             setUser({ token, username });
+            // Clear expired message on successful signup
+            setSessionExpiredMessage(null);
             console.log('[AuthContext] ✅ Signup successful');
         } catch (error: any) {
             console.error('[AuthContext] ❌ Signup failed:', error);
@@ -138,21 +206,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
-    const logout = () => {
-        console.log('[AuthContext] Logging out...');
-        setUser(null);
-        if (window.vscode) {
-            window.vscode.postMessage({ type: 'logout' });
-        }
-        console.log('[AuthContext] ✅ Logout successful');
-    };
-
     const value = {
         user,
         loading,
         login,
         signup,
-        logout,
+        logout: () => logout(false),
+        sessionExpiredMessage,
     };
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
