@@ -88,7 +88,8 @@ type ExtensionMessage =
   | { type: 'downloadOntology'; url: string; filename: string }
   | { type: 'downloadCurrentOntology' }
   | { type: 'fileLoaded'; projectId: string } // File selected from menu
-  | { type: 'requestCollaborationStatus' }; // Request current collaboration status
+  | { type: 'requestCollaborationStatus' } // Request current collaboration status
+  | { type: 'showNotification'; notification: { type: string; title: string; message: string; actions?: string[] } }; // System notification
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -98,12 +99,12 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         // Fix: Made command handler async to support async panel creation/file upload.
         vscode.commands.registerCommand('ontocode.edit', async () => {
-            // Fix: Use context.extensionUri to get the extension's URI.
-            const panel = await OntoCodePanel.createOrShow(context.extensionUri, context);
-            
-            // Check if there's an active OWL file
+            // Check if there's an active OWL file first
             const activeEditor = vscode.window.activeTextEditor;
             const hasActiveOwl = activeEditor && activeEditor.document.fileName.toLowerCase().endsWith('.owl');
+            
+            // Fix: Use context.extensionUri to get the extension's URI.
+            const panel = await OntoCodePanel.createOrShow(context.extensionUri, context, hasActiveOwl);
             
             if (hasActiveOwl) {
                 // Upload the active OWL file
@@ -136,7 +137,7 @@ export function activate(context: vscode.ExtensionContext) {
                 return;
             }
             // Fix: Use context.extensionUri to get the extension's URI.
-            const panel = await OntoCodePanel.createOrShow(context.extensionUri, context);
+            const panel = await OntoCodePanel.createOrShow(context.extensionUri, context, true);
             // FIX: Don't trigger upload here. Set it as pending.
             panel.setPendingUpload(false, uri);
         }),
@@ -211,11 +212,15 @@ class OntoCodePanel {
     private currentProjectId: string | null = null;
 
     // Fix: Made createOrShow async to handle async webview content loading.
-    public static async createOrShow(extensionUri: vscode.Uri, context: vscode.ExtensionContext): Promise<OntoCodePanel> {
+    public static async createOrShow(extensionUri: vscode.Uri, context: vscode.ExtensionContext, shouldTriggerUpload: boolean = false): Promise<OntoCodePanel> {
         const column = vscode.window.activeTextEditor?.viewColumn ?? vscode.ViewColumn.One;
 
         if (OntoCodePanel.currentPanel) {
             OntoCodePanel.currentPanel._panel.reveal(column);
+            // If we should trigger upload and webview is ready, do it now
+            if (shouldTriggerUpload && OntoCodePanel.currentPanel._isWebviewReady) {
+                OntoCodePanel.currentPanel.triggerPendingUpload();
+            }
             return OntoCodePanel.currentPanel;
         }
 
@@ -313,6 +318,9 @@ class OntoCodePanel {
                             connected: isConnected
                         });
                         console.log('[OntoCode] Status response sent:', isConnected);
+                        break;
+                    case 'showNotification':
+                        this.handleNotification(message.notification);
                         break;
                 }
             },
@@ -433,6 +441,29 @@ class OntoCodePanel {
     }
 
     /**
+     * Handle notification requests from webview
+     */
+    private handleNotification(notification: any) {
+        const message = `${notification.title}\n${notification.message}`;
+        
+        switch (notification.type) {
+            case 'success':
+                vscode.window.showInformationMessage(message);
+                break;
+            case 'error':
+                vscode.window.showErrorMessage(message);
+                break;
+            case 'warning':
+                vscode.window.showWarningMessage(message);
+                break;
+            case 'info':
+            default:
+                vscode.window.showInformationMessage(message);
+                break;
+        }
+    }
+
+    /**
      * Handles uploading a large file from a file URI (e.g., from the Explorer context menu).
      */
     // Fix: Refactored to use async vscode.workspace.fs.readFile instead of node 'fs'.
@@ -491,8 +522,9 @@ class OntoCodePanel {
             return;
         }
 
-        // 2. Inform the webview to show a loading state
-        this.postMessage({ type: 'showLoading' });
+        // 2. Send fileReady message BEFORE upload to show loading dialog immediately
+        console.log(`[OntoCode] Sending fileReady message for project: ${projectId}`);
+        this.postMessage({ type: 'fileReady', projectId: projectId });
 
         try {
             // 3. Prepare the form data for multipart upload
@@ -533,7 +565,6 @@ class OntoCodePanel {
             if (response.status === 200 || response.status === 201) {
                 console.log(`[OntoCode] Upload successful for project: ${projectId}`);
                 this._isWebviewReady = false;
-                this.postMessage({ type: 'fileReady', projectId: projectId });
                 vscode.window.showInformationMessage(`Ontology "${fileName}" uploaded successfully. Processing started...`);
                 
                 // 6. Initialize collaborative editing

@@ -16,7 +16,9 @@ import java.io.InputStream;
 import java.io.StringWriter;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -97,14 +99,13 @@ public class GraphDBDatasetService {
     }
     
     /**
-     * Execute a SPARQL SELECT query
+     * Execute a SPARQL SELECT query and return materialized results
      */
     public TupleQueryResult execSelect(String projectId, String sparqlQuery) {
         Repository repo = getRepository();
         String graphUri = getGraphUri(projectId);
         
-        try {
-            RepositoryConnection conn = repo.getConnection();
+        try (RepositoryConnection conn = repo.getConnection()) {
             
             // Inject FROM clause if not present
             if (!sparqlQuery.toUpperCase().contains("FROM")) {
@@ -112,13 +113,69 @@ public class GraphDBDatasetService {
                     "FROM <" + graphUri + "> WHERE");
             }
             
+            System.out.println("=== EXECUTING QUERY FOR PROJECT: " + projectId + " ===");
+            System.out.println("Graph URI: " + graphUri);
+            System.out.println("Query: " + sparqlQuery);
             log.debug("Executing SELECT query for project: {}", projectId);
             TupleQuery query = conn.prepareTupleQuery(sparqlQuery);
-            return query.evaluate();
+            
+            // Materialize results into a list before closing connection
+            List<BindingSet> results = new ArrayList<>();
+            List<String> bindingNames = new ArrayList<>();
+            try (TupleQueryResult result = query.evaluate()) {
+                bindingNames.addAll(result.getBindingNames());
+                while (result.hasNext()) {
+                    results.add(result.next());
+                }
+            }
+            System.out.println("=== QUERY EXECUTED, GOT " + results.size() + " RESULTS ===");
+            
+            // Return a simple iterator-based implementation
+            return new SimpleTupleQueryResult(bindingNames, results);
             
         } catch (Exception e) {
             log.error("SPARQL SELECT query failed for project: {}", projectId, e);
             throw new RuntimeException("SPARQL query execution failed", e);
+        }
+    }
+    
+    /**
+     * Simple in-memory TupleQueryResult implementation
+     */
+    private static class SimpleTupleQueryResult implements TupleQueryResult {
+        private final List<String> bindingNames;
+        private final List<BindingSet> bindings;
+        private int currentIndex = -1;
+        
+        public SimpleTupleQueryResult(List<String> bindingNames, List<BindingSet> bindings) {
+            this.bindingNames = bindingNames;
+            this.bindings = bindings;
+        }
+        
+        @Override
+        public List<String> getBindingNames() {
+            return bindingNames;
+        }
+        
+        @Override
+        public void close() {
+            // No-op, already materialized
+        }
+        
+        @Override
+        public boolean hasNext() {
+            return currentIndex < bindings.size() - 1;
+        }
+        
+        @Override
+        public BindingSet next() {
+            currentIndex++;
+            return bindings.get(currentIndex);
+        }
+        
+        @Override
+        public void remove() {
+            throw new UnsupportedOperationException();
         }
     }
     

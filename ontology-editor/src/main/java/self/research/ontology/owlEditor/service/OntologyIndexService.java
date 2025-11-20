@@ -30,7 +30,13 @@ public class OntologyIndexService {
           (COUNT(?triple) AS ?tripleCount)
         WHERE {
           {
-            ?class a owl:Class .
+            {
+              ?class a owl:Class .
+            } UNION {
+              ?class rdfs:subClassOf ?any .
+            } UNION {
+              ?any rdfs:subClassOf ?class .
+            }
             FILTER(isIRI(?class) && ?class != owl:Thing)
           }
           UNION

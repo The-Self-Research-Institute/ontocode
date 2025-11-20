@@ -34,11 +34,38 @@ public class OntologyQueryService {
     }
 
     public List<OntologyDto.TreeNode> topLevelClasses(String projectId, int limit) {
+        // Get classes that are direct subclasses of owl:Thing or have no explicit superclass
         String query = PREFIXES + """
-            SELECT ?c ?label (EXISTS { ?child rdfs:subClassOf ?c . FILTER(?child != ?c) } AS ?hasChildren)
+            SELECT DISTINCT ?c ?label (EXISTS { ?child rdfs:subClassOf ?c . FILTER(?child != ?c) } AS ?hasChildren)
             WHERE {
-              ?c a owl:Class .
-              FILTER NOT EXISTS { ?c rdfs:subClassOf ?super FILTER(?super != ?c) }
+              {
+                # Classes explicitly declared
+                ?c a owl:Class .
+              } UNION {
+                # Classes used as subject in subClassOf
+                ?c rdfs:subClassOf ?any .
+              } UNION {
+                # Classes used as object in subClassOf
+                ?any rdfs:subClassOf ?c .
+              }
+              
+              # Only include named classes (filter out blank nodes)
+              FILTER(isIRI(?c))
+              
+              # Filter for top-level: either subclass of owl:Thing or no superclass at all
+              FILTER (
+                NOT EXISTS { 
+                  ?c rdfs:subClassOf ?super . 
+                  FILTER(?super != ?c && ?super != <http://www.w3.org/2002/07/owl#Thing>)
+                } ||
+                EXISTS {
+                  ?c rdfs:subClassOf <http://www.w3.org/2002/07/owl#Thing> .
+                }
+              )
+              
+              # Exclude owl:Thing itself
+              FILTER(?c != <http://www.w3.org/2002/07/owl#Thing>)
+              
               OPTIONAL { ?c rdfs:label ?label }
             }
             ORDER BY COALESCE(LCASE(?label), STR(?c))
@@ -339,10 +366,20 @@ public class OntologyQueryService {
     private List<OntologyDto.TreeNode> mapTreeNodes(String projectId, String query, String parentIri) {
         TupleQueryResult rs = datasetService.execSelect(projectId, query);
         List<OntologyDto.TreeNode> nodes = new ArrayList<>();
+        System.out.println("=== MAPPING TREE NODES ===");
+        System.out.println("Available binding names: " + rs.getBindingNames());
+        int count = 0;
         while (rs.hasNext()) {
+            count++;
             BindingSet sol = rs.next();
+            System.out.println("Row " + count + " bindings: " + sol.getBindingNames());
             String iri = resource(sol, parentIri == null ? "c" : "child");
-            if (iri == null) continue;
+            if (iri == null) {
+                System.out.println("Row " + count + ": IRI is null for variable '" + (parentIri == null ? "c" : "child") + "'");
+                System.out.println("Row " + count + ": All values: " + sol);
+                continue;
+            }
+            System.out.println("Row " + count + ": IRI = " + iri);
             OntologyDto.TreeNode node = new OntologyDto.TreeNode();
             node.setId(iri);
             String label = literal(sol, parentIri == null ? "label" : "label");
@@ -356,6 +393,7 @@ public class OntologyQueryService {
             node.setParent(parentIri);
             nodes.add(node);
         }
+        System.out.println("=== MAPPED " + nodes.size() + " NODES FROM " + count + " ROWS ===");
         return nodes;
     }
 
@@ -420,8 +458,14 @@ public class OntologyQueryService {
             }
         }
 
-        // Count OWL classes
-        String classQuery = PREFIXES + "SELECT (COUNT(DISTINCT ?c) AS ?count) WHERE { ?c a owl:Class }";
+        // Count OWL classes (explicit or implicit)
+        String classQuery = PREFIXES + """
+            SELECT (COUNT(DISTINCT ?c) AS ?count) WHERE {
+              { ?c a owl:Class }
+              UNION { ?c rdfs:subClassOf ?any }
+              UNION { ?any rdfs:subClassOf ?c }
+            }
+            """;
         TupleQueryResult rs2 = datasetService.execSelect(projectId, classQuery);
         long classCount = 0;
         if (rs2.hasNext()) {

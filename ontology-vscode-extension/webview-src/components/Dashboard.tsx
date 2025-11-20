@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
+import { notificationService } from "../services/notificationService";
 import { pluginManager } from '../plugins/PluginSystem';
 import { SWRLPlugin, ReasoningPlugin } from '../plugins/PluginRegistry';
 import type { TreeNode, Property, Individual, OntologyMetadata, SelectableItem, AnnotationProperty, Datatype } from '../types';
@@ -50,6 +51,69 @@ const LoadingDialog = ({ isOpen, message }: { isOpen: boolean; message?: string 
           <Loader2 size={48} className="text-purple-600 animate-spin mb-4" />
           <h3 className="text-lg font-semibold text-gray-900 mb-2">{message || "Loading Ontology"}</h3>
           <p className="text-sm text-gray-500 text-center">Please wait while we process your ontology data...</p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const LoadingChoiceDialog = ({ 
+  isOpen, 
+  projectName, 
+  onWait, 
+  onContinue 
+}: { 
+  isOpen: boolean; 
+  projectName: string;
+  onWait: () => void; 
+  onContinue: () => void;
+}) => {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]">
+      <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+        <div className="flex items-start mb-4">
+          <div className="flex-shrink-0 w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center mr-3">
+            <Loader2 size={20} className="text-purple-600 animate-spin" />
+          </div>
+          <div className="flex-1">
+            <h3 className="text-lg font-semibold text-gray-900 mb-1">Loading Ontology</h3>
+            <p className="text-sm text-gray-600">
+              "{projectName}" is loading in the background...
+            </p>
+          </div>
+        </div>
+        
+        <div className="bg-gray-50 rounded-lg p-4 mb-4">
+          <p className="text-sm text-gray-700 mb-3">
+            <strong>What would you like to do?</strong>
+          </p>
+          <ul className="text-sm text-gray-600 space-y-2">
+            <li className="flex items-start">
+              <span className="text-purple-600 mr-2">•</span>
+              <span><strong>Wait:</strong> Stay on this screen until loading completes</span>
+            </li>
+            <li className="flex items-start">
+              <span className="text-purple-600 mr-2">•</span>
+              <span><strong>Continue:</strong> Work on other files, you'll get a notification when ready</span>
+            </li>
+          </ul>
+        </div>
+        
+        <div className="flex gap-3">
+          <button
+            onClick={onWait}
+            className="flex-1 px-4 py-2.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium flex items-center justify-center gap-2"
+          >
+            <Loader2 size={16} className="animate-spin" />
+            Wait for Loading
+          </button>
+          <button
+            onClick={onContinue}
+            className="flex-1 px-4 py-2.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium"
+          >
+            Continue Working
+          </button>
         </div>
       </div>
     </div>
@@ -402,6 +466,9 @@ const Dashboard = () => {
   const [expandedNodes, setExpandedNodes] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [isInitialLoading, setIsInitialLoading] = useState(false);
+  const [showLoadingChoice, setShowLoadingChoice] = useState(false);
+  const [loadingProjectName, setLoadingProjectName] = useState("");
+  const loadingPromiseRef = useRef<Promise<void> | null>(null);
   const [activeOntologySubTab, setActiveOntologySubTab] = useState('prefixes');
   const [isCreateIndividualModalOpen, setCreateIndividualModalOpen] = useState(false);
   const [isAddAnnotationDialogOpen, setAddAnnotationDialogOpen] = useState(false);
@@ -455,13 +522,22 @@ const Dashboard = () => {
     setVisibleMainTabs(prev => prev.includes('Graph') ? prev.filter(t => t !== 'Graph') : [...prev, 'Graph']);
   }, []);
 
-  const fetchData = useCallback(async (currentProjectId: string) => {
-    setIsInitialLoading(true);
+  const fetchData = useCallback(async (currentProjectId: string, waitForCompletion = false) => {
+    // Don't block UI - let user continue working
     setSelectedItem(null);
     setSearchQuery("");
+    
+    // Show loading indicator if user chose to wait
+    if (waitForCompletion) {
+      setIsInitialLoading(true);
+    }
+    
+    // Notify user that loading has started
+    console.log(`Loading ontology "${currentProjectId}"...`);
 
     try {
-      const [metadataRes, topLevelRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes] = await Promise.all([
+      // Fetch data in background
+      const dataFetchPromise = Promise.all([
         apiClient.get<any>(`/api/ontology/metadata/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/classes/top-level/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/properties/${currentProjectId}`),
@@ -469,6 +545,16 @@ const Dashboard = () => {
         apiClient.get<any>(`/api/ontology/annotation-properties/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/datatypes/${currentProjectId}`),
       ]);
+      
+      // Allow UI to be responsive immediately if not waiting
+      if (!waitForCompletion) {
+        setTimeout(() => {
+          setIsInitialLoading(false);
+        }, 500);
+      }
+      
+      // Continue loading in background
+      const [metadataRes, topLevelRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes] = await dataFetchPromise;
       
       // Handle metadata response - backend returns {success: true, data: {counts: {...}, prefixes: [...], ontologyIRI: "...", ...}}
       console.log("Metadata response:", metadataRes);
@@ -489,22 +575,52 @@ const Dashboard = () => {
       setMetadata(transformedMetadata);
 
       // Handle classes response - backend returns {success: true, classes: [...]}
-      console.log("Classes response:", topLevelRes);
-      console.log("Classes response keys:", Object.keys(topLevelRes || {}));
-      console.log("topLevelRes?.classes:", topLevelRes?.classes);
-      console.log("topLevelRes?.data?.classes:", topLevelRes?.data?.classes);
-      console.log("topLevelRes?.data:", topLevelRes?.data);
-      const classes = Array.isArray(topLevelRes?.classes) ? topLevelRes.classes :
-                     Array.isArray(topLevelRes?.data?.classes) ? topLevelRes.data.classes :
-                     Array.isArray(topLevelRes?.data) ? topLevelRes.data : [];
-      console.log("Extracted classes:", classes);
-      console.log("Extracted classes length:", classes.length);
+      console.log("=== CLASSES RESPONSE DEBUG ===");
+      console.log("Raw topLevelRes:", topLevelRes);
+      console.log("topLevelRes type:", typeof topLevelRes);
+      console.log("topLevelRes keys:", Object.keys(topLevelRes || {}));
+      
+      // The response structure is: topLevelRes = {success: true, classes: [...]}
+      // But apiClient might wrap it in a data field, so check both
+      let classes: any[] = [];
+      
+      if (Array.isArray(topLevelRes?.classes)) {
+        classes = topLevelRes.classes;
+        console.log("Found classes in topLevelRes.classes");
+      } else if (Array.isArray(topLevelRes?.data?.classes)) {
+        classes = topLevelRes.data.classes;
+        console.log("Found classes in topLevelRes.data.classes");
+      } else if (Array.isArray(topLevelRes?.data)) {
+        classes = topLevelRes.data;
+        console.log("Found classes in topLevelRes.data (array)");
+      } else if (Array.isArray(topLevelRes)) {
+        classes = topLevelRes;
+        console.log("topLevelRes itself is an array");
+      } else {
+        console.error("Could not find classes array in response structure!");
+        console.error("Available keys:", Object.keys(topLevelRes || {}));
+        if (topLevelRes?.data) {
+          console.error("Data keys:", Object.keys(topLevelRes.data || {}));
+        }
+      }
+      
+      console.log("Extracted classes array length:", classes.length);
+      console.log("First 3 classes:", classes.slice(0, 3));
+      console.log("=== END CLASSES DEBUG ===");
+      
+      // Nest all top-level classes under owl:Thing
       const topLevelNodes: TreeNode[] = classes.map((c: TopLevelClass) => ({
         ...c,
-        children: c.hasChildren ? undefined : undefined, // Use undefined to trigger lazy loading
+        children: [],
         hasChildren: c.hasChildren,
         subClassOfAxioms: [{ id: 'sub1', type: 'SubClassOf', definition: 'Thing' }]
       }));
+      
+      console.log("=== OWL:THING HIERARCHY DEBUG ===");
+      console.log("topLevelNodes count:", topLevelNodes.length);
+      console.log("First 3 topLevelNodes:", topLevelNodes.slice(0, 3));
+      
+      // Always include owl:Thing at the root with pre-loaded children
       const owlThingNode: TreeNode = {
         id: "http://www.w3.org/2002/07/owl#Thing",
         label: "owl:Thing",
@@ -512,6 +628,11 @@ const Dashboard = () => {
         hasChildren: topLevelNodes.length > 0,
         annotations: {}
       };
+      
+      console.log("owlThingNode created with children count:", owlThingNode.children?.length);
+      console.log("Setting classHierarchy with owl:Thing");
+      console.log("=== END OWL:THING DEBUG ===");
+      
       setClassHierarchy([owlThingNode]);
 
       // Handle properties response
@@ -645,8 +766,20 @@ const Dashboard = () => {
         console.error("Failed to fetch files:", fileError);
         setListOfFiles([]);
       }
+      
+      // Notify user that ontology is fully loaded
+      notificationService.success(
+        'Ontology Loaded',
+        `"${currentProjectId}" is ready! Found ${classes.length} classes, ${allProps.length} properties.`
+      );
     } catch (error) {
       console.error("Failed to fetch data:", error);
+      
+      // Notify user of the error
+      notificationService.error(
+        'Loading Failed',
+        `Failed to load ontology "${currentProjectId}". Please try again.`
+      );
     } finally {
       setIsInitialLoading(false);
     }
@@ -680,13 +813,16 @@ const Dashboard = () => {
   useEffect(() => {
     if (classHierarchy.length > 0 && classHierarchy[0].id === "http://www.w3.org/2002/07/owl#Thing") {
       const owlThingId = classHierarchy[0].id;
-      console.log('[Dashboard] Class hierarchy loaded, owl:Thing has', classHierarchy[0].children?.length || 0, 'top-level children');
-      if (!expandedNodes.includes(owlThingId)) {
+      const childCount = classHierarchy[0].children?.length || 0;
+      console.log('[Dashboard] Class hierarchy loaded, owl:Thing has', childCount, 'top-level children');
+      
+      // Always auto-expand owl:Thing when it has children
+      if (childCount > 0 && !expandedNodes.includes(owlThingId)) {
         console.log('[Dashboard] Auto-expanding owl:Thing');
-        setExpandedNodes(prev => [...prev, owlThingId]);
+        setExpandedNodes([owlThingId]);
       }
     }
-  }, [classHierarchy, expandedNodes]);
+  }, [classHierarchy]);
 
   // Fetch projects on mount when no projectId is set
   useEffect(() => {
@@ -695,40 +831,6 @@ const Dashboard = () => {
     }
   }, [projectId, fetchProjects]);
 
-  const pollProcessingStatus = useCallback((projectIdToPoll: string) => {
-    setIsInitialLoading(true);
-
-    const intervalId = setInterval(async () => {
-      try {
-        const response = await apiClient.get(`/api/ontology/status/${projectIdToPoll}`);
-        // Backend wraps response in {success: true, data: {status: "COMPLETED", ...}}
-        const statusData = response.data?.data || response.data || response;
-        
-        console.log('[Dashboard] Poll status response:', statusData);
-
-        if (statusData?.status === 'COMPLETED') {
-          console.log('[Dashboard] Processing complete, loading data...');
-          clearInterval(intervalId);
-          await fetchData(projectIdToPoll);
-        } else if (statusData?.status === 'ERROR') {
-          console.log('[Dashboard] Processing error:', statusData.statusMessage);
-          clearInterval(intervalId);
-          setIsInitialLoading(false);
-          showNotification(`Processing failed: ${statusData.statusMessage}`, 'error');
-        } else {
-          console.log('[Dashboard] Still processing, status:', statusData?.status);
-        }
-      } catch (error) {
-        console.error('[Dashboard] Failed to poll for status:', error);
-        clearInterval(intervalId);
-        setIsInitialLoading(false);
-        showNotification('Failed to check processing status. Please try reloading.', 'error');
-      }
-    }, 2000);
-
-    return () => clearInterval(intervalId);
-  }, [fetchData, setIsInitialLoading]);
-
   // Send 'webviewReady' to extension when mounted
   useEffect(() => {
     if (window.vscode) {
@@ -736,8 +838,24 @@ const Dashboard = () => {
     }
   }, []);
 
+  // Handle loading choice dialog actions
+  const handleWaitForLoading = useCallback(() => {
+    setShowLoadingChoice(false);
+    setIsInitialLoading(true);
+    // Wait for the loading promise to complete
+    if (loadingPromiseRef.current) {
+      loadingPromiseRef.current.finally(() => {
+        setIsInitialLoading(false);
+      });
+    }
+  }, []);
+
+  const handleContinueWorking = useCallback(() => {
+    setShowLoadingChoice(false);
+    // User chose to continue, they'll get a notification when done
+  }, []);
+
   useEffect(() => {
-    let cleanupPolling = () => { };
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
       console.log('[Dashboard] Received message:', message.type, message);
@@ -746,29 +864,25 @@ const Dashboard = () => {
           setIsInitialLoading(true);
           break;
         case "fileReady":
-          // Always load the new file, regardless of current state
-          console.log('[Dashboard] Loading new project:', message.projectId);
-          setProjectId(message.projectId);
-          setSelectedItem(null); // Clear selection
-          cleanupPolling = pollProcessingStatus(message.projectId);
-          break;
         case "fileLoaded":
-          // Handle file selection from File menu
-          console.log('[Dashboard] File selected from menu:', message.projectId);
-          const newProjectId = message.projectId;
-          setProjectId(newProjectId);
-          setSelectedItem(null); // Clear selection
-          setIsInitialLoading(true);
-          // Directly fetch data if already processed, otherwise poll
-          fetchData(newProjectId).catch(() => {
-            console.log('[Dashboard] Fetch failed, starting polling for:', newProjectId);
-            cleanupPolling = pollProcessingStatus(newProjectId);
+          // Show loading choice dialog
+          console.log('[Dashboard] Loading project:', message.projectId);
+          setProjectId(message.projectId);
+          setSelectedItem(null);
+          setLoadingProjectName(message.projectId);
+          setShowLoadingChoice(true);
+          
+          // Start loading in background and store the promise
+          loadingPromiseRef.current = fetchData(message.projectId, false).catch((error) => {
+            console.error('[Dashboard] Failed to load ontology:', error);
+            notificationService.error('Load Failed', `Could not load "${message.projectId}". The file may still be processing.`);
+            setShowLoadingChoice(false);
           });
           break;
         case "loadingFailed":
           setIsInitialLoading(false);
           console.error("Loading failed:", message.error);
-          showNotification(`Loading failed: ${message.error}`, 'error');
+          notificationService.error('Loading Failed', message.error);
           break;
         case "switchView":
           if (message.view === 'swrl' && !visibleMainTabs.includes('SWRL')) {
@@ -782,9 +896,26 @@ const Dashboard = () => {
 
     return () => {
       window.removeEventListener("message", handleMessage);
-      cleanupPolling();
     };
-  }, [pollProcessingStatus, toggleSwrlTab, visibleMainTabs, fetchData]);
+  }, [toggleSwrlTab, visibleMainTabs, fetchData]);
+
+  useEffect(() => {
+    // Initialize notification service to show toasts via collaboration context
+    notificationService.onToast((options) => {
+      collaboration.addNotification({
+        id: `notif-${Date.now()}`,
+        type: options.type,
+        message: `${options.title}: ${options.message}`,
+        username: 'System',
+        userColor: '#6366f1'
+      });
+    });
+    
+    // Request notification permission for web browsers
+    if (typeof window !== 'undefined' && !window.vscode) {
+      notificationService.requestPermission();
+    }
+  }, [collaboration]);
 
   useEffect(() => {
     let sourceData: SelectableItem[] = [];
@@ -1392,8 +1523,26 @@ const Dashboard = () => {
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto p-4">
-                <h3 className="text-xs font-semibold text-gray-700 mb-2">Annotations</h3>
-                <AnnotationsDisplay annotations={(metadata as any)?.annotations} onDelete={() => showNotification('Cannot delete ontology annotation here.', 'warning')} />
+                <h3 className="text-xs font-semibold text-gray-700 mb-3">Annotations</h3>
+                {(metadata as any)?.annotations && Object.keys((metadata as any).annotations).length > 0 ? (
+                  <div className="space-y-2">
+                    {Object.entries((metadata as any).annotations).map(([key, value]: [string, any]) => {
+                      const propertyLabel = key.includes('#') ? key.split('#').pop() : 
+                                          key.includes('/') ? key.split('/').pop() : key;
+                      return (
+                        <div key={key} className="border border-gray-200 rounded-md hover:border-blue-300 transition-colors">
+                          <div className="bg-gradient-to-r from-purple-50 to-gray-50 px-3 py-2 border-b border-gray-200">
+                            <div className="text-xs font-semibold text-purple-900">{propertyLabel}</div>
+                            <div className="text-[10px] text-gray-400 font-mono truncate" title={key}>{key}</div>
+                          </div>
+                          <div className="px-3 py-2 bg-white text-xs text-gray-700">{value?.toString() || ''}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-xs text-gray-400 italic p-2 bg-gray-50 border border-gray-200 rounded">No annotations</div>
+                )}
               </div>
               <div className="border-t border-gray-200">
                 <div className="flex bg-gray-100 text-xs border-b border-gray-200">
@@ -1856,6 +2005,14 @@ const Dashboard = () => {
           onClose={() => setShowProjectSelector(false)}
         />
       )}
+
+      {/* Loading Choice Dialog */}
+      <LoadingChoiceDialog
+        isOpen={showLoadingChoice}
+        projectName={loadingProjectName}
+        onWait={handleWaitForLoading}
+        onContinue={handleContinueWorking}
+      />
 
       {/* Collaboration Panel */}
       <CollaborationPanel />
