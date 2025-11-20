@@ -6,6 +6,7 @@ import apiClient from '../services/apiClient';
 interface User {
     token: string;
     username: string;
+    email?: string;
 }
 
 interface AuthContextType {
@@ -33,6 +34,23 @@ const isTokenExpired = (token: string): boolean => {
     } catch (error) {
         console.error('[AuthContext] Error decoding token:', error);
         return true; // If we can't decode, assume expired
+    }
+};
+
+// Decode JWT token to get user info
+const decodeToken = (token: string): { username: string; email?: string } => {
+    try {
+        const parts = token.split('.');
+        if (parts.length !== 3) return { username: 'unknown' };
+        
+        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+        return {
+            username: payload.sub || 'unknown',
+            email: payload.email
+        };
+    } catch (e) {
+        console.error('[AuthContext] Error decoding token:', e);
+        return { username: 'unknown' };
     }
 };
 
@@ -87,8 +105,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             setLoading(false);
                             return;
                         }
-                        // In a real app, decode JWT to get user info. For now, we'll mock it.
-                        setUser({ token: message.token, username: 'vscode_user' });
+                        // Decode JWT to get user info
+                        const userInfo = decodeToken(message.token);
+                        setUser({ token: message.token, username: userInfo.username, email: userInfo.email });
                         // Clear expired message on successful login
                         setSessionExpiredMessage(null);
                     }
@@ -147,7 +166,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 window.vscode.postMessage({ type: 'saveAuthToken', token });
             }
             
-            setUser({ token, username });
+            // Decode JWT to get user info
+            const userInfo = decodeToken(token);
+            setUser({ token, username: userInfo.username, email: userInfo.email });
             // Clear expired message on successful login
             setSessionExpiredMessage(null);
             console.log('[AuthContext] ✅ Login successful');
@@ -195,7 +216,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 window.vscode.postMessage({ type: 'saveAuthToken', token });
             }
             
-            setUser({ token, username });
+            // Decode JWT to get user info
+            const userInfo = decodeToken(token);
+            setUser({ token, username: userInfo.username, email: userInfo.email });
             // Clear expired message on successful signup
             setSessionExpiredMessage(null);
             console.log('[AuthContext] ✅ Signup successful');

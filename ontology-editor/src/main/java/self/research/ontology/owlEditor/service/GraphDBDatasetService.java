@@ -204,13 +204,59 @@ public class GraphDBDatasetService {
             
             log.info("Starting bulk load for project: {} with format: {}", projectId, rdfFormat);
             
+            // Read all bytes
+            byte[] data = inputStream.readAllBytes();
+            
+            // Skip BOM if present
+            int startIndex = 0;
+            java.nio.charset.Charset charset = java.nio.charset.StandardCharsets.UTF_8;
+            
+            if (data.length >= 3 && data[0] == (byte) 0xEF && data[1] == (byte) 0xBB && data[2] == (byte) 0xBF) {
+                startIndex = 3; // Skip UTF-8 BOM
+                charset = java.nio.charset.StandardCharsets.UTF_8;
+                log.info("UTF-8 BOM detected");
+            } else if (data.length >= 2 && data[0] == (byte) 0xFE && data[1] == (byte) 0xFF) {
+                startIndex = 2; // Skip UTF-16 BE BOM
+                charset = java.nio.charset.StandardCharsets.UTF_16BE;
+                log.info("UTF-16 BE BOM detected");
+            } else if (data.length >= 2 && data[0] == (byte) 0xFF && data[1] == (byte) 0xFE) {
+                startIndex = 2; // Skip UTF-16 LE BOM
+                charset = java.nio.charset.StandardCharsets.UTF_16LE;
+                log.info("UTF-16 LE BOM detected");
+            } else {
+                // No BOM - try to detect encoding from first bytes or assume ISO-8859-1/Windows-1252
+                // These encodings are supersets of ASCII and won't fail on any byte value
+                charset = java.nio.charset.StandardCharsets.ISO_8859_1;
+                log.info("No BOM detected, using ISO-8859-1 for reading");
+            }
+            
+            // Convert bytes to String using detected/assumed charset, then back to UTF-8 bytes
+            String content = new String(data, startIndex, data.length - startIndex, charset);
+            
+            // Remove any leading whitespace before XML declaration
+            content = content.trim();
+            
+            // Convert to UTF-8 bytes
+            byte[] utf8Data = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            
+            log.info("Converted {} bytes ({}) to {} UTF-8 bytes", data.length, charset.name(), utf8Data.length);
+            
+            // Log first few characters for debugging
+            if (content.length() > 0) {
+                String preview = content.substring(0, Math.min(50, content.length())).replace("\n", "\\n").replace("\r", "\\r");
+                log.info("Content preview: {}", preview);
+            }
+            
+            // Create input stream from UTF-8 data
+            InputStream cleanStream = new java.io.ByteArrayInputStream(utf8Data);
+            
             try (RepositoryConnection conn = repo.getConnection()) {
                 
                 // Clear existing data for this project
                 conn.clear(conn.getValueFactory().createIRI(graphUri));
                 
                 // Load new data into named graph
-                conn.add(inputStream, graphUri, rdfFormat, 
+                conn.add(cleanStream, graphUri, rdfFormat, 
                         conn.getValueFactory().createIRI(graphUri));
                 
                 // Get size after loading

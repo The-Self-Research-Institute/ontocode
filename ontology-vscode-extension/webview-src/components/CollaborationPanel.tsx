@@ -37,11 +37,16 @@ const CollaborationPanel: React.FC = () => {
                     <span className="font-semibold text-sm">Collaboration</span>
                 </div>
                 <div className="flex items-center gap-2">
-                    <div className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium ${
+                    <div 
+                        className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium ${
                         state.connected 
                             ? 'bg-green-500 bg-opacity-90' 
                             : 'bg-gray-500 bg-opacity-90'
-                    }`}>
+                    }`}
+                        title={state.connected 
+                            ? `Connected to collaboration server\n${activeUsers.length} active user(s)` 
+                            : 'Not connected to collaboration server'}
+                    >
                         {state.connected ? (
                             <>
                                 <Wifi size={12} />
@@ -95,6 +100,11 @@ const CollaborationPanel: React.FC = () => {
                                                 <Circle size={6} className="text-green-500 fill-current animate-pulse" />
                                                 <span>{getTimeAgo(user.lastActivity)}</span>
                                             </div>
+                                            {user.cursorPosition && (
+                                                <div className="text-xs text-gray-400 truncate mt-0.5" title={user.cursorPosition}>
+                                                    📍 {user.cursorPosition.split('#').pop()?.substring(0, 20)}...
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 ))}

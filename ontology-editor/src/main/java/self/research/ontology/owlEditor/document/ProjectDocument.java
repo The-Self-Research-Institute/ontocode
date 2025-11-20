@@ -13,6 +13,8 @@ public class ProjectDocument {
     private String id;
     private String name;
     private String filename;
+    private String ownerEmail;
+    private String gridfsFileId;  // GridFS file ID mapping
     private String status;
     private String statusMessage;
     private Instant createdAt;
@@ -53,6 +55,22 @@ public class ProjectDocument {
     
     public void setFilename(String filename) {
         this.filename = filename;
+    }
+    
+    public String getOwnerEmail() {
+        return ownerEmail;
+    }
+    
+    public void setOwnerEmail(String ownerEmail) {
+        this.ownerEmail = ownerEmail;
+    }
+    
+    public String getGridfsFileId() {
+        return gridfsFileId;
+    }
+    
+    public void setGridfsFileId(String gridfsFileId) {
+        this.gridfsFileId = gridfsFileId;
     }
     
     public String getStatus() {

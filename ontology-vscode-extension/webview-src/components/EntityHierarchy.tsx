@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronRight, ChevronDown, PlusCircle, Trash2, Search, Package, GitBranch, Database, Tag, User, Type, Binary } from "lucide-react";
+import { ChevronRight, ChevronDown, PlusCircle, Trash2, Search, Package, GitBranch, Database, Tag, User, Type, Binary, MousePointer2 } from "lucide-react";
 import type { SelectableItem, TreeNode } from '../types';
+import { useCollaboration } from '../contexts/CollaborationContext';
 
 interface EntityHierarchyProps {
   entitiesTab: string;
@@ -31,6 +32,10 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
 }) => {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: SelectableItem } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  const { state: collaborationState } = useCollaboration();
+  
+  // Get active users as array for easier rendering
+  const activeUsers = Array.from(collaborationState.activeUsers.values());
 
   // Close context menu when clicking outside
   useEffect(() => {
@@ -59,6 +64,11 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
     const isTreeNode = entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties';
     const hasChildren = 'hasChildren' in item && item.hasChildren;
     const isExpanded = isTreeNode && hasChildren && expandedNodes.includes(item.id);
+    
+    // Find users viewing this node
+    const usersViewingNode = activeUsers.filter(user => 
+      user.cursorPosition === item.id || user.selectedNodes?.includes(item.id)
+    );
 
     let Icon, iconClasses;
     let itemType = entitiesTab;
@@ -80,7 +90,17 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
           data-class-id={item.id}
           className={`flex items-center px-2 py-0.5 rounded cursor-pointer ${isSelected ? "bg-blue-200" : "hover:bg-slate-100"}`}
           style={{ paddingLeft: `${level * 16 + 4}px` }}
-          onClick={() => onSelectItem(item)}
+          onClick={() => {
+            onSelectItem(item);
+            // Broadcast cursor position to other users
+            if (window.vscode) {
+              window.vscode.postMessage({
+                type: 'cursorMoved',
+                nodeId: item.id,
+                nodeName: item.label
+              });
+            }
+          }}
           onContextMenu={(e) => handleContextMenu(e, item)}
         >
           {/* Expander Arrow */}
@@ -110,6 +130,27 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
           
           {/* Label */}
           <span className={`text-xs select-none text-black ${isSelected ? "font-semibold" : ""}`}>{item.label}</span>
+          
+          {/* Active User Cursors */}
+          {usersViewingNode.length > 0 && (
+            <div className="flex items-center gap-1 ml-2">
+              {usersViewingNode.map(user => (
+                <div 
+                  key={user.userId}
+                  className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium"
+                  style={{ 
+                    backgroundColor: `${user.color}20`,
+                    border: `1px solid ${user.color}`,
+                    color: user.color
+                  }}
+                  title={`${user.username} is viewing this item`}
+                >
+                  <MousePointer2 size={10} />
+                  <span>{user.username}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         
         {/* Render Children Recursively */}
