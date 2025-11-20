@@ -20,6 +20,7 @@ import SparqlQueryEditor from './SparqlQueryEditor';
 import { ProjectSelector } from './ProjectSelector';
 import CollaborationPanel from './CollaborationPanel';
 import ToastNotification from './ToastNotification';
+import ShareDialog from './ShareDialog';
 import { 
   ClassSelectorDialog, 
   PropertySelectorDialog, 
@@ -37,6 +38,10 @@ type FileInfo = {
   length: number;
   uploadDate: string; // ISO
   projectId?: string | null;
+  size?: number;
+  permission?: 'view' | 'edit';
+  sharedBy?: string;
+  ownerEmail?: string;
 };
 
 // #region Helper Components
@@ -62,14 +67,20 @@ const TopMenuBar = ({
   onToggleGraphTab,
   isGraphVisible,
   fileList,
+  myFiles,
+  sharedFiles,
   currentProjectId,
+  onShareFile,
 }: {
   onToggleSwrlTab: () => void;
   isSwrlVisible: boolean;
   onToggleGraphTab: () => void;
   isGraphVisible: boolean;
   fileList: FileInfo[];
+  myFiles: FileInfo[];
+  sharedFiles: FileInfo[];
   currentProjectId: string | null;
+  onShareFile: (fileId: string) => void;
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -114,7 +125,7 @@ const TopMenuBar = ({
   }, [fileList]);
 
   const displayedFiles = searchFile ? files : fileList;
-  const menuItems = ['File', 'Edit', 'View', 'Reasoner', 'Tools', 'Window', 'Download', 'Help'];
+  const menuItems = ['File', 'Edit', 'View', 'Reasoner', 'Tools', 'Window', 'Download', 'Help', 'Share'];
 
   return (
     <header ref={menuRef} className="bg-gray-200 text-gray-800 text-xs flex items-center px-2 relative border-b border-gray-300 h-8 flex-shrink-0">
@@ -144,6 +155,27 @@ const TopMenuBar = ({
                       });
                     }
                   }
+                } else if (item === "Share") {
+                  // Check if current file is owned by user
+                  const currentFile = myFiles.find(f => f.id === currentProjectId);
+                  if (currentProjectId && currentFile) {
+                    onShareFile(currentProjectId);
+                    setOpenMenu(null);
+                  } else if (!currentProjectId) {
+                    if (window.vscode) {
+                      window.vscode.postMessage({
+                        type: 'error',
+                        value: 'No ontology loaded. Please open a file first.'
+                      });
+                    }
+                  } else {
+                    if (window.vscode) {
+                      window.vscode.postMessage({
+                        type: 'error',
+                        value: 'You can only share files you own. This file is shared with you.'
+                      });
+                    }
+                  }
                 } else {
                   setOpenMenu(openMenu === item ? null : item);
                 }
@@ -153,7 +185,7 @@ const TopMenuBar = ({
               {item}
             </button>
             {openMenu === item && (
-              <div className={`absolute left-0 mt-1 ${item === 'File' ? 'w-96' : 'w-100'} bg-white border border-gray-300 rounded-md shadow-lg z-20`}>
+              <div className={`absolute left-0 mt-1 ${item === 'File' ? 'w-[360px]' : 'w-48'} bg-white border border-gray-300 rounded-lg shadow-xl z-20 overflow-hidden`}>
                 {item === "Window" ? (
                   <div className="py-1">
                     <div className="px-3 py-1 text-gray-400 text-xs">Tabs</div>
@@ -184,48 +216,197 @@ const TopMenuBar = ({
                     </a>
                   </div>
                 ) : item === "File" ? (
-                  <div className="p-3 space-y-1">
-                    <div className="p-2 border-b border-gray-200 flex-shrink-0">
+                  <div className="flex flex-col max-h-[500px]">
+                    <div className="p-3 border-b border-gray-200 flex-shrink-0 bg-gray-50">
                       <div className="relative">
                         <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                         <input
                           type="text"
-                          placeholder={`Search Files...`}
+                          placeholder="Search files..."
                           value={searchFile}
                           onChange={(e) => onSearchFileChange(e.target.value)}
-                          className="w-full pl-8 pr-3 py-1.5 border border-gray-300 rounded-md focus:ring-1 focus:ring-purple-500 text-sm bg-white"
+                          className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm bg-white transition-all"
                         />
                       </div>
                     </div>
+                    <div className="p-3 overflow-y-auto flex-1">
                     {isLoading && (
                       <div className="px-3 py-1 text-gray-500 text-xs flex items-center gap-2">
                         <Loader2 size={14} className="animate-spin" /> Searching...
                       </div>
                     )}
-                    {displayedFiles?.length > 0
-                      ? displayedFiles.map((file) => (
-                          <div 
-                            className="flex justify-between items-center gap-2 hover:bg-blue-50 px-2 py-1 rounded cursor-pointer transition-colors" 
-                            key={file.id}
-                            onClick={() => {
-                              if (window.vscode) {
-                                window.vscode.postMessage({
-                                  type: "fileLoaded",
-                                  projectId: file.filename.slice(0, -4),
-                                });
-                                setOpenMenu(null);
-                              }
-                            }}
-                          >
-                            <span
-                              className="truncate min-w-0 flex-1 text-black"
-                              title={`Click to load: ${file.filename}`}
+                    
+                    {searchFile ? (
+                      // Show search results
+                      displayedFiles?.length > 0 ? (
+                        <div className="space-y-0.5">
+                          {displayedFiles.map((file) => (
+                            <div 
+                              className="group flex items-start gap-2 hover:bg-gradient-to-r hover:from-purple-50 hover:to-blue-50 px-2 py-1.5 rounded-md cursor-pointer transition-all duration-200 border border-transparent hover:border-purple-200" 
+                              key={file.id}
+                              onClick={() => {
+                                if (window.vscode) {
+                                  window.vscode.postMessage({
+                                    type: "fileLoaded",
+                                    projectId: file.filename.slice(0, -4),
+                                  });
+                                  setOpenMenu(null);
+                                }
+                              }}
                             >
-                              {file.filename}
+                              <FileText size={16} className="text-purple-500 mt-0.5 flex-shrink-0" />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-medium text-gray-800 truncate" title={file.filename}>
+                                    {file.filename}
+                                  </span>
+                                </div>
+                                {file.size && (
+                                  <div className="flex items-center gap-1 mt-1 text-[10px] text-gray-500">
+                                    <Database size={10} />
+                                    <span>{(file.size / 1024).toFixed(1)} KB</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center justify-center py-6 text-gray-400">
+                          <Search size={24} className="mb-1.5 opacity-50" />
+                          <p className="text-[10px]">No matching files found</p>
+                        </div>
+                      )
+                    ) : (
+                      // Show categorized files
+                      <div className="space-y-3">
+                        {/* My Files Section */}
+                        <div className="flex flex-col max-h-[200px]">
+                          <div className="flex items-center gap-2 px-2 py-1.5 bg-gradient-to-r from-purple-100 to-purple-50 rounded-md mb-1.5 flex-shrink-0">
+                            <User size={12} className="text-purple-600" />
+                            <span className="text-[11px] font-semibold text-purple-800">
+                              My Files ({myFiles.length})
                             </span>
                           </div>
-                        ))
-                      : !isLoading && <div className="px-3 py-1 text-black">No Files</div>}
+                          {myFiles.length > 0 ? (
+                            <div className="space-y-0.5 overflow-y-auto">
+                              {myFiles.map((file) => (
+                                <div 
+                                  className="group flex items-start gap-2 hover:bg-gradient-to-r hover:from-purple-50 hover:to-blue-50 px-2 py-1.5 rounded-md cursor-pointer transition-all duration-200 border border-transparent hover:border-purple-200 relative" 
+                                  key={file.id}
+                                  onClick={() => {
+                                    if (window.vscode) {
+                                      window.vscode.postMessage({
+                                        type: "fileLoaded",
+                                        projectId: file.filename.slice(0, -4),
+                                      });
+                                      setOpenMenu(null);
+                                    }
+                                  }}
+                                >
+                                  <FileText size={16} className="text-purple-500 mt-0.5 flex-shrink-0" />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs font-medium text-gray-800 truncate" title={file.filename}>
+                                        {file.filename}
+                                      </span>
+                                      {file.id === currentProjectId && (
+                                        <span className="px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-semibold rounded">
+                                          ACTIVE
+                                        </span>
+                                      )}
+                                    </div>
+                                    {file.size && (
+                                      <div className="flex items-center gap-1 mt-1 text-[10px] text-gray-500">
+                                        <Database size={10} />
+                                        <span>{(file.size / 1024).toFixed(1)} KB</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="flex flex-col items-center justify-center py-4 text-gray-400 bg-gray-50 rounded-md">
+                              <FileText size={18} className="mb-1.5 opacity-50" />
+                              <p className="text-[10px]">No files uploaded yet</p>
+                            </div>
+                          )}
+                        </div>
+                        
+                        {/* Shared Files Section */}
+                        <div className="flex flex-col max-h-[200px]">
+                          <div className="flex items-center gap-2 px-2 py-1.5 bg-gradient-to-r from-blue-100 to-blue-50 rounded-md mb-1.5 flex-shrink-0">
+                            <Share2 size={12} className="text-blue-600" />
+                            <span className="text-[11px] font-semibold text-blue-800">
+                              Shared With Me ({sharedFiles.length})
+                            </span>
+                          </div>
+                          {sharedFiles.length > 0 ? (
+                            <div className="space-y-0.5 overflow-y-auto">
+                              {sharedFiles.map((file: any) => (
+                                <div 
+                                  className="group flex items-start gap-2 hover:bg-gradient-to-r hover:from-blue-50 hover:to-purple-50 px-2 py-1.5 rounded-md cursor-pointer transition-all duration-200 border border-transparent hover:border-blue-200" 
+                                  key={file.id}
+                                  onClick={() => {
+                                    if (window.vscode) {
+                                      window.vscode.postMessage({
+                                        type: "fileLoaded",
+                                        projectId: file.filename.slice(0, -4),
+                                      });
+                                      setOpenMenu(null);
+                                    }
+                                  }}
+                                >
+                                  <FileText size={16} className="text-blue-500 mt-0.5 flex-shrink-0" />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs font-medium text-gray-800 truncate" title={file.filename}>
+                                        {file.filename}
+                                      </span>
+                                      {file.id === currentProjectId && (
+                                        <span className="px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-semibold rounded">
+                                          ACTIVE
+                                        </span>
+                                      )}
+                                      {file.permission && (
+                                        <span className={`px-1.5 py-0.5 text-[10px] font-semibold rounded ${
+                                          file.permission === 'edit' 
+                                            ? 'bg-orange-100 text-orange-700' 
+                                            : 'bg-gray-100 text-gray-700'
+                                        }`}>
+                                          {file.permission === 'edit' ? 'CAN EDIT' : 'VIEW ONLY'}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-3 mt-1 text-[10px] text-gray-500">
+                                      {file.sharedBy && (
+                                        <span className="flex items-center gap-1">
+                                          <User size={10} />
+                                          Shared by {file.sharedBy}
+                                        </span>
+                                      )}
+                                      {file.size && (
+                                        <span className="flex items-center gap-1">
+                                          <Database size={10} />
+                                          {(file.size / 1024).toFixed(1)} KB
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="flex flex-col items-center justify-center py-4 text-gray-400 bg-gray-50 rounded-md">
+                              <Share2 size={18} className="mb-1.5 opacity-50" />
+                              <p className="text-[10px]">No shared files</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    </div>
                   </div>
                 ) : (
                   <div className="p-2 text-xs text-gray-400">No actions available</div>
@@ -442,6 +623,10 @@ const Dashboard = () => {
 
   const [filteredData, setFilteredData] = useState<SelectableItem[]>([]);
   const [listOfFiles, setListOfFiles] = useState<FileInfo[]>([]);
+  const [myFiles, setMyFiles] = useState<FileInfo[]>([]);
+  const [sharedFiles, setSharedFiles] = useState<FileInfo[]>([]);
+  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
+  const [shareFileId, setShareFileId] = useState<string | null>(null);
 
   const [visibleMainTabs, setVisibleMainTabs] = useState(['ActiveOntology', 'Entities', 'IndividualsByClass', 'DLQuery', 'SPARQL']);
   // #endregion
@@ -459,6 +644,14 @@ const Dashboard = () => {
     setIsInitialLoading(true);
     setSelectedItem(null);
     setSearchQuery("");
+    
+    console.log('[Dashboard] 🔄 Fetching data for project:', currentProjectId);
+    console.log('[Dashboard] 📊 Collaboration status:', collaboration.state.connected);
+    
+    // Request collaboration status when loading a new file
+    if (window.vscode) {
+      window.vscode.postMessage({ type: 'requestCollaborationStatus' });
+    }
 
     try {
       const [metadataRes, topLevelRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes] = await Promise.all([
@@ -632,18 +825,69 @@ const Dashboard = () => {
       
       // Fetch files list separately (not in parallel to avoid blocking main data load)
       try {
-        const filesRes = await apiClient.get<any>(`/api/projects`);
-        const projects = Array.isArray(filesRes?.projects) ? filesRes.projects : [];
-        setListOfFiles(projects.map((p: any) => ({
-          id: p.id,
-          filename: p.filename || p.name || p.id,
-          contentType: 'application/rdf+xml',
-          uploadDate: p.updatedAt || new Date().toISOString(),
-          length: 0
-        })));
+        const userEmail = user?.email || '';
+        const filesRes = await apiClient.get<any>(`/api/projects?userEmail=${encodeURIComponent(userEmail)}`);
+        
+        if (filesRes.myFiles && filesRes.sharedFiles) {
+          // New format with separate lists
+          const myProjects = Array.isArray(filesRes.myFiles) ? filesRes.myFiles : [];
+          const sharedProjects = Array.isArray(filesRes.sharedFiles) ? filesRes.sharedFiles : [];
+          
+          setMyFiles(myProjects.map((p: any) => ({
+            id: p.id,
+            filename: p.filename || p.name || p.id,
+            contentType: 'application/rdf+xml',
+            uploadDate: p.updatedAt || new Date().toISOString(),
+            length: 0,
+            ownerEmail: p.ownerEmail
+          })));
+          
+          setSharedFiles(sharedProjects.map((p: any) => ({
+            id: p.id,
+            filename: p.filename || p.name || p.id,
+            contentType: 'application/rdf+xml',
+            uploadDate: p.updatedAt || new Date().toISOString(),
+            length: 0,
+            sharedBy: p.sharedBy,
+            ownerEmail: p.ownerEmail,
+            permission: p.permission || 'view'
+          })));
+          
+          console.log('[Dashboard] 📂 Loaded shared files:', sharedProjects.length);
+          console.log('[Dashboard] 🤝 Collaboration features available for shared editing');
+          
+          // Combined list for backward compatibility
+          setListOfFiles([...myProjects, ...sharedProjects].map((p: any) => ({
+            id: p.id,
+            filename: p.filename || p.name || p.id,
+            contentType: 'application/rdf+xml',
+            uploadDate: p.updatedAt || new Date().toISOString(),
+            length: 0
+          })));
+        } else {
+          // Old format (backward compatibility)
+          const projects = Array.isArray(filesRes?.projects) ? filesRes.projects : [];
+          setListOfFiles(projects.map((p: any) => ({
+            id: p.id,
+            filename: p.filename || p.name || p.id,
+            contentType: 'application/rdf+xml',
+            uploadDate: p.updatedAt || new Date().toISOString(),
+            length: 0
+          })));
+          setMyFiles(projects.map((p: any) => ({
+            id: p.id,
+            filename: p.filename || p.name || p.id,
+            contentType: 'application/rdf+xml',
+            uploadDate: p.updatedAt || new Date().toISOString(),
+            length: 0
+          })));
+          setSharedFiles([]);
+        }
       } catch (fileError) {
         console.error("Failed to fetch files:", fileError);
         setListOfFiles([]);
+        setMyFiles([]);
+        setSharedFiles([]);
       }
     } catch (error) {
       console.error("Failed to fetch data:", error);
@@ -654,22 +898,38 @@ const Dashboard = () => {
 
   const fetchProjects = useCallback(async () => {
     try {
-      const response = await apiClient.get<{ success: boolean; projects: any[] }>('/api/projects');
-      if (response.success && response.projects) {
-        setAvailableProjects(response.projects);
-        
-        // If no project selected and projects exist, auto-load the first one
-        if (!projectId && response.projects.length > 0) {
-          const firstProject = response.projects[0];
-          console.log('[Dashboard] Auto-loading first project:', firstProject.id);
-          setProjectId(firstProject.id);
-          fetchData(firstProject.id);
+      const userEmail = user?.email || '';
+      const response = await apiClient.get<{ success: boolean; projects?: any[]; myFiles?: any[]; sharedFiles?: any[] }>(`/api/projects?userEmail=${encodeURIComponent(userEmail)}`);
+      
+      if (response.success) {
+        // Handle new format with myFiles and sharedFiles
+        if (response.myFiles && response.sharedFiles) {
+          const allProjects = [...(response.myFiles || []), ...(response.sharedFiles || [])];
+          setAvailableProjects(allProjects);
+          
+          // If no project selected and projects exist, auto-load the first one from myFiles
+          if (!projectId && response.myFiles.length > 0) {
+            const firstProject = response.myFiles[0];
+            console.log('[Dashboard] Auto-loading first project:', firstProject.id);
+            setProjectId(firstProject.id);
+            fetchData(firstProject.id);
+          }
+        } else if (response.projects) {
+          // Backward compatibility with old format
+          setAvailableProjects(response.projects);
+          
+          if (!projectId && response.projects.length > 0) {
+            const firstProject = response.projects[0];
+            console.log('[Dashboard] Auto-loading first project:', firstProject.id);
+            setProjectId(firstProject.id);
+            fetchData(firstProject.id);
+          }
         }
       }
     } catch (error) {
       console.error("Failed to fetch projects:", error);
     }
-  }, [projectId, fetchData]);
+  }, [projectId, fetchData, user]);
 
   const handleProjectSelection = useCallback((selectedProjectId: string) => {
     setProjectId(selectedProjectId);
@@ -1718,7 +1978,13 @@ const Dashboard = () => {
           onToggleGraphTab={toggleGraphTab}
           isGraphVisible={visibleMainTabs.includes('Graph')}
           fileList={listOfFiles}
+          myFiles={myFiles}
+          sharedFiles={sharedFiles}
           currentProjectId={projectId}
+          onShareFile={(fileId) => {
+            setShareFileId(fileId);
+            setIsShareDialogOpen(true);
+          }}
         />
 
         <div className="bg-white border-b border-gray-200 flex-shrink-0">
@@ -1859,6 +2125,19 @@ const Dashboard = () => {
 
       {/* Collaboration Panel */}
       <CollaborationPanel />
+
+      {/* Share Dialog */}
+      {shareFileId && (
+        <ShareDialog
+          isOpen={isShareDialogOpen}
+          onClose={() => {
+            setIsShareDialogOpen(false);
+            setShareFileId(null);
+          }}
+          projectId={shareFileId}
+          userEmail={user?.email || ''}
+        />
+      )}
 
       {/* Toast Notifications */}
       <div className="fixed top-4 right-4 z-[9999] space-y-2">
