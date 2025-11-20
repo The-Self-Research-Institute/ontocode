@@ -57,7 +57,7 @@ export class CollaborationManager {
                         // Add authentication headers here if needed
                     },
                     
-                    debug: (str) => {
+                    debug: (str: string) => {
                         console.log('[STOMP Debug]', str);
                     },
                     
@@ -87,7 +87,7 @@ export class CollaborationManager {
                         resolve();
                     },
                     
-                    onStompError: (frame) => {
+                    onStompError: (frame: any) => {
                         console.error('STOMP error:', frame);
                         const error = `STOMP error: ${frame.headers['message'] || 'Unknown error'}`;
                         if (this.onError) {
@@ -96,7 +96,7 @@ export class CollaborationManager {
                         reject(new Error(error));
                     },
                     
-                    onWebSocketError: (event) => {
+                    onWebSocketError: (event: any) => {
                         console.error('WebSocket error:', event);
                         const error = 'WebSocket connection error';
                         if (this.onError) {

@@ -32,6 +32,7 @@ module.exports = {
         "url": require.resolve("url/"),
         "http": require.resolve("stream-http"),
         "https": require.resolve("https-browserify"),
+        "process": require.resolve("process/browser"),
     }
   },
   module: {

@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
 import { sci2CodeService, CitationItem } from '../services/sci2CodeService';
 
 interface QuickPickCitation extends vscode.QuickPickItem {
@@ -21,7 +20,10 @@ export async function insertCitationCommand() {
     // Show more helpful error with what we found
     const openFiles = vscode.workspace.textDocuments
       .filter(d => !d.isUntitled && d.uri.scheme === 'file')
-      .map(d => path.basename(d.fileName))
+      .map(d => {
+        const fileName = d.fileName;
+        return fileName.substring(fileName.lastIndexOf('/') + 1).substring(fileName.lastIndexOf('\\') + 1);
+      })
       .join(', ');
     
     vscode.window.showWarningMessage(
@@ -37,7 +39,8 @@ export async function insertCitationCommand() {
 
   const document = editor.document;
   const fileName = document.fileName;
-  const fileExtension = path.extname(fileName).toLowerCase();
+  const lastDot = fileName.lastIndexOf('.');
+  const fileExtension = lastDot !== -1 ? fileName.substring(lastDot).toLowerCase() : '';
   
   console.log('File name:', fileName);
   console.log('File extension:', fileExtension);
@@ -118,7 +121,7 @@ function findOntologyEditor(): vscode.TextEditor | undefined {
   const activeEditor = vscode.window.activeTextEditor;
   if (activeEditor) {
     const fileName = activeEditor.document.fileName;
-    const ext = path.extname(fileName).toLowerCase();
+    const ext = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
     console.log('Active editor:', fileName, 'Extension:', ext);
     
     if (validExtensions.includes(ext)) {
@@ -133,7 +136,7 @@ function findOntologyEditor(): vscode.TextEditor | undefined {
   console.log('Checking visible editors...');
   for (const editor of vscode.window.visibleTextEditors) {
     const fileName = editor.document.fileName;
-    const ext = path.extname(fileName).toLowerCase();
+    const ext = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
     console.log('Visible editor:', fileName, 'Extension:', ext);
     
     if (validExtensions.includes(ext)) {
@@ -149,7 +152,7 @@ function findOntologyEditor(): vscode.TextEditor | undefined {
     if (doc.uri.scheme !== 'file') continue;
     
     const fileName = doc.fileName;
-    const ext = path.extname(fileName).toLowerCase();
+    const ext = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
     console.log('Open document:', fileName, 'Extension:', ext);
     
     if (validExtensions.includes(ext)) {

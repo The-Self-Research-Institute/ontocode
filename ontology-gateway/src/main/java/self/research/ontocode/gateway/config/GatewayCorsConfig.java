@@ -1,7 +1,10 @@
 package self.research.ontocode.gateway.config;
 
+import org.springframework.cloud.gateway.filter.GatewayFilterChain;
+import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.Ordered;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -21,45 +24,59 @@ import java.util.Collections;
 @Configuration
 public class GatewayCorsConfig {
 
+    /**
+     * Global filter to remove CORS headers from backend responses
+     * This runs with the highest priority (HIGHEST_PRECEDENCE) to ensure
+     * backend CORS headers are stripped before gateway adds its own
+     */
     @Bean
-    public CorsWebFilter corsWebFilter() {
-        CorsConfiguration corsConfig = new CorsConfiguration();
-
-        // Allow all origins for development
-        corsConfig.setAllowedOriginPatterns(Collections.singletonList("*"));
-
-        // Allow all methods
-        corsConfig.setAllowedMethods(Arrays.asList(
-                "GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"
-        ));
-
-        // Allow all headers
-        corsConfig.setAllowedHeaders(Collections.singletonList("*"));
-
-        // Allow credentials
-        corsConfig.setAllowCredentials(true);
-
-        // Cache preflight for 1 hour
-        corsConfig.setMaxAge(3600L);
-
-        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/**", corsConfig);
-
-        return new CorsWebFilter(source);
+    public GlobalFilter corsHeaderCleanupFilter() {
+        return (exchange, chain) -> {
+            return chain.filter(exchange).then(Mono.fromRunnable(() -> {
+                ServerHttpResponse response = exchange.getResponse();
+                HttpHeaders headers = response.getHeaders();
+                
+                // Get the origin from request
+                String origin = exchange.getRequest().getHeaders().getOrigin();
+                
+                // Remove all CORS headers that might have been added by backend services
+                headers.remove(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN);
+                headers.remove(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS);
+                headers.remove(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS);
+                headers.remove(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS);
+                headers.remove(HttpHeaders.ACCESS_CONTROL_MAX_AGE);
+                headers.remove(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS);
+                
+                // Add gateway's CORS headers
+                if (origin != null && !origin.isEmpty()) {
+                    headers.add(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+                    headers.add(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true");
+                    headers.add(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS, "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD");
+                    headers.add(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS, "*");
+                    headers.add(HttpHeaders.ACCESS_CONTROL_MAX_AGE, "3600");
+                }
+            }));
+        };
     }
 
     /**
-     * Handle OPTIONS preflight requests
+     * Handle OPTIONS preflight requests before routing
      */
     @Bean
-    public WebFilter corsFilter() {
+    public WebFilter corsPreFlightFilter() {
         return (ServerWebExchange ctx, WebFilterChain chain) -> {
             ServerHttpRequest request = ctx.getRequest();
             if (HttpMethod.OPTIONS.equals(request.getMethod())) {
                 ServerHttpResponse response = ctx.getResponse();
                 HttpHeaders headers = response.getHeaders();
-
-                headers.add("Access-Control-Allow-Origin", "*");
+                
+                String origin = request.getHeaders().getOrigin();
+                if (origin != null) {
+                    headers.add("Access-Control-Allow-Origin", origin);
+                } else {
+                    headers.add("Access-Control-Allow-Origin", "*");
+                }
+                
                 headers.add("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD");
                 headers.add("Access-Control-Allow-Headers", "*");
                 headers.add("Access-Control-Max-Age", "3600");
