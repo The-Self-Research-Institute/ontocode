@@ -1,0 +1,145 @@
+package self.research.ontology.owlEditor.service;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.HttpClientErrorException;
+import self.research.ontology.owlEditor.document.ProjectShare;
+import self.research.ontology.owlEditor.repository.ProjectShareRepository;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class ProjectShareService {
+    
+    private final ProjectShareRepository shareRepository;
+    private final RestTemplate restTemplate;
+    private final EmailNotificationService emailNotificationService;
+    private final ProjectMetadataService metadataService;
+    
+    @Value("${auth.service.url:http://localhost:8086}")
+    private String authServiceUrl;
+    
+    /**
+     * Get user email from auth service by username
+     */
+    private String getEmailFromUsername(String username) {
+        try {
+            String url = authServiceUrl + "/api/auth/user/email?username=" + username;
+            @SuppressWarnings("unchecked")
+            Map<String, String> response = restTemplate.getForObject(url, Map.class);
+            if (response != null && response.containsKey("email")) {
+                return response.get("email");
+            }
+            log.warn("No email found for username: {}", username);
+            return username; // Fallback to username if not found
+        } catch (HttpClientErrorException.NotFound e) {
+            log.warn("User not found in auth service: {}", username);
+            return username; // Fallback to username
+        } catch (Exception e) {
+            log.error("Failed to fetch email from auth service for username: {}", username, e);
+            return username; // Fallback to username
+        }
+    }
+    
+    public ProjectShare createShare(String projectId, String ownerIdentifier, String permission) {
+        // Check if share already exists
+        Optional<ProjectShare> existing = shareRepository.findByProjectId(projectId);
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+        
+        // If ownerIdentifier looks like an email, use it directly, otherwise fetch from auth service
+        String ownerEmail;
+        if (ownerIdentifier.contains("@")) {
+            ownerEmail = ownerIdentifier;
+        } else {
+            ownerEmail = getEmailFromUsername(ownerIdentifier);
+        }
+        
+        ProjectShare share = new ProjectShare(projectId, ownerEmail, permission);
+        return shareRepository.save(share);
+    }
+    
+    public Optional<ProjectShare> getShareByProjectId(String projectId) {
+        return shareRepository.findByProjectId(projectId);
+    }
+    
+    public Optional<ProjectShare> getShareByLink(String shareLink) {
+        return shareRepository.findByShareLink(shareLink);
+    }
+    
+    public ProjectShare addEmailAccess(String projectId, String email, String permission) {
+        ProjectShare share = shareRepository.findByProjectId(projectId)
+                .orElseThrow(() -> new RuntimeException("Share not found for project: " + projectId));
+        
+        share.addSharedEmail(email);
+        // Update the default permission if provided
+        if (permission != null && !permission.isEmpty()) {
+            share.setPermission(permission);
+        }
+        ProjectShare savedShare = shareRepository.save(share);
+        
+        // Send email notification
+        try {
+            // Get file name from project metadata
+            String fileName = metadataService.readStatus(projectId)
+                    .map(status -> status.filename())
+                    .orElse("Untitled File");
+            
+            // Extract username from owner email (part before @)
+            String fromUsername = share.getOwnerEmail().split("@")[0];
+            
+            emailNotificationService.sendShareNotification(
+                email, 
+                fromUsername, 
+                fileName, 
+                permission != null ? permission : "view"
+            );
+        } catch (Exception e) {
+            log.error("Failed to send share notification email, but share was created", e);
+            // Don't throw - email failure shouldn't break sharing
+        }
+        
+        return savedShare;
+    }
+    
+    // Keep backward compatibility
+    public ProjectShare addEmailAccess(String projectId, String email) {
+        return addEmailAccess(projectId, email, "view");
+    }
+    
+    public ProjectShare removeEmailAccess(String projectId, String email) {
+        ProjectShare share = shareRepository.findByProjectId(projectId)
+                .orElseThrow(() -> new RuntimeException("Share not found for project: " + projectId));
+        
+        share.removeSharedEmail(email);
+        return shareRepository.save(share);
+    }
+    
+    public List<ProjectShare> getMyShares(String ownerEmail) {
+        return shareRepository.findByOwnerEmail(ownerEmail);
+    }
+    
+    public List<ProjectShare> getSharedWithMe(String email) {
+        return shareRepository.findBySharedWithEmailsContaining(email);
+    }
+    
+    public void deleteShare(String projectId) {
+        shareRepository.findByProjectId(projectId)
+                .ifPresent(shareRepository::delete);
+    }
+    
+    public boolean hasAccess(String projectId, String userEmail) {
+        return shareRepository.findByProjectId(projectId)
+                .map(share -> share.getOwnerEmail().equals(userEmail) 
+                           || share.getSharedWithEmails().contains(userEmail))
+                .orElse(false);
+    }
+}

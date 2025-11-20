@@ -55,4 +55,24 @@ public class ProjectMetadataService {
         
         projectRepository.save(doc);
     }
+    
+    public void setOwnerEmail(String projectId, String ownerEmail) {
+        ProjectDocument doc = projectRepository.findById(projectId)
+                .orElse(new ProjectDocument(projectId, projectId, null));
+        
+        doc.setOwnerEmail(ownerEmail);
+        doc.setUpdatedAt(Instant.now());
+        
+        projectRepository.save(doc);
+    }
+    
+    public void setGridfsFileId(String projectId, String gridfsFileId) {
+        ProjectDocument doc = projectRepository.findById(projectId)
+                .orElse(new ProjectDocument(projectId, projectId, null));
+        
+        doc.setGridfsFileId(gridfsFileId);
+        doc.setUpdatedAt(Instant.now());
+        
+        projectRepository.save(doc);
+    }
 }

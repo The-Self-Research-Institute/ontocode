@@ -21,6 +21,7 @@ import SparqlQueryEditor from './SparqlQueryEditor';
 import { ProjectSelector } from './ProjectSelector';
 import CollaborationPanel from './CollaborationPanel';
 import ToastNotification from './ToastNotification';
+import ShareDialog from './ShareDialog';
 import { 
   ClassSelectorDialog, 
   PropertySelectorDialog, 
@@ -38,6 +39,10 @@ type FileInfo = {
   length: number;
   uploadDate: string; // ISO
   projectId?: string | null;
+  size?: number;
+  permission?: 'view' | 'edit';
+  sharedBy?: string;
+  ownerEmail?: string;
 };
 
 // #region Helper Components
@@ -126,14 +131,30 @@ const TopMenuBar = ({
   onToggleGraphTab,
   isGraphVisible,
   fileList,
+  myFiles,
+  sharedFiles,
   currentProjectId,
+  onShareFile,
+  onSave,
+  onSwitchFile,
+  hasUnsavedChanges,
+  isSaving,
+  onOpenDialog,
 }: {
   onToggleSwrlTab: () => void;
   isSwrlVisible: boolean;
   onToggleGraphTab: () => void;
   isGraphVisible: boolean;
   fileList: FileInfo[];
+  myFiles: FileInfo[];
+  sharedFiles: FileInfo[];
   currentProjectId: string | null;
+  onShareFile: (fileId: string) => void;
+  onSave: () => Promise<void>;
+  onSwitchFile: (projectId: string) => void;
+  hasUnsavedChanges: boolean;
+  isSaving: boolean;
+  onOpenDialog: () => void;
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -178,7 +199,7 @@ const TopMenuBar = ({
   }, [fileList]);
 
   const displayedFiles = searchFile ? files : fileList;
-  const menuItems = ['File', 'Edit', 'View', 'Reasoner', 'Tools', 'Window', 'Download', 'Help'];
+  const menuItems = ['File', 'Edit', 'View', 'Reasoner', 'Tools', 'Window', 'Download', 'Help', 'Share'];
 
   return (
     <header ref={menuRef} className="bg-gray-200 text-gray-800 text-xs flex items-center px-2 relative border-b border-gray-300 h-8 flex-shrink-0">
@@ -208,6 +229,27 @@ const TopMenuBar = ({
                       });
                     }
                   }
+                } else if (item === "Share") {
+                  // Check if current file is owned by user
+                  const currentFile = myFiles.find(f => f.id === currentProjectId);
+                  if (currentProjectId && currentFile) {
+                    onShareFile(currentProjectId);
+                    setOpenMenu(null);
+                  } else if (!currentProjectId) {
+                    if (window.vscode) {
+                      window.vscode.postMessage({
+                        type: 'error',
+                        value: 'No ontology loaded. Please open a file first.'
+                      });
+                    }
+                  } else {
+                    if (window.vscode) {
+                      window.vscode.postMessage({
+                        type: 'error',
+                        value: 'You can only share files you own. This file is shared with you.'
+                      });
+                    }
+                  }
                 } else {
                   setOpenMenu(openMenu === item ? null : item);
                 }
@@ -217,7 +259,7 @@ const TopMenuBar = ({
               {item}
             </button>
             {openMenu === item && (
-              <div className={`absolute left-0 mt-1 ${item === 'File' ? 'w-96' : 'w-100'} bg-white border border-gray-300 rounded-md shadow-lg z-20`}>
+              <div className={`absolute left-0 mt-1 ${item === 'File' ? 'w-[360px]' : 'w-48'} bg-white border border-gray-300 rounded-lg shadow-xl z-20 overflow-hidden`}>
                 {item === "Window" ? (
                   <div className="py-1">
                     <div className="px-3 py-1 text-gray-400 text-xs">Tabs</div>
@@ -248,48 +290,29 @@ const TopMenuBar = ({
                     </a>
                   </div>
                 ) : item === "File" ? (
-                  <div className="p-3 space-y-1">
-                    <div className="p-2 border-b border-gray-200 flex-shrink-0">
-                      <div className="relative">
-                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                        <input
-                          type="text"
-                          placeholder={`Search Files...`}
-                          value={searchFile}
-                          onChange={(e) => onSearchFileChange(e.target.value)}
-                          className="w-full pl-8 pr-3 py-1.5 border border-gray-300 rounded-md focus:ring-1 focus:ring-purple-500 text-sm bg-white"
-                        />
-                      </div>
-                    </div>
-                    {isLoading && (
-                      <div className="px-3 py-1 text-gray-500 text-xs flex items-center gap-2">
-                        <Loader2 size={14} className="animate-spin" /> Searching...
-                      </div>
-                    )}
-                    {displayedFiles?.length > 0
-                      ? displayedFiles.map((file) => (
-                          <div 
-                            className="flex justify-between items-center gap-2 hover:bg-blue-50 px-2 py-1 rounded cursor-pointer transition-colors" 
-                            key={file.id}
-                            onClick={() => {
-                              if (window.vscode) {
-                                window.vscode.postMessage({
-                                  type: "fileLoaded",
-                                  projectId: file.filename.slice(0, -4),
-                                });
-                                setOpenMenu(null);
-                              }
-                            }}
-                          >
-                            <span
-                              className="truncate min-w-0 flex-1 text-black"
-                              title={`Click to load: ${file.filename}`}
-                            >
-                              {file.filename}
-                            </span>
-                          </div>
-                        ))
-                      : !isLoading && <div className="px-3 py-1 text-black">No Files</div>}
+                  <div className="flex flex-col py-1">
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        onOpenDialog();
+                        setOpenMenu(null);
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
+                    >
+                      Open
+                    </button>
+                    <button
+                      onClick={async (e) => {
+                        e.preventDefault();
+                        await onSave();
+                        setOpenMenu(null);
+                      }}
+                      disabled={!hasUnsavedChanges || isSaving || !currentProjectId}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                      Save
+                      {hasUnsavedChanges && <span className="text-orange-600 text-lg leading-none">•</span>}
+                    </button>
                   </div>
                 ) : (
                   <div className="p-2 text-xs text-gray-400">No actions available</div>
@@ -300,6 +323,153 @@ const TopMenuBar = ({
         ))}
       </div>
     </header>
+  );
+};
+
+const OpenFileDialog = ({
+  isOpen,
+  onClose,
+  myFiles,
+  sharedFiles,
+  currentProjectId,
+  onSwitchFile
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  myFiles: FileInfo[];
+  sharedFiles: FileInfo[];
+  currentProjectId: string | null;
+  onSwitchFile: (projectId: string) => void;
+}) => {
+  const [searchQuery, setSearchQuery] = useState("");
+
+  if (!isOpen) return null;
+
+  const allFiles = [...myFiles, ...sharedFiles];
+  const filteredFiles = searchQuery
+    ? allFiles.filter(f => f.filename.toLowerCase().includes(searchQuery.toLowerCase()))
+    : allFiles;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-white rounded-lg shadow-2xl w-full max-w-md mx-4 max-h-[70vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="p-4 border-b border-gray-200">
+          <div className="relative">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search files..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              autoFocus
+              className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm"
+            />
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {myFiles.length > 0 && (
+            <div className="p-3">
+              <div className="flex items-center gap-2 px-2 py-1.5 mb-2">
+                <User size={14} className="text-purple-600" />
+                <span className="text-xs font-semibold text-purple-800">My Files ({myFiles.filter(f => !searchQuery || f.filename.toLowerCase().includes(searchQuery.toLowerCase())).length})</span>
+              </div>
+              <div className="space-y-0.5">
+                {myFiles.filter(f => !searchQuery || f.filename.toLowerCase().includes(searchQuery.toLowerCase())).map((file) => {
+                  const fileProjectId = file.filename.slice(0, -4);
+                  const isActive = fileProjectId === currentProjectId;
+                  return (
+                    <div
+                      key={file.id}
+                      onClick={() => {
+                        if (!isActive) {
+                          onSwitchFile(fileProjectId);
+                        }
+                        onClose();
+                      }}
+                      className={`flex items-center gap-3 p-2 px-3 rounded-md cursor-pointer transition-all ${
+                        isActive
+                          ? 'bg-purple-50 border border-purple-300'
+                          : 'hover:bg-gray-50 border border-transparent'
+                      }`}
+                    >
+                      <FileText size={18} className="text-purple-500" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-medium text-gray-900 truncate">{file.filename}</span>
+                          {isActive && (
+                            <span className="px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-semibold rounded">
+                              ACTIVE
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          <div className="p-3 border-t border-gray-100">
+            <div className="flex items-center gap-2 px-2 py-1.5 mb-2">
+              <Share2 size={14} className="text-blue-600" />
+              <span className="text-xs font-semibold text-blue-800">Shared With Me ({sharedFiles.filter(f => !searchQuery || f.filename.toLowerCase().includes(searchQuery.toLowerCase())).length})</span>
+            </div>
+            {sharedFiles.length > 0 ? (
+              <div className="space-y-0.5">
+                {sharedFiles.filter(f => !searchQuery || f.filename.toLowerCase().includes(searchQuery.toLowerCase())).map((file) => {
+                  const fileProjectId = file.filename.slice(0, -4);
+                  const isActive = fileProjectId === currentProjectId;
+                  return (
+                    <div
+                      key={file.id}
+                      onClick={() => {
+                        if (!isActive) {
+                          onSwitchFile(fileProjectId);
+                        }
+                        onClose();
+                      }}
+                      className={`flex items-center gap-3 p-2 px-3 rounded-md cursor-pointer transition-all ${
+                        isActive
+                          ? 'bg-blue-50 border border-blue-300'
+                          : 'hover:bg-gray-50 border border-transparent'
+                      }`}
+                    >
+                      <FileText size={18} className="text-blue-500" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-medium text-gray-900 truncate">{file.filename}</span>
+                          {isActive && (
+                            <span className="px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-semibold rounded">
+                              ACTIVE
+                            </span>
+                          )}
+                        </div>
+                        {file.sharedBy && (
+                          <div className="text-[10px] text-gray-500 mt-0.5">
+                            Shared by {file.sharedBy}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-4 text-gray-400">
+                <Share2 size={20} className="mb-1.5 opacity-50" />
+                <p className="text-[10px]">No shared files</p>
+              </div>
+            )}
+          </div>
+          {filteredFiles.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+              <Search size={32} className="mb-2 opacity-50" />
+              <p className="text-sm">No files found</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 };
 
@@ -469,6 +639,10 @@ const Dashboard = () => {
   const [showLoadingChoice, setShowLoadingChoice] = useState(false);
   const [loadingProjectName, setLoadingProjectName] = useState("");
   const loadingPromiseRef = useRef<Promise<void> | null>(null);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showOpenDialog, setShowOpenDialog] = useState(false);
   const [activeOntologySubTab, setActiveOntologySubTab] = useState('prefixes');
   const [isCreateIndividualModalOpen, setCreateIndividualModalOpen] = useState(false);
   const [isAddAnnotationDialogOpen, setAddAnnotationDialogOpen] = useState(false);
@@ -509,6 +683,10 @@ const Dashboard = () => {
 
   const [filteredData, setFilteredData] = useState<SelectableItem[]>([]);
   const [listOfFiles, setListOfFiles] = useState<FileInfo[]>([]);
+  const [myFiles, setMyFiles] = useState<FileInfo[]>([]);
+  const [sharedFiles, setSharedFiles] = useState<FileInfo[]>([]);
+  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
+  const [shareFileId, setShareFileId] = useState<string | null>(null);
 
   const [visibleMainTabs, setVisibleMainTabs] = useState(['ActiveOntology', 'Entities', 'IndividualsByClass', 'DLQuery', 'SPARQL']);
   // #endregion
@@ -534,6 +712,13 @@ const Dashboard = () => {
     
     // Notify user that loading has started
     console.log(`Loading ontology "${currentProjectId}"...`);
+    console.log('[Dashboard] 🔄 Fetching data for project:', currentProjectId);
+    console.log('[Dashboard] 📊 Collaboration status:', collaboration.state.connected);
+    
+    // Request collaboration status when loading a new file
+    if (window.vscode) {
+      window.vscode.postMessage({ type: 'requestCollaborationStatus' });
+    }
 
     try {
       // Fetch data in background
@@ -753,18 +938,69 @@ const Dashboard = () => {
       
       // Fetch files list separately (not in parallel to avoid blocking main data load)
       try {
-        const filesRes = await apiClient.get<any>(`/api/projects`);
-        const projects = Array.isArray(filesRes?.projects) ? filesRes.projects : [];
-        setListOfFiles(projects.map((p: any) => ({
-          id: p.id,
-          filename: p.filename || p.name || p.id,
-          contentType: 'application/rdf+xml',
-          uploadDate: p.updatedAt || new Date().toISOString(),
-          length: 0
-        })));
+        const userEmail = user?.email || '';
+        const filesRes = await apiClient.get<any>(`/api/projects?userEmail=${encodeURIComponent(userEmail)}`);
+        
+        if (filesRes.myFiles && filesRes.sharedFiles) {
+          // New format with separate lists
+          const myProjects = Array.isArray(filesRes.myFiles) ? filesRes.myFiles : [];
+          const sharedProjects = Array.isArray(filesRes.sharedFiles) ? filesRes.sharedFiles : [];
+          
+          setMyFiles(myProjects.map((p: any) => ({
+            id: p.id,
+            filename: p.filename || p.name || p.id,
+            contentType: 'application/rdf+xml',
+            uploadDate: p.updatedAt || new Date().toISOString(),
+            length: 0,
+            ownerEmail: p.ownerEmail
+          })));
+          
+          setSharedFiles(sharedProjects.map((p: any) => ({
+            id: p.id,
+            filename: p.filename || p.name || p.id,
+            contentType: 'application/rdf+xml',
+            uploadDate: p.updatedAt || new Date().toISOString(),
+            length: 0,
+            sharedBy: p.sharedBy,
+            ownerEmail: p.ownerEmail,
+            permission: p.permission || 'view'
+          })));
+          
+          console.log('[Dashboard] 📂 Loaded shared files:', sharedProjects.length);
+          console.log('[Dashboard] 🤝 Collaboration features available for shared editing');
+          
+          // Combined list for backward compatibility
+          setListOfFiles([...myProjects, ...sharedProjects].map((p: any) => ({
+            id: p.id,
+            filename: p.filename || p.name || p.id,
+            contentType: 'application/rdf+xml',
+            uploadDate: p.updatedAt || new Date().toISOString(),
+            length: 0
+          })));
+        } else {
+          // Old format (backward compatibility)
+          const projects = Array.isArray(filesRes?.projects) ? filesRes.projects : [];
+          setListOfFiles(projects.map((p: any) => ({
+            id: p.id,
+            filename: p.filename || p.name || p.id,
+            contentType: 'application/rdf+xml',
+            uploadDate: p.updatedAt || new Date().toISOString(),
+            length: 0
+          })));
+          setMyFiles(projects.map((p: any) => ({
+            id: p.id,
+            filename: p.filename || p.name || p.id,
+            contentType: 'application/rdf+xml',
+            uploadDate: p.updatedAt || new Date().toISOString(),
+            length: 0
+          })));
+          setSharedFiles([]);
+        }
       } catch (fileError) {
         console.error("Failed to fetch files:", fileError);
         setListOfFiles([]);
+        setMyFiles([]);
+        setSharedFiles([]);
       }
       
       // Notify user that ontology is fully loaded
@@ -787,22 +1023,38 @@ const Dashboard = () => {
 
   const fetchProjects = useCallback(async () => {
     try {
-      const response = await apiClient.get<{ success: boolean; projects: any[] }>('/api/projects');
-      if (response.success && response.projects) {
-        setAvailableProjects(response.projects);
-        
-        // If no project selected and projects exist, auto-load the first one
-        if (!projectId && response.projects.length > 0) {
-          const firstProject = response.projects[0];
-          console.log('[Dashboard] Auto-loading first project:', firstProject.id);
-          setProjectId(firstProject.id);
-          fetchData(firstProject.id);
+      const userEmail = user?.email || '';
+      const response = await apiClient.get<{ success: boolean; projects?: any[]; myFiles?: any[]; sharedFiles?: any[] }>(`/api/projects?userEmail=${encodeURIComponent(userEmail)}`);
+      
+      if (response.success) {
+        // Handle new format with myFiles and sharedFiles
+        if (response.myFiles && response.sharedFiles) {
+          const allProjects = [...(response.myFiles || []), ...(response.sharedFiles || [])];
+          setAvailableProjects(allProjects);
+          
+          // If no project selected and projects exist, auto-load the first one from myFiles
+          if (!projectId && response.myFiles.length > 0) {
+            const firstProject = response.myFiles[0];
+            console.log('[Dashboard] Auto-loading first project:', firstProject.id);
+            setProjectId(firstProject.id);
+            fetchData(firstProject.id);
+          }
+        } else if (response.projects) {
+          // Backward compatibility with old format
+          setAvailableProjects(response.projects);
+          
+          if (!projectId && response.projects.length > 0) {
+            const firstProject = response.projects[0];
+            console.log('[Dashboard] Auto-loading first project:', firstProject.id);
+            setProjectId(firstProject.id);
+            fetchData(firstProject.id);
+          }
         }
       }
     } catch (error) {
       console.error("Failed to fetch projects:", error);
     }
-  }, [projectId, fetchData]);
+  }, [projectId, fetchData, user]);
 
   const handleProjectSelection = useCallback((selectedProjectId: string) => {
     setProjectId(selectedProjectId);
@@ -873,11 +1125,16 @@ const Dashboard = () => {
           setShowLoadingChoice(true);
           
           // Start loading in background and store the promise
-          loadingPromiseRef.current = fetchData(message.projectId, false).catch((error) => {
-            console.error('[Dashboard] Failed to load ontology:', error);
-            notificationService.error('Load Failed', `Could not load "${message.projectId}". The file may still be processing.`);
-            setShowLoadingChoice(false);
-          });
+          loadingPromiseRef.current = fetchData(message.projectId, false)
+            .then(() => {
+              console.log('[Dashboard] Loading completed for:', message.projectId);
+              setShowLoadingChoice(false);
+            })
+            .catch((error) => {
+              console.error('[Dashboard] Failed to load ontology:', error);
+              notificationService.error('Load Failed', `Could not load "${message.projectId}". The file may still be processing.`);
+              setShowLoadingChoice(false);
+            });
           break;
         case "loadingFailed":
           setIsInitialLoading(false);
@@ -903,11 +1160,12 @@ const Dashboard = () => {
     // Initialize notification service to show toasts via collaboration context
     notificationService.onToast((options) => {
       collaboration.addNotification({
-        id: `notif-${Date.now()}`,
         type: options.type,
         message: `${options.title}: ${options.message}`,
+        userId: 'system',
         username: 'System',
-        userColor: '#6366f1'
+        userColor: '#6366f1',
+        timestamp: Date.now()
       });
     });
     
@@ -1079,6 +1337,128 @@ const Dashboard = () => {
     }
   }, [entitiesTab, selectedItem]);
 
+  // Draft auto-save: Mark changes as unsaved
+  const markAsUnsaved = useCallback(() => {
+    setHasUnsavedChanges(true);
+    
+    // Clear existing timer
+    if (draftTimerRef.current) {
+      clearTimeout(draftTimerRef.current);
+    }
+    
+    // Auto-save draft to localStorage after 2 seconds of inactivity
+    draftTimerRef.current = setTimeout(() => {
+      if (projectId) {
+        console.log('[Dashboard] Auto-saving draft to localStorage...');
+        const draft = {
+          projectId,
+          classHierarchy,
+          objectProperties,
+          dataProperties,
+          annotationProperties,
+          individuals,
+          datatypes,
+          metadata,
+          timestamp: Date.now()
+        };
+        localStorage.setItem(`draft_${projectId}`, JSON.stringify(draft));
+        console.log('[Dashboard] Draft saved to localStorage');
+      }
+    }, 2000);
+  }, [projectId, classHierarchy, objectProperties, dataProperties, annotationProperties, individuals, datatypes, metadata]);
+
+  // Save changes to backend
+  const handleSave = useCallback(async () => {
+    if (!projectId || isSaving) return;
+    
+    try {
+      setIsSaving(true);
+      console.log('[Dashboard] Saving changes to backend...');
+      
+      // Export current ontology state
+      const response = await apiClient.post(`/api/ontology/save/${projectId}`, {
+        classHierarchy,
+        objectProperties,
+        dataProperties,
+        annotationProperties,
+        individuals,
+        datatypes,
+        metadata
+      });
+      
+      setHasUnsavedChanges(false);
+      
+      // Clear draft from localStorage
+      localStorage.removeItem(`draft_${projectId}`);
+      
+      notificationService.success('Saved', `Ontology "${projectId}" saved successfully`);
+      console.log('[Dashboard] Save complete');
+    } catch (error) {
+      console.error('[Dashboard] Save failed:', error);
+      notificationService.error('Save Failed', 'Could not save changes. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  }, [projectId, isSaving, classHierarchy, objectProperties, dataProperties, annotationProperties, individuals, datatypes, metadata]);
+
+  // Switch to a different file (with unsaved changes check)
+  const handleSwitchFile = useCallback((newProjectId: string) => {
+    const switchFile = () => {
+      console.log('[Dashboard] Switching to file:', newProjectId);
+      if (window.vscode) {
+        window.vscode.postMessage({
+          type: "fileLoaded",
+          projectId: newProjectId,
+        });
+      }
+      setHasUnsavedChanges(false);
+      localStorage.removeItem(`draft_${projectId}`);
+    };
+
+    if (hasUnsavedChanges) {
+      // Show confirmation dialog
+      setConfirmDialog({
+        isOpen: true,
+        title: 'Unsaved Changes',
+        message: `You have unsaved changes in "${projectId}". Do you want to save before switching?`,
+        onConfirm: async () => {
+          await handleSave();
+          switchFile();
+        }
+      });
+    } else {
+      switchFile();
+    }
+  }, [hasUnsavedChanges, projectId, handleSave]);
+
+  // Load draft from localStorage if exists
+  useEffect(() => {
+    if (projectId) {
+      const draftKey = `draft_${projectId}`;
+      const savedDraft = localStorage.getItem(draftKey);
+      if (savedDraft) {
+        try {
+          const draft = JSON.parse(savedDraft);
+          const age = Date.now() - draft.timestamp;
+          // Only restore drafts less than 24 hours old
+          if (age < 24 * 60 * 60 * 1000) {
+            console.log('[Dashboard] Found draft, restoring...', draft);
+            // Could show a dialog asking if user wants to restore draft
+            setHasUnsavedChanges(true);
+          } else {
+            localStorage.removeItem(draftKey);
+          }
+        } catch (e) {
+          console.error('[Dashboard] Failed to parse draft:', e);
+          localStorage.removeItem(draftKey);
+        }
+      }
+    }
+  }, [projectId]);
+
+  // Keyboard shortcut for Save (Ctrl+S)
+
+
   const handleAddAnnotation = useCallback(async () => {
     if (!selectedItem || !projectId) return;
     setAddAnnotationDialogOpen(true);
@@ -1095,6 +1475,7 @@ const Dashboard = () => {
       const updatedAnnotations = { ...selectedItem.annotations, [propertyIri]: value };
       const updatedItem = { ...selectedItem, annotations: updatedAnnotations };
       updateItemInState(updatedItem);
+      markAsUnsaved();
       showNotification('Annotation added successfully!', 'info');
     } catch (error) {
       console.error('Failed to add annotation:', error);
@@ -1121,6 +1502,7 @@ const Dashboard = () => {
           delete remainingAnnotations[key];
           const updatedItem = { ...selectedItem, annotations: remainingAnnotations };
           updateItemInState(updatedItem);
+          markAsUnsaved();
           showNotification('Annotation deleted successfully!', 'info');
         } catch (error) {
           console.error('Failed to delete annotation:', error);
@@ -1217,6 +1599,7 @@ const Dashboard = () => {
           } else {
              setClassHierarchy(prev => addNodeRecursively(prev));
           }
+          markAsUnsaved();
       } else if (entitiesTab === 'ObjectProperties') {
           // Handle Object Property Creation
           parentIri = 'http://www.w3.org/2002/07/owl#topObjectProperty';
@@ -1852,6 +2235,14 @@ const Dashboard = () => {
         onAdd={handleAnnotationDialogAdd}
         availableProperties={annotationProperties}
       />
+      <OpenFileDialog
+        isOpen={showOpenDialog}
+        onClose={() => setShowOpenDialog(false)}
+        myFiles={myFiles}
+        sharedFiles={sharedFiles}
+        currentProjectId={projectId}
+        onSwitchFile={handleSwitchFile}
+      />
       <ConfirmDialog
         isOpen={confirmDialog.isOpen}
         onClose={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
@@ -1867,7 +2258,18 @@ const Dashboard = () => {
           onToggleGraphTab={toggleGraphTab}
           isGraphVisible={visibleMainTabs.includes('Graph')}
           fileList={listOfFiles}
+          myFiles={myFiles}
+          sharedFiles={sharedFiles}
           currentProjectId={projectId}
+          onShareFile={(fileId) => {
+            setShareFileId(fileId);
+            setIsShareDialogOpen(true);
+          }}
+          onSave={handleSave}
+          onSwitchFile={handleSwitchFile}
+          hasUnsavedChanges={hasUnsavedChanges}
+          isSaving={isSaving}
+          onOpenDialog={() => setShowOpenDialog(true)}
         />
 
         <div className="bg-white border-b border-gray-200 flex-shrink-0">
@@ -1896,6 +2298,12 @@ const Dashboard = () => {
                 >
                   <Database size={14} />
                   <span className="max-w-[200px] truncate">{projectId}</span>
+                  {hasUnsavedChanges && (
+                    <span className="text-orange-600 ml-1" title="Unsaved changes">●</span>
+                  )}
+                  {isSaving && (
+                    <Loader2 size={12} className="animate-spin ml-1 text-blue-600" />
+                  )}
                 </button>
               )}
               <span className="text-xs text-gray-600">Welcome, {user?.username || 'Guest'}</span>
@@ -2016,6 +2424,19 @@ const Dashboard = () => {
 
       {/* Collaboration Panel */}
       <CollaborationPanel />
+
+      {/* Share Dialog */}
+      {shareFileId && (
+        <ShareDialog
+          isOpen={isShareDialogOpen}
+          onClose={() => {
+            setIsShareDialogOpen(false);
+            setShareFileId(null);
+          }}
+          projectId={shareFileId}
+          userEmail={user?.email || ''}
+        />
+      )}
 
       {/* Toast Notifications */}
       <div className="fixed top-4 right-4 z-[9999] space-y-2">

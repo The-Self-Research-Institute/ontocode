@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import self.research.ontology.owlEditor.model.ProjectStatus;
+import self.research.ontology.owlEditor.service.GridFSFileService;
 import self.research.ontology.owlEditor.service.ProjectImportService;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
 import self.research.ontology.owlEditor.service.StorageManager;
@@ -39,34 +40,67 @@ public class ProjectLoadController {
     private final StorageManager storageManager;
     private final ProjectMetadataService metadataService;
     private final ProjectImportService importService;
+    private final GridFSFileService gridFSFileService;
 
     public ProjectLoadController(StorageManager storageManager,
                                  ProjectMetadataService metadataService,
-                                 ProjectImportService importService) {
+                                 ProjectImportService importService,
+                                 GridFSFileService gridFSFileService) {
         this.storageManager = storageManager;
         this.metadataService = metadataService;
         this.importService = importService;
+        this.gridFSFileService = gridFSFileService;
     }
 
     @PostMapping("/upload/{projectId}")
     public ResponseEntity<Map<String, Object>> upload(@PathVariable String projectId,
-                                                      @RequestParam("file") MultipartFile file) {
+                                                      @RequestParam("file") MultipartFile file,
+                                                      @RequestParam(required = false) String ownerEmail) {
         try {
+            // Store file in GridFS first
+            String gridfsFileId = gridFSFileService.storeFile(
+                projectId, 
+                file.getOriginalFilename(), 
+                file.getContentType(),
+                file.getInputStream()
+            );
+            
+            log.info("Stored file in GridFS for project {}: fileId={}", projectId, gridfsFileId);
+            
+            // Also save to local filesystem for processing
             Path projectDir = storageManager.prepareProjectDir(projectId);
             Path original = projectDir.resolve("ontology.original.owl");
             Files.createDirectories(original.getParent());
-            try (InputStream in = file.getInputStream();
-                 OutputStream out = Files.newOutputStream(original,
-                         StandardOpenOption.CREATE,
-                         StandardOpenOption.TRUNCATE_EXISTING,
-                         StandardOpenOption.WRITE)) {
-                in.transferTo(out);
+            
+            // Retrieve from GridFS and save to local file
+            gridFSFileService.getFileById(gridfsFileId).ifPresent(resource -> {
+                try (InputStream in = resource.getInputStream();
+                     OutputStream out = Files.newOutputStream(original,
+                             StandardOpenOption.CREATE,
+                             StandardOpenOption.TRUNCATE_EXISTING,
+                             StandardOpenOption.WRITE)) {
+                    in.transferTo(out);
+                } catch (IOException e) {
+                    throw new RuntimeException("Failed to save file to local filesystem", e);
+                }
+            });
+            
+            ProjectStatus status = ProjectStatus.uploaded(file.getOriginalFilename());
+            metadataService.writeStatus(projectId, status);
+            
+            // Set GridFS file ID mapping
+            metadataService.setGridfsFileId(projectId, gridfsFileId);
+            
+            // Set owner email if provided
+            if (ownerEmail != null && !ownerEmail.isEmpty()) {
+                metadataService.setOwnerEmail(projectId, ownerEmail);
             }
-            metadataService.writeStatus(projectId, ProjectStatus.uploaded(file.getOriginalFilename()));
+            
             importService.submitImport(projectId, original);
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "projectId", projectId,
+                    "gridfsFileId", gridfsFileId,
                     "message", "Upload complete, processing scheduled"));
         } catch (IOException e) {
             log.error("Upload failed", e);

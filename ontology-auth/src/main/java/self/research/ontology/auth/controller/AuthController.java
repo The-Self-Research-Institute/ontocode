@@ -176,7 +176,7 @@ public class AuthController {
 
         // Generate JWT token
         UserDetails userDetails = userDetailsService.loadUserByUsername(request.getUsername());
-        String jwt = jwtUtil.generateToken(userDetails);
+        String jwt = jwtUtil.generateToken(userDetails, user.getEmail());
 
         // Clear rate limit on successful login
         rateLimitService.clearLimit(clientIp);
@@ -237,7 +237,7 @@ public class AuthController {
 
         // Generate JWT token for immediate login
         UserDetails userDetails = userDetailsService.loadUserByUsername(request.getUsername());
-        String jwt = jwtUtil.generateToken(userDetails);
+        String jwt = jwtUtil.generateToken(userDetails, user.getEmail());
 
         return ResponseEntity.ok(Map.of(
             "jwt", jwt,
@@ -347,6 +347,31 @@ public class AuthController {
         return ResponseEntity.ok(Map.of(
             "message", "Password reset successfully! You can now log in with your new password."
         ));
+    }
+
+    /**
+     * Get user email by username
+     * Used by other services to lookup user email
+     */
+    @GetMapping("/user/email")
+    public ResponseEntity<?> getUserEmail(@RequestParam String username) {
+        try {
+            Optional<User> userOpt = userRepository.findByUsername(username);
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.notFound().build();
+            }
+            
+            User user = userOpt.get();
+            return ResponseEntity.ok(Map.of(
+                "username", user.getUsername(),
+                "email", user.getEmail()
+            ));
+        } catch (Exception e) {
+            log.error("Failed to get user email", e);
+            return ResponseEntity.badRequest().body(Map.of(
+                "error", e.getMessage()
+            ));
+        }
     }
 
     /**
