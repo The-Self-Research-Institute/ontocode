@@ -15,9 +15,9 @@ echo ========================================
 echo.
 
 :: Check if Maven daemon is available
-where mvnd >nul 2>&1
+where mvn >nul 2>&1
 if %errorlevel% equ 0 (
-    set MVN_CMD=mvnd
+    set MVN_CMD=mvn
     echo Using Maven Daemon for faster builds...
 ) else (
     set MVN_CMD=mvn
