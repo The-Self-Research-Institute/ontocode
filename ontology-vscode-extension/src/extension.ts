@@ -2,7 +2,7 @@
 
 import * as vscode from 'vscode';
 // Fix: Removed 'path' and 'fs' imports to use VSCode's API and web standards.
-import FormData from 'form-data';
+// Fix: Removed node.js form-data import - using native browser FormData instead
 import axios, { AxiosError } from 'axios';
 import { insertCitationCommand } from './features/citationInsertion';
 import { CitationPickerPanel } from './webview/citationPicker';
@@ -496,12 +496,19 @@ class OntoCodePanel {
 
         try {
             // 3. Prepare the form data for multipart upload
+            // Convert Uint8Array to Blob for web extension compatibility
+            // Create a new Uint8Array with ArrayBuffer to ensure compatibility
+            const buffer = new Uint8Array(fileData.buffer.byteLength);
+            buffer.set(new Uint8Array(fileData.buffer));
+            const fileBlob = new Blob([buffer], { type: 'application/rdf+xml' });
+            // Create a File object from the Blob to preserve filename
+            const file = new File([fileBlob], fileName, { type: 'application/rdf+xml' });
             const formData = new FormData();
-            formData.append('file', fileData, fileName);
+            formData.append('file', file);
             
             const headers = {
                 'Authorization': `Bearer ${token}`,
-                ...formData.getHeaders()
+                // Browser FormData sets its own Content-Type with boundary
             };
 
             // 4. Upload to gateway endpoint
@@ -746,14 +753,17 @@ class OntoCodePanel {
             <meta http-equiv="Content-Security-Policy" content="
                 default-src 'none'; 
                 img-src ${(webview as any).cspSource} https: data: blob:; 
-                script-src 'nonce-${nonce}' https://cdn.tailwindcss.com https://unpkg.com ${(webview as any).cspSource};
-                style-src ${(webview as any).cspSource} 'unsafe-inline' https://unpkg.com;
-                font-src ${(webview as any).cspSource} data:; 
-                connect-src ${GATEWAY_URL};
+                script-src 'nonce-${nonce}' https://cdn.tailwindcss.com https://unpkg.com https://aistudiocdn.com ${(webview as any).cspSource};
+                style-src ${(webview as any).cspSource} 'unsafe-inline' https://unpkg.com https://cdn.tailwindcss.com;
+                font-src ${(webview as any).cspSource} https://unpkg.com data:; 
+                connect-src ${GATEWAY_URL} https://unpkg.com https://aistudiocdn.com;
             ">
             <base href="${baseUri}">
             ${vscodeApiInjectionScript}`
         );
+        
+        // Add nonce to inline scripts (importmap, etc.)
+        htmlContent = htmlContent.replace(/<script type="importmap">/g, `<script type="importmap" nonce="${nonce}">`);
         
         // Add nonce to our main application script. The <base> tag handles the path resolution,
         // so we can change the src to be relative.
