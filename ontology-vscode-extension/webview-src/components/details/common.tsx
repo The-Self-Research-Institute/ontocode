@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { ChevronRight, ChevronDown, Plus, Trash2, Edit2, MessageCircle, HelpCircle } from "lucide-react";
 import ManchesterSyntaxEditor from './ManchesterSyntaxEditor';
 import type { Axiom } from '../../types';
@@ -245,7 +245,7 @@ const getPropertyLabel = (uri: string): string => {
 export const AnnotationsDisplay = ({ annotations, onDelete }: { annotations?: Record<string, string>, onDelete: (key: string) => void }) => {
   if (!annotations || Object.keys(annotations).length === 0) {
     return (
-        <div className="p-2 text-xs text-gray-400 italic">No annotations</div>
+        <div className="p-3 text-xs text-gray-400 italic text-center">No annotations</div>
     );
   }
   
@@ -256,28 +256,30 @@ export const AnnotationsDisplay = ({ annotations, onDelete }: { annotations?: Re
   });
   
   return (
-    <div className="space-y-2">
+    <div className="space-y-1">
       {sortedAnnotations.map(([key, value]) => {
         const propertyLabel = getPropertyLabel(key);
         return (
-          <div key={key} className="group border border-gray-200 rounded-md hover:border-blue-300 transition-colors">
-            <div className="bg-gradient-to-r from-blue-50 to-gray-50 px-3 py-2 border-b border-gray-200 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-blue-900">{propertyLabel}</span>
-                <span className="text-[10px] text-gray-400 font-mono truncate max-w-[200px]" title={key}>
-                  {key}
-                </span>
+          <div key={key} className="group bg-white border border-gray-200 rounded-lg overflow-hidden hover:border-purple-300 hover:shadow-sm transition-all">
+            <div className="flex items-center justify-between px-3 py-2 bg-gradient-to-r from-purple-50 via-blue-50 to-gray-50 border-b border-gray-200">
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                <span className="text-xs font-bold text-purple-900">{propertyLabel}</span>
+                {key !== propertyLabel && (
+                  <span className="text-[10px] text-gray-500 font-mono truncate" title={key}>
+                    ({key})
+                  </span>
+                )}
               </div>
               <button 
                 onClick={() => onDelete(key)} 
-                className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-100 transition-all"
-                title={`Delete annotation ${propertyLabel}`}
-                aria-label={`Delete annotation ${propertyLabel}`}
+                className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md hover:bg-red-50 transition-all flex-shrink-0"
+                title={`Delete ${propertyLabel} annotation`}
+                aria-label={`Delete ${propertyLabel} annotation`}
               >
-                <Trash2 size={14} className="text-red-600" />
+                <Trash2 size={13} className="text-red-600" />
               </button>
             </div>
-            <div className="px-3 py-2 bg-white">
+            <div className="px-3 py-2.5">
               <AnnotationValue value={value} />
             </div>
           </div>
@@ -305,7 +307,30 @@ export const Panel = ({
   themeColor?: string 
 }) => {
     const [isOpen, setIsOpen] = useState(defaultOpen);
+    const contentRef = useRef<HTMLDivElement>(null);
     const themeClasses = themeColor || 'bg-gradient-to-b from-[#F5F0E6] to-[#E1C688] text-black border-[#D6C9AD]';
+    
+    useEffect(() => {
+      const handleWheel = (e: WheelEvent) => {
+        const element = contentRef.current;
+        if (!element) return;
+
+        const isAtTop = element.scrollTop === 0;
+        const isAtBottom = Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop) < 1;
+        
+        if ((isAtTop && e.deltaY < 0) || (isAtBottom && e.deltaY > 0)) {
+          return;
+        }
+        
+        e.stopPropagation();
+      };
+
+      const element = contentRef.current;
+      if (element) {
+        element.addEventListener('wheel', handleWheel, { passive: false });
+        return () => element.removeEventListener('wheel', handleWheel);
+      }
+    }, [isOpen]);
     
     return (
         <div className={`border bg-white rounded-sm flex flex-col ${themeColor?.split(' ')[2] || 'border-[#D6C9AD]'}`}>
@@ -325,9 +350,9 @@ export const Panel = ({
             </div>
             <div 
               id={`panel-content-${title}`}
-              className={`transition-all duration-300 ease-in-out overflow-hidden ${isOpen ? 'max-h-[1000px]' : 'max-h-0'}`}
+              className={`transition-all duration-300 ease-in-out ${isOpen ? 'block' : 'hidden'}`}
             >
-                {isOpen && <div className="bg-white overflow-y-auto">{children}</div>}
+                {isOpen && <div ref={contentRef} className="bg-white overflow-y-auto max-h-[600px]">{children}</div>}
             </div>
         </div>
     );
