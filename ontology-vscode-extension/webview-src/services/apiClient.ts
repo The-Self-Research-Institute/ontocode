@@ -45,10 +45,18 @@ class ApiClient {
   private axiosClient: AxiosInstance | null = null;
   private isVSCode = typeof window !== 'undefined' && !!window.vscode; //
   private listenerAttached = false;
+  private onUnauthorized?: () => void; // Callback for 401 errors
 
   static getInstance() {
     if (!this._instance) this._instance = new ApiClient();
     return this._instance;
+  }
+
+  /**
+   * Register a callback to handle 401 Unauthorized errors (token expired)
+   */
+  setUnauthorizedCallback(callback: () => void) {
+    this.onUnauthorized = callback;
   }
 
   private constructor() {
@@ -79,6 +87,11 @@ class ApiClient {
 
       clearTimeout(p.timeout);
       if (error) {
+        // Check for 401 Unauthorized
+        if (error.status === 401 && this.onUnauthorized) {
+          console.log('[ApiClient] 401 Unauthorized - Token expired');
+          this.onUnauthorized();
+        }
         p.reject(new ApiError(error.message || 'API request failed via proxy', error.status, error.data, error.code));
       } else {
         p.resolve(response);
@@ -147,6 +160,13 @@ class ApiClient {
           (data && (data.message || data.error)) ||
           (typeof data === 'string' ? data : undefined) ||
           (err.response?.status === 401 ? 'Unauthorized' : err.message || 'Unexpected error');
+        
+        // Check for 401 Unauthorized
+        if (err.response?.status === 401 && this.onUnauthorized) {
+          console.log('[ApiClient] 401 Unauthorized - Token expired');
+          this.onUnauthorized();
+        }
+        
         throw new ApiError(msg, err.response?.status, data, err.code);
       }
     );
