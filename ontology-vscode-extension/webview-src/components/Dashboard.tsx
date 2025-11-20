@@ -658,15 +658,18 @@ const Dashboard = () => {
       if (response.success && response.projects) {
         setAvailableProjects(response.projects);
         
-        // If no project selected and projects exist, show selector
+        // If no project selected and projects exist, auto-load the first one
         if (!projectId && response.projects.length > 0) {
-          setShowProjectSelector(true);
+          const firstProject = response.projects[0];
+          console.log('[Dashboard] Auto-loading first project:', firstProject.id);
+          setProjectId(firstProject.id);
+          fetchData(firstProject.id);
         }
       }
     } catch (error) {
       console.error("Failed to fetch projects:", error);
     }
-  }, [projectId]);
+  }, [projectId, fetchData]);
 
   const handleProjectSelection = useCallback((selectedProjectId: string) => {
     setProjectId(selectedProjectId);

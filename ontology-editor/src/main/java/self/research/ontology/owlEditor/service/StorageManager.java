@@ -44,6 +44,16 @@ public class StorageManager {
     }
 
     public Path exportOntology(String projectId, String format) throws IOException {
+        // Return the original uploaded file to preserve structure and formatting
+        Path originalPath = projectDir(projectId).resolve("ontology.original.owl");
+        
+        if (Files.exists(originalPath)) {
+            log.info("Exporting original ontology file for project: {}", projectId);
+            return originalPath;
+        }
+        
+        // Fallback: export from GraphDB if original file not found
+        log.warn("Original file not found for project {}, exporting from GraphDB", projectId);
         RDFFormat rdfFormat = resolveLang(format);
         String extension = extensionFor(format);
         Path exportPath = projectDir(projectId).resolve("ontology.current." + extension);
