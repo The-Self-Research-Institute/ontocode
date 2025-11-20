@@ -27,7 +27,9 @@ import {
   PropertySelectorDialog, 
   CreateIndividualModal, 
   AddAnnotationDialog, 
-  AddClassDialog 
+  AddClassDialog,
+  AddObjectPropertyDialog,
+  ClassExpressionDialog
 } from './dialogs';
 
 type TopLevelClass = TreeNode & { hasChildren: boolean };
@@ -43,6 +45,17 @@ type FileInfo = {
   permission?: 'view' | 'edit';
   sharedBy?: string;
   ownerEmail?: string;
+};
+
+const findParentNode = (nodes: any[], targetId: string, parent: any | null = null): any | null => {
+  for (const node of nodes) {
+    if (node.id === targetId) return parent;
+    if (node.children && node.children.length) {
+      const found = findParentNode(node.children, targetId, node);
+      if (found) return found;
+    }
+  }
+  return null;
 };
 
 // #region Helper Components
@@ -648,10 +661,14 @@ const Dashboard = () => {
   const [isAddAnnotationDialogOpen, setAddAnnotationDialogOpen] = useState(false);
   const [isAddClassDialogOpen, setAddClassDialogOpen] = useState(false);
   const [addClassType, setAddClassType] = useState<'subclass' | 'sibling'>('subclass');
+  const [isAddPropertyDialogOpen, setAddPropertyDialogOpen] = useState(false);
+  const [addPropertyType, setAddPropertyType] = useState<'subproperty' | 'sibling' | 'root'>('root');
+  const [propertyParentLabel, setPropertyParentLabel] = useState('owl:topObjectProperty');
   
   // Selector Dialog State
   const [isClassSelectorOpen, setIsClassSelectorOpen] = useState(false);
   const [isPropertySelectorOpen, setIsPropertySelectorOpen] = useState(false);
+  const [isClassExpressionDialogOpen, setIsClassExpressionDialogOpen] = useState(false);
   const [selectorTarget, setSelectorTarget] = useState<'domain' | 'range' | 'subProperty' | 'inverse' | 'disjoint' | 'equivalent' | null>(null);
   
   // Confirm dialog state
@@ -1431,6 +1448,16 @@ const Dashboard = () => {
     }
   }, [hasUnsavedChanges, projectId, handleSave]);
 
+  // Create Property from Class Expression Dialog
+  const handleCreatePropertyFromDialog = useCallback(() => {
+    setEntitiesTab('ObjectProperties');
+    setSelectedItem(null);
+    setAddPropertyType('root');
+    setPropertyParentLabel('owl:topObjectProperty');
+    setAddPropertyDialogOpen(true);
+    setIsClassExpressionDialogOpen(false);
+  }, []);
+
   // Load draft from localStorage if exists
   useEffect(() => {
     if (projectId) {
@@ -1520,15 +1547,40 @@ const Dashboard = () => {
       return;
     }
 
+    if (entitiesTab === 'ObjectProperties') {
+      if (!selectedItem) {
+        showNotification('Select an object property first.', 'warning');
+        return;
+      }
+
+      const parentLabel = type === 'subclass'
+        ? selectedItem.label
+        : (findParentNode(objectPropertyHierarchy, selectedItem.id)?.label || 'owl:topObjectProperty');
+
+      setAddPropertyType(type === 'subclass' ? 'subproperty' : 'sibling');
+      setPropertyParentLabel(parentLabel);
+      setAddPropertyDialogOpen(true);
+      return;
+    }
+
+    if (entitiesTab === 'DataProperties') {
+      showNotification('Data property creation is not available yet.', 'warning');
+      return;
+    }
+
     if ((type === 'subclass' || type === 'sibling') && !selectedItem) {
-      showNotification("Please select an item first.", 'warning');
+      showNotification("Please select a class first.", 'warning');
       return;
     }
     
-    // Open dialog instead of using prompt
+    if (entitiesTab !== 'Classes') {
+      showNotification('This action is available only for classes right now.', 'warning');
+      return;
+    }
+
     setAddClassType(type);
     setAddClassDialogOpen(true);
-  }, [projectId, selectedItem]);
+  }, [projectId, entitiesTab, selectedItem, objectPropertyHierarchy, showNotification]);
 
   const handleCreateClass = useCallback(async (name: string) => {
     if (!projectId || !selectedItem) return;
@@ -1662,6 +1714,65 @@ const Dashboard = () => {
       showNotification('Failed to create entity. See console for details.', 'error');
     }
   }, [projectId, selectedItem, addClassType, entitiesTab, classHierarchy, expandedNodes, metadata]);
+
+  const handleCreateObjectProperty = useCallback(async (name: string) => {
+    if (!projectId) return;
+
+    const type = addPropertyType;
+
+    try {
+      const baseIri = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
+      const newIri = `${baseIri}#${name.replace(/\s+/g, '_')}`;
+      
+      let parentIri = 'http://www.w3.org/2002/07/owl#topObjectProperty';
+        if (type === 'subproperty' && selectedItem?.id) {
+          parentIri = selectedItem.id;
+        } else if (type === 'sibling' && selectedItem?.id) {
+          const parent = findParentNode(objectPropertyHierarchy, selectedItem.id);
+          parentIri = parent?.id || 'http://www.w3.org/2002/07/owl#topObjectProperty';
+        }
+      
+      await ontologyMutationService.createObjectProperty(projectId, newIri, name, parentIri);
+      
+      const newProp: any = {
+          id: newIri,
+          label: name,
+          type: 'ObjectProperty',
+          annotations: { 'rdfs:label': name },
+          children: [],
+          hasChildren: false
+      };
+      
+      setObjectProperties(prev => [...prev, newProp]);
+
+      const addNodeRecursively = (nodes: any[]): any[] => {
+        return nodes.map(node => {
+          if (node.id === parentIri) {
+            const children = node.children ? [...node.children, newProp] : [newProp];
+            return { ...node, children, hasChildren: true };
+          }
+          if (node.children) {
+            return { ...node, children: addNodeRecursively(node.children) };
+          }
+          return node;
+        });
+      };
+      
+      setObjectPropertyHierarchy(prev => addNodeRecursively(prev));
+      
+      if (parentIri && !expandedNodes.includes(parentIri)) {
+         setExpandedNodes(prev => [...prev, parentIri]);
+      }
+
+      markAsUnsaved();
+      showNotification('Property created successfully!', 'info');
+      setAddPropertyDialogOpen(false);
+      setPropertyParentLabel('owl:topObjectProperty');
+    } catch (error) {
+      console.error('Failed to create property:', error);
+      showNotification('Failed to create property. See console for details.', 'error');
+    }
+  }, [projectId, selectedItem, addPropertyType, objectPropertyHierarchy, expandedNodes, metadata, markAsUnsaved]);
 
   const handleAddIndividual = useCallback((name: string) => {
     const base = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
@@ -2120,7 +2231,7 @@ const Dashboard = () => {
   // #region Selector Handlers
   const handleOpenClassSelector = (target: 'domain' | 'range') => {
     setSelectorTarget(target);
-    setIsClassSelectorOpen(true);
+    setIsClassExpressionDialogOpen(true);
   };
 
   const handleOpenPropertySelector = (target: 'subProperty' | 'inverse' | 'disjoint' | 'equivalent') => {
@@ -2128,18 +2239,18 @@ const Dashboard = () => {
     setIsPropertySelectorOpen(true);
   };
 
-  const handleClassSelected = async (node: TreeNode) => {
+  const handleManchesterConfirm = async (expression: string) => {
     if (!selectedItem || !projectId || !selectorTarget) return;
 
     try {
       switch (selectorTarget) {
         case 'domain':
-          await ontologyMutationService.addPropertyDomain(projectId, selectedItem.id, node.id);
-          updateItemInState({ ...selectedItem, domains: [...((selectedItem as Property).domains || []), node.id] });
+          await ontologyMutationService.addPropertyDomain(projectId, selectedItem.id, expression);
+          updateItemInState({ ...selectedItem, domains: [...((selectedItem as Property).domains || []), expression] });
           break;
         case 'range':
-          await ontologyMutationService.addPropertyRange(projectId, selectedItem.id, node.id);
-          updateItemInState({ ...selectedItem, ranges: [...((selectedItem as Property).ranges || []), node.id] });
+          await ontologyMutationService.addPropertyRange(projectId, selectedItem.id, expression);
+          updateItemInState({ ...selectedItem, ranges: [...((selectedItem as Property).ranges || []), expression] });
           break;
       }
     } catch (error) {
@@ -2228,6 +2339,13 @@ const Dashboard = () => {
         onClose={() => setAddClassDialogOpen(false)} 
         onCreate={handleCreateClass}
         type={addClassType}
+      />
+      <AddObjectPropertyDialog 
+        isOpen={isAddPropertyDialogOpen} 
+        onClose={() => setAddPropertyDialogOpen(false)} 
+        onCreate={handleCreateObjectProperty}
+        type={addPropertyType}
+        parentLabel={propertyParentLabel}
       />
       <AddAnnotationDialog 
         isOpen={isAddAnnotationDialogOpen} 
@@ -2382,15 +2500,36 @@ const Dashboard = () => {
       </div>
 
       {/* Class Selector Dialog */}
+      {/* Class Expression Dialog for Domain/Range with 4 tabs */}
+      <ClassExpressionDialog
+        isOpen={isClassExpressionDialogOpen}
+        onClose={() => {
+          setIsClassExpressionDialogOpen(false);
+          setSelectorTarget(null);
+        }}
+        onConfirm={handleManchesterConfirm}
+        classHierarchy={classHierarchy}
+        objectProperties={objectProperties}
+        dataProperties={dataProperties}
+        title={`Add ${selectorTarget === 'domain' ? 'Domain' : 'Range'} Class Expression`}
+        expandedNodes={expandedNodes}
+        onToggleNode={toggleNode}
+        onCreateProperty={handleCreatePropertyFromDialog}
+      />
+
+      {/* Class Selector Dialog - kept for other uses if needed */}
       <ClassSelectorDialog
         isOpen={isClassSelectorOpen}
         onClose={() => {
           setIsClassSelectorOpen(false);
           setSelectorTarget(null);
         }}
-        onSelect={handleClassSelected}
+        onSelect={(node) => {
+          setIsClassSelectorOpen(false);
+          setSelectorTarget(null);
+        }}
         classHierarchy={classHierarchy}
-        title={`Select ${selectorTarget === 'domain' ? 'Domain' : 'Range'} Class`}
+        title="Select Class"
       />
 
       {/* Property Selector Dialog */}
