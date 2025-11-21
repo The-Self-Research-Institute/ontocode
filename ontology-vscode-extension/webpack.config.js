@@ -1,29 +1,30 @@
 const path = require('path');
 const webpack = require('webpack');
+const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
 
 module.exports = {
-  mode: 'production', 
-  target: 'webworker', 
+  mode: 'production',
+  target: 'webworker',
   entry: {
-    extension: './src/extension.ts' 
+    extension: './src/extension.ts'
   },
   output: {
     filename: '[name].js',
     path: path.resolve(__dirname, 'dist', 'web'),
     libraryTarget: 'commonjs',
     devtoolModuleFilenameTemplate: '../[resource]',
-    globalObject: 'self' 
+    globalObject: 'self'
   },
   devtool: 'source-map',
   externals: {
-    vscode: 'commonjs vscode' 
+    vscode: 'commonjs vscode'
   },
   resolve: {
     extensions: ['.ts', '.js'],
     fallback: {
-        "path": require.resolve("path-browserify"), 
+        "path": require.resolve("path-browserify"),
         "fs": false,
-        "os": false, 
+        "os": false,
         "crypto": require.resolve("crypto-browserify"),
         "stream": require.resolve("stream-browserify"),
         "buffer": require.resolve("buffer/"),
@@ -49,5 +50,12 @@ module.exports = {
         process: 'process/browser',
         Buffer: ['buffer', 'Buffer'],
     }),
+    new BundleAnalyzerPlugin({
+      analyzerMode: process.env.ANALYZE ? 'server' : 'disabled',
+      reportFilename: 'bundle-report-web.html',
+      openAnalyzer: true,
+      generateStatsFile: true,
+      statsFilename: 'bundle-stats-web.json'
+    })
   ]
 };

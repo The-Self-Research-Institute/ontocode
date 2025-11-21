@@ -8,3 +8,4 @@ export { default as ManchesterSyntaxEditor } from './ManchesterSyntaxEditor';
 export { default as MultiClassSelectorDialog } from './MultiClassSelectorDialog';
 export { default as PropertyChainDialog } from './PropertyChainDialog';
 export { default as ClassExpressionDialog } from './ClassExpressionDialog';
+export { default as PropertyExpressionDialog } from './PropertyExpressionDialog';
