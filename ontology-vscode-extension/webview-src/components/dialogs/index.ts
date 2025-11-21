@@ -10,3 +10,5 @@ export { default as PropertyChainDialog } from './PropertyChainDialog';
 export { default as ClassExpressionDialog } from './ClassExpressionDialog';
 export { default as PropertyExpressionDialog } from './PropertyExpressionDialog';
 export { default as AddDatatypeDialog } from './AddDatatypeDialog';
+export { default as DatatypeDefinitionDialog } from './DatatypeDefinitionDialog';
+export { default as KeyboardShortcutsDialog } from './KeyboardShortcutsDialog';
