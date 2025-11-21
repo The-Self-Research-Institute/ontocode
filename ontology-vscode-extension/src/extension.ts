@@ -808,6 +808,10 @@ class OntoCodePanel {
             <script nonce="${nonce}">
                 const vscode = acquireVsCodeApi();
                 window.vscode = vscode;
+                // Fallback for minified bundle expecting a global toggleNode
+                if (typeof window.toggleNode !== 'function') {
+                    window.toggleNode = () => {};
+                }
             </script>
         `;
         
@@ -835,6 +839,8 @@ class OntoCodePanel {
         
         // Add nonce to our main application script. The <base> tag handles the path resolution,
         // so we can change the src to be relative.
+        // Add cache busting timestamp to force reload
+        const cacheBuster = Date.now();
         htmlContent = htmlContent.replace(/(href|src)="([^"]+)"/g, (match, attr, rawPath) => {
             if (rawPath.startsWith('https:') || rawPath.startsWith('http:') || rawPath.startsWith('data:')) {
                 return match; // Return the original string (e.g., 'href="https://cdn.tailwindcss.com"')
@@ -844,7 +850,12 @@ class OntoCodePanel {
                 `${buildPath.toString()}/${rawPath.startsWith('/') ? rawPath.substring(1) : rawPath}`
             );
             // Fix: Cast webview to `any` to access `asWebviewUri` method, bypassing outdated type definitions.
-            return `${attr}="${(webview as any).asWebviewUri(resourcePath)}"`;
+            const webviewUri = (webview as any).asWebviewUri(resourcePath);
+            // Add cache buster for JS and CSS files
+            if (rawPath.includes('.js') || rawPath.includes('.css')) {
+                return `${attr}="${webviewUri}?v=${cacheBuster}"`;
+            }
+            return `${attr}="${webviewUri}"`;
         });
 
 

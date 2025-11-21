@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronRight, ChevronDown, PlusCircle, Trash2, Search, Package, GitBranch, Database, Tag, User, Type, Binary, MousePointer2, Eye, Settings } from "lucide-react";
+import { ChevronRight, ChevronDown, PlusCircle, Trash2, Search, Package, GitBranch, Database, Tag, User, Type, Binary, MousePointer2, Eye, Settings, Edit3 } from "lucide-react";
 import type { SelectableItem, TreeNode } from '../types';
 import { useCollaboration } from '../contexts/CollaborationContext';
+import InlineRenameInput from './InlineRenameInput';
 
 interface EntityHierarchyProps {
   entitiesTab: string;
@@ -16,6 +17,8 @@ interface EntityHierarchyProps {
   onDeleteItem: () => void;
   onMakeSiblingsDisjoint?: () => void;
   onMoveClass?: (classId: string, newParentId: string) => void;
+  onOpenPreferences?: () => void;
+  onRenameItem?: (itemId: string, newLabel: string) => void;
 }
 
 const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
@@ -31,10 +34,13 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
   onDeleteItem,
   onMakeSiblingsDisjoint,
   onMoveClass,
+  onOpenPreferences,
+  onRenameItem,
 }) => {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: SelectableItem } | null>(null);
   const [viewMode, setViewMode] = useState<'asserted' | 'inferred'>('asserted');
   const [draggedItem, setDraggedItem] = useState<SelectableItem | null>(null);
+  const [renamingItemId, setRenamingItemId] = useState<string | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const { state: collaborationState } = useCollaboration();
   
@@ -62,7 +68,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      
+
       if (e.key === 'a' || e.key === 'A') {
         setViewMode('asserted');
       } else if (e.key === 'i' || e.key === 'I') {
@@ -72,6 +78,19 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
 
     document.addEventListener('keydown', handleKeyPress);
     return () => document.removeEventListener('keydown', handleKeyPress);
+  }, []);
+
+  // Listen for F2 rename trigger from Dashboard
+  useEffect(() => {
+    const handleRenameEvent = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (customEvent.detail?.itemId) {
+        setRenamingItemId(customEvent.detail.itemId);
+      }
+    };
+
+    window.addEventListener('triggerRename', handleRenameEvent);
+    return () => window.removeEventListener('triggerRename', handleRenameEvent);
   }, []);
 
   const handleContextMenu = (e: React.MouseEvent, item: SelectableItem) => {
@@ -112,6 +131,22 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
 
   const handleDragEnd = () => {
     setDraggedItem(null);
+  };
+
+  const handleRenameConfirm = (newLabel: string) => {
+    if (renamingItemId && onRenameItem) {
+      onRenameItem(renamingItemId, newLabel);
+    }
+    setRenamingItemId(null);
+  };
+
+  const handleRenameCancel = () => {
+    setRenamingItemId(null);
+  };
+
+  const handleDoubleClick = (e: React.MouseEvent, item: SelectableItem) => {
+    e.stopPropagation();
+    setRenamingItemId(item.id);
   };
 
   const renderItem = (item: SelectableItem, level = 0): React.JSX.Element => {
@@ -212,8 +247,21 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
               )}
            </div>
           
-          {/* Label */}
-          <span className={`text-xs select-none text-black ${isSelected ? "font-semibold" : ""}`}>{item.label}</span>
+          {/* Label - show input if renaming */}
+          {renamingItemId === item.id ? (
+            <InlineRenameInput
+              initialValue={item.label}
+              onConfirm={handleRenameConfirm}
+              onCancel={handleRenameCancel}
+            />
+          ) : (
+            <span
+              className={`text-xs select-none text-black ${isSelected ? "font-semibold" : ""}`}
+              onDoubleClick={(e) => handleDoubleClick(e, item)}
+            >
+              {item.label}
+            </span>
+          )}
           
           {/* Active User Cursors */}
           {usersViewingNode.length > 0 && (
@@ -394,7 +442,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
              <button
                 title="Entity creation preferences"
                 aria-label="Entity creation preferences"
-                onClick={() => {/* TODO: Open preferences dialog */}}
+                onClick={() => onOpenPreferences?.()}
                 className="p-0.5 rounded text-gray-600 hover:text-gray-700 hover:bg-gray-200"
              >
                 <Settings size={14} />
@@ -440,6 +488,17 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
           className="fixed bg-white border border-gray-300 rounded shadow-lg py-1 z-50"
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
+          <button
+            className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
+            onClick={() => {
+              onSelectItem(contextMenu.item);
+              setRenamingItemId(contextMenu.item.id);
+              setContextMenu(null);
+            }}
+          >
+            <Edit3 size={14} />
+            Rename
+          </button>
           <button
             className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
             onClick={() => {

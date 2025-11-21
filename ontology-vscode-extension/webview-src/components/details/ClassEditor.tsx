@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Search, ExternalLink, AlertCircle } from 'lucide-react';
+import { Plus, Trash2, Search, ExternalLink, AlertCircle, Edit3 } from 'lucide-react';
 import { Panel, AnnotationsDisplay, AxiomSubsection } from './common';
-import { ManchesterSyntaxEditor, MultiClassSelectorDialog } from '../dialogs';
+import { ManchesterSyntaxEditor, MultiClassSelectorDialog, IRIEditorDialog } from '../dialogs';
 import apiClient from '../../services/apiClient';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import type { TreeNode, Axiom, ClassUsage, AxiomUsage } from '../../types';
@@ -187,11 +187,13 @@ const ClassEditor: React.FC<{
   onDeleteAnnotation: (key: string) => void;
   activeTheme?: string;
   classHierarchy?: TreeNode[];
-}> = ({ item, projectId, onUpdate, onAddAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [] }) => {
+  onToggleNode?: (nodeId: string) => Promise<void> | void;
+  expandedNodes?: string[];
+}> = ({ item, projectId, onUpdate, onAddAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes }) => {
   const [activeTab, setActiveTab] = useState<'annotations' | 'usage' | 'description'>('annotations');
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [classDetails, setClassDetails] = useState<any>(null);
-  
+
   // Manchester Syntax Editor State
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editorType, setEditorType] = useState<AxiomType | null>(null);
@@ -199,6 +201,30 @@ const ClassEditor: React.FC<{
 
   // Disjoint Union State
   const [isDisjointUnionOpen, setIsDisjointUnionOpen] = useState(false);
+
+  // IRI Editor State
+  const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
+
+  const handleSaveIRI = async (newIRI: string, newLabel: string) => {
+    try {
+      // Note: Changing IRI is a complex operation that may require backend support
+      // For now, we'll just update the label if it changed
+      if (newLabel !== item.label) {
+        await ontologyMutationService.updateClassLabel(projectId, item.id, newLabel);
+        const updatedItem = { ...item, label: newLabel };
+        onUpdate(updatedItem as TreeNode);
+      }
+
+      // TODO: Add backend support for IRI renaming
+      if (newIRI !== item.id) {
+        console.warn('IRI renaming requires backend support - not yet implemented');
+        alert('IRI renaming is not yet supported. Only label changes are saved.');
+      }
+    } catch (error) {
+      console.error('Failed to update entity:', error);
+      alert('Failed to update entity. See console for details.');
+    }
+  };
 
   // Load class details including annotations when component mounts
   useEffect(() => {
@@ -314,6 +340,13 @@ const ClassEditor: React.FC<{
             <span className="text-xs text-gray-500 truncate font-mono">{item.id}</span>
           </div>
         </div>
+        <button
+          onClick={() => setIsIRIEditorOpen(true)}
+          className="p-1.5 hover:bg-gray-200 rounded text-gray-600 hover:text-purple-600 flex-shrink-0"
+          title="Edit IRI and Label"
+        >
+          <Edit3 size={16} />
+        </button>
       </div>
 
       {/* Tabs */}
@@ -430,7 +463,20 @@ const ClassEditor: React.FC<{
         onClose={() => setIsDisjointUnionOpen(false)}
         onConfirm={handleDisjointUnionConfirm}
         classHierarchy={classHierarchy}
+        projectId={projectId}
+        onToggleNode={onToggleNode}
+        externalExpandedNodes={expandedNodes}
         title="Select Classes for Disjoint Union"
+      />
+
+      {/* IRI Editor Dialog */}
+      <IRIEditorDialog
+        isOpen={isIRIEditorOpen}
+        onClose={() => setIsIRIEditorOpen(false)}
+        currentIRI={item.id}
+        currentLabel={item.label}
+        entityType="Class"
+        onSave={handleSaveIRI}
       />
     </div>
   );

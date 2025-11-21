@@ -31,7 +31,7 @@ const PropertyExpressionDialog: React.FC<PropertyExpressionDialogProps> = ({
 
   if (!isOpen) return null;
 
-  const toggleNode = (nodeId: string) => {
+  const handleToggleNode = (nodeId: string) => {
     const isExpanded = expandedNodes.includes(nodeId);
 
     if (isExpanded) {
@@ -62,7 +62,7 @@ const PropertyExpressionDialog: React.FC<PropertyExpressionDialogProps> = ({
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  toggleNode(node.id);
+                  handleToggleNode(node.id);
                 }}
                 className="p-0.5 hover:bg-gray-200 rounded"
               >
