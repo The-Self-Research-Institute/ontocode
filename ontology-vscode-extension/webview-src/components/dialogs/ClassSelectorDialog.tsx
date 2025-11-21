@@ -1,13 +1,17 @@
-import React, { useState } from 'react';
-import { X, Search } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { X } from 'lucide-react';
 import EntityHierarchy from '../EntityHierarchy';
 import type { TreeNode } from '../../types';
+import apiClient from '../../services/apiClient';
 
 interface ClassSelectorDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onSelect: (node: TreeNode) => void;
   classHierarchy: TreeNode[];
+  projectId?: string;
+  onToggleNode?: (nodeId: string) => Promise<void> | void;
+  externalExpandedNodes?: string[];
   title?: string;
 }
 
@@ -16,18 +20,64 @@ const ClassSelectorDialog: React.FC<ClassSelectorDialogProps> = ({
   onClose,
   onSelect,
   classHierarchy,
+  projectId,
+  onToggleNode,
+  externalExpandedNodes,
   title = "Select Class"
 }) => {
   const [selectedClass, setSelectedClass] = useState<TreeNode | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<string[]>([]);
+  const [treeData, setTreeData] = useState<TreeNode[]>(classHierarchy);
+
+  useEffect(() => {
+    setTreeData(classHierarchy);
+  }, [classHierarchy]);
 
   if (!isOpen) return null;
 
-  const toggleNode = (nodeId: string) => {
-    if (expandedNodes.includes(nodeId)) {
+  const loadChildren = useCallback(async (nodeId: string) => {
+    if (!projectId) return;
+    try {
+      const response = await apiClient.get<any>(`/api/ontology/classes/children/${projectId}?parentIri=${encodeURIComponent(nodeId)}`);
+      const children = Array.isArray(response) ? response :
+        Array.isArray(response?.data) ? response.data :
+        Array.isArray(response?.classes) ? response.classes : [];
+
+      const updateTree = (nodes: TreeNode[]): TreeNode[] =>
+        nodes.map((n: TreeNode) => {
+          if (n.id === nodeId) {
+            return {
+              ...n,
+              children: children.map((c: TreeNode & { hasChildren?: boolean }) => ({
+                ...c,
+                children: c.hasChildren ? undefined : c.children,
+                hasChildren: c.hasChildren
+              }))
+            };
+          }
+          if (n.children) {
+            return { ...n, children: updateTree(n.children) };
+          }
+          return n;
+        });
+
+      setTreeData(prev => updateTree(prev));
+    } catch (error) {
+      console.error(`Failed to load children for ${nodeId}`, error);
+    }
+  }, [projectId]);
+
+  const handleToggleNode = async (nodeId: string) => {
+    const isExpanded = (externalExpandedNodes || expandedNodes).includes(nodeId);
+    if (isExpanded) {
       setExpandedNodes(prev => prev.filter(id => id !== nodeId));
     } else {
       setExpandedNodes(prev => [...prev, nodeId]);
+      if (onToggleNode) {
+        await onToggleNode(nodeId);
+      } else {
+        await loadChildren(nodeId);
+      }
     }
   };
 
@@ -59,13 +109,13 @@ const ClassSelectorDialog: React.FC<ClassSelectorDialogProps> = ({
           <div className="h-full">
             <EntityHierarchy
               entitiesTab="Classes"
-              filteredData={classHierarchy}
+              filteredData={treeData}
               selectedItem={selectedClass}
-              expandedNodes={expandedNodes}
+              expandedNodes={externalExpandedNodes || expandedNodes}
               searchQuery=""
               onSearchQueryChange={() => {}}
               onSelectItem={(item) => setSelectedClass(item as TreeNode)}
-              onToggleNode={toggleNode}
+              onToggleNode={handleToggleNode}
               onAddItem={() => {}}
               onDeleteItem={() => {}}
             />

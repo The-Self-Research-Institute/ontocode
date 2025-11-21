@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { useAuth } from './custom-hook/useAuth';
 import { CollaborationProvider } from './contexts/CollaborationContext';
+import { EntityPreferencesProvider } from './contexts/EntityPreferencesContext';
 import Dashboard from './components/Dashboard';
 import LoginForm from './components/LoginForm';
 import SignupForm from './components/SignupForm';
@@ -45,7 +46,9 @@ const AppContent = () => {
 const App = () => {
     return (
         <CollaborationProvider>
-            <AppContent />
+            <EntityPreferencesProvider>
+                <AppContent />
+            </EntityPreferencesProvider>
         </CollaborationProvider>
     );
 };

@@ -135,4 +135,46 @@ public class ProjectLoadController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
+
+    @PostMapping("/save/{projectId}")
+    public ResponseEntity<Map<String, Object>> save(@PathVariable String projectId) {
+        try {
+            log.info("[CHANGE TRACKING] Save requested for project: {}", projectId);
+
+            // Export current state from GraphDB to file system
+            Path exportPath = storageManager.exportOntology(projectId, "rdfxml");
+            log.info("[CHANGE TRACKING] Ontology saved to: {}", exportPath);
+
+            // Update GridFS with the current state
+            try (InputStream in = Files.newInputStream(exportPath)) {
+                String gridfsFileId = gridFSFileService.storeFile(
+                    projectId,
+                    exportPath.getFileName().toString(),
+                    "application/rdf+xml",
+                    in
+                );
+                metadataService.setGridfsFileId(projectId, gridfsFileId);
+                log.info("[CHANGE TRACKING] Updated GridFS file: {} for project: {}", gridfsFileId, projectId);
+            }
+
+            // Update last modified timestamp
+            ProjectStatus status = metadataService.readStatus(projectId)
+                    .orElse(ProjectStatus.uploaded("ontology.owl"));
+            metadataService.writeStatus(projectId, status);
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "Ontology saved successfully",
+                    "projectId", projectId,
+                    "savedPath", exportPath.toString()
+            ));
+        } catch (Exception e) {
+            log.error("[CHANGE TRACKING] Save failed for project: {}", projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of(
+                            "success", false,
+                            "error", "Failed to save ontology: " + e.getMessage()
+                    ));
+        }
+    }
 }

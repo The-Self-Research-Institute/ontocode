@@ -30,8 +30,12 @@ import {
   AddObjectPropertyDialog,
   ClassExpressionDialog,
   PropertyExpressionDialog,
-  AddDatatypeDialog
+  AddDatatypeDialog,
+  KeyboardShortcutsDialog,
+  EntityPreferencesDialog
 } from './dialogs';
+import { useKeyboardShortcuts, DEFAULT_SHORTCUTS, KeyboardShortcut } from '../hooks/useKeyboardShortcuts';
+import { useEntityPreferences } from '../contexts/EntityPreferencesContext';
 
 type TopLevelClass = TreeNode & { hasChildren: boolean };
 
@@ -639,6 +643,11 @@ const showNotification = (message: string, type: 'info' | 'error' | 'warning' = 
 };
 
 const Dashboard = () => {
+  // Debug: Track render count (moved outside useEffect to avoid infinite loop)
+  const renderCount = useRef(0);
+  renderCount.current++;
+  console.log(`[DEBUG] Dashboard render #${renderCount.current}`);
+
   // #region State
   const { user, logout } = useAuth();
   const collaboration = useCollaboration();
@@ -669,6 +678,11 @@ const Dashboard = () => {
   const [addPropertyType, setAddPropertyType] = useState<'subproperty' | 'sibling' | 'root'>('root');
   const [propertyParentLabel, setPropertyParentLabel] = useState('owl:topObjectProperty');
   const [isAddDatatypeDialogOpen, setAddDatatypeDialogOpen] = useState(false);
+  const [isKeyboardShortcutsDialogOpen, setKeyboardShortcutsDialogOpen] = useState(false);
+  const [isEntityPreferencesDialogOpen, setEntityPreferencesDialogOpen] = useState(false);
+
+  // Entity Preferences
+  const { preferences, updatePreferences } = useEntityPreferences();
 
   // Selector Dialog State
   const [isClassSelectorOpen, setIsClassSelectorOpen] = useState(false);
@@ -703,7 +717,6 @@ const Dashboard = () => {
   const [individuals, setIndividuals] = useState<Individual[]>([]);
   const [datatypes, setDatatypes] = useState<Datatype[]>([]);
 
-  const [filteredData, setFilteredData] = useState<SelectableItem[]>([]);
   const [listOfFiles, setListOfFiles] = useState<FileInfo[]>([]);
   const [myFiles, setMyFiles] = useState<FileInfo[]>([]);
   const [sharedFiles, setSharedFiles] = useState<FileInfo[]>([]);
@@ -1093,6 +1106,7 @@ const Dashboard = () => {
       // Always auto-expand owl:Thing when it has children
       if (childCount > 0 && !expandedNodes.includes(owlThingId)) {
         console.log('[Dashboard] Auto-expanding owl:Thing');
+        console.log('[DEBUG] useEffect[classHierarchy] triggering setExpandedNodes');
         setExpandedNodes([owlThingId]);
       }
     }
@@ -1197,44 +1211,45 @@ const Dashboard = () => {
     }
   }, [collaboration]);
 
-  useEffect(() => {
-    let sourceData: SelectableItem[] = [];
+  // Memoize the source data based on active tab to avoid unnecessary re-filtering
+  const sourceData = React.useMemo(() => {
     switch (entitiesTab) {
-      case "Classes": sourceData = classHierarchy; break;
-      case "ObjectProperties": sourceData = objectPropertyHierarchy; break;
-      case "DataProperties": sourceData = dataPropertyHierarchy; break;
-      case "AnnotationProperties": sourceData = annotationProperties; break;
-      case "Individuals": sourceData = individuals; break;
-      case "Datatypes": sourceData = datatypes; break;
+      case "Classes": return classHierarchy;
+      case "ObjectProperties": return objectPropertyHierarchy;
+      case "DataProperties": return dataPropertyHierarchy;
+      case "AnnotationProperties": return annotationProperties;
+      case "Individuals": return individuals;
+      case "Datatypes": return datatypes;
+      default: return [];
     }
+  }, [entitiesTab, classHierarchy, objectPropertyHierarchy, dataPropertyHierarchy, annotationProperties, individuals, datatypes]);
 
-    if (searchQuery) {
-      const lowercasedQuery = searchQuery.toLowerCase();
-      const filterRecursively = (items: SelectableItem[]): SelectableItem[] => {
-        const results: SelectableItem[] = [];
-        for (const item of items) {
-          let matches = item.label?.toLowerCase().includes(lowercasedQuery);
-          // Check for children in both TreeNode and our extended Property objects
-          const children = (item as any).children;
-          if (children) {
-            const childResults = filterRecursively(children);
-            if (childResults.length > 0) {
-              results.push({ ...item, children: childResults } as any);
-              matches = true;
-            }
-          }
-          if (matches && !results.find(r => r.id === item.id)) {
-            results.push(item);
+  // Filter data based on search query
+  const filteredData = React.useMemo(() => {
+    if (!searchQuery) return sourceData;
+
+    const lowercasedQuery = searchQuery.toLowerCase();
+    const filterRecursively = (items: SelectableItem[]): SelectableItem[] => {
+      const results: SelectableItem[] = [];
+      for (const item of items) {
+        let matches = item.label?.toLowerCase().includes(lowercasedQuery);
+        // Check for children in both TreeNode and our extended Property objects
+        const children = (item as any).children;
+        if (children) {
+          const childResults = filterRecursively(children);
+          if (childResults.length > 0) {
+            results.push({ ...item, children: childResults } as any);
+            matches = true;
           }
         }
-        return results;
-      };
-      setFilteredData(filterRecursively(sourceData));
-    } else {
-      setFilteredData(sourceData);
-    }
-
-  }, [searchQuery, entitiesTab, classHierarchy, objectProperties, objectPropertyHierarchy, dataProperties, dataPropertyHierarchy, annotationProperties, individuals, datatypes]);
+        if (matches && !results.find(r => r.id === item.id)) {
+          results.push(item);
+        }
+      }
+      return results;
+    };
+    return filterRecursively(sourceData);
+  }, [searchQuery, sourceData]);
 
   useEffect(() => {
     pluginManager.registerPlugin(SWRLPlugin);
@@ -1297,6 +1312,7 @@ const Dashboard = () => {
   }, [projectId]);
 
   const toggleNode = useCallback(async (nodeId: string) => {
+    console.log('[DEBUG] toggleNode called for nodeId:', nodeId);
     if (expandedNodes.includes(nodeId)) {
       setExpandedNodes(prev => prev.filter(id => id !== nodeId));
     } else {
@@ -1321,7 +1337,26 @@ const Dashboard = () => {
     }
   }, [expandedNodes, classHierarchy, loadChildren]);
 
+  // Expose a safe global for bundles/minified code paths that still reference toggleNode
+  useEffect(() => {
+    (window as any).toggleNode = toggleNode;
+    return () => {
+      if ((window as any).toggleNode === toggleNode) {
+        delete (window as any).toggleNode;
+      }
+    };
+  }, [toggleNode]);
+
   const updateItemInState = useCallback((updatedItem: SelectableItem) => {
+    console.log('[DEBUG] updateItemInState called for item:', updatedItem.id);
+    console.log('[CHANGE TRACKING] Entity updated:', {
+      entityId: updatedItem.id,
+      entityLabel: updatedItem.label,
+      entityType: entitiesTab,
+      modifiedBy: user?.username || 'anonymous',
+      timestamp: new Date().toISOString()
+    });
+
     const updateRecursively = (items: SelectableItem[]): SelectableItem[] => {
       return items.map(item => {
         if (item.id === updatedItem.id) return updatedItem;
@@ -1333,9 +1368,8 @@ const Dashboard = () => {
       });
     };
 
-    if (selectedItem?.id === updatedItem.id) {
-      setSelectedItem(updatedItem);
-    }
+    // Update selected item if it matches
+    setSelectedItem(prev => prev?.id === updatedItem.id ? updatedItem : prev);
 
     switch (entitiesTab) {
       case 'Classes':
@@ -1357,17 +1391,21 @@ const Dashboard = () => {
         setDatatypes(prev => prev.map(d => d.id === updatedItem.id ? updatedItem as Datatype : d));
         break;
     }
-  }, [entitiesTab, selectedItem]);
+
+    // Mark as unsaved to enable Save button
+    setHasUnsavedChanges(true);
+  }, [entitiesTab, user]);
 
   // Draft auto-save: Mark changes as unsaved
   const markAsUnsaved = useCallback(() => {
+    console.log('[DEBUG] markAsUnsaved called');
     setHasUnsavedChanges(true);
-    
+
     // Clear existing timer
     if (draftTimerRef.current) {
       clearTimeout(draftTimerRef.current);
     }
-    
+
     // Auto-save draft to localStorage after 2 seconds of inactivity
     draftTimerRef.current = setTimeout(() => {
       if (projectId) {
@@ -1391,8 +1429,9 @@ const Dashboard = () => {
 
   // Save changes to backend
   const handleSave = useCallback(async () => {
+    console.log('[DEBUG] handleSave called');
     if (!projectId || isSaving) return;
-    
+
     try {
       setIsSaving(true);
       console.log('[Dashboard] Saving changes to backend...');
@@ -1614,14 +1653,21 @@ const Dashboard = () => {
       }
     }
 
-    const parentLabel = type === 'subclass'
-      ? selectedItem.label
-      : (findParentNode(classHierarchy, selectedItem.id)?.label || 'owl:Thing');
+    // For parent label, we'll compute it from state accessor
+    let parentLabel = selectedItem.label;
+    if (type === 'sibling') {
+      // Use functional update to get parent label without dependency
+      setClassHierarchy(currentHierarchy => {
+        const parent = findParentNode(currentHierarchy, selectedItem.id);
+        parentLabel = parent?.label || 'owl:Thing';
+        return currentHierarchy; // No change
+      });
+    }
 
     setAddClassType(type);
     setClassParentLabel(parentLabel);
     setAddClassDialogOpen(true);
-  }, [projectId, entitiesTab, selectedItem, objectPropertyHierarchy, classHierarchy, showNotification]);
+  }, [projectId, entitiesTab, selectedItem, showNotification]);
 
   const handleCreateClass = useCallback(async (name: string) => {
     if (!projectId || !selectedItem) return;
@@ -1639,19 +1685,24 @@ const Dashboard = () => {
           if (type === 'subclass' && selectedItem?.id) {
             parentIri = selectedItem.id;
           } else if (type === 'sibling' && selectedItem?.id) {
-            // Find parent of selected item
-            const findParent = (nodes: TreeNode[], targetId: string, parent: TreeNode | null = null): TreeNode | null => {
-              for (const node of nodes) {
-                if (node.id === targetId) return parent;
-                if (node.children) {
-                  const found = findParent(node.children, targetId, node);
-                  if (found) return found;
+            // Use functional update to find parent without dependency
+            let foundParentIri = 'http://www.w3.org/2002/07/owl#Thing';
+            setClassHierarchy(currentHierarchy => {
+              const findParent = (nodes: TreeNode[], targetId: string, parent: TreeNode | null = null): TreeNode | null => {
+                for (const node of nodes) {
+                  if (node.id === targetId) return parent;
+                  if (node.children) {
+                    const found = findParent(node.children, targetId, node);
+                    if (found) return found;
+                  }
                 }
-              }
-              return null;
-            };
-            const parent = findParent(classHierarchy, selectedItem.id);
-            parentIri = parent?.id || 'http://www.w3.org/2002/07/owl#Thing';
+                return null;
+              };
+              const parent = findParent(currentHierarchy, selectedItem.id);
+              foundParentIri = parent?.id || 'http://www.w3.org/2002/07/owl#Thing';
+              return currentHierarchy; // No change yet
+            });
+            parentIri = foundParentIri;
           }
 
           // Call backend API
@@ -1666,32 +1717,37 @@ const Dashboard = () => {
             annotations: { 'rdfs:label': name }
           };
 
-          if (type === 'subclass' && selectedItem?.id && !expandedNodes.includes(selectedItem.id)) {
-            setExpandedNodes(prev => [...prev, selectedItem.id!]);
-          }
+          setExpandedNodes(prev => {
+            if (type === 'subclass' && selectedItem?.id && !prev.includes(selectedItem.id)) {
+              return [...prev, selectedItem.id];
+            }
+            return prev;
+          });
 
-          const addNodeRecursively = (nodes: TreeNode[]): TreeNode[] => {
-            return nodes.map(node => {
-              if (type === 'subclass' && node.id === selectedItem?.id) {
-                const children = node.children ? [...node.children, newNode] : [newNode];
-                return { ...node, children, hasChildren: true };
-              }
-              if (type === 'sibling' && node.children?.some((child: TreeNode) => child.id === selectedItem?.id)) {
-                return { ...node, children: [...(node.children || []), newNode] };
-              }
-              if (node.children) {
-                return { ...node, children: addNodeRecursively(node.children) };
-              }
-              return node;
-            });
-          };
-          
-          // If adding sibling at root level
-          if (type === 'sibling' && classHierarchy.some(node => node.id === selectedItem.id)) {
-             setClassHierarchy(prev => [...prev, newNode]);
-          } else {
-             setClassHierarchy(prev => addNodeRecursively(prev));
-          }
+          setClassHierarchy(prev => {
+            const addNodeRecursively = (nodes: TreeNode[]): TreeNode[] => {
+              return nodes.map(node => {
+                if (type === 'subclass' && node.id === selectedItem?.id) {
+                  const children = node.children ? [...node.children, newNode] : [newNode];
+                  return { ...node, children, hasChildren: true };
+                }
+                if (type === 'sibling' && node.children?.some((child: TreeNode) => child.id === selectedItem?.id)) {
+                  return { ...node, children: [...(node.children || []), newNode] };
+                }
+                if (node.children) {
+                  return { ...node, children: addNodeRecursively(node.children) };
+                }
+                return node;
+              });
+            };
+
+            // If adding sibling at root level
+            if (type === 'sibling' && prev.some(node => node.id === selectedItem.id)) {
+              return [...prev, newNode];
+            } else {
+              return addNodeRecursively(prev);
+            }
+          });
           markAsUnsaved();
       } else if (entitiesTab === 'ObjectProperties') {
           // Handle Object Property Creation
@@ -1754,7 +1810,7 @@ const Dashboard = () => {
       console.error('Failed to create entity:', error);
       showNotification('Failed to create entity. See console for details.', 'error');
     }
-  }, [projectId, selectedItem, addClassType, entitiesTab, classHierarchy, expandedNodes, metadata]);
+  }, [projectId, selectedItem, addClassType, entitiesTab, metadata, markAsUnsaved]);
 
   const handleCreateObjectProperty = useCallback(async (name: string) => {
     if (!projectId) return;
@@ -1855,9 +1911,10 @@ const Dashboard = () => {
   }, [metadata]);
 
   const handleMakeSiblingsDisjoint = useCallback(async () => {
+    console.log('[DEBUG] handleMakeSiblingsDisjoint called');
     if (!projectId || !selectedItem || entitiesTab !== 'Classes') return;
-    
-    // Find siblings of selected class
+
+    // Find siblings of selected class - use classHierarchy directly as a dependency
     const findSiblings = (nodes: TreeNode[], targetId: string, parent: TreeNode | null = null): TreeNode[] => {
       for (const node of nodes) {
         if (node.id === targetId && parent && parent.children) {
@@ -1865,20 +1922,21 @@ const Dashboard = () => {
           return parent.children.filter((child: TreeNode) => child.id !== targetId);
         }
         if (node.children) {
-          const siblings = findSiblings(node.children, targetId, node);
-          if (siblings.length > 0) return siblings;
+          const foundSiblings = findSiblings(node.children, targetId, node);
+          if (foundSiblings.length > 0) return foundSiblings;
         }
       }
       return [];
     };
-    
+
     const siblings = findSiblings(classHierarchy, selectedItem.id);
-    
+
     if (siblings.length === 0) {
       showNotification('No siblings found for the selected class.', 'info');
       return;
     }
-    
+
+    // Show confirmation dialog
     setConfirmDialog({
       isOpen: true,
       title: 'Make Siblings Disjoint',
@@ -1888,12 +1946,12 @@ const Dashboard = () => {
           // Include the selected class itself in the disjoint set
           const allClasses = [selectedItem as TreeNode, ...siblings];
           const classIds = allClasses.map(c => c.id);
-          
+
           // Call backend to create pairwise disjoint axioms
           await ontologyMutationService.makeSiblingsDisjoint(projectId, classIds);
-          
+
           showNotification(`Successfully made ${classIds.length} classes pairwise disjoint.`, 'info');
-          
+
           // Optionally refresh the selected item to show updated axioms
           if (selectedItem) {
             const updated = { ...selectedItem, disjointClassesAxioms: [] };
@@ -1975,7 +2033,42 @@ const Dashboard = () => {
     });
   }, [selectedItem, entitiesTab, projectId]);
 
+  const handleRenameItem = useCallback(async (itemId: string, newLabel: string) => {
+    console.log('[DEBUG] handleRenameItem called for itemId:', itemId, 'newLabel:', newLabel);
+    if (!projectId || !newLabel.trim()) return;
+
+    try {
+      // Update the label via backend
+      // We'll use the itemId directly rather than searching for the item
+      // The backend knows the entity type from the IRI
+
+      // Try to update via class label endpoint first (works for classes)
+      try {
+        await ontologyMutationService.updateClassLabel(projectId, itemId, newLabel);
+      } catch (classError) {
+        // If class update fails, try annotation-based update (for other entity types)
+        // Note: We need to get the current label - we'll use selectedItem if it matches
+        const currentLabel = selectedItem?.id === itemId ? selectedItem.label : 'Unknown';
+        await ontologyMutationService.deleteAnnotation(projectId, itemId, 'http://www.w3.org/2000/01/rdf-schema#label', currentLabel);
+        await ontologyMutationService.addAnnotation(projectId, itemId, 'http://www.w3.org/2000/01/rdf-schema#label', newLabel);
+      }
+
+      // Update local state by creating a minimal updated item
+      const updatedItem = {
+        ...(selectedItem || { id: itemId, label: newLabel }),
+        label: newLabel
+      } as SelectableItem;
+      updateItemInState(updatedItem);
+
+      showNotification(`Renamed to "${newLabel}"`, 'info');
+    } catch (error) {
+      console.error('Failed to rename item:', error);
+      showNotification('Failed to rename item. See console for details.', 'error');
+    }
+  }, [projectId, selectedItem, updateItemInState]);
+
   const handleGraphNodeClick = useCallback((nodeId: string) => {
+    console.log('[DEBUG] handleGraphNodeClick called for nodeId:', nodeId);
     const flatten = (nodes: TreeNode[]): TreeNode[] =>
       nodes.flatMap(n => [n, ...(n.children ? flatten(n.children) : [])]);
 
@@ -1997,9 +2090,28 @@ const Dashboard = () => {
   // Keyboard shortcuts (Protégé-style) - must be after handleAddItem and handleDeleteItem
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Only handle shortcuts when Entities tab is active and Classes tab is selected
-      if (mainTab !== 'Entities' || entitiesTab !== 'Classes') return;
-      
+      // Ignore if user is typing in input/textarea
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+        return;
+      }
+
+      // Only handle shortcuts when Entities tab is active
+      if (mainTab !== 'Entities') return;
+
+      // F2 - Rename (works for all entity types)
+      if (e.key === 'F2' && selectedItem) {
+        e.preventDefault();
+        // Trigger rename by posting message to EntityHierarchy
+        // We'll use a custom event since we can't directly access EntityHierarchy's state
+        const renameEvent = new CustomEvent('triggerRename', { detail: { itemId: selectedItem.id } });
+        window.dispatchEvent(renameEvent);
+        return;
+      }
+
+      // Other shortcuts only for Classes tab
+      if (entitiesTab !== 'Classes') return;
+
       // Ctrl+\ or Cmd+\ - Add Subclass
       if ((e.ctrlKey || e.metaKey) && e.key === '\\') {
         e.preventDefault();
@@ -2016,10 +2128,10 @@ const Dashboard = () => {
         handleDeleteItem();
       }
     };
-    
+
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [mainTab, entitiesTab, handleAddItem, handleDeleteItem]);
+  }, [mainTab, entitiesTab, handleAddItem, handleDeleteItem, selectedItem]);
 
   const handleExecuteDlQuery = () => {
     setIsDlQueryLoading(true);
@@ -2119,22 +2231,24 @@ const Dashboard = () => {
                 </div>
                 <div className="bg-white p-2 min-h-24 text-sm">
                   {activeOntologySubTab === 'prefixes' ? (
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="border-b">
-                          <th className="p-1.5 font-semibold">Prefix</th>
-                          <th className="p-1.5 font-semibold">Namespace</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(metadata as any)?.prefixes?.map((p: { prefix: string; namespace: string }) => (
-                          <tr key={p.prefix} className="border-b hover:bg-gray-50">
-                            <td className="p-1.5 font-mono">{p.prefix}</td>
-                            <td className="p-1.5 text-blue-700">{p.namespace}</td>
+                    <div className="max-h-48 overflow-y-auto border border-gray-200 rounded">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-gray-50 sticky top-0">
+                          <tr className="border-b">
+                            <th className="p-1.5 font-semibold">Prefix</th>
+                            <th className="p-1.5 font-semibold">Namespace</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {(metadata as any)?.prefixes?.map((p: { prefix: string; namespace: string }) => (
+                            <tr key={p.prefix} className="border-b hover:bg-gray-50">
+                              <td className="p-1.5 font-mono">{p.prefix}</td>
+                              <td className="p-1.5 text-blue-700 break-all">{p.namespace}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   ) : (
                     <div className="text-gray-400 italic">Content for {activeOntologySubTab}</div>
                   )}
@@ -2446,6 +2560,16 @@ const Dashboard = () => {
         title={confirmDialog.title}
         message={confirmDialog.message}
       />
+      <KeyboardShortcutsDialog
+        isOpen={isKeyboardShortcutsDialogOpen}
+        onClose={() => setKeyboardShortcutsDialogOpen(false)}
+      />
+      <EntityPreferencesDialog
+        isOpen={isEntityPreferencesDialogOpen}
+        onClose={() => setEntityPreferencesDialogOpen(false)}
+        preferences={preferences}
+        onSave={updatePreferences}
+      />
 
       <div className="h-screen bg-gray-50 flex flex-col text-sm max-h-screen">
         <TopMenuBar
@@ -2545,6 +2669,8 @@ const Dashboard = () => {
                 onAddItem={handleAddItem}
                 onDeleteItem={handleDeleteItem}
                 onMakeSiblingsDisjoint={handleMakeSiblingsDisjoint}
+                onOpenPreferences={() => setEntityPreferencesDialogOpen(true)}
+                onRenameItem={handleRenameItem}
               />
 
               <section className="flex-1 overflow-hidden p-2 bg-slate-200 flex flex-col">
@@ -2607,6 +2733,9 @@ const Dashboard = () => {
           setSelectorTarget(null);
         }}
         classHierarchy={classHierarchy}
+        projectId={projectId || undefined}
+        onToggleNode={toggleNode}
+        externalExpandedNodes={expandedNodes}
         title="Select Class"
       />
 

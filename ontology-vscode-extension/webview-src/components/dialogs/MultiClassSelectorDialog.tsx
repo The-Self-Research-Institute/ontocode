@@ -1,13 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { X, Check } from 'lucide-react';
 import EntityHierarchy from '../EntityHierarchy';
 import type { TreeNode } from '../../types';
+import apiClient from '../../services/apiClient';
 
 interface MultiClassSelectorDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onConfirm: (nodes: TreeNode[]) => void;
   classHierarchy: TreeNode[];
+  projectId?: string;
+  onToggleNode?: (nodeId: string) => Promise<void> | void;
+  externalExpandedNodes?: string[];
   title?: string;
 }
 
@@ -16,18 +20,62 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
   onClose,
   onConfirm,
   classHierarchy,
+  projectId,
+  onToggleNode,
+  externalExpandedNodes,
   title = "Select Classes"
 }) => {
   const [selectedClasses, setSelectedClasses] = useState<TreeNode[]>([]);
   const [expandedNodes, setExpandedNodes] = useState<string[]>([]);
+  const [treeData, setTreeData] = useState<TreeNode[]>(classHierarchy);
 
-  if (!isOpen) return null;
+  useEffect(() => {
+    setTreeData(classHierarchy);
+  }, [classHierarchy]);
 
-  const toggleNode = (nodeId: string) => {
-    if (expandedNodes.includes(nodeId)) {
+  const loadChildren = useCallback(async (nodeId: string) => {
+    if (!projectId) return;
+    try {
+      const response = await apiClient.get<any>(`/api/ontology/classes/children/${projectId}?parentIri=${encodeURIComponent(nodeId)}`);
+      const children = Array.isArray(response) ? response :
+        Array.isArray(response?.data) ? response.data :
+        Array.isArray(response?.classes) ? response.classes : [];
+
+      const updateTree = (nodes: TreeNode[]): TreeNode[] =>
+        nodes.map((n: TreeNode) => {
+          if (n.id === nodeId) {
+            return {
+              ...n,
+              children: children.map((c: TreeNode & { hasChildren?: boolean }) => ({
+                ...c,
+                children: c.hasChildren ? undefined : c.children,
+                hasChildren: c.hasChildren
+              }))
+            };
+          }
+          if (n.children) {
+            return { ...n, children: updateTree(n.children) };
+          }
+          return n;
+        });
+
+      setTreeData(prev => updateTree(prev));
+    } catch (error) {
+      console.error(`Failed to load children for ${nodeId}`, error);
+    }
+  }, [projectId]);
+
+  const handleToggleNode = async (nodeId: string) => {
+    const isExpanded = (externalExpandedNodes || expandedNodes).includes(nodeId);
+    if (isExpanded) {
       setExpandedNodes(prev => prev.filter(id => id !== nodeId));
     } else {
       setExpandedNodes(prev => [...prev, nodeId]);
+      if (onToggleNode) {
+        await onToggleNode(nodeId);
+      } else {
+        await loadChildren(nodeId);
+      }
     }
   };
 
@@ -44,6 +92,9 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
     setSelectedClasses([]);
     onClose();
   };
+
+  // Early return AFTER all hooks to comply with React Rules of Hooks
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -67,13 +118,13 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
              */}
              <EntityHierarchy 
                entitiesTab="Classes"
-               filteredData={classHierarchy}
+               filteredData={treeData}
                selectedItem={selectedClasses.length > 0 ? selectedClasses[selectedClasses.length - 1] : null}
-               expandedNodes={expandedNodes}
+               expandedNodes={externalExpandedNodes || expandedNodes}
                searchQuery=""
                onSearchQueryChange={() => {}}
                onSelectItem={(item) => handleNodeSelect(item as TreeNode)}
-               onToggleNode={toggleNode}
+               onToggleNode={handleToggleNode}
                onAddItem={() => {}}
                onDeleteItem={() => {}}
              />
