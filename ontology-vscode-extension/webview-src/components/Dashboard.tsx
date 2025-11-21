@@ -16,6 +16,7 @@ import EntityHierarchy from './EntityHierarchy';
 import ClassEditor from './details/ClassEditor';
 import PropertyEditor from './details/PropertyEditor';
 import IndividualEditor from './details/IndividualEditor';
+import DatatypeEditor from './details/DatatypeEditor';
 import { Panel, AnnotationsDisplay } from './details/common';
 import SparqlQueryEditor from './SparqlQueryEditor';
 import { ProjectSelector } from './ProjectSelector';
@@ -29,7 +30,8 @@ import {
   AddClassDialog,
   AddObjectPropertyDialog,
   ClassExpressionDialog,
-  PropertyExpressionDialog
+  PropertyExpressionDialog,
+  AddDatatypeDialog
 } from './dialogs';
 
 type TopLevelClass = TreeNode & { hasChildren: boolean };
@@ -616,7 +618,7 @@ const DetailsPanel = ({
       );
     }
     case 'Datatypes':
-      return <Panel title={`Annotations: ${selectedItem.label}`} {...sharedProps}><AnnotationsDisplay annotations={selectedItem.annotations} onDelete={onDeleteAnnotation} /></Panel>;
+      return <DatatypeEditor item={selectedItem as Datatype} onUpdate={onUpdate} {...sharedProps} />;
     default:
       return <div className="bg-white rounded-lg border p-4"><AnnotationsDisplay annotations={selectedItem.annotations} onDelete={onDeleteAnnotation} /></div>;
   }
@@ -661,10 +663,12 @@ const Dashboard = () => {
   const [isAddAnnotationDialogOpen, setAddAnnotationDialogOpen] = useState(false);
   const [isAddClassDialogOpen, setAddClassDialogOpen] = useState(false);
   const [addClassType, setAddClassType] = useState<'subclass' | 'sibling'>('subclass');
+  const [classParentLabel, setClassParentLabel] = useState('owl:Thing');
   const [isAddPropertyDialogOpen, setAddPropertyDialogOpen] = useState(false);
   const [addPropertyType, setAddPropertyType] = useState<'subproperty' | 'sibling' | 'root'>('root');
   const [propertyParentLabel, setPropertyParentLabel] = useState('owl:topObjectProperty');
-  
+  const [isAddDatatypeDialogOpen, setAddDatatypeDialogOpen] = useState(false);
+
   // Selector Dialog State
   const [isClassSelectorOpen, setIsClassSelectorOpen] = useState(false);
   const [isPropertyExpressionDialogOpen, setIsPropertyExpressionDialogOpen] = useState(false);
@@ -1553,6 +1557,19 @@ const Dashboard = () => {
         return;
       }
 
+      // Prevent creating sibling of top-level object property
+      if (type === 'sibling') {
+        const parent = findParentNode(objectPropertyHierarchy, selectedItem.id);
+        const isTopLevel = !parent ||
+                          selectedItem.id.includes('topObjectProperty') ||
+                          selectedItem.label === 'owl:topObjectProperty';
+
+        if (isTopLevel) {
+          showNotification('Cannot create sibling of top-level object property. Please create a subproperty instead.', 'warning');
+          return;
+        }
+      }
+
       const parentLabel = type === 'subclass'
         ? selectedItem.label
         : (findParentNode(objectPropertyHierarchy, selectedItem.id)?.label || 'owl:topObjectProperty');
@@ -1568,19 +1585,42 @@ const Dashboard = () => {
       return;
     }
 
+    if (entitiesTab === 'Datatypes') {
+      setAddDatatypeDialogOpen(true);
+      return;
+    }
+
     if ((type === 'subclass' || type === 'sibling') && !selectedItem) {
       showNotification("Please select a class first.", 'warning');
       return;
     }
-    
+
     if (entitiesTab !== 'Classes') {
       showNotification('This action is available only for classes right now.', 'warning');
       return;
     }
 
+    // Prevent creating sibling of top-level class
+    if (type === 'sibling') {
+      const parent = findParentNode(classHierarchy, selectedItem.id);
+      const isTopLevel = !parent ||
+                        selectedItem.id.includes('Thing') ||
+                        selectedItem.label === 'owl:Thing';
+
+      if (isTopLevel) {
+        showNotification('Cannot create sibling of owl:Thing. Please create a subclass instead.', 'warning');
+        return;
+      }
+    }
+
+    const parentLabel = type === 'subclass'
+      ? selectedItem.label
+      : (findParentNode(classHierarchy, selectedItem.id)?.label || 'owl:Thing');
+
     setAddClassType(type);
+    setClassParentLabel(parentLabel);
     setAddClassDialogOpen(true);
-  }, [projectId, entitiesTab, selectedItem, objectPropertyHierarchy, showNotification]);
+  }, [projectId, entitiesTab, selectedItem, objectPropertyHierarchy, classHierarchy, showNotification]);
 
   const handleCreateClass = useCallback(async (name: string) => {
     if (!projectId || !selectedItem) return;
@@ -1774,6 +1814,32 @@ const Dashboard = () => {
     }
   }, [projectId, selectedItem, addPropertyType, objectPropertyHierarchy, expandedNodes, metadata, markAsUnsaved]);
 
+  const handleCreateDatatype = useCallback(async (name: string) => {
+    if (!projectId) return;
+
+    try {
+      const baseIri = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
+      const newIri = `${baseIri}#${name.replace(/\s+/g, '_')}`;
+
+      await ontologyMutationService.createDatatype(projectId, newIri, name);
+
+      const newDatatype: Datatype = {
+        id: newIri,
+        label: name,
+        annotations: { 'rdfs:label': name }
+      };
+
+      setDatatypes(prev => [...prev, newDatatype]);
+
+      markAsUnsaved();
+      showNotification('Datatype created successfully!', 'info');
+      setAddDatatypeDialogOpen(false);
+    } catch (error) {
+      console.error('Failed to create datatype:', error);
+      showNotification('Failed to create datatype. See console for details.', 'error');
+    }
+  }, [projectId, metadata, markAsUnsaved, showNotification]);
+
   const handleAddIndividual = useCallback((name: string) => {
     const base = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
     const id = `${base}#${name.replace(/\s+/g, '_')}`;
@@ -1860,6 +1926,9 @@ const Dashboard = () => {
               break;
             case 'ObjectProperties':
               await ontologyMutationService.deleteObjectProperty(projectId, selectedItem.id);
+              break;
+            case 'Datatypes':
+              await ontologyMutationService.deleteDatatype(projectId, selectedItem.id);
               break;
             // Add other entity types as needed
           }
@@ -2336,18 +2405,24 @@ const Dashboard = () => {
     <>
       <LoadingDialog isOpen={isInitialLoading} />
       <CreateIndividualModal isOpen={isCreateIndividualModalOpen} onClose={() => setCreateIndividualModalOpen(false)} onCreate={handleAddIndividual} />
-      <AddClassDialog 
-        isOpen={isAddClassDialogOpen} 
-        onClose={() => setAddClassDialogOpen(false)} 
+      <AddClassDialog
+        isOpen={isAddClassDialogOpen}
+        onClose={() => setAddClassDialogOpen(false)}
         onCreate={handleCreateClass}
         type={addClassType}
+        parentLabel={classParentLabel}
       />
-      <AddObjectPropertyDialog 
-        isOpen={isAddPropertyDialogOpen} 
-        onClose={() => setAddPropertyDialogOpen(false)} 
+      <AddObjectPropertyDialog
+        isOpen={isAddPropertyDialogOpen}
+        onClose={() => setAddPropertyDialogOpen(false)}
         onCreate={handleCreateObjectProperty}
         type={addPropertyType}
         parentLabel={propertyParentLabel}
+      />
+      <AddDatatypeDialog
+        isOpen={isAddDatatypeDialogOpen}
+        onClose={() => setAddDatatypeDialogOpen(false)}
+        onCreate={handleCreateDatatype}
       />
       <AddAnnotationDialog 
         isOpen={isAddAnnotationDialogOpen} 
