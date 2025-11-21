@@ -34,58 +34,62 @@ export const ontologyMutationService = {
   /**
    * Create a new class
    */
-  async createClass(projectId: string, iri: string, label: string, parentIri: string): Promise<void> {
+  async createClass(projectId: string, iri: string, label: string, parentIri: string, 
+                   userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'createClass',
       iri,
       label,
       parent: parentIri
-    }]);
+    }], true, userId, username);
   },
 
   /**
    * Delete a class
    */
-  async deleteClass(projectId: string, iri: string): Promise<void> {
+  async deleteClass(projectId: string, iri: string, userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'deleteClass',
       iri
-    }]);
+    }], true, userId, username);
   },
 
   /**
    * Update class label
    */
-  async updateClassLabel(projectId: string, iri: string, label: string): Promise<void> {
+  async updateClassLabel(projectId: string, iri: string, label: string, 
+                        userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'updateClassLabel',
       iri,
       label
-    }]);
+    }], true, userId, username);
   },
 
   /**
    * Add annotation to an entity
    */
-  async addAnnotation(projectId: string, entityIri: string, propertyIri: string, value: string): Promise<void> {
+  async addAnnotation(projectId: string, entityIri: string, propertyIri: string, value: string,
+                     userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'addAnnotation',
       iri: entityIri,
       property: propertyIri,
       value
-    }]);
+    }], true, userId, username);
   },
 
   /**
    * Delete annotation from an entity
    */
-  async deleteAnnotation(projectId: string, entityIri: string, propertyIri: string, value: string): Promise<void> {
+  async deleteAnnotation(projectId: string, entityIri: string, propertyIri: string, value: string,
+                        userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'deleteAnnotation',
       iri: entityIri,
       property: propertyIri,
       value
-    }]);
+    }], true, userId, username);
   },
 
   /**

@@ -653,11 +653,6 @@ const showNotification = (message: string, type: 'info' | 'error' | 'warning' = 
 };
 
 const Dashboard = () => {
-  // Debug: Track render count (moved outside useEffect to avoid infinite loop)
-  const renderCount = useRef(0);
-  renderCount.current++;
-  console.log(`[DEBUG] Dashboard render #${renderCount.current}`);
-
   // #region State
   const { user, logout } = useAuth();
   const collaboration = useCollaboration();
@@ -751,6 +746,40 @@ const Dashboard = () => {
     setVisibleMainTabs(prev => prev.includes('Graph') ? prev.filter(t => t !== 'Graph') : [...prev, 'Graph']);
   }, []);
 
+  // Poll project status until it's COMPLETED
+  const waitForProcessingComplete = useCallback(async (currentProjectId: string): Promise<boolean> => {
+    const maxAttempts = 30; // 30 seconds max
+    const pollInterval = 1000; // 1 second
+    
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const statusRes = await apiClient.get<any>(`/api/ontology/status/${currentProjectId}`);
+        const status = statusRes?.data?.status || statusRes?.status;
+        
+        console.log(`[Dashboard] Project ${currentProjectId} status (attempt ${attempt + 1}):`, status);
+        
+        if (status === 'COMPLETED') {
+          return true;
+        }
+        
+        if (status === 'ERROR') {
+          console.error('[Dashboard] Project processing failed');
+          return false;
+        }
+        
+        // Still PROCESSING or UPLOADED, wait and retry
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+      } catch (error) {
+        console.error('[Dashboard] Error checking project status:', error);
+        // Continue polling even if status check fails
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+      }
+    }
+    
+    console.warn('[Dashboard] Timeout waiting for project processing');
+    return false; // Timeout
+  }, []);
+
   const fetchData = useCallback(async (currentProjectId: string, waitForCompletion = false) => {
     // Don't block UI - let user continue working
     setSelectedItem(null);
@@ -772,6 +801,18 @@ const Dashboard = () => {
     }
 
     try {
+      // Wait for processing to complete before fetching data
+      console.log('[Dashboard] Waiting for file processing to complete...');
+      const isReady = await waitForProcessingComplete(currentProjectId);
+      
+      if (!isReady) {
+        notificationService.error('Loading Failed', 'File is still processing. Please wait a moment and try again.');
+        setIsInitialLoading(false);
+        return;
+      }
+      
+      console.log('[Dashboard] File processing complete, fetching ontology data...');
+      
       // Fetch data in background
       const dataFetchPromise = Promise.all([
         apiClient.get<any>(`/api/ontology/metadata/${currentProjectId}`),
@@ -1070,7 +1111,7 @@ const Dashboard = () => {
     } finally {
       setIsInitialLoading(false);
     }
-  }, []);
+  }, []); // waitForProcessingComplete doesn't depend on state/props, stable reference
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -1753,8 +1794,15 @@ const Dashboard = () => {
             parentIri = foundParentIri;
           }
 
-          // Call backend API
-          await ontologyMutationService.createClass(projectId, newIri, name, parentIri);
+          // Call backend API with user info
+          await ontologyMutationService.createClass(
+            projectId, 
+            newIri, 
+            name, 
+            parentIri,
+            user?.email || 'anonymous',
+            user?.name || user?.email || 'Anonymous'
+          );
 
           // Update local state
           const newNode: TreeNode = {
