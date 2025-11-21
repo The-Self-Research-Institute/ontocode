@@ -253,121 +253,35 @@ public class GraphDBDatasetService {
     /**
      * Bulk load RDF data from input stream into GraphDB
      * Supports: RDF/XML, Turtle, N-Triples, JSON-LD
+     * Uses streaming to handle large files without loading entire content into memory
      */
     public void bulkLoad(String projectId, InputStream inputStream, RDFFormat rdfFormat) {
         try {
             Repository repo = getRepository();
             String graphUri = getGraphUri(projectId);
-            
+
             log.info("Starting bulk load for project: {} with format: {}", projectId, rdfFormat);
-            
-            // Read all bytes
-            byte[] data = inputStream.readAllBytes();
-            log.info("Read {} bytes from input stream", data.length);
-            
-            if (data.length == 0) {
-                throw new RuntimeException("Empty file uploaded. Please upload a valid RDF file.");
-            }
-            
-            // Skip BOM if present and detect charset
-            int startIndex = 0;
-            java.nio.charset.Charset charset = null;
-            
-            // Log first few bytes for debugging
-            StringBuilder hexDump = new StringBuilder();
-            for (int i = 0; i < Math.min(10, data.length); i++) {
-                hexDump.append(String.format("%02X ", data[i]));
-            }
-            log.info("First 10 bytes (hex): {}", hexDump.toString());
-            
-            if (data.length >= 3 && data[0] == (byte) 0xEF && data[1] == (byte) 0xBB && data[2] == (byte) 0xBF) {
-                startIndex = 3; // Skip UTF-8 BOM
-                charset = java.nio.charset.StandardCharsets.UTF_8;
-                log.info("UTF-8 BOM detected and will be skipped (bytes: EF BB BF)");
-            } else if (data.length >= 2 && data[0] == (byte) 0xFE && data[1] == (byte) 0xFF) {
-                startIndex = 2; // Skip UTF-16 BE BOM
-                charset = java.nio.charset.StandardCharsets.UTF_16BE;
-                log.info("UTF-16 BE BOM detected (bytes: FE FF)");
-            } else if (data.length >= 2 && data[0] == (byte) 0xFF && data[1] == (byte) 0xFE) {
-                startIndex = 2; // Skip UTF-16 LE BOM
-                charset = java.nio.charset.StandardCharsets.UTF_16LE;
-                log.info("UTF-16 LE BOM detected (bytes: FF FE)");
-            } else {
-                // No BOM detected - default to UTF-8 (most common for RDF files)
-                charset = java.nio.charset.StandardCharsets.UTF_8;
-                log.info("No BOM detected, defaulting to UTF-8");
-            }
-            
-            // Convert bytes to String using detected charset, skipping BOM
-            String content = new String(data, startIndex, data.length - startIndex, charset);
-            
-            // Remove any leading/trailing whitespace and control characters
-            content = content.trim();
-            
-            // Remove any remaining Unicode BOM character that might have slipped through
-            while (content.length() > 0 && (content.charAt(0) == '\uFEFF' || content.charAt(0) == '\uFFFE')) {
-                content = content.substring(1);
-                log.info("Removed Unicode BOM character (U+FEFF) from content");
-            }
-            
-            // Additional cleaning: remove any non-printable characters before the first '<'
-            int firstAngleBracket = content.indexOf('<');
-            if (firstAngleBracket > 0) {
-                log.warn("Found {} characters before first '<', removing them", firstAngleBracket);
-                String removed = content.substring(0, firstAngleBracket);
-                log.warn("Removed characters (as hex): {}", 
-                    removed.chars().mapToObj(c -> String.format("%04X", c)).collect(java.util.stream.Collectors.joining(" ")));
-                content = content.substring(firstAngleBracket);
-            }
-            
-            // Convert to UTF-8 bytes for RDF4J
-            byte[] utf8Data = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            
-            log.info("Converted {} bytes ({}) to {} UTF-8 bytes", data.length, charset.name(), utf8Data.length);
-            
-            // Log first few characters for debugging
-            if (content.length() > 0) {
-                String preview = content.substring(0, Math.min(150, content.length()))
-                    .replace("\n", "\\n")
-                    .replace("\r", "\\r")
-                    .replace("\t", "\\t");
-                log.info("Content preview (first 150 chars): {}", preview);
-                
-                // Log first few bytes as hex
-                StringBuilder hexPreview = new StringBuilder();
-                for (int i = 0; i < Math.min(20, utf8Data.length); i++) {
-                    hexPreview.append(String.format("%02X ", utf8Data[i]));
-                }
-                log.info("UTF-8 data first bytes (hex): {}", hexPreview.toString());
-            }
-            
-            // Validate that content looks like valid XML/RDF
-            if (rdfFormat.equals(RDFFormat.RDFXML)) {
-                if (content.isEmpty() || !content.startsWith("<")) {
-                    log.error("Content does not appear to be valid XML. Length: {}", content.length());
-                    log.error("First 200 chars: {}", content.substring(0, Math.min(200, content.length())));
-                    throw new RuntimeException("Invalid RDF/XML format: content must be valid XML starting with '<'");
-                }
-                log.info("RDF/XML validation passed - content starts with '<'");
-            }
-            
-            // Create input stream from UTF-8 data
-            InputStream cleanStream = new java.io.ByteArrayInputStream(utf8Data);
-            
+
+            // Use buffered input stream for better performance
+            // RDF4J handles BOM detection and charset conversion automatically
+            InputStream bufferedStream = new java.io.BufferedInputStream(inputStream, 8192);
+
             try (RepositoryConnection conn = repo.getConnection()) {
-                
+
                 // Clear existing data for this project
+                log.info("Clearing existing data for graph: {}", graphUri);
                 conn.clear(conn.getValueFactory().createIRI(graphUri));
-                
+
                 log.info("Loading data into GraphDB graph: {}", graphUri);
-                
-                // Load new data into named graph
-                conn.add(cleanStream, graphUri, rdfFormat, 
+
+                // Load new data into named graph (streaming - no full load into memory)
+                // RDF4J will parse and load incrementally
+                conn.add(bufferedStream, graphUri, rdfFormat,
                         conn.getValueFactory().createIRI(graphUri));
-                
+
                 // Get size after loading
                 long tripleCount = conn.size(conn.getValueFactory().createIRI(graphUri));
-                
+
                 log.info("Bulk load completed for project: {} - loaded {} triples", projectId, tripleCount);
             }
             
@@ -410,15 +324,53 @@ public class GraphDBDatasetService {
         try {
             Repository repo = getRepository();
             String graphUri = getGraphUri(projectId);
-            
+
             log.info("Clearing dataset for project: {} (graph: {})", projectId, graphUri);
-            
+
             try (RepositoryConnection conn = repo.getConnection()) {
-                // Clear specific named graph
-                conn.clear(conn.getValueFactory().createIRI(graphUri));
-                log.info("Dataset cleared for project: {}", projectId);
+                // First check if graph has any data to avoid unnecessary clearing
+                String countQuery = String.format(
+                    "SELECT (COUNT(*) as ?count) WHERE { GRAPH <%s> { ?s ?p ?o } }",
+                    graphUri
+                );
+
+                try {
+                    var query = conn.prepareTupleQuery(countQuery);
+                    try (var result = query.evaluate()) {
+                        if (result.hasNext()) {
+                            var binding = result.next();
+                            var countValue = binding.getValue("count");
+                            long count = Long.parseLong(countValue.stringValue());
+
+                            if (count == 0) {
+                                log.info("Dataset already empty for project: {}, skipping clear", projectId);
+                                return;
+                            }
+                            log.info("Found {} triples to clear for project: {}", count, projectId);
+                        }
+                    }
+                } catch (Exception e) {
+                    log.warn("Could not count triples, proceeding with clear: {}", e.getMessage());
+                }
+
+                // Use SPARQL DELETE for more reliable clearing
+                String deleteQuery = String.format(
+                    "DELETE { GRAPH <%s> { ?s ?p ?o } } WHERE { GRAPH <%s> { ?s ?p ?o } }",
+                    graphUri, graphUri
+                );
+
+                // Execute update with query
+                try {
+                    conn.prepareUpdate(deleteQuery).execute();
+                    log.info("Dataset cleared for project: {} using SPARQL DELETE", projectId);
+                } catch (Exception e) {
+                    // Fallback to conn.clear() if SPARQL DELETE fails
+                    log.warn("SPARQL DELETE failed, falling back to conn.clear(): {}", e.getMessage());
+                    conn.clear(conn.getValueFactory().createIRI(graphUri));
+                    log.info("Dataset cleared for project: {} using conn.clear()", projectId);
+                }
             }
-            
+
         } catch (org.eclipse.rdf4j.repository.RepositoryException e) {
             if (e.getMessage().contains("404") || e.getMessage().contains("not found")) {
                 log.error("GraphDB repository not found. Please ensure:");

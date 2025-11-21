@@ -73,7 +73,8 @@ type WebviewMessage =
   | { type: 'remoteEdit'; edit: any }
   | { type: 'presenceUpdate'; presence: any }
   | { type: 'lockUpdate'; lock: any }
-  | { type: 'collaborationStatus'; connected: boolean };
+  | { type: 'collaborationStatus'; connected: boolean }
+  | { type: 'importStatusUpdate'; status: any };
 
 type ExtensionMessage =
   | { type: 'error'; value: string }
@@ -945,21 +946,31 @@ class OntoCodePanel {
                     this.editCapture.setApplyingRemoteEdit(true);
                     await this.remoteEditApplier.applyRemoteEdit(edit);
                     this.editCapture.setApplyingRemoteEdit(false);
-                    
+
                     // Notify webview of remote edit
                     this.postMessage({
                         type: 'remoteEdit',
                         edit
                     });
                 },
-                
+
                 onPresenceUpdate: (presence) => {
                     console.log('[OntoCode] Presence update:', presence);
-                    
+
                     // Notify webview of presence change
                     this.postMessage({
                         type: 'presenceUpdate',
                         presence
+                    });
+                },
+
+                onImportStatusUpdate: (status) => {
+                    console.log('[OntoCode] Import status update:', status);
+
+                    // Forward import status to webview
+                    this.postMessage({
+                        type: 'importStatusUpdate',
+                        status
                     });
                 },
                 
