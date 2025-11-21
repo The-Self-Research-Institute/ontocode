@@ -817,6 +817,7 @@ const Dashboard = () => {
       }
       
       console.log('[Dashboard] File processing complete, fetching ontology data...');
+      console.log('[Dashboard] 📡 Loading data from GraphDB database for:', currentProjectId);
       
       // Fetch data in background
       const dataFetchPromise = Promise.all([
@@ -837,6 +838,9 @@ const Dashboard = () => {
       
       // Continue loading in background
       const [metadataRes, topLevelRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes] = await dataFetchPromise;
+      
+      console.log('[Dashboard] ✅ Data loaded from GraphDB database successfully!');
+      console.log('[Dashboard] 📊 This data includes all saved changes from the database');
       
       // Handle metadata response - backend returns {success: true, data: {counts: {...}, prefixes: [...], ontologyIRI: "...", ...}}
       console.log("Metadata response:", metadataRes);
@@ -1508,11 +1512,13 @@ const Dashboard = () => {
 
     try {
       setIsSaving(true);
-      console.log('[Dashboard] Saving changes to backend...');
+      console.log('[Dashboard] 💾 Saving changes to backend...');
       
       // Save will apply all drafts to GraphDB and export
       const startTime = Date.now();
-      const response = await apiClient.post(`/api/ontology/save/${projectId}`);
+      const saveUrl = `/api/ontology/save/${projectId}?userId=${user?.id || 'anonymous'}&username=${encodeURIComponent(user?.username || 'Anonymous')}`;
+      console.log('[Dashboard] 📤 Save URL:', saveUrl);
+      const response = await apiClient.post(saveUrl);
       const duration = Date.now() - startTime;
       
       console.log(`[Dashboard] Save response received after ${duration}ms:`, response);
@@ -1524,8 +1530,12 @@ const Dashboard = () => {
         setHasUnsavedChanges(false);
         setDraftCount(0);
         
-        notificationService.success('Saved', 
-          `Ontology saved successfully. Applied ${data.appliedDrafts || 0} changes.`);
+        console.log('[Dashboard] ✅ Changes saved to GraphDB database!');
+        console.log('[Dashboard] 📊 Applied drafts:', data.appliedDrafts || 0);
+        console.log('[Dashboard] 📝 History recorded in database');
+        
+        notificationService.success('Saved to Database', 
+          `${data.appliedDrafts || 0} change${(data.appliedDrafts || 0) !== 1 ? 's' : ''} saved to GraphDB and history recorded.`);
         console.log('[Dashboard] Save complete:', data);
         
         // Refresh collaboration panel to show recent changes
@@ -1542,7 +1552,7 @@ const Dashboard = () => {
     } finally {
       setIsSaving(false);
     }
-  }, [projectId, isSaving]);
+  }, [projectId, isSaving, user?.id, user?.username]);
 
   // Switch to a different file (with unsaved changes check)
   const handleSwitchFile = useCallback((newProjectId: string) => {
