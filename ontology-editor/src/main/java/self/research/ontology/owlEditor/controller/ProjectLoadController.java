@@ -239,11 +239,12 @@ public class ProjectLoadController {
                 log.info("[SAVE] Saved to GridFS with fileId: {}", gridfsFileId);
             }
 
-            // STEP 5: Update last modified timestamp and metadata
-            ProjectStatus status = metadataService.readStatus(projectId)
+            // STEP 5: Update status to COMPLETED after successful save
+            ProjectStatus currentStatus = metadataService.readStatus(projectId)
                     .orElse(ProjectStatus.uploaded("ontology.owl"));
-            metadataService.writeStatus(projectId, status);
-            log.info("[SAVE] Updated project status");
+            ProjectStatus completedStatus = ProjectStatus.completed(currentStatus.filename());
+            metadataService.writeStatus(projectId, completedStatus);
+            log.info("[SAVE] Updated project status to COMPLETED");
 
             // STEP 6: Clear applied drafts (cleanup)
             draftTrackingService.clearAppliedDrafts(projectId);
