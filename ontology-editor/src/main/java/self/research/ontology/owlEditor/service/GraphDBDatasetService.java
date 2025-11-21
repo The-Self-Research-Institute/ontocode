@@ -263,45 +263,92 @@ public class GraphDBDatasetService {
             
             // Read all bytes
             byte[] data = inputStream.readAllBytes();
+            log.info("Read {} bytes from input stream", data.length);
             
-            // Skip BOM if present
+            if (data.length == 0) {
+                throw new RuntimeException("Empty file uploaded. Please upload a valid RDF file.");
+            }
+            
+            // Skip BOM if present and detect charset
             int startIndex = 0;
-            java.nio.charset.Charset charset = java.nio.charset.StandardCharsets.UTF_8;
+            java.nio.charset.Charset charset = null;
+            
+            // Log first few bytes for debugging
+            StringBuilder hexDump = new StringBuilder();
+            for (int i = 0; i < Math.min(10, data.length); i++) {
+                hexDump.append(String.format("%02X ", data[i]));
+            }
+            log.info("First 10 bytes (hex): {}", hexDump.toString());
             
             if (data.length >= 3 && data[0] == (byte) 0xEF && data[1] == (byte) 0xBB && data[2] == (byte) 0xBF) {
                 startIndex = 3; // Skip UTF-8 BOM
                 charset = java.nio.charset.StandardCharsets.UTF_8;
-                log.info("UTF-8 BOM detected");
+                log.info("UTF-8 BOM detected and will be skipped (bytes: EF BB BF)");
             } else if (data.length >= 2 && data[0] == (byte) 0xFE && data[1] == (byte) 0xFF) {
                 startIndex = 2; // Skip UTF-16 BE BOM
                 charset = java.nio.charset.StandardCharsets.UTF_16BE;
-                log.info("UTF-16 BE BOM detected");
+                log.info("UTF-16 BE BOM detected (bytes: FE FF)");
             } else if (data.length >= 2 && data[0] == (byte) 0xFF && data[1] == (byte) 0xFE) {
                 startIndex = 2; // Skip UTF-16 LE BOM
                 charset = java.nio.charset.StandardCharsets.UTF_16LE;
-                log.info("UTF-16 LE BOM detected");
+                log.info("UTF-16 LE BOM detected (bytes: FF FE)");
             } else {
-                // No BOM - try to detect encoding from first bytes or assume ISO-8859-1/Windows-1252
-                // These encodings are supersets of ASCII and won't fail on any byte value
-                charset = java.nio.charset.StandardCharsets.ISO_8859_1;
-                log.info("No BOM detected, using ISO-8859-1 for reading");
+                // No BOM detected - default to UTF-8 (most common for RDF files)
+                charset = java.nio.charset.StandardCharsets.UTF_8;
+                log.info("No BOM detected, defaulting to UTF-8");
             }
             
-            // Convert bytes to String using detected/assumed charset, then back to UTF-8 bytes
+            // Convert bytes to String using detected charset, skipping BOM
             String content = new String(data, startIndex, data.length - startIndex, charset);
             
-            // Remove any leading whitespace before XML declaration
+            // Remove any leading/trailing whitespace and control characters
             content = content.trim();
             
-            // Convert to UTF-8 bytes
+            // Remove any remaining Unicode BOM character that might have slipped through
+            while (content.length() > 0 && (content.charAt(0) == '\uFEFF' || content.charAt(0) == '\uFFFE')) {
+                content = content.substring(1);
+                log.info("Removed Unicode BOM character (U+FEFF) from content");
+            }
+            
+            // Additional cleaning: remove any non-printable characters before the first '<'
+            int firstAngleBracket = content.indexOf('<');
+            if (firstAngleBracket > 0) {
+                log.warn("Found {} characters before first '<', removing them", firstAngleBracket);
+                String removed = content.substring(0, firstAngleBracket);
+                log.warn("Removed characters (as hex): {}", 
+                    removed.chars().mapToObj(c -> String.format("%04X", c)).collect(java.util.stream.Collectors.joining(" ")));
+                content = content.substring(firstAngleBracket);
+            }
+            
+            // Convert to UTF-8 bytes for RDF4J
             byte[] utf8Data = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
             
             log.info("Converted {} bytes ({}) to {} UTF-8 bytes", data.length, charset.name(), utf8Data.length);
             
             // Log first few characters for debugging
             if (content.length() > 0) {
-                String preview = content.substring(0, Math.min(50, content.length())).replace("\n", "\\n").replace("\r", "\\r");
-                log.info("Content preview: {}", preview);
+                String preview = content.substring(0, Math.min(150, content.length()))
+                    .replace("\n", "\\n")
+                    .replace("\r", "\\r")
+                    .replace("\t", "\\t");
+                log.info("Content preview (first 150 chars): {}", preview);
+                
+                // Log first few bytes as hex
+                StringBuilder hexPreview = new StringBuilder();
+                for (int i = 0; i < Math.min(20, utf8Data.length); i++) {
+                    hexPreview.append(String.format("%02X ", utf8Data[i]));
+                }
+                log.info("UTF-8 data first bytes (hex): {}", hexPreview.toString());
+            }
+            
+            // Validate that content looks like valid XML/RDF
+            if (rdfFormat.equals(RDFFormat.RDFXML)) {
+                if (content.isEmpty() || !content.startsWith("<")) {
+                    log.error("Content does not appear to be valid XML. Length: {}", content.length());
+                    log.error("First 200 chars: {}", content.substring(0, Math.min(200, content.length())));
+                    throw new RuntimeException("Invalid RDF/XML format: content must be valid XML starting with '<'");
+                }
+                log.info("RDF/XML validation passed - content starts with '<'");
             }
             
             // Create input stream from UTF-8 data
@@ -311,6 +358,8 @@ public class GraphDBDatasetService {
                 
                 // Clear existing data for this project
                 conn.clear(conn.getValueFactory().createIRI(graphUri));
+                
+                log.info("Loading data into GraphDB graph: {}", graphUri);
                 
                 // Load new data into named graph
                 conn.add(cleanStream, graphUri, rdfFormat, 
@@ -322,17 +371,34 @@ public class GraphDBDatasetService {
                 log.info("Bulk load completed for project: {} - loaded {} triples", projectId, tripleCount);
             }
             
+        } catch (org.eclipse.rdf4j.rio.RDFParseException e) {
+            log.error("RDF parsing failed for project: {}. Parse error: {}", projectId, e.getMessage());
+            log.error("Error at line {}, column {}", e.getLineNumber(), e.getColumnNumber());
+            
+            // Log more context about the error
+            String errorMsg = "Invalid RDF format";
+            if (e.getMessage().contains("prolog")) {
+                errorMsg = "File encoding issue or invalid XML prolog. The file may have hidden characters, incorrect BOM, or is not valid RDF/XML.";
+            } else if (e.getMessage().contains("Premature end")) {
+                errorMsg = "Incomplete RDF file. The file may be truncated or corrupted.";
+            } else if (e.getMessage().contains("Undeclared namespace")) {
+                errorMsg = "Missing namespace declaration: " + e.getMessage();
+            }
+            
+            throw new RuntimeException(errorMsg + " Details: " + e.getMessage(), e);
+            
         } catch (org.eclipse.rdf4j.repository.RepositoryException e) {
             if (e.getMessage().contains("404") || e.getMessage().contains("not found")) {
                 log.error("GraphDB repository '{}' not found at {}", repositoryId, graphdbUrl);
                 log.error("Please create the repository via GraphDB Workbench: {}/repository", graphdbUrl);
                 throw new RuntimeException("GraphDB repository '" + repositoryId + "' not found. Please create it first.", e);
             } else {
-                log.error("Bulk load failed for project: {}", projectId, e);
-                throw new RuntimeException("Bulk load failed: " + e.getMessage(), e);
+                log.error("GraphDB repository error for project: {}", projectId, e);
+                throw new RuntimeException("GraphDB error: " + e.getMessage(), e);
             }
         } catch (Exception e) {
             log.error("Unexpected error during bulk load for project: {}", projectId, e);
+            log.error("Error type: {}", e.getClass().getName());
             throw new RuntimeException("Bulk load failed: " + e.getMessage(), e);
         }
     }

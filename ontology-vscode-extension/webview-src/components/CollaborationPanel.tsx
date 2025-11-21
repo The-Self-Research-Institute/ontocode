@@ -1,10 +1,77 @@
-import React, { useState } from 'react';
-import { Users, Wifi, WifiOff, Circle, Lock, ChevronRight, ChevronDown, Activity } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Users, Wifi, WifiOff, Circle, Lock, ChevronRight, ChevronDown, Activity, Move } from 'lucide-react';
 import { useCollaboration } from '../contexts/CollaborationContext';
 
 const CollaborationPanel: React.FC = () => {
     const { state } = useCollaboration();
     const [isExpanded, setIsExpanded] = useState(true);
+    const [position, setPosition] = useState({ x: 0, y: 0 });
+    const [isDragging, setIsDragging] = useState(false);
+    const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+    const panelRef = useRef<HTMLDivElement>(null);
+
+    // Initialize position from localStorage or default to bottom-right
+    useEffect(() => {
+        const savedPosition = localStorage.getItem('collaborationPanelPosition');
+        if (savedPosition) {
+            setPosition(JSON.parse(savedPosition));
+        } else {
+            // Default position: bottom-right with some margin
+            setPosition({ x: window.innerWidth - 340, y: window.innerHeight - 620 });
+        }
+    }, []);
+
+    // Save position to localStorage when it changes
+    useEffect(() => {
+        if (position.x !== 0 || position.y !== 0) {
+            localStorage.setItem('collaborationPanelPosition', JSON.stringify(position));
+        }
+    }, [position]);
+
+    const handleMouseDown = (e: React.MouseEvent) => {
+        // Only start drag if clicking on the drag handle area (not the expand/collapse button)
+        const target = e.target as HTMLElement;
+        if (target.closest('.drag-handle') && !target.closest('button')) {
+            setIsDragging(true);
+            setDragStart({
+                x: e.clientX - position.x,
+                y: e.clientY - position.y
+            });
+            e.preventDefault();
+        }
+    };
+
+    useEffect(() => {
+        const handleMouseMove = (e: MouseEvent) => {
+            if (isDragging) {
+                const newX = e.clientX - dragStart.x;
+                const newY = e.clientY - dragStart.y;
+                
+                // Constrain to viewport
+                const maxX = window.innerWidth - (panelRef.current?.offsetWidth || 320);
+                const maxY = window.innerHeight - (panelRef.current?.offsetHeight || 600);
+                
+                setPosition({
+                    x: Math.max(0, Math.min(newX, maxX)),
+                    y: Math.max(0, Math.min(newY, maxY))
+                });
+            }
+        };
+
+        const handleMouseUp = () => {
+            setIsDragging(false);
+        };
+
+        if (isDragging) {
+            document.addEventListener('mousemove', handleMouseMove);
+            document.addEventListener('mouseup', handleMouseUp);
+        }
+
+        return () => {
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, [isDragging, dragStart, position]);
 
     const formatTime = (timestamp: number) => {
         const date = new Date(timestamp);
@@ -20,46 +87,74 @@ const CollaborationPanel: React.FC = () => {
         return `${hours}h ago`;
     };
 
-    // Convert Map to Array for rendering
-    const activeUsers = Array.from(state.activeUsers.values());
+    // Convert Map to Array and filter by current project
+    const allUsers = Array.from(state.activeUsers.values());
+    const activeUsers = allUsers.filter(user => 
+        !state.currentProjectId || user.projectId === state.currentProjectId
+    );
     const locks = Array.from(state.locks.values());
 
     return (
-        <div className="fixed bottom-4 right-4 bg-white rounded-lg shadow-2xl border border-gray-300 overflow-hidden z-50" 
-             style={{ width: isExpanded ? '320px' : '180px', maxHeight: '600px' }}>
+        <div 
+            ref={panelRef}
+            className="fixed bg-white rounded-lg shadow-2xl border border-gray-300 overflow-hidden z-50" 
+            style={{ 
+                width: isExpanded ? '400px' : '300px', 
+                maxHeight: '600px',
+                left: `${position.x}px`,
+                top: `${position.y}px`,
+                cursor: isDragging ? 'grabbing' : 'default'
+            }}
+        >
             {/* Header */}
-            <div 
-                className="bg-gradient-to-r from-purple-600 to-purple-700 text-white px-4 py-3 flex items-center justify-between cursor-pointer hover:from-purple-700 hover:to-purple-800 transition-all"
-                onClick={() => setIsExpanded(!isExpanded)}
-            >
-                <div className="flex items-center gap-2">
-                    <Users size={18} />
-                    <span className="font-semibold text-sm">Collaboration</span>
-                </div>
-                <div className="flex items-center gap-2">
+            <div className="bg-gradient-to-r from-purple-600 to-purple-700 text-white shadow-md">
+                <div 
+                    className="px-4 py-3 flex items-center justify-between"
+                >
                     <div 
-                        className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium ${
-                        state.connected 
-                            ? 'bg-green-500 bg-opacity-90' 
-                            : 'bg-gray-500 bg-opacity-90'
-                    }`}
-                        title={state.connected 
-                            ? `Connected to collaboration server\n${activeUsers.length} active user(s)` 
-                            : 'Not connected to collaboration server'}
+                        className="flex items-center gap-2 drag-handle cursor-move flex-1" 
+                        title="Drag to move panel"
+                        onMouseDown={handleMouseDown}
                     >
-                        {state.connected ? (
-                            <>
-                                <Wifi size={12} />
-                                <span>Live</span>
-                            </>
-                        ) : (
-                            <>
-                                <WifiOff size={12} />
-                                <span>Offline</span>
-                            </>
-                        )}
+                        <Move size={14} className="text-purple-200" />
+                        <Users size={18} />
+                        <span className="font-semibold text-sm">Collaboration</span>
                     </div>
-                    {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                    <div className="flex items-center gap-2">
+                        <div 
+                            className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium ${
+                            state.connected 
+                                ? 'bg-green-500 bg-opacity-90' 
+                                : 'bg-gray-500 bg-opacity-90'
+                        }`}
+                            title={state.connected 
+                                ? `Connected to collaboration server\n${activeUsers.length} active user(s)` 
+                                : 'Not connected to collaboration server'}
+                        >
+                            {state.connected ? (
+                                <>
+                                    <Wifi size={12} />
+                                    <span>Live</span>
+                                </>
+                            ) : (
+                                <>
+                                    <WifiOff size={12} />
+                                    <span>Offline</span>
+                                </>
+                            )}
+                        </div>
+                        <button
+                            onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setIsExpanded(!isExpanded);
+                            }}
+                            className="hover:bg-purple-800 active:bg-purple-900 rounded-md p-1.5 transition-all duration-200 ml-1"
+                            title={isExpanded ? "Collapse panel" : "Expand panel"}
+                        >
+                            {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                        </button>
+                    </div>
                 </div>
             </div>
 
