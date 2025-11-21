@@ -100,4 +100,13 @@ public class ProjectMetadataService {
                 .map(ProjectDocument::getId)
                 .findFirst();
     }
+    
+    /**
+     * Get the updatedAt timestamp for a project
+     */
+    public Instant getUpdatedAt(String projectId) {
+        return projectRepository.findById(projectId)
+                .map(ProjectDocument::getUpdatedAt)
+                .orElse(null);
+    }
 }

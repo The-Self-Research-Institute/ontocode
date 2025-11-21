@@ -7,6 +7,7 @@ import apiClient from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
 import { draftTrackingService } from "../services/draftTrackingService";
 import { notificationService } from "../services/notificationService";
+import { syncService } from "../services/syncService";
 import { pluginManager } from '../plugins/PluginSystem';
 import { SWRLPlugin, ReasoningPlugin } from '../plugins/PluginRegistry';
 import type { TreeNode, Property, Individual, OntologyMetadata, SelectableItem, AnnotationProperty, Datatype } from '../types';
@@ -1104,6 +1105,28 @@ const Dashboard = () => {
         setSharedFiles([]);
       }
       
+      // Start monitoring for changes from other users
+      const handleDataChanged = async (changedProjectId: string) => {
+        console.log('[Dashboard] 🔄 Change detected from another user! Refreshing data...');
+        notificationService.info('New Changes Available', 'Another user saved changes. Refreshing data...');
+        
+        // Refresh data once - no need to restart monitoring
+        await fetchData(changedProjectId, false);
+        console.log('[Dashboard] ✅ Refresh complete');
+      };
+      
+      // Get the current timestamp and start monitoring
+      try {
+        const timestampData = await apiClient.get<{ updatedAt: string }>(`/api/ontology/metadata/${currentProjectId}/timestamp`);
+        if (timestampData && timestampData.updatedAt) {
+          const currentTimestamp = new Date(timestampData.updatedAt).getTime();
+          syncService.startMonitoring(currentProjectId, handleDataChanged, currentTimestamp);
+          console.log('[Dashboard] 🔍 Monitoring for changes from other users');
+        }
+      } catch (error) {
+        console.warn('[Dashboard] Could not start change monitoring:', error);
+      }
+      
       // Notify user that ontology is fully loaded
       notificationService.success(
         'Ontology Loaded',
@@ -1514,6 +1537,9 @@ const Dashboard = () => {
       setIsSaving(true);
       console.log('[Dashboard] 💾 Saving changes to backend...');
       
+      // Notify sync service about local save to avoid triggering refresh for current user
+      syncService.notifyLocalSave(projectId);
+      
       // Save will apply all drafts to GraphDB and export
       const startTime = Date.now();
       const saveUrl = `/api/ontology/save/${projectId}?userId=${user?.id || 'anonymous'}&username=${encodeURIComponent(user?.username || 'Anonymous')}`;
@@ -1537,6 +1563,10 @@ const Dashboard = () => {
         notificationService.success('Saved to Database', 
           `${data.appliedDrafts || 0} change${(data.appliedDrafts || 0) !== 1 ? 's' : ''} saved to GraphDB and history recorded.`);
         console.log('[Dashboard] Save complete:', data);
+        
+        // Refresh the current file to show saved changes
+        console.log('[Dashboard] 🔄 Refreshing current file after save...');
+        await fetchData(projectId, false);
         
         // Refresh collaboration panel to show recent changes
         collaborationPanelRef.current?.refreshChanges();
@@ -2290,6 +2320,16 @@ const Dashboard = () => {
     } finally {
       setCodeViewLoading(false);
     }
+  }, [projectId]);
+
+  // Cleanup sync service when switching projects
+  useEffect(() => {
+    return () => {
+      if (projectId) {
+        syncService.stopMonitoring(projectId);
+        console.log('[Dashboard] Stopped monitoring for project:', projectId);
+      }
+    };
   }, [projectId]);
 
   // Load code view content when switching to CodeView tab
