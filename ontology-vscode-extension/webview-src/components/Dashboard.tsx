@@ -23,6 +23,7 @@ import { ProjectSelector } from './ProjectSelector';
 import CollaborationPanel, { CollaborationPanelRef } from './CollaborationPanel';
 import ToastNotification from './ToastNotification';
 import ShareDialog from './ShareDialog';
+import { ImportProgressToast, ImportStatus } from './ImportProgressIndicator';
 import {
   ClassSelectorDialog,
   CreateIndividualModal,
@@ -160,6 +161,8 @@ const TopMenuBar = ({
   isSaving,
   draftCount,
   onOpenDialog,
+  showImportProgress,
+  onToggleImportProgress,
 }: {
   onToggleSwrlTab: () => void;
   isSwrlVisible: boolean;
@@ -176,6 +179,8 @@ const TopMenuBar = ({
   isSaving: boolean;
   draftCount?: number;
   onOpenDialog: () => void;
+  showImportProgress: boolean;
+  onToggleImportProgress: () => void;
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -253,6 +258,20 @@ const TopMenuBar = ({
                       className="flex justify-between items-center px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100"
                     >
                       SWRL Tab {isSwrlVisible && <Check size={14} className="text-purple-600" />}
+                    </a>
+                  </div>
+                ) : item === "View" ? (
+                  <div className="py-1">
+                    <a
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        onToggleImportProgress();
+                        setOpenMenu(null);
+                      }}
+                      className="flex justify-between items-center px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100"
+                    >
+                      Import Progress {showImportProgress && <Check size={14} className="text-purple-600" />}
                     </a>
                   </div>
                 ) : item === "Reasoner" ? (
@@ -345,6 +364,7 @@ const TopMenuBar = ({
           </div>
         ))}
       </div>
+
     </header>
   );
 };
@@ -675,6 +695,14 @@ const Dashboard = () => {
   const [draftCount, setDraftCount] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Import status state
+  const [importStatus, setImportStatus] = useState<ImportStatus>({
+    type: 'IDLE',
+    status: 'COMPLETED',
+    statusMessage: '',
+  });
+  const [showImportProgress, setShowImportProgress] = useState(true);
   const collaborationPanelRef = useRef<CollaborationPanelRef>(null);
   const [showOpenDialog, setShowOpenDialog] = useState(false);
   const [activeOntologySubTab, setActiveOntologySubTab] = useState('prefixes');
@@ -751,38 +779,30 @@ const Dashboard = () => {
     setVisibleMainTabs(prev => prev.includes('Graph') ? prev.filter(t => t !== 'Graph') : [...prev, 'Graph']);
   }, []);
 
-  // Poll project status until it's COMPLETED
+  // Check status once (no polling - rely on WebSocket notifications)
   const waitForProcessingComplete = useCallback(async (currentProjectId: string): Promise<boolean> => {
-    const maxAttempts = 30; // 30 seconds max
-    const pollInterval = 1000; // 1 second
-    
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      try {
-        const statusRes = await apiClient.get<any>(`/api/ontology/status/${currentProjectId}`);
-        const status = statusRes?.data?.status || statusRes?.status;
-        
-        console.log(`[Dashboard] Project ${currentProjectId} status (attempt ${attempt + 1}):`, status);
-        
-        if (status === 'COMPLETED') {
-          return true;
-        }
-        
-        if (status === 'ERROR') {
-          console.error('[Dashboard] Project processing failed');
-          return false;
-        }
-        
-        // Still PROCESSING or UPLOADED, wait and retry
-        await new Promise(resolve => setTimeout(resolve, pollInterval));
-      } catch (error) {
-        console.error('[Dashboard] Error checking project status:', error);
-        // Continue polling even if status check fails
-        await new Promise(resolve => setTimeout(resolve, pollInterval));
+    try {
+      const statusRes = await apiClient.get<any>(`/api/ontology/status/${currentProjectId}`);
+      const status = statusRes?.data?.status || statusRes?.status;
+
+      console.log(`[Dashboard] Project ${currentProjectId} status:`, status);
+
+      if (status === 'COMPLETED') {
+        return true;
       }
+
+      if (status === 'ERROR') {
+        console.error('[Dashboard] Project processing failed');
+        return false;
+      }
+
+      // If PROCESSING, WebSocket will notify when complete
+      console.log('[Dashboard] File is processing, waiting for WebSocket notification...');
+      return true; // Don't block - let WebSocket handle it
+    } catch (error) {
+      console.error('[Dashboard] Error checking project status:', error);
+      return true; // Don't block on error
     }
-    
-    console.warn('[Dashboard] Timeout waiting for project processing');
-    return false; // Timeout
   }, []);
 
   const fetchData = useCallback(async (currentProjectId: string, waitForCompletion = false) => {
@@ -1263,6 +1283,35 @@ const Dashboard = () => {
             toggleSwrlTab();
           }
           setMainTab('SWRL');
+          break;
+        case "importStatusUpdate":
+          // Handle import status updates from WebSocket
+          console.log('[Dashboard] Import status update:', message.status);
+          setImportStatus({
+            type: message.status.type,
+            status: message.status.status,
+            statusMessage: message.status.statusMessage,
+            filename: message.status.filename,
+            progress: message.status.progress,
+            metadata: message.status.metadata,
+          });
+
+          // If import completed, fetch data automatically
+          if (message.status.type === 'IMPORT_COMPLETED' && message.status.projectId === projectId) {
+            console.log('[Dashboard] Import completed, fetching data...');
+            setTimeout(() => fetchData(message.status.projectId, false), 500);
+            // Auto-dismiss after 3 seconds
+            setTimeout(() => {
+              setImportStatus({ type: 'IDLE', status: 'COMPLETED', statusMessage: '' });
+            }, 3000);
+          }
+
+          // Auto-dismiss failed status after 10 seconds
+          if (message.status.type === 'IMPORT_FAILED') {
+            setTimeout(() => {
+              setImportStatus({ type: 'IDLE', status: 'COMPLETED', statusMessage: '' });
+            }, 10000);
+          }
           break;
       }
     };
@@ -2806,6 +2855,8 @@ const Dashboard = () => {
           isSaving={isSaving}
           draftCount={draftCount}
           onOpenDialog={() => setShowOpenDialog(true)}
+          showImportProgress={showImportProgress}
+          onToggleImportProgress={() => setShowImportProgress(!showImportProgress)}
         />
 
         <div className="bg-white border-b border-gray-200 flex-shrink-0">
@@ -3014,6 +3065,13 @@ const Dashboard = () => {
           />
         ))}
       </div>
+
+      {/* Import Progress Toast */}
+      <ImportProgressToast
+        importStatus={importStatus}
+        onDismiss={() => setImportStatus({ type: 'IDLE', status: 'COMPLETED', statusMessage: '' })}
+        visible={showImportProgress}
+      />
     </>
   );
 };

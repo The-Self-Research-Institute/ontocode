@@ -26,6 +26,7 @@ export class CollaborationManager {
     private onEditReceived?: (edit: EditOperation) => void;
     private onPresenceUpdate?: (presence: PresenceMessage) => void;
     private onLockUpdate?: (lock: LockMessage) => void;
+    private onImportStatusUpdate?: (status: any) => void;
     private onConnectionChange?: (connected: boolean) => void;
     private onError?: (error: string) => void;
 
@@ -170,6 +171,7 @@ export class CollaborationManager {
         this.subscribeToEdit(projectId);
         this.subscribeToPresence(projectId);
         this.subscribeToLocks(projectId);
+        this.subscribeToImportStatus(projectId);
         
         // Wait a bit for subscriptions to be established
         await new Promise(resolve => setTimeout(resolve, 100));
@@ -319,12 +321,14 @@ export class CollaborationManager {
         onEditReceived?: (edit: EditOperation) => void;
         onPresenceUpdate?: (presence: PresenceMessage) => void;
         onLockUpdate?: (lock: LockMessage) => void;
+        onImportStatusUpdate?: (status: any) => void;
         onConnectionChange?: (connected: boolean) => void;
         onError?: (error: string) => void;
     }): void {
         this.onEditReceived = handlers.onEditReceived;
         this.onPresenceUpdate = handlers.onPresenceUpdate;
         this.onLockUpdate = handlers.onLockUpdate;
+        this.onImportStatusUpdate = handlers.onImportStatusUpdate;
         this.onConnectionChange = handlers.onConnectionChange;
         this.onError = handlers.onError;
     }
@@ -438,6 +442,32 @@ export class CollaborationManager {
         );
         
         this.subscriptions.set('locks', subscription);
+    }
+
+    /**
+     * Subscribe to import status updates for a project.
+     */
+    private subscribeToImportStatus(projectId: string): void {
+        if (!this.client) return;
+
+        const subscription = this.client.subscribe(
+            `/topic/import/${projectId}`,
+            (message: IMessage) => {
+                try {
+                    const importStatus = JSON.parse(message.body);
+
+                    console.log('[CollaborationManager] Import status update:', importStatus);
+
+                    if (this.onImportStatusUpdate) {
+                        this.onImportStatusUpdate(importStatus);
+                    }
+                } catch (error) {
+                    console.error('Error parsing import status:', error);
+                }
+            }
+        );
+
+        this.subscriptions.set(`import-${projectId}`, subscription);
     }
 
     private processPendingEdits(): void {
