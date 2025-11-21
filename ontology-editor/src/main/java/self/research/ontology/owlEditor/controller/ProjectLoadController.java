@@ -265,4 +265,38 @@ public class ProjectLoadController {
                     ));
         }
     }
+
+    /**
+     * Get ontology content in specified format for code view
+     * @param projectId The project ID
+     * @param format The format (turtle, rdfxml, ntriples, jsonld) - defaults to rdfxml
+     * @return Ontology content as plain text
+     */
+    @GetMapping("/{projectId}/content")
+    public ResponseEntity<Map<String, Object>> getOntologyContent(
+            @PathVariable String projectId,
+            @RequestParam(defaultValue = "rdfxml") String format) {
+        try {
+            log.info("Fetching ontology content for project: {} in format: {}", projectId, format);
+            
+            // Export the ontology in the requested format
+            Path exportPath = storageManager.exportOntology(projectId, format);
+            String content = Files.readString(exportPath);
+            
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "content", content,
+                    "format", format,
+                    "projectId", projectId
+            ));
+        } catch (Exception e) {
+            log.error("Failed to get ontology content for project: {}", projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of(
+                            "success", false,
+                            "error", "Failed to get ontology content: " + e.getMessage()
+                    ));
+        }
+    }
 }
+
