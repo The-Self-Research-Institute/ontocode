@@ -1,10 +1,46 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useImperativeHandle, forwardRef } from 'react';
 import { Users, Wifi, WifiOff, Circle, Lock, ChevronRight, ChevronDown, Activity } from 'lucide-react';
 import { useCollaboration } from '../contexts/CollaborationContext';
+import { changeTrackingService, OntologyChange } from '../services/changeTrackingService';
 
-const CollaborationPanel: React.FC = () => {
+interface CollaborationPanelProps {
+  projectId?: string;
+}
+
+export interface CollaborationPanelRef {
+  refreshChanges: () => void;
+}
+
+const CollaborationPanel = forwardRef<CollaborationPanelRef, CollaborationPanelProps>(({ projectId }, ref) => {
     const { state } = useCollaboration();
     const [isExpanded, setIsExpanded] = useState(true);
+    const [recentChanges, setRecentChanges] = useState<OntologyChange[]>([]);
+    const [showAllChanges, setShowAllChanges] = useState(false);
+    
+    // Fetch recent changes when panel opens or projectId changes
+    const fetchRecentChanges = async () => {
+        if (projectId && isExpanded) {
+            const changes = await changeTrackingService.getRecentChanges(projectId, 50);
+            setRecentChanges(changes);
+        }
+    };
+    
+    // Expose refresh method to parent
+    useImperativeHandle(ref, () => ({
+        refreshChanges: () => {
+            fetchRecentChanges();
+        }
+    }));
+    
+    useEffect(() => {
+        fetchRecentChanges();
+        
+        // Refresh every 30 seconds if expanded
+        if (isExpanded) {
+            const interval = setInterval(fetchRecentChanges, 30000);
+            return () => clearInterval(interval);
+        }
+    }, [projectId, isExpanded]);
 
     const formatTime = (timestamp: number) => {
         const date = new Date(timestamp);
@@ -155,34 +191,64 @@ const CollaborationPanel: React.FC = () => {
                                 Recent Activity
                             </span>
                         </div>
-                        {state.notifications.length === 0 ? (
+                        {recentChanges.length === 0 ? (
                             <div className="px-4 py-6 text-center">
                                 <Activity size={32} className="mx-auto text-gray-300 mb-2" />
                                 <p className="text-xs text-gray-400 mb-1">No recent activity</p>
-                                <p className="text-xs text-gray-500">Activity will appear when you or others make edits</p>
+                                <p className="text-xs text-gray-500">Activity will appear when you save changes</p>
                             </div>
                         ) : (
-                            <div className="p-2 space-y-1">
-                                {state.notifications.slice(0, 5).map(notif => (
-                                    <div 
-                                        key={notif.id}
-                                        className="px-3 py-2 rounded-md hover:bg-gray-50 transition-colors"
-                                    >
-                                        <div className="text-xs text-gray-700 mb-1">
-                                            {notif.message}
+                            <>
+                                <div className="p-2 space-y-1">
+                                    {(showAllChanges ? recentChanges : recentChanges.slice(0, 5)).map(change => (
+                                        <div 
+                                            key={change.id}
+                                            className="px-3 py-2 rounded-md hover:bg-gray-50 transition-colors"
+                                        >
+                                            <div className="flex items-start gap-2">
+                                                <span className={`text-xs font-semibold mt-0.5 ${
+                                                    change.changeType.startsWith('ADD') ? 'text-green-600' :
+                                                    change.changeType.startsWith('DELETE') || change.changeType.startsWith('REMOVE') ? 'text-red-600' :
+                                                    change.changeType.startsWith('RENAME') ? 'text-blue-600' :
+                                                    'text-amber-600'
+                                                }`}>
+                                                    {change.changeType.startsWith('ADD') ? '+ ' :
+                                                     change.changeType.startsWith('DELETE') || change.changeType.startsWith('REMOVE') ? '− ' :
+                                                     change.changeType.startsWith('RENAME') ? '✎ ' : '• '}
+                                                </span>
+                                                <div className="flex-1">
+                                                    <div className="text-xs text-gray-700 mb-1">
+                                                        {change.description}
+                                                    </div>
+                                                    <div className="text-xs text-gray-500">
+                                                        by <span className="font-medium">{change.username}</span>
+                                                        <span className="mx-1">•</span>
+                                                        {formatTime(change.timestamp)}
+                                                    </div>
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div className="text-xs text-gray-400">
-                                            {formatTime(notif.timestamp)}
-                                        </div>
+                                    ))}
+                                </div>
+                                {recentChanges.length > 5 && (
+                                    <div className="px-4 py-2 border-t border-gray-200">
+                                        <button
+                                            onClick={() => setShowAllChanges(!showAllChanges)}
+                                            className="w-full text-xs text-purple-600 hover:text-purple-700 font-medium py-1"
+                                        >
+                                            {showAllChanges ? 'Show less' : `Show ${recentChanges.length - 5} more`}
+                                        </button>
                                     </div>
-                                ))}
-                            </div>
+                                )}
+                            </>
                         )}
                     </div>
                 </div>
             )}
         </div>
     );
-};
+});
+
+CollaborationPanel.displayName = 'CollaborationPanel';
 
 export default CollaborationPanel;

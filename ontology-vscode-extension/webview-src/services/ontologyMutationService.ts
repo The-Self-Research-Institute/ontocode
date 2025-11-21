@@ -14,9 +14,21 @@ export interface MutationOp {
 export const ontologyMutationService = {
   /**
    * Apply mutations to the ontology
+   * @param projectId - The project ID
+   * @param ops - The mutation operations
+   * @param draft - If true, records as draft without applying to GraphDB (default: true)
+   * @param userId - User ID for tracking
+   * @param username - Username for tracking
+   * @param sessionId - Session ID for tracking related operations
    */
-  async applyMutations(projectId: string, ops: MutationOp[]): Promise<void> {
-    await apiClient.post(`/api/ontology/mutations/${projectId}`, { ops });
+  async applyMutations(projectId: string, ops: MutationOp[], draft: boolean = true, 
+                      userId?: string, username?: string, sessionId?: string): Promise<void> {
+    await apiClient.post(`/api/ontology/mutations/${projectId}?draft=${draft}`, { 
+      ops,
+      userId: userId || 'anonymous',
+      username: username || 'Anonymous',
+      sessionId: sessionId || `session_${Date.now()}`
+    });
   },
 
   /**

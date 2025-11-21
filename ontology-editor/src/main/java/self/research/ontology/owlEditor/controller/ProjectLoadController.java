@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import self.research.ontology.owlEditor.model.ProjectStatus;
+import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.GridFSFileService;
 import self.research.ontology.owlEditor.service.ProjectImportService;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
@@ -41,15 +42,18 @@ public class ProjectLoadController {
     private final ProjectMetadataService metadataService;
     private final ProjectImportService importService;
     private final GridFSFileService gridFSFileService;
+    private final DraftTrackingService draftTrackingService;
 
     public ProjectLoadController(StorageManager storageManager,
                                  ProjectMetadataService metadataService,
                                  ProjectImportService importService,
-                                 GridFSFileService gridFSFileService) {
+                                 GridFSFileService gridFSFileService,
+                                 DraftTrackingService draftTrackingService) {
         this.storageManager = storageManager;
         this.metadataService = metadataService;
         this.importService = importService;
         this.gridFSFileService = gridFSFileService;
+        this.draftTrackingService = draftTrackingService;
     }
 
     @PostMapping("/upload/{projectId}")
@@ -139,37 +143,66 @@ public class ProjectLoadController {
     @PostMapping("/save/{projectId}")
     public ResponseEntity<Map<String, Object>> save(@PathVariable String projectId) {
         try {
-            log.info("[CHANGE TRACKING] Save requested for project: {}", projectId);
+            log.info("[SAVE] Save requested for project: {}", projectId);
 
-            // Export current state from GraphDB to file system
+            // STEP 1: Apply all unapplied drafts to GraphDB first
+            log.info("[SAVE] Applying drafts to GraphDB...");
+            DraftTrackingService.ApplyDraftsResult draftResult = draftTrackingService.applyDrafts(projectId);
+            
+            if (!draftResult.isSuccess()) {
+                log.error("[SAVE] Failed to apply drafts: {}", draftResult.getMessage());
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of(
+                        "success", false,
+                        "error", "Failed to apply drafts: " + draftResult.getMessage()
+                    ));
+            }
+            
+            log.info("[SAVE] Applied {} draft changes", draftResult.getAppliedCount());
+
+            // STEP 2: Export current state from GraphDB to file system
             Path exportPath = storageManager.exportOntology(projectId, "rdfxml");
-            log.info("[CHANGE TRACKING] Ontology saved to: {}", exportPath);
+            log.info("[SAVE] Ontology exported to: {}", exportPath);
 
-            // Update GridFS with the current state
+            // STEP 3: Update the original file so changes persist when switching files
+            Path originalPath = storageManager.projectDir(projectId).resolve("ontology.original.owl");
+            if (Files.exists(exportPath) && !exportPath.equals(originalPath)) {
+                Files.copy(exportPath, originalPath,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                log.info("[SAVE] Updated original file: {}", originalPath);
+            }
+
+            // STEP 4: Update GridFS with the current state for backup/versioning
             try (InputStream in = Files.newInputStream(exportPath)) {
                 String gridfsFileId = gridFSFileService.storeFile(
                     projectId,
-                    exportPath.getFileName().toString(),
+                    "ontology.owl",
                     "application/rdf+xml",
                     in
                 );
                 metadataService.setGridfsFileId(projectId, gridfsFileId);
-                log.info("[CHANGE TRACKING] Updated GridFS file: {} for project: {}", gridfsFileId, projectId);
+                log.info("[SAVE] Saved to GridFS with fileId: {}", gridfsFileId);
             }
 
-            // Update last modified timestamp
+            // STEP 5: Update last modified timestamp and metadata
             ProjectStatus status = metadataService.readStatus(projectId)
                     .orElse(ProjectStatus.uploaded("ontology.owl"));
             metadataService.writeStatus(projectId, status);
+            log.info("[SAVE] Updated project status");
+
+            // STEP 6: Clear applied drafts (cleanup)
+            draftTrackingService.clearAppliedDrafts(projectId);
+            log.info("[SAVE] Cleared applied drafts");
 
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "message", "Ontology saved successfully",
                     "projectId", projectId,
-                    "savedPath", exportPath.toString()
+                    "savedPath", originalPath.toString(),
+                    "appliedDrafts", draftResult.getAppliedCount()
             ));
         } catch (Exception e) {
-            log.error("[CHANGE TRACKING] Save failed for project: {}", projectId, e);
+            log.error("[SAVE] Save failed for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of(
                             "success", false,
