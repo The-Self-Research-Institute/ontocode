@@ -59,7 +59,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
 
   if (!isOpen) return null;
 
-  const toggleNode = async (nodeId: string) => {
+  const handleToggleNode = async (nodeId: string) => {
     // Use parent's toggle function if provided, otherwise use local logic
     if (parentToggleNode) {
       await parentToggleNode(nodeId);
@@ -95,7 +95,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  toggleNode(node.id);
+                  handleToggleNode(node.id);
                 }}
                 className="p-0.5 hover:bg-gray-200 rounded"
               >
