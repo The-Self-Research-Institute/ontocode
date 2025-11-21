@@ -96,10 +96,13 @@ const PropertyEditor: React.FC<{
                     await ontologyMutationService.addDisjointProperty(projectId, item.id, target);
                     onUpdate({ ...item, disjointProperties: [...(item.disjointProperties || []), target] });
                     break;
-                case 'equivalent':
+                case 'equivalent': {
+                    const currentEq = item.equivalentProperties || [];
+                    const updatedEq = [...currentEq, target];
+                    onUpdate({ ...item, equivalentProperties: updatedEq });
                     await ontologyMutationService.addEquivalentProperty(projectId, item.id, target);
-                    // Assuming we add an equivalentProperties field to Property type or reuse one
                     break;
+                }
             }
         } catch (error) {
             console.error(`Failed to add ${relation}`, error);
@@ -129,44 +132,46 @@ const PropertyEditor: React.FC<{
                     await ontologyMutationService.deleteDisjointProperty(projectId, item.id, target);
                     onUpdate({ ...item, disjointProperties: item.disjointProperties?.filter(p => p !== target) });
                     break;
-                 case 'equivalent':
+                case 'equivalent': {
+                    const remaining = item.equivalentProperties?.filter(p => p !== target) || [];
+                    onUpdate({ ...item, equivalentProperties: remaining });
                     await ontologyMutationService.deleteEquivalentProperty(projectId, item.id, target);
                     break;
+                }
             }
         } catch (error) {
             console.error(`Failed to delete ${relation}`, error);
         }
     };
 
-    const handleAddPropertyChain = async (expression: string) => {
-        try {
-            await ontologyMutationService.addAxiom(projectId, item.id, 'PropertyChain' as any, expression);
-            // We should reload property details here, but we don't have loadPropertyDetails function exposed or local.
-            // PropertyEditor receives 'item' from parent.
-            // We can call onUpdate with optimistic update, but we don't know the ID.
-            // Ideally, we should trigger a reload in parent.
-            // For now, let's just log.
-            console.log("Property chain added:", expression);
-        } catch (error) {
-            console.error("Failed to add property chain:", error);
-        }
-    };
-
     const handleDeletePropertyChain = async (chain: string) => {
-        // Implement delete logic
-        console.log("Delete property chain:", chain);
+        const updatedChains = item.propertyChains?.filter(c => c !== chain) || [];
+        onUpdate({ ...item, propertyChains: updatedChains });
+
+        try {
+            await ontologyMutationService.deletePropertyChain(projectId, item.id, chain);
+        } catch (error) {
+            console.error("Failed to delete property chain:", error);
+            // Revert if the API call fails
+            onUpdate({ ...item, propertyChains: item.propertyChains });
+        }
     };
 
     const handlePropertyChainConfirm = async (chain: string[]) => {
+        const expression = chain.join(' o ');
+        const updatedChains = [...(item.propertyChains || []), expression];
+        onUpdate({ ...item, propertyChains: updatedChains });
+
         try {
-            const expression = chain.join(' ∘ ');
-            await ontologyMutationService.addAxiom(projectId, item.id, 'PropertyChain' as any, expression);
+            await ontologyMutationService.addPropertyChain(projectId, item.id, expression);
             console.log("Property chain added:", expression);
         } catch (error) {
             console.error("Failed to add property chain:", error);
+            // Revert on failure
+            onUpdate({ ...item, propertyChains: item.propertyChains });
         }
     };
-
+    
     const openChainEditor = () => {
         setIsChainDialogOpen(true);
     };

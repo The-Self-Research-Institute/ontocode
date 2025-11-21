@@ -22,14 +22,14 @@ import { ProjectSelector } from './ProjectSelector';
 import CollaborationPanel from './CollaborationPanel';
 import ToastNotification from './ToastNotification';
 import ShareDialog from './ShareDialog';
-import { 
-  ClassSelectorDialog, 
-  PropertySelectorDialog, 
-  CreateIndividualModal, 
-  AddAnnotationDialog, 
+import {
+  ClassSelectorDialog,
+  CreateIndividualModal,
+  AddAnnotationDialog,
   AddClassDialog,
   AddObjectPropertyDialog,
-  ClassExpressionDialog
+  ClassExpressionDialog,
+  PropertyExpressionDialog
 } from './dialogs';
 
 type TopLevelClass = TreeNode & { hasChildren: boolean };
@@ -667,7 +667,7 @@ const Dashboard = () => {
   
   // Selector Dialog State
   const [isClassSelectorOpen, setIsClassSelectorOpen] = useState(false);
-  const [isPropertySelectorOpen, setIsPropertySelectorOpen] = useState(false);
+  const [isPropertyExpressionDialogOpen, setIsPropertyExpressionDialogOpen] = useState(false);
   const [isClassExpressionDialogOpen, setIsClassExpressionDialogOpen] = useState(false);
   const [selectorTarget, setSelectorTarget] = useState<'domain' | 'range' | 'subProperty' | 'inverse' | 'disjoint' | 'equivalent' | null>(null);
   
@@ -2236,7 +2236,7 @@ const Dashboard = () => {
 
   const handleOpenPropertySelector = (target: 'subProperty' | 'inverse' | 'disjoint' | 'equivalent') => {
     setSelectorTarget(target);
-    setIsPropertySelectorOpen(true);
+    setIsPropertyExpressionDialogOpen(true);
   };
 
   const handleManchesterConfirm = async (expression: string) => {
@@ -2261,32 +2261,34 @@ const Dashboard = () => {
     }
   };
 
-  const handlePropertySelected = async (node: TreeNode) => {
+  const handlePropertySelected = async (expression: string) => {
     if (!selectedItem || !projectId || !selectorTarget) return;
 
     try {
       switch (selectorTarget) {
         case 'subProperty':
-          await ontologyMutationService.addSubPropertyOf(projectId, selectedItem.id, node.id);
-          updateItemInState({ ...selectedItem, superProperties: [...((selectedItem as Property).superProperties || []), node.id] });
+          await ontologyMutationService.addSubPropertyOf(projectId, selectedItem.id, expression);
+          updateItemInState({ ...selectedItem, superProperties: [...((selectedItem as Property).superProperties || []), expression] });
           break;
         case 'inverse':
-          await ontologyMutationService.addInverseProperty(projectId, selectedItem.id, node.id);
-          updateItemInState({ ...selectedItem, inverseProperties: [...((selectedItem as Property).inverseProperties || []), node.id] });
+          await ontologyMutationService.addInverseProperty(projectId, selectedItem.id, expression);
+          updateItemInState({ ...selectedItem, inverseProperties: [...((selectedItem as Property).inverseProperties || []), expression] });
           break;
         case 'disjoint':
-          await ontologyMutationService.addDisjointProperty(projectId, selectedItem.id, node.id);
-          updateItemInState({ ...selectedItem, disjointProperties: [...((selectedItem as Property).disjointProperties || []), node.id] });
+          await ontologyMutationService.addDisjointProperty(projectId, selectedItem.id, expression);
+          updateItemInState({ ...selectedItem, disjointProperties: [...((selectedItem as Property).disjointProperties || []), expression] });
           break;
-        case 'equivalent':
-           await ontologyMutationService.addEquivalentProperty(projectId, selectedItem.id, node.id);
-           // update state if we had a field for it
+        case 'equivalent': {
+           const existing = (selectedItem as Property).equivalentProperties || [];
+           await ontologyMutationService.addEquivalentProperty(projectId, selectedItem.id, expression);
+           updateItemInState({ ...selectedItem, equivalentProperties: [...existing, expression] });
            break;
+        }
       }
     } catch (error) {
       console.error(`Failed to add ${selectorTarget}`, error);
     } finally {
-      setIsPropertySelectorOpen(false);
+      setIsPropertyExpressionDialogOpen(false);
       setSelectorTarget(null);
     }
   };
@@ -2392,16 +2394,16 @@ const Dashboard = () => {
 
         <div className="bg-white border-b border-gray-200 flex-shrink-0">
           <div className="flex items-center justify-between px-4 h-10">
-            <div className="flex items-center">
+      <div className="flex items-center flex-nowrap overflow-x-auto gap-1">
               {visibleMainTabs.map((tabId) => {
                 const tab = ALL_MAIN_TABS[tabId];
                 if (!tab) return null;
                 return (
-                  <button
-                    key={tabId}
-                    className={`flex items-center gap-2 px-3 h-full text-xs font-medium border-b-2 -mb-px ${mainTab === tabId ? "text-purple-600 border-purple-600" : "text-gray-500 hover:text-gray-800 border-transparent"}`}
-                    onClick={() => setMainTab(tabId)}
-                  >
+                <button
+                  key={tabId}
+                  className={`flex items-center gap-2 px-3 h-full text-xs font-medium border-b-2 -mb-px whitespace-nowrap flex-shrink-0 ${mainTab === tabId ? "text-purple-600 border-purple-600" : "text-gray-500 hover:text-gray-800 border-transparent"}`}
+                  onClick={() => setMainTab(tabId)}
+                >
                     <tab.icon size={14} /> {tab.label}
                   </button>
                 );
@@ -2435,12 +2437,12 @@ const Dashboard = () => {
 
         {mainTab === 'Entities' && (
           <div className="bg-gray-100 border-b border-gray-200 px-4 flex-shrink-0">
-            <div className="flex items-center">
+            <div className="flex items-center flex-nowrap overflow-x-auto gap-1">
               {entitiesTabs.map((tab) => (
                 <button
                   key={tab.id}
                   title={tab.label}
-                  className={`flex items-center gap-2 px-3 py-1 text-xs font-medium border-t-2 mt-px ${entitiesTab === tab.id ? "bg-white text-purple-600 border-purple-600" : "text-gray-500 hover:text-gray-800 border-transparent hover:bg-gray-200 rounded-t"}`}
+                  className={`flex items-center gap-2 px-3 py-1 text-xs font-medium border-t-2 mt-px whitespace-nowrap flex-shrink-0 ${entitiesTab === tab.id ? "bg-white text-purple-600 border-purple-600" : "text-gray-500 hover:text-gray-800 border-transparent hover:bg-gray-200 rounded-t"}`}
                   onClick={() => { setEntitiesTab(tab.id); setSelectedItem(null); }}
                 >
                   <tab.icon size={14} />
@@ -2532,15 +2534,16 @@ const Dashboard = () => {
         title="Select Class"
       />
 
-      {/* Property Selector Dialog */}
-      <PropertySelectorDialog
-        isOpen={isPropertySelectorOpen}
+      {/* Property Expression Dialog */}
+      <PropertyExpressionDialog
+        isOpen={isPropertyExpressionDialogOpen}
         onClose={() => {
-          setIsPropertySelectorOpen(false);
+          setIsPropertyExpressionDialogOpen(false);
           setSelectorTarget(null);
         }}
-        onSelect={handlePropertySelected}
+        onConfirm={handlePropertySelected}
         propertyHierarchy={objectPropertyHierarchy}
+        propertyType={selectedItem?.type === 'DataProperty' ? 'data' : 'object'}
         title={`Select ${selectorTarget ? selectorTarget.charAt(0).toUpperCase() + selectorTarget.slice(1) : 'Property'}`}
       />
 

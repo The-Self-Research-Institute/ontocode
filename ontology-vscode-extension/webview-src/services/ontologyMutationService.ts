@@ -230,6 +230,13 @@ export const ontologyMutationService = {
     await this.applyMutations(projectId, [{ type: 'deleteEquivalentProperty', iri: propertyIri, target: equivalentPropertyIri }]);
   },
 
+  async addPropertyChain(projectId: string, propertyIri: string, chainExpression: string): Promise<void> {
+    await this.applyMutations(projectId, [{ type: 'addPropertyChain', iri: propertyIri, value: chainExpression }]);
+  },
+  async deletePropertyChain(projectId: string, propertyIri: string, chainExpression: string): Promise<void> {
+    await this.applyMutations(projectId, [{ type: 'deletePropertyChain', iri: propertyIri, value: chainExpression }]);
+  },
+
   async addCharacteristic(projectId: string, propertyIri: string, characteristicIri: string): Promise<void> {
     await this.applyMutations(projectId, [{ type: 'addCharacteristic', iri: propertyIri, target: characteristicIri }]);
   },

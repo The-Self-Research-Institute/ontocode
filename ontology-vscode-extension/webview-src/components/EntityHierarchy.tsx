@@ -251,18 +251,22 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
   
   const currentTabConfig = entitiesTabsConfig[entitiesTab as keyof typeof entitiesTabsConfig];
 
+  const isPropertyTab = entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties' || entitiesTab === 'AnnotationProperties';
+  const sidebarWidthClass = isPropertyTab ? 'w-[26rem] min-w-[24rem]' : 'w-80';
+  const currentLabel = currentTabConfig?.label || entitiesTab;
+
   return (
-    <aside className="w-80 bg-white border-r border-gray-200 flex flex-col h-full">
+    <aside className={`${sidebarWidthClass} bg-white border-r border-gray-200 flex flex-col h-full`}>
       {/* Header with CUD buttons and Asserted/Inferred toggle */}
-      <div className={`text-xs font-semibold p-1.5 flex items-center justify-between border-b`}>
-        <span>{currentTabConfig?.label} hierarchy</span>
-        <div className="flex items-center gap-2">
+      <div className="text-xs font-semibold p-1 flex items-center justify-center gap-1 flex-wrap border-b text-center">
+        <span className="text-gray-600">{currentLabel} hierarchy</span>
+        <div className="flex items-center gap-0.5">
           {/* Asserted/Inferred mode toggle for Classes and Properties */}
           {(entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties') && (
-            <div className="flex items-center gap-1 bg-gray-100 rounded p-0.5">
+            <div className="flex items-center gap-0.5 bg-gray-100 rounded px-1 py-0.5">
               <button
                 onClick={() => setViewMode('asserted')}
-                className={`px-2 py-0.5 text-[10px] rounded transition-colors ${
+                className={`px-2 py-0.5 text-[10px] rounded transition-colors whitespace-nowrap ${
                   viewMode === 'asserted' 
                     ? 'bg-purple-600 text-white font-semibold' 
                     : 'text-gray-600 hover:bg-gray-200'
@@ -273,7 +277,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
               </button>
               <button
                 onClick={() => setViewMode('inferred')}
-                className={`px-2 py-0.5 text-[10px] rounded transition-colors ${
+                className={`px-2 py-0.5 text-[10px] rounded transition-colors whitespace-nowrap ${
                   viewMode === 'inferred' 
                     ? 'bg-yellow-500 text-white font-semibold' 
                     : 'text-gray-600 hover:bg-gray-200'
@@ -286,7 +290,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
             </div>
           )}
           
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-0.5">
               {entitiesTab === 'Classes' && viewMode === 'asserted' && (
                  <>
                  <button 
@@ -294,7 +298,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
                     aria-label="Add subclass"
                     disabled={!selectedItem} 
                     onClick={() => onAddItem('subclass')} //
-                    className="p-0.5 hover:bg-black/20 rounded disabled:opacity-30"
+                    className="p-0.5 rounded text-gray-600 hover:text-purple-600 disabled:text-gray-400 disabled:opacity-80"
                  >
                       <PlusCircle size={14} />
                  </button>
@@ -303,7 +307,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
                     aria-label="Add sibling class"
                     disabled={!selectedItem} 
                     onClick={() => onAddItem('sibling')} //
-                    className="p-0.5 hover:bg-black/20 rounded disabled:opacity-30"
+                    className="p-0.5 rounded text-gray-600 hover:text-purple-600 disabled:text-gray-400 disabled:opacity-80"
                  >
                       <Binary size={14} />
                  </button>
@@ -316,7 +320,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
                     aria-label="Add sub property"
                     disabled={!selectedItem} 
                     onClick={() => onAddItem('subclass')} // Reusing 'subclass' type for sub-property
-                    className="p-0.5 hover:bg-black/20 rounded disabled:opacity-30"
+                    className="p-0.5 rounded text-gray-600 hover:text-purple-600 disabled:text-gray-400 disabled:opacity-80"
                  >
                       <PlusCircle size={14} />
                  </button>
@@ -325,7 +329,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
                     aria-label="Add sibling property"
                     disabled={!selectedItem} 
                     onClick={() => onAddItem('sibling')} // Reusing 'sibling' type for sibling property
-                    className="p-0.5 hover:bg-black/20 rounded disabled:opacity-30"
+                    className="p-0.5 rounded text-gray-600 hover:text-purple-600 disabled:text-gray-400 disabled:opacity-80"
                  >
                       <Binary size={14} />
                  </button>
@@ -338,7 +342,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
                     aria-label="Add sub property"
                     disabled={!selectedItem} 
                     onClick={() => onAddItem('subclass')} //
-                    className="p-0.5 hover:bg-black/20 rounded disabled:opacity-30"
+                    className="p-0.5 rounded text-gray-600 hover:text-purple-600 disabled:text-gray-400 disabled:opacity-80"
                  >
                       <PlusCircle size={14} />
                  </button>
@@ -347,7 +351,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
                     aria-label="Add sibling property"
                     disabled={!selectedItem} 
                     onClick={() => onAddItem('sibling')} //
-                    className="p-0.5 hover:bg-black/20 rounded disabled:opacity-30"
+                    className="p-0.5 rounded text-gray-600 hover:text-purple-600 disabled:text-gray-400 disabled:opacity-80"
                  >
                       <Binary size={14} />
                  </button>
@@ -358,8 +362,8 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
                       title="Add individual" 
                       aria-label="Add individual"
                       onClick={() => onAddItem('individual')} //
-                      className="p-0.5 hover:bg-black/20 rounded"
-                   >
+                    className="p-0.5 rounded text-gray-600 hover:text-purple-600"
+                 >
                       <PlusCircle size={14} />
                  </button>
               )}
@@ -368,7 +372,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
                 aria-label="Delete selected entity"
                 disabled={!selectedItem || viewMode === 'inferred'} 
                 onClick={onDeleteItem} //
-                className="p-0.5 hover:bg-black/20 rounded disabled:opacity-30"
+                className="p-0.5 rounded text-gray-600 hover:text-red-600 disabled:text-gray-400 disabled:opacity-80"
              >
                 <Trash2 size={14} />
              </button>
@@ -380,7 +384,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
       <div className="p-2 border-b border-gray-200 flex-shrink-0">
           <div className="relative">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input type="text" placeholder={`Search ${entitiesTab.toLowerCase()}...`} value={searchQuery} onChange={e => onSearchQueryChange(e.target.value)} //
+              <input type="text" placeholder={`Search ${currentLabel.toLowerCase()}...`} value={searchQuery} onChange={e => onSearchQueryChange(e.target.value)} //
                   className="w-full pl-8 pr-3 py-1.5 border border-gray-300 rounded-md focus:ring-1 focus:ring-purple-500 text-sm bg-white" />
           </div>
           

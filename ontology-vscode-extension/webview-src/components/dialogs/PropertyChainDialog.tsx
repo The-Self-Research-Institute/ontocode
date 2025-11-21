@@ -141,7 +141,7 @@ const PropertyChainDialog: React.FC<PropertyChainDialogProps> = ({
                         </button>
                       </div>
                       {index < chain.length - 1 && (
-                        <span className="text-gray-400 font-semibold">∘</span>
+                        <span className="text-gray-400 font-semibold">o</span>
                       )}
                     </div>
                   ))}
@@ -158,7 +158,7 @@ const PropertyChainDialog: React.FC<PropertyChainDialogProps> = ({
               <div className="p-3 border-t bg-gray-50">
                 <p className="text-xs text-gray-500 mb-1">Chain Preview:</p>
                 <div className="font-mono text-sm text-gray-700 bg-white border rounded px-3 py-2">
-                  {chain.map(getPropertyLabel).join(' ∘ ')}
+                  {chain.map(getPropertyLabel).join(' o ')}
                 </div>
               </div>
             )}

@@ -110,7 +110,15 @@
     "build-webview": "cd webview && npm run build",
     "compile-web": "webpack --config webpack.config.js --mode development --watch",
     "test-web": "vscode-test-web --browserType=chromium --extensionDevelopmentPath=./",
-    "dev-webview": "cd webview && npm run start"
+    "dev-webview": "cd webview && npm run start",
+    "bundle:extension": "webpack --config webpack.extension.js --mode production",
+    "bundle:web": "webpack --config webpack.config.js --mode production",
+    "bundle:all": "npm run bundle:extension && npm run bundle:web",
+    "analyze:extension": "cross-env ANALYZE=true webpack --config webpack.extension.js --mode production",
+    "analyze:web": "cross-env ANALYZE=true webpack --config webpack.config.js --mode production",
+    "check:size": "node check-bundle-size.js",
+    "package": "vsce package",
+    "package:check": "vsce package && node -e \"const fs=require('fs');const files=fs.readdirSync('.');const vsix=files.find(f=>f.endsWith('.vsix'));if(vsix){const stats=fs.statSync(vsix);const mb=(stats.size/(1024*1024)).toFixed(2);console.log(`\\n📦 VSIX Size: ${mb} MB (${stats.size.toLocaleString()} bytes)`);console.log(`⚠️  Default limit: 25 MB`);console.log(`🔴 Hard limit: 50 MB\\n`);if(stats.size>50*1024*1024)console.log('❌ EXCEEDS HARD LIMIT!');else if(stats.size>25*1024*1024)console.log('⚠️  EXCEEDS DEFAULT LIMIT');}else{console.log('No .vsix file found');}\""
   },
   "devDependencies": {
     "@types/form-data": "^2.2.1",
@@ -122,6 +130,7 @@
     "@vscode/test-web": "^0.0.75",
     "assert": "^2.1.0",
     "buffer": "^6.0.3",
+    "cross-env": "^10.1.0",
     "eslint": "^8.28.0",
     "https-browserify": "^1.0.0",
     "process": "^0.11.10",
@@ -132,6 +141,7 @@
     "url": "^0.11.4",
     "util": "^0.12.5",
     "webpack": "^5.103.0",
+    "webpack-bundle-analyzer": "^5.0.1",
     "webpack-cli": "^6.0.1"
   },
   "dependencies": {
@@ -144,5 +154,9 @@
     "lucide-react": "^0.525.0",
     "path-browserify": "^1.0.1",
     "sockjs-client": "^1.6.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/The-Self-Research-Institute/ontocode.git"
   }
 }
