@@ -596,7 +596,13 @@ class OntoCodePanel {
             if (response.status === 200 || response.status === 201) {
                 console.log(`[OntoCode] Upload successful for project: ${projectId}`);
                 this._isWebviewReady = false;
-                vscode.window.showInformationMessage(`Ontology "${fileName}" uploaded successfully. Processing started...`);
+                
+                // Check if this was a file replacement
+                const isReplacement = response.data?.isReplacement || false;
+                const message = isReplacement 
+                    ? `Ontology "${fileName}" replaced successfully. Processing started...`
+                    : `Ontology "${fileName}" uploaded successfully. Processing started...`;
+                vscode.window.showInformationMessage(message);
                 
                 // 6. Initialize collaborative editing
                 await this.initializeCollaborationForProject(projectId, token);

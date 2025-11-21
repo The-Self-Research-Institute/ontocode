@@ -21,6 +21,7 @@ import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.GridFSFileService;
 import self.research.ontology.owlEditor.service.ProjectImportService;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
+import self.research.ontology.owlEditor.service.ProjectShareService;
 import self.research.ontology.owlEditor.service.StorageManager;
 
 import java.io.IOException;
@@ -30,6 +31,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Map;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/ontology")
@@ -42,17 +44,20 @@ public class ProjectLoadController {
     private final ProjectMetadataService metadataService;
     private final ProjectImportService importService;
     private final GridFSFileService gridFSFileService;
+    private final ProjectShareService shareService;
     private final DraftTrackingService draftTrackingService;
 
     public ProjectLoadController(StorageManager storageManager,
                                  ProjectMetadataService metadataService,
                                  ProjectImportService importService,
                                  GridFSFileService gridFSFileService,
+                                 ProjectShareService shareService,
                                  DraftTrackingService draftTrackingService) {
         this.storageManager = storageManager;
         this.metadataService = metadataService;
         this.importService = importService;
         this.gridFSFileService = gridFSFileService;
+        this.shareService = shareService;
         this.draftTrackingService = draftTrackingService;
     }
 
@@ -61,18 +66,43 @@ public class ProjectLoadController {
                                                       @RequestParam("file") MultipartFile file,
                                                       @RequestParam(required = false) String ownerEmail) {
         try {
+            String actualProjectId = projectId;
+            boolean isReplacement = false;
+            String filename = file.getOriginalFilename();
+            
+            // Check for duplicate filename and use existing projectId if found
+            if (ownerEmail != null && !ownerEmail.isEmpty()) {
+                // First, check if filename conflicts with shared files
+                if (shareService.isFilenameInSharedFiles(filename, ownerEmail)) {
+                    log.warn("Upload blocked - filename conflicts with shared file: {} for user: {}", filename, ownerEmail);
+                    return ResponseEntity.status(HttpStatus.CONFLICT)
+                            .body(Map.of(
+                                "success", false, 
+                                "error", "The file '" + filename + "' is already shared with you. Please upload with a different file name or version."
+                            ));
+                }
+                
+                // Then check if user owns a file with this name
+                Optional<String> existingProjectId = metadataService.getExistingProjectId(filename, ownerEmail);
+                if (existingProjectId.isPresent()) {
+                    actualProjectId = existingProjectId.get();
+                    isReplacement = true;
+                    log.info("Replacing existing file: {} for user: {} with projectId: {}", filename, ownerEmail, actualProjectId);
+                }
+            }
+            
             // Store file in GridFS first
             String gridfsFileId = gridFSFileService.storeFile(
-                projectId, 
+                actualProjectId, 
                 file.getOriginalFilename(), 
                 file.getContentType(),
                 file.getInputStream()
             );
             
-            log.info("Stored file in GridFS for project {}: fileId={}", projectId, gridfsFileId);
+            log.info("Stored file in GridFS for project {}: fileId={}", actualProjectId, gridfsFileId);
             
             // Also save to local filesystem for processing
-            Path projectDir = storageManager.prepareProjectDir(projectId);
+            Path projectDir = storageManager.prepareProjectDir(actualProjectId);
             Path original = projectDir.resolve("ontology.original.owl");
             Files.createDirectories(original.getParent());
             
@@ -90,26 +120,25 @@ public class ProjectLoadController {
             });
             
             ProjectStatus status = ProjectStatus.uploaded(file.getOriginalFilename());
-            metadataService.writeStatus(projectId, status);
+            metadataService.writeStatus(actualProjectId, status);
             
             // Set GridFS file ID mapping
-            metadataService.setGridfsFileId(projectId, gridfsFileId);
+            metadataService.setGridfsFileId(actualProjectId, gridfsFileId);
             
             // Set owner email if provided
             if (ownerEmail != null && !ownerEmail.isEmpty()) {
-                metadataService.setOwnerEmail(projectId, ownerEmail);
+                metadataService.setOwnerEmail(actualProjectId, ownerEmail);
             }
             
-            importService.submitImport(projectId, original);
+            importService.submitImport(actualProjectId, original);
             return ResponseEntity.ok(Map.of(
                     "success", true,
-                    "projectId", projectId,
+                    "projectId", actualProjectId,
                     "gridfsFileId", gridfsFileId,
-                    "message", "Upload complete, processing scheduled"));
+                    "isReplacement", isReplacement,
+                    "message", isReplacement ? "File replaced successfully, processing scheduled" : "Upload complete, processing scheduled"));
         } catch (IOException e) {
             log.error("Upload failed", e);
-            metadataService.writeStatus(projectId, ProjectStatus.error(file.getOriginalFilename(),
-                    "Upload failed: " + e.getMessage()));
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("success", false, "error", e.getMessage()));
         }
