@@ -75,4 +75,29 @@ public class ProjectMetadataService {
         
         projectRepository.save(doc);
     }
+    
+    public boolean isDuplicateFilename(String filename, String ownerEmail) {
+        if (filename == null || ownerEmail == null) {
+            return false;
+        }
+        return projectRepository.findByFilenameAndOwnerEmail(filename, ownerEmail).isPresent();
+    }
+    
+    public Optional<String> getExistingProjectId(String filename, String ownerEmail) {
+        if (filename == null || ownerEmail == null) {
+            return Optional.empty();
+        }
+        return projectRepository.findByFilenameAndOwnerEmail(filename, ownerEmail)
+                .map(ProjectDocument::getId);
+    }
+    
+    public Optional<String> getProjectIdByFilename(String filename) {
+        if (filename == null) {
+            return Optional.empty();
+        }
+        return projectRepository.findAll().stream()
+                .filter(doc -> filename.equals(doc.getFilename()))
+                .map(ProjectDocument::getId)
+                .findFirst();
+    }
 }

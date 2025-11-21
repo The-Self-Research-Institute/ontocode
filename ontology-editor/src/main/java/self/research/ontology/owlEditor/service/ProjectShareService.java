@@ -131,6 +131,23 @@ public class ProjectShareService {
         return shareRepository.findBySharedWithEmailsContaining(email);
     }
     
+    public boolean isFilenameInSharedFiles(String filename, String userEmail) {
+        if (filename == null || userEmail == null) {
+            return false;
+        }
+        List<ProjectShare> sharedWithMe = getSharedWithMe(userEmail);
+        List<String> sharedProjectIds = sharedWithMe.stream()
+                .map(ProjectShare::getProjectId)
+                .toList();
+        
+        // Check if any shared project has this filename
+        return sharedProjectIds.stream()
+                .map(projectId -> metadataService.readStatus(projectId))
+                .filter(Optional::isPresent)
+                .map(Optional::get)
+                .anyMatch(status -> filename.equals(status.filename()));
+    }
+    
     public void deleteShare(String projectId) {
         shareRepository.findByProjectId(projectId)
                 .ifPresent(shareRepository::delete);
