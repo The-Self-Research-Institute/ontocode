@@ -169,6 +169,32 @@ public class ProjectLoadController {
         }
     }
 
+    @PostMapping("/reload/{projectId}")
+    public ResponseEntity<Map<String, Object>> reload(@PathVariable String projectId) {
+        try {
+            log.info("[RELOAD] Reloading project {} from saved file", projectId);
+            
+            // Find the original ontology file
+            Path originalFile = storageManager.projectDir(projectId).resolve("ontology.original.owl");
+            if (!Files.exists(originalFile)) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("success", false, "error", "Original ontology file not found"));
+            }
+            
+            // Trigger re-import to reload GraphDB with the saved file
+            importService.submitImport(projectId, originalFile);
+            
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Project reload initiated. Processing in background."
+            ));
+        } catch (Exception e) {
+            log.error("[RELOAD] Reload failed", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
     @PostMapping("/save/{projectId}")
     public ResponseEntity<Map<String, Object>> save(@PathVariable String projectId) {
         try {
