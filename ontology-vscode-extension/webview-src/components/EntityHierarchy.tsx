@@ -44,8 +44,11 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const { state: collaborationState } = useCollaboration();
   
-  // Get active users as array for easier rendering
-  const activeUsers = Array.from(collaborationState.activeUsers.values());
+  // Get active users as array and filter by current project
+  const allUsers = Array.from(collaborationState.activeUsers.values());
+  const activeUsers = allUsers.filter(user => 
+    !collaborationState.currentProjectId || user.projectId === collaborationState.currentProjectId
+  );
 
   // Close context menu when clicking outside
   useEffect(() => {

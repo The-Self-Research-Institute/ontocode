@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useImperativeHandle, forwardRef } from 'react';
-import { Users, Wifi, WifiOff, Circle, Lock, ChevronRight, ChevronDown, Activity } from 'lucide-react';
+import React, { useState, useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
+import { Users, Wifi, WifiOff, Circle, Lock, ChevronRight, ChevronDown, Activity, GripVertical } from 'lucide-react';
 import { useCollaboration } from '../contexts/CollaborationContext';
 import { changeTrackingService, OntologyChange } from '../services/changeTrackingService';
 
@@ -13,7 +13,140 @@ export interface CollaborationPanelRef {
 
 const CollaborationPanel = forwardRef<CollaborationPanelRef, CollaborationPanelProps>(({ projectId }, ref) => {
     const { state } = useCollaboration();
-    const [isExpanded, setIsExpanded] = useState(true);
+    const [isExpanded, setIsExpanded] = useState(false);
+    const [isDragging, setIsDragging] = useState(false);
+    const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+    const panelRef = useRef<HTMLDivElement>(null);
+    const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+    const [collapsedPosition, setCollapsedPosition] = useState<{ x: number; y: number } | null>(null);
+
+    // Initialize position from localStorage or default to bottom-right
+    useEffect(() => {
+        const savedPosition = localStorage.getItem('collaborationPanelPosition');
+        
+        if (savedPosition) {
+            try {
+                const pos = JSON.parse(savedPosition);
+                // Always position at bottom-right, ignore saved Y position for collapsed state
+                setPosition({ x: pos.x, y: window.innerHeight - 70 });
+                setCollapsedPosition({ x: pos.x, y: window.innerHeight - 70 });
+            } catch (e) {
+                const defaultX = window.innerWidth - 380;
+                setPosition({ x: defaultX, y: window.innerHeight - 70 });
+                setCollapsedPosition({ x: defaultX, y: window.innerHeight - 70 });
+            }
+        } else {
+            const defaultX = window.innerWidth - 380;
+            setPosition({ x: defaultX, y: window.innerHeight - 70 });
+            setCollapsedPosition({ x: defaultX, y: window.innerHeight - 70 });
+        }
+    }, []);
+    
+    // Adjust position when expanding/collapsing - chatbot style
+    useEffect(() => {
+        if (position && panelRef.current) {
+            const expandedHeight = 400;
+            const collapsedHeight = 52; // approximate header height
+            const panelWidth = isExpanded ? 340 : 220;
+            
+            if (isExpanded) {
+                // When expanding, move panel UP to accommodate height while keeping bottom fixed
+                const bottomY = window.innerHeight - 70;
+                const newY = bottomY - expandedHeight + collapsedHeight;
+                const newX = Math.min(position.x, window.innerWidth - panelWidth - 20);
+                
+                setPosition({ x: Math.max(20, newX), y: Math.max(20, newY) });
+            } else {
+                // When collapsing, return to bottom
+                const newX = Math.min(position.x, window.innerWidth - panelWidth - 20);
+                setPosition({ x: Math.max(20, newX), y: window.innerHeight - 70 });
+            }
+        }
+    }, [isExpanded]);
+    
+    // Update position constraints when window resizes
+    useEffect(() => {
+        if (position && panelRef.current) {
+            const handleResize = () => {
+                const panelWidth = panelRef.current?.offsetWidth || 220;
+                const panelHeight = panelRef.current?.offsetHeight || 60;
+                const maxX = window.innerWidth - panelWidth - 20;
+                const maxY = window.innerHeight - panelHeight - 20;
+                
+                setPosition(prev => prev ? ({
+                    x: Math.max(20, Math.min(prev.x, maxX)),
+                    y: Math.max(20, Math.min(prev.y, maxY))
+                }) : null);
+            };
+            
+            window.addEventListener('resize', handleResize);
+            return () => window.removeEventListener('resize', handleResize);
+        }
+    }, [position]);
+
+    // Save position to localStorage when it changes
+    useEffect(() => {
+        if (position && (position.x !== 0 || position.y !== 0)) {
+            localStorage.setItem('collaborationPanelPosition', JSON.stringify(position));
+        }
+        if (collapsedPosition && (collapsedPosition.x !== 0 || collapsedPosition.y !== 0)) {
+            localStorage.setItem('collaborationPanelCollapsedPosition', JSON.stringify(collapsedPosition));
+        }
+    }, [position, collapsedPosition]);
+
+    const handleMouseDown = (e: React.MouseEvent) => {
+        // Only start drag if not clicking on the expand/collapse button
+        if (!position) return;
+        const target = e.target as HTMLElement;
+        if (!target.closest('button')) {
+            setIsDragging(true);
+            setDragStart({
+                x: e.clientX - position.x,
+                y: e.clientY - position.y
+            });
+            e.preventDefault();
+        }
+    };
+    
+    const handleDoubleClick = (e: React.MouseEvent) => {
+        // Toggle expand/collapse on double-click
+        const target = e.target as HTMLElement;
+        if (!target.closest('button')) {
+            setIsExpanded(!isExpanded);
+        }
+    };
+
+    useEffect(() => {
+        const handleMouseMove = (e: MouseEvent) => {
+            if (isDragging) {
+                const newX = e.clientX - dragStart.x;
+                const newY = e.clientY - dragStart.y;
+                
+                // Constrain to viewport
+                const maxX = window.innerWidth - (panelRef.current?.offsetWidth || 320);
+                const maxY = window.innerHeight - (panelRef.current?.offsetHeight || 600);
+                
+                setPosition({
+                    x: Math.max(0, Math.min(newX, maxX)),
+                    y: Math.max(0, Math.min(newY, maxY))
+                });
+            }
+        };
+
+        const handleMouseUp = () => {
+            setIsDragging(false);
+        };
+
+        if (isDragging) {
+            document.addEventListener('mousemove', handleMouseMove);
+            document.addEventListener('mouseup', handleMouseUp);
+        }
+
+        return () => {
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, [isDragging, dragStart, position]);
     const [recentChanges, setRecentChanges] = useState<OntologyChange[]>([]);
     const [showAllChanges, setShowAllChanges] = useState(false);
     
@@ -56,52 +189,118 @@ const CollaborationPanel = forwardRef<CollaborationPanelRef, CollaborationPanelP
         return `${hours}h ago`;
     };
 
-    // Convert Map to Array for rendering
-    const activeUsers = Array.from(state.activeUsers.values());
+    // Convert Map to Array and filter by current project
+    const allUsers = Array.from(state.activeUsers.values());
+    const activeUsers = allUsers.filter(user => 
+        !state.currentProjectId || user.projectId === state.currentProjectId
+    );
     const locks = Array.from(state.locks.values());
 
+    // Don't render until position is initialized
+    if (!position) {
+        return null;
+    }
+
     return (
-        <div className="fixed bottom-4 right-4 bg-white rounded-lg shadow-2xl border border-gray-300 overflow-hidden z-50" 
-             style={{ width: isExpanded ? '320px' : '180px', maxHeight: '600px' }}>
+        <>
+            <style>{`
+                .minimal-scrollbar::-webkit-scrollbar {
+                    width: 4px;
+                }
+                .minimal-scrollbar::-webkit-scrollbar-track {
+                    background: transparent;
+                }
+                .minimal-scrollbar::-webkit-scrollbar-thumb {
+                    background: rgba(203, 213, 225, 0.3);
+                    border-radius: 2px;
+                }
+                .minimal-scrollbar::-webkit-scrollbar-thumb:hover {
+                    background: rgba(203, 213, 225, 0.5);
+                }
+            `}</style>
+            <div 
+                ref={panelRef}
+                className="fixed bg-white rounded-lg shadow-2xl border border-gray-300 overflow-hidden z-50" 
+                style={{ 
+                    width: isExpanded ? '340px' : '220px', 
+                    maxHeight: isExpanded ? '400px' : 'auto',
+                    left: `${position.x}px`,
+                    top: `${position.y}px`,
+                    cursor: isDragging ? 'grabbing' : 'default'
+                }}
+            >
             {/* Header */}
             <div 
-                className="bg-gradient-to-r from-purple-600 to-purple-700 text-white px-4 py-3 flex items-center justify-between cursor-pointer hover:from-purple-700 hover:to-purple-800 transition-all"
-                onClick={() => setIsExpanded(!isExpanded)}
+                className="bg-gradient-to-r from-purple-600 to-purple-700 text-white shadow-md relative cursor-pointer"
+                onClick={(e) => {
+                    const target = e.target as HTMLElement;
+                    if (!target.closest('button') && !target.closest('[data-drag-handle]')) {
+                        setIsExpanded(!isExpanded);
+                    }
+                }}
             >
-                <div className="flex items-center gap-2">
-                    <Users size={18} />
-                    <span className="font-semibold text-sm">Collaboration</span>
+                {/* Drag Handle */}
+                <div 
+                    data-drag-handle
+                    className="absolute left-1/2 transform -translate-x-1/2 top-0 cursor-move hover:bg-purple-800 rounded-b px-2 pb-1"
+                    onMouseDown={handleMouseDown}
+                    title="Drag to move panel"
+                    style={{ paddingTop: '2px' }}
+                >
+                    <GripVertical size={14} className="text-purple-300" />
                 </div>
-                <div className="flex items-center gap-2">
+                
+                <div 
+                    className="px-4 py-3 flex items-center justify-between"
+                    style={{ marginTop: '4px' }}
+                >
                     <div 
-                        className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium ${
-                        state.connected 
-                            ? 'bg-green-500 bg-opacity-90' 
-                            : 'bg-gray-500 bg-opacity-90'
-                    }`}
-                        title={state.connected 
-                            ? `Connected to collaboration server\n${activeUsers.length} active user(s)` 
-                            : 'Not connected to collaboration server'}
+                        className="flex items-center gap-2 flex-1"
                     >
-                        {state.connected ? (
-                            <>
-                                <Wifi size={12} />
-                                <span>Live</span>
-                            </>
-                        ) : (
-                            <>
-                                <WifiOff size={12} />
-                                <span>Offline</span>
-                            </>
-                        )}
+                        <Users size={18} />
+                        <span className="font-semibold text-sm">Collaboration</span>
+                        <div 
+                            className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                                state.connected 
+                                    ? 'bg-green-500 bg-opacity-90' 
+                                    : 'bg-gray-500 bg-opacity-90'
+                            }`}
+                            title={state.connected 
+                                ? `Connected to collaboration server\n${activeUsers.length} active user(s)` 
+                                : 'Not connected to collaboration server'}
+                        >
+                            {state.connected ? (
+                                <>
+                                    <Wifi size={10} />
+                                    <span className="text-xs">Live</span>
+                                </>
+                            ) : (
+                                <>
+                                    <WifiOff size={10} />
+                                    <span className="text-xs">Offline</span>
+                                </>
+                            )}
+                        </div>
                     </div>
-                    {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                    <div className="flex items-center">
+                        <button
+                            onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setIsExpanded(!isExpanded);
+                            }}
+                            className="hover:bg-purple-800 active:bg-purple-900 rounded-md p-1.5 transition-all duration-200"
+                            title={isExpanded ? "Collapse panel" : "Expand panel"}
+                        >
+                            {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                        </button>
+                    </div>
                 </div>
             </div>
 
             {/* Expanded Content */}
             {isExpanded && (
-                <div className="overflow-y-auto" style={{ maxHeight: '520px' }}>
+                <div className="overflow-y-auto" style={{ maxHeight: '320px' }}>
                     {/* Active Users Section */}
                     <div className="border-b border-gray-200">
                         <div className="bg-gray-50 px-4 py-2 flex items-center gap-2 border-b border-gray-200">
@@ -199,8 +398,15 @@ const CollaborationPanel = forwardRef<CollaborationPanelRef, CollaborationPanelP
                             </div>
                         ) : (
                             <>
-                                <div className="p-2 space-y-1">
-                                    {(showAllChanges ? recentChanges : recentChanges.slice(0, 5)).map(change => (
+                                <div 
+                                    className="p-2 space-y-1 overflow-y-auto minimal-scrollbar" 
+                                    style={{ 
+                                        maxHeight: '200px',
+                                        scrollbarWidth: 'thin',
+                                        scrollbarColor: 'rgba(203, 213, 225, 0.3) transparent'
+                                    }}
+                                >
+                                    {(showAllChanges ? recentChanges : recentChanges.slice(0, 4)).map(change => (
                                         <div 
                                             key={change.id}
                                             className="px-3 py-2 rounded-md hover:bg-gray-50 transition-colors"
@@ -230,13 +436,13 @@ const CollaborationPanel = forwardRef<CollaborationPanelRef, CollaborationPanelP
                                         </div>
                                     ))}
                                 </div>
-                                {recentChanges.length > 5 && (
+                                {recentChanges.length > 4 && (
                                     <div className="px-4 py-2 border-t border-gray-200">
                                         <button
                                             onClick={() => setShowAllChanges(!showAllChanges)}
                                             className="w-full text-xs text-purple-600 hover:text-purple-700 font-medium py-1"
                                         >
-                                            {showAllChanges ? 'Show less' : `Show ${recentChanges.length - 5} more`}
+                                            {showAllChanges ? 'Show less' : `Show ${recentChanges.length - 4} more`}
                                         </button>
                                     </div>
                                 )}
@@ -245,7 +451,8 @@ const CollaborationPanel = forwardRef<CollaborationPanelRef, CollaborationPanelP
                     </div>
                 </div>
             )}
-        </div>
+            </div>
+        </>
     );
 });
 

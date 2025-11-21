@@ -1,7 +1,7 @@
 // src/Dashboard.tsx
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
-  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, DatabaseZap
+  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, DatabaseZap, Upload, FolderOpen
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
@@ -671,6 +671,8 @@ const Dashboard = () => {
   const [expandedNodes, setExpandedNodes] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [isInitialLoading, setIsInitialLoading] = useState(false);
+  const [hasFetchedProjects, setHasFetchedProjects] = useState(false);
+  const [hasUserSelectedFile, setHasUserSelectedFile] = useState(false);
   const [showLoadingChoice, setShowLoadingChoice] = useState(false);
   const [loadingProjectName, setLoadingProjectName] = useState("");
   const loadingPromiseRef = useRef<Promise<void> | null>(null);
@@ -1075,37 +1077,49 @@ const Dashboard = () => {
       const userEmail = user?.email || '';
       const response = await apiClient.get<{ success: boolean; projects?: any[]; myFiles?: any[]; sharedFiles?: any[] }>(`/api/projects?userEmail=${encodeURIComponent(userEmail)}`);
       
+      setHasFetchedProjects(true);
+      
       if (response.success) {
         // Handle new format with myFiles and sharedFiles
         if (response.myFiles && response.sharedFiles) {
           const allProjects = [...(response.myFiles || []), ...(response.sharedFiles || [])];
           setAvailableProjects(allProjects);
           
-          // If no project selected and projects exist, auto-load the first one from myFiles
-          if (!projectId && response.myFiles.length > 0) {
+          // Only auto-load the first file if user hasn't manually clicked on any file
+          if (!projectId && !hasUserSelectedFile && response.myFiles.length > 0) {
             const firstProject = response.myFiles[0];
             console.log('[Dashboard] Auto-loading first project:', firstProject.id);
             setProjectId(firstProject.id);
             fetchData(firstProject.id);
+          } else if (!projectId && response.myFiles.length === 0 && response.sharedFiles.length === 0) {
+            // No files at all - show empty state
+            console.log('[Dashboard] No files found, showing empty state');
+            setIsInitialLoading(false);
           }
         } else if (response.projects) {
           // Backward compatibility with old format
           setAvailableProjects(response.projects);
           
-          if (!projectId && response.projects.length > 0) {
+          if (!projectId && !hasUserSelectedFile && response.projects.length > 0) {
             const firstProject = response.projects[0];
             console.log('[Dashboard] Auto-loading first project:', firstProject.id);
             setProjectId(firstProject.id);
             fetchData(firstProject.id);
+          } else if (!projectId && response.projects.length === 0) {
+            // No files at all - show empty state
+            console.log('[Dashboard] No files found, showing empty state');
+            setIsInitialLoading(false);
           }
         }
       }
     } catch (error) {
       console.error("Failed to fetch projects:", error);
+      setIsInitialLoading(false);
     }
-  }, [projectId, fetchData, user]);
+  }, [projectId, fetchData, user, hasUserSelectedFile]);
 
   const handleProjectSelection = useCallback((selectedProjectId: string) => {
+    setHasUserSelectedFile(true); // Mark that user has manually selected a file
     setProjectId(selectedProjectId);
     setShowProjectSelector(false);
     fetchData(selectedProjectId);
@@ -1132,6 +1146,13 @@ const Dashboard = () => {
       fetchProjects();
     }
   }, [projectId, fetchProjects]);
+  
+  // Update collaboration context when projectId changes
+  useEffect(() => {
+    if (collaboration?.setCurrentProject) {
+      collaboration.setCurrentProject(projectId);
+    }
+  }, [projectId, collaboration]);
 
   // Send 'webviewReady' to extension when mounted
   useEffect(() => {
@@ -2527,17 +2548,41 @@ const Dashboard = () => {
   const activeTheme = entitiesTabs.find(t => t.id === entitiesTab)?.theme;
 
   if (!projectId) {
+    // Check if we're still loading or if there are no files
+    const hasNoFiles = hasFetchedProjects && myFiles.length === 0 && sharedFiles.length === 0;
+    
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <div className="text-center p-8">
+        <div className="text-center p-8 max-w-md">
           <div className="w-20 h-20 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg mx-auto mb-6">
-            <FileText size={40} className="text-white" />
+            {hasNoFiles ? <Upload size={40} className="text-white" /> : <FileText size={40} className="text-white" />}
           </div>
           <h2 className="text-2xl font-bold text-gray-800 mb-3">Welcome to OntoCode</h2>
-          <div className="flex items-center justify-center gap-2 text-purple-600">
-            <Loader2 size={20} className="animate-spin" />
-            <p className="text-sm">Waiting for an ontology file to be opened...</p>
-          </div>
+          
+          {hasNoFiles ? (
+            <div className="space-y-4">
+              <p className="text-gray-600 mb-6">
+                Get started by uploading your first OWL ontology file to begin editing
+              </p>
+              
+              <div className="bg-white rounded-lg shadow-md p-6 border-2 border-dashed border-gray-300 hover:border-purple-400 transition-colors">
+                <FolderOpen size={48} className="mx-auto text-gray-400 mb-4" />
+                <p className="text-sm text-gray-600 mb-4">
+                  You can upload OWL files through the VS Code extension or use the File menu above
+                </p>
+                <div className="text-xs text-gray-500 space-y-1">
+                  <p>• Drag and drop OWL files into VS Code</p>
+                  <p>• Click "File → Open Ontology" in the menu</p>
+                  <p>• Use the command palette (Ctrl+Shift+P)</p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center gap-2 text-purple-600">
+              <Loader2 size={20} className="animate-spin" />
+              <p className="text-sm">Loading your ontology files...</p>
+            </div>
+          )}
         </div>
       </div>
     );

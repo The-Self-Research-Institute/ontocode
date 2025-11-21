@@ -6,6 +6,7 @@ export interface ActiveUser {
     username: string;
     color: string;
     lastActivity: number;
+    projectId?: string;  // Track which project/file the user is viewing
     cursorPosition?: string;
     selectedNodes?: string[];
 }
@@ -30,6 +31,7 @@ export interface EditNotification {
 
 export interface CollaborationState {
     connected: boolean;
+    currentProjectId: string | null;  // Track the current project being viewed
     activeUsers: Map<string, ActiveUser>;
     locks: Map<string, NodeLock>;
     notifications: EditNotification[];
@@ -37,6 +39,7 @@ export interface CollaborationState {
 
 interface CollaborationContextType {
     state: CollaborationState;
+    setCurrentProject: (projectId: string | null) => void;
     addNotification: (notification: Omit<EditNotification, 'id'>) => void;
     removeNotification: (id: string) => void;
     clearNotifications: () => void;
@@ -47,6 +50,7 @@ export const CollaborationContext = createContext<CollaborationContextType | und
 export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [state, setState] = useState<CollaborationState>({
         connected: false,
+        currentProjectId: null,
         activeUsers: new Map(),
         locks: new Map(),
         notifications: [],
@@ -110,6 +114,7 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
                         username: presence.username,
                         color: presence.color || '#888888',
                         lastActivity: presence.timestamp,
+                        projectId: presence.projectId,  // Track which project user is viewing
                         cursorPosition: presence.cursorPosition,
                         selectedNodes: presence.selectedNodes,
                     });
@@ -223,8 +228,16 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
         }));
     }, []);
 
+    const setCurrentProject = useCallback((projectId: string | null) => {
+        setState(prev => ({
+            ...prev,
+            currentProjectId: projectId,
+        }));
+    }, []);
+
     const value: CollaborationContextType = {
         state,
+        setCurrentProject,
         addNotification,
         removeNotification,
         clearNotifications,
