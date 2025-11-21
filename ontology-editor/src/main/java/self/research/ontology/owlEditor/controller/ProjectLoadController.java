@@ -16,7 +16,12 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+
+import self.research.ontology.owlEditor.model.DraftChange;
+import self.research.ontology.owlEditor.model.OntologyChange;
 import self.research.ontology.owlEditor.model.ProjectStatus;
+import self.research.ontology.owlEditor.repository.DraftChangeRepository;
+import self.research.ontology.owlEditor.repository.OntologyChangeRepository;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.GridFSFileService;
 import self.research.ontology.owlEditor.service.ProjectImportService;
@@ -46,19 +51,25 @@ public class ProjectLoadController {
     private final GridFSFileService gridFSFileService;
     private final ProjectShareService shareService;
     private final DraftTrackingService draftTrackingService;
+    private final OntologyChangeRepository changeRepository;
+    private final DraftChangeRepository draftChangeRepository;
 
     public ProjectLoadController(StorageManager storageManager,
                                  ProjectMetadataService metadataService,
                                  ProjectImportService importService,
                                  GridFSFileService gridFSFileService,
                                  ProjectShareService shareService,
-                                 DraftTrackingService draftTrackingService) {
+                                 DraftTrackingService draftTrackingService,
+                                 OntologyChangeRepository changeRepository,
+                                 DraftChangeRepository draftChangeRepository) {
         this.storageManager = storageManager;
         this.metadataService = metadataService;
         this.importService = importService;
         this.gridFSFileService = gridFSFileService;
         this.shareService = shareService;
         this.draftTrackingService = draftTrackingService;
+        this.changeRepository = changeRepository;
+        this.draftChangeRepository = draftChangeRepository;
     }
 
     @PostMapping("/upload/{projectId}")
@@ -196,11 +207,19 @@ public class ProjectLoadController {
     }
 
     @PostMapping("/save/{projectId}")
-    public ResponseEntity<Map<String, Object>> save(@PathVariable String projectId) {
+    public ResponseEntity<Map<String, Object>> save(
+            @PathVariable String projectId,
+            @RequestParam(required = false) String userId,
+            @RequestParam(required = false) String username) {
         try {
-            log.info("[SAVE] Save requested for project: {}", projectId);
+            log.info("[SAVE] Save requested for project: {} by user: {}", projectId, username);
 
-            // STEP 1: Apply all unapplied drafts to GraphDB first
+            // STEP 1: Get all unapplied drafts BEFORE applying them (for history recording)
+            log.info("[SAVE] Fetching drafts to record in history...");
+            java.util.List<DraftChange> drafts = draftChangeRepository.findByProjectIdAndAppliedFalseOrderByTimestampAsc(projectId);
+            log.info("[SAVE] Found {} unapplied drafts", drafts.size());
+
+            // STEP 2: Apply all unapplied drafts to GraphDB
             log.info("[SAVE] Applying drafts to GraphDB...");
             DraftTrackingService.ApplyDraftsResult draftResult = draftTrackingService.applyDrafts(projectId);
             
@@ -215,19 +234,31 @@ public class ProjectLoadController {
             
             log.info("[SAVE] Applied {} draft changes", draftResult.getAppliedCount());
 
-            // STEP 2: Export current state from GraphDB to file system
+            // STEP 3: Export current state from GraphDB to file system
             Path exportPath = storageManager.exportOntology(projectId, "rdfxml");
             log.info("[SAVE] Ontology exported to: {}", exportPath);
 
-            // STEP 3: Update the original file so changes persist when switching files
+            // STEP 4: Update BOTH original AND current files so changes persist when switching files
             Path originalPath = storageManager.projectDir(projectId).resolve("ontology.original.owl");
-            if (Files.exists(exportPath) && !exportPath.equals(originalPath)) {
-                Files.copy(exportPath, originalPath,
-                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                log.info("[SAVE] Updated original file: {}", originalPath);
+            Path currentPath = storageManager.projectDir(projectId).resolve("ontology.current.owl");
+            
+            if (Files.exists(exportPath)) {
+                // Update original file
+                if (!exportPath.equals(originalPath)) {
+                    Files.copy(exportPath, originalPath,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    log.info("[SAVE] Updated original file: {}", originalPath);
+                }
+                
+                // Update current file (this is what gets loaded when switching back)
+                if (!exportPath.equals(currentPath)) {
+                    Files.copy(exportPath, currentPath,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    log.info("[SAVE] Updated current file: {}", currentPath);
+                }
             }
 
-            // STEP 4: Update GridFS with the current state for backup/versioning
+            // STEP 5: Update GridFS with the current state for backup/versioning
             try (InputStream in = Files.newInputStream(exportPath)) {
                 String gridfsFileId = gridFSFileService.storeFile(
                     projectId,
@@ -239,14 +270,47 @@ public class ProjectLoadController {
                 log.info("[SAVE] Saved to GridFS with fileId: {}", gridfsFileId);
             }
 
-            // STEP 5: Update status to COMPLETED after successful save
+            // STEP 6: Update status to COMPLETED after successful save
             ProjectStatus currentStatus = metadataService.readStatus(projectId)
                     .orElse(ProjectStatus.uploaded("ontology.owl"));
             ProjectStatus completedStatus = ProjectStatus.completed(currentStatus.filename());
             metadataService.writeStatus(projectId, completedStatus);
             log.info("[SAVE] Updated project status to COMPLETED");
 
-            // STEP 6: Clear applied drafts (cleanup)
+            // STEP 7: Record changes to history
+            log.info("[SAVE] Recording {} changes to history...", drafts.size());
+            java.time.LocalDateTime now = java.time.LocalDateTime.now();
+            for (DraftChange draft : drafts) {
+                OntologyChange change = new OntologyChange();
+                change.setProjectId(projectId);
+                change.setUserId(userId != null ? userId : "system");
+                change.setUsername(username != null ? username : "System");
+                change.setTimestamp(now);
+                change.setChangeType(mapOperationTypeToChangeType(draft.getOperationType()));
+                
+                // Extract entity details from operation data
+                Map<String, Object> opData = draft.getOperationData();
+                if (opData != null) {
+                    if (opData.containsKey("iri")) {
+                        change.setEntityIRI(opData.get("iri").toString());
+                    }
+                    if (opData.containsKey("label")) {
+                        change.setEntityLabel(opData.get("label").toString());
+                    }
+                    if (opData.containsKey("oldValue")) {
+                        change.setOldValue(opData.get("oldValue").toString());
+                    }
+                    if (opData.containsKey("newValue")) {
+                        change.setNewValue(opData.get("newValue").toString());
+                    }
+                }
+                
+                change.setDescription(draft.getOperationType() + " operation");
+                changeRepository.save(change);
+            }
+            log.info("[SAVE] History recording complete");
+
+            // STEP 8: Clear applied drafts (cleanup)
             draftTrackingService.clearAppliedDrafts(projectId);
             log.info("[SAVE] Cleared applied drafts");
 
@@ -265,6 +329,24 @@ public class ProjectLoadController {
                             "error", "Failed to save ontology: " + e.getMessage()
                     ));
         }
+    }
+
+    private OntologyChange.ChangeType mapOperationTypeToChangeType(String operationType) {
+        return switch (operationType) {
+            case "createClass" -> OntologyChange.ChangeType.CLASS_CREATED;
+            case "deleteClass" -> OntologyChange.ChangeType.CLASS_DELETED;
+            case "updateClassLabel" -> OntologyChange.ChangeType.CLASS_MODIFIED;
+            case "addSubClass" -> OntologyChange.ChangeType.CLASS_MODIFIED;
+            case "createObjectProperty" -> OntologyChange.ChangeType.PROPERTY_CREATED;
+            case "createDataProperty" -> OntologyChange.ChangeType.PROPERTY_CREATED;
+            case "deleteObjectProperty" -> OntologyChange.ChangeType.PROPERTY_DELETED;
+            case "deleteDataProperty" -> OntologyChange.ChangeType.PROPERTY_DELETED;
+            case "addAnnotation" -> OntologyChange.ChangeType.ANNOTATION_ADDED;
+            case "deleteAnnotation" -> OntologyChange.ChangeType.ANNOTATION_DELETED;
+            case "createIndividual" -> OntologyChange.ChangeType.INDIVIDUAL_CREATED;
+            case "deleteIndividual" -> OntologyChange.ChangeType.INDIVIDUAL_DELETED;
+            default -> OntologyChange.ChangeType.OTHER;
+        };
     }
 
     /**
