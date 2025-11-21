@@ -381,5 +381,37 @@ public class ProjectLoadController {
                     ));
         }
     }
+
+    /**
+     * Get the last modified timestamp for a project (for sync checking)
+     */
+    @GetMapping("/metadata/{projectId}/timestamp")
+    public ResponseEntity<Map<String, Object>> getProjectTimestamp(@PathVariable String projectId) {
+        try {
+            log.debug("Fetching timestamp for project: {}", projectId);
+            java.time.Instant updatedAt = metadataService.getUpdatedAt(projectId);
+            
+            if (updatedAt != null) {
+                return ResponseEntity.ok(Map.of(
+                        "success", true,
+                        "projectId", projectId,
+                        "updatedAt", updatedAt.toString()
+                ));
+            } else {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(Map.of(
+                                "success", false,
+                                "error", "Project not found"
+                        ));
+            }
+        } catch (Exception e) {
+            log.error("Failed to get timestamp for project: {}", projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of(
+                            "success", false,
+                            "error", "Failed to get timestamp: " + e.getMessage()
+                    ));
+        }
+    }
 }
 
