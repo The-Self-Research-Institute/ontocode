@@ -186,6 +186,27 @@ export const ontologyMutationService = {
     }]);
   },
 
+  /**
+   * Create a new datatype
+   */
+  async createDatatype(projectId: string, iri: string, label: string): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'createDatatype',
+      iri,
+      label
+    }]);
+  },
+
+  /**
+   * Delete a datatype
+   */
+  async deleteDatatype(projectId: string, iri: string): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'deleteDatatype',
+      iri
+    }]);
+  },
+
   // --- Property Mutations ---
 
   async addPropertyDomain(projectId: string, propertyIri: string, domainIri: string): Promise<void> {

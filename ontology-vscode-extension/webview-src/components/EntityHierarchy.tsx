@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronRight, ChevronDown, PlusCircle, Trash2, Search, Package, GitBranch, Database, Tag, User, Type, Binary, MousePointer2, Eye } from "lucide-react";
+import { ChevronRight, ChevronDown, PlusCircle, Trash2, Search, Package, GitBranch, Database, Tag, User, Type, Binary, MousePointer2, Eye, Settings } from "lucide-react";
 import type { SelectableItem, TreeNode } from '../types';
 import { useCollaboration } from '../contexts/CollaborationContext';
 
@@ -261,8 +261,8 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
       <div className="text-xs font-semibold p-1 flex items-center justify-center gap-1 flex-wrap border-b text-center">
         <span className="text-gray-600">{currentLabel} hierarchy</span>
         <div className="flex items-center gap-0.5">
-          {/* Asserted/Inferred mode toggle for Classes and Properties */}
-          {(entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties') && (
+          {/* Asserted/Inferred mode toggle for Classes, Properties, and Datatypes */}
+          {(entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties' || entitiesTab === 'Datatypes') && (
             <div className="flex items-center gap-0.5 bg-gray-100 rounded px-1 py-0.5">
               <button
                 onClick={() => setViewMode('asserted')}
@@ -357,9 +357,21 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
                  </button>
                  </>
               )}
+              {entitiesTab === 'Datatypes' && viewMode === 'asserted' && (
+                 <>
+                 <button
+                    title="Add datatype"
+                    aria-label="Add datatype"
+                    onClick={() => onAddItem('subclass')} // Reusing 'subclass' type for datatype creation
+                    className="p-0.5 rounded text-gray-600 hover:text-purple-600"
+                 >
+                      <PlusCircle size={14} />
+                 </button>
+                 </>
+              )}
               {entitiesTab === 'Individuals' && (
-                   <button 
-                      title="Add individual" 
+                   <button
+                      title="Add individual"
                       aria-label="Add individual"
                       onClick={() => onAddItem('individual')} //
                     className="p-0.5 rounded text-gray-600 hover:text-purple-600"
@@ -367,14 +379,22 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
                       <PlusCircle size={14} />
                  </button>
               )}
-             <button 
-                title="Delete selected entity" 
+             <button
+                title="Delete selected entity"
                 aria-label="Delete selected entity"
-                disabled={!selectedItem || viewMode === 'inferred'} 
+                disabled={!selectedItem || viewMode === 'inferred'}
                 onClick={onDeleteItem} //
                 className="p-0.5 rounded text-gray-600 hover:text-red-600 disabled:text-gray-400 disabled:opacity-80"
              >
                 <Trash2 size={14} />
+             </button>
+             <button
+                title="Entity creation preferences"
+                aria-label="Entity creation preferences"
+                onClick={() => {/* TODO: Open preferences dialog */}}
+                className="p-0.5 rounded text-gray-600 hover:text-gray-700 hover:bg-gray-200"
+             >
+                <Settings size={14} />
              </button>
         </div>
         </div>
