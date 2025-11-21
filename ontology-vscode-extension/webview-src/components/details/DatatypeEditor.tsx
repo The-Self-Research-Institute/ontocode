@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, Search } from 'lucide-react';
 import { Panel, AnnotationsDisplay } from './common';
+import { DatatypeDefinitionDialog } from '../dialogs';
 import apiClient from '../../services/apiClient';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import type { Datatype } from '../../types';
@@ -94,7 +95,7 @@ const UsageTab: React.FC<{
 interface DatatypeDefinition {
   id: string;
   expression: string;
-  type: 'restriction' | 'enumeration' | 'union' | 'intersection';
+  type: 'builtin' | 'restriction' | 'enumeration' | 'union' | 'intersection';
 }
 
 const DescriptionTab: React.FC<{
@@ -104,25 +105,25 @@ const DescriptionTab: React.FC<{
 }> = ({ item, projectId, onUpdate }) => {
   const [definitions, setDefinitions] = useState<DatatypeDefinition[]>([]);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
-  const [newDefinitionExpression, setNewDefinitionExpression] = useState('');
 
   const handleAddDefinition = () => {
     setIsAddDialogOpen(true);
   };
 
-  const handleSaveDefinition = async () => {
-    if (!newDefinitionExpression.trim()) return;
-
+  const handleConfirmDefinition = async (expression: string, type: 'builtin' | 'expression') => {
     try {
       // TODO: Call backend API to add datatype definition
+      const defType = type === 'builtin' ? 'builtin' :
+                     expression.includes('[') ? 'restriction' :
+                     expression.includes('{') ? 'enumeration' :
+                     expression.includes('or') ? 'union' : 'intersection';
+
       const newDef: DatatypeDefinition = {
         id: Date.now().toString(),
-        expression: newDefinitionExpression,
-        type: 'restriction'
+        expression,
+        type: defType as any
       };
       setDefinitions(prev => [...prev, newDef]);
-      setNewDefinitionExpression('');
-      setIsAddDialogOpen(false);
     } catch (error) {
       console.error('Failed to add datatype definition:', error);
     }
@@ -180,49 +181,11 @@ const DescriptionTab: React.FC<{
       </Panel>
 
       {/* Add Definition Dialog */}
-      {isAddDialogOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={() => setIsAddDialogOpen(false)}>
-          <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-black mb-4">Add Datatype Definition</h3>
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm font-medium text-gray-700 block mb-2">Definition Expression</label>
-                <textarea
-                  value={newDefinitionExpression}
-                  onChange={(e) => setNewDefinitionExpression(e.target.value)}
-                  placeholder="e.g., xsd:integer[>= 0, <= 100] or { &quot;red&quot;, &quot;green&quot;, &quot;blue&quot; }"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm font-mono"
-                  rows={4}
-                  autoFocus
-                />
-              </div>
-              <div className="text-xs text-gray-500 bg-blue-50 border border-blue-200 rounded p-2">
-                <p className="font-semibold mb-1">Examples:</p>
-                <ul className="list-disc list-inside space-y-1">
-                  <li>Restriction: <code className="bg-white px-1 rounded">xsd:integer[&gt;= 0, &lt;= 100]</code></li>
-                  <li>Enumeration: <code className="bg-white px-1 rounded">&#123; &quot;low&quot;, &quot;medium&quot;, &quot;high&quot; &#125;</code></li>
-                  <li>Union: <code className="bg-white px-1 rounded">xsd:string or xsd:integer</code></li>
-                </ul>
-              </div>
-            </div>
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                onClick={() => setIsAddDialogOpen(false)}
-                className="px-4 py-2 text-sm bg-gray-200 text-black rounded-md hover:bg-gray-300"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSaveDefinition}
-                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
-                disabled={!newDefinitionExpression.trim()}
-              >
-                Add
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <DatatypeDefinitionDialog
+        isOpen={isAddDialogOpen}
+        onClose={() => setIsAddDialogOpen(false)}
+        onConfirm={handleConfirmDefinition}
+      />
     </div>
   );
 };

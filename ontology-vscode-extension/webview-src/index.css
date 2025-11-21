@@ -24,6 +24,15 @@
   scrollbar-color: #888 #f1f1f1;
 }
 
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 /* Ensure body and html take full height */
 html, body, #root {
   margin: 0;

@@ -1,8 +1,7 @@
 // src/Dashboard.tsx
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
-  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, DatabaseZap,
-  Download
+  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, DatabaseZap
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
@@ -214,7 +213,7 @@ const TopMenuBar = ({
   }, [fileList]);
 
   const displayedFiles = searchFile ? files : fileList;
-  const menuItems = ['File', 'Edit', 'View', 'Reasoner', 'Tools', 'Window', 'Download', 'Help', 'Share'];
+  const menuItems = ['File', 'Edit', 'View', 'Reasoner', 'Tools', 'Window', 'Help'];
 
   return (
     <header ref={menuRef} className="bg-gray-200 text-gray-800 text-xs flex items-center px-2 relative border-b border-gray-300 h-8 flex-shrink-0">
@@ -226,48 +225,7 @@ const TopMenuBar = ({
           <div key={item} className="relative">
             <button
               onClick={() => {
-                if (item === "Download") {
-                  console.log('[TopMenuBar] Download clicked, projectId:', currentProjectId);
-                  if (window.vscode && currentProjectId) {
-                    window.vscode.postMessage({ 
-                      type: "downloadOntology",
-                      url: `/api/ontology/export/${currentProjectId}`,
-                      filename: `${currentProjectId}.owl`
-                    });
-                  } else if (!currentProjectId) {
-                    console.warn('[TopMenuBar] No project loaded to download');
-                    // Show user-friendly message
-                    if (window.vscode) {
-                      window.vscode.postMessage({
-                        type: 'error',
-                        value: 'No ontology loaded. Please open an ontology file first.'
-                      });
-                    }
-                  }
-                } else if (item === "Share") {
-                  // Check if current file is owned by user
-                  const currentFile = myFiles.find(f => f.id === currentProjectId);
-                  if (currentProjectId && currentFile) {
-                    onShareFile(currentProjectId);
-                    setOpenMenu(null);
-                  } else if (!currentProjectId) {
-                    if (window.vscode) {
-                      window.vscode.postMessage({
-                        type: 'error',
-                        value: 'No ontology loaded. Please open a file first.'
-                      });
-                    }
-                  } else {
-                    if (window.vscode) {
-                      window.vscode.postMessage({
-                        type: 'error',
-                        value: 'You can only share files you own. This file is shared with you.'
-                      });
-                    }
-                  }
-                } else {
-                  setOpenMenu(openMenu === item ? null : item);
-                }
+                setOpenMenu(openMenu === item ? null : item);
               }}
               className="px-3 py-1 hover:bg-gray-300 rounded-sm"
             >
@@ -306,6 +264,7 @@ const TopMenuBar = ({
                   </div>
                 ) : item === "File" ? (
                   <div className="flex flex-col py-1">
+                    <div className="px-4 py-2 text-[11px] uppercase tracking-wide text-gray-500">File</div>
                     <button
                       onClick={(e) => {
                         e.preventDefault();
@@ -316,6 +275,7 @@ const TopMenuBar = ({
                     >
                       Open
                     </button>
+                    <div className="border-t border-gray-100 my-1" />
                     <button
                       onClick={async (e) => {
                         e.preventDefault();
@@ -327,6 +287,47 @@ const TopMenuBar = ({
                     >
                       Save
                       {hasUnsavedChanges && <span className="text-orange-600 text-lg leading-none">•</span>}
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        if (window.vscode && currentProjectId) {
+                          window.vscode.postMessage({
+                            type: "downloadOntology",
+                            url: `/api/ontology/export/${currentProjectId}`,
+                            filename: `${currentProjectId}.owl`
+                          });
+                        } else if (window.vscode) {
+                          window.vscode.postMessage({
+                            type: 'error',
+                            value: 'No ontology loaded. Please open a file first.'
+                          });
+                        }
+                        setOpenMenu(null);
+                      }}
+                      disabled={!currentProjectId}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Download
+                    </button>
+                    <div className="border-t border-gray-100 my-1" />
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        if (currentProjectId) {
+                          onShareFile(currentProjectId);
+                        } else if (window.vscode) {
+                          window.vscode.postMessage({
+                            type: 'error',
+                            value: 'No ontology loaded. Please open a file first.'
+                          });
+                        }
+                        setOpenMenu(null);
+                      }}
+                      disabled={!currentProjectId}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Share
                     </button>
                   </div>
                 ) : (
@@ -2469,7 +2470,7 @@ const Dashboard = () => {
 
         <div className="bg-white border-b border-gray-200 flex-shrink-0">
           <div className="flex items-center justify-between px-4 h-10">
-      <div className="flex items-center flex-nowrap overflow-x-auto gap-1">
+      <div className="flex items-center flex-nowrap overflow-x-auto no-scrollbar gap-1">
               {visibleMainTabs.map((tabId) => {
                 const tab = ALL_MAIN_TABS[tabId];
                 if (!tab) return null;
@@ -2512,7 +2513,7 @@ const Dashboard = () => {
 
         {mainTab === 'Entities' && (
           <div className="bg-gray-100 border-b border-gray-200 px-4 flex-shrink-0">
-            <div className="flex items-center flex-nowrap overflow-x-auto gap-1">
+            <div className="flex items-center flex-nowrap overflow-x-auto no-scrollbar gap-1">
               {entitiesTabs.map((tab) => (
                 <button
                   key={tab.id}
