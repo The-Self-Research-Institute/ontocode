@@ -734,7 +734,12 @@ const Dashboard = () => {
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [shareFileId, setShareFileId] = useState<string | null>(null);
 
-  const [visibleMainTabs, setVisibleMainTabs] = useState(['ActiveOntology', 'Entities', 'IndividualsByClass', 'DLQuery', 'SPARQL']);
+  const [visibleMainTabs, setVisibleMainTabs] = useState(['ActiveOntology', 'Entities', 'IndividualsByClass', 'DLQuery', 'CodeView', 'SPARQL']);
+  
+  // Code View states
+  const [codeViewFormat, setCodeViewFormat] = useState<'turtle' | 'rdfxml' | 'ntriples'>('turtle');
+  const [codeViewContent, setCodeViewContent] = useState<string>('');
+  const [codeViewLoading, setCodeViewLoading] = useState(false);
   // #endregion
 
   // #region Data Fetching and Initialization
@@ -2257,8 +2262,96 @@ const Dashboard = () => {
   // #endregion
 
   // #region Render Methods
+  const fetchCodeViewContent = useCallback(async (format: 'turtle' | 'rdfxml' | 'ntriples') => {
+    if (!projectId) return;
+    setCodeViewLoading(true);
+    try {
+      const response = await apiClient.get<{ success: boolean; content: string; format: string }>(
+        `/api/ontology/${projectId}/content`,
+        { format }
+      );
+      if (response.success) {
+        setCodeViewContent(response.content);
+        setCodeViewFormat(format);
+      }
+    } catch (error) {
+      console.error('Failed to fetch code view content:', error);
+      setCodeViewContent('// Error loading ontology content');
+    } finally {
+      setCodeViewLoading(false);
+    }
+  }, [projectId]);
+
+  // Load code view content when switching to CodeView tab
+  useEffect(() => {
+    if (mainTab === 'CodeView' && projectId && !codeViewContent) {
+      fetchCodeViewContent(codeViewFormat);
+    }
+  }, [mainTab, projectId, codeViewContent, codeViewFormat, fetchCodeViewContent]);
+
   const renderMainContent = () => {
     switch (mainTab) {
+      case 'CodeView':
+        return (
+          <div className="flex h-full bg-gray-100">
+            <div className="flex-1 flex flex-col bg-white">
+              <div className="p-4 border-b border-gray-200">
+                <h2 className="text-lg font-semibold">OWL/RDF Code View</h2>
+                <p className="text-sm text-gray-600 mt-1">View the ontology in different serialization formats</p>
+              </div>
+              <div className="flex-1 overflow-auto p-4">
+                <div className="mb-4 flex gap-2">
+                  <button 
+                    onClick={() => fetchCodeViewContent('turtle')}
+                    className={`px-3 py-1 text-sm rounded-md ${
+                      codeViewFormat === 'turtle' 
+                        ? 'bg-purple-600 text-white hover:bg-purple-700' 
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                  >
+                    Turtle
+                  </button>
+                  <button 
+                    onClick={() => fetchCodeViewContent('rdfxml')}
+                    className={`px-3 py-1 text-sm rounded-md ${
+                      codeViewFormat === 'rdfxml' 
+                        ? 'bg-purple-600 text-white hover:bg-purple-700' 
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                  >
+                    RDF/XML
+                  </button>
+                  <button 
+                    onClick={() => fetchCodeViewContent('ntriples')}
+                    className={`px-3 py-1 text-sm rounded-md ${
+                      codeViewFormat === 'ntriples' 
+                        ? 'bg-purple-600 text-white hover:bg-purple-700' 
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                  >
+                    N-Triples
+                  </button>
+                  <button 
+                    onClick={() => fetchCodeViewContent(codeViewFormat)}
+                    className="ml-auto px-3 py-1 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                    disabled={codeViewLoading}
+                  >
+                    {codeViewLoading ? 'Refreshing...' : 'Refresh'}
+                  </button>
+                </div>
+                {codeViewLoading ? (
+                  <div className="flex items-center justify-center h-64">
+                    <div className="text-gray-500">Loading ontology content...</div>
+                  </div>
+                ) : (
+                  <pre className="bg-gray-50 p-4 rounded-lg text-xs font-mono overflow-auto border border-gray-200 h-full">
+                    <code className="text-gray-800 whitespace-pre">{codeViewContent || '// No content available'}</code>
+                  </pre>
+                )}
+              </div>
+            </div>
+          </div>
+        );
       case 'SPARQL':
         return <SparqlQueryEditor projectId={projectId!} prefixes={(metadata as any)?.prefixes || []} />;
       case 'Graph': {
@@ -2581,6 +2674,7 @@ const Dashboard = () => {
     Graph: { label: "Graph", icon: Share2 },
     IndividualsByClass: { label: "Individuals by class", icon: Eye },
     DLQuery: { label: "DL Query", icon: Code },
+    CodeView: { label: "Code View", icon: Code },
     SPARQL: { label: "SPARQL Query", icon: DatabaseZap },
     SWRL: { label: "SWRL Rules", icon: Code },
   };

@@ -1,6 +1,6 @@
 import React from "react";
 
-const TABS = ["Entities", "Individuals by class", "DL Query", "SPARQL Query"] as const;
+const TABS = ["Entities", "Individuals by class", "DL Query", "Code View", "SPARQL Query"] as const;
 export type PrimaryTab = typeof TABS[number];
 
 export function PrimaryTabs({
