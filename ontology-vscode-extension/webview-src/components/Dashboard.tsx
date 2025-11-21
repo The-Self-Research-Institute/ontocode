@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
+import { draftTrackingService } from "../services/draftTrackingService";
 import { notificationService } from "../services/notificationService";
 import { pluginManager } from '../plugins/PluginSystem';
 import { SWRLPlugin, ReasoningPlugin } from '../plugins/PluginRegistry';
@@ -19,7 +20,7 @@ import DatatypeEditor from './details/DatatypeEditor';
 import { Panel, AnnotationsDisplay } from './details/common';
 import SparqlQueryEditor from './SparqlQueryEditor';
 import { ProjectSelector } from './ProjectSelector';
-import CollaborationPanel from './CollaborationPanel';
+import CollaborationPanel, { CollaborationPanelRef } from './CollaborationPanel';
 import ToastNotification from './ToastNotification';
 import ShareDialog from './ShareDialog';
 import {
@@ -157,6 +158,7 @@ const TopMenuBar = ({
   onSwitchFile,
   hasUnsavedChanges,
   isSaving,
+  draftCount,
   onOpenDialog,
 }: {
   onToggleSwrlTab: () => void;
@@ -172,6 +174,7 @@ const TopMenuBar = ({
   onSwitchFile: (projectId: string) => void;
   hasUnsavedChanges: boolean;
   isSaving: boolean;
+  draftCount?: number;
   onOpenDialog: () => void;
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
@@ -289,7 +292,7 @@ const TopMenuBar = ({
                       disabled={!hasUnsavedChanges || isSaving || !currentProjectId}
                       className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                     >
-                      Save
+                      Save {draftCount && draftCount > 0 ? `(${draftCount})` : ''}
                       {hasUnsavedChanges && <span className="text-orange-600 text-lg leading-none">•</span>}
                     </button>
                     <button
@@ -497,12 +500,14 @@ const ConfirmDialog = ({
   isOpen,
   onClose,
   onConfirm,
+  onCancel,
   title,
   message
 }: {
   isOpen: boolean;
   onClose: () => void;
   onConfirm: () => void;
+  onCancel?: () => void;
   title: string;
   message: string;
 }) => {
@@ -515,19 +520,24 @@ const ConfirmDialog = ({
         <p className="text-sm text-gray-700 mb-6">{message}</p>
         <div className="flex justify-end gap-3">
           <button 
-            onClick={onClose} 
+            onClick={() => {
+              if (onCancel) {
+                onCancel();
+              }
+              onClose();
+            }} 
             className="px-4 py-2 text-sm bg-gray-200 text-black rounded-md hover:bg-gray-300"
           >
-            Cancel
+            {onCancel ? 'Discard' : 'Cancel'}
           </button>
           <button 
             onClick={() => {
               onConfirm();
               onClose();
             }} 
-            className="px-4 py-2 text-sm bg-red-600 text-white rounded-md hover:bg-red-700"
+            className="px-4 py-2 text-sm bg-purple-600 text-white rounded-md hover:bg-purple-700"
           >
-            Delete
+            {onCancel ? 'Save' : 'Confirm'}
           </button>
         </div>
       </div>
@@ -665,8 +675,10 @@ const Dashboard = () => {
   const [loadingProjectName, setLoadingProjectName] = useState("");
   const loadingPromiseRef = useRef<Promise<void> | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [draftCount, setDraftCount] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const collaborationPanelRef = useRef<CollaborationPanelRef>(null);
   const [showOpenDialog, setShowOpenDialog] = useState(false);
   const [activeOntologySubTab, setActiveOntologySubTab] = useState('prefixes');
   const [isCreateIndividualModalOpen, setCreateIndividualModalOpen] = useState(false);
@@ -696,11 +708,13 @@ const Dashboard = () => {
     title: string;
     message: string;
     onConfirm: () => void;
+    onCancel?: () => void;
   }>({
     isOpen: false,
     title: '',
     message: '',
-    onConfirm: () => {}
+    onConfirm: () => {},
+    onCancel: undefined
   });
 
   const [selectedClassForIndividuals, setSelectedClassForIndividuals] = useState<TreeNode | null>(null);
@@ -1396,38 +1410,31 @@ const Dashboard = () => {
     setHasUnsavedChanges(true);
   }, [entitiesTab, user]);
 
-  // Draft auto-save: Mark changes as unsaved
+  // Update draft count
+  const updateDraftCount = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      console.log('[Dashboard] Updating draft count for project:', projectId);
+      const stats = await draftTrackingService.getDraftStats(projectId);
+      console.log('[Dashboard] Draft stats received:', stats);
+      setDraftCount(stats.unappliedDrafts);
+      setHasUnsavedChanges(stats.unappliedDrafts > 0);
+    } catch (error) {
+      console.error('[Dashboard] Failed to update draft count:', error);
+      // Don't show error notification - just log it
+      // The user can still work, we'll try again later
+    }
+  }, [projectId]);
+
+  // Mark as unsaved (called after mutations)
   const markAsUnsaved = useCallback(() => {
     console.log('[DEBUG] markAsUnsaved called');
     setHasUnsavedChanges(true);
+    // Update draft count after a short delay
+    setTimeout(() => updateDraftCount(), 500);
+  }, [updateDraftCount]);
 
-    // Clear existing timer
-    if (draftTimerRef.current) {
-      clearTimeout(draftTimerRef.current);
-    }
-
-    // Auto-save draft to localStorage after 2 seconds of inactivity
-    draftTimerRef.current = setTimeout(() => {
-      if (projectId) {
-        console.log('[Dashboard] Auto-saving draft to localStorage...');
-        const draft = {
-          projectId,
-          classHierarchy,
-          objectProperties,
-          dataProperties,
-          annotationProperties,
-          individuals,
-          datatypes,
-          metadata,
-          timestamp: Date.now()
-        };
-        localStorage.setItem(`draft_${projectId}`, JSON.stringify(draft));
-        console.log('[Dashboard] Draft saved to localStorage');
-      }
-    }, 2000);
-  }, [projectId, classHierarchy, objectProperties, dataProperties, annotationProperties, individuals, datatypes, metadata]);
-
-  // Save changes to backend
+  // Save changes to backend (applies drafts to GraphDB)
   const handleSave = useCallback(async () => {
     console.log('[DEBUG] handleSave called');
     if (!projectId || isSaving) return;
@@ -1436,35 +1443,43 @@ const Dashboard = () => {
       setIsSaving(true);
       console.log('[Dashboard] Saving changes to backend...');
       
-      // Export current ontology state
-      const response = await apiClient.post(`/api/ontology/save/${projectId}`, {
-        classHierarchy,
-        objectProperties,
-        dataProperties,
-        annotationProperties,
-        individuals,
-        datatypes,
-        metadata
-      });
+      // Save will apply all drafts to GraphDB and export
+      const startTime = Date.now();
+      const response = await apiClient.post(`/api/ontology/save/${projectId}`);
+      const duration = Date.now() - startTime;
       
-      setHasUnsavedChanges(false);
+      console.log(`[Dashboard] Save response received after ${duration}ms:`, response);
       
-      // Clear draft from localStorage
-      localStorage.removeItem(`draft_${projectId}`);
+      // Handle both direct response and response.data (VS Code proxy vs direct HTTP)
+      const data = response.data || response;
       
-      notificationService.success('Saved', `Ontology "${projectId}" saved successfully`);
-      console.log('[Dashboard] Save complete');
+      if (data && data.success) {
+        setHasUnsavedChanges(false);
+        setDraftCount(0);
+        
+        notificationService.success('Saved', 
+          `Ontology saved successfully. Applied ${data.appliedDrafts || 0} changes.`);
+        console.log('[Dashboard] Save complete:', data);
+        
+        // Refresh collaboration panel to show recent changes
+        collaborationPanelRef.current?.refreshChanges();
+      } else {
+        const errorMsg = (data && data.error) || 'Save failed - no response from server';
+        console.error('[Dashboard] Save response was invalid:', response);
+        throw new Error(errorMsg);
+      }
     } catch (error) {
-      console.error('[Dashboard] Save failed:', error);
-      notificationService.error('Save Failed', 'Could not save changes. Please try again.');
+      console.error('[Dashboard] Save failed with error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Could not save changes. Please try again.';
+      notificationService.error('Save Failed', errorMessage);
     } finally {
       setIsSaving(false);
     }
-  }, [projectId, isSaving, classHierarchy, objectProperties, dataProperties, annotationProperties, individuals, datatypes, metadata]);
+  }, [projectId, isSaving]);
 
   // Switch to a different file (with unsaved changes check)
   const handleSwitchFile = useCallback((newProjectId: string) => {
-    const switchFile = () => {
+    const switchFile = async () => {
       console.log('[Dashboard] Switching to file:', newProjectId);
       if (window.vscode) {
         window.vscode.postMessage({
@@ -1473,7 +1488,7 @@ const Dashboard = () => {
         });
       }
       setHasUnsavedChanges(false);
-      localStorage.removeItem(`draft_${projectId}`);
+      setDraftCount(0);
     };
 
     if (hasUnsavedChanges) {
@@ -1481,16 +1496,28 @@ const Dashboard = () => {
       setConfirmDialog({
         isOpen: true,
         title: 'Unsaved Changes',
-        message: `You have unsaved changes in "${projectId}". Do you want to save before switching?`,
+        message: `You have ${draftCount} unsaved change${draftCount !== 1 ? 's' : ''} in "${projectId}". Do you want to save before switching?`,
         onConfirm: async () => {
           await handleSave();
+          switchFile();
+        },
+        onCancel: async () => {
+          // Discard drafts
+          if (projectId) {
+            try {
+              await draftTrackingService.discardDrafts(projectId);
+              console.log('[Dashboard] Discarded drafts');
+            } catch (error) {
+              console.error('[Dashboard] Failed to discard drafts:', error);
+            }
+          }
           switchFile();
         }
       });
     } else {
       switchFile();
     }
-  }, [hasUnsavedChanges, projectId, handleSave]);
+  }, [hasUnsavedChanges, draftCount, projectId, handleSave]);
 
   // Create Property from Class Expression Dialog
   const handleCreatePropertyFromDialog = useCallback(() => {
@@ -2557,6 +2584,7 @@ const Dashboard = () => {
         isOpen={confirmDialog.isOpen}
         onClose={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
         onConfirm={confirmDialog.onConfirm}
+        onCancel={confirmDialog.onCancel}
         title={confirmDialog.title}
         message={confirmDialog.message}
       />
@@ -2589,6 +2617,7 @@ const Dashboard = () => {
           onSwitchFile={handleSwitchFile}
           hasUnsavedChanges={hasUnsavedChanges}
           isSaving={isSaving}
+          draftCount={draftCount}
           onOpenDialog={() => setShowOpenDialog(true)}
         />
 
@@ -2770,7 +2799,7 @@ const Dashboard = () => {
       />
 
       {/* Collaboration Panel */}
-      <CollaborationPanel />
+      <CollaborationPanel ref={collaborationPanelRef} projectId={projectId || undefined} />
 
       {/* Share Dialog */}
       {shareFileId && (
