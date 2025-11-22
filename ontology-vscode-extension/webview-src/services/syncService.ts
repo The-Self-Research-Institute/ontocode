@@ -1,6 +1,6 @@
 /**
  * Service to detect when the ontology data has been updated by other users
- * Checks for updates 60 seconds after the last known save
+ * Polls every 10 seconds to check for changes
  */
 
 import apiClient from './apiClient';
@@ -8,14 +8,17 @@ import apiClient from './apiClient';
 type SyncCallback = (projectId: string) => void;
 
 class SyncService {
-    private checkDelay: number = 60000; // Check 60 seconds after last save
+    private pollingInterval: number = 5000; // Poll every 5 seconds
+    private monitoringDuration: number = 30000; // Monitor for 30 seconds total
     private lastKnownTimestamps: Map<string, number> = new Map();
-    private scheduledChecks: Map<string, NodeJS.Timeout> = new Map();
+    private activePolling: Map<string, NodeJS.Timeout> = new Map();
+    private monitoringTimeouts: Map<string, NodeJS.Timeout> = new Map();
     private callbacks: Map<string, Set<SyncCallback>> = new Map();
     private ignoreNextUpdate: Map<string, boolean> = new Map();
 
     /**
      * Start monitoring a project for changes
+     * Polls every 5 seconds for 30 seconds, stops after first change or timeout
      */
     startMonitoring(projectId: string, callback: SyncCallback, initialTimestamp?: number) {
         console.log('[SyncService] Starting monitoring for project:', projectId);
@@ -31,16 +34,24 @@ class SyncService {
         }
         this.callbacks.get(projectId)!.add(callback);
 
-        // Cancel existing check if any
-        this.cancelScheduledCheck(projectId);
+        // Cancel existing polling if any
+        this.stopPolling(projectId);
 
-        // Schedule a check after 60 seconds
-        const timeoutId = setTimeout(() => {
+        // Start polling every 5 seconds
+        const intervalId = setInterval(() => {
             this.checkForUpdates(projectId);
-        }, this.checkDelay);
+        }, this.pollingInterval);
 
-        this.scheduledChecks.set(projectId, timeoutId);
-        console.log('[SyncService] 📅 Scheduled check in 60 seconds');
+        this.activePolling.set(projectId, intervalId);
+        
+        // Set timeout to stop monitoring after 30 seconds
+        const timeoutId = setTimeout(() => {
+            console.log('[SyncService] ⏱️ Monitoring timeout reached (30s), stopping polling');
+            this.stopPolling(projectId);
+        }, this.monitoringDuration);
+        
+        this.monitoringTimeouts.set(projectId, timeoutId);
+        console.log('[SyncService] 🔄 Started polling every 5 seconds for 30 seconds');
     }
 
     /**
@@ -51,15 +62,15 @@ class SyncService {
             // Remove specific callback
             this.callbacks.get(projectId)?.delete(callback);
             
-            // If no more callbacks, stop check
+            // If no more callbacks, stop polling
             if (this.callbacks.get(projectId)?.size === 0) {
-                this.cancelScheduledCheck(projectId);
+                this.stopPolling(projectId);
                 this.callbacks.delete(projectId);
                 this.lastKnownTimestamps.delete(projectId);
             }
         } else {
             // Stop all monitoring for this project
-            this.cancelScheduledCheck(projectId);
+            this.stopPolling(projectId);
             this.callbacks.delete(projectId);
             this.lastKnownTimestamps.delete(projectId);
         }
@@ -77,7 +88,7 @@ class SyncService {
         setTimeout(() => {
             this.ignoreNextUpdate.delete(projectId);
             console.log('[SyncService] ✓ Local save ignore flag cleared for:', projectId);
-        }, 65000); // 65 seconds to cover the 60 second check delay
+        }, 15000); // 15 seconds should be enough
     }
 
     /**
@@ -99,10 +110,6 @@ class SyncService {
                 const serverTimestamp = new Date(response.updatedAt).getTime();
                 const lastKnown = this.lastKnownTimestamps.get(projectId);
 
-                console.log('[SyncService] 📊 Timestamp check for:', projectId);
-                console.log('[SyncService]   Last known:', lastKnown ? new Date(lastKnown).toISOString() : 'none');
-                console.log('[SyncService]   Server:', new Date(serverTimestamp).toISOString());
-
                 if (lastKnown && serverTimestamp > lastKnown) {
                     // Check if we should ignore this update (user just saved)
                     if (this.ignoreNextUpdate.get(projectId)) {
@@ -119,6 +126,10 @@ class SyncService {
                     // Update timestamp
                     this.lastKnownTimestamps.set(projectId, serverTimestamp);
 
+                    // Stop polling after detecting first change
+                    this.stopPolling(projectId);
+                    console.log('[SyncService] ✅ Stopped polling after detecting change');
+
                     // Notify all callbacks
                     const callbacks = this.callbacks.get(projectId);
                     if (callbacks) {
@@ -130,24 +141,28 @@ class SyncService {
                             }
                         });
                     }
-                } else if (lastKnown && serverTimestamp <= lastKnown) {
-                    console.log('[SyncService] ⏱️ No changes detected');
                 }
             }
         } catch (error) {
-            console.error('[SyncService] ❌ Error checking for updates:', error);
+            // Silently fail on network errors to avoid console spam
+            // console.error('[SyncService] ❌ Error checking for updates:', error);
         }
     }
 
     /**
-     * Cancel scheduled check for a project
+     * Stop polling for a project
      */
-    private cancelScheduledCheck(projectId: string) {
-        const timeoutId = this.scheduledChecks.get(projectId);
+    private stopPolling(projectId: string) {
+        const intervalId = this.activePolling.get(projectId);
+        if (intervalId) {
+            clearInterval(intervalId);
+            this.activePolling.delete(projectId);
+        }
+        
+        const timeoutId = this.monitoringTimeouts.get(projectId);
         if (timeoutId) {
             clearTimeout(timeoutId);
-            this.scheduledChecks.delete(projectId);
-            console.log('[SyncService] Cancelled scheduled check for project:', projectId);
+            this.monitoringTimeouts.delete(projectId);
         }
     }
 
@@ -156,8 +171,10 @@ class SyncService {
      */
     cleanup() {
         console.log('[SyncService] Cleaning up all monitoring');
-        this.scheduledChecks.forEach((timeoutId) => clearTimeout(timeoutId));
-        this.scheduledChecks.clear();
+        this.activePolling.forEach((intervalId) => clearInterval(intervalId));
+        this.activePolling.clear();
+        this.monitoringTimeouts.forEach((timeoutId) => clearTimeout(timeoutId));
+        this.monitoringTimeouts.clear();
         this.callbacks.clear();
         this.lastKnownTimestamps.clear();
         this.ignoreNextUpdate.clear();

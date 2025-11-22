@@ -1133,23 +1133,25 @@ const Dashboard = () => {
         setSharedFiles([]);
       }
       
+      // Stop any previous monitoring for this project
+      syncService.stopMonitoring(currentProjectId);
+      
       // Start monitoring for changes from other users
       const handleDataChanged = async (changedProjectId: string) => {
         console.log('[Dashboard] 🔄 Change detected from another user! Refreshing data...');
         notificationService.info('New Changes Available', 'Another user saved changes. Refreshing data...');
         
-        // Refresh data once - no need to restart monitoring
-        await fetchData(changedProjectId, false);
-        console.log('[Dashboard] ✅ Refresh complete');
+        // Refresh data and restart monitoring for another 30 seconds
+        await fetchData(changedProjectId, false, true);
+        console.log('[Dashboard] ✅ Refresh complete, monitoring restarted');
       };
       
-      // Get the current timestamp and start monitoring
       try {
         const timestampData = await apiClient.get<{ updatedAt: string }>(`/api/ontology/metadata/${currentProjectId}/timestamp`);
         if (timestampData && timestampData.updatedAt) {
           const currentTimestamp = new Date(timestampData.updatedAt).getTime();
           syncService.startMonitoring(currentProjectId, handleDataChanged, currentTimestamp);
-          console.log('[Dashboard] 🔍 Monitoring for changes from other users');
+          console.log('[Dashboard] 🔍 Started monitoring for changes (30 seconds)');
         }
       } catch (error) {
         console.warn('[Dashboard] Could not start change monitoring:', error);
@@ -1766,6 +1768,8 @@ const Dashboard = () => {
         console.log('[Dashboard] 🔄 Refreshing current file after save...');
         await fetchData(projectId, false);
         
+        // Monitoring is automatically restarted by fetchData
+        
         // Refresh collaboration panel to show recent changes
         collaborationPanelRef.current?.refreshChanges();
       } else {
@@ -1796,32 +1800,35 @@ const Dashboard = () => {
       setDraftCount(0);
     };
 
-    if (hasUnsavedChanges) {
-      // Show confirmation dialog
-      setConfirmDialog({
-        isOpen: true,
-        title: 'Unsaved Changes',
-        message: `You have ${draftCount} unsaved change${draftCount !== 1 ? 's' : ''} in "${projectId}". Do you want to save before switching?`,
-        onConfirm: async () => {
-          await handleSave();
-          switchFile();
-        },
-        onCancel: async () => {
-          // Discard drafts
-          if (projectId) {
-            try {
-              await draftTrackingService.discardDrafts(projectId);
-              console.log('[Dashboard] Discarded drafts');
-            } catch (error) {
-              console.error('[Dashboard] Failed to discard drafts:', error);
-            }
-          }
-          switchFile();
-        }
-      });
-    } else {
+    // If no unsaved changes or draft count is 0, switch directly
+    if (!hasUnsavedChanges || draftCount === 0) {
+      console.log('[Dashboard] No unsaved changes, switching directly');
       switchFile();
+      return;
     }
+
+    // Show confirmation dialog only if there are actual unsaved changes
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Unsaved Changes',
+      message: `You have ${draftCount} unsaved change${draftCount !== 1 ? 's' : ''} in "${projectId}". Do you want to save before switching?`,
+      onConfirm: async () => {
+        await handleSave();
+        switchFile();
+      },
+      onCancel: async () => {
+        // Discard drafts
+        if (projectId) {
+          try {
+            await draftTrackingService.discardDrafts(projectId);
+            console.log('[Dashboard] Discarded drafts');
+          } catch (error) {
+            console.error('[Dashboard] Failed to discard drafts:', error);
+          }
+        }
+        switchFile();
+      }
+    });
   }, [hasUnsavedChanges, draftCount, projectId, handleSave]);
 
   // Create Property from Class Expression Dialog
