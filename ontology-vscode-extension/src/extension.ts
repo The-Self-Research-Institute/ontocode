@@ -64,7 +64,7 @@ type WebviewMessage =
   | { type: 'storedAuthToken'; token: string | null }
   | { type: 'loggedOut' }
   | { type: 'showLogin' }
-  | { type: 'showLoading' }
+  | { type: 'showLoading'; projectId: string }
   | { type: 'fileReady'; projectId: string }
   | { type: 'loadingFailed'; error: string }
   // Fix: Added message type for API responses from the proxy
@@ -206,6 +206,7 @@ class OntoCodePanel {
     private _isWebviewReady: boolean = false;
     private _pendingFileUri: vscode.Uri | null = null;
     private _isPendingRegularUpload: boolean = false;
+    private _lastProjectId: string | null = null; // Track last opened project
 
     // Collaborative editing
     private collaborationManager: CollaborationManager | null = null;
@@ -264,6 +265,11 @@ class OntoCodePanel {
                     case 'webviewReady':
                         console.log('[OntoCode] Received webviewReady message.');
                         this._isWebviewReady = true;
+                        // Restore last opened project if exists
+                        if (this._lastProjectId) {
+                            console.log('[OntoCode] Restoring last project:', this._lastProjectId);
+                            this.postMessage({ type: 'fileReady', projectId: this._lastProjectId });
+                        }
                         this.triggerPendingUpload(); // Trigger any upload that was waiting
                         break;
                     case 'error':
@@ -540,12 +546,23 @@ class OntoCodePanel {
             return;
         }
 
-        // 2. Send fileReady message BEFORE upload to show loading dialog immediately
-        console.log(`[OntoCode] Sending fileReady message for project: ${projectId}`);
-        this.postMessage({ type: 'fileReady', projectId: projectId });
+        // 2. Initialize WebSocket connection FIRST (before upload)
+        // This ensures we receive the IMPORT_COMPLETED message
+        console.log(`[OntoCode] Initializing WebSocket before upload...`);
+        try {
+            await this.initializeCollaborationForProject(projectId, token);
+            console.log(`[OntoCode] ✅ WebSocket initialized, proceeding with upload`);
+        } catch (error) {
+            console.error('[OntoCode] Failed to initialize WebSocket:', error);
+            // Continue with upload anyway - collaboration is optional
+        }
+
+        // 3. Let the webview know we're starting an upload
+        console.log(`[OntoCode] Notifying webview about pending upload for project: ${projectId}`);
+        this.postMessage({ type: 'showLoading', projectId });
 
         try {
-            // 3. Prepare the form data for multipart upload
+            // 4. Prepare the form data for multipart upload
             // Convert Uint8Array to Blob for web extension compatibility
             // Create a new Uint8Array with ArrayBuffer to ensure compatibility
             const buffer = new Uint8Array(fileData.buffer.byteLength);
@@ -560,7 +577,10 @@ class OntoCodePanel {
             try {
                 const tokenParts = token.split('.');
                 if (tokenParts.length === 3) {
-                    const payload = JSON.parse(Buffer.from(tokenParts[1], 'base64').toString());
+                    // Fix: Use atob() instead of Buffer for web compatibility
+                    const base64 = tokenParts[1].replace(/-/g, '+').replace(/_/g, '/');
+                    const jsonPayload = atob(base64);
+                    const payload = JSON.parse(jsonPayload);
                     if (payload.email) {
                         formData.append('ownerEmail', payload.email);
                         console.log(`[OntoCode] Adding owner email: ${payload.email}`);
@@ -596,17 +616,17 @@ class OntoCodePanel {
             // 5. Check if upload was successful
             if (response.status === 200 || response.status === 201) {
                 console.log(`[OntoCode] Upload successful for project: ${projectId}`);
-                this._isWebviewReady = false;
+                this._lastProjectId = projectId; // Remember this project
+
+                // WebSocket already initialized before upload - will receive IMPORT_COMPLETED
+                console.log(`[OntoCode] Upload successful, WebSocket listening for IMPORT_COMPLETED`);
                 
                 // Check if this was a file replacement
                 const isReplacement = response.data?.isReplacement || false;
                 const message = isReplacement 
-                    ? `Ontology "${fileName}" replaced successfully. Processing started...`
-                    : `Ontology "${fileName}" uploaded successfully. Processing started...`;
+                    ? `Ontology "${fileName}" replaced successfully. Processing...`
+                    : `Ontology "${fileName}" uploaded successfully. Processing...`;
                 vscode.window.showInformationMessage(message);
-                
-                // 6. Initialize collaborative editing
-                await this.initializeCollaborationForProject(projectId, token);
             } else {
                 throw new Error(`Upload failed with status ${response.status}: ${JSON.stringify(response.data)}`);
             }

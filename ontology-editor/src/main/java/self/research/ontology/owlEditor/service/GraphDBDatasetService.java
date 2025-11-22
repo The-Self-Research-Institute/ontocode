@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.service;
 
+import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.query.*;
 import org.eclipse.rdf4j.repository.Repository;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
@@ -256,33 +257,53 @@ public class GraphDBDatasetService {
      * Uses streaming to handle large files without loading entire content into memory
      */
     public void bulkLoad(String projectId, InputStream inputStream, RDFFormat rdfFormat) {
+        long bulkLoadStart = System.nanoTime();
         try {
             Repository repo = getRepository();
             String graphUri = getGraphUri(projectId);
 
-            log.info("Starting bulk load for project: {} with format: {}", projectId, rdfFormat);
+            log.info("Starting bulk load for project: {} with format: {} (GraphDB: {} repo: {})",
+                    projectId, rdfFormat, graphdbUrl, repositoryId);
 
             // Use buffered input stream for better performance
             // RDF4J handles BOM detection and charset conversion automatically
             InputStream bufferedStream = new java.io.BufferedInputStream(inputStream, 8192);
 
             try (RepositoryConnection conn = repo.getConnection()) {
+                var valueFactory = conn.getValueFactory();
+                IRI graphIri = valueFactory.createIRI(graphUri);
 
-                // Clear existing data for this project
-                log.info("Clearing existing data for graph: {}", graphUri);
-                conn.clear(conn.getValueFactory().createIRI(graphUri));
+                log.info("Opened GraphDB connection for {} (autoCommit={}, isolation={})",
+                        projectId, conn.isAutoCommit(), safeIsolationLevel(conn));
+
+                // Record current dataset size if possible
+                long sizeBeforeClear = safeGraphSize(conn, graphIri, "before-clear", projectId);
+                if (sizeBeforeClear >= 0) {
+                    log.info("Project {}: {} triples detected before clear", projectId, sizeBeforeClear);
+                }
+
+                // Clear existing data only if needed (avoid hanging clears on empty graphs)
+                if (sizeBeforeClear > 0) {
+                    clearGraph(conn, graphIri, graphUri, projectId);
+                } else {
+                    log.info("Graph {} already empty, skipping clear", graphUri);
+                }
 
                 log.info("Loading data into GraphDB graph: {}", graphUri);
 
                 // Load new data into named graph (streaming - no full load into memory)
                 // RDF4J will parse and load incrementally
-                conn.add(bufferedStream, graphUri, rdfFormat,
-                        conn.getValueFactory().createIRI(graphUri));
+                long addStart = System.nanoTime();
+                conn.add(bufferedStream, graphUri, rdfFormat, graphIri);
+                log.info("GraphDB add() finished in {} ms", elapsedMillis(addStart));
 
                 // Get size after loading
-                long tripleCount = conn.size(conn.getValueFactory().createIRI(graphUri));
+                long sizeQueryStart = System.nanoTime();
+                long tripleCount = conn.size(graphIri);
+                log.info("Graph size computed in {} ms", elapsedMillis(sizeQueryStart));
 
-                log.info("Bulk load completed for project: {} - loaded {} triples", projectId, tripleCount);
+                log.info("Bulk load completed for project: {} - loaded {} triples (total {} ms)",
+                        projectId, tripleCount, elapsedMillis(bulkLoadStart));
             }
             
         } catch (org.eclipse.rdf4j.rio.RDFParseException e) {
@@ -308,6 +329,7 @@ public class GraphDBDatasetService {
                 throw new RuntimeException("GraphDB repository '" + repositoryId + "' not found. Please create it first.", e);
             } else {
                 log.error("GraphDB repository error for project: {}", projectId, e);
+                logCauseChain(e);
                 throw new RuntimeException("GraphDB error: " + e.getMessage(), e);
             }
         } catch (Exception e) {
@@ -504,5 +526,55 @@ public class GraphDBDatasetService {
             repository.shutDown();
             log.info("GraphDB repository connection closed");
         }
+    }
+
+    private long elapsedMillis(long startNanos) {
+        return (System.nanoTime() - startNanos) / 1_000_000;
+    }
+
+    private long safeGraphSize(RepositoryConnection conn, IRI graphIri, String tag, String projectId) {
+        try {
+            long size = conn.size(graphIri);
+            log.info("Project {}: graph size {} during {}", projectId, size, tag);
+            return size;
+        } catch (Exception e) {
+            log.warn("Could not get graph size for project {} during {}: {}", projectId, tag, e.getMessage());
+            return -1;
+        }
+    }
+
+    private void logCauseChain(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            log.error("Cause: {} - {}", current.getClass().getName(), current.getMessage());
+            current = current.getCause();
+        }
+    }
+
+    private String safeIsolationLevel(RepositoryConnection conn) {
+        try {
+            var method = conn.getClass().getMethod("getTransactionIsolationLevel");
+            Object value = method.invoke(conn);
+            return value != null ? value.toString() : "null";
+        } catch (Exception ex) {
+            return "unknown";
+        }
+    }
+
+    private void clearGraph(RepositoryConnection conn, IRI graphIri, String graphUri, String projectId) {
+        long clearStart = System.nanoTime();
+        String clearQuery = String.format("CLEAR GRAPH <%s>", graphUri);
+        try {
+            conn.prepareUpdate(clearQuery).execute();
+            log.info("Graph {} cleared via SPARQL CLEAR in {} ms", graphUri, elapsedMillis(clearStart));
+            return;
+        } catch (Exception sparqlClearError) {
+            log.warn("SPARQL CLEAR failed for project {} graph {}: {}. Falling back to conn.clear()",
+                    projectId, graphUri, sparqlClearError.getMessage());
+        }
+
+        long fallbackStart = System.nanoTime();
+        conn.clear(graphIri);
+        log.info("Graph {} cleared via conn.clear() in {} ms", graphUri, elapsedMillis(fallbackStart));
     }
 }
