@@ -114,10 +114,11 @@ public class GraphDBDatasetService {
                     "FROM <" + graphUri + "> WHERE");
             }
             
-            System.out.println("=== EXECUTING QUERY FOR PROJECT: " + projectId + " ===");
-            System.out.println("Graph URI: " + graphUri);
-            System.out.println("Query: " + sparqlQuery);
-            log.debug("Executing SELECT query for project: {}", projectId);
+            log.info("[GRAPHDB] 📡 EXECUTING SELECT QUERY");
+            log.info("[GRAPHDB] Project: {}", projectId);
+            log.info("[GRAPHDB] Graph URI: {}", graphUri);
+            log.debug("[GRAPHDB] Query: {}", sparqlQuery);
+            
             TupleQuery query = conn.prepareTupleQuery(sparqlQuery);
             
             // Materialize results into a list before closing connection
@@ -129,13 +130,14 @@ public class GraphDBDatasetService {
                     results.add(result.next());
                 }
             }
-            System.out.println("=== QUERY EXECUTED, GOT " + results.size() + " RESULTS ===");
+            
+            log.info("[GRAPHDB] ✅ Query completed, retrieved {} results from GraphDB", results.size());
             
             // Return a simple iterator-based implementation
             return new SimpleTupleQueryResult(bindingNames, results);
             
         } catch (Exception e) {
-            log.error("SPARQL SELECT query failed for project: {}", projectId, e);
+            log.error("[GRAPHDB] ❌ SELECT query failed for project: {}", projectId, e);
             throw new RuntimeException("SPARQL query execution failed", e);
         }
     }
@@ -236,19 +238,77 @@ public class GraphDBDatasetService {
      */
     public void execUpdate(String projectId, String sparqlUpdate) {
         Repository repo = getRepository();
+        String graphUri = getGraphUri(projectId);
         
         try (RepositoryConnection conn = repo.getConnection()) {
             
-            log.debug("Executing UPDATE for project: {}", projectId);
-            Update update = conn.prepareUpdate(sparqlUpdate);
+            log.info("[GRAPHDB] ========== EXECUTING UPDATE ==========");
+            log.info("[GRAPHDB] Project: {}", projectId);
+            log.info("[GRAPHDB] Graph URI: {}", graphUri);
+            log.info("[GRAPHDB] Original SPARQL:");
+            log.info("{}", sparqlUpdate);
+            
+            // Inject graph context properly
+            String graphAwareUpdate = injectGraphContext(sparqlUpdate, graphUri);
+            
+            log.info("[GRAPHDB] Graph-aware SPARQL:");
+            log.info("{}", graphAwareUpdate);
+            
+            Update update = conn.prepareUpdate(graphAwareUpdate);
             update.execute();
             
-            log.debug("SPARQL UPDATE executed successfully for project: {}", projectId);
+            log.info("[GRAPHDB] ✅ UPDATE executed successfully!");
             
         } catch (Exception e) {
-            log.error("SPARQL UPDATE failed for project: {}", projectId, e);
-            throw new RuntimeException("SPARQL UPDATE execution failed", e);
+            log.error("[GRAPHDB] ❌ UPDATE failed for project: {}", projectId, e);
+            log.error("[GRAPHDB] Query was: {}", sparqlUpdate);
+            throw new RuntimeException("SPARQL UPDATE failed: " + e.getMessage(), e);
         }
+    }
+    
+    /**
+     * Inject GRAPH/WITH context into SPARQL UPDATE
+     */
+    private String injectGraphContext(String sparql, String graphUri) {
+        // Extract PREFIX declarations
+        StringBuilder prefixes = new StringBuilder();
+        StringBuilder operations = new StringBuilder();
+        
+        String[] lines = sparql.split("\\n");
+        for (String line : lines) {
+            if (line.trim().toUpperCase().startsWith("PREFIX")) {
+                prefixes.append(line).append("\n");
+            } else if (!line.trim().isEmpty()) {
+                operations.append(line).append("\n");
+            }
+        }
+        
+        // Split operations by semicolon
+        String[] statements = operations.toString().split(";");
+        StringBuilder result = new StringBuilder(prefixes);
+        
+        for (int i = 0; i < statements.length; i++) {
+            String stmt = statements[i].trim();
+            if (stmt.isEmpty()) continue;
+            
+            // For INSERT DATA and DELETE DATA, wrap in GRAPH clause
+            if (stmt.matches("(?is)INSERT\\s+DATA\\s*\\{.*")) {
+                stmt = stmt.replaceFirst("(?is)(INSERT\\s+DATA\\s*\\{)", "$1 GRAPH <" + graphUri + "> {") + " }";
+            } else if (stmt.matches("(?is)DELETE\\s+DATA\\s*\\{.*")) {
+                stmt = stmt.replaceFirst("(?is)(DELETE\\s+DATA\\s*\\{)", "$1 GRAPH <" + graphUri + "> {") + " }";
+            }
+            // For DELETE/INSERT WHERE, add WITH clause
+            else if (stmt.matches("(?is)DELETE\\s*\\{.*") && !stmt.trim().startsWith("WITH")) {
+                stmt = "WITH <" + graphUri + "> " + stmt;
+            }
+            
+            result.append(stmt);
+            if (i < statements.length - 1) {
+                result.append(" ;\n");
+            }
+        }
+        
+        return result.toString();
     }
     
     /**

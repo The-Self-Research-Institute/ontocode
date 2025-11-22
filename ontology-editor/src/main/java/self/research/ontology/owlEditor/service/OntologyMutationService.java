@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
@@ -11,6 +13,8 @@ import java.util.stream.Collectors;
 
 @Service
 public class OntologyMutationService {
+
+    private static final Logger log = LoggerFactory.getLogger(OntologyMutationService.class);
 
     private static final String PREFIXES = """
         PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
@@ -36,13 +40,23 @@ public class OntologyMutationService {
 
     public void apply(String projectId, List<MutationOp> ops) {
         if (ops == null || ops.isEmpty()) {
+            log.warn("[MUTATION] No operations to apply for project: {}", projectId);
             return;
         }
 
+        log.info("[MUTATION] ========== APPLYING {} MUTATIONS ==========", ops.size());
+        log.info("[MUTATION] Project: {}", projectId);
+        
         String sparql = PREFIXES + "\n" + ops.stream()
                 .map(this::toUpdate)
                 .collect(Collectors.joining("\n;\n"));
+        
+        log.info("[MUTATION] Generated SPARQL (BEFORE graph injection):");
+        log.info("[MUTATION] {}", sparql);
+        
         datasetService.execUpdate(projectId, sparql);
+        
+        log.info("[MUTATION] ✅ Mutations applied successfully!");
 
         CompletableFuture.runAsync(() -> {
             Map<String, Object> meta = indexService.computeMetadata(projectId);
@@ -254,7 +268,14 @@ public class OntologyMutationService {
         if (value == null) {
             return "\"\"";
         }
-        return "\"%s\"".formatted(value.replace("\"", "\\\""));
+        // Properly escape special characters in SPARQL string literals
+        String escaped = value
+            .replace("\\", "\\\\")   // Backslash must be first
+            .replace("\"", "\\\"")   // Double quote
+            .replace("\n", "\\n")    // Newline
+            .replace("\r", "\\r")    // Carriage return
+            .replace("\t", "\\t");   // Tab
+        return "\"%s\"".formatted(escaped);
     }
 
     public record MutationOp(
