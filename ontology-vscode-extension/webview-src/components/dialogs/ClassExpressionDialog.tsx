@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { X, Search, ChevronDown, ChevronRight } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X } from 'lucide-react';
+import EntityHierarchy from '../EntityHierarchy';
 import type { TreeNode, Property } from '../../types';
 
 interface ClassExpressionDialogProps {
@@ -10,13 +11,31 @@ interface ClassExpressionDialogProps {
   objectProperties: Property[];
   dataProperties: Property[];
   title?: string;
+  initialValue?: string;
+  projectId?: string;
   expandedNodes?: string[];
   onToggleNode?: (nodeId: string) => void;
-  onCreateProperty?: () => void;
+  onAddClass?: (type: 'subclass' | 'sibling') => void;
+  onDeleteClass?: () => void;
+  // NEW: Optional property hierarchies as TreeNode[] if they have structure
+  objectPropertiesTree?: TreeNode[];
+  dataPropertiesTree?: TreeNode[];
+  // NEW: Property toggle handlers for loading children
+  onToggleObjectProperty?: (nodeId: string) => void;
+  onToggleDataProperty?: (nodeId: string) => void;
 }
 
 type TabType = 'hierarchy' | 'objectRestriction' | 'classExpression' | 'dataRestriction';
 
+/**
+ * ClassExpressionDialog - Protégé desktop-style class expression builder
+ *
+ * Matches Protégé desktop UI with:
+ * - EntityHierarchy for all tree views (classes, properties)
+ * - Asserted/Inferred toggles
+ * - Compact two-panel layouts for restrictions
+ * - Professional toolbar integration
+ */
 const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   isOpen,
   onClose,
@@ -25,147 +44,138 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   objectProperties,
   dataProperties,
   title = "Class Expression Editor",
-  expandedNodes: parentExpandedNodes = [],
-  onToggleNode: parentToggleNode,
-  onCreateProperty
+  initialValue = "",
+  projectId,
+  expandedNodes = [],
+  onToggleNode,
+  onAddClass,
+  onDeleteClass,
+  objectPropertiesTree: externalObjectPropertiesTree,
+  dataPropertiesTree: externalDataPropertiesTree,
+  onToggleObjectProperty,
+  onToggleDataProperty
 }) => {
   const [activeTab, setActiveTab] = useState<TabType>('hierarchy');
+
+  // Class hierarchy state
   const [selectedClass, setSelectedClass] = useState<TreeNode | null>(null);
+  const [classSearchQuery, setClassSearchQuery] = useState('');
   const [localExpandedNodes, setLocalExpandedNodes] = useState<string[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [loadingNodes, setLoadingNodes] = useState<string[]>([]);
-  
-  // Use parent's expanded nodes if provided, otherwise use local state
-  const expandedNodes = parentToggleNode ? parentExpandedNodes : localExpandedNodes;
-  const setExpandedNodes = parentToggleNode ? (() => {}) : setLocalExpandedNodes;
-  
+
   // Object Restriction state
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null);
   const [restrictionType, setRestrictionType] = useState<'some' | 'only' | 'min' | 'max' | 'exactly' | 'value'>('some');
   const [cardinality, setCardinality] = useState(1);
   const [restrictionFiller, setRestrictionFiller] = useState<TreeNode | null>(null);
-  const [propertySearchQuery, setPropertySearchQuery] = useState('');
   const [fillerSearchQuery, setFillerSearchQuery] = useState('');
-  
+  const [propertyExpandedNodes, setPropertyExpandedNodes] = useState<string[]>([]);
+  const [fillerExpandedNodes, setFillerExpandedNodes] = useState<string[]>([]);
+
   // Data Restriction state
   const [selectedDataProperty, setSelectedDataProperty] = useState<Property | null>(null);
   const [dataRestrictionType, setDataRestrictionType] = useState<'some' | 'only' | 'min' | 'max' | 'exactly' | 'value'>('some');
   const [dataCardinality, setDataCardinality] = useState(1);
   const [datatype, setDatatype] = useState('xsd:string');
-  const [dataPropertySearchQuery, setDataPropertySearchQuery] = useState('');
-  
-  // Class Expression state
-  const [manchesterExpression, setManchesterExpression] = useState('');
+  const [dataPropertyExpandedNodes, setDataPropertyExpandedNodes] = useState<string[]>([]);
 
-  if (!isOpen) return null;
+  // Class Expression (Manchester) state
+  const [manchesterExpression, setManchesterExpression] = useState(initialValue);
 
-  const handleToggleNode = async (nodeId: string) => {
-    // Use parent's toggle function if provided, otherwise use local logic
-    if (parentToggleNode) {
-      await parentToggleNode(nodeId);
-    } else {
-      const isExpanded = localExpandedNodes.includes(nodeId);
-      
-      if (isExpanded) {
-        setLocalExpandedNodes(prev => prev.filter(id => id !== nodeId));
-      } else {
-        setLocalExpandedNodes(prev => [...prev, nodeId]);
+  // Reset state when dialog opens with initialValue
+  useEffect(() => {
+    if (isOpen) {
+      setManchesterExpression(initialValue);
+      if (initialValue) {
+        setActiveTab('classExpression');
       }
     }
-  };
+  }, [isOpen, initialValue]);
 
-  const renderClassTree = (
-    nodes: TreeNode[], 
-    level: number, 
-    onSelect: (node: TreeNode) => void, 
-    selected: TreeNode | null,
-    searchQuery: string
-  ): React.ReactNode => {
-    return nodes
-      .filter(node => !searchQuery || node.label.toLowerCase().includes(searchQuery.toLowerCase()))
-      .map(node => (
-        <div key={node.id}>
-          <div
-            className={`flex items-center gap-2 px-2 py-2 hover:bg-gray-50 cursor-pointer transition-colors ${
-              selected?.id === node.id ? 'bg-gray-100 border-l-3 border-l-gray-700' : ''
-            }`}
-            style={{ paddingLeft: `${level * 16 + 8}px` }}
-          >
-            {node.hasChildren ? (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleToggleNode(node.id);
-                }}
-                className="p-0.5 hover:bg-gray-200 rounded"
-              >
-                {expandedNodes.includes(node.id) ? (
-                  <ChevronDown size={14} className="text-gray-600" />
-                ) : (
-                  <ChevronRight size={14} className="text-gray-400" />
-                )}
-              </button>
-            ) : (
-              <span className="w-5" />
-            )}
-            <div
-              onClick={() => onSelect(node)}
-              className="flex items-center gap-2 flex-1"
-            >
-              <span className={`w-2.5 h-2.5 rounded-full ${
-                selected?.id === node.id ? 'bg-gray-700' : 'bg-amber-400'
-              }`} />
-              <span className={`text-sm ${selected?.id === node.id ? 'font-semibold text-gray-900' : 'text-gray-700'}`}>
-                {node.label}
-              </span>
-            </div>
-          </div>
-          {expandedNodes.includes(node.id) && node.children && node.children.length > 0 && (
-            renderClassTree(node.children, level + 1, onSelect, selected, searchQuery)
-          )}
-        </div>
-      ));
-  };
+  // Convert flat property list to tree structure with top property
+  const propertiesToTree = (properties: Property[], isDataProperty: boolean = false): TreeNode[] => {
+    const topPropertyIri = isDataProperty
+      ? 'http://www.w3.org/2002/07/owl#topDataProperty'
+      : 'http://www.w3.org/2002/07/owl#topObjectProperty';
 
-  const renderPropertyTree = (
-    properties: Property[],
-    onSelect: (prop: Property) => void,
-    selected: Property | null,
-    searchQuery: string,
-    isDataProperty: boolean = false
-  ) => {
-    return properties
-      .filter(prop => !searchQuery || prop.label.toLowerCase().includes(searchQuery.toLowerCase()))
-      .map(prop => (
-        <div
-          key={prop.id}
-          onClick={() => onSelect(prop)}
-          className={`flex items-center gap-2 px-3 py-2.5 cursor-pointer transition-colors ${
-            selected?.id === prop.id 
-              ? 'bg-gray-100 border-l-3 border-l-gray-700' 
-              : 'hover:bg-gray-50'
-          }`}
-        >
-          <span className={`w-2.5 h-2.5 rounded-sm ${
-            selected?.id === prop.id 
-              ? 'bg-gray-700'
-              : isDataProperty ? 'bg-green-500' : 'bg-blue-500'
-          }`} />
-          <span className={`text-sm font-mono ${
-            selected?.id === prop.id ? 'font-semibold text-gray-900' : 'text-gray-700'
-          }`}>
-            {prop.label}
-          </span>
-        </div>
-      ));
+    const topPropertyLabel = isDataProperty
+      ? 'owl:topDataProperty'
+      : 'owl:topObjectProperty';
+
+    // If no properties provided, create just the top property
+    if (properties.length === 0) {
+      return [{
+        id: topPropertyIri,
+        label: topPropertyLabel,
+        hasChildren: false,
+        children: []
+      }];
+    }
+
+    // Build a map of properties by ID for quick lookup
+    const propMap = new Map<string, Property>();
+    properties.forEach(prop => propMap.set(prop.id, prop));
+
+    // Build children map: parentId -> child properties
+    const childrenMap = new Map<string, Property[]>();
+
+    properties.forEach(prop => {
+      if (prop.superProperties && prop.superProperties.length > 0) {
+        // This property has parents, add it as a child to each parent
+        prop.superProperties.forEach(parentId => {
+          if (!childrenMap.has(parentId)) {
+            childrenMap.set(parentId, []);
+          }
+          childrenMap.get(parentId)!.push(prop);
+        });
+      } else {
+        // No superProperties means it's a direct child of top property
+        if (!childrenMap.has(topPropertyIri)) {
+          childrenMap.set(topPropertyIri, []);
+        }
+        childrenMap.get(topPropertyIri)!.push(prop);
+      }
+    });
+
+    // Recursive function to build tree nodes
+    const buildNode = (prop: Property): TreeNode => {
+      const children = childrenMap.get(prop.id) || [];
+      return {
+        id: prop.id,
+        label: prop.label,
+        hasChildren: children.length > 0,
+        children: children.map(buildNode)
+      };
+    };
+
+    // Build top property node
+    const topPropertyChildren = childrenMap.get(topPropertyIri) || [];
+
+    const result = [{
+      id: topPropertyIri,
+      label: topPropertyLabel,
+      hasChildren: topPropertyChildren.length > 0,
+      children: topPropertyChildren.map(buildNode)
+    }];
+
+    // Debug logging
+    console.log(`[propertiesToTree] ${isDataProperty ? 'Data' : 'Object'} Properties:`, {
+      inputCount: properties.length,
+      topPropertyChildren: topPropertyChildren.length,
+      hasChildren: topPropertyChildren.length > 0,
+      firstFewProps: properties.slice(0, 3).map(p => ({ label: p.label, superProperties: p.superProperties })),
+      childrenMapKeys: Array.from(childrenMap.keys()),
+      result: result[0]
+    });
+
+    return result;
   };
 
   const buildObjectRestriction = (): string => {
     if (!selectedProperty || !restrictionFiller) return '';
-    
+
     const propName = selectedProperty.label;
     const fillerName = restrictionFiller.label;
-    
+
     switch (restrictionType) {
       case 'some':
         return `${propName} some ${fillerName}`;
@@ -186,9 +196,9 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
 
   const buildDataRestriction = (): string => {
     if (!selectedDataProperty) return '';
-    
+
     const propName = selectedDataProperty.label;
-    
+
     switch (dataRestrictionType) {
       case 'some':
         return `${propName} some ${datatype}`;
@@ -207,7 +217,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
 
   const handleConfirm = () => {
     let expression = '';
-    
+
     switch (activeTab) {
       case 'hierarchy':
         if (selectedClass) expression = selectedClass.id;
@@ -222,7 +232,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
         expression = buildDataRestriction();
         break;
     }
-    
+
     if (expression) {
       onConfirm(expression);
       handleClose();
@@ -230,12 +240,82 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   };
 
   const handleClose = () => {
+    // Reset all state
     setSelectedClass(null);
     setSelectedProperty(null);
     setRestrictionFiller(null);
     setSelectedDataProperty(null);
     setManchesterExpression('');
+    setClassSearchQuery('');
+    setFillerSearchQuery('');
+    setActiveTab('hierarchy');
     onClose();
+  };
+
+  // Handle toggle for hierarchy tab
+  const handleHierarchyToggle = async (nodeId: string) => {
+    if (onToggleNode) {
+      await onToggleNode(nodeId);
+    } else {
+      // Fallback to local state
+      const isExpanded = localExpandedNodes.includes(nodeId);
+      setLocalExpandedNodes(
+        isExpanded
+          ? localExpandedNodes.filter(id => id !== nodeId)
+          : [...localExpandedNodes, nodeId]
+      );
+    }
+  };
+
+  // Handle toggle for object properties
+  const handleObjectPropertyToggle = async (nodeId: string) => {
+    if (onToggleObjectProperty) {
+      await onToggleObjectProperty(nodeId);
+    }
+    // Also update local expanded state
+    const isExpanded = propertyExpandedNodes.includes(nodeId);
+    setPropertyExpandedNodes(
+      isExpanded
+        ? propertyExpandedNodes.filter(id => id !== nodeId)
+        : [...propertyExpandedNodes, nodeId]
+    );
+  };
+
+  // Handle toggle for data properties
+  const handleDataPropertyToggle = async (nodeId: string) => {
+    if (onToggleDataProperty) {
+      await onToggleDataProperty(nodeId);
+    }
+    // Also update local expanded state
+    const isExpanded = dataPropertyExpandedNodes.includes(nodeId);
+    setDataPropertyExpandedNodes(
+      isExpanded
+        ? dataPropertyExpandedNodes.filter(id => id !== nodeId)
+        : [...dataPropertyExpandedNodes, nodeId]
+    );
+  };
+
+  // Handle toggle for restriction filler
+  const handleFillerToggle = async (nodeId: string) => {
+    if (onToggleNode) {
+      // Use parent's toggle if available
+      await onToggleNode(nodeId);
+      // Also update local state for this panel
+      const isExpanded = fillerExpandedNodes.includes(nodeId);
+      setFillerExpandedNodes(
+        isExpanded
+          ? fillerExpandedNodes.filter(id => id !== nodeId)
+          : [...fillerExpandedNodes, nodeId]
+      );
+    } else {
+      // Fallback to local state only
+      const isExpanded = fillerExpandedNodes.includes(nodeId);
+      setFillerExpandedNodes(
+        isExpanded
+          ? fillerExpandedNodes.filter(id => id !== nodeId)
+          : [...fillerExpandedNodes, nodeId]
+      );
+    }
   };
 
   const datatypes = [
@@ -261,207 +341,163 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
     'xsd:string'
   ];
 
+  const restrictionTypes = [
+    { value: 'some', label: 'Some (existential)' },
+    { value: 'only', label: 'Only (universal)' },
+    { value: 'min', label: 'Min (minimum cardinality)' },
+    { value: 'max', label: 'Max (maximum cardinality)' },
+    { value: 'exactly', label: 'Exactly (exact cardinality)' },
+    { value: 'value', label: 'Value (has value)' }
+  ];
+
+  const manchesterKeywords = ['and', 'or', 'not', 'some', 'only', 'min', 'max', 'exactly', 'value'];
+
+  const isOkEnabled =
+    (activeTab === 'hierarchy' && selectedClass) ||
+    (activeTab === 'objectRestriction' && selectedProperty && restrictionFiller) ||
+    (activeTab === 'classExpression' && manchesterExpression.trim()) ||
+    (activeTab === 'dataRestriction' && selectedDataProperty);
+
+  if (!isOpen) return null;
+
+  // Use external property trees if provided, otherwise convert from flat list
+  const objectPropertiesTree = externalObjectPropertiesTree || propertiesToTree(objectProperties, false);
+  const dataPropertiesTree = externalDataPropertiesTree || propertiesToTree(dataProperties, true);
+
+  // Debug logging
+  console.log('[ClassExpressionDialog] Object Properties Tree Debug:', {
+    externalProvided: !!externalObjectPropertiesTree,
+    treeLength: objectPropertiesTree.length,
+    firstNode: objectPropertiesTree[0],
+    hasChildren: objectPropertiesTree[0]?.hasChildren,
+    childrenCount: objectPropertiesTree[0]?.children?.length
+  });
+
+  // Use parent's expanded nodes if available, otherwise use local
+  const effectiveExpandedNodes = onToggleNode ? expandedNodes : localExpandedNodes;
+  const effectiveFillerExpandedNodes = onToggleNode ? [...expandedNodes, ...fillerExpandedNodes] : fillerExpandedNodes;
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-6xl mx-4 flex flex-col h-[90vh]">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-7xl mx-4 flex flex-col h-[90vh]">
         {/* Header */}
-        <div className="px-6 py-4 border-b bg-gray-800 flex justify-between items-center">
-          <h3 className="text-lg font-semibold text-white">{title}</h3>
-          <button 
-            onClick={handleClose} 
-            className="text-white hover:bg-gray-700 rounded-lg p-1.5 transition-colors"
+        <div className="px-6 py-3 border-b border-gray-300 flex justify-between items-center bg-gray-50">
+          <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
+          <button
+            onClick={handleClose}
+            className="text-gray-400 hover:text-gray-600 transition-colors"
+            title="Close"
           >
             <X size={20} />
           </button>
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b bg-gray-50">
+        <div className="flex border-b border-gray-300 bg-gray-100">
           <button
             onClick={() => setActiveTab('hierarchy')}
-            className={`px-5 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            className={`px-4 py-2 text-sm font-medium transition-colors ${
               activeTab === 'hierarchy'
-                ? 'border-indigo-500 text-indigo-700 bg-white'
-                : 'border-transparent text-gray-600 hover:text-gray-800 hover:bg-gray-100'
+                ? 'bg-white text-gray-900 border-t-2 border-t-blue-500'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
             }`}
           >
             Class hierarchy
           </button>
           <button
             onClick={() => setActiveTab('objectRestriction')}
-            className={`px-5 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            className={`px-4 py-2 text-sm font-medium transition-colors ${
               activeTab === 'objectRestriction'
-                ? 'border-indigo-500 text-indigo-700 bg-white'
-                : 'border-transparent text-gray-600 hover:text-gray-800 hover:bg-gray-100'
+                ? 'bg-white text-gray-900 border-t-2 border-t-blue-500'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
             }`}
           >
             Object restriction creator
           </button>
           <button
             onClick={() => setActiveTab('classExpression')}
-            className={`px-5 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            className={`px-4 py-2 text-sm font-medium transition-colors ${
               activeTab === 'classExpression'
-                ? 'border-indigo-500 text-indigo-700 bg-white'
-                : 'border-transparent text-gray-600 hover:text-gray-800 hover:bg-gray-100'
+                ? 'bg-white text-gray-900 border-t-2 border-t-blue-500'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
             }`}
           >
             Class expression editor
           </button>
           <button
             onClick={() => setActiveTab('dataRestriction')}
-            className={`px-5 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            className={`px-4 py-2 text-sm font-medium transition-colors ${
               activeTab === 'dataRestriction'
-                ? 'border-indigo-500 text-indigo-700 bg-white'
-                : 'border-transparent text-gray-600 hover:text-gray-800 hover:bg-gray-100'
+                ? 'bg-white text-gray-900 border-t-2 border-t-blue-500'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
             }`}
           >
             Data restriction creator
           </button>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-hidden">
+        {/* Content Area */}
+        <div className="flex-1 overflow-hidden min-h-0 bg-white">
           {/* Class Hierarchy Tab */}
           {activeTab === 'hierarchy' && (
-            <div className="h-full flex flex-col">
-              <div className="p-3 border-b bg-gray-50">
-                <div className="flex items-center gap-2 mb-2">
-                  <h4 className="text-sm font-semibold text-gray-700">Class hierarchy</h4>
-                  <select className="ml-auto px-2 py-1 text-xs border rounded bg-white">
-                    <option>Asserted</option>
-                    <option>Inferred</option>
-                  </select>
-                </div>
-                <div className="relative">
-                  <Search size={16} className="absolute left-3 top-2.5 text-gray-400" />
-                  <input
-                    type="text"
-                    placeholder="Search classes..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-9 pr-3 py-2 text-sm border border-purple-200 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white"
-                  />
-                </div>
-              </div>
-              <div className="flex-1 overflow-y-auto bg-white">
-                {classHierarchy.length > 0 ? (
-                  renderClassTree(classHierarchy, 0, setSelectedClass, selectedClass, searchQuery)
-                ) : (
-                  <div className="flex items-center justify-center h-full text-sm text-gray-400 italic">
-                    No classes available
-                  </div>
-                )}
-              </div>
+            <div className="h-full">
+              <EntityHierarchy
+                entitiesTab="Classes"
+                filteredData={classHierarchy}
+                selectedItem={selectedClass}
+                expandedNodes={effectiveExpandedNodes}
+                searchQuery={classSearchQuery}
+                onSearchQueryChange={setClassSearchQuery}
+                onSelectItem={(item) => setSelectedClass(item as TreeNode)}
+                onToggleNode={handleHierarchyToggle}
+                onAddItem={onAddClass || (() => {})}
+                onDeleteItem={onDeleteClass || (() => {})}
+              />
             </div>
           )}
 
           {/* Object Restriction Creator Tab */}
           {activeTab === 'objectRestriction' && (
-            <div className="h-full flex flex-col">
-              {/* Restriction type - Top panel */}
-              <div className="p-4 bg-gray-50 border-b">
-                <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Restriction type</h4>
-                <div className="flex items-center gap-3">
-                  <select
-                    value={restrictionType}
-                    onChange={(e) => setRestrictionType(e.target.value as any)}
-                    className="flex-1 px-3 py-2 bg-white border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                  >
-                    <option value="some">Some (existential)</option>
-                    <option value="only">Only (universal)</option>
-                    <option value="min">Min (minimum cardinality)</option>
-                    <option value="max">Max (maximum cardinality)</option>
-                    <option value="exactly">Exactly (exact cardinality)</option>
-                    <option value="value">Value (has value)</option>
-                  </select>
-                  {(restrictionType === 'min' || restrictionType === 'max' || restrictionType === 'exactly') && (
-                    <div className="flex items-center gap-2">
-                      <label className="text-sm font-medium text-gray-700">Cardinality</label>
-                      <input
-                        type="number"
-                        min="0"
-                        step="1"
-                        value={cardinality}
-                        onChange={(e) => setCardinality(parseInt(e.target.value) || 0)}
-                        className="w-24 px-2 py-1.5 bg-white border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
-                      />
-                    </div>
-                  )}
+            <div className="h-full flex">
+              {/* LEFT: Restricted property - Uses EntityHierarchy */}
+              <div className="w-1/2 border-r border-gray-300 flex flex-col">
+                <div className="bg-gray-100 px-3 py-2 border-b border-gray-300">
+                  <h4 className="text-sm font-semibold text-gray-700">Restricted property</h4>
+                </div>
+                <div className="flex-1 overflow-hidden">
+                  <EntityHierarchy
+                    entitiesTab="ObjectProperties"
+                    filteredData={objectPropertiesTree}
+                    selectedItem={selectedProperty as any}
+                    expandedNodes={propertyExpandedNodes}
+                    searchQuery=""
+                    onSearchQueryChange={() => {}}
+                    onSelectItem={(item) => setSelectedProperty(item as any as Property)}
+                    onToggleNode={handleObjectPropertyToggle}
+                    onAddItem={() => {}}
+                    onDeleteItem={() => {}}
+                  />
                 </div>
               </div>
 
-              {/* Two-column layout */}
-              <div className="flex-1 flex overflow-hidden">
-                {/* Restricted property */}
-                <div className="w-1/2 border-r flex flex-col bg-white">
-                  <div className="p-3 border-b bg-gray-50">
-                    <h4 className="text-sm font-semibold text-gray-700 mb-2">Restricted property</h4>
-                    <div className="relative">
-                      <Search size={16} className="absolute left-3 top-2.5 text-gray-400" />
-                      <input
-                        type="text"
-                        placeholder="Search properties..."
-                        value={propertySearchQuery}
-                        onChange={(e) => setPropertySearchQuery(e.target.value)}
-                        className="w-full pl-9 pr-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex-1 overflow-y-auto">
-                    {objectProperties.length > 0 ? (
-                      renderPropertyTree(objectProperties, setSelectedProperty, selectedProperty, propertySearchQuery, false)
-                    ) : (
-                      <div className="flex flex-col">
-                        <div
-                          onClick={() => setSelectedProperty({ id: 'http://www.w3.org/2002/07/owl#topObjectProperty', label: 'owl:topObjectProperty', type: 'ObjectProperty' } as Property)}
-                          className={`flex items-center gap-2 px-3 py-2.5 cursor-pointer transition-colors ${
-                            selectedProperty?.id === 'http://www.w3.org/2002/07/owl#topObjectProperty'
-                              ? 'bg-gray-100 border-l-3 border-l-gray-700'
-                              : 'hover:bg-gray-50'
-                          }`}
-                        >
-                          <span className="w-2.5 h-2.5 rounded-sm bg-blue-500" />
-                          <span className="text-sm font-mono text-gray-700">owl:topObjectProperty</span>
-                        </div>
-                        {onCreateProperty && (
-                          <div className="p-4 text-center">
-                            <button
-                              onClick={onCreateProperty}
-                              className="px-4 py-2 text-sm text-blue-600 hover:text-blue-700 border border-blue-300 hover:border-blue-400 rounded-md hover:bg-blue-50 transition-colors"
-                            >
-                              Create new object property
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
+              {/* RIGHT: Restriction filler - Uses EntityHierarchy */}
+              <div className="w-1/2 flex flex-col">
+                <div className="bg-gray-100 px-3 py-2 border-b border-gray-300">
+                  <h4 className="text-sm font-semibold text-gray-700">Restriction filler</h4>
                 </div>
-
-                {/* Restriction filler */}
-                <div className="w-1/2 flex flex-col bg-white">
-                  <div className="p-3 border-b bg-gray-50">
-                    <h4 className="text-sm font-semibold text-gray-700 mb-2">Restriction filler</h4>
-                    <div className="relative">
-                      <Search size={16} className="absolute left-3 top-2.5 text-gray-400" />
-                      <input
-                        type="text"
-                        placeholder="Search classes..."
-                        value={fillerSearchQuery}
-                        onChange={(e) => setFillerSearchQuery(e.target.value)}
-                        className="w-full pl-9 pr-3 py-2 text-sm border border-amber-200 rounded-md focus:outline-none focus:ring-2 focus:ring-amber-500"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex-1 overflow-y-auto">
-                    {classHierarchy.length > 0 ? (
-                      renderClassTree(classHierarchy, 0, setRestrictionFiller, restrictionFiller, fillerSearchQuery)
-                    ) : (
-                      <div className="flex items-center justify-center h-full text-sm text-gray-400 italic">
-                        No classes available
-                      </div>
-                    )}
-                  </div>
+                <div className="flex-1 overflow-hidden">
+                  <EntityHierarchy
+                    entitiesTab="Classes"
+                    filteredData={classHierarchy}
+                    selectedItem={restrictionFiller}
+                    expandedNodes={effectiveFillerExpandedNodes}
+                    searchQuery={fillerSearchQuery}
+                    onSearchQueryChange={setFillerSearchQuery}
+                    onSelectItem={(item) => setRestrictionFiller(item as TreeNode)}
+                    onToggleNode={handleFillerToggle}
+                    onAddItem={() => {}}
+                    onDeleteItem={() => {}}
+                  />
                 </div>
               </div>
             </div>
@@ -469,34 +505,34 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
 
           {/* Class Expression Editor Tab */}
           {activeTab === 'classExpression' && (
-            <div className="h-full p-6 flex flex-col bg-white">
-              <div className="flex-1 flex flex-col">
-                <label className="text-sm font-bold text-gray-700 mb-2">Manchester OWL Syntax</label>
+            <div className="h-full p-6 flex flex-col">
+              <div className="flex-1 flex flex-col min-h-0">
+                <label className="text-sm font-semibold text-gray-700 mb-2">Manchester OWL Syntax</label>
                 <textarea
                   value={manchesterExpression}
                   onChange={(e) => setManchesterExpression(e.target.value)}
-                  placeholder="Enter Manchester OWL Syntax expression"
-                  className="flex-1 p-4 border-2 border-purple-200 rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none bg-white shadow-sm"
+                  placeholder="e.g., Cell and hasPart some Nucleus&#10;      Person and hasAge some xsd:integer&#10;      hasSibling min 2 Person"
+                  className="flex-1 p-4 border border-gray-300 rounded font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                 />
               </div>
-              <div className="mt-4 p-4 bg-white rounded-lg border border-purple-200 shadow-sm">
-                <p className="text-xs font-bold text-gray-700 mb-2">KEYWORDS</p>
+              <div className="mt-4 p-4 bg-blue-50 rounded border border-blue-200">
+                <p className="text-xs font-semibold text-blue-900 mb-2">KEYWORDS</p>
                 <div className="flex flex-wrap gap-2 mb-3">
-                  {['and', 'or', 'not', 'some', 'only', 'min', 'max', 'exactly', 'value'].map(kw => (
+                  {manchesterKeywords.map(kw => (
                     <button
                       key={kw}
                       onClick={() => setManchesterExpression(prev => prev + (prev ? ' ' : '') + kw + ' ')}
-                      className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs font-mono rounded border transition-colors"
+                      className="px-3 py-1 bg-white hover:bg-blue-100 text-blue-900 text-xs font-mono rounded border border-blue-300 transition-colors"
                     >
                       {kw}
                     </button>
                   ))}
                 </div>
-                <p className="text-xs font-bold text-gray-700 mb-1">EXAMPLES</p>
-                <ul className="text-xs text-gray-600 space-y-1">
+                <p className="text-xs font-semibold text-blue-900 mb-1.5">EXAMPLES</p>
+                <ul className="text-xs text-blue-800 space-y-1">
                   <li className="font-mono">• Cell and hasPart some Nucleus</li>
-                  <li className="font-mono">• locatedIn only PlantCell</li>
-                  <li className="font-mono">• hasPart max 1 Nucleus</li>
+                  <li className="font-mono">• Person and hasAge some xsd:integer</li>
+                  <li className="font-mono">• hasSibling min 2 Person</li>
                   <li className="font-mono">• (Cat or Dog) and hasFur value true</li>
                 </ul>
               </div>
@@ -505,116 +541,114 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
 
           {/* Data Restriction Creator Tab */}
           {activeTab === 'dataRestriction' && (
-            <div className="h-full flex flex-col">
-              {/* Restriction type - Top panel */}
-              <div className="p-4 bg-gradient-to-r from-green-50 to-emerald-50 border-b">
-                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Restriction type</h4>
-                <div className="flex items-center gap-3">
-                  <select
-                    value={dataRestrictionType}
-                    onChange={(e) => setDataRestrictionType(e.target.value as any)}
-                    className="flex-1 px-3 py-2 bg-white border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                  >
-                    <option value="some">Some (existential)</option>
-                    <option value="only">Only (universal)</option>
-                    <option value="min">Min (minimum cardinality)</option>
-                    <option value="max">Max (maximum cardinality)</option>
-                    <option value="exactly">Exactly (exact cardinality)</option>
-                  </select>
-                  {(dataRestrictionType === 'min' || dataRestrictionType === 'max' || dataRestrictionType === 'exactly') && (
-                    <div className="flex items-center gap-2">
-                      <label className="text-sm font-medium text-gray-700">Cardinality</label>
-                      <input
-                        type="number"
-                        min="0"
-                        step="1"
-                        value={dataCardinality}
-                        onChange={(e) => setDataCardinality(parseInt(e.target.value) || 0)}
-                        className="w-24 px-2 py-1.5 bg-white border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                      />
-                    </div>
-                  )}
+            <div className="h-full flex">
+              {/* LEFT: Restricted property - Uses EntityHierarchy */}
+              <div className="w-1/2 border-r border-gray-300 flex flex-col">
+                <div className="bg-gray-100 px-3 py-2 border-b border-gray-300">
+                  <h4 className="text-sm font-semibold text-gray-700">Restricted property</h4>
+                </div>
+                <div className="flex-1 overflow-hidden">
+                  <EntityHierarchy
+                    entitiesTab="DataProperties"
+                    filteredData={dataPropertiesTree}
+                    selectedItem={selectedDataProperty as any}
+                    expandedNodes={dataPropertyExpandedNodes}
+                    searchQuery=""
+                    onSearchQueryChange={() => {}}
+                    onSelectItem={(item) => setSelectedDataProperty(item as any as Property)}
+                    onToggleNode={handleDataPropertyToggle}
+                    onAddItem={() => {}}
+                    onDeleteItem={() => {}}
+                  />
                 </div>
               </div>
 
-              {/* Two-column layout */}
-              <div className="flex-1 flex overflow-hidden">
-                {/* Restricted property */}
-                <div className="w-1/2 border-r flex flex-col bg-white">
-                  <div className="p-3 border-b bg-gradient-to-r from-green-50 to-green-100">
-                    <div className="flex items-center justify-between mb-2">
-                      <h4 className="text-sm font-bold text-green-900">Restricted property</h4>
-                      <select className="px-2 py-1 text-xs border border-green-200 rounded bg-white text-green-900">
-                        <option>Asserted</option>
-                        <option>Inferred</option>
-                      </select>
-                    </div>
-                    <div className="relative">
-                      <Search size={16} className="absolute left-3 top-2.5 text-gray-400" />
-                      <input
-                        type="text"
-                        placeholder="Search data properties..."
-                        value={dataPropertySearchQuery}
-                        onChange={(e) => setDataPropertySearchQuery(e.target.value)}
-                        className="w-full pl-9 pr-3 py-2 text-sm border border-green-200 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex-1 overflow-y-auto">
-                    {dataProperties.length > 0 ? (
-                      renderPropertyTree(dataProperties, setSelectedDataProperty, selectedDataProperty, dataPropertySearchQuery, true)
-                    ) : (
-                      <div className="flex items-center justify-center h-full text-sm text-gray-400 italic">
-                        No data properties available
-                      </div>
-                    )}
-                  </div>
+              {/* RIGHT: Restriction filler (Datatypes) */}
+              <div className="w-1/2 flex flex-col">
+                <div className="bg-gray-100 px-3 py-2 border-b border-gray-300">
+                  <h4 className="text-sm font-semibold text-gray-700">Restriction filler</h4>
                 </div>
-
-                {/* Restriction filler (Datatypes) */}
-                <div className="w-1/2 flex flex-col bg-white">
-                  <div className="p-3 border-b bg-gradient-to-r from-red-50 to-red-100">
-                    <h4 className="text-sm font-bold text-red-900">Restriction filler (Datatypes)</h4>
-                  </div>
-                  <div className="flex-1 overflow-y-auto">
-                    {datatypes.map(dt => (
-                      <div
-                        key={dt}
-                        onClick={() => setDatatype(dt)}
-                        className={`px-3 py-2.5 hover:bg-red-50 cursor-pointer transition-colors border-b border-gray-100 ${
-                          datatype === dt ? 'bg-red-100 border-l-4 border-l-red-500' : ''
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className={`w-3 h-3 rounded-full ${datatype === dt ? 'bg-red-500' : 'bg-red-300'} border border-red-600`} />
-                          <span className={`text-sm font-mono ${datatype === dt ? 'font-bold text-red-900' : 'text-gray-700'}`}>{dt}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                <div className="flex-1 overflow-y-auto">
+                  {datatypes.map(dt => (
+                    <div
+                      key={dt}
+                      onClick={() => setDatatype(dt)}
+                      className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer transition-colors text-sm border-b border-gray-100 ${
+                        datatype === dt ? 'bg-red-50 font-semibold' : 'hover:bg-gray-50'
+                      }`}
+                    >
+                      <span className={`w-3.5 h-3.5 rounded-sm border flex-shrink-0 ${
+                        datatype === dt ? 'bg-red-600 border-red-700' : 'bg-red-400 border-red-600'
+                      }`} />
+                      <span className="font-mono text-xs">{dt}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
           )}
         </div>
 
+        {/* Restriction Type Controls - Bottom panel for restriction tabs */}
+        {(activeTab === 'objectRestriction' || activeTab === 'dataRestriction') && (
+          <div className="px-4 py-3 bg-gray-50 border-t border-gray-300">
+            <div className="flex items-center gap-4">
+              <label className="text-sm font-semibold text-gray-700">Restriction type</label>
+              <select
+                value={activeTab === 'objectRestriction' ? restrictionType : dataRestrictionType}
+                onChange={(e) => {
+                  const val = e.target.value as any;
+                  if (activeTab === 'objectRestriction') {
+                    setRestrictionType(val);
+                  } else {
+                    setDataRestrictionType(val);
+                  }
+                }}
+                className="flex-1 max-w-xs px-3 py-2 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {restrictionTypes
+                  .filter(t => activeTab === 'dataRestriction' ? t.value !== 'value' : true)
+                  .map(type => (
+                    <option key={type.value} value={type.value}>{type.label}</option>
+                  ))}
+              </select>
+
+              {((activeTab === 'objectRestriction' && (restrictionType === 'min' || restrictionType === 'max' || restrictionType === 'exactly')) ||
+                (activeTab === 'dataRestriction' && (dataRestrictionType === 'min' || dataRestrictionType === 'max' || dataRestrictionType === 'exactly'))) && (
+                <>
+                  <label className="text-sm font-semibold text-gray-700">Cardinality</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={activeTab === 'objectRestriction' ? cardinality : dataCardinality}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value) || 0;
+                      if (activeTab === 'objectRestriction') {
+                        setCardinality(val);
+                      } else {
+                        setDataCardinality(val);
+                      }
+                    }}
+                    className="w-24 px-3 py-2 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Footer */}
-        <div className="px-6 py-4 border-t bg-gradient-to-r from-gray-50 to-gray-100 flex justify-end gap-3">
+        <div className="px-6 py-3 border-t border-gray-300 flex justify-end gap-3 bg-gray-50">
           <button
             onClick={handleClose}
-            className="px-6 py-2.5 text-sm font-semibold text-gray-700 bg-white border-2 border-gray-300 rounded-lg hover:bg-gray-50 hover:border-gray-400 transition-all shadow-sm"
+            className="px-5 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-100 transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={handleConfirm}
-            disabled={
-              (activeTab === 'hierarchy' && !selectedClass) ||
-              (activeTab === 'objectRestriction' && (!selectedProperty || !restrictionFiller)) ||
-              (activeTab === 'classExpression' && !manchesterExpression.trim()) ||
-              (activeTab === 'dataRestriction' && !selectedDataProperty)
-            }
-            className="px-6 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-purple-600 to-indigo-600 rounded-lg hover:from-purple-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg"
+            disabled={!isOkEnabled}
+            className="px-5 py-2 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             OK
           </button>
