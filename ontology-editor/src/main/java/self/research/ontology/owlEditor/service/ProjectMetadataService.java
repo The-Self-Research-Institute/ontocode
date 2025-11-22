@@ -100,4 +100,28 @@ public class ProjectMetadataService {
                 .map(ProjectDocument::getId)
                 .findFirst();
     }
+
+    /**
+     * FIX: Batch update project metadata in a single database operation
+     * Improves performance by avoiding 3 separate DB writes
+     */
+    public void updateProjectMetadata(String projectId, ProjectStatus status, String gridfsFileId, String ownerEmail) {
+        ProjectDocument doc = projectRepository.findById(projectId)
+                .orElse(new ProjectDocument(projectId, projectId, status.filename()));
+
+        // Update all fields in single operation
+        doc.setStatus(status.status());
+        doc.setStatusMessage(status.statusMessage());
+        doc.setFilename(status.filename());
+        doc.setGridfsFileId(gridfsFileId);
+
+        if (ownerEmail != null && !ownerEmail.isEmpty()) {
+            doc.setOwnerEmail(ownerEmail);
+        }
+
+        doc.setUpdatedAt(Instant.now());
+
+        // Single database write
+        projectRepository.save(doc);
+    }
 }

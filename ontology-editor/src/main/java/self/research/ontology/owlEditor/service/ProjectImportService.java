@@ -15,6 +15,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -27,35 +28,94 @@ public class ProjectImportService {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectImportService.class);
 
+    // Prevent concurrent imports for the same project (which cause overlapping progress threads and GraphDB clears)
+    private final Map<String, AtomicBoolean> importInProgress = new ConcurrentHashMap<>();
+
     private final Executor owlParsingExecutor;
     private final GraphDBDatasetService datasetService;
     private final OntologyIndexService indexService;
     private final ProjectMetadataService metadataService;
     private final StorageManager storageManager;
     private final SimpMessagingTemplate messagingTemplate;
+    private final ImportQueueManager queueManager;
 
     public ProjectImportService(@Qualifier("owlParsingExecutor") Executor owlParsingExecutor,
                                 GraphDBDatasetService datasetService,
                                 OntologyIndexService indexService,
                                 ProjectMetadataService metadataService,
                                 StorageManager storageManager,
-                                SimpMessagingTemplate messagingTemplate) {
+                                SimpMessagingTemplate messagingTemplate,
+                                ImportQueueManager queueManager) {
         this.owlParsingExecutor = owlParsingExecutor;
         this.datasetService = datasetService;
         this.indexService = indexService;
         this.metadataService = metadataService;
         this.storageManager = storageManager;
         this.messagingTemplate = messagingTemplate;
+        this.queueManager = queueManager;
     }
 
     public void submitImport(String projectId, Path owlFile) {
-        owlParsingExecutor.execute(() -> runImport(projectId, owlFile));
+        submitImport(projectId, owlFile, null);
+    }
+
+    public void submitImport(String projectId, Path owlFile, String ownerEmail) {
+        String filename = owlFile.getFileName().toString();
+
+        log.info("[Import] Submitting import for project {}: {}", projectId, filename);
+
+        // Add to queue
+        queueManager.enqueue(projectId, filename, ownerEmail, owlFile);
+
+        // Try to process next item in queue
+        processNextInQueue();
+    }
+
+    private void processNextInQueue() {
+        if (!queueManager.canProcess()) {
+            log.debug("[Import] Cannot process - max concurrent imports reached");
+            return;
+        }
+
+        owlParsingExecutor.execute(() -> {
+            self.research.ontology.owlEditor.model.ImportQueueItem item = queueManager.dequeue();
+            if (item == null) {
+                return; // No items in queue
+            }
+
+            long startTime = System.currentTimeMillis();
+            try {
+                runImport(item.getProjectId(), item.getOwlFile());
+                long duration = System.currentTimeMillis() - startTime;
+                queueManager.markCompleted(item.getProjectId(), duration);
+            } catch (Exception e) {
+                log.error("[Import] Failed to process queue item for project {}", item.getProjectId(), e);
+                queueManager.markFailed(item.getProjectId());
+            } finally {
+                // Try to process next item in queue
+                processNextInQueue();
+            }
+        });
     }
 
     private void runImport(String projectId, Path owlFile) {
+        AtomicBoolean guard = importInProgress.computeIfAbsent(projectId, id -> new AtomicBoolean(false));
+        if (!guard.compareAndSet(false, true)) {
+            log.warn("[Import {}] Import already running, rejecting duplicate request", projectId);
+            Map<String, Object> errorMeta = new HashMap<>();
+            errorMeta.put("error", "Import already in progress for this project");
+            sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_FAILED,
+                    "ERROR", "Import already in progress, please wait", owlFile.getFileName().toString(), errorMeta);
+            return;
+        }
+
+        long importStart = System.nanoTime();
+        String stage = "initialization";
         String filename = metadataService.readStatus(projectId)
                 .map(ProjectStatus::filename)
                 .orElse(owlFile.getFileName().toString());
+
+        log.info("[Import {}] Starting import for file {}", projectId, filename);
 
         // Notify: Import started
         sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_STARTED,
@@ -63,14 +123,20 @@ public class ProjectImportService {
 
         metadataService.writeStatus(projectId, ProjectStatus.processing(filename));
         try {
+            stage = "detect-format";
             RDFFormat format = detectFormat(owlFile);
+            log.info("[Import {}] Detected RDF format: {}", projectId, format);
 
             // Clear dataset
-            log.info("Clearing dataset for project {}", projectId);
+            stage = "clear-dataset";
+            log.info("[Import {}] Clearing dataset", projectId);
+            long clearStart = System.nanoTime();
             datasetService.clearDataset(projectId);
+            log.info("[Import {}] Dataset cleared in {} ms", projectId, elapsedMillis(clearStart));
 
             // Load data with progress updates
-            log.info("Loading data for project {}", projectId);
+            stage = "bulk-load";
+            log.info("[Import {}] Loading data into GraphDB", projectId);
             long fileSize = Files.size(owlFile);
             log.info("File size: {} bytes ({} MB)", fileSize, fileSize / (1024 * 1024));
 
@@ -100,25 +166,38 @@ public class ProjectImportService {
             progressThread.setDaemon(true);
             progressThread.start();
 
+            long bulkLoadStart = System.nanoTime();
             try (InputStream in = Files.newInputStream(owlFile)) {
                 datasetService.bulkLoad(projectId, in, format);
             } finally {
                 loadingComplete.set(true);
             }
+            log.info("[Import {}] GraphDB bulk load completed in {} ms", projectId, elapsedMillis(bulkLoadStart));
+
+            Map<String, Object> postLoadMeta = new HashMap<>();
+            postLoadMeta.put("progress", 95);
+            postLoadMeta.put("stage", "graphdb-load-complete");
+            sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
+                    "PROCESSING", "GraphDB load finished, computing metadata", filename, postLoadMeta);
 
             // Copy file
+            stage = "persist-copy";
             Path current = storageManager.resolveProjectFile(projectId, "ontology.current." + extensionFor(format));
             Files.createDirectories(current.getParent());
             Files.copy(owlFile, current, StandardCopyOption.REPLACE_EXISTING);
 
             // Compute metadata
-            log.info("Computing metadata for project {}", projectId);
+            stage = "metadata";
+            log.info("[Import {}] Computing metadata", projectId);
+            long metadataStart = System.nanoTime();
             Map<String, Object> meta = indexService.computeMetadata(projectId);
+            log.info("[Import {}] Metadata computed in {} ms", projectId, elapsedMillis(metadataStart));
             metadataService.writeMeta(projectId, meta);
 
             // Update status
+            stage = "complete";
             metadataService.writeStatus(projectId, ProjectStatus.completed(filename));
-            log.info("Completed import for project {}", projectId);
+            log.info("Completed import for project {} in {} ms", projectId, elapsedMillis(importStart));
 
             // Notify: Import completed
             Map<String, Object> metadata = new HashMap<>();
@@ -128,7 +207,7 @@ public class ProjectImportService {
                     "COMPLETED", "Import completed successfully", filename, metadata);
 
         } catch (Exception e) {
-            log.error("Import failed for {}", projectId, e);
+            log.error("Import failed for {} while {}", projectId, stage, e);
             metadataService.writeStatus(projectId, ProjectStatus.error(filename, e.getMessage()));
 
             // Notify: Import failed
@@ -136,6 +215,8 @@ public class ProjectImportService {
             errorMeta.put("error", e.getMessage());
             sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_FAILED,
                     "ERROR", "Import failed: " + e.getMessage(), filename, errorMeta);
+        } finally {
+            guard.set(false);
         }
     }
 
@@ -201,5 +282,9 @@ public class ProjectImportService {
             return "jsonld";
         }
         return "owl";
+    }
+
+    private long elapsedMillis(long startNanos) {
+        return (System.nanoTime() - startNanos) / 1_000_000;
     }
 }

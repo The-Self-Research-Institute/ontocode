@@ -1,4 +1,5 @@
 import React from 'react';
+import { Loader2, CheckCircle2, XCircle } from 'lucide-react';
 
 interface ProjectInfo {
   id: string;
@@ -7,6 +8,7 @@ interface ProjectInfo {
   statusMessage?: string;
   updatedAt?: string;
   filename?: string;
+  progress?: number;
   metadata?: {
     counts?: {
       classes?: number;
@@ -22,15 +24,75 @@ interface ProjectSelectorProps {
   projects: ProjectInfo[];
   onSelectProject: (projectId: string) => void;
   onClose?: () => void;
+  importStatus?: { [projectId: string]: { type: string; status: string; progress?: number } };
 }
 
-export const ProjectSelector: React.FC<ProjectSelectorProps> = ({ projects, onSelectProject, onClose }) => {
+export const ProjectSelector: React.FC<ProjectSelectorProps> = ({ projects, onSelectProject, onClose, importStatus = {} }) => {
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return 'Unknown';
     try {
       return new Date(dateStr).toLocaleString();
     } catch {
       return dateStr;
+    }
+  };
+
+  const getStatusDisplay = (project: ProjectInfo) => {
+    // Check if there's an active import status for this project
+    const activeImport = importStatus[project.id];
+    const currentStatus = activeImport?.status || project.status;
+    const progress = activeImport?.progress || project.progress;
+
+    switch (currentStatus) {
+      case 'COMPLETED':
+        // Show READY badge for completed projects
+        return (
+          <div className="flex items-center gap-1.5">
+            <CheckCircle2 size={14} className="text-green-600" />
+            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+              READY
+            </span>
+          </div>
+        );
+      case 'PROCESSING':
+        return (
+          <div className="flex items-center gap-2">
+            <Loader2 size={14} className="animate-spin text-blue-600" />
+            <div className="flex flex-col gap-1">
+              <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                PROCESSING
+              </span>
+              {progress !== undefined && progress > 0 && (
+                <div className="w-32 bg-gray-200 rounded-full h-1.5">
+                  <div
+                    className="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
+                    style={{ width: `${Math.min(100, progress)}%` }}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      case 'ERROR':
+      case 'FAILED':
+        return (
+          <div className="flex items-center gap-1.5">
+            <XCircle size={14} className="text-red-600" />
+            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+              FAILED
+            </span>
+          </div>
+        );
+      case 'UPLOADED':
+        return (
+          <div className="flex items-center gap-1.5">
+            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+              READY
+            </span>
+          </div>
+        );
+      default:
+        return null;
     }
   };
 
@@ -84,39 +146,30 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({ projects, onSe
                       )}
                       <div className="flex items-center gap-4 mt-2 text-sm text-gray-500">
                         <span>Updated: {formatDate(project.updatedAt)}</span>
-                        {project.status && (
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                            project.status === 'COMPLETED' ? 'bg-green-100 text-green-800' :
-                            project.status === 'PROCESSING' ? 'bg-blue-100 text-blue-800' :
-                            project.status === 'FAILED' ? 'bg-red-100 text-red-800' :
-                            'bg-gray-100 text-gray-800'
-                          }`}>
-                            {project.status}
-                          </span>
-                        )}
+                        {getStatusDisplay(project)}
                       </div>
                     </div>
                     <div className="ml-4 text-right">
-                      {project.metadata?.counts && (
+                      {project.metadata && (
                         <div className="text-sm space-y-1">
-                          {project.metadata.counts.classes !== undefined && (
+                          {((project.metadata as any).classCount !== undefined || (project.metadata.counts?.classes !== undefined)) && (
                             <div className="text-gray-600">
-                              <span className="font-medium">{project.metadata.counts.classes}</span> classes
+                              <span className="font-medium">{(project.metadata as any).classCount || project.metadata.counts?.classes}</span> classes
                             </div>
                           )}
-                          {project.metadata.counts.objectProperties !== undefined && (
+                          {((project.metadata as any).objectPropertyCount !== undefined || (project.metadata.counts?.objectProperties !== undefined)) && (
                             <div className="text-gray-600">
-                              <span className="font-medium">{project.metadata.counts.objectProperties}</span> obj props
+                              <span className="font-medium">{(project.metadata as any).objectPropertyCount || project.metadata.counts?.objectProperties}</span> obj props
                             </div>
                           )}
-                          {project.metadata.counts.individuals !== undefined && (
+                          {((project.metadata as any).individualCount !== undefined || (project.metadata.counts?.individuals !== undefined)) && (
                             <div className="text-gray-600">
-                              <span className="font-medium">{project.metadata.counts.individuals}</span> individuals
+                              <span className="font-medium">{(project.metadata as any).individualCount || project.metadata.counts?.individuals}</span> individuals
                             </div>
                           )}
-                          {project.metadata.counts.triples !== undefined && (
+                          {((project.metadata as any).tripleCount !== undefined || (project.metadata.counts?.triples !== undefined)) && (
                             <div className="text-gray-500 text-xs mt-1">
-                              {project.metadata.counts.triples} triples
+                              {(project.metadata as any).tripleCount || project.metadata.counts?.triples} triples
                             </div>
                           )}
                         </div>

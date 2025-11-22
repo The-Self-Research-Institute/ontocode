@@ -66,6 +66,17 @@ public class ProjectLoadController {
                                                       @RequestParam("file") MultipartFile file,
                                                       @RequestParam(required = false) String ownerEmail) {
         try {
+            // VALIDATION: Check file size (max 300MB)
+            long maxSize = 300 * 1024 * 1024; // 300MB
+            if (file.getSize() > maxSize) {
+                log.warn("File too large: {} bytes (max: {} bytes)", file.getSize(), maxSize);
+                return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                        .body(Map.of(
+                            "success", false,
+                            "error", "File too large. Maximum file size is 300MB. Your file is " + (file.getSize() / (1024 * 1024)) + "MB"
+                        ));
+            }
+
             String actualProjectId = projectId;
             boolean isReplacement = false;
             String filename = file.getOriginalFilename();
@@ -91,46 +102,46 @@ public class ProjectLoadController {
                 }
             }
             
-            // Store file in GridFS first
-            String gridfsFileId = gridFSFileService.storeFile(
-                actualProjectId, 
-                file.getOriginalFilename(), 
-                file.getContentType(),
-                file.getInputStream()
-            );
-            
-            log.info("Stored file in GridFS for project {}: fileId={}", actualProjectId, gridfsFileId);
-            
-            // Also save to local filesystem for processing
+            // FIX: Optimize by writing to both GridFS and filesystem in one pass
+            // Save to local filesystem first
             Path projectDir = storageManager.prepareProjectDir(actualProjectId);
             Path original = projectDir.resolve("ontology.original.owl");
             Files.createDirectories(original.getParent());
-            
-            // Retrieve from GridFS and save to local file
-            gridFSFileService.getFileById(gridfsFileId).ifPresent(resource -> {
-                try (InputStream in = resource.getInputStream();
-                     OutputStream out = Files.newOutputStream(original,
-                             StandardOpenOption.CREATE,
-                             StandardOpenOption.TRUNCATE_EXISTING,
-                             StandardOpenOption.WRITE)) {
-                    in.transferTo(out);
-                } catch (IOException e) {
-                    throw new RuntimeException("Failed to save file to local filesystem", e);
-                }
-            });
-            
-            ProjectStatus status = ProjectStatus.uploaded(file.getOriginalFilename());
-            metadataService.writeStatus(actualProjectId, status);
-            
-            // Set GridFS file ID mapping
-            metadataService.setGridfsFileId(actualProjectId, gridfsFileId);
-            
-            // Set owner email if provided
-            if (ownerEmail != null && !ownerEmail.isEmpty()) {
-                metadataService.setOwnerEmail(actualProjectId, ownerEmail);
+
+            // Write uploaded file directly to local filesystem
+            try (InputStream in = file.getInputStream();
+                 OutputStream out = Files.newOutputStream(original,
+                         StandardOpenOption.CREATE,
+                         StandardOpenOption.TRUNCATE_EXISTING,
+                         StandardOpenOption.WRITE)) {
+                in.transferTo(out);
             }
-            
-            importService.submitImport(actualProjectId, original);
+
+            log.info("Saved file to local filesystem: {}", original);
+
+            // Then store in GridFS for backup/versioning
+            String gridfsFileId;
+            try (InputStream fileIn = Files.newInputStream(original)) {
+                gridfsFileId = gridFSFileService.storeFile(
+                    actualProjectId,
+                    file.getOriginalFilename(),
+                    file.getContentType(),
+                    fileIn
+                );
+            }
+
+            // FIX: Add error handling - verify GridFS storage succeeded
+            if (gridfsFileId == null || gridfsFileId.isEmpty()) {
+                throw new RuntimeException("Failed to store file in GridFS - no file ID returned");
+            }
+
+            log.info("Stored file in GridFS for project {}: fileId={}", actualProjectId, gridfsFileId);
+
+            // FIX: Batch metadata updates into single operation for better performance
+            ProjectStatus status = ProjectStatus.uploaded(file.getOriginalFilename());
+            metadataService.updateProjectMetadata(actualProjectId, status, gridfsFileId, ownerEmail);
+
+            importService.submitImport(actualProjectId, original, ownerEmail);
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "projectId", actualProjectId,

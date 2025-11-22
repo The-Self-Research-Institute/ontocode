@@ -23,7 +23,8 @@ import { ProjectSelector } from './ProjectSelector';
 import CollaborationPanel, { CollaborationPanelRef } from './CollaborationPanel';
 import ToastNotification from './ToastNotification';
 import ShareDialog from './ShareDialog';
-import { ImportProgressToast, ImportStatus } from './ImportProgressIndicator';
+// ImportProgressToast removed per user request
+import { QueueStatusIndicator, GlobalQueueStats } from './QueueStatusIndicator';
 import {
   ClassSelectorDialog,
   CreateIndividualModal,
@@ -161,8 +162,6 @@ const TopMenuBar = ({
   isSaving,
   draftCount,
   onOpenDialog,
-  showImportProgress,
-  onToggleImportProgress,
 }: {
   onToggleSwrlTab: () => void;
   isSwrlVisible: boolean;
@@ -179,8 +178,6 @@ const TopMenuBar = ({
   isSaving: boolean;
   draftCount?: number;
   onOpenDialog: () => void;
-  showImportProgress: boolean;
-  onToggleImportProgress: () => void;
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -258,20 +255,6 @@ const TopMenuBar = ({
                       className="flex justify-between items-center px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100"
                     >
                       SWRL Tab {isSwrlVisible && <Check size={14} className="text-purple-600" />}
-                    </a>
-                  </div>
-                ) : item === "View" ? (
-                  <div className="py-1">
-                    <a
-                      href="#"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        onToggleImportProgress();
-                        setOpenMenu(null);
-                      }}
-                      className="flex justify-between items-center px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100"
-                    >
-                      Import Progress {showImportProgress && <Check size={14} className="text-purple-600" />}
                     </a>
                   </div>
                 ) : item === "Reasoner" ? (
@@ -506,8 +489,13 @@ const OpenFileDialog = ({
           </div>
           {filteredFiles.length === 0 && (
             <div className="flex flex-col items-center justify-center py-12 text-gray-400">
-              <Search size={32} className="mb-2 opacity-50" />
-              <p className="text-sm">No files found</p>
+              <Search size={40} className="mb-3 opacity-30" />
+              <p className="text-base font-medium text-gray-600 mb-1">No ontology files found</p>
+              <p className="text-xs text-gray-500 max-w-xs text-center">
+                {searchQuery 
+                  ? `No files match "${searchQuery}". Try a different search.`
+                  : 'Upload an .owl or .rdf file to get started.'}
+              </p>
             </div>
           )}
         </div>
@@ -688,21 +676,23 @@ const Dashboard = () => {
   const [isInitialLoading, setIsInitialLoading] = useState(false);
   const [hasFetchedProjects, setHasFetchedProjects] = useState(false);
   const [hasUserSelectedFile, setHasUserSelectedFile] = useState(false);
+  const hasUserSelectedFileRef = useRef(false);
+  const [isExpectingFileReady, setIsExpectingFileReady] = useState(false); // Don't auto-load if expecting upload
+  const pendingImportProjectIdRef = useRef<string | null>(null); // Track which project is being imported (using ref for persistence)
   const [showLoadingChoice, setShowLoadingChoice] = useState(false);
   const [loadingProjectName, setLoadingProjectName] = useState("");
   const loadingPromiseRef = useRef<Promise<void> | null>(null);
+  const userLoadingChoice = useRef<'wait' | 'continue' | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [draftCount, setDraftCount] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Import status state
-  const [importStatus, setImportStatus] = useState<ImportStatus>({
-    type: 'IDLE',
-    status: 'COMPLETED',
-    statusMessage: '',
-  });
-  const [showImportProgress, setShowImportProgress] = useState(true);
+  // Import status state - Removed (ImportProgressToast removed per user request)
+  // Track import status for all projects (for ProjectSelector)
+  const [projectImportStatuses, setProjectImportStatuses] = useState<{ [projectId: string]: { type: string; status: string; progress?: number } }>({});
+  // Queue status visibility
+  const [showQueueStatus, setShowQueueStatus] = useState(false);
   const collaborationPanelRef = useRef<CollaborationPanelRef>(null);
   const [showOpenDialog, setShowOpenDialog] = useState(false);
   const [activeOntologySubTab, setActiveOntologySubTab] = useState('prefixes');
@@ -717,6 +707,10 @@ const Dashboard = () => {
   const [isAddDatatypeDialogOpen, setAddDatatypeDialogOpen] = useState(false);
   const [isKeyboardShortcutsDialogOpen, setKeyboardShortcutsDialogOpen] = useState(false);
   const [isEntityPreferencesDialogOpen, setEntityPreferencesDialogOpen] = useState(false);
+
+  useEffect(() => {
+    hasUserSelectedFileRef.current = hasUserSelectedFile;
+  }, [hasUserSelectedFile]);
 
   // Entity Preferences
   const { preferences, updatePreferences } = useEntityPreferences();
@@ -1150,9 +1144,18 @@ const Dashboard = () => {
         if (response.myFiles && response.sharedFiles) {
           const allProjects = [...(response.myFiles || []), ...(response.sharedFiles || [])];
           setAvailableProjects(allProjects);
+          setMyFiles(response.myFiles || []);
+          setSharedFiles(response.sharedFiles || []);
+          console.log('[Dashboard] Fetched', response.myFiles.length, 'myFiles and', response.sharedFiles.length, 'sharedFiles');
           
-          // Only auto-load the first file if user hasn't manually clicked on any file
-          if (!projectId && !hasUserSelectedFile && response.myFiles.length > 0) {
+          // Only auto-load the first file if:
+          // 1. No projectId is set
+          // 2. User hasn't manually clicked on any file
+          // 3. Not expecting a fileReady message from upload
+          // 4. This is NOT the initial mount (hasFetchedProjects was false before this call)
+          const shouldAutoLoad = !projectId && !hasUserSelectedFileRef.current && !isExpectingFileReady && hasFetchedProjects;
+          
+          if (shouldAutoLoad && response.myFiles.length > 0) {
             const firstProject = response.myFiles[0];
             console.log('[Dashboard] Auto-loading first project:', firstProject.id);
             setProjectId(firstProject.id);
@@ -1165,8 +1168,13 @@ const Dashboard = () => {
         } else if (response.projects) {
           // Backward compatibility with old format
           setAvailableProjects(response.projects);
+          // Assume all projects are "myFiles" if no sharedBy field
+          setMyFiles(response.projects.filter((p: any) => !p.sharedBy));
+          setSharedFiles(response.projects.filter((p: any) => p.sharedBy));
           
-          if (!projectId && !hasUserSelectedFile && response.projects.length > 0) {
+          const shouldAutoLoad = !projectId && !hasUserSelectedFileRef.current && !isExpectingFileReady && hasFetchedProjects;
+          
+          if (shouldAutoLoad && response.projects.length > 0) {
             const firstProject = response.projects[0];
             console.log('[Dashboard] Auto-loading first project:', firstProject.id);
             setProjectId(firstProject.id);
@@ -1182,7 +1190,7 @@ const Dashboard = () => {
       console.error("Failed to fetch projects:", error);
       setIsInitialLoading(false);
     }
-  }, [projectId, fetchData, user, hasUserSelectedFile]);
+  }, [projectId, fetchData, user, isExpectingFileReady]);
 
   const handleProjectSelection = useCallback((selectedProjectId: string) => {
     setHasUserSelectedFile(true); // Mark that user has manually selected a file
@@ -1190,6 +1198,12 @@ const Dashboard = () => {
     setShowProjectSelector(false);
     fetchData(selectedProjectId);
   }, [fetchData]);
+
+  const handleOpenProjectSelector = useCallback(() => {
+    // Fetch projects when user opens the selector
+    fetchProjects();
+    setShowProjectSelector(true);
+  }, [fetchProjects]);
 
   useEffect(() => {
     if (classHierarchy.length > 0 && classHierarchy[0].id === "http://www.w3.org/2002/07/owl#Thing") {
@@ -1206,12 +1220,12 @@ const Dashboard = () => {
     }
   }, [classHierarchy]);
 
-  // Fetch projects on mount when no projectId is set
+  // Fetch projects list on mount (but don't auto-load a file)
+  // This populates the file selector dropdown when user clicks it
   useEffect(() => {
-    if (!projectId) {
-      fetchProjects();
-    }
-  }, [projectId, fetchProjects]);
+    console.log('[Dashboard] Initial mount - fetching projects list');
+    fetchProjects();
+  }, [fetchProjects]);
   
   // Update collaboration context when projectId changes
   useEffect(() => {
@@ -1220,57 +1234,91 @@ const Dashboard = () => {
     }
   }, [projectId, collaboration]);
 
+  // Track if component is mounted to prevent race conditions
+  const isMountedRef = useRef(false);
+  
   // Send 'webviewReady' to extension when mounted
   useEffect(() => {
+    isMountedRef.current = true;
     if (window.vscode) {
       window.vscode.postMessage({ type: 'webviewReady' });
     }
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
 
   // Handle loading choice dialog actions
   const handleWaitForLoading = useCallback(() => {
-    setShowLoadingChoice(false);
-    setIsInitialLoading(true);
-    // Wait for the loading promise to complete
-    if (loadingPromiseRef.current) {
-      loadingPromiseRef.current.finally(() => {
-        setIsInitialLoading(false);
-      });
-    }
+    userLoadingChoice.current = 'wait';
+    // Keep dialog open, show waiting state
+    console.log('[Dashboard] Wait for Loading clicked - keeping dialog open');
+    // Dialog will be closed by IMPORT_COMPLETED handler when data loads
   }, []);
 
   const handleContinueWorking = useCallback(() => {
+    userLoadingChoice.current = 'continue';
     setShowLoadingChoice(false);
-    // User chose to continue, they'll get a notification when done
+    console.log('[Dashboard] Continue Working clicked - closing dialog, will auto-load when import completes');
+    // Keep isExpectingFileReady=true so IMPORT_COMPLETED will auto-load
+    // Reset choice after a short delay
+    setTimeout(() => {
+      userLoadingChoice.current = null;
+    }, 100);
   }, []);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
+      // Ignore messages until component is fully mounted
+      if (!isMountedRef.current) {
+        console.log('[Dashboard] Ignoring message before mount:', event.data.type);
+        return;
+      }
+      
       const message = event.data;
       console.log('[Dashboard] Received message:', message.type, message);
       switch (message.type) {
         case "showLoading":
-          setIsInitialLoading(true);
+          console.log('[Dashboard] showLoading received - file upload starting for project:', message.projectId);
+          setHasUserSelectedFile(true);
+          hasUserSelectedFileRef.current = true;
+          pendingImportProjectIdRef.current = message.projectId; // Track which project is being imported
+          console.log('[Dashboard] Set pendingImportProjectIdRef.current to:', pendingImportProjectIdRef.current);
+          setIsExpectingFileReady(true);
+          // Show loading dialog immediately
+          setShowLoadingChoice(true);
+          setLoadingProjectName(message.projectId || 'Processing file upload...');
+          // Don't fetch projects yet - wait for upload to complete
           break;
         case "fileReady":
         case "fileLoaded":
           // Show loading choice dialog
           console.log('[Dashboard] Loading project:', message.projectId);
+          // Don't clear isExpectingFileReady here - let IMPORT_COMPLETED handler do it
+          setHasUserSelectedFile(true);
+          hasUserSelectedFileRef.current = true;
           setProjectId(message.projectId);
           setSelectedItem(null);
           setLoadingProjectName(message.projectId);
+          userLoadingChoice.current = null; // Reset choice for new loading
           setShowLoadingChoice(true);
-          
+
           // Start loading in background and store the promise
           loadingPromiseRef.current = fetchData(message.projectId, false)
             .then(() => {
               console.log('[Dashboard] Loading completed for:', message.projectId);
+              // Close loading dialog immediately on success
               setShowLoadingChoice(false);
+              setShowQueueStatus(false);
+              // Refresh projects list
+              setTimeout(() => fetchProjects(), 300);
+              // Dialog will auto-close via importStatusUpdate message when IMPORT_COMPLETED
             })
             .catch((error) => {
               console.error('[Dashboard] Failed to load ontology:', error);
               notificationService.error('Load Failed', `Could not load "${message.projectId}". The file may still be processing.`);
               setShowLoadingChoice(false);
+              // Dialog will auto-close via importStatusUpdate message when IMPORT_FAILED
             });
           break;
         case "loadingFailed":
@@ -1287,30 +1335,103 @@ const Dashboard = () => {
         case "importStatusUpdate":
           // Handle import status updates from WebSocket
           console.log('[Dashboard] Import status update:', message.status);
-          setImportStatus({
-            type: message.status.type,
-            status: message.status.status,
-            statusMessage: message.status.statusMessage,
-            filename: message.status.filename,
-            progress: message.status.progress,
-            metadata: message.status.metadata,
-          });
+          console.log('[Dashboard] Current projectId:', projectId);
+          console.log('[Dashboard] Message projectId:', message.status.projectId);
+          console.log('[Dashboard] Status type:', message.status.type);
 
-          // If import completed, fetch data automatically
-          if (message.status.type === 'IMPORT_COMPLETED' && message.status.projectId === projectId) {
-            console.log('[Dashboard] Import completed, fetching data...');
-            setTimeout(() => fetchData(message.status.projectId, false), 500);
-            // Auto-dismiss after 3 seconds
-            setTimeout(() => {
-              setImportStatus({ type: 'IDLE', status: 'COMPLETED', statusMessage: '' });
-            }, 3000);
+          // Update project-specific import status for ProjectSelector
+          if (message.status.projectId) {
+            setProjectImportStatuses(prev => ({
+              ...prev,
+              [message.status.projectId]: {
+                type: message.status.type,
+                status: message.status.status,
+                progress: message.status.progress
+              }
+            }));
           }
 
-          // Auto-dismiss failed status after 10 seconds
-          if (message.status.type === 'IMPORT_FAILED') {
+          // Handle import completion
+          if (message.status.type === 'IMPORT_COMPLETED') {
+            console.log('[Dashboard] ✅ IMPORT_COMPLETED for project:', message.status.projectId);
+            console.log('[Dashboard] User choice:', userLoadingChoice.current);
+            console.log('[Dashboard] Current projectId:', projectId);
+            console.log('[Dashboard] pendingImportProjectIdRef.current:', pendingImportProjectIdRef.current);
+            console.log('[Dashboard] isExpectingFileReady:', isExpectingFileReady);
+            
+            const isCurrentProject = message.status.projectId === projectId;
+            const isPendingImport = message.status.projectId === pendingImportProjectIdRef.current;
+            const userChoice = userLoadingChoice.current;
+            
+            // Only auto-load if:
+            // 1. This is the current project being viewed, OR
+            // 2. This matches the pendingImportProjectId (new upload)
+            if (isCurrentProject || isPendingImport) {
+              console.log('[Dashboard] Should auto-load:', isPendingImport ? 'pending import' : 'current project');
+              
+              // Set projectId for new uploads
+              if (isPendingImport && !projectId) {
+                console.log('[Dashboard] Setting projectId to:', message.status.projectId);
+                setProjectId(message.status.projectId);
+                setLoadingProjectName(message.status.projectId);
+              }
+              
+              // Clear pending import tracking
+              pendingImportProjectIdRef.current = null;
+              console.log('[Dashboard] Cleared pendingImportProjectIdRef');
+              setIsExpectingFileReady(false);
+              
+              // Fetch the data
+              console.log('[Dashboard] Fetching data for:', message.status.projectId);
+              fetchData(message.status.projectId, false)
+                .then(() => {
+                  console.log('[Dashboard] ✅ Data loaded successfully');
+                  console.log('[Dashboard] Closing dialogs...');
+                  // Close all dialogs after successful load
+                  setShowLoadingChoice(false);
+                  setShowQueueStatus(false);
+                  setShowProjectSelector(false);
+                  setIsInitialLoading(false);
+                  // Reset user choice
+                  userLoadingChoice.current = null;
+                })
+                .catch((error) => {
+                  console.error('[Dashboard] ❌ Failed to fetch data:', error);
+                  setShowLoadingChoice(false);
+                  setIsInitialLoading(false);
+                  notificationService.error('Load Failed', 'Failed to load ontology data');
+                });
+              
+              // Refresh projects list
+              setTimeout(() => fetchProjects(), 500);
+            } else {
+              console.log('[Dashboard] Import completed for different project - not auto-loading');
+            }
+          }
+
+          // If import failed, close loading choice dialog
+          if (message.status.type === 'IMPORT_FAILED' && message.status.projectId === projectId) {
+            console.log('[Dashboard] Import failed');
             setTimeout(() => {
-              setImportStatus({ type: 'IDLE', status: 'COMPLETED', statusMessage: '' });
-            }, 10000);
+              setShowLoadingChoice(false);
+              setShowQueueStatus(false);
+            }, 2000);
+          }
+
+          // Show queue status when import starts
+          if (message.status.type === 'IMPORT_STARTED' && message.status.projectId === projectId) {
+            setShowQueueStatus(true);
+          }
+
+          // Clear project-specific status after completion/failure
+          if (message.status.projectId && (message.status.type === 'IMPORT_COMPLETED' || message.status.type === 'IMPORT_FAILED')) {
+            setTimeout(() => {
+              setProjectImportStatuses(prev => {
+                const updated = { ...prev };
+                delete updated[message.status.projectId];
+                return updated;
+              });
+            }, message.status.type === 'IMPORT_COMPLETED' ? 3000 : 10000);
           }
           break;
       }
@@ -2738,46 +2859,8 @@ const Dashboard = () => {
   ];
   const activeTheme = entitiesTabs.find(t => t.id === entitiesTab)?.theme;
 
-  if (!projectId) {
-    // Check if we're still loading or if there are no files
-    const hasNoFiles = hasFetchedProjects && myFiles.length === 0 && sharedFiles.length === 0;
-    
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <div className="text-center p-8 max-w-md">
-          <div className="w-20 h-20 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg mx-auto mb-6">
-            {hasNoFiles ? <Upload size={40} className="text-white" /> : <FileText size={40} className="text-white" />}
-          </div>
-          <h2 className="text-2xl font-bold text-gray-800 mb-3">Welcome to OntoCode</h2>
-          
-          {hasNoFiles ? (
-            <div className="space-y-4">
-              <p className="text-gray-600 mb-6">
-                Get started by uploading your first OWL ontology file to begin editing
-              </p>
-              
-              <div className="bg-white rounded-lg shadow-md p-6 border-2 border-dashed border-gray-300 hover:border-purple-400 transition-colors">
-                <FolderOpen size={48} className="mx-auto text-gray-400 mb-4" />
-                <p className="text-sm text-gray-600 mb-4">
-                  You can upload OWL files through the VS Code extension or use the File menu above
-                </p>
-                <div className="text-xs text-gray-500 space-y-1">
-                  <p>• Drag and drop OWL files into VS Code</p>
-                  <p>• Click "File → Open Ontology" in the menu</p>
-                  <p>• Use the command palette (Ctrl+Shift+P)</p>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center justify-center gap-2 text-purple-600">
-              <Loader2 size={20} className="animate-spin" />
-              <p className="text-sm">Loading your ontology files...</p>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
+  // Don't show welcome screen - just render empty editor if no project loaded
+  // User can click the file selector in the header to browse projects
 
   return (
     <>
@@ -2855,8 +2938,6 @@ const Dashboard = () => {
           isSaving={isSaving}
           draftCount={draftCount}
           onOpenDialog={() => setShowOpenDialog(true)}
-          showImportProgress={showImportProgress}
-          onToggleImportProgress={() => setShowImportProgress(!showImportProgress)}
         />
 
         <div className="bg-white border-b border-gray-200 flex-shrink-0">
@@ -2879,7 +2960,7 @@ const Dashboard = () => {
             <div className="flex items-center gap-4">
               {projectId && (
                 <button
-                  onClick={() => setShowProjectSelector(true)}
+                  onClick={handleOpenProjectSelector}
                   className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-800 hover:bg-gray-100 p-2 rounded-md"
                   title="Switch Project"
                 >
@@ -3025,6 +3106,7 @@ const Dashboard = () => {
           projects={availableProjects}
           onSelectProject={handleProjectSelection}
           onClose={() => setShowProjectSelector(false)}
+          importStatus={projectImportStatuses}
         />
       )}
 
@@ -3066,12 +3148,16 @@ const Dashboard = () => {
         ))}
       </div>
 
-      {/* Import Progress Toast */}
-      <ImportProgressToast
-        importStatus={importStatus}
-        onDismiss={() => setImportStatus({ type: 'IDLE', status: 'COMPLETED', statusMessage: '' })}
-        visible={showImportProgress}
+      {/* Import Progress Toast - Removed per user request */}
+
+      {/* Queue Status Indicator */}
+      <QueueStatusIndicator
+        projectId={projectId || ''}
+        visible={showQueueStatus && !!projectId}
       />
+
+      {/* Global Queue Stats */}
+      <GlobalQueueStats visible={true} />
     </>
   );
 };
