@@ -601,18 +601,6 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({ content, forma
             Copy All
           </button>
         </div>
-        
-        <button
-          onClick={() => setWordWrap(!wordWrap)}
-          className={`px-2 py-1 text-xs rounded ${
-            wordWrap 
-              ? 'bg-purple-600 text-white' 
-              : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-          }`}
-          title="Toggle word wrap"
-        >
-          <WrapText className="w-4 h-4" />
-        </button>
       </div>
 
       {/* Search Results Panel */}
