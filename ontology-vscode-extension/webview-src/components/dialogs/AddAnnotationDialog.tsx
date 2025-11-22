@@ -7,20 +7,42 @@ interface AddAnnotationDialogProps {
   onClose: () => void;
   onAdd: (propertyIri: string, value: string, datatype?: string) => void;
   availableProperties: AnnotationProperty[];
+  editMode?: boolean;
+  initialProperty?: string;
+  initialValue?: string;
 }
 
 const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({ 
   isOpen, 
   onClose, 
   onAdd, 
-  availableProperties 
+  availableProperties,
+  editMode = false,
+  initialProperty = '',
+  initialValue = ''
 }) => {
-  const [selectedProperty, setSelectedProperty] = useState('');
+  const [selectedProperty, setSelectedProperty] = useState(initialProperty);
   const [customProperty, setCustomProperty] = useState('');
-  const [value, setValue] = useState('');
+  const [value, setValue] = useState(initialValue);
   const [datatype, setDatatype] = useState('xsd:string');
   const [searchQuery, setSearchQuery] = useState('');
   const [useCustom, setUseCustom] = useState(false);
+
+  // Reset form when opening in edit mode
+  React.useEffect(() => {
+    if (isOpen && editMode) {
+      setSelectedProperty(initialProperty);
+      setValue(initialValue);
+    } else if (!isOpen) {
+      // Reset on close
+      setSelectedProperty('');
+      setCustomProperty('');
+      setValue('');
+      setDatatype('xsd:string');
+      setSearchQuery('');
+      setUseCustom(false);
+    }
+  }, [isOpen, editMode, initialProperty, initialValue]);
 
   if (!isOpen) return null;
 
@@ -74,7 +96,7 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={handleClose}>
       <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 flex flex-col max-h-[80vh]" onClick={e => e.stopPropagation()}>
         <div className="p-6 border-b">
-          <h3 className="text-lg font-semibold text-black">Add Annotation</h3>
+          <h3 className="text-lg font-semibold text-black">{editMode ? 'Edit Annotation' : 'Add Annotation'}</h3>
         </div>
         
         <div className="flex-1 overflow-y-auto p-6 space-y-4 text-sm min-h-0">
@@ -82,18 +104,24 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
           <div>
             <div className="flex items-center gap-2 mb-2">
               <label className="font-medium text-black">Annotation Property</label>
-              <label className="flex items-center gap-1 text-xs text-black">
-                <input 
-                  type="checkbox" 
-                  checked={useCustom} 
-                  onChange={(e) => setUseCustom(e.target.checked)}
-                  className="w-3 h-3"
-                />
-                Custom IRI
-              </label>
+              {!editMode && (
+                <label className="flex items-center gap-1 text-xs text-black">
+                  <input 
+                    type="checkbox" 
+                    checked={useCustom} 
+                    onChange={(e) => setUseCustom(e.target.checked)}
+                    className="w-3 h-3"
+                  />
+                  Custom IRI
+                </label>
+              )}
             </div>
             
-            {useCustom ? (
+            {editMode ? (
+              <div className="px-3 py-2 bg-gray-100 border border-gray-300 rounded-md text-black">
+                {selectedProperty || initialProperty}
+              </div>
+            ) : useCustom ? (
               <input
                 type="text"
                 value={customProperty}
@@ -183,7 +211,7 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
             onClick={handleAdd} 
             className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
           >
-            Add
+            {editMode ? 'Save' : 'Add'}
           </button>
         </div>
       </div>
