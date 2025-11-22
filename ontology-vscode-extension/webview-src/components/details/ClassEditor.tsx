@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, Search, ExternalLink, AlertCircle, Edit3 } from 'lucide-react';
 import { Panel, AnnotationsDisplay, AxiomSubsection } from './common';
-import { ManchesterSyntaxEditor, MultiClassSelectorDialog, IRIEditorDialog } from '../dialogs';
+import { ClassExpressionDialog, MultiClassSelectorDialog, IRIEditorDialog } from '../dialogs';
 import apiClient from '../../services/apiClient';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import type { TreeNode, Axiom, ClassUsage, AxiomUsage } from '../../types';
@@ -199,6 +199,12 @@ const ClassEditor: React.FC<{
   const [editorType, setEditorType] = useState<AxiomType | null>(null);
   const [editorTitle, setEditorTitle] = useState("");
 
+  // Properties for restriction creators
+  const [properties, setProperties] = useState<any[]>([]);
+  const [dataProperties, setDataProperties] = useState<any[]>([]);
+  const [objectPropertyHierarchy, setObjectPropertyHierarchy] = useState<TreeNode[]>([]);
+  const [dataPropertyHierarchy, setDataPropertyHierarchy] = useState<TreeNode[]>([]);
+
   // Disjoint Union State
   const [isDisjointUnionOpen, setIsDisjointUnionOpen] = useState(false);
 
@@ -230,8 +236,108 @@ const ClassEditor: React.FC<{
   useEffect(() => {
     if (item.id && projectId) {
       loadClassDetails();
+      loadProperties();
     }
   }, [item.id, projectId]);
+
+  const loadProperties = async () => {
+    try {
+      // Load all properties (both object and data)
+      const allPropsResponse = await apiClient.get(`/api/ontology/properties/${projectId}`);
+      const allProps = allPropsResponse?.data?.properties || [];
+
+      // Separate object and data properties
+      const objProps = allProps.filter((p: any) => p.type === 'ObjectProperty');
+      const dataProps = allProps.filter((p: any) => p.type === 'DatatypeProperty');
+
+      setProperties(objProps);
+      setDataProperties(dataProps);
+
+      // Build Object Property Hierarchy (same logic as Dashboard)
+      const opMap = new Map<string, any>();
+      objProps.forEach((p: any) => {
+        opMap.set(p.id, { ...p, children: [], hasChildren: false });
+      });
+
+      const topObjectProperty = {
+        id: 'http://www.w3.org/2002/07/owl#topObjectProperty',
+        label: 'owl:topObjectProperty',
+        children: [],
+        hasChildren: false
+      };
+
+      objProps.forEach((p: any) => {
+        const node = opMap.get(p.id);
+        if (p.superProperties && p.superProperties.length > 0) {
+          let added = false;
+          p.superProperties.forEach((superId: string) => {
+            if (superId === topObjectProperty.id) {
+              topObjectProperty.children.push(node);
+              topObjectProperty.hasChildren = true;
+              added = true;
+            } else if (opMap.has(superId)) {
+              const parent = opMap.get(superId);
+              parent.children.push(node);
+              parent.hasChildren = true;
+              added = true;
+            }
+          });
+          if (!added) {
+            topObjectProperty.children.push(node);
+            topObjectProperty.hasChildren = true;
+          }
+        } else {
+          topObjectProperty.children.push(node);
+          topObjectProperty.hasChildren = true;
+        }
+      });
+
+      setObjectPropertyHierarchy([topObjectProperty]);
+
+      // Build Data Property Hierarchy
+      const dpMap = new Map<string, any>();
+      dataProps.forEach((p: any) => {
+        dpMap.set(p.id, { ...p, children: [], hasChildren: false });
+      });
+
+      const topDataProperty = {
+        id: 'http://www.w3.org/2002/07/owl#topDataProperty',
+        label: 'owl:topDataProperty',
+        children: [],
+        hasChildren: false
+      };
+
+      dataProps.forEach((p: any) => {
+        const node = dpMap.get(p.id);
+        if (p.superProperties && p.superProperties.length > 0) {
+          let added = false;
+          p.superProperties.forEach((superId: string) => {
+            if (superId === topDataProperty.id) {
+              topDataProperty.children.push(node);
+              topDataProperty.hasChildren = true;
+              added = true;
+            } else if (dpMap.has(superId)) {
+              const parent = dpMap.get(superId);
+              parent.children.push(node);
+              parent.hasChildren = true;
+              added = true;
+            }
+          });
+          if (!added) {
+            topDataProperty.children.push(node);
+            topDataProperty.hasChildren = true;
+          }
+        } else {
+          topDataProperty.children.push(node);
+          topDataProperty.hasChildren = true;
+        }
+      });
+
+      setDataPropertyHierarchy([topDataProperty]);
+    } catch (error) {
+      console.error('Failed to load properties:', error);
+    }
+  };
 
   const loadClassDetails = async () => {
     setLoadingDetails(true);
@@ -448,13 +554,19 @@ const ClassEditor: React.FC<{
         )}
       </div>
 
-      {/* Manchester Syntax Editor Modal */}
-      <ManchesterSyntaxEditor
+      {/* Class Expression Editor Dialog (Better UI) */}
+      <ClassExpressionDialog
         isOpen={isEditorOpen}
         onClose={() => setIsEditorOpen(false)}
         onConfirm={handleEditorConfirm}
         title={editorTitle}
-        projectId={projectId}
+        classHierarchy={classHierarchy}
+        objectProperties={properties}
+        dataProperties={dataProperties}
+        objectPropertiesTree={objectPropertyHierarchy}
+        dataPropertiesTree={dataPropertyHierarchy}
+        expandedNodes={expandedNodes}
+        onToggleNode={onToggleNode}
       />
 
       {/* Disjoint Union Selector */}
