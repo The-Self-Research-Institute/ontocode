@@ -265,45 +265,86 @@ public class GraphDBDatasetService {
             log.info("Starting bulk load for project: {} with format: {} (GraphDB: {} repo: {})",
                     projectId, rdfFormat, graphdbUrl, repositoryId);
 
-            // Use buffered input stream for better performance
+            // Use large buffered input stream for better performance with big files
             // RDF4J handles BOM detection and charset conversion automatically
-            InputStream bufferedStream = new java.io.BufferedInputStream(inputStream, 8192);
+            InputStream bufferedStream = new java.io.BufferedInputStream(inputStream, 65536); // 64KB buffer
 
             try (RepositoryConnection conn = repo.getConnection()) {
                 var valueFactory = conn.getValueFactory();
                 IRI graphIri = valueFactory.createIRI(graphUri);
 
-                log.info("Opened GraphDB connection for {} (autoCommit={}, isolation={})",
+                // **CRITICAL PERFORMANCE FIX**: Disable auto-commit for bulk loading
+                // This groups all operations into a single transaction instead of committing each triple
+                boolean originalAutoCommit = conn.isAutoCommit();
+                
+                // Only disable auto-commit if not already disabled
+                if (originalAutoCommit) {
+                    conn.setAutoCommit(false);
+                }
+                
+                // Only begin transaction if not already active
+                if (!conn.isActive()) {
+                    conn.begin();
+                    log.info("Started new transaction for bulk load");
+                } else {
+                    log.info("Using existing active transaction");
+                }
+
+                log.info("Opened GraphDB connection for {} (autoCommit={}, transaction active, isolation={})",
                         projectId, conn.isAutoCommit(), safeIsolationLevel(conn));
 
-                // Record current dataset size if possible
-                long sizeBeforeClear = safeGraphSize(conn, graphIri, "before-clear", projectId);
-                if (sizeBeforeClear >= 0) {
-                    log.info("Project {}: {} triples detected before clear", projectId, sizeBeforeClear);
+                try {
+                    // Record current dataset size if possible
+                    long sizeBeforeClear = safeGraphSize(conn, graphIri, "before-clear", projectId);
+                    if (sizeBeforeClear >= 0) {
+                        log.info("Project {}: {} triples detected before clear", projectId, sizeBeforeClear);
+                    }
+
+                    // Clear existing data only if needed (avoid hanging clears on empty graphs)
+                    if (sizeBeforeClear > 0) {
+                        clearGraph(conn, graphIri, graphUri, projectId);
+                    } else {
+                        log.info("Graph {} already empty, skipping clear", graphUri);
+                    }
+
+                    log.info("Loading data into GraphDB graph: {}", graphUri);
+
+                    // Load new data into named graph (streaming - no full load into memory)
+                    // RDF4J will parse and load incrementally
+                    long addStart = System.nanoTime();
+                    conn.add(bufferedStream, graphUri, rdfFormat, graphIri);
+                    log.info("GraphDB add() finished in {} ms", elapsedMillis(addStart));
+
+                    // Get size after loading
+                    long sizeQueryStart = System.nanoTime();
+                    long tripleCount = conn.size(graphIri);
+                    log.info("Graph size computed in {} ms", elapsedMillis(sizeQueryStart));
+
+                    // **COMMIT THE TRANSACTION** - This is where all changes are persisted
+                    // For large files (100k+ triples), this commit can take 1-5 minutes
+                    log.warn("Committing {} triples to GraphDB - this may take several minutes for large ontologies...", tripleCount);
+                    long commitStart = System.nanoTime();
+                    conn.commit();
+                    log.info("Transaction committed in {} ms ({} seconds)", 
+                            elapsedMillis(commitStart), elapsedMillis(commitStart) / 1000);
+
+                    // Restore original auto-commit setting
+                    conn.setAutoCommit(originalAutoCommit);
+
+                    log.info("Bulk load completed for project: {} - loaded {} triples (total {} ms = {} seconds)",
+                            projectId, tripleCount, elapsedMillis(bulkLoadStart), elapsedMillis(bulkLoadStart) / 1000);
+                } catch (Exception e) {
+                    // Rollback on any error
+                    try {
+                        if (conn.isActive()) {
+                            conn.rollback();
+                            log.warn("Transaction rolled back for project: {}", projectId);
+                        }
+                    } catch (Exception rollbackEx) {
+                        log.error("Failed to rollback transaction", rollbackEx);
+                    }
+                    throw e; // Re-throw to outer catch blocks
                 }
-
-                // Clear existing data only if needed (avoid hanging clears on empty graphs)
-                if (sizeBeforeClear > 0) {
-                    clearGraph(conn, graphIri, graphUri, projectId);
-                } else {
-                    log.info("Graph {} already empty, skipping clear", graphUri);
-                }
-
-                log.info("Loading data into GraphDB graph: {}", graphUri);
-
-                // Load new data into named graph (streaming - no full load into memory)
-                // RDF4J will parse and load incrementally
-                long addStart = System.nanoTime();
-                conn.add(bufferedStream, graphUri, rdfFormat, graphIri);
-                log.info("GraphDB add() finished in {} ms", elapsedMillis(addStart));
-
-                // Get size after loading
-                long sizeQueryStart = System.nanoTime();
-                long tripleCount = conn.size(graphIri);
-                log.info("Graph size computed in {} ms", elapsedMillis(sizeQueryStart));
-
-                log.info("Bulk load completed for project: {} - loaded {} triples (total {} ms)",
-                        projectId, tripleCount, elapsedMillis(bulkLoadStart));
             }
             
         } catch (org.eclipse.rdf4j.rio.RDFParseException e) {

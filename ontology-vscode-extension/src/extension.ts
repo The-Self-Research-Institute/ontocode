@@ -627,6 +627,27 @@ class OntoCodePanel {
                     ? `Ontology "${fileName}" replaced successfully. Processing...`
                     : `Ontology "${fileName}" uploaded successfully. Processing...`;
                 vscode.window.showInformationMessage(message);
+                
+                // If it's a replacement, the file might already be processed - set a fallback timeout
+                if (isReplacement) {
+                    console.log(`[OntoCode] File replacement detected, will check status after 3 seconds if no IMPORT_COMPLETED`);
+                    setTimeout(async () => {
+                        // Check if we already received IMPORT_COMPLETED (pendingImportProjectIdRef would be cleared)
+                        // If not, check the project status and trigger fileReady if COMPLETED
+                        try {
+                            const statusUrl = `http://localhost:8082/api/ontology/status/${projectId}`;
+                            const statusResp = await axios.get(statusUrl, { headers });
+                            console.log(`[OntoCode] Fallback status check for ${projectId}:`, statusResp.data);
+                            
+                            if (statusResp.data?.status === 'COMPLETED') {
+                                console.log(`[OntoCode] File already completed, sending fileReady`);
+                                this.postMessage({ type: 'fileReady', projectId });
+                            }
+                        } catch (err) {
+                            console.error('[OntoCode] Failed to check fallback status:', err);
+                        }
+                    }, 3000);
+                }
             } else {
                 throw new Error(`Upload failed with status ${response.status}: ${JSON.stringify(response.data)}`);
             }

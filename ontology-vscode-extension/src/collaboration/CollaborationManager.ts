@@ -448,26 +448,36 @@ export class CollaborationManager {
      * Subscribe to import status updates for a project.
      */
     private subscribeToImportStatus(projectId: string): void {
-        if (!this.client) return;
+        if (!this.client) {
+            console.error('[CollaborationManager] ❌ Cannot subscribe to import status - no client');
+            return;
+        }
+
+        console.log(`[CollaborationManager] 📡 Subscribing to /topic/import/${projectId}`);
 
         const subscription = this.client.subscribe(
             `/topic/import/${projectId}`,
             (message: IMessage) => {
+                console.log('[CollaborationManager] 📨 Received import status message:', message.body);
                 try {
                     const importStatus = JSON.parse(message.body);
 
-                    console.log('[CollaborationManager] Import status update:', importStatus);
+                    console.log('[CollaborationManager] ✅ Parsed import status:', importStatus);
 
                     if (this.onImportStatusUpdate) {
+                        console.log('[CollaborationManager] 📤 Calling onImportStatusUpdate handler');
                         this.onImportStatusUpdate(importStatus);
+                    } else {
+                        console.warn('[CollaborationManager] ⚠️  No onImportStatusUpdate handler registered!');
                     }
                 } catch (error) {
-                    console.error('Error parsing import status:', error);
+                    console.error('[CollaborationManager] ❌ Error parsing import status:', error);
                 }
             }
         );
 
         this.subscriptions.set(`import-${projectId}`, subscription);
+        console.log(`[CollaborationManager] ✅ Subscribed to import status for project: ${projectId}`);
     }
 
     private processPendingEdits(): void {

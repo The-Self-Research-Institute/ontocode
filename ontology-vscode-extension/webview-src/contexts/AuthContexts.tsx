@@ -192,36 +192,35 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             
             console.log('[AuthContext] Signup response:', response);
             
-            // Check if signup requires email verification
-            if (response?.message || response?.data?.message) {
-                const message = response?.message || response?.data?.message;
-                console.log('[AuthContext] ℹ️ Signup requires verification:', message);
-                // Show verification message to user
-                throw new Error(message);
-            }
-
             // Backend returns 'jwt' field if immediate login, not 'token'
             const token = response?.jwt || response?.token || response?.data?.jwt || response?.data?.token;
 
-            if (!token) {
-                // Check if it's an error response
-                if (response?.error || response?.data?.error) {
-                    throw new Error(response?.error || response?.data?.error);
-                }
-                throw new Error('Registration successful! Please check your email to verify your account.');
+            // Check for errors first
+            if (response?.error || response?.data?.error) {
+                throw new Error(response?.error || response?.data?.error);
             }
 
-            console.log('[AuthContext] Saving token to VS Code...');
-            if (window.vscode) {
-                window.vscode.postMessage({ type: 'saveAuthToken', token });
+            // If we have a token, user is logged in immediately (no email verification)
+            if (token) {
+                console.log('[AuthContext] Saving token to VS Code...');
+                if (window.vscode) {
+                    window.vscode.postMessage({ type: 'saveAuthToken', token });
+                }
+                
+                // Decode JWT to get user info
+                const userInfo = decodeToken(token);
+                setUser({ token, username: userInfo.username, email: userInfo.email });
+                // Clear expired message on successful signup
+                setSessionExpiredMessage(null);
+                console.log('[AuthContext] ✅ Signup successful with immediate login');
+                return;
             }
-            
-            // Decode JWT to get user info
-            const userInfo = decodeToken(token);
-            setUser({ token, username: userInfo.username, email: userInfo.email });
-            // Clear expired message on successful signup
-            setSessionExpiredMessage(null);
-            console.log('[AuthContext] ✅ Signup successful');
+
+            // No token means email verification required
+            const message = response?.message || response?.data?.message || 'Registration successful! Please check your email to verify your account.';
+            console.log('[AuthContext] ✅ Signup successful - awaiting email verification:', message);
+            // Show success message to user through a custom result
+            throw { success: true, message };
         } catch (error: any) {
             console.error('[AuthContext] ❌ Signup failed:', error);
             const message = error?.message || error?.data?.message || error?.data?.error || 'Could not create account';
