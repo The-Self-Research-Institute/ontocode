@@ -18,11 +18,10 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import self.research.ontology.owlEditor.model.DraftChange;
-import self.research.ontology.owlEditor.model.OntologyChange;
 import self.research.ontology.owlEditor.model.ProjectStatus;
 import self.research.ontology.owlEditor.repository.DraftChangeRepository;
-import self.research.ontology.owlEditor.repository.OntologyChangeRepository;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
+import self.research.ontology.owlEditor.service.GraphDBHistoryService;
 import self.research.ontology.owlEditor.service.GridFSFileService;
 import self.research.ontology.owlEditor.service.ProjectImportService;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
@@ -55,7 +54,7 @@ public class ProjectLoadController {
     private final GridFSFileService gridFSFileService;
     private final ProjectShareService shareService;
     private final DraftTrackingService draftTrackingService;
-    private final OntologyChangeRepository changeRepository;
+    private final GraphDBHistoryService historyService;
     private final DraftChangeRepository draftChangeRepository;
 
     public ProjectLoadController(StorageManager storageManager,
@@ -64,7 +63,7 @@ public class ProjectLoadController {
                                  GridFSFileService gridFSFileService,
                                  ProjectShareService shareService,
                                  DraftTrackingService draftTrackingService,
-                                 OntologyChangeRepository changeRepository,
+                                 GraphDBHistoryService historyService,
                                  DraftChangeRepository draftChangeRepository) {
         this.storageManager = storageManager;
         this.metadataService = metadataService;
@@ -72,7 +71,7 @@ public class ProjectLoadController {
         this.gridFSFileService = gridFSFileService;
         this.shareService = shareService;
         this.draftTrackingService = draftTrackingService;
-        this.changeRepository = changeRepository;
+        this.historyService = historyService;
         this.draftChangeRepository = draftChangeRepository;
     }
 
@@ -298,38 +297,36 @@ public class ProjectLoadController {
             metadataService.writeStatus(projectId, completedStatus);
             log.info("[SAVE] Updated project status to COMPLETED");
 
-            // STEP 7: Record changes to history
-            log.info("[SAVE] Recording {} changes to history...", drafts.size());
-            java.time.LocalDateTime now = java.time.LocalDateTime.now();
+            // STEP 7: Record changes to GraphDB history
+            log.info("[SAVE] Recording {} changes to GraphDB history...", drafts.size());
             for (DraftChange draft : drafts) {
-                OntologyChange change = new OntologyChange();
-                change.setProjectId(projectId);
-                change.setUserId(userId != null ? userId : "system");
-                change.setUsername(username != null ? username : "System");
-                change.setTimestamp(now);
-                change.setChangeType(mapOperationTypeToChangeType(draft.getOperationType()));
+                String entityIRI = null;
+                String entityLabel = null;
+                String oldValue = null;
+                String newValue = null;
                 
                 // Extract entity details from operation data
                 Map<String, Object> opData = draft.getOperationData();
                 if (opData != null) {
-                    if (opData.containsKey("iri")) {
-                        change.setEntityIRI(opData.get("iri").toString());
-                    }
-                    if (opData.containsKey("label")) {
-                        change.setEntityLabel(opData.get("label").toString());
-                    }
-                    if (opData.containsKey("oldValue")) {
-                        change.setOldValue(opData.get("oldValue").toString());
-                    }
-                    if (opData.containsKey("newValue")) {
-                        change.setNewValue(opData.get("newValue").toString());
-                    }
+                    entityIRI = opData.containsKey("iri") ? opData.get("iri").toString() : null;
+                    entityLabel = opData.containsKey("label") ? opData.get("label").toString() : null;
+                    oldValue = opData.containsKey("oldValue") ? opData.get("oldValue").toString() : null;
+                    newValue = opData.containsKey("newValue") ? opData.get("newValue").toString() : null;
                 }
                 
-                change.setDescription(draft.getOperationType() + " operation");
-                changeRepository.save(change);
+                historyService.recordEdit(
+                    projectId,
+                    userId != null ? userId : "system",
+                    username != null ? username : "System",
+                    draft.getOperationType(),
+                    entityIRI,
+                    entityLabel,
+                    oldValue,
+                    newValue,
+                    draft.getOperationType() + " operation"
+                );
             }
-            log.info("[SAVE] History recording complete");
+            log.info("[SAVE] GraphDB history recording complete");
 
             // STEP 8: Clear applied drafts (cleanup)
             draftTrackingService.clearAppliedDrafts(projectId);
@@ -352,24 +349,6 @@ public class ProjectLoadController {
                         ));
             }
         }
-    }
-
-    private OntologyChange.ChangeType mapOperationTypeToChangeType(String operationType) {
-        return switch (operationType) {
-            case "createClass" -> OntologyChange.ChangeType.CLASS_CREATED;
-            case "deleteClass" -> OntologyChange.ChangeType.CLASS_DELETED;
-            case "updateClassLabel" -> OntologyChange.ChangeType.CLASS_MODIFIED;
-            case "addSubClass" -> OntologyChange.ChangeType.CLASS_MODIFIED;
-            case "createObjectProperty" -> OntologyChange.ChangeType.PROPERTY_CREATED;
-            case "createDataProperty" -> OntologyChange.ChangeType.PROPERTY_CREATED;
-            case "deleteObjectProperty" -> OntologyChange.ChangeType.PROPERTY_DELETED;
-            case "deleteDataProperty" -> OntologyChange.ChangeType.PROPERTY_DELETED;
-            case "addAnnotation" -> OntologyChange.ChangeType.ANNOTATION_ADDED;
-            case "deleteAnnotation" -> OntologyChange.ChangeType.ANNOTATION_DELETED;
-            case "createIndividual" -> OntologyChange.ChangeType.INDIVIDUAL_CREATED;
-            case "deleteIndividual" -> OntologyChange.ChangeType.INDIVIDUAL_DELETED;
-            default -> OntologyChange.ChangeType.OTHER;
-        };
     }
 
     /**
