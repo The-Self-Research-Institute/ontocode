@@ -600,7 +600,8 @@ const DetailsPanel = ({
   activeTheme, 
   projectId, 
   onUpdate, 
-  onAddAnnotation, 
+  onAddAnnotation,
+  onEditAnnotation, 
   onDeleteAnnotation,
   onAddDomainClick,
   onAddRangeClick,
@@ -617,6 +618,7 @@ const DetailsPanel = ({
   projectId: string | null;
   onUpdate: (item: SelectableItem) => void;
   onAddAnnotation: () => void;
+  onEditAnnotation: (propertyIri: string, currentValue: string) => void;
   onDeleteAnnotation: (key: string) => void;
   onAddDomainClick?: () => void;
   onAddRangeClick?: () => void;
@@ -639,6 +641,7 @@ const DetailsPanel = ({
 
   const sharedProps = {
     onAddAnnotation,
+    onEditAnnotation,
     onDeleteAnnotation,
     activeTheme,
     projectId: projectId || ''
@@ -672,14 +675,14 @@ const DetailsPanel = ({
       const item = selectedItem as AnnotationProperty;
       return (
         <div className="flex-1 flex flex-col gap-2">
-          <Panel title={`Annotations: ${item.label}`} {...sharedProps}><AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} /></Panel>
+          <Panel title={`Annotations: ${item.label}`} {...sharedProps}><AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} /></Panel>
         </div>
       );
     }
     case 'Datatypes':
       return <DatatypeEditor item={selectedItem as Datatype} onUpdate={onUpdate} {...sharedProps} />;
     default:
-      return <div className="bg-white rounded-lg border p-4"><AnnotationsDisplay annotations={selectedItem.annotations} onDelete={onDeleteAnnotation} /></div>;
+      return <div className="bg-white rounded-lg border p-4"><AnnotationsDisplay annotations={selectedItem.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} /></div>;
   }
 };
 // #endregion
@@ -735,6 +738,8 @@ const Dashboard = () => {
   const [activeOntologySubTab, setActiveOntologySubTab] = useState('prefixes');
   const [isCreateIndividualModalOpen, setCreateIndividualModalOpen] = useState(false);
   const [isAddAnnotationDialogOpen, setAddAnnotationDialogOpen] = useState(false);
+  const [isEditAnnotationDialogOpen, setEditAnnotationDialogOpen] = useState(false);
+  const [editAnnotationData, setEditAnnotationData] = useState<{propertyIri: string, currentValue: string, entityId: string} | null>(null);
   const [isAddClassDialogOpen, setAddClassDialogOpen] = useState(false);
   const [addClassType, setAddClassType] = useState<'subclass' | 'sibling'>('subclass');
   const [classParentLabel, setClassParentLabel] = useState('owl:Thing');
@@ -975,13 +980,18 @@ const Dashboard = () => {
       setClassHierarchy([owlThingNode]);
 
       // Handle properties response
+      console.log("=== PROPERTIES RESPONSE DEBUG ===");
       console.log("Properties response:", propertiesRes);
       const allProps = Array.isArray(propertiesRes?.data) ? propertiesRes.data : 
                        Array.isArray(propertiesRes?.properties) ? propertiesRes.properties : 
                        Array.isArray(propertiesRes) ? propertiesRes : [];
       console.log("All props after extraction:", allProps);
+      console.log("All props length:", allProps.length);
       const opList = allProps.filter((p: Property) => p.type === "ObjectProperty");
+      console.log("Object Properties filtered (opList):", opList);
+      console.log("Object Properties count:", opList.length);
       setObjectProperties(opList);
+      console.log("=== END PROPERTIES DEBUG ===");
 
       // Build Object Property Hierarchy
       const opMap = new Map<string, any>();
@@ -1946,6 +1956,33 @@ const Dashboard = () => {
       showNotification('Failed to add annotation. See console for details.', 'error');
     }
   }, [selectedItem, updateItemInState, projectId]);
+
+  const handleEditAnnotation = useCallback(async (propertyIri: string, currentValue: string) => {
+    if (!selectedItem || !projectId) return;
+    
+    // Open dialog with current value pre-filled
+    setEditAnnotationData({ propertyIri, currentValue, entityId: selectedItem.id });
+    setEditAnnotationDialogOpen(true);
+  }, [selectedItem, projectId]);
+
+  const handleAnnotationDialogEdit = useCallback(async (propertyIri: string, oldValue: string, newValue: string) => {
+    if (!selectedItem || !projectId) return;
+
+    try {
+      // Update annotation atomically (single operation instead of delete + add)
+      await ontologyMutationService.updateAnnotation(projectId, selectedItem.id, propertyIri, newValue, user?.email || 'anonymous', user?.username || 'Anonymous');
+      
+      // Update local state
+      const updatedAnnotations = { ...selectedItem.annotations, [propertyIri]: newValue };
+      const updatedItem = { ...selectedItem, annotations: updatedAnnotations };
+      updateItemInState(updatedItem);
+      markAsUnsaved();
+      showNotification('Annotation updated successfully!', 'info');
+    } catch (error) {
+      console.error('Failed to update annotation:', error);
+      showNotification('Failed to update annotation. See console for details.', 'error');
+    }
+  }, [selectedItem, updateItemInState, projectId, user]);
 
   const handleDeleteAnnotation = useCallback(async (key: string) => {
     if (!selectedItem || !selectedItem.annotations || !projectId) return;
@@ -3043,6 +3080,24 @@ const Dashboard = () => {
         onAdd={handleAnnotationDialogAdd}
         availableProperties={annotationProperties}
       />
+      <AddAnnotationDialog 
+        isOpen={isEditAnnotationDialogOpen} 
+        onClose={() => {
+          setEditAnnotationDialogOpen(false);
+          setEditAnnotationData(null);
+        }}
+        onAdd={(propertyIri, newValue) => {
+          if (editAnnotationData) {
+            handleAnnotationDialogEdit(propertyIri, editAnnotationData.currentValue, newValue);
+          }
+          setEditAnnotationDialogOpen(false);
+          setEditAnnotationData(null);
+        }}
+        availableProperties={annotationProperties}
+        editMode={true}
+        initialProperty={editAnnotationData?.propertyIri || ''}
+        initialValue={editAnnotationData?.currentValue || ''}
+      />
       <OpenFileDialog
         isOpen={showOpenDialog}
         onClose={() => setShowOpenDialog(false)}
@@ -3183,6 +3238,7 @@ const Dashboard = () => {
                     projectId={projectId}
                     onUpdate={updateItemInState}
                     onAddAnnotation={handleAddAnnotation}
+                    onEditAnnotation={handleEditAnnotation}
                     onDeleteAnnotation={handleDeleteAnnotation}
                     onAddDomainClick={() => handleOpenClassSelector('domain')}
                     onAddRangeClick={() => handleOpenClassSelector('range')}

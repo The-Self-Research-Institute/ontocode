@@ -9,10 +9,11 @@ const IndividualEditor: React.FC<{
   item: Individual;
   onUpdate: (updatedItem: Individual) => void;
   onAddAnnotation: () => void;
+  onEditAnnotation: (propertyIri: string, currentValue: string) => void;
   onDeleteAnnotation: (key: string) => void;
   activeTheme?: string;
   projectId: string;
-}> = ({ item, onUpdate, onAddAnnotation, onDeleteAnnotation, activeTheme, projectId }) => {
+}> = ({ item, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, projectId }) => {
   const [isAddingAssertion, setIsAddingAssertion] = useState(false);
   const [newAssertion, setNewAssertion] = useState({ propertyLabel: '', targetLabel: '', isObjectProperty: true });
   
@@ -97,7 +98,7 @@ const IndividualEditor: React.FC<{
           }
         >
           <div className="p-2">
-            <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} />
+            <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} />
           </div>
         </Panel>
 

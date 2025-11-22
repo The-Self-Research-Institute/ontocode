@@ -274,6 +274,7 @@ public class CollaborativeEditService {
             case "createObjectProperty", "createDataProperty", "createProperty" -> EditOperation.OperationType.PROPERTY_ADDED;
             case "deleteObjectProperty", "deleteDataProperty", "deleteProperty" -> EditOperation.OperationType.PROPERTY_DELETED;
             case "addAnnotation" -> EditOperation.OperationType.ANNOTATION_ADDED;
+            case "updateAnnotation" -> EditOperation.OperationType.ANNOTATION_MODIFIED;
             case "deleteAnnotation" -> EditOperation.OperationType.ANNOTATION_DELETED;
             case "createIndividual" -> EditOperation.OperationType.INDIVIDUAL_ADDED;
             case "deleteIndividual" -> EditOperation.OperationType.INDIVIDUAL_DELETED;

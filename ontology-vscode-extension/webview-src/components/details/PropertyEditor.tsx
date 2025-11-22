@@ -10,6 +10,7 @@ const PropertyEditor: React.FC<{
   item: Property;
   onUpdate: (updatedItem: Property) => void;
   onAddAnnotation: () => void;
+  onEditAnnotation: (propertyIri: string, currentValue: string) => void;
   onDeleteAnnotation: (key: string) => void;
   activeTheme?: string;
   projectId: string;
@@ -23,7 +24,8 @@ const PropertyEditor: React.FC<{
 }> = ({ 
     item, 
     onUpdate, 
-    onAddAnnotation, 
+    onAddAnnotation,
+    onEditAnnotation, 
     onDeleteAnnotation, 
     activeTheme, 
     projectId,
@@ -201,7 +203,7 @@ const PropertyEditor: React.FC<{
                     }
                 >
                     <div className="p-2">
-                        <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} />
+                        <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} />
                     </div>
                 </Panel>
 

@@ -110,6 +110,19 @@ export const ontologyMutationService = {
   },
 
   /**
+   * Update annotation value (atomic operation)
+   */
+  async updateAnnotation(projectId: string, entityIri: string, propertyIri: string, newValue: string,
+                        userId?: string, username?: string): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'updateAnnotation',
+      iri: entityIri,
+      property: propertyIri,
+      value: newValue
+    }], undefined, userId, username);
+  },
+
+  /**
    * Add SubClassOf axiom
    */
   async addSubClassOf(projectId: string, classIri: string, superClassIri: string): Promise<void> {

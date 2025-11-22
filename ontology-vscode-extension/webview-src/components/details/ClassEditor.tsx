@@ -184,12 +184,13 @@ const ClassEditor: React.FC<{
   projectId: string;
   onUpdate: (updatedItem: TreeNode) => void;
   onAddAnnotation: () => void;
+  onEditAnnotation: (propertyIri: string, currentValue: string) => void;
   onDeleteAnnotation: (key: string) => void;
   activeTheme?: string;
   classHierarchy?: TreeNode[];
   onToggleNode?: (nodeId: string) => Promise<void> | void;
   expandedNodes?: string[];
-}> = ({ item, projectId, onUpdate, onAddAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes }) => {
+}> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes }) => {
   const [activeTab, setActiveTab] = useState<'annotations' | 'usage' | 'description'>('annotations');
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [classDetails, setClassDetails] = useState<any>(null);
@@ -492,7 +493,7 @@ const ClassEditor: React.FC<{
               }
             >
               <div className="p-2">
-                <AnnotationsDisplay annotations={displayAnnotations} onDelete={onDeleteAnnotation} />
+                <AnnotationsDisplay annotations={displayAnnotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} />
               </div>
             </Panel>
         )}

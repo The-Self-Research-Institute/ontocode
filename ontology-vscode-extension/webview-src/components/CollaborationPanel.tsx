@@ -252,7 +252,6 @@ const CollaborationPanel = forwardRef<CollaborationPanelRef, CollaborationPanelP
                 
                 <div 
                     className="px-4 py-3 flex items-center justify-between"
-                    style={{ marginTop: '4px' }}
                 >
                     <div 
                         className="flex items-center gap-2 flex-1"
@@ -413,18 +412,44 @@ const CollaborationPanel = forwardRef<CollaborationPanelRef, CollaborationPanelP
                                         >
                                             <div className="flex items-start gap-2">
                                                 <span className={`text-xs font-semibold mt-0.5 ${
-                                                    change.changeType.startsWith('ADD') ? 'text-green-600' :
-                                                    change.changeType.startsWith('DELETE') || change.changeType.startsWith('REMOVE') ? 'text-red-600' :
-                                                    change.changeType.startsWith('RENAME') ? 'text-blue-600' :
+                                                    change.changeType.startsWith('ADD') || change.changeType.includes('add') ? 'text-green-600' :
+                                                    change.changeType.startsWith('DELETE') || change.changeType.startsWith('REMOVE') || change.changeType.includes('delete') ? 'text-red-600' :
+                                                    change.changeType.startsWith('RENAME') || change.changeType.includes('update') || change.changeType.includes('edit') ? 'text-blue-600' :
                                                     'text-amber-600'
                                                 }`}>
-                                                    {change.changeType.startsWith('ADD') ? '+ ' :
-                                                     change.changeType.startsWith('DELETE') || change.changeType.startsWith('REMOVE') ? '− ' :
-                                                     change.changeType.startsWith('RENAME') ? '✎ ' : '• '}
+                                                    {change.changeType.startsWith('ADD') || change.changeType.includes('add') ? '+ ' :
+                                                     change.changeType.startsWith('DELETE') || change.changeType.startsWith('REMOVE') || change.changeType.includes('delete') ? '− ' :
+                                                     change.changeType.startsWith('RENAME') || change.changeType.includes('update') || change.changeType.includes('edit') ? '✎ ' : '• '}
                                                 </span>
                                                 <div className="flex-1">
                                                     <div className="text-xs text-gray-700 mb-1">
-                                                        {change.description}
+                                                        {change.entityLabel && (
+                                                            <span className="font-medium text-purple-600">
+                                                                {change.entityLabel}
+                                                            </span>
+                                                        )}
+                                                        {change.entityLabel && ': '}
+                                                        {change.changeType}
+                                                        {/* Show old → new for edits/updates */}
+                                                        {change.oldValue && change.newValue && (
+                                                            <div className="mt-1 text-xs">
+                                                                <span className="text-red-600 line-through">{change.oldValue}</span>
+                                                                {' → '}
+                                                                <span className="text-green-600">{change.newValue}</span>
+                                                            </div>
+                                                        )}
+                                                        {/* Show added value for new annotations */}
+                                                        {change.newValue && !change.oldValue && (change.changeType.includes('add') || change.changeType.includes('ADD')) && (
+                                                            <div className="mt-1 text-xs text-green-600">
+                                                                Added: <span className="font-medium">{change.newValue}</span>
+                                                            </div>
+                                                        )}
+                                                        {/* Show removed value for deleted annotations */}
+                                                        {change.oldValue && !change.newValue && (change.changeType.includes('delete') || change.changeType.includes('DELETE') || change.changeType.includes('REMOVE')) && (
+                                                            <div className="mt-1 text-xs text-red-600">
+                                                                Removed: <span className="font-medium">{change.oldValue}</span>
+                                                            </div>
+                                                        )}
                                                     </div>
                                                     <div className="text-xs text-gray-500">
                                                         by <span className="font-medium">{change.username}</span>
