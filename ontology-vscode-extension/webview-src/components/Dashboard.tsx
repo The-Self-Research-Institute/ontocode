@@ -40,6 +40,7 @@ import {
 } from './dialogs';
 import { useKeyboardShortcuts, DEFAULT_SHORTCUTS, KeyboardShortcut } from '../hooks/useKeyboardShortcuts';
 import { useEntityPreferences } from '../contexts/EntityPreferencesContext';
+import { CodeHighlighter } from './CodeHighlighter';
 
 type TopLevelClass = TreeNode & { hasChildren: boolean };
 
@@ -773,7 +774,7 @@ const Dashboard = () => {
   const [visibleMainTabs, setVisibleMainTabs] = useState(['ActiveOntology', 'Entities', 'IndividualsByClass', 'DLQuery', 'CodeView', 'SPARQL']);
   
   // Code View states
-  const [codeViewFormat, setCodeViewFormat] = useState<'turtle' | 'rdfxml' | 'ntriples'>('turtle');
+  const [codeViewFormat, setCodeViewFormat] = useState<'turtle' | 'rdfxml' | 'ntriples' | 'owl'>('turtle');
   const [codeViewContent, setCodeViewContent] = useState<string>('');
   const [codeViewLoading, setCodeViewLoading] = useState(false);
   // #endregion
@@ -2499,7 +2500,7 @@ const Dashboard = () => {
   // #endregion
 
   // #region Render Methods
-  const fetchCodeViewContent = useCallback(async (format: 'turtle' | 'rdfxml' | 'ntriples') => {
+  const fetchCodeViewContent = useCallback(async (format: 'turtle' | 'rdfxml' | 'ntriples' | 'owl') => {
     if (!projectId) return;
     setCodeViewLoading(true);
     try {
@@ -2579,6 +2580,16 @@ const Dashboard = () => {
                     N-Triples
                   </button>
                   <button 
+                    onClick={() => fetchCodeViewContent('owl')}
+                    className={`px-3 py-1 text-sm rounded-md ${
+                      codeViewFormat === 'owl' 
+                        ? 'bg-purple-600 text-white hover:bg-purple-700' 
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                  >
+                    OWL/XML
+                  </button>
+                  <button 
                     onClick={() => fetchCodeViewContent(codeViewFormat)}
                     className="ml-auto px-3 py-1 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
                     disabled={codeViewLoading}
@@ -2591,9 +2602,10 @@ const Dashboard = () => {
                     <div className="text-gray-500">Loading ontology content...</div>
                   </div>
                 ) : (
-                  <pre className="bg-gray-50 p-4 rounded-lg text-xs font-mono overflow-auto border border-gray-200 h-full">
-                    <code className="text-gray-800 whitespace-pre">{codeViewContent || '// No content available'}</code>
-                  </pre>
+                  <CodeHighlighter 
+                    content={codeViewContent || '// No content available'} 
+                    format={codeViewFormat} 
+                  />
                 )}
               </div>
             </div>

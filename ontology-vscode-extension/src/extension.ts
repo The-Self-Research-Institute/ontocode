@@ -242,7 +242,7 @@ class OntoCodePanel {
         OntoCodePanel.currentPanel = new OntoCodePanel(panel, extensionUri, context);
         // Fix: Awaited the update of the webview content after panel creation.
         await OntoCodePanel.currentPanel._update();
-        return OntoCodePanel.currentPanel;
+        return OntoCodePanel.currentPanel!;
     }
 
     private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri, context: vscode.ExtensionContext) {
@@ -855,12 +855,28 @@ class OntoCodePanel {
                     window.toggleNode = () => {};
                 }
             </script>
+            <style>
+                /* Fix: Ensure code blocks are selectable and clickable */
+                pre, code, .hljs, [class*="code-"] {
+                    user-select: text !important;
+                    -webkit-user-select: text !important;
+                    cursor: text !important;
+                    pointer-events: auto !important;
+                }
+                
+                /* Fix: Remove default margins from pre tags to fix extra spacing */
+                pre {
+                    margin: 0 !important;
+                    padding: 0 !important;
+                }
+            </style>
         `;
         
         // Remove any existing CSP meta tags to avoid conflicts
         htmlContent = htmlContent.replace(/<meta[^>]*Content-Security-Policy[^>]*>/gi, '');
         
-        // Inject our new CSP, a <base> tag, and the API script into the <head>
+        // Inject our new CSP and the API script into the <head>
+        // Fix: Removed <base> tag as it breaks in-page anchor navigation (e.g. search results jumping to lines)
         htmlContent = htmlContent.replace(
             /(<head>)/,
             `$1
@@ -872,20 +888,19 @@ class OntoCodePanel {
                 font-src ${(webview as any).cspSource} https://unpkg.com data:; 
                 connect-src ${GATEWAY_URL} https://unpkg.com https://aistudiocdn.com;
             ">
-            <base href="${baseUri}">
             ${vscodeApiInjectionScript}`
         );
         
         // Add nonce to inline scripts (importmap, etc.)
         htmlContent = htmlContent.replace(/<script type="importmap">/g, `<script type="importmap" nonce="${nonce}">`);
         
-        // Add nonce to our main application script. The <base> tag handles the path resolution,
-        // so we can change the src to be relative.
+        // Add nonce to our main application script.
         // Add cache busting timestamp to force reload
         const cacheBuster = Date.now();
         htmlContent = htmlContent.replace(/(href|src)="([^"]+)"/g, (match, attr, rawPath) => {
-            if (rawPath.startsWith('https:') || rawPath.startsWith('http:') || rawPath.startsWith('data:')) {
-                return match; // Return the original string (e.g., 'href="https://cdn.tailwindcss.com"')
+            // Fix: Ignore hash links (anchors) so they work for in-page navigation
+            if (rawPath.startsWith('https:') || rawPath.startsWith('http:') || rawPath.startsWith('data:') || rawPath.startsWith('#')) {
+                return match; 
             }
             // Fix: Replace missing Uri.joinPath with Uri.parse and string interpolation for compatibility.
             const resourcePath = vscode.Uri.parse(
