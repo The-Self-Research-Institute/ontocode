@@ -135,6 +135,13 @@
             <version>${rdf4j.version}</version>
         </dependency>
 
+        <!-- Apache Commons IO for BOM handling -->
+        <dependency>
+            <groupId>commons-io</groupId>
+            <artifactId>commons-io</artifactId>
+            <version>2.15.1</version>
+        </dependency>
+
         <dependency>
             <groupId>org.semanticweb.elk</groupId>
             <artifactId>elk-owlapi</artifactId>

@@ -21,12 +21,17 @@ public class ImportQueueItem {
     private ImportStatus status;
     private long estimatedDurationMs;
     private int queuePosition;
+    private int retryCount;
+    private int maxRetries;
+    private String failureReason;
+    private Instant lastAttemptAt;
 
     public enum ImportStatus {
         QUEUED,
         PROCESSING,
         COMPLETED,
-        FAILED
+        FAILED,
+        RETRYING
     }
 
     public long getWaitTimeMs() {

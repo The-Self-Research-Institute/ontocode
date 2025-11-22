@@ -90,12 +90,57 @@ public class ProjectImportService {
                 queueManager.markCompleted(item.getProjectId(), duration);
             } catch (Exception e) {
                 log.error("[Import] Failed to process queue item for project {}", item.getProjectId(), e);
-                queueManager.markFailed(item.getProjectId());
+                
+                // Check if error is retryable (connection issues, timeouts, etc.)
+                boolean shouldRetry = isRetryableError(e);
+                String errorReason = extractErrorReason(e);
+                
+                queueManager.markFailed(item.getProjectId(), errorReason, shouldRetry);
             } finally {
                 // Try to process next item in queue
                 processNextInQueue();
             }
         });
+    }
+
+    /**
+     * Determine if an error is retryable (connection issues, timeouts)
+     */
+    private boolean isRetryableError(Exception e) {
+        String message = e.getMessage();
+        String causeMessage = e.getCause() != null ? e.getCause().getMessage() : "";
+        
+        // Check for connection-related errors
+        return message != null && (
+                message.contains("SocketException") ||
+                message.contains("Connection aborted") ||
+                message.contains("Connection reset") ||
+                message.contains("Connection timeout") ||
+                message.contains("NonRepeatableRequestException") ||
+                causeMessage.contains("SocketException") ||
+                causeMessage.contains("Connection aborted")
+        );
+    }
+
+    /**
+     * Extract a user-friendly error reason
+     */
+    private String extractErrorReason(Exception e) {
+        if (isRetryableError(e)) {
+            return "Connection to GraphDB lost. This usually means GraphDB ran out of memory for large files.";
+        }
+        
+        String message = e.getMessage();
+        if (message != null) {
+            if (message.contains("RDFParseException")) {
+                return "Invalid RDF format in ontology file";
+            }
+            if (message.contains("OutOfMemoryError")) {
+                return "Out of memory - file too large";
+            }
+        }
+        
+        return message != null ? message : "Unknown error";
     }
 
     private void runImport(String projectId, Path owlFile) {
@@ -177,7 +222,7 @@ public class ProjectImportService {
                     "PROCESSING", "Loading into GraphDB...", filename, bulkLoadStartMeta);
             
             try (InputStream in = Files.newInputStream(owlFile)) {
-                datasetService.bulkLoad(projectId, in, format);
+                datasetService.bulkLoadChunked(projectId, in, format);
             } finally {
                 loadingComplete.set(true);
             }
