@@ -12,6 +12,7 @@ const SignupForm = ({ onToggleForm }: { onToggleForm: () => void }) => {
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
+    const [successMessage, setSuccessMessage] = useState('');
     const { signup } = useAuth();
 
     const validatePassword = (pwd: string): string | null => {
@@ -27,6 +28,7 @@ const SignupForm = ({ onToggleForm }: { onToggleForm: () => void }) => {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
+        setSuccessMessage('');
         
         // Validate password
         const passwordError = validatePassword(password);
@@ -43,8 +45,14 @@ const SignupForm = ({ onToggleForm }: { onToggleForm: () => void }) => {
         setIsLoading(true);
         try {
             await signup(username, email, password);
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'An unknown error occurred.');
+            // If we get here without error, signup succeeded with immediate login
+        } catch (err: any) {
+            // Check if it's a success case (verification required)
+            if (err?.success && err?.message) {
+                setSuccessMessage(err.message);
+            } else {
+                setError(err instanceof Error ? err.message : 'An unknown error occurred.');
+            }
         } finally {
             setIsLoading(false);
         }
@@ -70,6 +78,12 @@ const SignupForm = ({ onToggleForm }: { onToggleForm: () => void }) => {
                 {error && (
                     <div className="bg-red-500/10 border border-red-400/30 text-red-400 px-4 py-3 rounded-lg mb-6 text-sm backdrop-blur-sm">
                         {error}
+                    </div>
+                )}
+                
+                {successMessage && (
+                    <div className="bg-green-500/10 border border-green-400/30 text-green-400 px-4 py-3 rounded-lg mb-6 text-sm backdrop-blur-sm">
+                        {successMessage}
                     </div>
                 )}
 

@@ -86,11 +86,13 @@ const LoadingDialog = ({ isOpen, message }: { isOpen: boolean; message?: string 
 const LoadingChoiceDialog = ({ 
   isOpen, 
   projectName, 
+  loadingStatusMessage,
   onWait, 
   onContinue 
 }: { 
   isOpen: boolean; 
   projectName: string;
+  loadingStatusMessage?: string;
   onWait: () => void; 
   onContinue: () => void;
 }) => {
@@ -104,9 +106,14 @@ const LoadingChoiceDialog = ({
           </div>
           <div className="flex-1">
             <h3 className="text-lg font-semibold text-gray-900 mb-1">Loading Ontology</h3>
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-gray-600 mb-1">
               "{projectName}" is loading in the background...
             </p>
+            {loadingStatusMessage && (
+              <p className="text-xs text-purple-600 font-medium mt-2">
+                {loadingStatusMessage}
+              </p>
+            )}
           </div>
         </div>
         
@@ -124,6 +131,11 @@ const LoadingChoiceDialog = ({
               <span><strong>Continue:</strong> Work on other files, you'll get a notification when ready</span>
             </li>
           </ul>
+          {loadingStatusMessage.includes('several minutes') && (
+            <div className="mt-3 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
+              <strong>Large file detected:</strong> Processing may take 2-5 minutes. We recommend clicking "Continue Working" to avoid waiting.
+            </div>
+          )}
         </div>
         
         <div className="flex gap-3">
@@ -681,6 +693,7 @@ const Dashboard = () => {
   const pendingImportProjectIdRef = useRef<string | null>(null); // Track which project is being imported (using ref for persistence)
   const [showLoadingChoice, setShowLoadingChoice] = useState(false);
   const [loadingProjectName, setLoadingProjectName] = useState("");
+  const [loadingStatusMessage, setLoadingStatusMessage] = useState<string>(""); // Track import progress message
   const loadingPromiseRef = useRef<Promise<void> | null>(null);
   const userLoadingChoice = useRef<'wait' | 'continue' | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
@@ -1349,6 +1362,20 @@ const Dashboard = () => {
                 progress: message.status.progress
               }
             }));
+            
+            // Update loading status message for user feedback
+            if (message.status.type === 'IMPORT_PROGRESS' && message.status.metadata?.message) {
+              setLoadingStatusMessage(message.status.metadata.message);
+            } else if (message.status.type === 'IMPORT_PROGRESS' && message.status.metadata?.stage) {
+              const stage = message.status.metadata.stage;
+              const stageMessages: Record<string, string> = {
+                'parsing': 'Parsing ontology file...',
+                'graphdb-loading': 'Loading data into GraphDB (this may take several minutes for large files)...',
+                'graphdb-load-complete': 'GraphDB load complete, computing metadata...',
+                'computing-metadata': 'Computing ontology statistics...'
+              };
+              setLoadingStatusMessage(stageMessages[stage] || 'Processing...');
+            }
           }
 
           // Handle import completion
@@ -3114,6 +3141,7 @@ const Dashboard = () => {
       <LoadingChoiceDialog
         isOpen={showLoadingChoice}
         projectName={loadingProjectName}
+        loadingStatusMessage={loadingStatusMessage}
         onWait={handleWaitForLoading}
         onContinue={handleContinueWorking}
       />

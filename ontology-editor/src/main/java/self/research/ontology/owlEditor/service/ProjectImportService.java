@@ -167,6 +167,15 @@ public class ProjectImportService {
             progressThread.start();
 
             long bulkLoadStart = System.nanoTime();
+            
+            // Notify user that we're starting GraphDB bulk load (this may take time for large files)
+            Map<String, Object> bulkLoadStartMeta = new HashMap<>();
+            bulkLoadStartMeta.put("progress", 60);
+            bulkLoadStartMeta.put("stage", "graphdb-loading");
+            bulkLoadStartMeta.put("message", "Loading data into GraphDB (this may take several minutes for large files)...");
+            sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
+                    "PROCESSING", "Loading into GraphDB...", filename, bulkLoadStartMeta);
+            
             try (InputStream in = Files.newInputStream(owlFile)) {
                 datasetService.bulkLoad(projectId, in, format);
             } finally {
