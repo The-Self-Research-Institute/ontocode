@@ -37,6 +37,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
 @RestController
 @RequestMapping("/api/ontology")
@@ -44,6 +45,9 @@ import java.util.Optional;
 public class ProjectLoadController {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectLoadController.class);
+    
+    // Project-level locks to prevent concurrent saves
+    private final ConcurrentHashMap<String, Object> projectSaveLocks = new ConcurrentHashMap<>();
 
     private final StorageManager storageManager;
     private final ProjectMetadataService metadataService;
@@ -222,28 +226,34 @@ public class ProjectLoadController {
             @PathVariable String projectId,
             @RequestParam(required = false) String userId,
             @RequestParam(required = false) String username) {
-        try {
-            log.info("[SAVE] Save requested for project: {} by user: {}", projectId, username);
+        
+        // Get or create a lock object for this project
+        Object lock = projectSaveLocks.computeIfAbsent(projectId, k -> new Object());
+        
+        // Synchronize on the project-specific lock to prevent concurrent saves
+        synchronized (lock) {
+            try {
+                log.info("[SAVE] Save requested for project: {} by user: {} (acquiring lock)", projectId, username);
 
-            // STEP 1: Get all unapplied drafts BEFORE applying them (for history recording)
-            log.info("[SAVE] Fetching drafts to record in history...");
-            java.util.List<DraftChange> drafts = draftChangeRepository.findByProjectIdAndAppliedFalseOrderByTimestampAsc(projectId);
-            log.info("[SAVE] Found {} unapplied drafts", drafts.size());
+                // STEP 1: Get all unapplied drafts BEFORE applying them (for history recording)
+                log.info("[SAVE] Fetching drafts to record in history...");
+                java.util.List<DraftChange> drafts = draftChangeRepository.findByProjectIdAndAppliedFalseOrderByTimestampAsc(projectId);
+                log.info("[SAVE] Found {} unapplied drafts", drafts.size());
 
-            // STEP 2: Apply all unapplied drafts to GraphDB
-            log.info("[SAVE] Applying drafts to GraphDB...");
-            DraftTrackingService.ApplyDraftsResult draftResult = draftTrackingService.applyDrafts(projectId);
-            
-            if (!draftResult.isSuccess()) {
-                log.error("[SAVE] Failed to apply drafts: {}", draftResult.getMessage());
-                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of(
-                        "success", false,
-                        "error", "Failed to apply drafts: " + draftResult.getMessage()
-                    ));
-            }
-            
-            log.info("[SAVE] Applied {} draft changes", draftResult.getAppliedCount());
+                // STEP 2: Apply all unapplied drafts to GraphDB
+                log.info("[SAVE] Applying drafts to GraphDB...");
+                DraftTrackingService.ApplyDraftsResult draftResult = draftTrackingService.applyDrafts(projectId);
+                
+                if (!draftResult.isSuccess()) {
+                    log.error("[SAVE] Failed to apply drafts: {}", draftResult.getMessage());
+                    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body(Map.of(
+                            "success", false,
+                            "error", "Failed to apply drafts: " + draftResult.getMessage()
+                        ));
+                }
+                
+                log.info("[SAVE] Applied {} draft changes", draftResult.getAppliedCount());
 
             // STEP 3: Export current state from GraphDB to file system
             Path exportPath = storageManager.exportOntology(projectId, "rdfxml");
@@ -324,6 +334,7 @@ public class ProjectLoadController {
             // STEP 8: Clear applied drafts (cleanup)
             draftTrackingService.clearAppliedDrafts(projectId);
             log.info("[SAVE] Cleared applied drafts");
+            log.info("[SAVE] ✅ Save completed successfully, releasing lock");
 
             return ResponseEntity.ok(Map.of(
                     "success", true,
@@ -332,13 +343,14 @@ public class ProjectLoadController {
                     "savedPath", originalPath.toString(),
                     "appliedDrafts", draftResult.getAppliedCount()
             ));
-        } catch (Exception e) {
-            log.error("[SAVE] Save failed for project: {}", projectId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of(
-                            "success", false,
-                            "error", "Failed to save ontology: " + e.getMessage()
-                    ));
+            } catch (Exception e) {
+                log.error("[SAVE] Save failed for project: {}", projectId, e);
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body(Map.of(
+                                "success", false,
+                                "error", "Failed to save ontology: " + e.getMessage()
+                        ));
+            }
         }
     }
 

@@ -16,12 +16,12 @@ export const ontologyMutationService = {
    * Apply mutations to the ontology
    * @param projectId - The project ID
    * @param ops - The mutation operations
-   * @param draft - If true, records as draft without applying to GraphDB (default: true)
+   * @param draft - If true, records as draft without applying to GraphDB (default: false for real-time sync)
    * @param userId - User ID for tracking
    * @param username - Username for tracking
    * @param sessionId - Session ID for tracking related operations
    */
-  async applyMutations(projectId: string, ops: MutationOp[], draft: boolean = true, 
+  async applyMutations(projectId: string, ops: MutationOp[], draft: boolean = false, 
                       userId?: string, username?: string, sessionId?: string): Promise<void> {
     await apiClient.post(`/api/ontology/mutations/${projectId}?draft=${draft}`, { 
       ops,
@@ -41,7 +41,7 @@ export const ontologyMutationService = {
       iri,
       label,
       parent: parentIri
-    }], true, userId, username);
+    }], false, userId, username);
   },
 
   /**
@@ -51,7 +51,7 @@ export const ontologyMutationService = {
     await this.applyMutations(projectId, [{
       type: 'deleteClass',
       iri
-    }], true, userId, username);
+    }], false, userId, username);
   },
 
   /**
@@ -63,7 +63,7 @@ export const ontologyMutationService = {
       type: 'updateClassLabel',
       iri,
       label
-    }], true, userId, username);
+    }], false, userId, username);
   },
 
   /**
@@ -76,7 +76,7 @@ export const ontologyMutationService = {
       iri: entityIri,
       property: propertyIri,
       value
-    }], true, userId, username);
+    }], false, userId, username);
   },
 
   /**
@@ -89,7 +89,7 @@ export const ontologyMutationService = {
       iri: entityIri,
       property: propertyIri,
       value
-    }], true, userId, username);
+    }], false, userId, username);
   },
 
   /**
