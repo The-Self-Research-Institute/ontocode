@@ -32,6 +32,8 @@ public class ImportQueueManager {
     // Configuration
     private static final int MAX_CONCURRENT_IMPORTS = 1; // Process one at a time to avoid GraphDB conflicts
     private static final long DEFAULT_ESTIMATED_DURATION_MS = 5 * 60 * 1000; // 5 minutes default
+    private static final int MAX_RETRIES = 3; // Maximum retry attempts for failed imports
+    private static final long RETRY_DELAY_MS = 10 * 1000; // 10 seconds delay before retry
 
     public ImportQueueManager(SimpMessagingTemplate messagingTemplate) {
         this.messagingTemplate = messagingTemplate;
@@ -64,6 +66,8 @@ public class ImportQueueManager {
                 .status(ImportQueueItem.ImportStatus.QUEUED)
                 .estimatedDurationMs(getAverageProcessingTime())
                 .queuePosition(queue.size() + 1)
+                .retryCount(0)
+                .maxRetries(MAX_RETRIES)
                 .build();
 
         queue.addLast(item);
@@ -138,13 +142,47 @@ public class ImportQueueManager {
     }
 
     /**
-     * Mark import as failed
+     * Mark import as failed with option to retry
      */
     public synchronized void markFailed(String projectId) {
+        markFailed(projectId, "Unknown error", false);
+    }
+
+    /**
+     * Mark import as failed with retry logic
+     * @param shouldRetry true if this is a retryable error (e.g., connection timeout)
+     */
+    public synchronized void markFailed(String projectId, String reason, boolean shouldRetry) {
         ImportQueueItem item = activeImports.remove(projectId);
-        if (item != null) {
+        if (item == null) {
+            return;
+        }
+
+        item.setFailureReason(reason);
+        item.setLastAttemptAt(Instant.now());
+
+        // Check if should retry
+        if (shouldRetry && item.getRetryCount() < item.getMaxRetries()) {
+            item.setRetryCount(item.getRetryCount() + 1);
+            item.setStatus(ImportQueueItem.ImportStatus.RETRYING);
+            
+            log.warn("[Queue] Failed project {} (attempt {}/{}): {}. Will retry in {} seconds",
+                    projectId, item.getRetryCount(), item.getMaxRetries(), reason, RETRY_DELAY_MS / 1000);
+            
+            // Re-queue with delay
+            scheduleRetry(item);
+            
+            // Notify user about retry
+            notifyRetrying(item);
+        } else {
             item.setStatus(ImportQueueItem.ImportStatus.FAILED);
-            log.warn("[Queue] Failed project {}", projectId);
+            log.error("[Queue] Failed project {} permanently ({}): {}",
+                    projectId, 
+                    item.getRetryCount() >= item.getMaxRetries() ? "max retries exceeded" : "non-retryable error",
+                    reason);
+            
+            // Notify user about failure
+            notifyFailed(item);
         }
 
         // Update queue positions
@@ -152,6 +190,29 @@ public class ImportQueueManager {
 
         // Broadcast updated stats
         broadcastQueueStats();
+    }
+
+    /**
+     * Schedule a retry for a failed import
+     */
+    private void scheduleRetry(ImportQueueItem item) {
+        new Thread(() -> {
+            try {
+                Thread.sleep(RETRY_DELAY_MS);
+                synchronized (this) {
+                    item.setStatus(ImportQueueItem.ImportStatus.QUEUED);
+                    item.setQueuePosition(queue.size() + 1);
+                    queue.addLast(item);
+                    log.info("[Queue] Re-queued project {} for retry (attempt {}/{})",
+                            item.getProjectId(), item.getRetryCount(), item.getMaxRetries());
+                    notifyQueueStatus(item.getProjectId());
+                    broadcastQueueStats();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.error("[Queue] Retry scheduling interrupted for project {}", item.getProjectId());
+            }
+        }).start();
     }
 
     /**
@@ -305,6 +366,43 @@ public class ImportQueueManager {
             messagingTemplate.convertAndSend("/topic/queue/stats", message);
         } catch (Exception e) {
             log.warn("[Queue] Failed to broadcast queue stats: {}", e.getMessage());
+        }
+    }
+
+    private void notifyRetrying(ImportQueueItem item) {
+        QueueStatusMessage message = QueueStatusMessage.builder()
+                .projectId(item.getProjectId())
+                .queuePosition(item.getQueuePosition())
+                .totalInQueue(queue.size())
+                .status("RETRYING")
+                .message(String.format("Import failed: %s. Retrying in 10 seconds (attempt %d/%d)",
+                        item.getFailureReason(), item.getRetryCount(), item.getMaxRetries()))
+                .timestamp(System.currentTimeMillis())
+                .build();
+
+        try {
+            messagingTemplate.convertAndSend("/topic/queue/" + item.getProjectId(), message);
+        } catch (Exception e) {
+            log.warn("[Queue] Failed to send retry notification: {}", e.getMessage());
+        }
+    }
+
+    private void notifyFailed(ImportQueueItem item) {
+        QueueStatusMessage message = QueueStatusMessage.builder()
+                .projectId(item.getProjectId())
+                .queuePosition(0)
+                .totalInQueue(queue.size())
+                .status("FAILED")
+                .message(String.format("Import failed permanently: %s %s",
+                        item.getFailureReason(),
+                        item.getRetryCount() >= item.getMaxRetries() ? "(maximum retries exceeded)" : ""))
+                .timestamp(System.currentTimeMillis())
+                .build();
+
+        try {
+            messagingTemplate.convertAndSend("/topic/queue/" + item.getProjectId(), message);
+        } catch (Exception e) {
+            log.warn("[Queue] Failed to send failure notification: {}", e.getMessage());
         }
     }
 

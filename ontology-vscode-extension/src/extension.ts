@@ -517,15 +517,15 @@ class OntoCodePanel {
 
         await vscode.window.showTextDocument(targetEditor.document, targetEditor.viewColumn);
 
-        const fileContent = targetEditor.document.getText();
+        // Fix: Use binary file reading instead of getText() to preserve encoding
+        // getText() converts to JavaScript string which corrupts non-UTF8 bytes
+        const fileData = await vscode.workspace.fs.readFile(targetEditor.document.uri);
         // Fix: Replaced path.basename with string manipulation on the URI path.
         const fileName = targetEditor.document.uri.path.substring(targetEditor.document.uri.path.lastIndexOf('/') + 1);
-        // Fix: Replaced Buffer.from with TextEncoder to produce a Uint8Array, avoiding Node.js globals.
-        const fileBuffer = new TextEncoder().encode(fileContent);
         const projectId = fileName.endsWith('.owl') ? fileName.slice(0, -4) : fileName;
 
         // Delegate to the shared upload logic
-        this._uploadOntology(projectId, fileName, fileBuffer);
+        this._uploadOntology(projectId, fileName, fileData);
     }
 
     /**

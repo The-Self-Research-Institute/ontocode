@@ -1,12 +1,16 @@
 package self.research.ontology.owlEditor.service;
 
 import org.eclipse.rdf4j.model.IRI;
+import org.eclipse.rdf4j.model.Statement;
 import org.eclipse.rdf4j.query.*;
 import org.eclipse.rdf4j.repository.Repository;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
 import org.eclipse.rdf4j.repository.http.HTTPRepository;
 import org.eclipse.rdf4j.rio.RDFFormat;
+import org.eclipse.rdf4j.rio.RDFHandler;
+import org.eclipse.rdf4j.rio.RDFParser;
 import org.eclipse.rdf4j.rio.Rio;
+import org.eclipse.rdf4j.rio.helpers.AbstractRDFHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,6 +26,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Service for managing GraphDB repositories.
@@ -56,8 +61,18 @@ public class GraphDBDatasetService {
         if (repository == null) {
             log.info("Initializing GraphDB repository connection: {} / {}", graphdbUrl, repositoryId);
             try {
-                repository = new HTTPRepository(graphdbUrl, repositoryId);
+                HTTPRepository httpRepo = new HTTPRepository(graphdbUrl, repositoryId);
+                
+                // Configure HTTP client with extended timeouts for large file uploads
+                // This prevents "Connection aborted" errors during large imports
+                httpRepo.setAdditionalHttpHeaders(java.util.Map.of(
+                    "Keep-Alive", "timeout=1800, max=1" // 30 minutes keep-alive
+                ));
+                
+                repository = httpRepo;
                 repository.init();
+                
+                log.info("GraphDB HTTP client configured with extended timeouts for large file support");
                 
                 // Test connection
                 try (RepositoryConnection conn = repository.getConnection()) {
@@ -312,6 +327,135 @@ public class GraphDBDatasetService {
     }
     
     /**
+     * Bulk load RDF data from input stream into GraphDB using CHUNKED approach
+     * Parses the file and uploads in batches of 1000 triples to avoid connection timeouts
+     * This is more reliable for large files that cause "Connection aborted" errors
+     */
+    public void bulkLoadChunked(String projectId, InputStream inputStream, RDFFormat rdfFormat) {
+        long bulkLoadStart = System.nanoTime();
+        final int BATCH_SIZE = 1000; // Triples per batch
+        
+        try {
+            Repository repo = getRepository();
+            String graphUri = getGraphUri(projectId);
+
+            log.info("Starting CHUNKED bulk load for project: {} with format: {} (batch size: {} triples)",
+                    projectId, rdfFormat, BATCH_SIZE);
+
+            // WORKAROUND: VS Code web editor can add garbage bytes before XML declaration
+            // Read entire stream, find <?xml, and create clean stream from that point
+            InputStream cleanedStream;
+            try {
+                byte[] allBytes = inputStream.readAllBytes();
+                log.info("Read {} bytes from input stream", allBytes.length);
+                
+                // Find the start of XML content (<?xml)
+                int xmlStart = -1;
+                for (int i = 0; i < Math.min(1000, allBytes.length - 5); i++) {
+                    if (allBytes[i] == '<' && allBytes[i+1] == '?' && 
+                        allBytes[i+2] == 'x' && allBytes[i+3] == 'm' && allBytes[i+4] == 'l') {
+                        xmlStart = i;
+                        break;
+                    }
+                }
+                
+                if (xmlStart == -1) {
+                    log.error("Could not find <?xml declaration in file");
+                    throw new RuntimeException("Invalid RDF/XML file: no <?xml declaration found");
+                } else if (xmlStart > 0) {
+                    log.warn("Found {} garbage bytes before <?xml declaration - stripping them", xmlStart);
+                    byte[] cleanBytes = new byte[allBytes.length - xmlStart];
+                    System.arraycopy(allBytes, xmlStart, cleanBytes, 0, cleanBytes.length);
+                    cleanedStream = new java.io.ByteArrayInputStream(cleanBytes);
+                } else {
+                    log.info("File starts correctly with <?xml");
+                    cleanedStream = new java.io.ByteArrayInputStream(allBytes);
+                }
+            } catch (Exception e) {
+                log.error("Failed to clean input stream", e);
+                throw new RuntimeException("Failed to prepare input stream: " + e.getMessage(), e);
+            }
+
+            try (RepositoryConnection conn = repo.getConnection()) {
+                var valueFactory = conn.getValueFactory();
+                IRI graphIri = valueFactory.createIRI(graphUri);
+
+                // Disable auto-commit for better performance
+                boolean originalAutoCommit = conn.isAutoCommit();
+                if (originalAutoCommit) {
+                    conn.setAutoCommit(false);
+                }
+
+                if (!conn.isActive()) {
+                    conn.begin();
+                }
+
+                try {
+                    // Clear existing data
+                    long sizeBeforeClear = safeGraphSize(conn, graphIri, "before-clear", projectId);
+                    if (sizeBeforeClear > 0) {
+                        clearGraph(conn, graphIri, graphUri, projectId);
+                    }
+
+                    // Parse and upload in batches
+                    RDFParser parser = Rio.createParser(rdfFormat);
+                    AtomicLong totalTriples = new AtomicLong(0);
+                    List<Statement> batch = new ArrayList<>(BATCH_SIZE);
+                    
+                    parser.setRDFHandler(new AbstractRDFHandler() {
+                        @Override
+                        public void handleStatement(Statement st) {
+                            batch.add(st);
+                            
+                            if (batch.size() >= BATCH_SIZE) {
+                                // Upload batch
+                                conn.add(batch, graphIri);
+                                long count = totalTriples.addAndGet(batch.size());
+                                if (count % 10000 == 0) {
+                                    log.info("Uploaded {} triples so far...", count);
+                                }
+                                batch.clear();
+                            }
+                        }
+                    });
+
+                    log.info("Parsing RDF file...");
+                    parser.parse(cleanedStream, graphUri);
+                    
+                    // Upload remaining triples
+                    if (!batch.isEmpty()) {
+                        conn.add(batch, graphIri);
+                        totalTriples.addAndGet(batch.size());
+                    }
+
+                    log.info("Parsed {} triples total", totalTriples.get());
+
+                    // Commit transaction
+                    log.warn("Committing {} triples to GraphDB...", totalTriples.get());
+                    long commitStart = System.nanoTime();
+                    conn.commit();
+                    log.info("Transaction committed in {} ms", elapsedMillis(commitStart));
+
+                    conn.setAutoCommit(originalAutoCommit);
+
+                    log.info("CHUNKED bulk load completed for project: {} - loaded {} triples (total {} seconds)",
+                            projectId, totalTriples.get(), elapsedMillis(bulkLoadStart) / 1000);
+                } catch (Exception e) {
+                    if (conn.isActive()) {
+                        conn.rollback();
+                        log.warn("Transaction rolled back for project: {}", projectId);
+                    }
+                    throw e;
+                }
+            }
+            
+        } catch (Exception e) {
+            log.error("Chunked bulk load failed for project: {}", projectId, e);
+            throw new RuntimeException("Chunked bulk load failed: " + e.getMessage(), e);
+        }
+    }
+    
+    /**
      * Bulk load RDF data from input stream into GraphDB
      * Supports: RDF/XML, Turtle, N-Triples, JSON-LD
      * Uses streaming to handle large files without loading entire content into memory
@@ -325,9 +469,17 @@ public class GraphDBDatasetService {
             log.info("Starting bulk load for project: {} with format: {} (GraphDB: {} repo: {})",
                     projectId, rdfFormat, graphdbUrl, repositoryId);
 
-            // Use large buffered input stream for better performance with big files
-            // RDF4J handles BOM detection and charset conversion automatically
-            InputStream bufferedStream = new java.io.BufferedInputStream(inputStream, 65536); // 64KB buffer
+            // Wrap with BOM-aware input stream to handle UTF-8 BOM (Byte Order Mark)
+            // Many OWL files downloaded from the internet have BOM which can cause parse failures
+            InputStream bomStrippedStream = new org.apache.commons.io.input.BOMInputStream(
+                inputStream, 
+                org.apache.commons.io.ByteOrderMark.UTF_8,
+                org.apache.commons.io.ByteOrderMark.UTF_16LE,
+                org.apache.commons.io.ByteOrderMark.UTF_16BE
+            );
+            
+            // Use large buffered input stream for better performance
+            InputStream bufferedStream = new java.io.BufferedInputStream(bomStrippedStream, 65536); // 64KB buffer
 
             try (RepositoryConnection conn = repo.getConnection()) {
                 var valueFactory = conn.getValueFactory();
@@ -369,11 +521,28 @@ public class GraphDBDatasetService {
 
                     log.info("Loading data into GraphDB graph: {}", graphUri);
 
-                    // Load new data into named graph (streaming - no full load into memory)
-                    // RDF4J will parse and load incrementally
+                    // WORKAROUND for "Connection reset by peer" errors:
+                    // Save stream to temp file first, then load from file
+                    // This makes the request repeatable if connection fails
+                    java.io.File tempFile = java.io.File.createTempFile("graphdb-upload-", ".rdf");
+                    tempFile.deleteOnExit();
+                    
+                    log.info("Copying stream to temp file: {}", tempFile.getAbsolutePath());
+                    try (java.io.FileOutputStream fos = new java.io.FileOutputStream(tempFile)) {
+                        bufferedStream.transferTo(fos);
+                    }
+                    long fileSize = tempFile.length();
+                    log.info("Temp file created: {} bytes ({} MB)", fileSize, fileSize / 1024 / 1024);
+
+                    // Now load from file (repeatable if connection drops)
                     long addStart = System.nanoTime();
-                    conn.add(bufferedStream, graphUri, rdfFormat, graphIri);
+                    try (java.io.FileInputStream fis = new java.io.FileInputStream(tempFile)) {
+                        conn.add(fis, graphUri, rdfFormat, graphIri);
+                    }
                     log.info("GraphDB add() finished in {} ms", elapsedMillis(addStart));
+                    
+                    // Clean up temp file
+                    tempFile.delete();
 
                     // Get size after loading
                     long sizeQueryStart = System.nanoTime();
