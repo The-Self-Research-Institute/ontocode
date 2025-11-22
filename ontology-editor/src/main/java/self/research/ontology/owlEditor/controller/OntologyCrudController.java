@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
+import self.research.ontology.owlEditor.service.GraphDBHistoryService;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
 
 import java.util.List;
@@ -26,11 +27,14 @@ public class OntologyCrudController {
 
     private final OntologyMutationService mutationService;
     private final DraftTrackingService draftTrackingService;
+    private final GraphDBHistoryService historyService;
 
     public OntologyCrudController(OntologyMutationService mutationService,
-                                 DraftTrackingService draftTrackingService) {
+                                 DraftTrackingService draftTrackingService,
+                                 GraphDBHistoryService historyService) {
         this.mutationService = mutationService;
         this.draftTrackingService = draftTrackingService;
+        this.historyService = historyService;
     }
 
     @PostMapping("/mutations/{projectId}")
@@ -56,10 +60,37 @@ public class OntologyCrudController {
                 "message", "Changes recorded as draft"
             ));
         } else {
-            // Apply directly to GraphDB (legacy behavior)
+            // Apply directly to GraphDB and record to history
             log.info("[MUTATION] Applying {} operations directly to GraphDB for project {}", 
                 request.ops().size(), projectId);
+            
+            String userId = request.userId() != null ? request.userId() : "anonymous";
+            String username = request.username() != null ? request.username() : "Anonymous";
+            
             mutationService.apply(projectId, request.ops());
+            
+            // Record each operation to GraphDB history
+            for (OntologyMutationService.MutationOp op : request.ops()) {
+                String entityIRI = op.iri();
+                String entityLabel = op.label();
+                String oldValue = null; // Not available in MutationOp
+                String newValue = op.value();
+                
+                historyService.recordEdit(
+                    projectId, 
+                    userId, 
+                    username, 
+                    op.type(), 
+                    entityIRI, 
+                    entityLabel, 
+                    oldValue, 
+                    newValue, 
+                    op.type() + " operation"
+                );
+            }
+            
+            log.info("[MUTATION] Recorded {} changes to GraphDB history", request.ops().size());
+            
             return ResponseEntity.ok(Map.of(
                 "success", true,
                 "draft", false,
@@ -67,7 +98,7 @@ public class OntologyCrudController {
             ));
         }
     }
-
+    
     @PostMapping("/make-siblings-disjoint/{projectId}")
     public ResponseEntity<?> makeSiblingsDisjoint(@PathVariable String projectId,
                                                   @RequestBody MakeSiblingsDisjointRequest request) {

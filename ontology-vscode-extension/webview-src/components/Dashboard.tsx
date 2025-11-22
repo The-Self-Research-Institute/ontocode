@@ -1,7 +1,7 @@
 // src/Dashboard.tsx
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
-  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, DatabaseZap, Upload, FolderOpen
+  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, DatabaseZap, Upload, FolderOpen, Clock
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
@@ -22,6 +22,7 @@ import { Panel, AnnotationsDisplay } from './details/common';
 import SparqlQueryEditor from './SparqlQueryEditor';
 import { ProjectSelector } from './ProjectSelector';
 import CollaborationPanel, { CollaborationPanelRef } from './CollaborationPanel';
+import HistoryPanel from './HistoryPanel';
 import ToastNotification from './ToastNotification';
 import ShareDialog from './ShareDialog';
 // ImportProgressToast removed per user request
@@ -176,6 +177,7 @@ const TopMenuBar = ({
   isSaving,
   draftCount,
   onOpenDialog,
+  onOpenHistory,
 }: {
   onToggleSwrlTab: () => void;
   isSwrlVisible: boolean;
@@ -192,6 +194,7 @@ const TopMenuBar = ({
   isSaving: boolean;
   draftCount?: number;
   onOpenDialog: () => void;
+  onOpenHistory: () => void;
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -351,6 +354,25 @@ const TopMenuBar = ({
                       className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Share
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        if (currentProjectId) {
+                          onOpenHistory();
+                        } else if (window.vscode) {
+                          window.vscode.postMessage({
+                            type: 'error',
+                            value: 'No ontology loaded. Please open a file first.'
+                          });
+                        }
+                        setOpenMenu(null);
+                      }}
+                      disabled={!currentProjectId}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                      <Clock size={14} />
+                      History
                     </button>
                   </div>
                 ) : (
@@ -770,6 +792,8 @@ const Dashboard = () => {
   const [sharedFiles, setSharedFiles] = useState<FileInfo[]>([]);
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [shareFileId, setShareFileId] = useState<string | null>(null);
+  const [isCurrentFileShared, setIsCurrentFileShared] = useState(false);
+  const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
 
   const [visibleMainTabs, setVisibleMainTabs] = useState(['ActiveOntology', 'Entities', 'IndividualsByClass', 'DLQuery', 'CodeView', 'SPARQL']);
   
@@ -1071,12 +1095,15 @@ const Dashboard = () => {
         const userEmail = user?.email || '';
         const filesRes = await apiClient.get<any>(`/api/projects?userEmail=${encodeURIComponent(userEmail)}`);
         
+        let myProjectsList: any[] = [];
+        let sharedProjectsList: any[] = [];
+        
         if (filesRes.myFiles && filesRes.sharedFiles) {
           // New format with separate lists
-          const myProjects = Array.isArray(filesRes.myFiles) ? filesRes.myFiles : [];
-          const sharedProjects = Array.isArray(filesRes.sharedFiles) ? filesRes.sharedFiles : [];
+          myProjectsList = Array.isArray(filesRes.myFiles) ? filesRes.myFiles : [];
+          sharedProjectsList = Array.isArray(filesRes.sharedFiles) ? filesRes.sharedFiles : [];
           
-          setMyFiles(myProjects.map((p: any) => ({
+          setMyFiles(myProjectsList.map((p: any) => ({
             id: p.id,
             filename: p.filename || p.name || p.id,
             contentType: 'application/rdf+xml',
@@ -1085,7 +1112,7 @@ const Dashboard = () => {
             ownerEmail: p.ownerEmail
           })));
           
-          setSharedFiles(sharedProjects.map((p: any) => ({
+          setSharedFiles(sharedProjectsList.map((p: any) => ({
             id: p.id,
             filename: p.filename || p.name || p.id,
             contentType: 'application/rdf+xml',
@@ -1096,11 +1123,11 @@ const Dashboard = () => {
             permission: p.permission || 'view'
           })));
           
-          console.log('[Dashboard] 📂 Loaded shared files:', sharedProjects.length);
+          console.log('[Dashboard] 📂 Loaded shared files:', sharedProjectsList.length);
           console.log('[Dashboard] 🤝 Collaboration features available for shared editing');
           
           // Combined list for backward compatibility
-          setListOfFiles([...myProjects, ...sharedProjects].map((p: any) => ({
+          setListOfFiles([...myProjectsList, ...sharedProjectsList].map((p: any) => ({
             id: p.id,
             filename: p.filename || p.name || p.id,
             contentType: 'application/rdf+xml',
@@ -1110,6 +1137,7 @@ const Dashboard = () => {
         } else {
           // Old format (backward compatibility)
           const projects = Array.isArray(filesRes?.projects) ? filesRes.projects : [];
+          myProjectsList = projects;
           setListOfFiles(projects.map((p: any) => ({
             id: p.id,
             filename: p.filename || p.name || p.id,
@@ -1126,6 +1154,53 @@ const Dashboard = () => {
           })));
           setSharedFiles([]);
         }
+        
+        // Check if current file is shared (for real-time collaboration)
+        // Use the freshly fetched data, not state variables
+        // A file is shared if:
+        // 1. It's in sharedFiles list (shared WITH me by someone else)
+        // 2. It's in myFiles and has sharedWith array (shared BY me with others)
+        const isSharedWithMe = sharedProjectsList.some((f: any) => f.id === currentProjectId);
+        const isSharedByMe = myProjectsList.some((f: any) => f.id === currentProjectId && f.sharedWith && f.sharedWith.length > 0);
+        const isShared = isSharedWithMe || isSharedByMe;
+        setIsCurrentFileShared(isShared);
+        
+        console.log('[Dashboard] 📊 File shared status:', isShared, 'for project:', currentProjectId);
+        console.log('[Dashboard] 📥 Shared WITH me:', isSharedWithMe);
+        console.log('[Dashboard] 📤 Shared BY me:', isSharedByMe);
+        console.log('[Dashboard] 📋 Shared files list:', sharedProjectsList.map((f: any) => f.id));
+        console.log('[Dashboard] 📋 My files list:', myProjectsList.map((f: any) => f.id));
+        
+        // Configure mutation service based on whether file is shared
+        ontologyMutationService.setRealTimeSync(isShared);
+        
+        // Only start monitoring for shared files (real-time collaboration)
+        if (isShared) {
+          console.log('[Dashboard] 📤 File is shared - enabling real-time collaboration');
+          
+          // Start monitoring for changes from other users
+          const handleDataChanged = async (changedProjectId: string) => {
+            console.log('[Dashboard] 🔄 Change detected from another user! Refreshing data...');
+            notificationService.info('New Changes Available', 'Another user saved changes. Refreshing data...');
+            
+            // Refresh data and restart monitoring for another 30 seconds
+            await fetchData(changedProjectId, false);
+            console.log('[Dashboard] ✅ Refresh complete, monitoring restarted');
+          };
+          
+          try {
+            const timestampData = await apiClient.get<{ updatedAt: string }>(`/api/ontology/metadata/${currentProjectId}/timestamp`);
+            if (timestampData && timestampData.updatedAt) {
+              const currentTimestamp = new Date(timestampData.updatedAt).getTime();
+              syncService.startMonitoring(currentProjectId, handleDataChanged, currentTimestamp);
+              console.log('[Dashboard] 🔍 Started monitoring for changes (30 seconds)');
+            }
+          } catch (error) {
+            console.warn('[Dashboard] Could not start change monitoring:', error);
+          }
+        } else {
+          console.log('[Dashboard] 📝 File is private - using draft mode (click Save to apply changes)');
+        }
       } catch (fileError) {
         console.error("Failed to fetch files:", fileError);
         setListOfFiles([]);
@@ -1135,27 +1210,6 @@ const Dashboard = () => {
       
       // Stop any previous monitoring for this project
       syncService.stopMonitoring(currentProjectId);
-      
-      // Start monitoring for changes from other users
-      const handleDataChanged = async (changedProjectId: string) => {
-        console.log('[Dashboard] 🔄 Change detected from another user! Refreshing data...');
-        notificationService.info('New Changes Available', 'Another user saved changes. Refreshing data...');
-        
-        // Refresh data and restart monitoring for another 30 seconds
-        await fetchData(changedProjectId, false, true);
-        console.log('[Dashboard] ✅ Refresh complete, monitoring restarted');
-      };
-      
-      try {
-        const timestampData = await apiClient.get<{ updatedAt: string }>(`/api/ontology/metadata/${currentProjectId}/timestamp`);
-        if (timestampData && timestampData.updatedAt) {
-          const currentTimestamp = new Date(timestampData.updatedAt).getTime();
-          syncService.startMonitoring(currentProjectId, handleDataChanged, currentTimestamp);
-          console.log('[Dashboard] 🔍 Started monitoring for changes (30 seconds)');
-        }
-      } catch (error) {
-        console.warn('[Dashboard] Could not start change monitoring:', error);
-      }
       
       // Notify user that ontology is fully loaded
       notificationService.success(
@@ -1879,7 +1933,7 @@ const Dashboard = () => {
 
     try {
       // Call backend API
-      await ontologyMutationService.addAnnotation(projectId, selectedItem.id, propertyIri, value);
+      await ontologyMutationService.addAnnotation(projectId, selectedItem.id, propertyIri, value, user?.email || 'anonymous', user?.username || 'Anonymous');
       
       // Update local state
       const updatedAnnotations = { ...selectedItem.annotations, [propertyIri]: value };
@@ -1905,7 +1959,7 @@ const Dashboard = () => {
         try {
           const value = selectedItem.annotations[key];
           // Call backend API
-          await ontologyMutationService.deleteAnnotation(projectId, selectedItem.id, key, value);
+          await ontologyMutationService.deleteAnnotation(projectId, selectedItem.id, key, value, user?.email || 'anonymous', user?.username || 'Anonymous');
           
           // Update local state
           const remainingAnnotations = { ...selectedItem.annotations };
@@ -2051,7 +2105,7 @@ const Dashboard = () => {
             name, 
             parentIri,
             user?.email || 'anonymous',
-            user?.name || user?.email || 'Anonymous'
+            user?.username || 'Anonymous'
           );
 
           // Update local state
@@ -2116,7 +2170,7 @@ const Dashboard = () => {
               parentIri = parent?.id || 'http://www.w3.org/2002/07/owl#topObjectProperty';
           }
           
-          await ontologyMutationService.createObjectProperty(projectId, newIri, name, parentIri);
+          await ontologyMutationService.createObjectProperty(projectId, newIri, name, parentIri, user?.email || 'anonymous', user?.username || 'Anonymous');
           
           const newProp: any = {
               id: newIri,
@@ -2224,7 +2278,7 @@ const Dashboard = () => {
       const baseIri = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
       const newIri = `${baseIri}#${name.replace(/\s+/g, '_')}`;
 
-      await ontologyMutationService.createDatatype(projectId, newIri, name);
+      await ontologyMutationService.createDatatype(projectId, newIri, name, user?.email || 'anonymous', user?.username || 'Anonymous');
 
       const newDatatype: Datatype = {
         id: newIri,
@@ -2294,7 +2348,7 @@ const Dashboard = () => {
           const classIds = allClasses.map(c => c.id);
 
           // Call backend to create pairwise disjoint axioms
-          await ontologyMutationService.makeSiblingsDisjoint(projectId, classIds);
+          await ontologyMutationService.makeSiblingsDisjoint(projectId, classIds, user?.email || 'anonymous', user?.username || 'Anonymous');
 
           showNotification(`Successfully made ${classIds.length} classes pairwise disjoint.`, 'info');
 
@@ -2324,16 +2378,16 @@ const Dashboard = () => {
           // Call backend API based on entity type
           switch (entitiesTab) {
             case 'Classes':
-              await ontologyMutationService.deleteClass(projectId, selectedItem.id);
+              await ontologyMutationService.deleteClass(projectId, selectedItem.id, user?.email || 'anonymous', user?.username || 'Anonymous');
               break;
             case 'Individuals':
-              await ontologyMutationService.deleteIndividual(projectId, selectedItem.id);
+              await ontologyMutationService.deleteIndividual(projectId, selectedItem.id, user?.email || 'anonymous', user?.username || 'Anonymous');
               break;
             case 'ObjectProperties':
-              await ontologyMutationService.deleteObjectProperty(projectId, selectedItem.id);
+              await ontologyMutationService.deleteObjectProperty(projectId, selectedItem.id, user?.email || 'anonymous', user?.username || 'Anonymous');
               break;
             case 'Datatypes':
-              await ontologyMutationService.deleteDatatype(projectId, selectedItem.id);
+              await ontologyMutationService.deleteDatatype(projectId, selectedItem.id, user?.email || 'anonymous', user?.username || 'Anonymous');
               break;
             // Add other entity types as needed
           }
@@ -2390,13 +2444,13 @@ const Dashboard = () => {
 
       // Try to update via class label endpoint first (works for classes)
       try {
-        await ontologyMutationService.updateClassLabel(projectId, itemId, newLabel);
+        await ontologyMutationService.updateClassLabel(projectId, itemId, newLabel, user?.email || 'anonymous', user?.username || 'Anonymous');
       } catch (classError) {
         // If class update fails, try annotation-based update (for other entity types)
         // Note: We need to get the current label - we'll use selectedItem if it matches
         const currentLabel = selectedItem?.id === itemId ? selectedItem.label : 'Unknown';
-        await ontologyMutationService.deleteAnnotation(projectId, itemId, 'http://www.w3.org/2000/01/rdf-schema#label', currentLabel);
-        await ontologyMutationService.addAnnotation(projectId, itemId, 'http://www.w3.org/2000/01/rdf-schema#label', newLabel);
+        await ontologyMutationService.deleteAnnotation(projectId, itemId, 'http://www.w3.org/2000/01/rdf-schema#label', currentLabel, user?.email || 'anonymous', user?.username || 'Anonymous');
+        await ontologyMutationService.addAnnotation(projectId, itemId, 'http://www.w3.org/2000/01/rdf-schema#label', newLabel, user?.email || 'anonymous', user?.username || 'Anonymous');
       }
 
       // Update local state by creating a minimal updated item
@@ -2886,11 +2940,11 @@ const Dashboard = () => {
     try {
       switch (selectorTarget) {
         case 'domain':
-          await ontologyMutationService.addPropertyDomain(projectId, selectedItem.id, expression);
+          await ontologyMutationService.addPropertyDomain(projectId, selectedItem.id, expression, user?.email || 'anonymous', user?.username || 'Anonymous');
           updateItemInState({ ...selectedItem, domains: [...((selectedItem as Property).domains || []), expression] });
           break;
         case 'range':
-          await ontologyMutationService.addPropertyRange(projectId, selectedItem.id, expression);
+          await ontologyMutationService.addPropertyRange(projectId, selectedItem.id, expression, user?.email || 'anonymous', user?.username || 'Anonymous');
           updateItemInState({ ...selectedItem, ranges: [...((selectedItem as Property).ranges || []), expression] });
           break;
       }
@@ -2908,20 +2962,20 @@ const Dashboard = () => {
     try {
       switch (selectorTarget) {
         case 'subProperty':
-          await ontologyMutationService.addSubPropertyOf(projectId, selectedItem.id, expression);
+          await ontologyMutationService.addSubPropertyOf(projectId, selectedItem.id, expression, user?.email || 'anonymous', user?.username || 'Anonymous');
           updateItemInState({ ...selectedItem, superProperties: [...((selectedItem as Property).superProperties || []), expression] });
           break;
         case 'inverse':
-          await ontologyMutationService.addInverseProperty(projectId, selectedItem.id, expression);
+          await ontologyMutationService.addInverseProperty(projectId, selectedItem.id, expression, user?.email || 'anonymous', user?.username || 'Anonymous');
           updateItemInState({ ...selectedItem, inverseProperties: [...((selectedItem as Property).inverseProperties || []), expression] });
           break;
         case 'disjoint':
-          await ontologyMutationService.addDisjointProperty(projectId, selectedItem.id, expression);
+          await ontologyMutationService.addDisjointProperty(projectId, selectedItem.id, expression, user?.email || 'anonymous', user?.username || 'Anonymous');
           updateItemInState({ ...selectedItem, disjointProperties: [...((selectedItem as Property).disjointProperties || []), expression] });
           break;
         case 'equivalent': {
            const existing = (selectedItem as Property).equivalentProperties || [];
-           await ontologyMutationService.addEquivalentProperty(projectId, selectedItem.id, expression);
+           await ontologyMutationService.addEquivalentProperty(projectId, selectedItem.id, expression, user?.email || 'anonymous', user?.username || 'Anonymous');
            updateItemInState({ ...selectedItem, equivalentProperties: [...existing, expression] });
            break;
         }
@@ -3036,6 +3090,7 @@ const Dashboard = () => {
           isSaving={isSaving}
           draftCount={draftCount}
           onOpenDialog={() => setShowOpenDialog(true)}
+          onOpenHistory={() => setIsHistoryPanelOpen(true)}
         />
 
         <div className="bg-white border-b border-gray-200 flex-shrink-0">
@@ -3217,8 +3272,10 @@ const Dashboard = () => {
         onContinue={handleContinueWorking}
       />
 
-      {/* Collaboration Panel */}
-      <CollaborationPanel ref={collaborationPanelRef} projectId={projectId || undefined} />
+      {/* Collaboration Panel - Only show for shared files */}
+      {isCurrentFileShared && (
+        <CollaborationPanel ref={collaborationPanelRef} projectId={projectId || undefined} />
+      )}
 
       {/* Share Dialog */}
       {shareFileId && (
@@ -3257,6 +3314,15 @@ const Dashboard = () => {
 
       {/* Global Queue Stats */}
       <GlobalQueueStats visible={true} />
+
+      {/* History Panel */}
+      {projectId && (
+        <HistoryPanel
+          projectId={projectId}
+          isOpen={isHistoryPanelOpen}
+          onClose={() => setIsHistoryPanelOpen(false)}
+        />
+      )}
     </>
   );
 };

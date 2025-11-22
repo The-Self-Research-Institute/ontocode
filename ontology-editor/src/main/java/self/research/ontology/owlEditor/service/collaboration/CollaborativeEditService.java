@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.collaboration.EditOperation;
 import self.research.ontology.owlEditor.model.collaboration.LockMessage;
 import self.research.ontology.owlEditor.model.collaboration.PresenceMessage;
+import self.research.ontology.owlEditor.service.GraphDBHistoryService;
 import self.research.ontology.owlEditor.websocket.WebSocketEventListener;
 
 import java.util.*;
@@ -24,6 +25,7 @@ public class CollaborativeEditService {
 
     private final SimpMessagingTemplate messagingTemplate;
     private final WebSocketEventListener eventListener;
+    private final GraphDBHistoryService historyService;
     
     // Operation history per project: projectId -> Queue<EditOperation>
     private final Map<String, Queue<EditOperation>> operationHistory = new ConcurrentHashMap<>();
@@ -224,15 +226,61 @@ public class CollaborativeEditService {
     }
 
     /**
-     * Get operation history for a project.
+     * Get operation history for a project from GraphDB.
      */
     public List<EditOperation> getHistory(String projectId, int limit) {
-        Queue<EditOperation> history = operationHistory.get(projectId);
-        if (history == null) return Collections.emptyList();
+        // Read from GraphDB history graph
+        List<Map<String, Object>> historyData = historyService.getHistory(projectId, limit);
         
-        return history.stream()
-                .skip(Math.max(0, history.size() - limit))
+        // Convert to EditOperation objects
+        return historyData.stream()
+                .map(this::convertToEditOperation)
                 .toList();
+    }
+    
+    private EditOperation convertToEditOperation(Map<String, Object> data) {
+        EditOperation op = new EditOperation();
+        
+        // Convert string operation type to enum
+        String typeStr = (String) data.get("type");
+        EditOperation.OperationType operationType = convertStringToOperationType(typeStr);
+        op.setType(operationType);
+        
+        op.setProjectId(""); // Not stored in GraphDB history
+        op.setNodeId((String) data.getOrDefault("nodeId", ""));
+        op.setUserId((String) data.get("userId"));
+        op.setUsername((String) data.get("username"));
+        op.setSessionId(""); // Not stored in GraphDB history
+        op.setTimestamp((Long) data.get("timestamp"));
+        op.setServerTimestamp((Long) data.get("serverTimestamp"));
+        
+        @SuppressWarnings("unchecked")
+        Map<String, Object> metadata = (Map<String, Object>) data.get("metadata");
+        if (metadata != null) {
+            op.setMetadata(metadata);
+        }
+        
+        return op;
+    }
+    
+    private EditOperation.OperationType convertStringToOperationType(String type) {
+        if (type == null) return EditOperation.OperationType.CLASS_MODIFIED;
+        
+        return switch (type) {
+            case "createClass" -> EditOperation.OperationType.CLASS_ADDED;
+            case "deleteClass" -> EditOperation.OperationType.CLASS_DELETED;
+            case "updateClassLabel" -> EditOperation.OperationType.CLASS_MODIFIED;
+            case "renameClass" -> EditOperation.OperationType.CLASS_RENAMED;
+            case "createObjectProperty", "createDataProperty", "createProperty" -> EditOperation.OperationType.PROPERTY_ADDED;
+            case "deleteObjectProperty", "deleteDataProperty", "deleteProperty" -> EditOperation.OperationType.PROPERTY_DELETED;
+            case "addAnnotation" -> EditOperation.OperationType.ANNOTATION_ADDED;
+            case "deleteAnnotation" -> EditOperation.OperationType.ANNOTATION_DELETED;
+            case "createIndividual" -> EditOperation.OperationType.INDIVIDUAL_ADDED;
+            case "deleteIndividual" -> EditOperation.OperationType.INDIVIDUAL_DELETED;
+            case "addSubClass" -> EditOperation.OperationType.SUBCLASS_ADDED;
+            case "removeSubClass" -> EditOperation.OperationType.SUBCLASS_REMOVED;
+            default -> EditOperation.OperationType.CLASS_MODIFIED;
+        };
     }
 
     /**
