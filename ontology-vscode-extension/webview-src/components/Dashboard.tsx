@@ -2547,49 +2547,49 @@ const Dashboard = () => {
                 <h2 className="text-lg font-semibold">OWL/RDF Code View</h2>
                 <p className="text-sm text-gray-600 mt-1">View the ontology in different serialization formats</p>
               </div>
-              <div className="flex-1 overflow-auto p-4">
-                <div className="mb-4 flex gap-2">
-                  <button 
+              <div className="flex-1 flex flex-col overflow-hidden p-4">
+                <div className="mb-4 flex gap-2 flex-shrink-0">
+                  <button
                     onClick={() => fetchCodeViewContent('turtle')}
                     className={`px-3 py-1 text-sm rounded-md ${
-                      codeViewFormat === 'turtle' 
-                        ? 'bg-purple-600 text-white hover:bg-purple-700' 
+                      codeViewFormat === 'turtle'
+                        ? 'bg-purple-600 text-white hover:bg-purple-700'
                         : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                     }`}
                   >
                     Turtle
                   </button>
-                  <button 
+                  <button
                     onClick={() => fetchCodeViewContent('rdfxml')}
                     className={`px-3 py-1 text-sm rounded-md ${
-                      codeViewFormat === 'rdfxml' 
-                        ? 'bg-purple-600 text-white hover:bg-purple-700' 
+                      codeViewFormat === 'rdfxml'
+                        ? 'bg-purple-600 text-white hover:bg-purple-700'
                         : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                     }`}
                   >
                     RDF/XML
                   </button>
-                  <button 
+                  <button
                     onClick={() => fetchCodeViewContent('ntriples')}
                     className={`px-3 py-1 text-sm rounded-md ${
-                      codeViewFormat === 'ntriples' 
-                        ? 'bg-purple-600 text-white hover:bg-purple-700' 
+                      codeViewFormat === 'ntriples'
+                        ? 'bg-purple-600 text-white hover:bg-purple-700'
                         : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                     }`}
                   >
                     N-Triples
                   </button>
-                  <button 
+                  <button
                     onClick={() => fetchCodeViewContent('owl')}
                     className={`px-3 py-1 text-sm rounded-md ${
-                      codeViewFormat === 'owl' 
-                        ? 'bg-purple-600 text-white hover:bg-purple-700' 
+                      codeViewFormat === 'owl'
+                        ? 'bg-purple-600 text-white hover:bg-purple-700'
                         : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                     }`}
                   >
                     OWL/XML
                   </button>
-                  <button 
+                  <button
                     onClick={() => fetchCodeViewContent(codeViewFormat)}
                     className="ml-auto px-3 py-1 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
                     disabled={codeViewLoading}
@@ -2597,16 +2597,18 @@ const Dashboard = () => {
                     {codeViewLoading ? 'Refreshing...' : 'Refresh'}
                   </button>
                 </div>
-                {codeViewLoading ? (
-                  <div className="flex items-center justify-center h-64">
-                    <div className="text-gray-500">Loading ontology content...</div>
-                  </div>
-                ) : (
-                  <CodeHighlighter 
-                    content={codeViewContent || '// No content available'} 
-                    format={codeViewFormat} 
-                  />
-                )}
+                <div className="flex-1 overflow-hidden">
+                  {codeViewLoading ? (
+                    <div className="flex items-center justify-center h-64">
+                      <div className="text-gray-500">Loading ontology content...</div>
+                    </div>
+                  ) : (
+                    <CodeHighlighter
+                      content={codeViewContent || '// No content available'}
+                      format={codeViewFormat}
+                    />
+                  )}
+                </div>
               </div>
             </div>
           </div>

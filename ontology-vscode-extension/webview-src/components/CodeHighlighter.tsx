@@ -221,9 +221,9 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({ content, forma
       const lineNumberWeight = isLineSelected ? 'bold' : 'normal';
 
       numberedLines[index] =
-        `<div class="code-line" data-line="${index}" style="${lineStyle};display:flex;min-height:20px;line-height:20px;padding:0;margin:0;width:100%">` +
+        `<div class="code-line" data-line="${index}" style="${lineStyle};display:flex;min-height:20px;line-height:20px;padding:0;margin:0">` +
         `<span style="color:${lineNumberColor};font-weight:${lineNumberWeight};user-select:none;width:50px;min-width:50px;text-align:right;padding-right:12px;flex-shrink:0;cursor:pointer" class="line-number" data-line-idx="${index}" title="Click to select/deselect line">${lineNumber}</span>` +
-        `<span style="color:#d4d4d4;white-space:${wordWrap ? 'pre-wrap' : 'pre'};overflow-wrap:${wordWrap ? 'anywhere' : 'normal'};word-break:${wordWrap ? 'break-word' : 'normal'};min-width:0;user-select:text;cursor:text" class="line-content">${processedLine}</span>` +
+        `<span style="color:#d4d4d4;white-space:${wordWrap ? 'pre-wrap' : 'pre'};overflow-wrap:${wordWrap ? 'anywhere' : 'normal'};word-break:${wordWrap ? 'break-word' : 'normal'};flex:1;min-width:0;user-select:text;cursor:text" class="line-content">${processedLine}</span>` +
         `</div>`;
     }
 
@@ -445,7 +445,7 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({ content, forma
   const hasMore = displayedLines < totalLines;
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col" style={{ minWidth: 0, maxWidth: '100%', overflow: 'hidden' }}>
       {/* Search Bar */}
       <div className="bg-gray-800 border-b border-gray-700 p-2 flex items-center gap-2">
         <div className="flex-1 relative">
@@ -661,20 +661,24 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({ content, forma
         </div>
       )}
 
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1" style={{ minWidth: 0, overflow: 'auto', maxWidth: '98vw', width: '100vw' }}>
         <pre
           ref={codeRef}
-          className="bg-[#1e1e1e] p-4 rounded-lg text-sm font-mono overflow-auto border border-gray-700 flex-1"
+          className="bg-[#1e1e1e] p-4 rounded-lg text-sm font-mono h-full border border-gray-700"
           style={{
             lineHeight: '20px',
             tabSize: 4,
             whiteSpace: wordWrap ? 'pre-wrap' : 'pre',
             wordBreak: wordWrap ? 'break-word' : 'normal',
-            maxWidth: '100%'
+            overflowX: 'auto',
+            overflowY: 'auto',
+            width: '100%',
+            maxWidth: '100vw',
+            boxSizing: 'border-box',
+            margin: 0
           }}
         >
         <div
-          style={{ width: '100%', maxWidth: '100%' }}
           dangerouslySetInnerHTML={{ __html: highlightedContent }}
         />
       </pre>
@@ -705,27 +709,67 @@ function highlightTurtleLine(line: string): string {
   if (!line.trim()) return escapeHtml(line);
 
   let escaped = escapeHtml(line);
-  return escaped
-    .replace(/(@prefix|@base)(\s+)/g, '<span style="color:#c586c0">$1</span>$2')
-    .replace(/(&lt;[^&gt;]+&gt;)/g, '<span style="color:#4ec9b0">$1</span>')
-    .replace(/("(?:[^"\\]|\\.)*")(@[a-z]{2}(?:-[A-Z]{2})?)\b/g, '<span style="color:#ce9178">$1</span><span style="color:#4fc1ff">$2</span>')
-    .replace(/("(?:[^"\\]|\\.)*")/g, '<span style="color:#ce9178">$1</span>')
-    .replace(/(\^\^)/g, '<span style="color:#d4d4d4">$1</span>')
-    .replace(/\b([a-zA-Z_][\w-]*):([a-zA-Z_][\w-]*)\b/g, '<span style="color:#9cdcfe">$1</span>:<span style="color:#dcdcaa">$2</span>')
-    .replace(/\b(a|true|false)\b/g, '<span style="color:#569cd6">$1</span>')
-    .replace(/([;.,\[\]()])/g, '<span style="color:#d4d4d4">$1</span>');
+  const MARKER = '\u0000';
+  const replacements: string[] = [];
+  let counter = 0;
+
+  const store = (replacement: string) => {
+    const marker = `${MARKER}${counter}${MARKER}`;
+    replacements[counter] = replacement;
+    counter++;
+    return marker;
+  };
+
+  let result = escaped
+    .replace(/(@prefix|@base)(\s+)/g, (_match, keyword, space) => `${store(`<span style="color:#c586c0">${keyword}</span>`)}${space}`)
+    .replace(/(&lt;[^&gt;]+&gt;)/g, (match) => store(`<span style="color:#4ec9b0">${match}</span>`))
+    .replace(/("(?:[^"\\]|\\.)*")(@[a-z]{2}(?:-[A-Z]{2})?)\b/g, (_match, str, lang) =>
+      `${store(`<span style="color:#ce9178">${str}</span>`)}${store(`<span style="color:#4fc1ff">${lang}</span>`)}`)
+    .replace(/("(?:[^"\\]|\\.)*")/g, (match) => store(`<span style="color:#ce9178">${match}</span>`))
+    .replace(/(\^\^)/g, (match) => store(`<span style="color:#d4d4d4">${match}</span>`))
+    .replace(/\b([a-zA-Z_][\w-]*):([a-zA-Z_][\w-]*)\b/g, (_match, prefix, name) =>
+      `${store(`<span style="color:#9cdcfe">${prefix}</span>`)}:${store(`<span style="color:#dcdcaa">${name}</span>`)}`)
+    .replace(/\b(a|true|false)\b/g, (match) => store(`<span style="color:#569cd6">${match}</span>`))
+    .replace(/([;.,\[\]()])/g, (match) => store(`<span style="color:#d4d4d4">${match}</span>`));
+
+  for (let i = 0; i < counter; i++) {
+    result = result.replace(`${MARKER}${i}${MARKER}`, replacements[i]);
+  }
+
+  return result;
 }
 
 function highlightRDFXMLLine(line: string): string {
   let escaped = escapeHtml(line);
-  return escaped
-    .replace(/(&lt;\?xml[^?]*\?&gt;)/g, '<span style="color:#569cd6">$1</span>')
-    .replace(/(&lt;!--.*?--&gt;)/g, '<span style="color:#6a9955">$1</span>')
-    .replace(/=(&quot;[^&quot;]*&quot;|"[^"]*")/g, '=<span style="color:#ce9178">$1</span>')
-    .replace(/(&lt;\/?)([a-zA-Z_][\w-]*):([a-zA-Z_][\w-]*)/g, '$1<span style="color:#569cd6">$2</span>:<span style="color:#4ec9b0">$3</span>')
-    .replace(/(&lt;\/?)([a-zA-Z_][\w-]*)/g, '$1<span style="color:#4ec9b0">$2</span>')
-    .replace(/(\s)([a-zA-Z_][\w-]*(?::[a-zA-Z_][\w-]*)?)=/g, '$1<span style="color:#9cdcfe">$2</span>=')
-    .replace(/(\/?&gt;)/g, '<span style="color:#808080">$1</span>');
+  const MARKER = '\u0000'; // Null character as marker
+  const replacements: string[] = [];
+  let counter = 0;
+
+  // Function to store a replacement and return a marker
+  const store = (replacement: string) => {
+    const marker = `${MARKER}${counter}${MARKER}`;
+    replacements[counter] = replacement;
+    counter++;
+    return marker;
+  };
+
+  let result = escaped
+    .replace(/(&lt;\?xml[^?]*\?&gt;)/g, (match) => store(`<span style="color:#569cd6">${match}</span>`))
+    .replace(/(&lt;!--.*?--&gt;)/g, (match) => store(`<span style="color:#6a9955">${match}</span>`))
+    .replace(/=(&quot;[^&quot;]*&quot;)/g, (_match, value) => `=${store(`<span style="color:#ce9178">${value}</span>`)}`)
+    .replace(/(&lt;\/?)([a-zA-Z_][\w-]*):([a-zA-Z_][\w-]*)/g, (_match, open, ns, name) =>
+      `${open}${store(`<span style="color:#569cd6">${ns}</span>`)}:${store(`<span style="color:#4ec9b0">${name}</span>`)}`)
+    .replace(/(&lt;\/?)([a-zA-Z_][\w-]*)/g, (_match, open, name) => `${open}${store(`<span style="color:#4ec9b0">${name}</span>`)}`)
+    .replace(/(\s)([a-zA-Z_][\w-]*(?::[a-zA-Z_][\w-]*)?)=/g, (_match, space, attr) =>
+      `${space}${store(`<span style="color:#9cdcfe">${attr}</span>`)}=`)
+    .replace(/(\/?&gt;)/g, (match) => store(`<span style="color:#808080">${match}</span>`));
+
+  // Restore all stored replacements
+  for (let i = 0; i < counter; i++) {
+    result = result.replace(`${MARKER}${i}${MARKER}`, replacements[i]);
+  }
+
+  return result;
 }
 
 function highlightNTriplesLine(line: string): string {
@@ -745,16 +789,38 @@ function highlightNTriplesLine(line: string): string {
 
 function highlightOWLLine(line: string): string {
   let escaped = escapeHtml(line);
-  return escaped
-    .replace(/(&lt;\?xml[^?]*\?&gt;)/g, '<span style="color:#569cd6">$1</span>')
-    .replace(/(&lt;!--.*?--&gt;)/g, '<span style="color:#6a9955">$1</span>')
-    .replace(/(&lt;!DOCTYPE[^&gt;]*&gt;)/g, '<span style="color:#569cd6">$1</span>')
-    .replace(/=(&quot;[^&quot;]*&quot;|"[^"]*")/g, '=<span style="color:#ce9178">$1</span>')
-    .replace(/(&lt;\/?)((owl|rdf|rdfs|xsd|dc|dcterms):([a-zA-Z_][\w-]*))/g, '$1<span style="color:#569cd6">$3</span>:<span style="color:#4ec9b0">$4</span>')
-    .replace(/(&lt;\/?)([a-zA-Z_][\w-]*):([a-zA-Z_][\w-]*)/g, '$1<span style="color:#569cd6">$2</span>:<span style="color:#4ec9b0">$3</span>')
-    .replace(/(&lt;\/?)([a-zA-Z_][\w-]*)/g, '$1<span style="color:#4ec9b0">$2</span>')
-    .replace(/(\s)([a-zA-Z_][\w-]*(?::[a-zA-Z_][\w-]*)?)=/g, '$1<span style="color:#9cdcfe">$2</span>=')
-    .replace(/(\/?&gt;)/g, '<span style="color:#808080">$1</span>');
+  const MARKER = '\u0000'; // Null character as marker
+  const replacements: string[] = [];
+  let counter = 0;
+
+  // Function to store a replacement and return a marker
+  const store = (replacement: string) => {
+    const marker = `${MARKER}${counter}${MARKER}`;
+    replacements[counter] = replacement;
+    counter++;
+    return marker;
+  };
+
+  let result = escaped
+    .replace(/(&lt;\?xml[^?]*\?&gt;)/g, (match) => store(`<span style="color:#569cd6">${match}</span>`))
+    .replace(/(&lt;!--.*?--&gt;)/g, (match) => store(`<span style="color:#6a9955">${match}</span>`))
+    .replace(/(&lt;!DOCTYPE[^&gt;]*&gt;)/g, (match) => store(`<span style="color:#569cd6">${match}</span>`))
+    .replace(/=(&quot;[^&quot;]*&quot;)/g, (_match, value) => `=${store(`<span style="color:#ce9178">${value}</span>`)}`)
+    .replace(/(&lt;\/?)((owl|rdf|rdfs|xsd|dc|dcterms):([a-zA-Z_][\w-]*))/g, (_match, open, _full, ns, name) =>
+      `${open}${store(`<span style="color:#569cd6">${ns}</span>`)}:${store(`<span style="color:#4ec9b0">${name}</span>`)}`)
+    .replace(/(&lt;\/?)([a-zA-Z_][\w-]*):([a-zA-Z_][\w-]*)/g, (_match, open, ns, name) =>
+      `${open}${store(`<span style="color:#569cd6">${ns}</span>`)}:${store(`<span style="color:#4ec9b0">${name}</span>`)}`)
+    .replace(/(&lt;\/?)([a-zA-Z_][\w-]*)/g, (_match, open, name) => `${open}${store(`<span style="color:#4ec9b0">${name}</span>`)}`)
+    .replace(/(\s)([a-zA-Z_][\w-]*(?::[a-zA-Z_][\w-]*)?)=/g, (_match, space, attr) =>
+      `${space}${store(`<span style="color:#9cdcfe">${attr}</span>`)}=`)
+    .replace(/(\/?&gt;)/g, (match) => store(`<span style="color:#808080">${match}</span>`));
+
+  // Restore all stored replacements
+  for (let i = 0; i < counter; i++) {
+    result = result.replace(`${MARKER}${i}${MARKER}`, replacements[i]);
+  }
+
+  return result;
 }
 
 function highlightTurtle(lines: string[]): string {
