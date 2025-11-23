@@ -29,97 +29,25 @@
     "type": "git",
     "url": "https://github.com/ontocode/fuzzy-ontology-plugin"
   },
-  "main": "./dist/extension.js",
-  "activationEvents": [
-    "onLanguage:turtle",
-    "onLanguage:owl",
-    "onCommand:fuzzy.enableFuzzyMode",
-    "onView:fuzzy-ontology-explorer"
-  ],
-  "contributes": {
-    "commands": [
-      {
-        "command": "fuzzy.enableFuzzyMode",
-        "title": "Enable Fuzzy Ontology Mode",
-        "category": "Fuzzy"
-      },
-      {
-        "command": "fuzzy.setMembershipDegree",
-        "title": "Set Membership Degree",
-        "category": "Fuzzy"
-      },
-      {
-        "command": "fuzzy.visualizeMembership",
-        "title": "Visualize Membership Functions",
-        "category": "Fuzzy"
-      },
-      {
-        "command": "fuzzy.runFuzzyQuery",
-        "title": "Run Fuzzy Query",
-        "category": "Fuzzy"
-      },
-      {
-        "command": "fuzzy.exportFuzzyOWL",
-        "title": "Export Fuzzy OWL",
-        "category": "Fuzzy"
-      }
-    ],
-    "views": {
-      "explorer": [
-        {
-          "id": "fuzzy-ontology-explorer",
-          "name": "Fuzzy Ontology Explorer"
-        }
-      ]
-    },
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "fuzzy-ontology",
-          "title": "Fuzzy Ontology",
-          "icon": "resources/fuzzy-icon.svg"
-        }
-      ]
-    },
-    "configuration": {
-      "title": "Fuzzy Ontology",
-      "properties": {
-        "fuzzy.defaultTNorm": {
-          "type": "string",
-          "enum": ["product", "godel", "lukasiewicz"],
-          "default": "product",
-          "description": "Default T-norm for fuzzy conjunction"
-        },
-        "fuzzy.defaultTCoNorm": {
-          "type": "string",
-          "enum": ["probabilistic", "godel", "lukasiewicz"],
-          "default": "probabilistic",
-          "description": "Default T-conorm for fuzzy disjunction"
-        },
-        "fuzzy.visualizationTheme": {
-          "type": "string",
-          "enum": ["gradient", "heatmap", "categorical"],
-          "default": "gradient",
-          "description": "Membership degree visualization theme"
-        },
-        "fuzzy.alphaDecay": {
-          "type": "number",
-          "default": 0.8,
-          "minimum": 0,
-          "maximum": 1,
-          "description": "Alpha decay parameter for hierarchical embeddings"
-        }
-      }
-    }
-  },
+  "main": "./dist/index.js",
   "scripts": {
-    "build": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "package": "vsce package"
+    "build": "webpack --mode production",
+    "watch": "webpack --mode development --watch"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "typescript": "^5.3.0"
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "ts-loader": "^9.4.0",
+    "typescript": "^5.3.0",
+    "webpack": "^5.88.0",
+    "webpack-cli": "^5.1.0"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "lucide-react": "^0.263.0"
   },
   "dependencies": {}
 }
+

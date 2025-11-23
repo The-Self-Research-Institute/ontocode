@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import apiClient from './apiClient';
 
 export interface PluginManifest {
   name: string;
@@ -220,40 +221,55 @@ class PluginLoaderService {
     }
 
     try {
-      // Map known plugins to their already-registered components in pluginManager
-      // These plugins are already integrated via PluginSystem
-      const { pluginManager } = await import('../plugins/PluginSystem');
+      // Download and dynamically load the plugin bundle
+      const bundleUrl = `${(window as any).API_BASE_URL}/api/plugins/${pluginId}/download`;
       
-      let component: React.ComponentType<any> | null = null;
+      console.log(`[PluginLoader] 📥 Loading plugin bundle from ${bundleUrl}`);
+      
+      // Create a script element that loads directly from URL
+      // This avoids CSP issues with inline scripts and blob URLs
+      const script = document.createElement('script');
+      script.src = bundleUrl;
+      script.type = 'text/javascript';
+      // Note: Don't set crossOrigin when using wildcard CORS (*)
+      
+      // Wait for script to load
+      await new Promise<void>((resolve, reject) => {
+        script.onload = () => {
+          console.log(`[PluginLoader] ✅ Script loaded for ${pluginId}`);
+          resolve();
+        };
+        script.onerror = (error) => {
+          console.error(`[PluginLoader] ❌ Script load error for ${pluginId}:`, error);
+          reject(new Error('Failed to load plugin script'));
+        };
+        document.head.appendChild(script);
+      });
 
-      // Map marketplace plugin IDs to internal plugin IDs
-      const pluginMapping: Record<string, string> = {
-        'swrl-editor-plugin': 'swrl-tab',
-        'graph-view-plugin': 'reasoning-graph',
-        'fuzzy-ontology-plugin': 'fuzzy-ontology-plugin'
+      // The UMD bundle should expose itself on window with the library name
+      // e.g., window.FuzzyOntologyPlugin, window.SWRLEditorPlugin, window.GraphViewPlugin
+      const libraryNames: Record<string, string> = {
+        'fuzzy-ontology-plugin': 'FuzzyOntologyPlugin',
+        'swrl-editor-plugin': 'SWRLEditorPlugin',
+        'graph-view-plugin': 'GraphViewPlugin'
       };
 
-      const internalPluginId = pluginMapping[pluginId];
-      if (internalPluginId) {
-        const registeredPlugin = pluginManager.getPlugin(internalPluginId);
-        if (registeredPlugin) {
-          // Activate the plugin if not already active
-          if (!pluginManager.isPluginActive(internalPluginId)) {
-            await pluginManager.activatePlugin(internalPluginId);
-          }
-          component = registeredPlugin.component;
-          console.log(`[PluginLoader] ✅ Loaded plugin ${pluginId} -> ${internalPluginId}`);
-        } else {
-          console.warn(`[PluginLoader] ⚠️ Plugin ${internalPluginId} not registered in pluginManager yet - will be available after implementation`);
-          // Plugin is marked as installed but component not available yet
-          // This is OK for fuzzy-ontology-plugin which isn't implemented yet
-        }
-      } else {
-        console.warn(`[PluginLoader] ⚠️ Unknown plugin: ${pluginId}`);
+      const libraryName = libraryNames[pluginId];
+      if (!libraryName) {
+        throw new Error(`Unknown plugin library name for ${pluginId}`);
+      }
+
+      // Get the component from the global scope - UMD export should be directly on window
+      const component = (window as any)[libraryName];
+      
+      if (!component) {
+        throw new Error(`Plugin ${pluginId} did not export a default component`);
       }
 
       plugin.component = component;
       plugin.loaded = true;
+      
+      console.log(`[PluginLoader] ✅ Successfully loaded plugin ${pluginId}`);
       
       this.notifyListeners();
       
@@ -346,32 +362,25 @@ class PluginLoaderService {
   ): Promise<void> {
     try {
       const token = this.getAuthToken();
-      const headers: HeadersInit = {
-        'Content-Type': 'application/json'
-      };
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
+      if (!token) {
+        throw new Error('Please log in to rate plugins');
       }
       
-      const response = await fetch(`${window.API_BASE_URL}/api/plugins/${pluginId}/rate`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          stars,
-          review,
-          merits,
-          demerits,
-          recommended
-        })
+      await apiClient.post(`/api/plugins/${pluginId}/rate`, {
+        stars,
+        review,
+        merits,
+        demerits,
+        recommended
       });
 
-      if (!response.ok) {
-        throw new Error(`Failed to rate plugin: ${response.statusText}`);
-      }
-
       console.log(`[PluginLoader] Successfully rated plugin ${pluginId} with ${stars} stars`);
-    } catch (error) {
+    } catch (error: any) {
       console.error('[PluginLoader] Failed to rate plugin:', error);
+      // Check if it's an authentication error
+      if (error?.status === 401 || error?.message?.includes('Unauthorized')) {
+        throw new Error('Please log in to rate plugins');
+      }
       throw error;
     }
   }
@@ -382,26 +391,18 @@ class PluginLoaderService {
   async getUserRating(pluginId: string): Promise<any> {
     try {
       const token = this.getAuthToken();
-      const headers: HeadersInit = {};
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
+      if (!token) {
+        // No auth token - user not logged in, return null silently
+        return null;
       }
       
-      const response = await fetch(`${window.API_BASE_URL}/api/plugins/${pluginId}/my-rating`, {
-        method: 'GET',
-        headers
-      });
-
-      if (response.status === 204) {
-        return null; // No rating yet
+      const response = await apiClient.get(`/api/plugins/${pluginId}/my-rating`);
+      return response;
+    } catch (error: any) {
+      // Silently return null for 401 (not logged in) or 404 (no rating yet)
+      if (error?.status === 401 || error?.status === 404 || error?.status === 204) {
+        return null;
       }
-
-      if (!response.ok) {
-        throw new Error(`Failed to get rating: ${response.statusText}`);
-      }
-
-      return await response.json();
-    } catch (error) {
       console.error('[PluginLoader] Failed to get user rating:', error);
       return null;
     }

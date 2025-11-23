@@ -91,12 +91,14 @@ public class PluginController {
         InputStream fileStream = pluginService.downloadPlugin(pluginId, version);
 
         HttpHeaders headers = new HttpHeaders();
-        headers.add(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + pluginId + "-" + version + ".vsix");
-        headers.add(HttpHeaders.CONTENT_TYPE, "application/zip");
+        headers.add(HttpHeaders.CONTENT_TYPE, "application/javascript");
+        headers.add(HttpHeaders.CACHE_CONTROL, "no-cache, no-store, must-revalidate");
+        headers.add(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "*");
+        headers.add(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true");
 
         return ResponseEntity.ok()
             .headers(headers)
-            .contentType(MediaType.APPLICATION_OCTET_STREAM)
+            .contentType(MediaType.valueOf("application/javascript"))
             .body(new InputStreamResource(fileStream));
     }
 

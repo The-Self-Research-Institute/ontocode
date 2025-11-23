@@ -18,6 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const FormData = require('form-data');
 const axios = require('axios');
+const { execSync } = require('child_process');
 
 // Configuration
 const PLUGIN_SERVICE_URL = 'http://localhost:8087/api/plugins';
@@ -74,38 +75,46 @@ async function getAuthToken() {
 }
 
 /**
- * Create a mock VSIX file from plugin directory
- * In production, this would use proper VSIX packaging
+ * Build plugin using webpack and return path to bundle
  */
-function createMockVSIX(pluginDir, pluginId) {
+function buildPlugin(pluginDir, pluginId) {
   const sourceDir = path.join(PLUGINS_DIR, pluginDir);
   const packageJsonPath = path.join(sourceDir, 'package.json');
+  const bundlePath = path.join(sourceDir, 'dist', 'index.js');
   
   if (!fs.existsSync(packageJsonPath)) {
     throw new Error(`package.json not found for ${pluginId}`);
   }
 
-  // Read package.json to create metadata
-  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+  console.log(`   Building plugin with webpack...`);
   
-  // Create a simple ZIP-like structure (for demo purposes)
-  // In production, use proper VSIX packaging with vsce
-  const vsixPath = path.join(__dirname, 'temp', `${pluginId}.vsix`);
-  const tempDir = path.join(__dirname, 'temp');
-  
-  if (!fs.existsSync(tempDir)) {
-    fs.mkdirSync(tempDir, { recursive: true });
-  }
+  try {
+    // Install dependencies if node_modules doesn't exist
+    if (!fs.existsSync(path.join(sourceDir, 'node_modules'))) {
+      console.log(`   Installing dependencies...`);
+      execSync('npm install', { 
+        cwd: sourceDir, 
+        stdio: 'inherit',
+        shell: true 
+      });
+    }
 
-  // Create a minimal VSIX file marker (placeholder)
-  const vsixContent = JSON.stringify({
-    pluginId,
-    packageJson,
-    timestamp: new Date().toISOString()
-  });
-  
-  fs.writeFileSync(vsixPath, vsixContent);
-  return vsixPath;
+    // Build with webpack
+    execSync('npx webpack --mode production', { 
+      cwd: sourceDir,
+      stdio: 'pipe',
+      shell: true
+    });
+
+    if (!fs.existsSync(bundlePath)) {
+      throw new Error(`Bundle not found at ${bundlePath}`);
+    }
+
+    console.log(`   ✅ Built successfully: ${bundlePath}`);
+    return bundlePath;
+  } catch (error) {
+    throw new Error(`Failed to build ${pluginId}: ${error.message}`);
+  }
 }
 
 /**
@@ -115,8 +124,8 @@ async function uploadPlugin(plugin) {
   console.log(`\n📦 Uploading ${plugin.name}...`);
   
   try {
-    // Create VSIX file
-    const vsixPath = createMockVSIX(plugin.pluginId, plugin.pluginId);
+    // Build plugin to get UMD bundle
+    const bundlePath = buildPlugin(plugin.pluginId, plugin.pluginId);
     
     // Create form data
     const form = new FormData();
@@ -139,10 +148,10 @@ async function uploadPlugin(plugin) {
       contentType: 'application/json'
     });
     
-    // Add VSIX file
-    form.append('vsixFile', fs.createReadStream(vsixPath), {
-      filename: `${plugin.pluginId}-${plugin.version}.vsix`,
-      contentType: 'application/zip'
+    // Add UMD bundle as the plugin file
+    form.append('vsixFile', fs.createReadStream(bundlePath), {
+      filename: `${plugin.pluginId}-${plugin.version}.js`,
+      contentType: 'application/javascript'
     });
 
     // Get auth token
@@ -165,9 +174,6 @@ async function uploadPlugin(plugin) {
     console.log(`✅ Successfully uploaded ${plugin.name}`);
     console.log(`   Plugin ID: ${response.data.pluginId}`);
     console.log(`   Version: ${response.data.latestVersion}`);
-    
-    // Clean up temp file
-    fs.unlinkSync(vsixPath);
     
     return response.data;
   } catch (error) {
@@ -229,12 +235,6 @@ async function main() {
       failCount++;
       // Continue with next plugin
     }
-  }
-
-  // Clean up temp directory
-  const tempDir = path.join(__dirname, 'temp');
-  if (fs.existsSync(tempDir)) {
-    fs.rmSync(tempDir, { recursive: true });
   }
 
   // Summary

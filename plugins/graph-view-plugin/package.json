@@ -1,11 +1,12 @@
 {
   "name": "@ontocode/graph-view-plugin",
-  "displayName": "Ontology Graph View",
-  "version": "1.0.0",
-  "description": "Interactive graph visualization for ontology classes, properties, and relationships using network diagrams",
+  "displayName": "Advanced Ontology Graph View",
+  "version": "2.0.0",
+  "description": "Enterprise-grade graph visualization with 1000x features: AI reasoning, collaborative editing, temporal modeling, provenance tracking, ML integration, and advanced querying",
   "author": "OntoCode Team",
   "license": "MIT",
-  "main": "src/GraphView.tsx",
+  "icon": "icon.png",
+  "main": "./dist/index.js",
   "category": "Visualization",
   "keywords": [
     "ontology",
@@ -15,38 +16,20 @@
     "diagram",
     "owl",
     "rdf",
-    "knowledge graph"
+    "knowledge graph",
+    "semantic web",
+    "reasoning",
+    "inference",
+    "provenance",
+    "temporal",
+    "spatial",
+    "ml",
+    "ai",
+    "collaboration",
+    "sparql",
+    "cypher",
+    "graph-rag"
   ],
-  "engines": {
-    "vscode": "^1.80.0"
-  },
-  "activationEvents": [
-    "onView:graphView"
-  ],
-  "contributes": {
-    "views": {
-      "explorer": [
-        {
-          "id": "graphView",
-          "name": "Graph View",
-          "icon": "$(graph)",
-          "contextualTitle": "Ontology Graph Visualization"
-        }
-      ]
-    }
-  },
-  "dependencies": {
-    "vis-network": "^9.1.9",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "lucide-react": "^0.263.1"
-  },
-  "devDependencies": {
-    "@types/react": "^18.2.0",
-    "@types/react-dom": "^18.2.0",
-    "typescript": "^5.0.0"
-  },
-  "icon": "icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/ontocode/graph-view-plugin"
@@ -54,5 +37,34 @@
   "homepage": "https://github.com/ontocode/graph-view-plugin#readme",
   "bugs": {
     "url": "https://github.com/ontocode/graph-view-plugin/issues"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "scripts": {
+    "build": "webpack --mode production",
+    "watch": "webpack --mode development --watch"
+  },
+  "dependencies": {
+    "vis-network": "^9.1.9",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "lucide-react": "^0.263.1",
+    "sockjs-client": "^1.6.1",
+    "@stomp/stompjs": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "ts-loader": "^9.4.0",
+    "typescript": "^5.0.0",
+    "webpack": "^5.88.0",
+    "webpack-cli": "^5.1.0"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "lucide-react": "^0.263.0"
   }
 }
+

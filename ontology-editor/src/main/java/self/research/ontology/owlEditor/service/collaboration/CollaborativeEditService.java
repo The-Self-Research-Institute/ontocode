@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.collaboration.EditOperation;
+import self.research.ontology.owlEditor.model.collaboration.GraphUpdateMessage;
 import self.research.ontology.owlEditor.model.collaboration.LockMessage;
 import self.research.ontology.owlEditor.model.collaboration.PresenceMessage;
 import self.research.ontology.owlEditor.service.GraphDBHistoryService;
@@ -70,10 +71,13 @@ public class CollaborativeEditService {
         
         // Broadcast to all clients in the project
         broadcastEdit(operation);
-        
-        log.info("Processed edit: type={}, node={}, user={}", 
+
+        // Also broadcast graph update for visualization clients
+        processEditForGraphUpdate(operation);
+
+        log.info("Processed edit: type={}, node={}, user={}",
                 operation.getType(), operation.getNodeId(), operation.getUserId());
-        
+
         return operation;
     }
 
@@ -289,7 +293,7 @@ public class CollaborativeEditService {
      */
     public List<Map<String, Object>> getActiveUsers(String projectId) {
         Map<String, WebSocketEventListener.UserSession> sessions = eventListener.getProjectSessions(projectId);
-        
+
         List<Map<String, Object>> result = new ArrayList<>();
         for (WebSocketEventListener.UserSession session : sessions.values()) {
             Map<String, Object> userMap = new HashMap<>();
@@ -301,6 +305,170 @@ public class CollaborativeEditService {
             result.add(userMap);
         }
         return result;
+    }
+
+    /**
+     * Broadcast graph update to all clients viewing the graph.
+     */
+    public void broadcastGraphUpdate(GraphUpdateMessage update) {
+        messagingTemplate.convertAndSend(
+            "/topic/graph/" + update.getProjectId(),
+            update
+        );
+
+        log.debug("Broadcast graph update: type={}, project={}, user={}",
+                update.getType(), update.getProjectId(), update.getUserId());
+    }
+
+    /**
+     * Convert EditOperation to GraphUpdateMessage for graph view clients.
+     */
+    public void processEditForGraphUpdate(EditOperation operation) {
+        GraphUpdateMessage graphUpdate = convertEditToGraphUpdate(operation);
+        if (graphUpdate != null) {
+            broadcastGraphUpdate(graphUpdate);
+        }
+    }
+
+    private GraphUpdateMessage convertEditToGraphUpdate(EditOperation operation) {
+        String nodeId = operation.getNodeId();
+        Map<String, Object> metadata = operation.getMetadata();
+
+        switch (operation.getType()) {
+            case CLASS_ADDED:
+                GraphUpdateMessage.GraphNode newClassNode = GraphUpdateMessage.GraphNode.builder()
+                    .id(nodeId)
+                    .label((String) metadata.getOrDefault("label", nodeId))
+                    .type("class")
+                    .hasChildren(false)
+                    .expanded(false)
+                    .build();
+
+                return GraphUpdateMessage.nodeAdded(
+                    operation.getProjectId(),
+                    operation.getUserId(),
+                    operation.getUsername(),
+                    newClassNode
+                );
+
+            case CLASS_DELETED:
+                return GraphUpdateMessage.nodeDeleted(
+                    operation.getProjectId(),
+                    operation.getUserId(),
+                    operation.getUsername(),
+                    nodeId
+                );
+
+            case CLASS_MODIFIED:
+            case CLASS_RENAMED:
+                GraphUpdateMessage.GraphNode updatedNode = GraphUpdateMessage.GraphNode.builder()
+                    .id(nodeId)
+                    .label((String) metadata.getOrDefault("label", nodeId))
+                    .type("class")
+                    .build();
+
+                return GraphUpdateMessage.nodeUpdated(
+                    operation.getProjectId(),
+                    operation.getUserId(),
+                    operation.getUsername(),
+                    updatedNode
+                );
+
+            case PROPERTY_ADDED:
+                String propertyType = (String) metadata.getOrDefault("propertyType", "property");
+                GraphUpdateMessage.GraphNode propertyNode = GraphUpdateMessage.GraphNode.builder()
+                    .id(nodeId)
+                    .label((String) metadata.getOrDefault("label", nodeId))
+                    .type(propertyType)
+                    .hasChildren(false)
+                    .expanded(false)
+                    .build();
+
+                return GraphUpdateMessage.nodeAdded(
+                    operation.getProjectId(),
+                    operation.getUserId(),
+                    operation.getUsername(),
+                    propertyNode
+                );
+
+            case PROPERTY_DELETED:
+                return GraphUpdateMessage.nodeDeleted(
+                    operation.getProjectId(),
+                    operation.getUserId(),
+                    operation.getUsername(),
+                    nodeId
+                );
+
+            case INDIVIDUAL_ADDED:
+                GraphUpdateMessage.GraphNode individualNode = GraphUpdateMessage.GraphNode.builder()
+                    .id(nodeId)
+                    .label((String) metadata.getOrDefault("label", nodeId))
+                    .type("individual")
+                    .hasChildren(false)
+                    .expanded(false)
+                    .build();
+
+                return GraphUpdateMessage.nodeAdded(
+                    operation.getProjectId(),
+                    operation.getUserId(),
+                    operation.getUsername(),
+                    individualNode
+                );
+
+            case INDIVIDUAL_DELETED:
+                return GraphUpdateMessage.nodeDeleted(
+                    operation.getProjectId(),
+                    operation.getUserId(),
+                    operation.getUsername(),
+                    nodeId
+                );
+
+            case SUBCLASS_ADDED:
+                String parentId = (String) metadata.get("parentId");
+                if (parentId != null) {
+                    GraphUpdateMessage.GraphEdge edge = GraphUpdateMessage.GraphEdge.builder()
+                        .id(nodeId + "_" + parentId)
+                        .from(nodeId)
+                        .to(parentId)
+                        .label("subClassOf")
+                        .type("subClassOf")
+                        .build();
+
+                    return GraphUpdateMessage.edgeAdded(
+                        operation.getProjectId(),
+                        operation.getUserId(),
+                        operation.getUsername(),
+                        edge
+                    );
+                }
+                break;
+
+            case SUBCLASS_REMOVED:
+                String removedParentId = (String) metadata.get("parentId");
+                if (removedParentId != null) {
+                    GraphUpdateMessage.GraphEdge edge = GraphUpdateMessage.GraphEdge.builder()
+                        .id(nodeId + "_" + removedParentId)
+                        .from(nodeId)
+                        .to(removedParentId)
+                        .label("subClassOf")
+                        .type("subClassOf")
+                        .build();
+
+                    return GraphUpdateMessage.edgeDeleted(
+                        operation.getProjectId(),
+                        operation.getUserId(),
+                        operation.getUsername(),
+                        edge
+                    );
+                }
+                break;
+
+            default:
+                // For other operations, no graph update needed
+                return null;
+        }
+
+        return null;
     }
 
     // Private helper methods
