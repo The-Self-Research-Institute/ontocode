@@ -41,23 +41,44 @@ export const getRootNodes = (
   }
 
   // Fallback: Use edge analysis
+  // For SUBCLASS_OF: child (from) → parent (to)
+  // Root nodes are those that never appear as 'from' (i.e., they have no parents)
   const childIds = new Set(
     edges
       .filter(e => e.type === 'subClassOf' || e.type === 'instanceOf')
-      .map(e => e.to)
+      .map(e => e.from)  // Nodes that ARE children
   );
 
   const rootIds = nodes
-    .filter(node => !childIds.has(node.id))
+    .filter(node => !childIds.has(node.id))  // Nodes that are NOT children = roots
     .map(node => node.id);
 
   console.log(`[Hierarchy] Found ${rootIds.length} root nodes (using edges) out of ${nodes.length} total`);
+  console.log(`[Hierarchy] Root nodes:`, rootIds.map(id => nodes.find(n => n.id === id)?.label));
   return rootIds;
+};
+
+/**
+ * Get immediate parents of a node
+ * Uses edges to find parents (nodes that are the parent of this node)
+ * For SUBCLASS_OF: child (from/source) → parent (to/target)
+ */
+export const getParents = (
+  nodeId: string,
+  edges: OntologyEdge[],
+  nodes?: OntologyNode[]
+): string[] => {
+  // Use edges to find parents
+  // For SUBCLASS_OF: if nodeId is 'from', then 'to' is the parent
+  return edges
+    .filter(edge => edge.from === nodeId && edge.type === 'subClassOf')
+    .map(edge => edge.to);
 };
 
 /**
  * Get immediate children of a node
  * Uses edges to find children (nodes where this node is the parent)
+ * For SUBCLASS_OF: child (from/source) → parent (to/target)
  */
 export const getChildren = (
   nodeId: string,
@@ -71,10 +92,14 @@ export const getChildren = (
       .map(node => node.id);
   }
 
-  // Fallback: use edges
-  return edges
-    .filter(edge => edge.from === nodeId && edge.type === 'subClassOf')
-    .map(edge => edge.to);
+  // Use edges to find children
+  // For SUBCLASS_OF: if nodeId is 'to', then 'from' is the child
+  const children = edges
+    .filter(edge => edge.to === nodeId && edge.type === 'subClassOf')
+    .map(edge => edge.from);
+    
+  console.log(`[Hierarchy] getChildren for ${nodeId}: Found ${children.length} children`);
+  return children;
 };
 
 /**
@@ -100,7 +125,9 @@ export const hasChildren = (
   }
 
   // Final fallback: use edges
-  return edges.some(edge => edge.from === nodeId && edge.type === 'subClassOf');
+  // For SUBCLASS_OF: child (from) -> parent (to)
+  // So a node has children if it appears as 'to' in a subClassOf edge
+  return edges.some(edge => edge.to === nodeId && edge.type === 'subClassOf');
 };
 
 /**
@@ -165,17 +192,18 @@ export const findPathToNode = (
   }
 
   // Fallback: traverse using edges
+  // subClassOf edges: Child (from) -> Parent (to)
   while (currentId && !visited.has(currentId)) {
     path.unshift(currentId);
     visited.add(currentId);
 
-    // Find parent (node with subClassOf edge to current)
+    // Find parent: edge where current node is the child (from) and parent is (to)
     const parentEdge = edges.find(e =>
-      e.to === currentId && e.type === 'subClassOf'
+      e.from === currentId && e.type === 'subClassOf'
     );
 
     if (!parentEdge) break;
-    currentId = parentEdge.from;
+    currentId = parentEdge.to;
   }
 
   return path;
