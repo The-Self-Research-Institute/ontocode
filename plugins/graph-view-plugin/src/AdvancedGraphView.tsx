@@ -1,87 +1,20 @@
-/**
- * ============================================================================
- * ADVANCED ONTOLOGY GRAPH VIEW PLUGIN v2.0.0
- * ============================================================================
- * 
- * Enterprise-grade graph visualization with 1000x features
- * 
- * FEATURES IMPLEMENTED:
- * 
- * 1. RICH MODELING
- *    ✅ Higher-order relationships (reification, hyperedges)
- *    ✅ N-ary relations for complex interactions
- *    ✅ Temporal modeling (valid/transaction time)
- *    ✅ Spatial/contextual modeling
- *    ✅ Typed contextual edges
- *    ✅ Multiple inheritance support
- * 
- * 2. SEMANTIC REASONING
- *    ✅ Rule-based reasoning (SWRL integration)
- *    ✅ Probabilistic reasoning with confidence scores
- *    ✅ Automated pattern discovery
- *    ✅ SHACL constraint validation
- *    ✅ Real-time inference
- * 
- * 3. INTEROPERABILITY
- *    ✅ Multi-format export (OWL, RDF, JSON-LD, GraphML, Cypher)
- *    ✅ Schema mapping and alignment
- *    ✅ Ontology versioning with diffing
- *    ✅ Multi-lingual support
- * 
- * 4. EDITING & GOVERNANCE
- *    ✅ Collaborative editing with real-time sync
- *    ✅ Role-based permissions
- *    ✅ Graph-aware version control
- *    ✅ Impact analysis
- *    ✅ Audit trails
- * 
- * 5. PERFORMANCE
- *    ✅ Hybrid caching (client + server)
- *    ✅ Lazy loading with pagination
- *    ✅ Node clustering for large graphs
- *    ✅ Incremental reasoning
- *    ✅ Request optimization
- * 
- * 6. ML/LLM INTEGRATION
- *    ✅ Ontology-guided embeddings
- *    ✅ AI-powered auto-suggestions
- *    ✅ Entity linking
- *    ✅ Graph-RAG capabilities
- *    ✅ Natural language queries
- * 
- * 7. ADVANCED QUERYING
- *    ✅ Hybrid SPARQL + Cypher
- *    ✅ Natural language to query
- *    ✅ Pattern mining and motif detection
- *    ✅ Time-travel queries
- *    ✅ Graph similarity search
- * 
- * 8. METADATA & PROVENANCE
- *    ✅ PROV-O provenance tracking
- *    ✅ Lineage graphs
- *    ✅ Trust scoring
- *    ✅ Citation management
- * 
- * 9. UX ENHANCEMENTS
- *    ✅ Auto-suggest for classes
- *    ✅ Conflict/duplicate detection
- *    ✅ Smart synonyms
- *    ✅ Explainable reasoning
- *    ✅ Keyboard shortcuts
- *    ✅ Context menus
- *    ✅ Multi-select
- *    ✅ Drag & drop
- * 
- * 10. DOMAIN TEMPLATES
- *    ✅ Biomedical ontologies
- *    ✅ Enterprise knowledge graphs
- *    ✅ Event modeling
- *    ✅ Scientific workflows
- */
-
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { Network, DataSet } from 'vis-network';
-import type { Options, Data, Node, Edge, IdType } from 'vis-network';
+import * as d3 from 'd3';
+import {
+  RefreshCw,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
+  Search,
+  Filter,
+  Settings,
+  FileText,
+  Download,
+  AlertTriangle,
+  Edit3,
+  Zap,
+  Grid
+} from 'lucide-react';
 import type {
   OntologyNode,
   OntologyEdge,
@@ -89,9 +22,34 @@ import type {
   GraphFilters,
   NodeType,
   EdgeType,
-  LayoutAlgorithm,
   ExportFormat
 } from './types';
+import PluginUpdateService from './PluginUpdateService';
+import {
+  getRootNodes,
+  getChildren,
+  hasChildren,
+  toggleNodeExpansion as toggleExpansion,
+  searchNodesWithPaths,
+  expandAll as expandAllNodes,
+  collapseAll as collapseAllNodes,
+  getExpansionStats
+} from './HierarchicalLazyLoading';
+
+// D3 types
+interface D3Node extends OntologyNode, d3.SimulationNodeDatum {
+  x?: number;
+  y?: number;
+  fx?: number | null;
+  fy?: number | null;
+  vx?: number;
+  vy?: number;
+}
+
+interface D3Edge extends OntologyEdge {
+  source: D3Node | string;
+  target: D3Node | string;
+}
 
 interface AdvancedGraphViewProps {
   projectId: string;
@@ -101,56 +59,83 @@ interface AdvancedGraphViewProps {
   readonly?: boolean;
 }
 
-// Default settings optimized for performance
+// Type normalization helpers
+const normalizeNodeType = (type: string): NodeType => {
+  if (!type) return 'class';
+  const normalized = type === 'CLASS' ? 'class' :
+        type === 'INDIVIDUAL' ? 'individual' :
+        type === 'PROPERTY' ? 'property' :
+        type === 'DATA_PROPERTY' ? 'dataProperty' :
+        type === 'OBJECT_PROPERTY' ? 'objectProperty' :
+        type === 'ANNOTATION' ? 'annotation' :
+        type.toLowerCase();
+  return normalized as NodeType;
+};
+
+const normalizeEdgeType = (type: string): EdgeType => {
+  if (!type) return 'custom';
+  let normalized = type;
+  if (type === 'SUBCLASS_OF') normalized = 'subClassOf';
+  else if (type === 'INSTANCE_OF') normalized = 'instanceOf';
+  else if (type === 'PROPERTY_RELATION') normalized = 'propertyRelation';
+  else if (type === 'EQUIVALENT_CLASS') normalized = 'equivalentClass';
+  else if (type === 'DISJOINT_WITH') normalized = 'disjointWith';
+  else if (type.includes('_')) {
+    normalized = type.replace(/_([a-z])/gi, (_match: string, letter: string) => letter.toUpperCase())
+                     .replace(/^[A-Z]/, (c: string) => c.toLowerCase());
+  }
+  return normalized as EdgeType;
+};
+
+// Color schemes
+const TYPE_COLORS: Record<NodeType, string> = {
+  class: '#667eea',
+  individual: '#10b981',
+  property: '#f59e0b',
+  dataProperty: '#ec4899',
+  objectProperty: '#06b6d4',
+  annotation: '#8b5cf6'
+};
+
+const EDGE_TYPE_COLORS: Record<EdgeType, string> = {
+  subClassOf: '#667eea',
+  instanceOf: '#10b981',
+  propertyRelation: '#f59e0b',
+  equivalentClass: '#ec4899',
+  disjointWith: '#ef4444',
+  domain: '#06b6d4',
+  range: '#8b5cf6',
+  inverseOf: '#fbbf24',
+  custom: '#6b7280',
+  temporal: '#34d399',
+  spatial: '#3b82f6',
+  probabilistic: '#fb923c'
+};
+
+// Default settings
 const DEFAULT_SETTINGS: GraphSettings = {
   layout: 'force',
   showLabels: true,
   showArrows: true,
   physics: true,
-  nodeSize: 25,
-  edgeWidth: 2,
+  nodeSize: 12,  // Increased from 8 to 12 for better visibility
+  edgeWidth: 1.5,
   showConfidence: false,
   showTemporal: false,
   showProvenance: false,
   colorByType: true,
   colorByConfidence: false,
-  maxNodes: 1000,
-  clusterNodes: true,
+  maxNodes: 5000,
+  clusterNodes: false,
   lazyLoad: true,
   multiSelect: true,
   contextMenu: true,
-  tooltips: true
+  tooltips: false  // Disabled by default to avoid tooltip issues
 };
 
 const DEFAULT_FILTERS: GraphFilters = {
   nodeTypes: new Set(['class', 'individual', 'property', 'dataProperty', 'objectProperty', 'annotation']),
   edgeTypes: new Set(['subClassOf', 'instanceOf', 'propertyRelation', 'equivalentClass', 'domain', 'range'])
-};
-
-// Type colors optimized for accessibility
-const TYPE_COLORS: Record<NodeType, string> = {
-  class: '#4A90E2',
-  individual: '#7ED321',
-  property: '#F5A623',
-  dataProperty: '#BD10E0',
-  objectProperty: '#50E3C2',
-  annotation: '#9013FE'
-};
-
-// Edge type colors
-const EDGE_TYPE_COLORS: Record<EdgeType, string> = {
-  subClassOf: '#4A90E2',
-  instanceOf: '#7ED321',
-  propertyRelation: '#F5A623',
-  equivalentClass: '#BD10E0',
-  disjointWith: '#FF3B30',
-  domain: '#50E3C2',
-  range: '#9013FE',
-  inverseOf: '#FFCC00',
-  custom: '#8E8E93',
-  temporal: '#34C759',
-  spatial: '#007AFF',
-  probabilistic: '#FF9500'
 };
 
 export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
@@ -160,53 +145,115 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   onEdgeClick,
   readonly = false
 }) => {
-  // Core refs
-  const containerRef = useRef<HTMLDivElement>(null);
-  const networkRef = useRef<Network | null>(null);
-  const nodesDataSetRef = useRef<DataSet<Node>>(new DataSet());
-  const edgesDataSetRef = useRef<DataSet<Edge>>(new DataSet());
+  // Refs
+  const svgRef = useRef<SVGSVGElement>(null);
+  const gRef = useRef<SVGGElement>(null);
+  const simulationRef = useRef<d3.Simulation<D3Node, D3Edge> | null>(null);
 
-  // State management
-  const [nodes, setNodes] = useState<OntologyNode[]>([]);
-  const [edges, setEdges] = useState<OntologyEdge[]>([]);
+  // State - Hierarchical Lazy Loading
+  const [allNodes, setAllNodes] = useState<OntologyNode[]>([]);  // All data from API
+  const [allEdges, setAllEdges] = useState<OntologyEdge[]>([]);  // All edges from API
+  const [visibleNodeIds, setVisibleNodeIds] = useState<Set<string>>(new Set());  // Currently visible
+  const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(new Set());  // Expanded nodes
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // UI State
   const [selectedNodes, setSelectedNodes] = useState<Set<string>>(new Set());
-  const [selectedEdges, setSelectedEdges] = useState<Set<string>>(new Set());
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
+  const [editMode, setEditMode] = useState(false);
+  const [showPropertyPanel, setShowPropertyPanel] = useState(false);
+  const [selectedNodeInfo, setSelectedNodeInfo] = useState<OntologyNode | null>(null);
+
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{
+    visible: boolean;
+    x: number;
+    y: number;
+    nodeId: string | null;
+  }>({ visible: false, x: 0, y: 0, nodeId: null });
 
   // Settings & Filters
   const [settings, setSettings] = useState<GraphSettings>(DEFAULT_SETTINGS);
   const [filters, setFilters] = useState<GraphFilters>(DEFAULT_FILTERS);
+  const [searchQuery, setSearchQuery] = useState('');
 
-  // Panel visibility
-  const [showSettings, setShowSettings] = useState(false);
-  const [showFilters, setShowFilters] = useState(false);
+  // Panels
   const [showSearch, setShowSearch] = useState(false);
-  const [showReasoning, setShowReasoning] = useState(false);
-  const [showProvenance, setShowProvenance] = useState(false);
-  const [showCollaboration, setShowCollaboration] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showGrid, setShowGrid] = useState(false);
 
   // Advanced features
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedNodeInfo, setSelectedNodeInfo] = useState<OntologyNode | null>(null);
-  const [reasoningResults, setReasoningResults] = useState<any>(null);
-  const [suggestions, setSuggestions] = useState<any[]>([]);
-  const [conflicts, setConflicts] = useState<any[]>([]);
+  const [zoomLevel, setZoomLevel] = useState(1);
 
-  // Performance optimization - debounced search
-  const [searchTimeout, setSearchTimeout] = useState<NodeJS.Timeout | null>(null);
+  // Compute visible nodes and edges based on hierarchy
+  const visibleNodes = useMemo(() =>
+    allNodes.filter(n => visibleNodeIds.has(n.id)),
+    [allNodes, visibleNodeIds]
+  );
+
+  const visibleEdges = useMemo(() =>
+    allEdges.filter(e =>
+      visibleNodeIds.has(e.from) && visibleNodeIds.has(e.to)
+    ),
+    [allEdges, visibleNodeIds]
+  );
+
+  // Performance tracking
+  const [fps, setFps] = useState(60);
+  const [renderTime, setRenderTime] = useState(0);
+  const frameTimesRef = useRef<number[]>([]);
+  const animationFrameRef = useRef<number | null>(null);
 
   /**
    * ========================================================================
-   * DATA FETCHING WITH CACHING
+   * PERFORMANCE MONITORING
+   * ========================================================================
+   */
+  useEffect(() => {
+    let lastTime = performance.now();
+    let frameCount = 0;
+
+    const measureFPS = () => {
+      const currentTime = performance.now();
+      const delta = currentTime - lastTime;
+
+      frameTimesRef.current.push(delta);
+      if (frameTimesRef.current.length > 60) {
+        frameTimesRef.current.shift();
+      }
+
+      frameCount++;
+      if (delta >= 1000) {
+        const avgFrameTime = frameTimesRef.current.reduce((a, b) => a + b, 0) / frameTimesRef.current.length;
+        setFps(Math.round(1000 / avgFrameTime));
+        frameCount = 0;
+        lastTime = currentTime;
+      }
+
+      animationFrameRef.current = requestAnimationFrame(measureFPS);
+    };
+
+    animationFrameRef.current = requestAnimationFrame(measureFPS);
+
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, []);
+
+  /**
+   * ========================================================================
+   * DATA FETCHING
    * ========================================================================
    */
   const fetchGraphData = useCallback(async () => {
     setLoading(true);
     setError(null);
+
+    console.log('[AdvancedGraphView D3] 📡 Fetching graph data for project:', projectId);
 
     try {
       const cacheKey = `graph-${projectId}`;
@@ -215,18 +262,42 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
       // Use cache if less than 5 minutes old
       if (cached && cacheTime && Date.now() - parseInt(cacheTime) < 5 * 60 * 1000) {
-        const data = JSON.parse(cached);
-        setNodes(data.nodes || []);
-        setEdges(data.edges || []);
+        console.log('[AdvancedGraphView D3] ⚡ Using cached data');
+        const cachedData = JSON.parse(cached);
+
+        const normalizedNodes = (cachedData.nodes || []).map((node: any) => ({
+          ...node,
+          type: normalizeNodeType(node.type)
+        }));
+
+        const normalizedEdges = (cachedData.edges || []).map((edge: any) => ({
+          ...edge,
+          from: edge.source || edge.from,
+          to: edge.target || edge.to,
+          type: normalizeEdgeType(edge.type)
+        }));
+
+        setAllNodes(normalizedNodes);
+        setAllEdges(normalizedEdges);
+
+        // Initialize with root nodes only
+        const rootIds = getRootNodes(normalizedNodes, normalizedEdges);
+        setVisibleNodeIds(new Set(rootIds));
+        setExpandedNodeIds(new Set());
+
+        console.log(`[Hierarchy] Showing ${rootIds.length} root nodes out of ${normalizedNodes.length} total`);
         setLoading(false);
         return;
       }
 
-      const response = await fetch(`/api/ontology/${projectId}/graph`, {
+      const url = `${(window as any).API_BASE_URL}/api/ontology/${projectId}/graph`;
+      console.log('[AdvancedGraphView D3] 🌐 Fetching from:', url);
+
+      const response = await fetch(url, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
       });
 
@@ -235,17 +306,37 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       }
 
       const data = await response.json();
-      
+      console.log('[AdvancedGraphView D3] ✅ Received', data.nodes?.length || 0, 'nodes and', data.edges?.length || 0, 'edges');
+
+      const normalizedNodes = (data.nodes || []).map((node: any) => ({
+        ...node,
+        type: normalizeNodeType(node.type)
+      }));
+
+      const transformedEdges = (data.edges || []).map((edge: any) => ({
+        ...edge,
+        from: edge.source || edge.from,
+        to: edge.target || edge.to,
+        type: normalizeEdgeType(edge.type)
+      }));
+
       // Cache the result
       localStorage.setItem(cacheKey, JSON.stringify(data));
       localStorage.setItem(`${cacheKey}-time`, Date.now().toString());
 
-      setNodes(data.nodes || []);
-      setEdges(data.edges || []);
+      setAllNodes(normalizedNodes);
+      setAllEdges(transformedEdges);
+
+      // Initialize with root nodes only
+      const rootIds = getRootNodes(normalizedNodes, transformedEdges);
+      setVisibleNodeIds(new Set(rootIds));
+      setExpandedNodeIds(new Set());
+
+      console.log(`[Hierarchy] Showing ${rootIds.length} root nodes out of ${normalizedNodes.length} total`);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
       setError(errorMessage);
-      console.error('[AdvancedGraphView] Error fetching graph data:', err);
+      console.error('[AdvancedGraphView D3] ❌ Error:', errorMessage);
     } finally {
       setLoading(false);
     }
@@ -253,13 +344,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
   /**
    * ========================================================================
-   * SEARCH & FILTER
+   * FILTERING
    * ========================================================================
    */
   const filteredNodes = useMemo(() => {
-    let filtered = nodes.filter(node => filters.nodeTypes.has(node.type));
+    let filtered = visibleNodes.filter(node => filters.nodeTypes.has(node.type));
 
-    // Search filter
+    // Search filter (Note: Search now handled by handleSearch with path expansion)
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter(node =>
@@ -269,297 +360,400 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       );
     }
 
-    // Confidence filter
-    if (filters.confidenceMin !== undefined) {
-      filtered = filtered.filter(node => 
-        node.confidence === undefined || node.confidence >= filters.confidenceMin!
-      );
-    }
-
     return filtered;
-  }, [nodes, filters, searchQuery]);
+  }, [visibleNodes, filters, searchQuery]);
 
   const filteredEdges = useMemo(() => {
     const nodeIds = new Set(filteredNodes.map(n => n.id));
-    return edges.filter(edge =>
+    return visibleEdges.filter(edge =>
       filters.edgeTypes.has(edge.type) &&
       nodeIds.has(edge.from) &&
       nodeIds.has(edge.to)
     );
-  }, [edges, filteredNodes, filters]);
+  }, [visibleEdges, filteredNodes, filters]);
 
   /**
    * ========================================================================
-   * VIS-NETWORK INITIALIZATION
+   * D3 VISUALIZATION - OPTIMIZED FOR PERFORMANCE
    * ========================================================================
    */
   useEffect(() => {
-    if (!containerRef.current || filteredNodes.length === 0) return;
+    if (!svgRef.current || filteredNodes.length === 0) return;
 
-    // Prepare vis-network nodes
-    const visNodes: Node[] = filteredNodes.map(node => ({
-      id: node.id,
-      label: settings.showLabels ? node.label : '',
-      color: {
-        background: node.color || TYPE_COLORS[node.type],
-        border: selectedNodes.has(node.id) ? '#FF3B30' : '#999',
-        highlight: {
-          background: node.color || TYPE_COLORS[node.type],
-          border: '#FF3B30'
-        }
-      },
-      shape: getNodeShape(node.type),
-      size: node.size || settings.nodeSize,
-      font: {
-        size: 14,
-        color: '#333',
-        face: 'Inter, system-ui, sans-serif'
-      },
-      title: settings.tooltips ? createTooltip(node) : undefined,
-      borderWidth: selectedNodes.has(node.id) ? 4 : 2,
-      opacity: node.confidence !== undefined && settings.colorByConfidence
-        ? node.confidence
-        : 1.0
+    const startTime = performance.now();
+    console.log('[AdvancedGraphView D3] 🎨 Initializing D3 visualization');
+    console.log('[AdvancedGraphView D3] 📊 Nodes:', filteredNodes.length, 'Edges:', filteredEdges.length);
+
+    const svg = d3.select(svgRef.current);
+    const g = d3.select(gRef.current);
+
+    const width = svgRef.current.clientWidth;
+    const height = svgRef.current.clientHeight;
+
+    // Clear existing content
+    g.selectAll('*').remove();
+
+    // Create arrow markers for each edge type
+    const defs = svg.select('defs');
+    if (defs.empty()) {
+      svg.append('defs');
+    }
+
+    Object.entries(EDGE_TYPE_COLORS).forEach(([type, color]) => {
+      svg.select('defs')
+        .append('marker')
+        .attr('id', `arrow-${type}`)
+        .attr('viewBox', '0 -5 10 10')
+        .attr('refX', 20)
+        .attr('refY', 0)
+        .attr('markerWidth', 6)
+        .attr('markerHeight', 6)
+        .attr('orient', 'auto')
+        .append('path')
+        .attr('d', 'M0,-5L10,0L0,5')
+        .attr('fill', color);
+    });
+
+    // Prepare D3 data
+    const d3Nodes: D3Node[] = filteredNodes.map(node => ({
+      ...node,
+      x: width / 2 + (Math.random() - 0.5) * 100,
+      y: height / 2 + (Math.random() - 0.5) * 100
     }));
 
-    // Prepare vis-network edges
-    const visEdges: Edge[] = filteredEdges.map(edge => ({
-      id: edge.id,
-      from: edge.from,
-      to: edge.to,
-      label: edge.label,
-      arrows: settings.showArrows ? { to: { enabled: true, scaleFactor: 0.5 } } : undefined,
-      font: {
-        size: 11,
-        color: '#666',
-        align: 'middle',
-        strokeWidth: 0
-      },
-      color: {
-        color: EDGE_TYPE_COLORS[edge.type] || '#999',
-        hover: '#333',
-        highlight: '#FF3B30'
-      },
-      width: edge.weight || settings.edgeWidth,
-      smooth: {
-        type: 'continuous',
-        roundness: 0.5
-      },
-      dashes: edge.type === 'probabilistic' || edge.confidence && edge.confidence < 0.7
-    }));
+    const nodeMap = new Map(d3Nodes.map(n => [n.id, n]));
 
-    // Update DataSets
-    nodesDataSetRef.current.clear();
-    nodesDataSetRef.current.add(visNodes);
-    edgesDataSetRef.current.clear();
-    edgesDataSetRef.current.add(visEdges);
+    const d3Edges: D3Edge[] = filteredEdges.map(edge => ({
+      ...edge,
+      source: nodeMap.get(edge.from)!,
+      target: nodeMap.get(edge.to)!
+    })).filter(e => e.source && e.target);
 
-    const data: Data = {
-      nodes: nodesDataSetRef.current,
-      edges: edgesDataSetRef.current
-    };
+    console.log('[AdvancedGraphView D3] ✅ Prepared D3 data - Nodes:', d3Nodes.length, 'Edges:', d3Edges.length);
 
-    // Network options optimized for performance
-    const options: Options = {
-      layout: getLayoutOptions(settings.layout),
-      physics: {
-        enabled: settings.physics,
-        stabilization: {
-          enabled: true,
-          iterations: 100,
-          updateInterval: 25
-        },
-        barnesHut: {
-          gravitationalConstant: -8000,
-          centralGravity: 0.3,
-          springLength: 150,
-          springConstant: 0.04,
-          damping: 0.09,
-          avoidOverlap: 0.1
-        },
-        maxVelocity: 50,
-        minVelocity: 0.75,
-        solver: 'barnesHut',
-        timestep: 0.5
-      },
-      interaction: {
-        hover: true,
-        multiselect: settings.multiSelect,
-        zoomView: true,
-        dragView: true,
-        navigationButtons: false,
-        keyboard: {
-          enabled: true,
-          bindToWindow: false
-        },
-        tooltipDelay: 100
-      },
-      nodes: {
-        borderWidth: 2,
-        borderWidthSelected: 4,
-        scaling: {
-          min: 10,
-          max: 50
-        }
-      },
-      edges: {
-        smooth: {
-          enabled: true,
-          type: 'continuous',
-          roundness: 0.5
-        },
-        scaling: {
-          min: 1,
-          max: 5
-        }
-      },
-      manipulation: readonly ? undefined : {
-        enabled: true,
-        addNode: (nodeData: any, callback: any) => {
-          // Custom add node dialog
-          callback(nodeData);
-        },
-        addEdge: (edgeData: any, callback: any) => {
-          // Custom add edge dialog
-          callback(edgeData);
-        }
-      }
-    };
+    // Create force simulation with optimized parameters
+    const simulation = d3.forceSimulation<D3Node>(d3Nodes)
+      .force('link', d3.forceLink<D3Node, D3Edge>(d3Edges)
+        .id(d => d.id)
+        .distance(80)
+        .strength(0.5))
+      .force('charge', d3.forceManyBody()
+        .strength(-300)
+        .distanceMax(400)
+        .theta(0.9)) // Barnes-Hut optimization
+      .force('center', d3.forceCenter(width / 2, height / 2))
+      .force('collision', d3.forceCollide()
+        .radius(d => ((d as D3Node).size || settings.nodeSize) + 5)
+        .iterations(2)) // Reduce collision iterations for performance
+      .alphaDecay(0.02)
+      .velocityDecay(0.3)
+      .alphaTarget(0); // Stop simulation faster
 
-    // Create or update network
-    if (networkRef.current) {
-      networkRef.current.setData(data);
-      networkRef.current.setOptions(options);
-    } else {
-      const network = new Network(containerRef.current, data, options);
-      networkRef.current = network;
+    simulationRef.current = simulation;
 
-      // Event handlers
-      network.on('selectNode', (params) => {
-        const nodeIds = params.nodes as string[];
-        setSelectedNodes(new Set(nodeIds));
-        
-        if (nodeIds.length === 1) {
-          const node = nodes.find(n => n.id === nodeIds[0]);
-          if (node) {
-            setSelectedNodeInfo(node);
-            onNodeClick?.(node.id);
-          }
-        }
+    // Draw edges
+    const link = g.append('g')
+      .attr('class', 'links')
+      .selectAll('line')
+      .data(d3Edges)
+      .join('line')
+      .attr('stroke', d => EDGE_TYPE_COLORS[d.type] || '#999')
+      .attr('stroke-width', d => d.weight || settings.edgeWidth)
+      .attr('stroke-opacity', 0.6)
+      .attr('marker-end', d => settings.showArrows ? `url(#arrow-${d.type})` : null)
+      .style('cursor', 'pointer')
+      .on('click', (event, d) => {
+        event.stopPropagation();
+        onEdgeClick?.(d.id);
       });
 
-      network.on('selectEdge', (params) => {
-        const edgeIds = params.edges as string[];
-        setSelectedEdges(new Set(edgeIds));
-        
-        if (edgeIds.length === 1 && onEdgeClick) {
-          onEdgeClick(edgeIds[0]);
+    // Draw edge labels
+    const linkLabel = g.append('g')
+      .attr('class', 'link-labels')
+      .selectAll('text')
+      .data(d3Edges)
+      .join('text')
+      .attr('font-size', 10)
+      .attr('fill', '#666')
+      .attr('text-anchor', 'middle')
+      .text(d => d.label || '')
+      .style('pointer-events', 'none')
+      .style('opacity', settings.showLabels ? 1 : 0);
+
+    // Draw nodes
+    const node = g.append('g')
+      .attr('class', 'nodes')
+      .selectAll('g')
+      .data(d3Nodes)
+      .join('g')
+      .attr('class', 'node')
+      .style('cursor', editMode ? 'move' : 'pointer')
+      .call(d3.drag<SVGGElement, D3Node>()
+        .on('start', dragStarted)
+        .on('drag', dragged)
+        .on('end', dragEnded) as any);
+
+    // Node circles
+    node.append('circle')
+      .attr('r', d => d.size || settings.nodeSize)
+      .attr('fill', d => d.color || TYPE_COLORS[d.type])
+      .attr('stroke', '#fff')
+      .attr('stroke-width', 2)
+      .style('filter', 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))')
+      .on('click', handleNodeClick)
+      .on('contextmenu', handleNodeRightClick)
+      .on('mouseover', handleNodeMouseOver)
+      .on('mouseout', handleNodeMouseOut);
+
+    // Node labels
+    node.append('text')
+      .attr('dx', d => (d.size || settings.nodeSize) + 5)
+      .attr('dy', 4)
+      .attr('font-size', 12)
+      .attr('font-weight', '500')
+      .attr('fill', '#333')
+      .text(d => settings.showLabels ? d.label : '')
+      .style('pointer-events', 'none')
+      .style('user-select', 'none');
+
+    // Node type badge
+    node.append('text')
+      .attr('dx', d => -(d.size || settings.nodeSize) / 2)
+      .attr('dy', d => -(d.size || settings.nodeSize) - 5)
+      .attr('font-size', 9)
+      .attr('fill', '#666')
+      .attr('font-weight', '600')
+      .text(d => d.type.substring(0, 1).toUpperCase())
+      .style('pointer-events', 'none')
+      .style('opacity', 0.7);
+
+    // Add expand/collapse indicator (+/−)
+    node.append('text')
+      .attr('class', 'expand-indicator')
+      .attr('dx', d => (d.size || settings.nodeSize) + 12)
+      .attr('dy', 5)
+      .attr('font-size', 16)
+      .attr('font-weight', 'bold')
+      .attr('fill', d => hasChildren(d.id, allEdges, allNodes) ? '#667eea' : '#ccc')
+      .attr('cursor', d => hasChildren(d.id, allEdges, allNodes) ? 'pointer' : 'default')
+      .text(d => {
+        if (!hasChildren(d.id, allEdges, allNodes)) return '';
+        return expandedNodeIds.has(d.id) ? '−' : '+';
+      })
+      .on('click', (event, d) => {
+        event.stopPropagation();
+        if (hasChildren(d.id, allEdges, allNodes)) {
+          handleToggleExpansion(d.id);
         }
       });
 
-      network.on('deselectNode', () => {
-        setSelectedNodes(new Set());
-        setSelectedNodeInfo(null);
-      });
+    // Style nodes based on expandable state
+    node.select('circle')
+      .attr('stroke-width', d => hasChildren(d.id, allEdges, allNodes) ? 3 : 2)
+      .attr('stroke-dasharray', d =>
+        hasChildren(d.id, allEdges, allNodes) && !expandedNodeIds.has(d.id) ? '5,3' : 'none'
+      );
 
-      network.on('hoverNode', (params) => {
-        setHoveredNode(params.node as string);
-      });
+    // Simulation tick
+    simulation.on('tick', () => {
+      link
+        .attr('x1', d => (d.source as D3Node).x!)
+        .attr('y1', d => (d.source as D3Node).y!)
+        .attr('x2', d => (d.target as D3Node).x!)
+        .attr('y2', d => (d.target as D3Node).y!);
 
-      network.on('blurNode', () => {
-        setHoveredNode(null);
-      });
+      linkLabel
+        .attr('x', d => ((d.source as D3Node).x! + (d.target as D3Node).x!) / 2)
+        .attr('y', d => ((d.source as D3Node).y! + (d.target as D3Node).y!) / 2);
 
-      // Double-click to expand
-      network.on('doubleClick', (params) => {
-        if (params.nodes.length > 0) {
-          expandNode(params.nodes[0] as string);
-        }
-      });
+      node.attr('transform', d => `translate(${d.x},${d.y})`);
+    });
 
-      // Context menu
-      if (settings.contextMenu) {
-        network.on('oncontext', (params) => {
-          params.event.preventDefault();
-          showContextMenu(params);
-        });
+    // Drag functions
+    function dragStarted(event: any, d: D3Node) {
+      if (!event.active) simulation.alphaTarget(0.3).restart();
+      d.fx = d.x;
+      d.fy = d.y;
+    }
+
+    function dragged(event: any, d: D3Node) {
+      d.fx = event.x;
+      d.fy = event.y;
+    }
+
+    function dragEnded(event: any, d: D3Node) {
+      if (!event.active) simulation.alphaTarget(0);
+      if (!editMode) {
+        d.fx = null;
+        d.fy = null;
       }
     }
 
+    // Node interaction handlers
+    function handleNodeClick(event: any, d: D3Node) {
+      event.stopPropagation();
+
+      if (event.ctrlKey || event.metaKey) {
+        // Multi-select
+        const newSelected = new Set(selectedNodes);
+        if (newSelected.has(d.id)) {
+          newSelected.delete(d.id);
+        } else {
+          newSelected.add(d.id);
+        }
+        setSelectedNodes(newSelected);
+      } else {
+        // Single select
+        setSelectedNodes(new Set([d.id]));
+        setSelectedNodeInfo(d as OntologyNode);
+        setShowPropertyPanel(true);
+        onNodeClick?.(d.id);
+      }
+
+      // Update visual selection
+      node.selectAll('circle')
+        .attr('stroke', (n: any) => selectedNodes.has(n.id) || n.id === d.id ? '#667eea' : '#fff')
+        .attr('stroke-width', (n: any) => selectedNodes.has(n.id) || n.id === d.id ? 3 : 2);
+    }
+
+    function handleNodeRightClick(event: any, d: D3Node) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      // Show context menu
+      setContextMenu({
+        visible: true,
+        x: event.pageX,
+        y: event.pageY,
+        nodeId: d.id
+      });
+
+      // Also select the node
+      setSelectedNodes(new Set([d.id]));
+      setSelectedNodeInfo(d as OntologyNode);
+    }
+
+    function handleNodeMouseOver(event: any, d: D3Node) {
+      setHoveredNode(d.id);
+
+      if (settings.tooltips) {
+        // Remove any existing tooltips first
+        d3.selectAll('.graph-tooltip').remove();
+
+        d3.select('body').append('div')
+          .attr('class', 'graph-tooltip')
+          .style('position', 'absolute')
+          .style('background', 'rgba(0,0,0,0.8)')
+          .style('color', 'white')
+          .style('padding', '8px 12px')
+          .style('border-radius', '6px')
+          .style('font-size', '12px')
+          .style('pointer-events', 'none')
+          .style('z-index', '1000')
+          .style('left', `${event.pageX + 10}px`)
+          .style('top', `${event.pageY + 10}px`)
+          .html(`
+            <strong>${d.label}</strong><br/>
+            <em>${d.type}</em><br/>
+            ${d.description ? `<br/>${d.description.substring(0, 100)}...` : ''}
+          `);
+      }
+
+      // Highlight connected nodes and edges
+      link
+        .style('stroke-opacity', l =>
+          (l.source as D3Node).id === d.id || (l.target as D3Node).id === d.id ? 1 : 0.2
+        )
+        .style('stroke-width', l =>
+          (l.source as D3Node).id === d.id || (l.target as D3Node).id === d.id ? 2 : 1
+        );
+
+      node.style('opacity', n => {
+        const isConnected = d3Edges.some(e =>
+          ((e.source as D3Node).id === d.id && (e.target as D3Node).id === n.id) ||
+          ((e.target as D3Node).id === d.id && (e.source as D3Node).id === n.id)
+        );
+        return n.id === d.id || isConnected ? 1 : 0.3;
+      });
+    }
+
+    function handleNodeMouseOut() {
+      setHoveredNode(null);
+      d3.selectAll('.graph-tooltip').remove();
+
+      // Reset highlighting
+      link
+        .style('stroke-opacity', 0.6)
+        .style('stroke-width', d => d.weight || settings.edgeWidth);
+
+      node.style('opacity', 1);
+    }
+
+    // Zoom behavior
+    const zoom = d3.zoom<SVGSVGElement, unknown>()
+      .scaleExtent([0.1, 10])
+      .on('zoom', (event) => {
+        g.attr('transform', event.transform);
+        setZoomLevel(event.transform.k);
+      });
+
+    svg.call(zoom as any);
+
+    // Log performance metrics
+    const endTime = performance.now();
+    const renderTime = endTime - startTime;
+    setRenderTime(renderTime);
+    console.log(`[AdvancedGraphView D3] ⚡ Render completed in ${renderTime.toFixed(2)}ms`);
+    console.log(`[AdvancedGraphView D3] 📊 Performance: ${(filteredNodes.length / renderTime * 1000).toFixed(0)} nodes/sec`);
+
+    // Cleanup
     return () => {
-      // Cleanup handled by ref
+      simulation.stop();
     };
-  }, [filteredNodes, filteredEdges, settings, selectedNodes, readonly]);
+  }, [filteredNodes, filteredEdges, settings, editMode, selectedNodes, onNodeClick, onEdgeClick, allEdges, allNodes, expandedNodeIds]);
 
   /**
    * ========================================================================
-   * HELPER FUNCTIONS
+   * HIERARCHICAL NAVIGATION HANDLERS
    * ========================================================================
    */
-  const getNodeShape = (type: NodeType): string => {
-    const shapes: Record<NodeType, string> = {
-      class: 'box',
-      individual: 'ellipse',
-      property: 'diamond',
-      dataProperty: 'triangle',
-      objectProperty: 'star',
-      annotation: 'hexagon'
-    };
-    return shapes[type] || 'dot';
-  };
+  const handleToggleExpansion = useCallback((nodeId: string) => {
+    const { newExpandedIds, newVisibleIds, action } = toggleExpansion(
+      nodeId,
+      expandedNodeIds,
+      visibleNodeIds,
+      allEdges,
+      allNodes  // Pass nodes for parent-based hierarchy
+    );
 
-  const createTooltip = (node: OntologyNode): string => {
-    let tooltip = `<div style="padding: 8px;">`;
-    tooltip += `<strong>${node.label}</strong><br/>`;
-    tooltip += `<em>${node.type}</em><br/>`;
-    
-    if (node.description) {
-      tooltip += `<br/>${node.description}<br/>`;
-    }
-    
-    if (node.confidence !== undefined) {
-      tooltip += `<br/>Confidence: ${(node.confidence * 100).toFixed(0)}%`;
-    }
-    
-    if (node.provenance?.wasAttributedTo) {
-      tooltip += `<br/>Author: ${node.provenance.wasAttributedTo}`;
-    }
-    
-    tooltip += `</div>`;
-    return tooltip;
-  };
+    setExpandedNodeIds(newExpandedIds);
+    setVisibleNodeIds(newVisibleIds);
 
-  const getLayoutOptions = (layout: LayoutAlgorithm): any => {
-    switch (layout) {
-      case 'hierarchical':
-        return {
-          hierarchical: {
-            direction: 'UD',
-            sortMethod: 'directed',
-            levelSeparation: 150,
-            nodeSpacing: 200,
-            treeSpacing: 200
-          }
-        };
-      case 'circular':
-        return { randomSeed: 2 };
-      case 'radial':
-        return { improvedLayout: true };
-      default:
-        return { randomSeed: undefined };
+    console.log(`[User Action] ${action} node:`, allNodes.find(n => n.id === nodeId)?.label);
+  }, [expandedNodeIds, visibleNodeIds, allEdges, allNodes]);
+
+  const handleSearch = useCallback((query: string) => {
+    if (!query) {
+      // Clear search - show only root nodes
+      const rootIds = getRootNodes(allNodes, allEdges);
+      setVisibleNodeIds(new Set(rootIds));
+      setExpandedNodeIds(new Set());
+      setSearchQuery('');
+      return;
     }
-  };
 
-  const expandNode = async (nodeId: string) => {
-    // Fetch neighbors and add to graph
-    console.log(`[AdvancedGraphView] Expanding node: ${nodeId}`);
-    // TODO: Implement lazy loading of neighbors
-  };
+    const { nodesToShow, nodesToExpand } = searchNodesWithPaths(
+      query,
+      allNodes,
+      allEdges
+    );
 
-  const showContextMenu = (params: any) => {
-    // TODO: Implement context menu
-    console.log('[AdvancedGraphView] Context menu:', params);
-  };
+    setVisibleNodeIds(nodesToShow);
+    setExpandedNodeIds(nodesToExpand);
+    setSearchQuery(query);
+
+    console.log(`[Search] Found ${nodesToShow.size} nodes for query: "${query}"`);
+  }, [allNodes, allEdges]);
 
   /**
    * ========================================================================
@@ -567,62 +761,106 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
    * ========================================================================
    */
   const handleZoomIn = () => {
-    if (networkRef.current) {
-      const scale = networkRef.current.getScale();
-      networkRef.current.moveTo({ scale: scale * 1.2, animation: { duration: 300 } });
+    if (svgRef.current) {
+      const svg = d3.select(svgRef.current);
+      svg.transition().duration(300).call(
+        (d3.zoom() as any).scaleBy as any, 1.3
+      );
     }
   };
 
   const handleZoomOut = () => {
-    if (networkRef.current) {
-      const scale = networkRef.current.getScale();
-      networkRef.current.moveTo({ scale: scale / 1.2, animation: { duration: 300 } });
+    if (svgRef.current) {
+      const svg = d3.select(svgRef.current);
+      svg.transition().duration(300).call(
+        (d3.zoom() as any).scaleBy as any, 0.7
+      );
     }
   };
 
   const handleFit = () => {
-    networkRef.current?.fit({ animation: { duration: 500, easingFunction: 'easeInOutQuad' } });
+    if (svgRef.current && gRef.current) {
+      const svg = d3.select(svgRef.current);
+      const bounds = (gRef.current as any).getBBox();
+      const width = svgRef.current.clientWidth;
+      const height = svgRef.current.clientHeight;
+
+      const scale = 0.9 / Math.max(bounds.width / width, bounds.height / height);
+      const translate = [
+        width / 2 - scale * (bounds.x + bounds.width / 2),
+        height / 2 - scale * (bounds.y + bounds.height / 2)
+      ];
+
+      svg.transition().duration(500).call(
+        (d3.zoom() as any).transform as any,
+        d3.zoomIdentity.translate(translate[0], translate[1]).scale(scale)
+      );
+    }
   };
 
-  const handleExport = async (format: ExportFormat) => {
-    if (format === 'png' || format === 'svg') {
-      if (networkRef.current && containerRef.current) {
-        const canvas = containerRef.current.querySelector('canvas');
-        if (canvas) {
-          const link = document.createElement('a');
-          link.download = `ontology-graph-${projectId}.${format}`;
-          link.href = canvas.toDataURL(`image/${format}`);
-          link.click();
-        }
+  const handleExport = (format: ExportFormat) => {
+    if (format === 'svg' && svgRef.current) {
+      const svgData = new XMLSerializer().serializeToString(svgRef.current);
+      const blob = new Blob([svgData], { type: 'image/svg+xml' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `ontology-graph-${projectId}.svg`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } else if (format === 'png' && svgRef.current) {
+      const svgData = new XMLSerializer().serializeToString(svgRef.current);
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      const img = new Image();
+
+      img.onload = () => {
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx?.drawImage(img, 0, 0);
+        canvas.toBlob(blob => {
+          if (blob) {
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `ontology-graph-${projectId}.png`;
+            link.click();
+            URL.revokeObjectURL(url);
+          }
+        });
+      };
+
+      img.src = 'data:image/svg+xml;base64,' + btoa(svgData);
+    }
+  };
+
+  const togglePhysics = () => {
+    setSettings(prev => ({ ...prev, physics: !prev.physics }));
+    if (simulationRef.current) {
+      if (settings.physics) {
+        simulationRef.current.stop();
+      } else {
+        simulationRef.current.alphaTarget(0.3).restart();
       }
-    } else {
-      // Export to semantic format
-      console.log(`[AdvancedGraphView] Exporting to ${format}`);
-      // TODO: Implement semantic exports
     }
   };
 
-  const handleReasoning = async () => {
-    setShowReasoning(true);
-    // TODO: Implement reasoning
-  };
-
-  const handleSearch = (query: string) => {
-    if (searchTimeout) {
-      clearTimeout(searchTimeout);
-    }
-
-    setSearchTimeout(
-      setTimeout(() => {
-        setSearchQuery(query);
-      }, 300)
-    );
-  };
-
-  // Initial data load
+  // Load data on mount
   useEffect(() => {
     fetchGraphData();
   }, [fetchGraphData]);
+
+  // Close context menu on outside click
+  useEffect(() => {
+    const handleClickOutside = () => {
+      if (contextMenu.visible) {
+        setContextMenu({ ...contextMenu, visible: false });
+      }
+    };
+
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, [contextMenu]);
 
   /**
    * ========================================================================
@@ -630,300 +868,550 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
    * ========================================================================
    */
   return (
-    <div
-      className="advanced-graph-view"
-      style={{
-        width: '100%',
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        position: 'relative',
-        backgroundColor: '#f5f5f5',
-        fontFamily: 'Inter, system-ui, sans-serif'
-      }}
-    >
+    <div className="advanced-graph-view-d3" style={styles.container}>
+      {/* Plugin Update Service */}
+      <PluginUpdateService
+        currentVersion="3.1.0"
+        pluginId="graph-view-plugin"
+        checkInterval={60 * 60 * 1000}
+      />
+
       {/* Toolbar */}
-      <div
-        className="graph-toolbar"
-        style={{
-          padding: '12px',
-          backgroundColor: '#ffffff',
-          borderBottom: '1px solid #e5e5e5',
-          display: 'flex',
-          gap: '8px',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
-        }}
-      >
+      <div style={styles.toolbar}>
         {/* Primary actions */}
-        <button
-          onClick={() => fetchGraphData()}
-          disabled={loading}
-          className="toolbar-btn primary"
-          title="Refresh graph"
-        >
+        <button onClick={() => fetchGraphData()} disabled={loading} style={styles.btnPrimary} title="Refresh graph">
           <RefreshCw size={16} className={loading ? 'spinning' : ''} />
           Refresh
         </button>
 
-        <div style={{ width: '1px', height: '24px', backgroundColor: '#e5e5e5' }} />
+        <div style={styles.divider} />
 
         {/* View controls */}
-        <button onClick={handleZoomIn} className="toolbar-btn" title="Zoom In">
+        <button onClick={handleZoomIn} style={styles.btn} title="Zoom In">
           <ZoomIn size={16} />
         </button>
-        <button onClick={handleZoomOut} className="toolbar-btn" title="Zoom Out">
+        <button onClick={handleZoomOut} style={styles.btn} title="Zoom Out">
           <ZoomOut size={16} />
         </button>
-        <button onClick={handleFit} className="toolbar-btn" title="Fit to Screen">
+        <button onClick={handleFit} style={styles.btn} title="Fit to Screen">
           <Maximize2 size={16} />
         </button>
 
-        <div style={{ width: '1px', height: '24px', backgroundColor: '#e5e5e5' }} />
+        <div style={styles.divider} />
+
+        {/* Hierarchical navigation */}
+        <button
+          onClick={() => {
+            const { newExpandedIds, newVisibleIds } = expandAllNodes(allNodes);
+            setExpandedNodeIds(newExpandedIds);
+            setVisibleNodeIds(newVisibleIds);
+          }}
+          style={styles.btn}
+          title="Expand All Nodes"
+        >
+          Expand All
+        </button>
+        <button
+          onClick={() => {
+            const { newExpandedIds, newVisibleIds } = collapseAllNodes(allNodes, allEdges);
+            setExpandedNodeIds(newExpandedIds);
+            setVisibleNodeIds(newVisibleIds);
+          }}
+          style={styles.btn}
+          title="Collapse to Root Nodes"
+        >
+          Collapse All
+        </button>
+
+        <div style={styles.divider} />
+
+        {/* Edit mode */}
+        {!readonly && (
+          <>
+            <button
+              onClick={() => setEditMode(!editMode)}
+              style={editMode ? styles.btnActive : styles.btn}
+              title="Edit Mode"
+            >
+              <Edit3 size={16} />
+              {editMode ? 'Editing' : 'Edit'}
+            </button>
+            <div style={styles.divider} />
+          </>
+        )}
 
         {/* Feature toggles */}
-        <button
-          onClick={() => setShowSearch(!showSearch)}
-          className={`toolbar-btn ${showSearch ? 'active' : ''}`}
-          title="Search & Filter"
-        >
+        <button onClick={() => setShowSearch(!showSearch)} style={showSearch ? styles.btnActive : styles.btn} title="Search">
           <Search size={16} />
         </button>
-
-        <button
-          onClick={() => setShowFilters(!showFilters)}
-          className={`toolbar-btn ${showFilters ? 'active' : ''}`}
-          title="Filters"
-        >
+        <button onClick={() => setShowFilters(!showFilters)} style={showFilters ? styles.btnActive : styles.btn} title="Filters">
           <Filter size={16} />
         </button>
-
-        <button
-          onClick={() => setShowSettings(!showSettings)}
-          className={`toolbar-btn ${showSettings ? 'active' : ''}`}
-          title="Settings"
-        >
+        <button onClick={() => setShowSettings(!showSettings)} style={showSettings ? styles.btnActive : styles.btn} title="Settings">
           <Settings size={16} />
         </button>
-
-        <button
-          onClick={handleReasoning}
-          className={`toolbar-btn ${showReasoning ? 'active' : ''}`}
-          title="AI Reasoning"
-        >
-          <Brain size={16} />
+        <button onClick={() => setShowGrid(!showGrid)} style={showGrid ? styles.btnActive : styles.btn} title="Grid">
+          <Grid size={16} />
         </button>
-
-        <button
-          onClick={() => setShowProvenance(!showProvenance)}
-          className={`toolbar-btn ${showProvenance ? 'active' : ''}`}
-          title="Provenance & Metadata"
-        >
-          <FileText size={16} />
-        </button>
-
-        <button
-          onClick={() => setShowCollaboration(!showCollaboration)}
-          className={`toolbar-btn ${showCollaboration ? 'active' : ''}`}
-          title="Collaboration"
-        >
-          <Users size={16} />
+        <button onClick={togglePhysics} style={settings.physics ? styles.btnActive : styles.btn} title="Physics">
+          <Zap size={16} />
         </button>
 
         <div style={{ flex: 1 }} />
 
         {/* Stats */}
-        <div style={{ fontSize: '13px', color: '#666', padding: '0 12px' }}>
-          {filteredNodes.length} nodes · {filteredEdges.length} edges
+        <div style={styles.stats}>
+          {getExpansionStats(allNodes.length, visibleNodeIds.size, expandedNodeIds.size)} · {zoomLevel.toFixed(1)}x · {fps} FPS
+          {allNodes.length > 1000 && <span style={{color: '#10b981', marginLeft: '8px'}}>⚡ Lazy Loading</span>}
         </div>
 
-        {/* Export menu */}
-        <button
-          onClick={() => handleExport('png')}
-          className="toolbar-btn"
-          title="Export"
-        >
+        {/* Export */}
+        <button onClick={() => handleExport('svg')} style={styles.btn} title="Export SVG">
           <Download size={16} />
+          SVG
+        </button>
+        <button onClick={() => handleExport('png')} style={styles.btn} title="Export PNG">
+          <Download size={16} />
+          PNG
         </button>
       </div>
 
-      {/* Main Content Area */}
-      <div style={{ flex: 1, display: 'flex', position: 'relative', overflow: 'hidden' }}>
-        {/* Graph Canvas */}
-        <div
-          ref={containerRef}
-          style={{
-            flex: 1,
-            backgroundColor: '#fff',
-            position: 'relative'
-          }}
-        />
+      {/* Main content */}
+      <div style={styles.content}>
+        {/* SVG Canvas */}
+        <svg ref={svgRef} style={styles.svg}>
+          <defs>
+            {/* Grid pattern */}
+            {showGrid && (
+              <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
+                <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#e5e5e5" strokeWidth="0.5" />
+              </pattern>
+            )}
+          </defs>
+          {showGrid && <rect width="100%" height="100%" fill="url(#grid)" />}
+          <g ref={gRef} />
+        </svg>
 
         {/* Search Panel */}
         {showSearch && (
-          <div className="side-panel" style={{ position: 'absolute', top: 12, left: 12 }}>
-            <h3><Search size={16} /> Search & Query</h3>
+          <div style={styles.searchPanel}>
+            <div style={styles.panelHeader}>
+              <Search size={18} />
+              <h3 style={styles.panelTitle}>Search</h3>
+              <button onClick={() => setShowSearch(false)} style={styles.closeBtn}>×</button>
+            </div>
             <input
               type="text"
-              placeholder="Search nodes..."
+              placeholder="Search node (shows path and children)..."
+              value={searchQuery}
               onChange={(e) => handleSearch(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '8px',
-                border: '1px solid #e5e5e5',
-                borderRadius: '4px',
-                fontSize: '14px'
-              }}
+              style={styles.searchInput}
             />
-            <div style={{ marginTop: '12px', fontSize: '13px', color: '#666' }}>
-              Press Ctrl+F for advanced search
-            </div>
+            {searchQuery && (
+              <div style={{ padding: '12px', background: '#f0f9ff', borderRadius: '8px', margin: '12px' }}>
+                <div style={{ fontSize: '12px', color: '#0369a1', marginBottom: '4px' }}>
+                  Search Results
+                </div>
+                <div style={{ fontSize: '13px', color: '#0c4a6e' }}>
+                  {getExpansionStats(allNodes.length, visibleNodeIds.size, expandedNodeIds.size)}
+                </div>
+                <button
+                  onClick={() => handleSearch('')}
+                  style={{
+                    marginTop: '8px',
+                    padding: '6px 12px',
+                    background: '#667eea',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontSize: '12px'
+                  }}
+                >
+                  Clear & Show Roots
+                </button>
+              </div>
+            )}
+            {!searchQuery && (
+              <div style={styles.searchResults}>
+                {visibleNodeIds.size} visible nodes
+              </div>
+            )}
           </div>
         )}
 
-        {/* Selected Node Info */}
-        {selectedNodeInfo && (
-          <div className="info-panel" style={{ position: 'absolute', bottom: 12, left: 12 }}>
-            <h3>{selectedNodeInfo.label}</h3>
-            <div style={{ fontSize: '13px', color: '#666' }}>
-              <div><strong>Type:</strong> {selectedNodeInfo.type}</div>
-              <div><strong>ID:</strong> {selectedNodeInfo.id}</div>
-              {selectedNodeInfo.confidence !== undefined && (
-                <div><strong>Confidence:</strong> {(selectedNodeInfo.confidence * 100).toFixed(0)}%</div>
-              )}
+        {/* Property Panel */}
+        {showPropertyPanel && selectedNodeInfo && (
+          <div style={styles.propertyPanel}>
+            <div style={styles.panelHeader}>
+              <FileText size={18} />
+              <h3 style={styles.panelTitle}>{selectedNodeInfo.label}</h3>
+              <button onClick={() => setShowPropertyPanel(false)} style={styles.closeBtn}>×</button>
+            </div>
+            <div style={styles.propertyContent}>
+              <div style={styles.propertyItem}>
+                <div style={styles.propertyLabel}>Type</div>
+                <div style={styles.propertyValue}>{selectedNodeInfo.type}</div>
+              </div>
+              <div style={styles.propertyItem}>
+                <div style={styles.propertyLabel}>IRI</div>
+                <div style={{ ...styles.propertyValue, fontFamily: 'monospace', fontSize: '11px', wordBreak: 'break-all' }}>
+                  {selectedNodeInfo.id}
+                </div>
+              </div>
               {selectedNodeInfo.description && (
-                <div style={{ marginTop: '8px' }}>{selectedNodeInfo.description}</div>
+                <div style={styles.propertyItem}>
+                  <div style={styles.propertyLabel}>Description</div>
+                  <div style={styles.propertyValue}>{selectedNodeInfo.description}</div>
+                </div>
+              )}
+              {selectedNodeInfo.confidence !== undefined && (
+                <div style={styles.propertyItem}>
+                  <div style={styles.propertyLabel}>Confidence</div>
+                  <div style={styles.propertyValue}>{(selectedNodeInfo.confidence * 100).toFixed(0)}%</div>
+                </div>
               )}
             </div>
           </div>
         )}
 
-        {/* Loading Overlay */}
+        {/* Loading */}
         {loading && (
-          <div className="loading-overlay">
+          <div style={styles.loadingOverlay}>
             <RefreshCw size={32} className="spinning" />
-            <div style={{ marginTop: '12px', fontSize: '14px', color: '#666' }}>
-              Loading graph data...
-            </div>
+            <div style={{ marginTop: '12px' }}>Loading graph...</div>
           </div>
         )}
 
-        {/* Error Display */}
+        {/* Error */}
         {error && (
-          <div className="error-panel">
-            <AlertTriangle size={20} color="#FF3B30" />
+          <div style={styles.errorPanel}>
+            <AlertTriangle size={20} color="#ef4444" />
             <div>{error}</div>
+          </div>
+        )}
+
+        {/* Context Menu */}
+        {contextMenu.visible && contextMenu.nodeId && (
+          <div
+            style={{
+              ...styles.contextMenu,
+              left: contextMenu.x,
+              top: contextMenu.y
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={styles.contextMenuHeader}>
+              {allNodes.find(n => n.id === contextMenu.nodeId)?.label || 'Node'}
+            </div>
+            {hasChildren(contextMenu.nodeId, allEdges, allNodes) && (
+              <>
+                {!expandedNodeIds.has(contextMenu.nodeId) ? (
+                  <button
+                    style={styles.contextMenuItem}
+                    onClick={() => {
+                      handleToggleExpansion(contextMenu.nodeId!);
+                      setContextMenu({ ...contextMenu, visible: false });
+                    }}
+                  >
+                    ➕ Expand Children
+                  </button>
+                ) : (
+                  <button
+                    style={styles.contextMenuItem}
+                    onClick={() => {
+                      handleToggleExpansion(contextMenu.nodeId!);
+                      setContextMenu({ ...contextMenu, visible: false });
+                    }}
+                  >
+                    ➖ Collapse Children
+                  </button>
+                )}
+              </>
+            )}
+            <button
+              style={styles.contextMenuItem}
+              onClick={() => {
+                setSelectedNodeInfo(allNodes.find(n => n.id === contextMenu.nodeId) || null);
+                setShowPropertyPanel(true);
+                setContextMenu({ ...contextMenu, visible: false });
+              }}
+            >
+              ℹ️ View Properties
+            </button>
+            <button
+              style={styles.contextMenuItem}
+              onClick={() => {
+                const { newExpandedIds, newVisibleIds } = expandAllNodes(allNodes);
+                setExpandedNodeIds(newExpandedIds);
+                setVisibleNodeIds(newVisibleIds);
+                setContextMenu({ ...contextMenu, visible: false });
+              }}
+            >
+              🌳 Expand All
+            </button>
+            <button
+              style={styles.contextMenuItem}
+              onClick={() => {
+                const { newExpandedIds, newVisibleIds } = collapseAllNodes(allNodes, allEdges);
+                setExpandedNodeIds(newExpandedIds);
+                setVisibleNodeIds(newVisibleIds);
+                setContextMenu({ ...contextMenu, visible: false });
+              }}
+            >
+              📁 Collapse All
+            </button>
           </div>
         )}
       </div>
 
-      {/* Embedded Styles */}
+      {/* Styles */}
       <style>{`
-        .advanced-graph-view {
-          --primary-color: #4A90E2;
-          --border-color: #e5e5e5;
-          --text-color: #333;
-          --text-secondary: #666;
+        .advanced-graph-view-d3 {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
         }
-
-        .toolbar-btn {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          padding: 8px 12px;
-          background: transparent;
-          border: 1px solid var(--border-color);
-          border-radius: 6px;
-          cursor: pointer;
-          font-size: 14px;
-          color: var(--text-color);
-          transition: all 0.2s;
-        }
-
-        .toolbar-btn:hover {
-          background: #f5f5f5;
-          border-color: var(--primary-color);
-        }
-
-        .toolbar-btn.active {
-          background: var(--primary-color);
-          color: white;
-          border-color: var(--primary-color);
-        }
-
-        .toolbar-btn.primary {
-          background: var(--primary-color);
-          color: white;
-          border-color: var(--primary-color);
-        }
-
-        .toolbar-btn:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-
-        .side-panel, .info-panel {
-          background: white;
-          border: 1px solid var(--border-color);
-          border-radius: 8px;
-          padding: 16px;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-          min-width: 280px;
-          max-width: 400px;
-          z-index: 10;
-        }
-
-        .side-panel h3, .info-panel h3 {
-          margin: 0 0 12px 0;
-          font-size: 14px;
-          font-weight: 600;
-          display: flex;
-          align-items: center;
-          gap: 8px;
-        }
-
-        .loading-overlay {
-          position: absolute;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          background: rgba(255,255,255,0.9);
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          z-index: 100;
-        }
-
-        .error-panel {
-          position: absolute;
-          top: 50%;
-          left: 50%;
-          transform: translate(-50%, -50%);
-          background: white;
-          border: 2px solid #FF3B30;
-          border-radius: 8px;
-          padding: 20px;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          z-index: 100;
-        }
-
         .spinning {
           animation: spin 1s linear infinite;
         }
-
         @keyframes spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
         }
+        .graph-tooltip {
+          box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+        button[style*="contextMenuItem"]:hover {
+          background: #f3f4f6 !important;
+        }
       `}</style>
     </div>
   );
+};
+
+// Styles
+const styles: Record<string, React.CSSProperties> = {
+  container: {
+    width: '100%',
+    height: '100%',
+    display: 'flex',
+    flexDirection: 'column',
+    backgroundColor: '#f9fafb',
+    overflow: 'hidden'
+  },
+  toolbar: {
+    padding: '12px',
+    backgroundColor: '#fff',
+    borderBottom: '1px solid #e5e7eb',
+    display: 'flex',
+    gap: '8px',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+  },
+  btn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '8px 12px',
+    background: 'white',
+    border: '1px solid #e5e7eb',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    color: '#374151',
+    transition: 'all 0.2s'
+  },
+  btnPrimary: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '8px 12px',
+    background: '#667eea',
+    border: '1px solid #667eea',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    color: 'white',
+    transition: 'all 0.2s'
+  },
+  btnActive: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '8px 12px',
+    background: '#667eea',
+    border: '1px solid #667eea',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    color: 'white',
+    transition: 'all 0.2s'
+  },
+  divider: {
+    width: '1px',
+    height: '24px',
+    backgroundColor: '#e5e7eb'
+  },
+  stats: {
+    fontSize: '13px',
+    color: '#6b7280',
+    padding: '0 12px'
+  },
+  content: {
+    flex: 1,
+    position: 'relative',
+    overflow: 'hidden',
+    backgroundColor: '#fff'
+  },
+  svg: {
+    width: '100%',
+    height: '100%',
+    cursor: 'grab'
+  },
+  searchPanel: {
+    position: 'absolute',
+    top: '20px',
+    left: '20px',
+    width: '300px',
+    background: 'white',
+    borderRadius: '12px',
+    boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
+    overflow: 'hidden'
+  },
+  propertyPanel: {
+    position: 'absolute',
+    top: '20px',
+    right: '20px',
+    width: '320px',
+    background: 'white',
+    borderRadius: '12px',
+    boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
+    overflow: 'hidden',
+    maxHeight: '80vh',
+    display: 'flex',
+    flexDirection: 'column'
+  },
+  panelHeader: {
+    padding: '16px 20px',
+    background: '#f9fafb',
+    borderBottom: '1px solid #e5e7eb',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px'
+  },
+  panelTitle: {
+    flex: 1,
+    margin: 0,
+    fontSize: '16px',
+    fontWeight: '600',
+    color: '#111827'
+  },
+  closeBtn: {
+    background: 'transparent',
+    border: 'none',
+    color: '#9ca3af',
+    cursor: 'pointer',
+    fontSize: '24px',
+    lineHeight: '1',
+    padding: '0',
+    width: '24px',
+    height: '24px'
+  },
+  searchInput: {
+    width: '100%',
+    padding: '12px 16px',
+    border: 'none',
+    borderBottom: '1px solid #e5e7eb',
+    fontSize: '14px',
+    outline: 'none',
+    boxSizing: 'border-box'
+  },
+  searchResults: {
+    padding: '12px 16px',
+    fontSize: '13px',
+    color: '#6b7280'
+  },
+  propertyContent: {
+    padding: '16px',
+    overflowY: 'auto',
+    flex: 1
+  },
+  propertyItem: {
+    marginBottom: '16px'
+  },
+  propertyLabel: {
+    fontSize: '11px',
+    fontWeight: '600',
+    color: '#6b7280',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+    marginBottom: '4px'
+  },
+  propertyValue: {
+    fontSize: '14px',
+    color: '#111827',
+    lineHeight: '1.5'
+  },
+  loadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: 'rgba(255,255,255,0.9)',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 100
+  },
+  errorPanel: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
+    background: 'white',
+    border: '2px solid #ef4444',
+    borderRadius: '8px',
+    padding: '20px',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    zIndex: 100
+  },
+  contextMenu: {
+    position: 'fixed',
+    background: 'white',
+    borderRadius: '8px',
+    boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+    padding: '8px 0',
+    zIndex: 1000,
+    minWidth: '200px',
+    border: '1px solid #e5e7eb'
+  },
+  contextMenuHeader: {
+    padding: '8px 16px',
+    fontSize: '13px',
+    fontWeight: '600',
+    color: '#111827',
+    borderBottom: '1px solid #e5e7eb',
+    marginBottom: '4px'
+  },
+  contextMenuItem: {
+    width: '100%',
+    padding: '10px 16px',
+    background: 'transparent',
+    border: 'none',
+    textAlign: 'left',
+    fontSize: '14px',
+    color: '#374151',
+    cursor: 'pointer',
+    transition: 'background 0.2s',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px'
+  }
 };
 
 export default AdvancedGraphView;

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Network, DataSet } from 'vis-network';
+import { Network } from 'vis-network';
+import { DataSet } from 'vis-data';
 import type { Options, Node, Edge, IdType } from 'vis-network';
 import SockJS from 'sockjs-client';
 import { Client, Stomp, IMessage } from '@stomp/stompjs';
@@ -167,7 +168,7 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
 
       const response = await fetch(endpoint, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
       });
 
@@ -447,8 +448,8 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
       console.log(`Expanding node: ${nodeId}`);
       setLoading(true);
 
-      const response = await fetch(`/api/graph/${projectId}/expand/${nodeId}`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      const response = await fetch(`${(window as any).API_BASE_URL}/api/graph/${projectId}/expand/${nodeId}`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
       });
 
       if (response.ok) {

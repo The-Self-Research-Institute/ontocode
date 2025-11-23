@@ -113,11 +113,11 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
   const fetchGraphData = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch(`/api/ontology/${projectId}/graph`, {
+      const response = await fetch(`${(window as any).API_BASE_URL}/api/ontology/${projectId}/graph`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
       });
       
