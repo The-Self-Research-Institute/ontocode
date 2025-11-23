@@ -10,7 +10,7 @@ export class GraphDataService {
   private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
   private abortController: AbortController | null = null;
 
-  constructor(private baseUrl: string = '/api/ontology') {}
+  constructor(private baseUrl: string = `${(window as any).API_BASE_URL || 'http://localhost:8082'}/api/ontology`) {}
 
   /**
    * Fetch graph data with caching and performance optimization
@@ -53,7 +53,7 @@ export class GraphDataService {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         },
         signal: this.abortController.signal
       });
@@ -92,7 +92,7 @@ export class GraphDataService {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         },
         body: JSON.stringify(query)
       });
@@ -120,7 +120,7 @@ export class GraphDataService {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         },
         body: JSON.stringify(options || {})
       });
@@ -150,7 +150,7 @@ export class GraphDataService {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
+            'Authorization': `Bearer ${localStorage.getItem('authToken')}`
           }
         }
       );
@@ -184,7 +184,7 @@ export class GraphDataService {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         },
         body: JSON.stringify({
           from: fromNodeId,
@@ -222,7 +222,7 @@ export class GraphDataService {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         },
         body: JSON.stringify(context)
       });
@@ -253,7 +253,7 @@ export class GraphDataService {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
       });
 
