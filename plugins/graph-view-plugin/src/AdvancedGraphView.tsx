@@ -13,7 +13,17 @@ import {
   AlertTriangle,
   Edit3,
   Zap,
-  Grid
+  Grid,
+  Box,
+  GripVertical,
+  Minus,
+  X,
+  ChevronUp,
+  ChevronDown,
+  ChevronRight,
+  Plus,
+  GitBranch,
+  Trash2
 } from 'lucide-react';
 import type {
   OntologyNode,
@@ -28,12 +38,14 @@ import PluginUpdateService from './PluginUpdateService';
 import {
   getRootNodes,
   getChildren,
+  getParents,
   hasChildren,
   toggleNodeExpansion as toggleExpansion,
   searchNodesWithPaths,
   expandAll as expandAllNodes,
   collapseAll as collapseAllNodes,
-  getExpansionStats
+  getExpansionStats,
+  findPathToNode
 } from './HierarchicalLazyLoading';
 
 // D3 types
@@ -118,7 +130,7 @@ const DEFAULT_SETTINGS: GraphSettings = {
   showLabels: true,
   showArrows: true,
   physics: true,
-  nodeSize: 12,  // Increased from 8 to 12 for better visibility
+  nodeSize: 16,  // Increased for better visibility and expand icons
   edgeWidth: 1.5,
   showConfidence: false,
   showTemporal: false,
@@ -138,6 +150,35 @@ const DEFAULT_FILTERS: GraphFilters = {
   edgeTypes: new Set(['subClassOf', 'instanceOf', 'propertyRelation', 'equivalentClass', 'domain', 'range'])
 };
 
+type HierarchyState = {
+  visible: Set<string>;
+  expanded: Set<string>;
+};
+
+type OntologyMutationOp = {
+  type: string;
+  iri: string;
+  label?: string;
+  parent?: string;
+  property?: string;
+  value?: string;
+  target?: string;
+  classIri?: string;
+};
+
+const extractNamespace = (iri?: string | null): string | null => {
+  if (!iri) return null;
+  const hashIndex = iri.lastIndexOf('#');
+  if (hashIndex >= 0) {
+    return iri.substring(0, hashIndex + 1);
+  }
+  const slashIndex = iri.lastIndexOf('/');
+  if (slashIndex >= 0) {
+    return iri.substring(0, slashIndex + 1);
+  }
+  return null;
+};
+
 export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   projectId,
   context,
@@ -153,10 +194,48 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   // State - Hierarchical Lazy Loading
   const [allNodes, setAllNodes] = useState<OntologyNode[]>([]);  // All data from API
   const [allEdges, setAllEdges] = useState<OntologyEdge[]>([]);  // All edges from API
-  const [visibleNodeIds, setVisibleNodeIds] = useState<Set<string>>(new Set());  // Currently visible
-  const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(new Set());  // Expanded nodes
+  const [hierarchyState, setHierarchyState] = useState<HierarchyState>(() => ({
+    visible: new Set<string>(),
+    expanded: new Set<string>()
+  }));
+  const visibleNodeIds = hierarchyState.visible;
+  const expandedNodeIds = hierarchyState.expanded;
+  const canEdit = !readonly && (context?.permissions?.canEdit ?? true);
+  const updateHierarchyState = useCallback((updater: (prev: HierarchyState) => HierarchyState) => {
+    setHierarchyState(prev => updater({
+      visible: new Set(prev.visible),
+      expanded: new Set(prev.expanded)
+    }));
+  }, []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [ontologyMetadata, setOntologyMetadata] = useState<any | null>(null);
+  const [classActionLoading, setClassActionLoading] = useState(false);
+  const [classActionFeedback, setClassActionFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  type PendingClassAction =
+    | {
+        kind: 'create';
+        relation: 'child' | 'sibling';
+        targetNode: OntologyNode;
+        parentNode: OntologyNode;
+        label: string;
+      }
+    | {
+        kind: 'delete';
+        targetNode: OntologyNode;
+        childCount: number;
+      };
+  const [pendingClassAction, setPendingClassAction] = useState<PendingClassAction | null>(null);
+  const handlePendingActionCancel = useCallback(() => {
+    if (classActionLoading) return;
+    setPendingClassAction(null);
+  }, [classActionLoading]);
+  const handlePendingLabelChange = useCallback((value: string) => {
+    setPendingClassAction(prev => {
+      if (!prev || prev.kind !== 'create') return prev;
+      return { ...prev, label: value };
+    });
+  }, []);
 
   // UI State
   const [selectedNodes, setSelectedNodes] = useState<Set<string>>(new Set());
@@ -164,6 +243,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const [editMode, setEditMode] = useState(false);
   const [showPropertyPanel, setShowPropertyPanel] = useState(false);
   const [selectedNodeInfo, setSelectedNodeInfo] = useState<OntologyNode | null>(null);
+  
+  // Hierarchy Dialog State
+  const [showHierarchyDialog, setShowHierarchyDialog] = useState(false);
+  const [hierarchyDialogPosition, setHierarchyDialogPosition] = useState({ x: 100, y: 100 });
+  const [hierarchyRootNode, setHierarchyRootNode] = useState<OntologyNode | null>(null);
+  const [isDialogMinimized, setIsDialogMinimized] = useState(false);
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{
@@ -193,56 +278,22 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     [allNodes, visibleNodeIds]
   );
 
-  const visibleEdges = useMemo(() =>
-    allEdges.filter(e =>
+  const visibleEdges = useMemo(() => {
+    if (visibleNodeIds.size === 0) return [];
+    if (visibleNodeIds.size === allNodes.length) return allEdges; // All visible
+    
+    // Fast path: filter using Set lookups (O(1) per lookup)
+    const edges = allEdges.filter(e => 
       visibleNodeIds.has(e.from) && visibleNodeIds.has(e.to)
-    ),
-    [allEdges, visibleNodeIds]
-  );
+    );
+    
+    console.log('[AdvancedGraphView] Visible edges:', edges.length, 'from total:', allEdges.length);
+    
+    return edges;
+  }, [allEdges, visibleNodeIds, allNodes.length]);
 
-  // Performance tracking
-  const [fps, setFps] = useState(60);
-  const [renderTime, setRenderTime] = useState(0);
-  const frameTimesRef = useRef<number[]>([]);
-  const animationFrameRef = useRef<number | null>(null);
-
-  /**
-   * ========================================================================
-   * PERFORMANCE MONITORING
-   * ========================================================================
-   */
-  useEffect(() => {
-    let lastTime = performance.now();
-    let frameCount = 0;
-
-    const measureFPS = () => {
-      const currentTime = performance.now();
-      const delta = currentTime - lastTime;
-
-      frameTimesRef.current.push(delta);
-      if (frameTimesRef.current.length > 60) {
-        frameTimesRef.current.shift();
-      }
-
-      frameCount++;
-      if (delta >= 1000) {
-        const avgFrameTime = frameTimesRef.current.reduce((a, b) => a + b, 0) / frameTimesRef.current.length;
-        setFps(Math.round(1000 / avgFrameTime));
-        frameCount = 0;
-        lastTime = currentTime;
-      }
-
-      animationFrameRef.current = requestAnimationFrame(measureFPS);
-    };
-
-    animationFrameRef.current = requestAnimationFrame(measureFPS);
-
-    return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-    };
-  }, []);
+  // Performance tracking (disabled for production performance)
+  const renderTime = useRef(0);
 
   /**
    * ========================================================================
@@ -282,8 +333,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
         // Initialize with root nodes only
         const rootIds = getRootNodes(normalizedNodes, normalizedEdges);
-        setVisibleNodeIds(new Set(rootIds));
-        setExpandedNodeIds(new Set());
+        updateHierarchyState(() => ({
+          visible: new Set(rootIds),
+          expanded: new Set()
+        }));
 
         console.log(`[Hierarchy] Showing ${rootIds.length} root nodes out of ${normalizedNodes.length} total`);
         setLoading(false);
@@ -310,14 +363,16 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
       const normalizedNodes = (data.nodes || []).map((node: any) => ({
         ...node,
-        type: normalizeNodeType(node.type)
+        // Backend now returns normalized types
+        type: node.type
       }));
 
       const transformedEdges = (data.edges || []).map((edge: any) => ({
         ...edge,
-        from: edge.source || edge.from,
-        to: edge.target || edge.to,
-        type: normalizeEdgeType(edge.type)
+        // Backend now returns from/to and normalized types
+        from: edge.from,
+        to: edge.to,
+        type: edge.type
       }));
 
       // Cache the result
@@ -327,10 +382,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       setAllNodes(normalizedNodes);
       setAllEdges(transformedEdges);
 
+      console.log('[AdvancedGraphView D3] 📊 Using edges from API:', transformedEdges.length);
+
       // Initialize with root nodes only
       const rootIds = getRootNodes(normalizedNodes, transformedEdges);
-      setVisibleNodeIds(new Set(rootIds));
-      setExpandedNodeIds(new Set());
+      updateHierarchyState(() => ({
+        visible: new Set(rootIds),
+        expanded: new Set()
+      }));
 
       console.log(`[Hierarchy] Showing ${rootIds.length} root nodes out of ${normalizedNodes.length} total`);
     } catch (err) {
@@ -350,6 +409,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const filteredNodes = useMemo(() => {
     let filtered = visibleNodes.filter(node => filters.nodeTypes.has(node.type));
 
+    console.log(`[Filtering] visibleNodes: ${visibleNodes.length}, after type filter: ${filtered.length}`);
+    console.log(`[Filtering] Visible node labels: ${visibleNodes.map(n => n.label).join(', ')}`);
+
     // Search filter (Note: Search now handled by handleSearch with path expansion)
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
@@ -360,16 +422,28 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       );
     }
 
+    console.log(`[Filtering] Final filtered nodes: ${filtered.length} - ${filtered.map(n => n.label).join(', ')}`);
+
     return filtered;
   }, [visibleNodes, filters, searchQuery]);
 
   const filteredEdges = useMemo(() => {
     const nodeIds = new Set(filteredNodes.map(n => n.id));
-    return visibleEdges.filter(edge =>
+    const filtered = visibleEdges.filter(edge =>
       filters.edgeTypes.has(edge.type) &&
       nodeIds.has(edge.from) &&
       nodeIds.has(edge.to)
     );
+    
+    console.log('[AdvancedGraphView] Filtered edges:', filtered.length);
+    console.log('[AdvancedGraphView] Edge types in filters:', Array.from(filters.edgeTypes));
+    console.log('[AdvancedGraphView] Sample edges:', visibleEdges.slice(0, 3));
+    if (filtered.length === 0 && visibleEdges.length > 0) {
+      console.warn('[AdvancedGraphView] ⚠️ No edges after filtering! Check edge types.');
+      console.warn('[AdvancedGraphView] Edge types in data:', [...new Set(visibleEdges.map(e => e.type))]);
+    }
+    
+    return filtered;
   }, [visibleEdges, filteredNodes, filters]);
 
   /**
@@ -393,26 +467,25 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     // Clear existing content
     g.selectAll('*').remove();
 
-    // Create arrow markers for each edge type
+    // Create arrow markers for each edge type (only once)
     const defs = svg.select('defs');
     if (defs.empty()) {
-      svg.append('defs');
+      const newDefs = svg.append('defs');
+      Object.entries(EDGE_TYPE_COLORS).forEach(([type, color]) => {
+        newDefs
+          .append('marker')
+          .attr('id', `arrow-${type}`)
+          .attr('viewBox', '0 -5 10 10')
+          .attr('refX', 10) // Tip of the arrow is at (10,0), so this aligns tip with the end of the line
+          .attr('refY', 0)
+          .attr('markerWidth', 6)
+          .attr('markerHeight', 6)
+          .attr('orient', 'auto')
+          .append('path')
+          .attr('d', 'M0,-5L10,0L0,5')
+          .attr('fill', color);
+      });
     }
-
-    Object.entries(EDGE_TYPE_COLORS).forEach(([type, color]) => {
-      svg.select('defs')
-        .append('marker')
-        .attr('id', `arrow-${type}`)
-        .attr('viewBox', '0 -5 10 10')
-        .attr('refX', 20)
-        .attr('refY', 0)
-        .attr('markerWidth', 6)
-        .attr('markerHeight', 6)
-        .attr('orient', 'auto')
-        .append('path')
-        .attr('d', 'M0,-5L10,0L0,5')
-        .attr('fill', color);
-    });
 
     // Prepare D3 data
     const d3Nodes: D3Node[] = filteredNodes.map(node => ({
@@ -431,22 +504,28 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     console.log('[AdvancedGraphView D3] ✅ Prepared D3 data - Nodes:', d3Nodes.length, 'Edges:', d3Edges.length);
 
-    // Create force simulation with optimized parameters
+    // Create force simulation with highly optimized parameters
+    const nodeCount = d3Nodes.length;
     const simulation = d3.forceSimulation<D3Node>(d3Nodes)
       .force('link', d3.forceLink<D3Node, D3Edge>(d3Edges)
         .id(d => d.id)
-        .distance(80)
-        .strength(0.5))
+        .distance(nodeCount > 100 ? 60 : 80) // Tighter layout for large graphs
+        .strength(nodeCount > 100 ? 0.3 : 0.5)
+        .iterations(1)) // Single iteration for speed
       .force('charge', d3.forceManyBody()
-        .strength(-300)
-        .distanceMax(400)
-        .theta(0.9)) // Barnes-Hut optimization
-      .force('center', d3.forceCenter(width / 2, height / 2))
+        .strength(nodeCount > 100 ? -200 : -300)
+        .distanceMax(nodeCount > 100 ? 300 : 400)
+        .theta(0.95)) // More aggressive Barnes-Hut (was 0.9)
+      .force('center', d3.forceCenter(width / 2, height / 2)
+        .strength(0.05)) // Weaker center force
       .force('collision', d3.forceCollide()
         .radius(d => ((d as D3Node).size || settings.nodeSize) + 5)
-        .iterations(2)) // Reduce collision iterations for performance
-      .alphaDecay(0.02)
-      .velocityDecay(0.3)
+        .strength(0.7)
+        .iterations(1)) // Single iteration for speed
+      .alphaDecay(nodeCount > 100 ? 0.08 : 0.05) // Faster for large graphs
+      .velocityDecay(0.4) // More damping (was 0.3)
+      .alpha(0.3) // Lower initial energy for faster settle
+      .alphaMin(0.001) // Stop earlier
       .alphaTarget(0); // Stop simulation faster
 
     simulationRef.current = simulation;
@@ -498,8 +577,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .attr('r', d => d.size || settings.nodeSize)
       .attr('fill', d => d.color || TYPE_COLORS[d.type])
       .attr('stroke', '#fff')
-      .attr('stroke-width', 2)
-      .style('filter', 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))')
+      .attr('stroke-width', d => hasChildren(d.id, allEdges, allNodes) ? 3 : 2)
+      .style('filter', visibleNodes.length > 100 ? 'none' : 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))')
       .on('click', handleNodeClick)
       .on('contextmenu', handleNodeRightClick)
       .on('mouseover', handleNodeMouseOver)
@@ -507,9 +586,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     // Node labels
     node.append('text')
-      .attr('dx', d => (d.size || settings.nodeSize) + 5)
+      .attr('dx', d => (d.size || settings.nodeSize) + 8)
       .attr('dy', 4)
-      .attr('font-size', 12)
+      .attr('font-size', 13)
       .attr('font-weight', '500')
       .attr('fill', '#333')
       .text(d => settings.showLabels ? d.label : '')
@@ -527,46 +606,63 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .style('pointer-events', 'none')
       .style('opacity', 0.7);
 
-    // Add expand/collapse indicator (+/−)
-    node.append('text')
-      .attr('class', 'expand-indicator')
-      .attr('dx', d => (d.size || settings.nodeSize) + 12)
-      .attr('dy', 5)
-      .attr('font-size', 16)
-      .attr('font-weight', 'bold')
-      .attr('fill', d => hasChildren(d.id, allEdges, allNodes) ? '#667eea' : '#ccc')
-      .attr('cursor', d => hasChildren(d.id, allEdges, allNodes) ? 'pointer' : 'default')
-      .text(d => {
-        if (!hasChildren(d.id, allEdges, allNodes)) return '';
-        return expandedNodeIds.has(d.id) ? '−' : '+';
-      })
-      .on('click', (event, d) => {
-        event.stopPropagation();
-        if (hasChildren(d.id, allEdges, allNodes)) {
-          handleToggleExpansion(d.id);
-        }
-      });
-
-    // Style nodes based on expandable state
-    node.select('circle')
-      .attr('stroke-width', d => hasChildren(d.id, allEdges, allNodes) ? 3 : 2)
-      .attr('stroke-dasharray', d =>
-        hasChildren(d.id, allEdges, allNodes) && !expandedNodeIds.has(d.id) ? '5,3' : 'none'
-      );
-
-    // Simulation tick
+    // Simulation tick with aggressive throttling for performance
+    let rafId: number | null = null;
+    let ticking = false;
+    let tickCount = 0;
+    const updateInterval = nodeCount > 100 ? 3 : 2; // Skip more frames for large graphs
+    
     simulation.on('tick', () => {
-      link
-        .attr('x1', d => (d.source as D3Node).x!)
-        .attr('y1', d => (d.source as D3Node).y!)
-        .attr('x2', d => (d.target as D3Node).x!)
-        .attr('y2', d => (d.target as D3Node).y!);
+      tickCount++;
+      // Skip frames for better performance
+      if (tickCount % updateInterval !== 0) return;
+      
+      if (!ticking) {
+        ticking = true;
+        rafId = requestAnimationFrame(() => {
+          link
+            .attr('x1', d => (d.source as D3Node).x!)
+            .attr('y1', d => (d.source as D3Node).y!)
+            .attr('x2', d => {
+              const source = d.source as D3Node;
+              const target = d.target as D3Node;
+              if (!source.x || !source.y || !target.x || !target.y) return 0;
+              
+              const dx = target.x - source.x;
+              const dy = target.y - source.y;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+              
+              if (dist === 0) return target.x;
+              
+              // Shorten the edge to stop at the node boundary + padding
+              // This ensures the arrow marker is visible and points to the node edge
+              const r = (target.size || settings.nodeSize) + 3; 
+              return target.x - (dx / dist) * r;
+            })
+            .attr('y2', d => {
+              const source = d.source as D3Node;
+              const target = d.target as D3Node;
+              if (!source.x || !source.y || !target.x || !target.y) return 0;
+              
+              const dx = target.x - source.x;
+              const dy = target.y - source.y;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+              
+              if (dist === 0) return target.y;
+              
+              const r = (target.size || settings.nodeSize) + 3;
+              return target.y - (dy / dist) * r;
+            });
 
-      linkLabel
-        .attr('x', d => ((d.source as D3Node).x! + (d.target as D3Node).x!) / 2)
-        .attr('y', d => ((d.source as D3Node).y! + (d.target as D3Node).y!) / 2);
+          linkLabel
+            .attr('x', d => ((d.source as D3Node).x! + (d.target as D3Node).x!) / 2)
+            .attr('y', d => ((d.source as D3Node).y! + (d.target as D3Node).y!) / 2);
 
-      node.attr('transform', d => `translate(${d.x},${d.y})`);
+          node.attr('transform', d => `translate(${d.x},${d.y})`);
+          
+          ticking = false;
+        });
+      }
     });
 
     // Drag functions
@@ -603,10 +699,52 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         }
         setSelectedNodes(newSelected);
       } else {
-        // Single select
+        // Single click - open hierarchy dialog
         setSelectedNodes(new Set([d.id]));
         setSelectedNodeInfo(d as OntologyNode);
-        setShowPropertyPanel(true);
+        setHierarchyRootNode(d as OntologyNode);
+        setIsDialogMinimized(false); // Ensure dialog starts expanded
+        
+        // Position dialog in viewport - use mouse event position for better placement
+        const svgRect = svgRef.current?.getBoundingClientRect();
+        if (svgRect && event) {
+          // Use click position relative to viewport
+          const clickX = event.pageX || event.clientX;
+          const clickY = event.pageY || event.clientY;
+          
+          // Position dialog to the right of click, but keep within viewport
+          const dialogWidth = 380;
+          const dialogHeight = 500;
+          const padding = 20;
+          
+          let posX = clickX + padding;
+          let posY = clickY - 100; // Slightly above click point
+          
+          // Position on left side of graph area
+          const viewportHeight = window.innerHeight;
+          const leftMargin = 20; // Distance from left edge
+          
+          // Set X position to left edge
+          posX = leftMargin;
+          
+          // Adjust Y to keep within viewport
+          if (posY < padding) {
+            posY = padding;
+          }
+          if (posY + dialogHeight > viewportHeight - padding) {
+            posY = viewportHeight - dialogHeight - padding;
+          }
+          
+          setHierarchyDialogPosition({ x: posX, y: posY });
+        } else {
+          // Fallback: left side, centered vertically
+          setHierarchyDialogPosition({
+            x: 20,
+            y: 100
+          });
+        }
+        
+        setShowHierarchyDialog(true);
         onNodeClick?.(d.id);
       }
 
@@ -701,10 +839,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     // Log performance metrics
     const endTime = performance.now();
-    const renderTime = endTime - startTime;
-    setRenderTime(renderTime);
-    console.log(`[AdvancedGraphView D3] ⚡ Render completed in ${renderTime.toFixed(2)}ms`);
-    console.log(`[AdvancedGraphView D3] 📊 Performance: ${(filteredNodes.length / renderTime * 1000).toFixed(0)} nodes/sec`);
+    const renderTimeMs = endTime - startTime;
+    renderTime.current = renderTimeMs;
+    console.log(`[AdvancedGraphView D3] ⚡ Render completed in ${renderTimeMs.toFixed(2)}ms`);
+    console.log(`[AdvancedGraphView D3] 📊 Performance: ${(filteredNodes.length / renderTimeMs * 1000).toFixed(0)} nodes/sec`);
 
     // Cleanup
     return () => {
@@ -718,26 +856,87 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
    * ========================================================================
    */
   const handleToggleExpansion = useCallback((nodeId: string) => {
-    const { newExpandedIds, newVisibleIds, action } = toggleExpansion(
-      nodeId,
-      expandedNodeIds,
-      visibleNodeIds,
-      allEdges,
-      allNodes  // Pass nodes for parent-based hierarchy
-    );
+    const nodeBefore = allNodes.find(n => n.id === nodeId);
+    console.log(`[UI] User clicked to toggle expansion for: ${nodeBefore?.label || nodeId}`);
+    console.log(`[UI] Current state - Visible: ${visibleNodeIds.size}, Expanded: ${expandedNodeIds.size}`);
 
-    setExpandedNodeIds(newExpandedIds);
-    setVisibleNodeIds(newVisibleIds);
+    updateHierarchyState(prev => {
+      const { newExpandedIds, newVisibleIds, action } = toggleExpansion(
+        nodeId,
+        prev.expanded,
+        prev.visible,
+        allEdges,
+        allNodes
+      );
 
-    console.log(`[User Action] ${action} node:`, allNodes.find(n => n.id === nodeId)?.label);
-  }, [expandedNodeIds, visibleNodeIds, allEdges, allNodes]);
+      console.log(`[UI] Action: ${action}`);
+      console.log(`[UI] New state - Visible: ${newVisibleIds.size}, Expanded: ${newExpandedIds.size}`);
+      console.log(`[UI] Newly visible nodes: ${Array.from(newVisibleIds)
+        .filter(id => !prev.visible.has(id))
+        .map(id => allNodes.find(n => n.id === id)?.label || id)
+        .join(', ')}`);
+      console.log(`[User Action] ${action} node:`, allNodes.find(n => n.id === nodeId)?.label);
+
+      return {
+        visible: newVisibleIds,
+        expanded: newExpandedIds
+      };
+    });
+  }, [allNodes, allEdges, expandedNodeIds, visibleNodeIds, updateHierarchyState]);
+
+  const handleExpandParents = useCallback((nodeId: string) => {
+    const node = allNodes.find(n => n.id === nodeId);
+    if (!node) {
+      console.log('[User Action] Node not found:', nodeId);
+      return;
+    }
+
+    // Get parent IRIs from edges
+    const parentIds = getParents(nodeId, allEdges, allNodes);
+    
+    if (parentIds.length === 0) {
+      console.log('[User Action] No parents to expand for:', node.label);
+      return;
+    }
+
+    console.log(`[User Action] Expanding parents for:`, node.label);
+
+    updateHierarchyState(prev => {
+      const newVisibleIds = new Set(prev.visible);
+      const newExpandedIds = new Set(prev.expanded);
+
+      parentIds.forEach((parentId: string) => {
+        if (!prev.visible.has(parentId)) {
+          const parentNode = allNodes.find(n => n.id === parentId);
+          console.log('  - Added parent:', parentNode?.label || parentId);
+        }
+        newVisibleIds.add(parentId);
+        newExpandedIds.add(parentId);
+      });
+
+      return {
+        visible: newVisibleIds,
+        expanded: newExpandedIds
+      };
+    });
+    
+    // If dialog is open, update it to show the topmost parent as root
+    if (showHierarchyDialog && parentIds.length > 0) {
+      const topmostParent = allNodes.find(n => n.id === parentIds[0]);
+      if (topmostParent) {
+        setHierarchyRootNode(topmostParent);
+      }
+    }
+  }, [allNodes, allEdges, showHierarchyDialog, updateHierarchyState]);
 
   const handleSearch = useCallback((query: string) => {
     if (!query) {
       // Clear search - show only root nodes
       const rootIds = getRootNodes(allNodes, allEdges);
-      setVisibleNodeIds(new Set(rootIds));
-      setExpandedNodeIds(new Set());
+      updateHierarchyState(() => ({
+        visible: new Set(rootIds),
+        expanded: new Set()
+      }));
       setSearchQuery('');
       return;
     }
@@ -748,12 +947,232 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       allEdges
     );
 
-    setVisibleNodeIds(nodesToShow);
-    setExpandedNodeIds(nodesToExpand);
+    updateHierarchyState(() => ({
+      visible: new Set(nodesToShow),
+      expanded: new Set(nodesToExpand)
+    }));
     setSearchQuery(query);
 
     console.log(`[Search] Found ${nodesToShow.size} nodes for query: "${query}"`);
-  }, [allNodes, allEdges]);
+  }, [allNodes, allEdges, updateHierarchyState]);
+
+  const applyOntologyMutations = useCallback(async (ops: OntologyMutationOp[]) => {
+    if (!projectId) {
+      throw new Error('Missing project context for ontology mutation');
+    }
+
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = localStorage.getItem('authToken');
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const draftMode = context?.draftMode ?? false;
+    const response = await fetch(`${(window as any).API_BASE_URL}/api/ontology/mutations/${projectId}?draft=${draftMode}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        ops,
+        userId: context?.userId || 'graph-view-plugin',
+        username: context?.username || 'Graph View Plugin',
+        sessionId: context?.sessionId || `graph-view-${Date.now()}`
+      })
+    });
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      throw new Error(payload?.message || `Ontology mutation failed (${response.status})`);
+    }
+  }, [context, projectId]);
+
+  const sanitizeLabelFragment = useCallback((label: string) => {
+    return label
+      .trim()
+      .replace(/[^A-Za-z0-9]+/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_+|_+$/g, '');
+  }, []);
+
+  const buildClassIri = useCallback((label: string, referenceNode?: OntologyNode | null) => {
+    const fragment = sanitizeLabelFragment(label) || `Class_${Date.now()}`;
+    const namespaceFromNode = extractNamespace(referenceNode?.id);
+    let namespace = namespaceFromNode
+      || extractNamespace(ontologyMetadata?.ontologyIRI)
+      || ontologyMetadata?.ontologyIRI
+      || 'http://example.com/ontology#';
+
+    if (!namespace.endsWith('#') && !namespace.endsWith('/')) {
+      namespace = `${namespace}#`;
+    }
+
+    return `${namespace}${fragment}`;
+  }, [ontologyMetadata, sanitizeLabelFragment]);
+
+  const startCreateClassAction = useCallback((type: 'child' | 'sibling', nodeId: string) => {
+    if (readonly || !projectId || !canEdit || classActionLoading) {
+      console.warn('[Graph Dialog] Edit action blocked');
+      return;
+    }
+
+    const targetNode = allNodes.find(n => n.id === nodeId);
+    if (!targetNode) {
+      console.warn('[Graph Dialog] Node not found for add-class action:', nodeId);
+      return;
+    }
+
+    const parentIds = getParents(nodeId, allEdges, allNodes);
+    const parentId = type === 'child' ? targetNode.id : parentIds[0];
+    const parentNode = parentId ? allNodes.find(n => n.id === parentId) : null;
+
+    if (!parentNode) {
+      setClassActionFeedback({ type: 'error', message: 'Unable to determine parent class for the new node.' });
+      return;
+    }
+
+    setPendingClassAction({
+      kind: 'create',
+      relation: type,
+      targetNode,
+      parentNode,
+      label: ''
+    });
+  }, [allNodes, allEdges, canEdit, classActionLoading, projectId, readonly]);
+
+  const executeCreateClass = useCallback(async (action: Extract<PendingClassAction, { kind: 'create' }>) => {
+    if (!projectId) return;
+    const parentId = action.parentNode.id;
+    const newLabel = action.label.trim();
+    if (!newLabel) {
+      setClassActionFeedback({ type: 'error', message: 'Class name cannot be empty.' });
+      return;
+    }
+
+    try {
+      setClassActionLoading(true);
+      setClassActionFeedback(null);
+      const newIri = buildClassIri(newLabel, action.parentNode || action.targetNode);
+
+      await applyOntologyMutations([{
+        type: 'createClass',
+        iri: newIri,
+        label: newLabel,
+        parent: parentId
+      }]);
+
+      const newNode: OntologyNode = {
+        id: newIri,
+        label: newLabel,
+        type: 'class',
+        namespace: extractNamespace(newIri) || extractNamespace(action.parentNode.id) || undefined,
+        metadata: { createdBy: 'graph-view-plugin' }
+      };
+
+      setAllNodes(prev => [...prev, newNode]);
+      setAllEdges(prev => ([
+        ...prev,
+        {
+          id: `edge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          from: newIri,
+          to: parentId,
+          label: 'subClassOf',
+          type: 'subClassOf'
+        }
+      ]));
+
+      updateHierarchyState(prev => {
+        const visible = new Set(prev.visible);
+        const expanded = new Set(prev.expanded);
+        visible.add(newIri);
+        expanded.add(parentId);
+        return { visible, expanded };
+      });
+
+      setSelectedNodes(new Set([newIri]));
+      setSelectedNodeInfo(newNode);
+      setClassActionFeedback({ type: 'success', message: `Created class "${newLabel}"` });
+      setPendingClassAction(null);
+    } catch (actionError) {
+      const message = actionError instanceof Error ? actionError.message : 'Failed to create class';
+      setClassActionFeedback({ type: 'error', message });
+      console.error('[Graph Dialog] Create class failed', actionError);
+    } finally {
+      setClassActionLoading(false);
+    }
+  }, [applyOntologyMutations, buildClassIri, projectId, updateHierarchyState]);
+
+  const startDeleteClassAction = useCallback((nodeId: string) => {
+    if (readonly || !projectId || !canEdit || classActionLoading) {
+      console.warn('[Graph Dialog] Delete action blocked');
+      return;
+    }
+
+    const node = allNodes.find(n => n.id === nodeId);
+    if (!node) {
+      console.warn('[Graph Dialog] Node not found for delete action:', nodeId);
+      return;
+    }
+
+    const childCount = getChildren(nodeId, allEdges, allNodes).length;
+    setPendingClassAction({ kind: 'delete', targetNode: node, childCount });
+  }, [allNodes, allEdges, canEdit, classActionLoading, projectId, readonly]);
+
+  const executeDeleteClass = useCallback(async (action: Extract<PendingClassAction, { kind: 'delete' }>) => {
+    const nodeId = action.targetNode.id;
+    const parentIds = getParents(nodeId, allEdges, allNodes);
+    const fallbackRoot = parentIds.length > 0 ? allNodes.find(n => n.id === parentIds[0]) || null : null;
+    const shouldCloseDialog = hierarchyRootNode?.id === nodeId && !fallbackRoot;
+
+    try {
+      setClassActionLoading(true);
+      setClassActionFeedback(null);
+
+      await applyOntologyMutations([{ type: 'deleteClass', iri: nodeId }]);
+
+      setAllNodes(prev => prev.filter(n => n.id !== nodeId));
+      setAllEdges(prev => prev.filter(e => e.from !== nodeId && e.to !== nodeId));
+
+      updateHierarchyState(prev => {
+        const visible = new Set(prev.visible);
+        const expanded = new Set(prev.expanded);
+        visible.delete(nodeId);
+        expanded.delete(nodeId);
+        return { visible, expanded };
+      });
+
+      setSelectedNodes(prev => {
+        if (!prev.has(nodeId)) {
+          return prev;
+        }
+        const updated = new Set(prev);
+        updated.delete(nodeId);
+        return updated;
+      });
+
+      setSelectedNodeInfo(info => (info?.id === nodeId ? null : info));
+      setHierarchyRootNode(current => (current?.id === nodeId ? (fallbackRoot || null) : current));
+      if (shouldCloseDialog) {
+        setShowHierarchyDialog(false);
+      }
+
+      setClassActionFeedback({ type: 'success', message: `Deleted class "${action.targetNode.label}"` });
+      setPendingClassAction(null);
+    } catch (actionError) {
+      const message = actionError instanceof Error ? actionError.message : 'Failed to delete class';
+      setClassActionFeedback({ type: 'error', message });
+      console.error('[Graph Dialog] Delete class failed', actionError);
+    } finally {
+      setClassActionLoading(false);
+    }
+  }, [allEdges, allNodes, applyOntologyMutations, hierarchyRootNode, updateHierarchyState]);
+
+  const handleConfirmPendingAction = useCallback(async () => {
+    if (!pendingClassAction) return;
+    if (pendingClassAction.kind === 'create') {
+      await executeCreateClass(pendingClassAction);
+    } else {
+      await executeDeleteClass(pendingClassAction);
+    }
+  }, [executeCreateClass, executeDeleteClass, pendingClassAction]);
 
   /**
    * ========================================================================
@@ -850,6 +1269,45 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     fetchGraphData();
   }, [fetchGraphData]);
 
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+
+    const loadMetadata = async () => {
+      try {
+        const token = localStorage.getItem('authToken');
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+        const response = await fetch(`${(window as any).API_BASE_URL}/api/ontology/metadata/${projectId}`, {
+          method: 'GET',
+          headers
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to fetch ontology metadata (${response.status})`);
+        }
+        const payload = await response.json();
+        if (!cancelled) {
+          setOntologyMetadata(payload?.data || payload);
+        }
+      } catch (metadataError) {
+        console.error('[AdvancedGraphView] Metadata fetch failed', metadataError);
+      }
+    };
+
+    loadMetadata();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!classActionFeedback) return;
+    const timer = setTimeout(() => setClassActionFeedback(null), 5000);
+    return () => clearTimeout(timer);
+  }, [classActionFeedback]);
+
   // Close context menu on outside click
   useEffect(() => {
     const handleClickOutside = () => {
@@ -861,6 +1319,294 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
   }, [contextMenu]);
+
+  /**
+   * ========================================================================
+   * HIERARCHY DIALOG HELPERS
+   * ========================================================================
+   */
+  const handleDialogExpand = useCallback((nodeId: string) => {
+    const label = allNodes.find(n => n.id === nodeId)?.label || nodeId;
+    console.log(`[Dialog] User clicked to expand/collapse node:`, label);
+    console.log(`[Dialog] Node currently visible in graph?`, visibleNodeIds.has(nodeId));
+
+    updateHierarchyState(prev => {
+      const isCurrentlyExpanded = prev.expanded.has(nodeId);
+      const isVisible = prev.visible.has(nodeId);
+
+      if (isCurrentlyExpanded) {
+        console.log('[Dialog] Node already expanded, collapsing');
+        const { newExpandedIds, newVisibleIds } = toggleExpansion(
+          nodeId,
+          prev.expanded,
+          prev.visible,
+          allEdges,
+          allNodes
+        );
+
+        return {
+          visible: newVisibleIds,
+          expanded: newExpandedIds
+        };
+      }
+
+      if (isVisible) {
+        console.log('[Dialog] Node is visible, expanding via standard toggle');
+        const { newExpandedIds, newVisibleIds } = toggleExpansion(
+          nodeId,
+          prev.expanded,
+          prev.visible,
+          allEdges,
+          allNodes
+        );
+
+        return {
+          visible: newVisibleIds,
+          expanded: newExpandedIds
+        };
+      }
+
+      console.log(`[Dialog] Node is NOT visible in graph yet. Need to expand parent path.`);
+      const path = findPathToNode(nodeId, allEdges, allNodes);
+      console.log(`[Dialog] Path to node:`, path.map(id => allNodes.find(n => n.id === id)?.label));
+
+      const newVisibleIds = new Set(prev.visible);
+      const newExpandedIds = new Set(prev.expanded);
+
+      for (let i = 0; i < path.length - 1; i++) {
+        const currentNodeId = path[i];
+        if (!newExpandedIds.has(currentNodeId)) {
+          const children = getChildren(currentNodeId, allEdges, allNodes);
+          children.forEach(childId => newVisibleIds.add(childId));
+          newExpandedIds.add(currentNodeId);
+          console.log(`[Dialog] Auto-expanded ancestor:`, allNodes.find(n => n.id === currentNodeId)?.label);
+        }
+      }
+
+      const children = getChildren(nodeId, allEdges, allNodes);
+      children.forEach(childId => newVisibleIds.add(childId));
+      newExpandedIds.add(nodeId);
+
+      console.log(`[Dialog] Expanded target node and ancestors. New visible count:`, newVisibleIds.size);
+      return {
+        visible: newVisibleIds,
+        expanded: newExpandedIds
+      };
+    });
+  }, [allNodes, allEdges, updateHierarchyState, visibleNodeIds]);
+
+  // Memoize node children and parents map for better performance
+  const nodeRelationsMap = useMemo(() => {
+    const relations = new Map<string, { children: string[]; parents: string[]; hasChildren: boolean; hasParents: boolean }>();
+    
+    allNodes.forEach(node => {
+      const childIds = getChildren(node.id, allEdges, allNodes);
+      const parentIds = getParents(node.id, allEdges, allNodes);
+      
+      relations.set(node.id, {
+        children: childIds,
+        parents: parentIds,
+        hasChildren: childIds.length > 0,
+        hasParents: parentIds.length > 0
+      });
+    });
+    
+    return relations;
+  }, [allNodes, allEdges]);
+
+  const renderHierarchyTree = useCallback((node: OntologyNode, level: number = 0): JSX.Element => {
+    const relations = nodeRelationsMap.get(node.id) || { children: [], parents: [], hasChildren: false, hasParents: false };
+    const children = relations.children.map(id => allNodes.find(n => n.id === id)).filter(Boolean) as OntologyNode[];
+    const isExpanded = expandedNodeIds.has(node.id);
+    const { hasChildren: hasChildNodes, hasParents } = relations;
+    const parentIds = getParents(node.id, allEdges, allNodes);
+    const canAddChild = canEdit && !classActionLoading;
+    const canAddSibling = canEdit && parentIds.length > 0 && !classActionLoading;
+    const canDeleteNode = canEdit && !classActionLoading;
+
+    return (
+      <div key={node.id} style={{ marginLeft: level > 0 ? '20px' : '0' }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            padding: '6px 8px',
+            cursor: 'pointer',
+            borderRadius: '4px',
+            backgroundColor: selectedNodes.has(node.id) ? '#e0e7ff' : 'transparent',
+            transition: 'background-color 0.15s'
+          }}
+          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = selectedNodes.has(node.id) ? '#e0e7ff' : '#f3f4f6'}
+          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = selectedNodes.has(node.id) ? '#e0e7ff' : 'transparent'}
+        >
+          {/* Expand Up (Parents) Icon */}
+          {hasParents && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleExpandParents(node.id);
+              }}
+              style={{
+                marginRight: '4px',
+                cursor: 'pointer',
+                fontSize: '12px',
+                fontWeight: 'bold',
+                color: '#fff',
+                backgroundColor: '#667eea',
+                border: 'none',
+                borderRadius: '50%',
+                width: '18px',
+                height: '18px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: 0
+              }}
+              title="Expand parents in graph"
+            >
+              <ChevronUp size={12} />
+            </button>
+          )}
+          
+          {/* Expand Down (Children) Icon */}
+          {hasChildNodes && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDialogExpand(node.id);
+              }}
+              style={{
+                marginRight: '6px',
+                cursor: 'pointer',
+                fontSize: '12px',
+                fontWeight: 'bold',
+                color: '#fff',
+                backgroundColor: '#10b981',
+                border: 'none',
+                borderRadius: '50%',
+                width: '18px',
+                height: '18px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: 0
+              }}
+              title="Expand/collapse children"
+            >
+              {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            </button>
+          )}
+          
+          {/* Spacer if no icons */}
+          {!hasChildNodes && !hasParents && <span style={{ width: '22px', display: 'inline-block' }} />}
+          
+          <span
+            style={{
+              fontSize: '13px',
+              color: '#374151',
+              flex: 1
+            }}
+            onClick={() => {
+              setSelectedNodes(new Set([node.id]));
+              setSelectedNodeInfo(node);
+            }}
+          >
+            {node.label}
+          </span>
+          <span
+            style={{
+              fontSize: '10px',
+              color: '#9ca3af',
+              marginLeft: '8px',
+              padding: '2px 6px',
+              backgroundColor: TYPE_COLORS[node.type] + '20',
+              borderRadius: '4px'
+            }}
+          >
+            {node.type}
+          </span>
+          {canEdit && (
+            <div style={{ display: 'flex', gap: '4px', marginLeft: '8px' }}>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  startCreateClassAction('child', node.id);
+                }}
+                disabled={!canAddChild}
+                style={{
+                  border: '1px solid #cbd5f5',
+                  backgroundColor: canAddChild ? '#eef2ff' : '#f3f4f6',
+                  color: canAddChild ? '#4c1d95' : '#9ca3af',
+                  borderRadius: '4px',
+                  padding: '2px',
+                  width: '22px',
+                  height: '22px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: canAddChild ? 'pointer' : 'not-allowed'
+                }}
+                title={canAddChild ? 'Add child class' : 'Action disabled while another request is running'}
+              >
+                <Plus size={14} />
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  startCreateClassAction('sibling', node.id);
+                }}
+                disabled={!canAddSibling}
+                style={{
+                  border: '1px solid #cbd5f5',
+                  backgroundColor: canAddSibling ? '#ecfeff' : '#f3f4f6',
+                  color: canAddSibling ? '#155e75' : '#9ca3af',
+                  borderRadius: '4px',
+                  padding: '2px',
+                  width: '22px',
+                  height: '22px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: canAddSibling ? 'pointer' : 'not-allowed'
+                }}
+                title={canAddSibling ? 'Add sibling class' : 'Sibling requires a parent'}
+              >
+                <GitBranch size={14} />
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  startDeleteClassAction(node.id);
+                }}
+                disabled={!canDeleteNode}
+                style={{
+                  border: '1px solid #fecaca',
+                  backgroundColor: canDeleteNode ? '#fef2f2' : '#f3f4f6',
+                  color: canDeleteNode ? '#b91c1c' : '#9ca3af',
+                  borderRadius: '4px',
+                  padding: '2px',
+                  width: '22px',
+                  height: '22px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: canDeleteNode ? 'pointer' : 'not-allowed'
+                }}
+                title={canDeleteNode ? 'Delete class' : 'Action disabled while another request is running'}
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          )}
+        </div>
+        {isExpanded && hasChildNodes && (
+          <div>
+            {children.map(child => renderHierarchyTree(child, level + 1))}
+          </div>
+        )}
+      </div>
+    );
+  }, [nodeRelationsMap, allNodes, allEdges, expandedNodeIds, selectedNodes, handleExpandParents, handleDialogExpand, startCreateClassAction, startDeleteClassAction, canEdit, classActionLoading]);
 
   /**
    * ========================================================================
@@ -901,24 +1647,76 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
         {/* Hierarchical navigation */}
         <button
-          onClick={() => {
-            const { newExpandedIds, newVisibleIds } = expandAllNodes(allNodes);
-            setExpandedNodeIds(newExpandedIds);
-            setVisibleNodeIds(newVisibleIds);
+          onClick={async () => {
+            // Fetch full graph from API for expand all
+            setLoading(true);
+            try {
+              const url = `${(window as any).API_BASE_URL}/api/ontology/${projectId}/graph`;
+              const response = await fetch(url, {
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+                }
+              });
+              
+              if (response.ok) {
+                const data = await response.json();
+                console.log('[Expand All] Loaded', data.nodes?.length, 'nodes and', data.edges?.length, 'edges');
+                
+                const normalizedNodes = (data.nodes || []).map((node: any) => ({
+                  ...node,
+                  type: normalizeNodeType(node.type)
+                }));
+                
+                const normalizedEdges = (data.edges || []).map((edge: any) => ({
+                  ...edge,
+                  from: edge.source || edge.from,
+                  to: edge.target || edge.to,
+                  type: normalizeEdgeType(edge.type)
+                }));
+                
+                setAllNodes(normalizedNodes);
+                setAllEdges(normalizedEdges);
+                
+                // Show all nodes
+                const allNodeIds = normalizedNodes.map((n: any) => n.id);
+                updateHierarchyState(() => ({
+                  visible: new Set(allNodeIds),
+                  expanded: new Set(allNodeIds)
+                }));
+                
+                console.log('[Expand All] Showing all', allNodeIds.length, 'nodes');
+              }
+            } catch (err) {
+              console.error('[Expand All] Error:', err);
+            } finally {
+              setLoading(false);
+            }
           }}
           style={styles.btn}
-          title="Expand All Nodes"
+          title="Expand All Nodes (loads full graph)"
+          disabled={loading}
         >
           Expand All
         </button>
         <button
           onClick={() => {
-            const { newExpandedIds, newVisibleIds } = collapseAllNodes(allNodes, allEdges);
-            setExpandedNodeIds(newExpandedIds);
-            setVisibleNodeIds(newVisibleIds);
+            // Collapse to root nodes using existing data
+            console.log('[Collapse All] Collapsing to root nodes');
+            
+            // Find root nodes from existing data
+            const rootIds = getRootNodes(allNodes, allEdges);
+
+            updateHierarchyState(() => ({
+              visible: new Set(rootIds),
+              expanded: new Set()
+            }));
+            
+            console.log('[Collapse All] Showing', rootIds.length, 'root nodes');
           }}
           style={styles.btn}
           title="Collapse to Root Nodes"
+          disabled={loading}
         >
           Collapse All
         </button>
@@ -961,7 +1759,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
         {/* Stats */}
         <div style={styles.stats}>
-          {getExpansionStats(allNodes.length, visibleNodeIds.size, expandedNodeIds.size)} · {zoomLevel.toFixed(1)}x · {fps} FPS
+          {getExpansionStats(allNodes.length, visibleNodeIds.size, expandedNodeIds.size)} · {zoomLevel.toFixed(1)}x
           {allNodes.length > 1000 && <span style={{color: '#10b981', marginLeft: '8px'}}>⚡ Lazy Loading</span>}
         </div>
 
@@ -1059,10 +1857,75 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                   {selectedNodeInfo.id}
                 </div>
               </div>
+              {selectedNodeInfo.uri && selectedNodeInfo.uri !== selectedNodeInfo.id && (
+                <div style={styles.propertyItem}>
+                  <div style={styles.propertyLabel}>URI</div>
+                  <div style={{ ...styles.propertyValue, fontFamily: 'monospace', fontSize: '11px', wordBreak: 'break-all' }}>
+                    {selectedNodeInfo.uri}
+                  </div>
+                </div>
+              )}
               {selectedNodeInfo.description && (
                 <div style={styles.propertyItem}>
-                  <div style={styles.propertyLabel}>Description</div>
+                  <div style={styles.propertyLabel}>Definition</div>
                   <div style={styles.propertyValue}>{selectedNodeInfo.description}</div>
+                </div>
+              )}
+              {selectedNodeInfo.superClasses && selectedNodeInfo.superClasses.length > 0 && (
+                <div style={styles.propertyItem}>
+                  <div style={styles.propertyLabel}>Superclasses ({selectedNodeInfo.superClasses.length})</div>
+                  <div style={styles.propertyValue}>
+                    {selectedNodeInfo.superClasses.slice(0, 5).map((sc, idx) => (
+                      <div key={idx} style={{ marginBottom: '4px', fontSize: '11px', padding: '4px', background: '#f3f4f6', borderRadius: '4px' }}>
+                        {sc.split('#').pop() || sc.split('/').pop() || sc}
+                      </div>
+                    ))}
+                    {selectedNodeInfo.superClasses.length > 5 && (
+                      <div style={{ fontSize: '11px', color: '#666', fontStyle: 'italic' }}>+ {selectedNodeInfo.superClasses.length - 5} more</div>
+                    )}
+                  </div>
+                </div>
+              )}
+              {selectedNodeInfo.equivalentClasses && selectedNodeInfo.equivalentClasses.length > 0 && (
+                <div style={styles.propertyItem}>
+                  <div style={styles.propertyLabel}>Equivalent Classes</div>
+                  <div style={styles.propertyValue}>
+                    {selectedNodeInfo.equivalentClasses.slice(0, 3).map((ec, idx) => (
+                      <div key={idx} style={{ marginBottom: '4px', fontSize: '11px', padding: '4px', background: '#f3f4f6', borderRadius: '4px' }}>
+                        {ec.split('#').pop() || ec.split('/').pop() || ec}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {selectedNodeInfo.disjointClasses && selectedNodeInfo.disjointClasses.length > 0 && (
+                <div style={styles.propertyItem}>
+                  <div style={styles.propertyLabel}>Disjoint With</div>
+                  <div style={styles.propertyValue}>
+                    {selectedNodeInfo.disjointClasses.slice(0, 3).map((dc, idx) => (
+                      <div key={idx} style={{ marginBottom: '4px', fontSize: '11px', padding: '4px', background: '#fef2f2', borderRadius: '4px' }}>
+                        {dc.split('#').pop() || dc.split('/').pop() || dc}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {selectedNodeInfo.annotations && Object.keys(selectedNodeInfo.annotations).length > 0 && (
+                <div style={styles.propertyItem}>
+                  <div style={styles.propertyLabel}>Annotations ({Object.keys(selectedNodeInfo.annotations).length})</div>
+                  <div style={styles.propertyValue}>
+                    {Object.entries(selectedNodeInfo.annotations).slice(0, 5).map(([key, value], idx) => (
+                      <div key={idx} style={{ marginBottom: '6px', fontSize: '11px' }}>
+                        <div style={{ fontWeight: '600', color: '#4b5563', marginBottom: '2px' }}>{key}:</div>
+                        <div style={{ padding: '4px', background: '#f9fafb', borderRadius: '4px', wordBreak: 'break-word' }}>
+                          {typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value)}
+                        </div>
+                      </div>
+                    ))}
+                    {Object.keys(selectedNodeInfo.annotations).length > 5 && (
+                      <div style={{ fontSize: '11px', color: '#666', fontStyle: 'italic' }}>+ {Object.keys(selectedNodeInfo.annotations).length - 5} more</div>
+                    )}
+                  </div>
                 </div>
               )}
               {selectedNodeInfo.confidence !== undefined && (
@@ -1071,6 +1934,294 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                   <div style={styles.propertyValue}>{(selectedNodeInfo.confidence * 100).toFixed(0)}%</div>
                 </div>
               )}
+              {selectedNodeInfo.namespace && (
+                <div style={styles.propertyItem}>
+                  <div style={styles.propertyLabel}>Namespace</div>
+                  <div style={{ ...styles.propertyValue, fontSize: '11px', fontFamily: 'monospace' }}>{selectedNodeInfo.namespace}</div>
+                </div>
+              )}
+              {selectedNodeInfo.version && (
+                <div style={styles.propertyItem}>
+                  <div style={styles.propertyLabel}>Version</div>
+                  <div style={styles.propertyValue}>{selectedNodeInfo.version}</div>
+                </div>
+              )}
+              {selectedNodeInfo.metadata && Object.keys(selectedNodeInfo.metadata).length > 0 && (
+                <div style={styles.propertyItem}>
+                  <div style={styles.propertyLabel}>Metadata</div>
+                  <div style={{ ...styles.propertyValue, fontSize: '10px', fontFamily: 'monospace', maxHeight: '100px', overflow: 'auto' }}>
+                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                      {JSON.stringify(selectedNodeInfo.metadata, null, 2)}
+                    </pre>
+                  </div>
+                </div>
+              )}
+              <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #e5e7eb', fontSize: '11px', color: '#6b7280' }}>
+                <div style={{ marginBottom: '4px' }}>
+                  <strong>Tip:</strong> Click node to open hierarchy navigator
+                </div>
+                <div>Right-click for more options</div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Hierarchy Dialog */}
+        {showHierarchyDialog && hierarchyRootNode && (
+          <div
+            style={{
+              position: 'fixed',
+              left: `${hierarchyDialogPosition.x}px`,
+              top: `${hierarchyDialogPosition.y}px`,
+              width: isDialogMinimized ? 'auto' : '380px',
+              minWidth: isDialogMinimized ? '280px' : 'auto',
+              maxHeight: isDialogMinimized ? 'auto' : '500px',
+              backgroundColor: '#fff',
+              border: '1px solid #d1d5db',
+              borderRadius: '8px',
+              boxShadow: '0 10px 25px rgba(0,0,0,0.15)',
+              zIndex: 1000,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              transition: 'all 0.2s ease-in-out'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Dialog Header - Draggable */}
+            <div
+              style={{
+                padding: '10px 16px',
+                backgroundColor: '#667eea',
+                color: '#fff',
+                fontWeight: '600',
+                fontSize: '14px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                cursor: 'move',
+                userSelect: 'none',
+                boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+              }}
+              onMouseDown={(e) => {
+                // Don't start drag if clicking on buttons
+                if ((e.target as HTMLElement).tagName === 'BUTTON' || (e.target as HTMLElement).closest('button')) {
+                  return;
+                }
+                
+                const startX = e.clientX - hierarchyDialogPosition.x;
+                const startY = e.clientY - hierarchyDialogPosition.y;
+
+                const handleMouseMove = (moveEvent: MouseEvent) => {
+                  setHierarchyDialogPosition({
+                    x: moveEvent.clientX - startX,
+                    y: moveEvent.clientY - startY
+                  });
+                };
+
+                const handleMouseUp = () => {
+                  document.removeEventListener('mousemove', handleMouseMove);
+                  document.removeEventListener('mouseup', handleMouseUp);
+                };
+
+                document.addEventListener('mousemove', handleMouseMove);
+                document.addEventListener('mouseup', handleMouseUp);
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <GripVertical size={18} style={{ opacity: 0.8 }} />
+                <Box size={16} />
+                <span>Class Hierarchy Navigator</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsDialogMinimized(!isDialogMinimized);
+                  }}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#fff',
+                    cursor: 'pointer',
+                    padding: '4px 6px',
+                    lineHeight: '1',
+                    borderRadius: '4px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    transition: 'background-color 0.15s'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)'}
+                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                  title="Minimize"
+                >
+                  <Minus size={16} />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowHierarchyDialog(false);
+                  }}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#fff',
+                    cursor: 'pointer',
+                    padding: '4px 6px',
+                    lineHeight: '1',
+                    borderRadius: '4px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    transition: 'background-color 0.15s'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.2)'}
+                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                  title="Close"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            {/* Dialog Content - Hidden when minimized */}
+            {!isDialogMinimized && (
+              <>
+                {/* Root Node Info */}
+                <div
+                  style={{
+                    padding: '12px 16px',
+                    backgroundColor: '#f9fafb',
+                    borderBottom: '1px solid #e5e7eb'
+                  }}
+                >
+              <div style={{ fontSize: '16px', fontWeight: '600', color: '#1f2937', marginBottom: '4px' }}>
+                {hierarchyRootNode.label}
+              </div>
+              <div style={{ fontSize: '11px', color: '#6b7280', fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                {hierarchyRootNode.id}
+              </div>
+              {hierarchyRootNode.description && (
+                <div style={{ fontSize: '12px', color: '#4b5563', marginTop: '8px', fontStyle: 'italic' }}>
+                  {hierarchyRootNode.description}
+                </div>
+              )}
+            </div>
+
+            {/* Hierarchy Tree */}
+            <div
+              style={{
+                flex: 1,
+                overflow: 'auto',
+                padding: '12px 16px'
+              }}
+            >
+              <div style={{ marginBottom: '12px', fontSize: '12px', fontWeight: '600', color: '#6b7280' }}>
+                HIERARCHY
+              </div>
+              {renderHierarchyTree(hierarchyRootNode)}
+            </div>
+
+            {classActionFeedback && (
+              <div style={{ padding: '0 16px 12px' }}>
+                <div
+                  style={{
+                    backgroundColor: classActionFeedback.type === 'success' ? '#ecfdf5' : '#fef2f2',
+                    border: `1px solid ${classActionFeedback.type === 'success' ? '#a7f3d0' : '#fecdd3'}`,
+                    color: classActionFeedback.type === 'success' ? '#065f46' : '#991b1b',
+                    borderRadius: '6px',
+                    padding: '8px 10px',
+                    fontSize: '12px'
+                  }}
+                >
+                  {classActionFeedback.message}
+                </div>
+              </div>
+            )}
+
+            {/* Dialog Footer */}
+            <div
+              style={{
+                padding: '12px 16px',
+                backgroundColor: '#f9fafb',
+                borderTop: '1px solid #e5e7eb',
+                fontSize: '11px',
+                color: '#6b7280'
+              }}
+            >
+              <div style={{ marginBottom: '4px' }}>
+                ▶ Click arrow to expand/collapse in both dialog and graph
+              </div>
+              <div>Click class name to select it</div>
+            </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {pendingClassAction && (
+          <div style={styles.modalOverlay} onClick={handlePendingActionCancel}>
+            <div
+              style={styles.modal}
+              onClick={e => e.stopPropagation()}
+            >
+              <div style={styles.modalHeader}>
+                {pendingClassAction.kind === 'create'
+                  ? `Create ${pendingClassAction.relation === 'child' ? 'Child' : 'Sibling'} Class`
+                  : 'Delete Class'}
+              </div>
+              <div style={styles.modalBody}>
+                {pendingClassAction.kind === 'create' ? (
+                  <>
+                    <div style={{ marginBottom: '12px', fontSize: '13px', color: '#4b5563' }}>
+                      Add a {pendingClassAction.relation === 'child' ? 'child of' : 'sibling next to'} <strong>{pendingClassAction.targetNode.label}</strong>.
+                    </div>
+                    <div style={{ marginBottom: '8px', fontSize: '12px', color: '#6b7280' }}>
+                      Parent: <strong>{pendingClassAction.parentNode.label}</strong>
+                    </div>
+                    <label style={{ display: 'block', fontSize: '12px', color: '#374151', marginBottom: '4px' }}>Class Name</label>
+                    <input
+                      type="text"
+                      value={pendingClassAction.label}
+                      onChange={e => handlePendingLabelChange(e.target.value)}
+                      placeholder="Enter class label"
+                      style={styles.modalInput}
+                      autoFocus
+                      disabled={classActionLoading}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <div style={{ marginBottom: '12px', fontSize: '13px', color: '#4b5563' }}>
+                      Are you sure you want to delete <strong>{pendingClassAction.targetNode.label}</strong>?
+                    </div>
+                    {pendingClassAction.childCount > 0 && (
+                      <div style={{ fontSize: '12px', color: '#b45309', background: '#fff7ed', padding: '8px', borderRadius: '6px' }}>
+                        This class has {pendingClassAction.childCount} child class{pendingClassAction.childCount === 1 ? '' : 'es'} that will be detached.
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+              <div style={styles.modalActions}>
+                <button
+                  style={styles.modalButton}
+                  onClick={handlePendingActionCancel}
+                  disabled={classActionLoading}
+                >
+                  Cancel
+                </button>
+                <button
+                  style={{
+                    ...styles.modalButtonPrimary,
+                    backgroundColor: pendingClassAction.kind === 'delete' ? '#dc2626' : '#2563eb',
+                    borderColor: pendingClassAction.kind === 'delete' ? '#b91c1c' : '#2563eb'
+                  }}
+                  onClick={handleConfirmPendingAction}
+                  disabled={classActionLoading || (pendingClassAction.kind === 'create' && pendingClassAction.label.trim().length === 0)}
+                >
+                  {pendingClassAction.kind === 'create' ? 'Create Class' : 'Delete Class'}
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -1143,8 +2294,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               style={styles.contextMenuItem}
               onClick={() => {
                 const { newExpandedIds, newVisibleIds } = expandAllNodes(allNodes);
-                setExpandedNodeIds(newExpandedIds);
-                setVisibleNodeIds(newVisibleIds);
+                updateHierarchyState(() => ({
+                  visible: newVisibleIds,
+                  expanded: newExpandedIds
+                }));
                 setContextMenu({ ...contextMenu, visible: false });
               }}
             >
@@ -1154,8 +2307,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               style={styles.contextMenuItem}
               onClick={() => {
                 const { newExpandedIds, newVisibleIds } = collapseAllNodes(allNodes, allEdges);
-                setExpandedNodeIds(newExpandedIds);
-                setVisibleNodeIds(newVisibleIds);
+                updateHierarchyState(() => ({
+                  visible: newVisibleIds,
+                  expanded: newExpandedIds
+                }));
                 setContextMenu({ ...contextMenu, visible: false });
               }}
             >
@@ -1411,6 +2566,67 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: '8px'
+  },
+  modalOverlay: {
+    position: 'fixed',
+    inset: 0,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1500,
+    padding: '16px'
+  },
+  modal: {
+    width: '100%',
+    maxWidth: '420px',
+    backgroundColor: '#fff',
+    borderRadius: '10px',
+    boxShadow: '0 20px 45px rgba(0,0,0,0.25)',
+    overflow: 'hidden',
+    border: '1px solid #e5e7eb'
+  },
+  modalHeader: {
+    padding: '14px 18px',
+    borderBottom: '1px solid #e5e7eb',
+    fontSize: '15px',
+    fontWeight: 600,
+    color: '#111827'
+  },
+  modalBody: {
+    padding: '18px'
+  },
+  modalActions: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    gap: '8px',
+    padding: '12px 18px',
+    borderTop: '1px solid #e5e7eb',
+    backgroundColor: '#f9fafb'
+  },
+  modalButton: {
+    padding: '8px 16px',
+    borderRadius: '6px',
+    border: '1px solid #d1d5db',
+    backgroundColor: '#fff',
+    cursor: 'pointer',
+    fontSize: '14px'
+  },
+  modalButtonPrimary: {
+    padding: '8px 16px',
+    borderRadius: '6px',
+    border: '1px solid #2563eb',
+    backgroundColor: '#2563eb',
+    color: '#fff',
+    cursor: 'pointer',
+    fontSize: '14px'
+  },
+  modalInput: {
+    width: '100%',
+    padding: '8px 10px',
+    borderRadius: '6px',
+    border: '1px solid #d1d5db',
+    fontSize: '14px'
   }
 };
 

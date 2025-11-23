@@ -2,10 +2,8 @@ package self.research.ontology.owlEditor.controller;
 
 import com.mongodb.client.gridfs.model.GridFSFile;
 import org.semanticweb.owlapi.apibinding.OWLManager;
-import org.semanticweb.owlapi.model.IRI;
-import org.semanticweb.owlapi.model.OWLClass;
-import org.semanticweb.owlapi.model.OWLOntology;
-import org.semanticweb.owlapi.model.OWLOntologyManager;
+import org.semanticweb.owlapi.model.*;
+import org.semanticweb.owlapi.search.EntitySearcher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,8 +17,8 @@ import self.research.ontology.owlEditor.service.GraphGeneratingService;
 import self.research.ontology.owlEditor.service.GraphGeneratingService.Graph;
 
 import java.io.InputStream;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * REST controller for ontology visualization operations.
@@ -197,6 +195,186 @@ public class VisualizationController {
                 "error", e.getMessage()
             ));
         }
+    }
+
+    /**
+     * Get root classes for hierarchical navigation
+     * GET /api/ontology/{projectId}/hierarchy/roots
+     */
+    @GetMapping("/{projectId}/hierarchy/roots")
+    public ResponseEntity<Map<String, Object>> getRootClasses(@PathVariable String projectId) {
+        try {
+            log.info("Getting root classes for project: {}", projectId);
+            
+            OWLOntology ontology = loadOntology(projectId);
+            OWLDataFactory factory = ontology.getOWLOntologyManager().getOWLDataFactory();
+            OWLClass owlThing = factory.getOWLThing();
+            
+            Set<Map<String, Object>> rootClasses = new HashSet<>();
+            
+            // Get direct subclasses of owl:Thing
+            for (OWLClass cls : ontology.getClassesInSignature()) {
+                boolean isRoot = true;
+                
+                // Check if this class has any superclasses other than owl:Thing
+                for (OWLClassExpression superClass : EntitySearcher.getSuperClasses(cls, ontology).collect(Collectors.toSet())) {
+                    if (superClass instanceof OWLClass && !superClass.equals(owlThing) && !superClass.equals(cls)) {
+                        isRoot = false;
+                        break;
+                    }
+                }
+                
+                if (isRoot && !cls.isOWLThing() && !cls.isOWLNothing()) {
+                    Map<String, Object> classInfo = new HashMap<>();
+                    classInfo.put("id", cls.getIRI().toString());
+                    classInfo.put("label", getClassLabel(cls, ontology));
+                    classInfo.put("type", "CLASS");
+                    classInfo.put("hasChildren", EntitySearcher.getSubClasses(cls, ontology).findAny().isPresent());
+                    rootClasses.add(classInfo);
+                }
+            }
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("roots", rootClasses);
+            response.put("count", rootClasses.size());
+            
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            log.error("Error getting root classes", e);
+            return ResponseEntity.status(500).body(Map.of(
+                "success", false,
+                "error", e.getMessage()
+            ));
+        }
+    }
+
+    /**
+     * Get children of a specific class
+     * GET /api/ontology/{projectId}/hierarchy/children
+     */
+    @GetMapping("/{projectId}/hierarchy/children")
+    public ResponseEntity<Map<String, Object>> getClassChildren(
+            @PathVariable String projectId,
+            @RequestParam String classIRI
+    ) {
+        try {
+            log.info("Getting children for class: {}", classIRI);
+            
+            OWLOntology ontology = loadOntology(projectId);
+            OWLDataFactory factory = ontology.getOWLOntologyManager().getOWLDataFactory();
+            OWLClass parentClass = factory.getOWLClass(IRI.create(classIRI));
+            
+            Set<Map<String, Object>> children = new HashSet<>();
+            
+            // Get direct subclasses
+            for (OWLClassExpression subClass : EntitySearcher.getSubClasses(parentClass, ontology).collect(Collectors.toSet())) {
+                if (subClass instanceof OWLClass) {
+                    OWLClass childClass = (OWLClass) subClass;
+                    if (!childClass.isOWLNothing()) {
+                        Map<String, Object> classInfo = new HashMap<>();
+                        classInfo.put("id", childClass.getIRI().toString());
+                        classInfo.put("label", getClassLabel(childClass, ontology));
+                        classInfo.put("type", "CLASS");
+                        classInfo.put("hasChildren", EntitySearcher.getSubClasses(childClass, ontology).findAny().isPresent());
+                        classInfo.put("parentId", classIRI);
+                        children.add(classInfo);
+                    }
+                }
+            }
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("children", children);
+            response.put("count", children.size());
+            response.put("parentId", classIRI);
+            
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            log.error("Error getting class children", e);
+            return ResponseEntity.status(500).body(Map.of(
+                "success", false,
+                "error", e.getMessage()
+            ));
+        }
+    }
+
+    /**
+     * Get parents of a specific class
+     * GET /api/ontology/{projectId}/hierarchy/parents
+     */
+    @GetMapping("/{projectId}/hierarchy/parents")
+    public ResponseEntity<Map<String, Object>> getClassParents(
+            @PathVariable String projectId,
+            @RequestParam String classIRI
+    ) {
+        try {
+            log.info("Getting parents for class: {}", classIRI);
+            
+            OWLOntology ontology = loadOntology(projectId);
+            OWLDataFactory factory = ontology.getOWLOntologyManager().getOWLDataFactory();
+            OWLClass childClass = factory.getOWLClass(IRI.create(classIRI));
+            OWLClass owlThing = factory.getOWLThing();
+            
+            Set<Map<String, Object>> parents = new HashSet<>();
+            
+            // Get direct superclasses
+            for (OWLClassExpression superClass : EntitySearcher.getSuperClasses(childClass, ontology).collect(Collectors.toSet())) {
+                if (superClass instanceof OWLClass) {
+                    OWLClass parentClass = (OWLClass) superClass;
+                    if (!parentClass.isOWLThing() && !parentClass.equals(childClass)) {
+                        Map<String, Object> classInfo = new HashMap<>();
+                        classInfo.put("id", parentClass.getIRI().toString());
+                        classInfo.put("label", getClassLabel(parentClass, ontology));
+                        classInfo.put("type", "CLASS");
+                        classInfo.put("hasChildren", EntitySearcher.getSubClasses(parentClass, ontology).findAny().isPresent());
+                        classInfo.put("childId", classIRI);
+                        parents.add(classInfo);
+                    }
+                }
+            }
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("parents", parents);
+            response.put("count", parents.size());
+            response.put("childId", classIRI);
+            
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            log.error("Error getting class parents", e);
+            return ResponseEntity.status(500).body(Map.of(
+                "success", false,
+                "error", e.getMessage()
+            ));
+        }
+    }
+
+    /**
+     * Helper method to get class label
+     */
+    private String getClassLabel(OWLClass cls, OWLOntology ontology) {
+        // Try to get rdfs:label annotation
+        for (OWLAnnotation annotation : EntitySearcher.getAnnotations(cls, ontology).collect(Collectors.toSet())) {
+            if (annotation.getProperty().isLabel()) {
+                OWLAnnotationValue value = annotation.getValue();
+                if (value instanceof OWLLiteral) {
+                    return ((OWLLiteral) value).getLiteral();
+                }
+            }
+        }
+        
+        // Fallback to fragment or full IRI
+        String iri = cls.getIRI().toString();
+        if (iri.contains("#")) {
+            return iri.substring(iri.lastIndexOf("#") + 1);
+        } else if (iri.contains("/")) {
+            return iri.substring(iri.lastIndexOf("/") + 1);
+        }
+        return iri;
     }
 
     /**

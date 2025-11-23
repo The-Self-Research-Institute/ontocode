@@ -2613,6 +2613,62 @@ const Dashboard = () => {
     }
   }, [classHierarchy, individuals]);
 
+  useEffect(() => {
+    const handleGraphAddClass = (event: Event) => {
+      const custom = event as CustomEvent<{
+        action: 'subclass' | 'sibling';
+        targetNodeId: string;
+        targetNodeLabel?: string;
+        parentId?: string | null;
+        parentLabel?: string | null;
+        projectId?: string;
+      }>;
+
+      const detail = custom.detail;
+      if (!detail) return;
+      if (detail.projectId && projectId && detail.projectId !== projectId) {
+        return;
+      }
+
+      const findNode = (nodes: TreeNode[], targetId: string): TreeNode | null => {
+        for (const node of nodes) {
+          if (node.id === targetId) return node;
+          if (node.children) {
+            const found = findNode(node.children, targetId);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+
+      const targetNode = findNode(classHierarchy, detail.targetNodeId);
+      if (!targetNode) {
+        showNotification('Selected class not found in hierarchy. Please refresh the graph and try again.', 'warning');
+        return;
+      }
+
+      setMainTab('Entities');
+      setEntitiesTab('Classes');
+      setSelectedItem(targetNode);
+
+      if (detail.action === 'sibling') {
+        const parent = detail.parentId
+          ? findNode(classHierarchy, detail.parentId)
+          : findParentNode(classHierarchy, targetNode.id);
+        setClassParentLabel(parent?.label || detail.parentLabel || 'owl:Thing');
+        setAddClassType('sibling');
+      } else {
+        setClassParentLabel(targetNode.label);
+        setAddClassType('subclass');
+      }
+
+      setAddClassDialogOpen(true);
+    };
+
+    window.addEventListener('graph-view:add-class', handleGraphAddClass as EventListener);
+    return () => window.removeEventListener('graph-view:add-class', handleGraphAddClass as EventListener);
+  }, [classHierarchy, projectId, showNotification]);
+
   // Keyboard shortcuts (Protégé-style) - must be after handleAddItem and handleDeleteItem
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

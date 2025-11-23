@@ -32,7 +32,7 @@ public class GraphGeneratingService {
     public static class Node {
         private String id;
         private String label;
-        private String type; // CLASS, OBJECT_PROPERTY, DATA_PROPERTY, INDIVIDUAL
+        private String type; // class, objectProperty, dataProperty, individual
         private String iri;
         private int size = 10;
         private String color;
@@ -51,10 +51,10 @@ public class GraphGeneratingService {
 
         private String getColorForType(String type) {
             switch (type) {
-                case "CLASS": return "#4A90E2";
-                case "OBJECT_PROPERTY": return "#50C878";
-                case "DATA_PROPERTY": return "#F39C12";
-                case "INDIVIDUAL": return "#E74C3C";
+                case "class": return "#4A90E2";
+                case "objectProperty": return "#50C878";
+                case "dataProperty": return "#F39C12";
+                case "individual": return "#E74C3C";
                 default: return "#95A5A6";
             }
         }
@@ -81,9 +81,9 @@ public class GraphGeneratingService {
      */
     public static class Edge {
         private String id;
-        private String source;
-        private String target;
-        private String type; // SUBCLASS_OF, INSTANCE_OF, DOMAIN, RANGE, etc.
+        private String from;
+        private String to;
+        private String type; // subClassOf, instanceOf, domain, range, etc.
         private String label;
         private String color;
         private int width = 2;
@@ -92,10 +92,10 @@ public class GraphGeneratingService {
         // Constructors
         public Edge() {}
 
-        public Edge(String source, String target, String type, String label) {
-            this.id = source + "_" + type + "_" + target;
-            this.source = source;
-            this.target = target;
+        public Edge(String from, String to, String type, String label) {
+            this.id = from + "_" + type + "_" + to;
+            this.from = from;
+            this.to = to;
             this.type = type;
             this.label = label;
             this.color = getColorForType(type);
@@ -103,11 +103,11 @@ public class GraphGeneratingService {
 
         private String getColorForType(String type) {
             switch (type) {
-                case "SUBCLASS_OF": return "#3498DB";
-                case "INSTANCE_OF": return "#E74C3C";
-                case "DOMAIN": return "#50C878";
-                case "RANGE": return "#F39C12";
-                case "PROPERTY": return "#9B59B6";
+                case "subClassOf": return "#3498DB";
+                case "instanceOf": return "#E74C3C";
+                case "domain": return "#50C878";
+                case "range": return "#F39C12";
+                case "propertyRelation": return "#9B59B6";
                 default: return "#95A5A6";
             }
         }
@@ -115,10 +115,17 @@ public class GraphGeneratingService {
         // Getters and setters
         public String getId() { return id; }
         public void setId(String id) { this.id = id; }
-        public String getSource() { return source; }
-        public void setSource(String source) { this.source = source; }
-        public String getTarget() { return target; }
-        public void setTarget(String target) { this.target = target; }
+        public String getFrom() { return from; }
+        public void setFrom(String from) { this.from = from; }
+        public String getTo() { return to; }
+        public void setTo(String to) { this.to = to; }
+        
+        // Compatibility methods for legacy code
+        public String getSource() { return from; }
+        public void setSource(String source) { this.from = source; }
+        public String getTarget() { return to; }
+        public void setTarget(String target) { this.to = target; }
+        
         public String getType() { return type; }
         public void setType(String type) { this.type = type; }
         public String getLabel() { return label; }
@@ -166,7 +173,7 @@ public class GraphGeneratingService {
             String id = getNodeId(owlClass.getIRI());
             String label = getLabel(owlClass, ontology);
             
-            Node node = new Node(id, label, "CLASS", owlClass.getIRI().toString());
+            Node node = new Node(id, label, "class", owlClass.getIRI().toString());
             
             // Add metadata
             node.getMetadata().put("axiomCount", ontology.getAxioms(owlClass).size());
@@ -184,7 +191,7 @@ public class GraphGeneratingService {
             String id = getNodeId(property.getIRI());
             String label = getLabel(property, ontology);
             
-            Node node = new Node(id, label, "OBJECT_PROPERTY", property.getIRI().toString());
+            Node node = new Node(id, label, "objectProperty", property.getIRI().toString());
             nodeMap.put(id, node);
             graph.getNodes().add(node);
         }
@@ -195,7 +202,7 @@ public class GraphGeneratingService {
                 String id = getNodeId(individual.getIRI());
                 String label = getLabel(individual, ontology);
                 
-                Node node = new Node(id, label, "INDIVIDUAL", individual.getIRI().toString());
+                Node node = new Node(id, label, "individual", individual.getIRI().toString());
                 node.setSize(8); // Smaller size for individuals
                 nodeMap.put(id, node);
                 graph.getNodes().add(node);
@@ -209,7 +216,7 @@ public class GraphGeneratingService {
                 String superId = getNodeId(axiom.getSuperClass().asOWLClass().getIRI());
                 
                 if (nodeMap.containsKey(subId) && nodeMap.containsKey(superId)) {
-                    Edge edge = new Edge(subId, superId, "SUBCLASS_OF", "subClassOf");
+                    Edge edge = new Edge(subId, superId, "subClassOf", "subClassOf");
                     graph.getEdges().add(edge);
                 }
             }
@@ -224,7 +231,7 @@ public class GraphGeneratingService {
                 if (!axiom.getDomain().isAnonymous()) {
                     String domainId = getNodeId(axiom.getDomain().asOWLClass().getIRI());
                     if (nodeMap.containsKey(domainId) && nodeMap.containsKey(propId)) {
-                        Edge edge = new Edge(propId, domainId, "DOMAIN", "domain");
+                        Edge edge = new Edge(propId, domainId, "domain", "domain");
                         graph.getEdges().add(edge);
                     }
                 }
@@ -235,7 +242,7 @@ public class GraphGeneratingService {
                 if (!axiom.getRange().isAnonymous()) {
                     String rangeId = getNodeId(axiom.getRange().asOWLClass().getIRI());
                     if (nodeMap.containsKey(rangeId) && nodeMap.containsKey(propId)) {
-                        Edge edge = new Edge(propId, rangeId, "RANGE", "range");
+                        Edge edge = new Edge(propId, rangeId, "range", "range");
                         graph.getEdges().add(edge);
                     }
                 }
@@ -250,7 +257,7 @@ public class GraphGeneratingService {
                     String classId = getNodeId(axiom.getClassExpression().asOWLClass().getIRI());
                     
                     if (nodeMap.containsKey(indId) && nodeMap.containsKey(classId)) {
-                        Edge edge = new Edge(indId, classId, "INSTANCE_OF", "instanceOf");
+                        Edge edge = new Edge(indId, classId, "instanceOf", "instanceOf");
                         graph.getEdges().add(edge);
                     }
                 }
@@ -315,7 +322,7 @@ public class GraphGeneratingService {
             String id = getNodeId(property.getIRI());
             String label = getLabel(property, ontology);
             
-            Node node = new Node(id, label, "OBJECT_PROPERTY", property.getIRI().toString());
+            Node node = new Node(id, label, "objectProperty", property.getIRI().toString());
             nodeMap.put(id, node);
             graph.getNodes().add(node);
         }
@@ -327,7 +334,7 @@ public class GraphGeneratingService {
                 String superId = getNodeId(axiom.getSuperProperty().asOWLObjectProperty().getIRI());
                 
                 if (nodeMap.containsKey(subId) && nodeMap.containsKey(superId)) {
-                    Edge edge = new Edge(subId, superId, "SUBPROPERTY_OF", "subPropertyOf");
+                    Edge edge = new Edge(subId, superId, "subPropertyOf", "subPropertyOf");
                     graph.getEdges().add(edge);
                 }
             }
@@ -343,7 +350,7 @@ public class GraphGeneratingService {
                 String secondId = getNodeId(second.asOWLObjectProperty().getIRI());
                 
                 if (nodeMap.containsKey(firstId) && nodeMap.containsKey(secondId)) {
-                    Edge edge = new Edge(firstId, secondId, "INVERSE_OF", "inverseOf");
+                    Edge edge = new Edge(firstId, secondId, "inverseOf", "inverseOf");
                     edge.setColor("#9B59B6");
                     graph.getEdges().add(edge);
                 }
@@ -366,7 +373,7 @@ public class GraphGeneratingService {
         String id = getNodeId(owlClass.getIRI());
         if (!nodeMap.containsKey(id)) {
             String label = getLabel(owlClass, ontology);
-            Node node = new Node(id, label, "CLASS", owlClass.getIRI().toString());
+            Node node = new Node(id, label, "class", owlClass.getIRI().toString());
             nodeMap.put(id, node);
             graph.getNodes().add(node);
         }
@@ -378,7 +385,7 @@ public class GraphGeneratingService {
                 addClassWithHierarchy(ontology, subClass, depth - 1, graph, nodeMap, visited);
                 
                 String subId = getNodeId(subClass.getIRI());
-                Edge edge = new Edge(subId, id, "SUBCLASS_OF", "subClassOf");
+                Edge edge = new Edge(subId, id, "subClassOf", "subClassOf");
                 graph.getEdges().add(edge);
             }
         }
