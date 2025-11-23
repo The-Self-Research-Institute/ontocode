@@ -2491,66 +2491,68 @@ const Dashboard = () => {
     });
   }, [projectId, selectedItem, entitiesTab, classHierarchy, updateItemInState]);
 
-  const handleDeleteItem = useCallback(async () => {
-    if (!selectedItem || !projectId) return;
+  const handleDeleteItem = useCallback(async (itemOverride?: SelectableItem, tabOverride?: typeof entitiesTab) => {
+    const item = itemOverride || selectedItem;
+    const activeTab = tabOverride || entitiesTab;
+    if (!item || !projectId) return;
     
     // Show confirm dialog instead of using confirm()
     setConfirmDialog({
       isOpen: true,
       title: 'Delete Item',
-      message: `Are you sure you want to delete "${selectedItem.label}"? This action cannot be undone.`,
+      message: `Are you sure you want to delete "${item.label}"? This action cannot be undone.`,
       onConfirm: async () => {
         try {
           // Call backend API based on entity type
-          switch (entitiesTab) {
+          switch (activeTab) {
             case 'Classes':
-              await ontologyMutationService.deleteClass(projectId, selectedItem.id, user?.email || 'anonymous', user?.username || 'Anonymous');
+              await ontologyMutationService.deleteClass(projectId, item.id, user?.email || 'anonymous', user?.username || 'Anonymous');
               break;
             case 'Individuals':
-              await ontologyMutationService.deleteIndividual(projectId, selectedItem.id, user?.email || 'anonymous', user?.username || 'Anonymous');
+              await ontologyMutationService.deleteIndividual(projectId, item.id, user?.email || 'anonymous', user?.username || 'Anonymous');
               break;
             case 'ObjectProperties':
-              await ontologyMutationService.deleteObjectProperty(projectId, selectedItem.id, user?.email || 'anonymous', user?.username || 'Anonymous');
+              await ontologyMutationService.deleteObjectProperty(projectId, item.id, user?.email || 'anonymous', user?.username || 'Anonymous');
               break;
             case 'Datatypes':
-              await ontologyMutationService.deleteDatatype(projectId, selectedItem.id, user?.email || 'anonymous', user?.username || 'Anonymous');
+              await ontologyMutationService.deleteDatatype(projectId, item.id, user?.email || 'anonymous', user?.username || 'Anonymous');
               break;
             // Add other entity types as needed
           }
 
           // Update local state
-          switch (entitiesTab) {
+          switch (activeTab) {
             case 'Classes': {
               const removeNodeRecursively = (nodes: TreeNode[], id: string): TreeNode[] =>
                 nodes
                   .filter(node => node.id !== id)
                   .map(node => node.children ? { ...node, children: removeNodeRecursively(node.children, id) } : node);
-              setClassHierarchy(prev => removeNodeRecursively(prev, selectedItem.id));
+              setClassHierarchy(prev => removeNodeRecursively(prev, item.id));
               break;
             }
             case 'Individuals':
-              setIndividuals(prev => prev.filter(ind => ind.id !== selectedItem.id));
+              setIndividuals(prev => prev.filter(ind => ind.id !== item.id));
               break;
             case 'ObjectProperties':
-              setObjectProperties(prev => prev.filter(p => p.id !== selectedItem.id));
+              setObjectProperties(prev => prev.filter(p => p.id !== item.id));
               const removeOpRecursively = (nodes: any[], id: string): any[] =>
                 nodes
                   .filter(node => node.id !== id)
                   .map(node => node.children ? { ...node, children: removeOpRecursively(node.children, id) } : node);
-              setObjectPropertyHierarchy(prev => removeOpRecursively(prev, selectedItem.id));
+              setObjectPropertyHierarchy(prev => removeOpRecursively(prev, item.id));
               break;
             case 'DataProperties':
-              setDataProperties(prev => prev.filter(p => p.id !== selectedItem.id));
+              setDataProperties(prev => prev.filter(p => p.id !== item.id));
               break;
         case 'AnnotationProperties':
-          setAnnotationProperties(prev => prev.filter(p => p.id !== selectedItem.id));
+          setAnnotationProperties(prev => prev.filter(p => p.id !== item.id));
           break;
             case 'Datatypes':
-              setDatatypes(prev => prev.filter(d => d.id !== selectedItem.id));
+              setDatatypes(prev => prev.filter(d => d.id !== item.id));
               break;
           }
-          setSelectedItem(null);
-          showNotification(`"${selectedItem.label}" deleted successfully!`, 'info');
+          setSelectedItem(prev => (prev?.id === item.id ? null : prev));
+          showNotification(`"${item.label}" deleted successfully!`, 'info');
         } catch (error) {
           console.error('Failed to delete item:', error);
           showNotification('Failed to delete item. See console for details.', 'error');
@@ -2613,6 +2615,24 @@ const Dashboard = () => {
     }
   }, [classHierarchy, individuals]);
 
+  const findClassNodeById = useCallback((targetId: string): TreeNode | null => {
+    const traverse = (nodes: TreeNode[]): TreeNode | null => {
+      for (const node of nodes) {
+        if (node.id === targetId) {
+          return node;
+        }
+        if (node.children) {
+          const found = traverse(node.children);
+          if (found) {
+            return found;
+          }
+        }
+      }
+      return null;
+    };
+    return traverse(classHierarchy);
+  }, [classHierarchy]);
+
   useEffect(() => {
     const handleGraphAddClass = (event: Event) => {
       const custom = event as CustomEvent<{
@@ -2630,18 +2650,7 @@ const Dashboard = () => {
         return;
       }
 
-      const findNode = (nodes: TreeNode[], targetId: string): TreeNode | null => {
-        for (const node of nodes) {
-          if (node.id === targetId) return node;
-          if (node.children) {
-            const found = findNode(node.children, targetId);
-            if (found) return found;
-          }
-        }
-        return null;
-      };
-
-      const targetNode = findNode(classHierarchy, detail.targetNodeId);
+      const targetNode = findClassNodeById(detail.targetNodeId);
       if (!targetNode) {
         showNotification('Selected class not found in hierarchy. Please refresh the graph and try again.', 'warning');
         return;
@@ -2653,7 +2662,7 @@ const Dashboard = () => {
 
       if (detail.action === 'sibling') {
         const parent = detail.parentId
-          ? findNode(classHierarchy, detail.parentId)
+          ? findClassNodeById(detail.parentId)
           : findParentNode(classHierarchy, targetNode.id);
         setClassParentLabel(parent?.label || detail.parentLabel || 'owl:Thing');
         setAddClassType('sibling');
@@ -2667,7 +2676,50 @@ const Dashboard = () => {
 
     window.addEventListener('graph-view:add-class', handleGraphAddClass as EventListener);
     return () => window.removeEventListener('graph-view:add-class', handleGraphAddClass as EventListener);
-  }, [classHierarchy, projectId, showNotification]);
+  }, [classHierarchy, findClassNodeById, projectId, showNotification]);
+
+  useEffect(() => {
+    const handleGraphDelete = (event: Event) => {
+      const custom = event as CustomEvent<{
+        nodeId: string;
+        nodeLabel?: string;
+        projectId?: string;
+      }>;
+      const detail = custom.detail;
+      if (!detail) return;
+      if (detail.projectId && projectId && detail.projectId !== projectId) {
+        return;
+      }
+
+      const targetNode = findClassNodeById(detail.nodeId);
+      if (!targetNode) {
+        showNotification(`Class "${detail.nodeLabel || detail.nodeId}" not found in hierarchy.`, 'warning');
+        return;
+      }
+
+      setMainTab('Entities');
+      setEntitiesTab('Classes');
+      setSelectedItem(targetNode);
+      handleDeleteItem(targetNode, 'Classes');
+    };
+
+    window.addEventListener('graph-view:delete-class', handleGraphDelete as EventListener);
+    return () => window.removeEventListener('graph-view:delete-class', handleGraphDelete as EventListener);
+  }, [findClassNodeById, handleDeleteItem, projectId, showNotification]);
+
+  useEffect(() => {
+    const handleShowCollaboration = (event: Event) => {
+      const custom = event as CustomEvent<{ projectId?: string }>;
+      const detail = custom.detail;
+      if (detail?.projectId && projectId && detail.projectId !== projectId) {
+        return;
+      }
+      setShowCollaborationPanel(true);
+    };
+
+    window.addEventListener('graph-view:show-collaboration', handleShowCollaboration as EventListener);
+    return () => window.removeEventListener('graph-view:show-collaboration', handleShowCollaboration as EventListener);
+  }, [projectId]);
 
   // Keyboard shortcuts (Protégé-style) - must be after handleAddItem and handleDeleteItem
   useEffect(() => {

@@ -23,7 +23,8 @@ import {
   ChevronRight,
   Plus,
   GitBranch,
-  Trash2
+  Trash2,
+  Users
 } from 'lucide-react';
 import type {
   OntologyNode,
@@ -179,6 +180,66 @@ const extractNamespace = (iri?: string | null): string | null => {
   return null;
 };
 
+const isLikelyAbsoluteIri = (value?: string | null): boolean => {
+  if (!value) return false;
+  return /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(value);
+};
+
+const resolveNamespaceFromNode = (node?: OntologyNode | null): string | null => {
+  if (!node) return null;
+  const candidateIris: Array<string | null | undefined> = [
+    node.metadata?.iri,
+    node.metadata?.originalIri,
+    node.metadata?.baseIri,
+    node.metadata?.baseIRI,
+    node.uri,
+    node.id
+  ];
+
+  for (const candidate of candidateIris) {
+    if (!candidate) continue;
+    const namespace = extractNamespace(candidate);
+    if (isLikelyAbsoluteIri(namespace)) {
+      return namespace;
+    }
+  }
+
+  return null;
+};
+
+const resolveNodeIri = (node?: OntologyNode | null): string | null => {
+  if (!node) return null;
+  const candidateIris: Array<string | null | undefined> = [
+    node.metadata?.iri,
+    node.metadata?.originalIri,
+    node.metadata?.iriValue,
+    node.uri,
+    node.id
+  ];
+
+  for (const candidate of candidateIris) {
+    if (!candidate) continue;
+    if (isLikelyAbsoluteIri(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+};
+
+const dispatchHostEvent = (name: string, detail: Record<string, any>): boolean => {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') {
+    return false;
+  }
+  try {
+    window.dispatchEvent(new CustomEvent(name, { detail }));
+    return true;
+  } catch (eventError) {
+    console.error(`[Graph Dialog] Failed to dispatch ${name}`, eventError);
+    return false;
+  }
+};
+
 export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   projectId,
   context,
@@ -236,6 +297,42 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       return { ...prev, label: value };
     });
   }, []);
+  const requestHostClassDialog = useCallback((action: 'child' | 'sibling', targetNode: OntologyNode, parentNode: OntologyNode | null) => {
+    const dispatched = dispatchHostEvent('graph-view:add-class', {
+      action: action === 'child' ? 'subclass' : 'sibling',
+      targetNodeId: targetNode.id,
+      targetNodeLabel: targetNode.label,
+      parentId: parentNode?.id ?? null,
+      parentLabel: parentNode?.label ?? null,
+      projectId
+    });
+    if (dispatched) {
+      setClassActionFeedback({
+        type: 'success',
+        message: 'Opening full ontology editor dialog. Finish the operation from the Entities tab.'
+      });
+    } else {
+      setClassActionFeedback({ type: 'error', message: 'Unable to reach the main editor dialog.' });
+    }
+  }, [projectId]);
+  const requestHostDeleteDialog = useCallback((targetNode: OntologyNode) => {
+    const dispatched = dispatchHostEvent('graph-view:delete-class', {
+      nodeId: targetNode.id,
+      nodeLabel: targetNode.label,
+      projectId
+    });
+    if (dispatched) {
+      setClassActionFeedback({
+        type: 'success',
+        message: 'Delete request sent to main editor. Confirm from the Entities tab.'
+      });
+    } else {
+      setClassActionFeedback({ type: 'error', message: 'Unable to open delete dialog in main editor.' });
+    }
+  }, [projectId]);
+  const requestHostCollaborationPanel = useCallback(() => {
+    dispatchHostEvent('graph-view:show-collaboration', { projectId });
+  }, [projectId]);
 
   // UI State
   const [selectedNodes, setSelectedNodes] = useState<Set<string>>(new Set());
@@ -995,11 +1092,29 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
   const buildClassIri = useCallback((label: string, referenceNode?: OntologyNode | null) => {
     const fragment = sanitizeLabelFragment(label) || `Class_${Date.now()}`;
-    const namespaceFromNode = extractNamespace(referenceNode?.id);
-    let namespace = namespaceFromNode
-      || extractNamespace(ontologyMetadata?.ontologyIRI)
-      || ontologyMetadata?.ontologyIRI
-      || 'http://example.com/ontology#';
+    let namespace = resolveNamespaceFromNode(referenceNode);
+
+    if (!namespace) {
+      const metadataCandidates: Array<string | null | undefined> = [
+        ontologyMetadata?.defaultNamespace,
+        ontologyMetadata?.baseIRI,
+        ontologyMetadata?.baseIri,
+        ontologyMetadata?.ontologyIRI
+      ];
+
+      for (const candidate of metadataCandidates) {
+        if (!candidate) continue;
+        const derived = extractNamespace(candidate) || candidate;
+        if (isLikelyAbsoluteIri(derived)) {
+          namespace = derived;
+          break;
+        }
+      }
+    }
+
+    if (!namespace || !isLikelyAbsoluteIri(namespace)) {
+      namespace = 'http://example.com/ontology#';
+    }
 
     if (!namespace.endsWith('#') && !namespace.endsWith('/')) {
       namespace = `${namespace}#`;
@@ -1041,9 +1156,16 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const executeCreateClass = useCallback(async (action: Extract<PendingClassAction, { kind: 'create' }>) => {
     if (!projectId) return;
     const parentId = action.parentNode.id;
+    const parentIriForMutation = resolveNodeIri(action.parentNode);
     const newLabel = action.label.trim();
     if (!newLabel) {
       setClassActionFeedback({ type: 'error', message: 'Class name cannot be empty.' });
+      return;
+    }
+
+    if (!parentIriForMutation) {
+      requestHostClassDialog(action.relation, action.targetNode, action.parentNode);
+      setPendingClassAction(null);
       return;
     }
 
@@ -1056,7 +1178,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         type: 'createClass',
         iri: newIri,
         label: newLabel,
-        parent: parentId
+        parent: parentIriForMutation
       }]);
 
       const newNode: OntologyNode = {
@@ -1098,7 +1220,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     } finally {
       setClassActionLoading(false);
     }
-  }, [applyOntologyMutations, buildClassIri, projectId, updateHierarchyState]);
+  }, [applyOntologyMutations, buildClassIri, projectId, requestHostClassDialog, updateHierarchyState]);
 
   const startDeleteClassAction = useCallback((nodeId: string) => {
     if (readonly || !projectId || !canEdit || classActionLoading) {
@@ -1118,15 +1240,22 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
   const executeDeleteClass = useCallback(async (action: Extract<PendingClassAction, { kind: 'delete' }>) => {
     const nodeId = action.targetNode.id;
+    const nodeIriForMutation = resolveNodeIri(action.targetNode);
     const parentIds = getParents(nodeId, allEdges, allNodes);
     const fallbackRoot = parentIds.length > 0 ? allNodes.find(n => n.id === parentIds[0]) || null : null;
     const shouldCloseDialog = hierarchyRootNode?.id === nodeId && !fallbackRoot;
+
+    if (!nodeIriForMutation) {
+      requestHostDeleteDialog(action.targetNode);
+      setPendingClassAction(null);
+      return;
+    }
 
     try {
       setClassActionLoading(true);
       setClassActionFeedback(null);
 
-      await applyOntologyMutations([{ type: 'deleteClass', iri: nodeId }]);
+      await applyOntologyMutations([{ type: 'deleteClass', iri: nodeIriForMutation }]);
 
       setAllNodes(prev => prev.filter(n => n.id !== nodeId));
       setAllEdges(prev => prev.filter(e => e.from !== nodeId && e.to !== nodeId));
@@ -1163,7 +1292,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     } finally {
       setClassActionLoading(false);
     }
-  }, [allEdges, allNodes, applyOntologyMutations, hierarchyRootNode, updateHierarchyState]);
+  }, [allEdges, allNodes, applyOntologyMutations, hierarchyRootNode, requestHostDeleteDialog, updateHierarchyState]);
 
   const handleConfirmPendingAction = useCallback(async () => {
     if (!pendingClassAction) return;
@@ -1755,6 +1884,17 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           <Zap size={16} />
         </button>
 
+        <div style={styles.divider} />
+
+        <button
+          onClick={requestHostCollaborationPanel}
+          style={styles.btn}
+          title="Open collaboration panel in main editor"
+        >
+          <Users size={16} />
+          <span style={{ marginLeft: 6 }}>Collaboration</span>
+        </button>
+
         <div style={{ flex: 1 }} />
 
         {/* Stats */}
@@ -2188,6 +2328,16 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                       autoFocus
                       disabled={classActionLoading}
                     />
+                    <button
+                      style={styles.modalLinkButton}
+                      onClick={() => {
+                        requestHostClassDialog(pendingClassAction.relation, pendingClassAction.targetNode, pendingClassAction.parentNode);
+                        setPendingClassAction(null);
+                      }}
+                      disabled={classActionLoading}
+                    >
+                      Use main editor dialog
+                    </button>
                   </>
                 ) : (
                   <>
@@ -2199,6 +2349,16 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                         This class has {pendingClassAction.childCount} child class{pendingClassAction.childCount === 1 ? '' : 'es'} that will be detached.
                       </div>
                     )}
+                    <button
+                      style={styles.modalLinkButton}
+                      onClick={() => {
+                        requestHostDeleteDialog(pendingClassAction.targetNode);
+                        setPendingClassAction(null);
+                      }}
+                      disabled={classActionLoading}
+                    >
+                      Use main editor delete flow
+                    </button>
                   </>
                 )}
               </div>
@@ -2627,6 +2787,17 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '6px',
     border: '1px solid #d1d5db',
     fontSize: '14px'
+  },
+  modalLinkButton: {
+    marginTop: '12px',
+    background: 'none',
+    border: 'none',
+    color: '#2563eb',
+    fontSize: '13px',
+    padding: 0,
+    cursor: 'pointer',
+    textDecoration: 'underline',
+    alignSelf: 'flex-start'
   }
 };
 
