@@ -28,7 +28,7 @@ if %errorlevel% equ 0 (
 :: Check Prerequisites
 :: ========================================
 echo.
-echo %BLUE%[1/7] Checking Prerequisites...%NC%
+echo %BLUE%[1/8] Checking Prerequisites...%NC%
 echo.
 
 :: Check MongoDB
@@ -56,7 +56,7 @@ if %errorlevel% neq 0 (
 :: Build All Modules
 :: ========================================
 echo.
-echo %BLUE%[2/7] Building all modules...%NC%
+echo %BLUE%[2/8] Building all modules...%NC%
 echo.
 cd /d %~dp0..
 call %MVN_CMD% clean install -DskipTests -T 1C -B
@@ -71,7 +71,7 @@ echo %GREEN%Build successful!%NC%
 :: Start Auth Service
 :: ========================================
 echo.
-echo %BLUE%[3/7] Starting Auth Service...%NC%
+echo %BLUE%[3/8] Starting Auth Service...%NC%
 start "Ontology Auth Service" cmd /k "cd /d %~dp0..\ontology-auth && %MVN_CMD% spring-boot:run -Dspring-boot.run.profiles=dev"
 timeout /t 10 /nobreak >nul
 
@@ -97,7 +97,7 @@ if %AUTH_READY% equ 1 (
 :: Start Gateway
 :: ========================================
 echo.
-echo %BLUE%[4/7] Starting Gateway...%NC%
+echo %BLUE%[4/8] Starting Gateway...%NC%
 start "Ontology Gateway" cmd /k "cd /d %~dp0..\ontology-gateway && %MVN_CMD% spring-boot:run -Dspring-boot.run.profiles=dev"
 timeout /t 10 /nobreak >nul
 
@@ -123,7 +123,7 @@ if %GATEWAY_READY% equ 1 (
 :: Start OWL Editor
 :: ========================================
 echo.
-echo %BLUE%[5/7] Starting OWL Editor...%NC%
+echo %BLUE%[5/8] Starting OWL Editor...%NC%
 start "OWL Editor Service" cmd /k "cd /d %~dp0..\ontology-editor && %MVN_CMD% spring-boot:run -Dspring-boot.run.profiles=dev"
 timeout /t 15 /nobreak >nul
 
@@ -149,7 +149,7 @@ if %OWL_READY% equ 1 (
 :: Start SWRL Service
 :: ========================================
 echo.
-echo %BLUE%[6/7] Starting SWRL Service...%NC%
+echo %BLUE%[6/8] Starting SWRL Service...%NC%
 start "SWRL Service" cmd /k "cd /d %~dp0..\ontology-swrl && %MVN_CMD% spring-boot:run -Dspring-boot.run.profiles=dev"
 timeout /t 10 /nobreak >nul
 
@@ -172,6 +172,32 @@ if %SWRL_READY% equ 1 (
 )
 
 :: ========================================
+:: Start Plugin Service
+:: ========================================
+echo.
+echo %BLUE%[7/7] Starting Plugin Service...%NC%
+start "Plugin Service" cmd /k "cd /d %~dp0..\ontology-plugin-service && %MVN_CMD% spring-boot:run -Dspring-boot.run.profiles=dev"
+timeout /t 10 /nobreak >nul
+
+:: Health check for Plugin Service
+echo Checking Plugin Service health...
+set PLUGIN_READY=0
+for /l %%i in (1,1,30) do (
+    curl -s http://localhost:8087/actuator/health >nul 2>&1
+    if !errorlevel! equ 0 (
+        set PLUGIN_READY=1
+        goto plugin_ready
+    )
+    timeout /t 2 /nobreak >nul
+)
+:plugin_ready
+if %PLUGIN_READY% equ 1 (
+    echo %GREEN%Plugin Service is running on port 8087%NC%
+) else (
+    echo %YELLOW%Warning: Plugin Service may not be ready yet%NC%
+)
+
+:: ========================================
 :: Summary
 :: ========================================
 echo.
@@ -184,6 +210,7 @@ echo    Auth Service:    http://localhost:8086
 echo    Gateway:         http://localhost:8082
 echo    OWL Editor:      http://localhost:8083
 echo    SWRL Service:    http://localhost:8084
+echo    Plugin Service:  http://localhost:8087
 echo.
 echo %YELLOW%Infrastructure:%NC%
 echo    MongoDB:         http://localhost:27017

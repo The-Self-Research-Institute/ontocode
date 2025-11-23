@@ -192,7 +192,7 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ isOpen, onClose, projectId, u
                   onChange={(e) => setNewEmail(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && addEmail()}
                   placeholder="Enter email address"
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-purple-500"
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-purple-500 text-black"
                 />
                 <select
                   value={selectedPermission}

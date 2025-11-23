@@ -66,6 +66,47 @@ services:
       retries: 3
       start_period: 60s
 
+  # Plugin Service
+  plugin-service:
+    build:
+      context: ./ontology-plugin-service
+      dockerfile: Dockerfile
+    container_name: ontocode-plugin-service
+    restart: always
+    ports:
+      - "8087:8087"
+    environment:
+      # MongoDB
+      SPRING_DATA_MONGODB_HOST: mongodb
+      SPRING_DATA_MONGODB_PORT: 27017
+      SPRING_DATA_MONGODB_DATABASE: ontology
+      SPRING_DATA_MONGODB_AUTHENTICATION-DATABASE: admin
+      SPRING_DATA_MONGODB_USERNAME: ${MONGO_ROOT_USER:-admin}
+      SPRING_DATA_MONGODB_PASSWORD: ${MONGO_ROOT_PASSWORD:-changeme}
+
+      # JWT Secret (same as auth service)
+      JWT_SECRET: ${JWT_SECRET:-your-secret-key-min-256-bits-change-in-production}
+
+      # Application
+      SPRING_PROFILES_ACTIVE: production
+
+      # Logging
+      LOGGING_LEVEL_ROOT: INFO
+      LOGGING_LEVEL_SELF_RESEARCH_ONTOLOGY_PLUGINS: DEBUG
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    volumes:
+      - plugin-storage:/app/storage
+    networks:
+      - ontocode-network
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8087/actuator/health || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
   # Frontend Service
   frontend:
     build:
@@ -80,6 +121,8 @@ services:
       - "443:443"
     depends_on:
       backend:
+        condition: service_healthy
+      plugin-service:
         condition: service_healthy
     volumes:
       - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
@@ -156,6 +199,8 @@ volumes:
   backend-logs:
     driver: local
   plugin-data:
+    driver: local
+  plugin-storage:
     driver: local
   redis-data:
     driver: local

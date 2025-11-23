@@ -38,7 +38,7 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext }> =
     <div className="flex flex-col h-full bg-gray-50">
       <div className="p-4 border-b"><h3 className="text-lg font-semibold text-gray-800">SQWRL Query</h3></div>
       <div className="p-4 flex-grow flex flex-col gap-4">
-        <textarea className="w-full h-32 p-3 font-mono text-sm border rounded-lg bg-white focus:ring-2 focus:ring-purple-500"
+        <textarea className="w-full h-32 p-3 font-mono text-sm border rounded-lg bg-white focus:ring-2 focus:ring-purple-500 text-black"
                   value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Enter SQWRL query…" />
         <button onClick={execute} disabled={loading} className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-purple-300 text-sm">
           {loading ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />} Execute Query
@@ -413,7 +413,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
                   value={editForm.ruleName}
                   onChange={(e) => setEditForm({ ...editForm, ruleName: e.target.value })}
                   disabled={!isEditing}
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-lg font-semibold focus:ring-2 focus:ring-purple-500 focus:outline-none disabled:bg-gray-50"
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-lg font-semibold focus:ring-2 focus:ring-purple-500 focus:outline-none disabled:bg-gray-50 text-black"
                   placeholder="Rule Name"
                 />
                 {!isEditing && (
@@ -432,7 +432,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
                   value={editForm.category}
                   onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
                   disabled={!isEditing}
-                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:outline-none disabled:bg-gray-50"
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:outline-none disabled:bg-gray-50 text-black"
                   placeholder="Category (optional)"
                   list="categories"
                 />
@@ -456,7 +456,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
                 value={editForm.comment}
                 onChange={(e) => setEditForm({ ...editForm, comment: e.target.value })}
                 disabled={!isEditing}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:outline-none disabled:bg-gray-50"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:outline-none disabled:bg-gray-50 text-black"
                 placeholder="Comment (optional)"
                 rows={2}
               />
@@ -469,7 +469,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
                   value={editForm.ruleText}
                   onChange={(e) => setEditForm({ ...editForm, ruleText: e.target.value })}
                   disabled={!isEditing}
-                  className="w-full h-32 p-3 font-mono text-sm border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none disabled:bg-gray-50"
+                  className="w-full h-32 p-3 font-mono text-sm border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none disabled:bg-gray-50 text-black"
                   placeholder="Example: Person(?p) ^ hasAge(?p, ?age) ^ swrlb:greaterThan(?age, 18) -> Adult(?p)"
                 />
               </div>

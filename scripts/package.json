@@ -1,13 +1,15 @@
 {
   "name": "ontocode-scripts",
   "version": "1.0.0",
-  "description": "Database cleanup scripts for OntoCode",
+  "description": "Database cleanup and plugin management scripts for OntoCode",
   "scripts": {
     "clear-all": "node clear-databases.js",
-    "clear-mongo": "node clear-mongodb.js"
+    "clear-mongo": "node clear-mongodb.js",
+    "upload-plugins": "node upload-default-plugins.js"
   },
   "dependencies": {
     "mongodb": "^6.3.0",
-    "axios": "^1.6.5"
+    "axios": "^1.6.5",
+    "form-data": "^4.0.0"
   }
 }

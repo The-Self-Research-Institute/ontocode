@@ -155,7 +155,7 @@ const SparqlQueryEditor: React.FC<{ projectId: string; prefixes: OntologyPrefix[
                 {/* Main Editor */}
                 <main className="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
                     <div className="bg-white border border-gray-200 rounded-lg p-4 space-y-3 flex-shrink-0">
-                        <input type="text" value={queryName} onChange={(e) => setQueryName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-lg font-semibold focus:ring-2 focus:ring-purple-500 focus:outline-none" placeholder="Query Name" />
+                        <input type="text" value={queryName} onChange={(e) => setQueryName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-lg font-semibold focus:ring-2 focus:ring-purple-500 focus:outline-none text-black" placeholder="Query Name" />
                         <div className="border rounded-md">
                             <button onClick={() => setPrefixesVisible(!isPrefixesVisible)} className="w-full flex items-center justify-between p-2 bg-gray-50 text-xs font-medium text-gray-600 hover:bg-gray-100">
                                 <span>Ontology Prefixes</span>
@@ -170,7 +170,7 @@ const SparqlQueryEditor: React.FC<{ projectId: string; prefixes: OntologyPrefix[
                             )}
                         </div>
                         <textarea
-                            className="w-full h-48 p-3 font-mono text-sm border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                            className="w-full h-48 p-3 font-mono text-sm border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none text-black"
                             value={queryText}
                             onChange={(e) => setQueryText(e.target.value)}
                             placeholder="Enter SPARQL query... e.g., SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10"

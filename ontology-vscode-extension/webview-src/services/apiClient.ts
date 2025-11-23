@@ -8,6 +8,7 @@ const TIMEOUT = 60_000; // 60-second timeout for requests
 declare global {
   interface Window {
     vscode?: { postMessage: (message: any) => void };
+    API_BASE_URL: string;
   }
 }
 

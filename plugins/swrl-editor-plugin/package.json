@@ -1,0 +1,66 @@
+{
+  "name": "@ontocode/swrl-editor-plugin",
+  "version": "1.0.0",
+  "displayName": "SWRL Editor",
+  "description": "Semantic Web Rule Language editor and validator for ontologies. Create, edit, and execute SWRL rules with syntax validation.",
+  "category": "Editor",
+  "keywords": ["swrl", "rules", "reasoning", "semantic-web", "owl", "ontology"],
+  "author": "OntoCode Team",
+  "publisher": "ontocode",
+  "license": "MIT",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/The-Self-Research-Institute/ontocode"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "main": "./dist/extension.js",
+  "contributes": {
+    "views": {
+      "explorer": [
+        {
+          "id": "swrlEditor",
+          "name": "SWRL Rules",
+          "icon": "$(symbol-ruler)"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "swrl.newRule",
+        "title": "New SWRL Rule",
+        "icon": "$(add)"
+      },
+      {
+        "command": "swrl.validateRule",
+        "title": "Validate SWRL Rule",
+        "icon": "$(check)"
+      },
+      {
+        "command": "swrl.executeRule",
+        "title": "Execute SWRL Rule",
+        "icon": "$(play)"
+      }
+    ]
+  },
+  "activationEvents": [
+    "onView:swrlEditor"
+  ],
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@types/vscode": "^1.80.0",
+    "typescript": "^5.0.0"
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  }
+}

@@ -1,7 +1,7 @@
 // src/Dashboard.tsx
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
-  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, DatabaseZap, Upload, FolderOpen
+  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, DatabaseZap, Upload, FolderOpen, Sparkles
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
@@ -9,7 +9,7 @@ import { draftTrackingService } from "../services/draftTrackingService";
 import { notificationService } from "../services/notificationService";
 import { syncService } from "../services/syncService";
 import { pluginManager } from '../plugins/PluginSystem';
-import { SWRLPlugin, ReasoningPlugin } from '../plugins/PluginRegistry';
+import { SWRLPlugin, ReasoningPlugin, FuzzyOntologyPlugin } from '../plugins/PluginRegistry';
 import type { TreeNode, Property, Individual, OntologyMetadata, SelectableItem, AnnotationProperty, Datatype } from '../types';
 import { useAuth } from '../custom-hook/useAuth';
 import { useCollaboration } from '../contexts/CollaborationContext';
@@ -41,6 +41,7 @@ import {
 import { useKeyboardShortcuts, DEFAULT_SHORTCUTS, KeyboardShortcut } from '../hooks/useKeyboardShortcuts';
 import { useEntityPreferences } from '../contexts/EntityPreferencesContext';
 import { CodeHighlighter } from './CodeHighlighter';
+import { PluginMarketplace } from './PluginMarketplace';
 
 type TopLevelClass = TreeNode & { hasChildren: boolean };
 
@@ -161,10 +162,6 @@ const LoadingChoiceDialog = ({
 };
 
 const TopMenuBar = ({
-  onToggleSwrlTab,
-  isSwrlVisible,
-  onToggleGraphTab,
-  isGraphVisible,
   fileList,
   myFiles,
   sharedFiles,
@@ -176,11 +173,8 @@ const TopMenuBar = ({
   isSaving,
   draftCount,
   onOpenDialog,
+  onOpenPluginMarketplace,
 }: {
-  onToggleSwrlTab: () => void;
-  isSwrlVisible: boolean;
-  onToggleGraphTab: () => void;
-  isGraphVisible: boolean;
   fileList: FileInfo[];
   myFiles: FileInfo[];
   sharedFiles: FileInfo[];
@@ -192,6 +186,7 @@ const TopMenuBar = ({
   isSaving: boolean;
   draftCount?: number;
   onOpenDialog: () => void;
+  onOpenPluginMarketplace: () => void;
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -256,34 +251,26 @@ const TopMenuBar = ({
             </button>
             {openMenu === item && (
               <div className={`absolute left-0 mt-1 ${item === 'File' ? 'w-[360px]' : 'w-48'} bg-white border border-gray-300 rounded-lg shadow-xl z-20 overflow-hidden`}>
-                {item === "Window" ? (
+                {item === "View" ? (
                   <div className="py-1">
-                    <div className="px-3 py-1 text-gray-400 text-xs">Tabs</div>
-                    <a
-                      href="#"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        onToggleSwrlTab();
+                    <button
+                      onClick={() => {
+                        onOpenPluginMarketplace();
                         setOpenMenu(null);
                       }}
-                      className="flex justify-between items-center px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100"
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
                     >
-                      SWRL Tab {isSwrlVisible && <Check size={14} className="text-purple-600" />}
-                    </a>
+                      <Package size={14} />
+                      Plugin Marketplace
+                    </button>
+                  </div>
+                ) : item === "Window" ? (
+                  <div className="py-1">
+                    <div className="px-3 py-1 text-gray-400 text-xs">Appearance</div>
                   </div>
                 ) : item === "Reasoner" ? (
                   <div className="py-1">
-                    <a
-                      href="#"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        onToggleGraphTab();
-                        setOpenMenu(null);
-                      }}
-                      className="flex justify-between items-center px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100"
-                    >
-                      Graph View {isGraphVisible && <Check size={14} className="text-purple-600" />}
-                    </a>
+                    <div className="px-3 py-1 text-gray-400 text-xs">No options</div>
                   </div>
                 ) : item === "File" ? (
                   <div className="flex flex-col py-1">
@@ -772,6 +759,8 @@ const Dashboard = () => {
   const [shareFileId, setShareFileId] = useState<string | null>(null);
 
   const [visibleMainTabs, setVisibleMainTabs] = useState(['ActiveOntology', 'Entities', 'IndividualsByClass', 'DLQuery', 'CodeView', 'SPARQL']);
+  const [showPluginMarketplace, setShowPluginMarketplace] = useState(false);
+  const [installedPlugins, setInstalledPlugins] = useState<Set<string>>(new Set());
   
   // Code View states
   const [codeViewFormat, setCodeViewFormat] = useState<'turtle' | 'rdfxml' | 'ntriples' | 'owl'>('turtle');
@@ -780,12 +769,82 @@ const Dashboard = () => {
   // #endregion
 
   // #region Data Fetching and Initialization
-  const toggleSwrlTab = useCallback(() => {
-    setVisibleMainTabs(prev => prev.includes('SWRL') ? prev.filter(t => t !== 'SWRL') : [...prev, 'SWRL']);
+  // Plugin marketplace handlers
+  const handleInstallPlugin = useCallback(async (pluginId: string) => {
+    try {
+      // Use pluginLoader to install and load the plugin
+      const { pluginLoader } = await import('../services/pluginLoader');
+      await pluginLoader.installPlugin(pluginId);
+      await pluginLoader.loadPlugin(pluginId);
+      
+      setInstalledPlugins(prev => new Set([...prev, pluginId]));
+      
+      // Map plugin IDs to their corresponding tab IDs and add to visible tabs
+      const pluginToTabMap: Record<string, string> = {
+        'swrl-editor-plugin': 'SWRL',
+        'graph-view-plugin': 'Graph',
+        'fuzzy-ontology-plugin': 'Fuzzy'
+      };
+      
+      const tabId = pluginToTabMap[pluginId];
+      if (tabId) {
+        setVisibleMainTabs(prev => {
+          if (!prev.includes(tabId)) {
+            return [...prev, tabId];
+          }
+          return prev;
+        });
+      }
+      
+      console.log(`[Dashboard] Plugin ${pluginId} installed and loaded`);
+    } catch (error) {
+      console.error(`[Dashboard] Failed to install plugin ${pluginId}:`, error);
+      throw error;
+    }
   }, []);
 
-  const toggleGraphTab = useCallback(() => {
-    setVisibleMainTabs(prev => prev.includes('Graph') ? prev.filter(t => t !== 'Graph') : [...prev, 'Graph']);
+  const handleUninstallPlugin = useCallback(async (pluginId: string) => {
+    try {
+      const { pluginLoader } = await import('../services/pluginLoader');
+      await pluginLoader.uninstallPlugin(pluginId);
+      
+      setInstalledPlugins(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(pluginId);
+        return newSet;
+      });
+      
+      // Map plugin IDs to internal plugin IDs and deactivate
+      const pluginToInternalMap: Record<string, string> = {
+        'swrl-editor-plugin': 'swrl-tab',
+        'graph-view-plugin': 'reasoning-graph',
+        'fuzzy-ontology-plugin': 'fuzzy-ontology-plugin'
+      };
+      
+      const internalPluginId = pluginToInternalMap[pluginId];
+      if (internalPluginId && pluginManager.isPluginActive(internalPluginId)) {
+        await pluginManager.deactivatePlugin(internalPluginId);
+      }
+      
+      // Remove the corresponding tab from visible tabs
+      const pluginToTabMap: Record<string, string> = {
+        'swrl-editor-plugin': 'SWRL',
+        'graph-view-plugin': 'Graph',
+        'fuzzy-ontology-plugin': 'Fuzzy'
+      };
+      
+      const tabId = pluginToTabMap[pluginId];
+      if (tabId) {
+        setVisibleMainTabs(prev => prev.filter(t => t !== tabId));
+        // Switch to Entities tab if the current tab is being removed
+        setMainTab(current => current === tabId ? 'Entities' : current);
+      }
+      
+      console.log(`[Dashboard] Plugin ${pluginId} uninstalled`);
+    } catch (error) {
+      console.error(`[Dashboard] Failed to uninstall plugin ${pluginId}:`, error);
+      throw error;
+    }
   }, []);
 
   // Check status once (no polling - rely on WebSocket notifications)
@@ -1368,10 +1427,10 @@ const Dashboard = () => {
           notificationService.error('Loading Failed', message.error);
           break;
         case "switchView":
-          if (message.view === 'swrl' && !visibleMainTabs.includes('SWRL')) {
-            toggleSwrlTab();
+          // Switch to SWRL view (now handled via plugins)
+          if (message.view === 'swrl') {
+            setMainTab('SWRL');
           }
-          setMainTab('SWRL');
           break;
         case "importStatusUpdate":
           // Handle import status updates from WebSocket
@@ -1496,7 +1555,7 @@ const Dashboard = () => {
     return () => {
       window.removeEventListener("message", handleMessage);
     };
-  }, [toggleSwrlTab, visibleMainTabs, fetchData]);
+  }, [visibleMainTabs, fetchData]);
 
   useEffect(() => {
     // Initialize notification service to show toasts via collaboration context
@@ -1560,6 +1619,58 @@ const Dashboard = () => {
   useEffect(() => {
     pluginManager.registerPlugin(SWRLPlugin);
     pluginManager.registerPlugin(ReasoningPlugin);
+    pluginManager.registerPlugin(FuzzyOntologyPlugin);
+    
+    // Load previously installed plugins from localStorage
+    const loadInstalledPlugins = async () => {
+      try {
+        const { pluginLoader } = await import('../services/pluginLoader');
+        pluginLoader.loadFromStorage();
+        const installed = pluginLoader.getInstalledPlugins();
+        
+        // Update state with installed plugin IDs
+        const pluginIds = installed.map(p => p.id);
+        setInstalledPlugins(new Set(pluginIds));
+        
+        // Map plugin IDs to tab IDs and show tabs for installed plugins
+        const pluginToTabMap: Record<string, string> = {
+          'swrl-editor-plugin': 'SWRL',
+          'graph-view-plugin': 'Graph',
+          'fuzzy-ontology-plugin': 'Fuzzy'
+        };
+        
+        const tabsToShow = pluginIds
+          .map(id => pluginToTabMap[id])
+          .filter(Boolean);
+        
+        if (tabsToShow.length > 0) {
+          setVisibleMainTabs(prev => {
+            const newTabs = [...prev];
+            tabsToShow.forEach(tab => {
+              if (!newTabs.includes(tab)) {
+                newTabs.push(tab);
+              }
+            });
+            return newTabs;
+          });
+        }
+        
+        // Auto-load installed plugins
+        for (const plugin of installed) {
+          try {
+            await pluginLoader.loadPlugin(plugin.id);
+            console.log(`[Dashboard] Auto-loaded plugin: ${plugin.id}`);
+          } catch (error) {
+            console.warn(`[Dashboard] Failed to auto-load plugin ${plugin.id}:`, error);
+          }
+        }
+      } catch (error) {
+        console.error('[Dashboard] Failed to load installed plugins:', error);
+      }
+    };
+    
+    loadInstalledPlugins();
+    
     if (projectId) {
       const context = {
         projectId,
@@ -1573,6 +1684,7 @@ const Dashboard = () => {
       pluginManager.setContext(context);
       pluginManager.activatePlugin('swrl-tab');
       pluginManager.activatePlugin('reasoning-graph');
+      pluginManager.activatePlugin('fuzzy-ontology-plugin');
     }
   }, [projectId]);
 
@@ -2631,6 +2743,14 @@ const Dashboard = () => {
         }
         return <div className="p-4">Enable the SWRL tab from the Window menu.</div>;
       }
+      case 'Fuzzy': {
+        const fuzzyPlugin = pluginManager.getPlugin('fuzzy-ontology-plugin');
+        if (fuzzyPlugin && pluginManager.isPluginActive('fuzzy-ontology-plugin') && projectId) {
+          const PluginComponent = fuzzyPlugin.component;
+          return <PluginComponent projectId={projectId} context={pluginManager.getContext()} />;
+        }
+        return <div className="p-4">Enable the Fuzzy Ontology tab from the Window menu.</div>;
+      }
       case 'ActiveOntology':
         return (
           <div className="flex h-full bg-gray-100">
@@ -2809,7 +2929,7 @@ const Dashboard = () => {
             <main className="flex-1 flex flex-col p-2 bg-gray-50">
               <div className="border bg-white p-2">
                 <h3 className="text-xs font-semibold mb-2">Query (class expression)</h3>
-                <textarea value={dlQuery} onChange={e => setDlQuery(e.target.value)} className="w-full h-24 border p-1 font-mono text-sm focus:ring-1 focus:ring-purple-500"></textarea>
+                <textarea value={dlQuery} onChange={e => setDlQuery(e.target.value)} className="w-full h-24 border p-1 font-mono text-sm focus:ring-1 focus:ring-purple-500 text-black"></textarea>
                 <div className="flex gap-2 mt-2">
                   <button onClick={handleExecuteDlQuery} disabled={isDlQueryLoading} className="px-3 py-1 bg-purple-600 text-white text-xs rounded hover:bg-purple-700 disabled:bg-purple-300 flex items-center gap-2">
                     {isDlQueryLoading ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
@@ -2938,6 +3058,7 @@ const Dashboard = () => {
     CodeView: { label: "Code View", icon: Code },
     SPARQL: { label: "SPARQL Query", icon: DatabaseZap },
     SWRL: { label: "SWRL Rules", icon: Code },
+    Fuzzy: { label: "Fuzzy Ontology", icon: Sparkles },
   };
 
   const entitiesTabs = [
@@ -3011,10 +3132,6 @@ const Dashboard = () => {
 
       <div className="h-screen bg-gray-50 flex flex-col text-sm max-h-screen">
         <TopMenuBar
-          onToggleSwrlTab={toggleSwrlTab}
-          isSwrlVisible={visibleMainTabs.includes('SWRL')}
-          onToggleGraphTab={toggleGraphTab}
-          isGraphVisible={visibleMainTabs.includes('Graph')}
           fileList={listOfFiles}
           myFiles={myFiles}
           sharedFiles={sharedFiles}
@@ -3029,6 +3146,7 @@ const Dashboard = () => {
           isSaving={isSaving}
           draftCount={draftCount}
           onOpenDialog={() => setShowOpenDialog(true)}
+          onOpenPluginMarketplace={() => setShowPluginMarketplace(true)}
         />
 
         <div className="bg-white border-b border-gray-200 flex-shrink-0">
@@ -3241,6 +3359,15 @@ const Dashboard = () => {
       </div>
 
       {/* Import Progress Toast - Removed per user request */}
+
+      {/* Plugin Marketplace */}
+      <PluginMarketplace
+        isOpen={showPluginMarketplace}
+        onClose={() => setShowPluginMarketplace(false)}
+        onInstall={handleInstallPlugin}
+        onUninstall={handleUninstallPlugin}
+        installedPlugins={installedPlugins}
+      />
 
       {/* Queue Status Indicator */}
       <QueueStatusIndicator
