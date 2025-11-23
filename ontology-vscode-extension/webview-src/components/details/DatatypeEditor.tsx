@@ -194,6 +194,7 @@ const DatatypeEditor: React.FC<{
   item: Datatype;
   onUpdate: (updatedItem: Datatype) => void;
   onAddAnnotation: () => void;
+  onEditAnnotation: (propertyIri: string, currentValue: string) => void;
   onDeleteAnnotation: (key: string) => void;
   activeTheme?: string;
   projectId: string;
@@ -201,6 +202,7 @@ const DatatypeEditor: React.FC<{
     item,
     onUpdate,
     onAddAnnotation,
+    onEditAnnotation,
     onDeleteAnnotation,
     activeTheme,
     projectId
@@ -273,7 +275,7 @@ const DatatypeEditor: React.FC<{
               </button>
             }
           >
-            <AnnotationsDisplay annotations={item.annotations || {}} onDelete={onDeleteAnnotation} />
+            <AnnotationsDisplay annotations={item.annotations || {}} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} />
           </Panel>
         )}
 

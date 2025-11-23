@@ -108,8 +108,25 @@ public class OntologyQueryService {
                    (GROUP_CONCAT(DISTINCT ?equiv; SEPARATOR="|") AS ?equivalentProperties)
                    (GROUP_CONCAT(DISTINCT ?char; SEPARATOR="|") AS ?characteristics)
             WHERE {
-              ?prop a ?kind .
-              VALUES ?kind { owl:ObjectProperty owl:DatatypeProperty }
+              {
+                # Explicitly typed properties
+                ?prop a ?kind .
+                VALUES ?kind { owl:ObjectProperty owl:DatatypeProperty }
+              } UNION {
+                # Properties used in domain/range/subPropertyOf but not explicitly typed
+                {
+                  { ?prop rdfs:domain ?any } UNION 
+                  { ?prop rdfs:range ?any } UNION 
+                  { ?prop rdfs:subPropertyOf ?any } UNION 
+                  { ?any rdfs:subPropertyOf ?prop }
+                }
+                # Infer type based on usage or default to ObjectProperty
+                OPTIONAL { ?prop a ?explicitKind . VALUES ?explicitKind { owl:ObjectProperty owl:DatatypeProperty } }
+                BIND(COALESCE(?explicitKind, owl:ObjectProperty) AS ?kind)
+                # Exclude annotation properties
+                FILTER NOT EXISTS { ?prop a owl:AnnotationProperty }
+                FILTER(isIRI(?prop))
+              }
               %s
               OPTIONAL { ?prop rdfs:label ?lbl }
               OPTIONAL { ?prop rdfs:domain ?domain . FILTER(isIRI(?domain)) }
