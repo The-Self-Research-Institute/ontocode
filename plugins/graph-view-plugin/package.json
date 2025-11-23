@@ -1,0 +1,58 @@
+{
+  "name": "@ontocode/graph-view-plugin",
+  "displayName": "Ontology Graph View",
+  "version": "1.0.0",
+  "description": "Interactive graph visualization for ontology classes, properties, and relationships using network diagrams",
+  "author": "OntoCode Team",
+  "license": "MIT",
+  "main": "src/GraphView.tsx",
+  "category": "Visualization",
+  "keywords": [
+    "ontology",
+    "graph",
+    "visualization",
+    "network",
+    "diagram",
+    "owl",
+    "rdf",
+    "knowledge graph"
+  ],
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "activationEvents": [
+    "onView:graphView"
+  ],
+  "contributes": {
+    "views": {
+      "explorer": [
+        {
+          "id": "graphView",
+          "name": "Graph View",
+          "icon": "$(graph)",
+          "contextualTitle": "Ontology Graph Visualization"
+        }
+      ]
+    }
+  },
+  "dependencies": {
+    "vis-network": "^9.1.9",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "lucide-react": "^0.263.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "typescript": "^5.0.0"
+  },
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ontocode/graph-view-plugin"
+  },
+  "homepage": "https://github.com/ontocode/graph-view-plugin#readme",
+  "bugs": {
+    "url": "https://github.com/ontocode/graph-view-plugin/issues"
+  }
+}

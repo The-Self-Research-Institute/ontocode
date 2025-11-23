@@ -850,6 +850,7 @@ class OntoCodePanel {
             <script nonce="${nonce}">
                 const vscode = acquireVsCodeApi();
                 window.vscode = vscode;
+                window.API_BASE_URL = '${GATEWAY_URL}';
                 // Fallback for minified bundle expecting a global toggleNode
                 if (typeof window.toggleNode !== 'function') {
                     window.toggleNode = () => {};

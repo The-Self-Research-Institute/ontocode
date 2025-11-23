@@ -1,0 +1,132 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ontocode
+  labels:
+    name: ontocode
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mongodb-credentials
+  namespace: ontocode
+type: Opaque
+stringData:
+  username: admin
+  password: changeme-in-production
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mongodb-uri
+  namespace: ontocode
+type: Opaque
+stringData:
+  uri: mongodb://admin:changeme-in-production@mongodb-service:27017/ontocode?authSource=admin
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: jwt-secret
+  namespace: ontocode
+type: Opaque
+stringData:
+  secret: your-secret-key-min-256-bits-change-in-production
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongodb-init
+  namespace: ontocode
+data:
+  setup-mongodb.js: |
+    db = db.getSiblingDB('ontocode');
+    db.createCollection('projects');
+    db.createCollection('files');
+    db.createCollection('plugins');
+    db.createCollection('users');
+    print('Database initialized successfully');
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongodb
+  namespace: ontocode
+spec:
+  serviceName: mongodb-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodb
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      containers:
+      - name: mongodb
+        image: mongo:6.0
+        ports:
+        - containerPort: 27017
+          name: mongodb
+        env:
+        - name: MONGO_INITDB_ROOT_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-credentials
+              key: username
+        - name: MONGO_INITDB_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-credentials
+              key: password
+        - name: MONGO_INITDB_DATABASE
+          value: ontocode
+        volumeMounts:
+        - name: mongodb-data
+          mountPath: /data/db
+        - name: mongodb-config
+          mountPath: /data/configdb
+        - name: mongodb-init
+          mountPath: /docker-entrypoint-initdb.d
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+      volumes:
+      - name: mongodb-init
+        configMap:
+          name: mongodb-init
+  volumeClaimTemplates:
+  - metadata:
+      name: mongodb-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: standard
+      resources:
+        requests:
+          storage: 20Gi
+  - metadata:
+      name: mongodb-config
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: standard
+      resources:
+        requests:
+          storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-service
+  namespace: ontocode
+spec:
+  clusterIP: None
+  ports:
+  - port: 27017
+    targetPort: 27017
+  selector:
+    app: mongodb

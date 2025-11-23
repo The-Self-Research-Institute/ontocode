@@ -1,7 +1,8 @@
-import { Code, Share2 } from "lucide-react";
+import { Code, Share2, Sparkles } from "lucide-react";
 import { OntologyPlugin, PluginContext } from "../types";
 import SWRLEditor from "../components/SWRLEditor";
 import ReasoningVisualizer from "../components/ReasoningVisualizer";
+import FuzzyOntologyEditor from "../components/FuzzyOntologyEditor";
 
 export const SWRLPlugin: OntologyPlugin = {
   id: "swrl-tab",
@@ -37,6 +38,25 @@ export const ReasoningPlugin: OntologyPlugin = {
   },
   async deactivate(context: PluginContext): Promise<boolean> {
     console.log("Deactivated");
+    return true;
+  },
+};
+
+export const FuzzyOntologyPlugin: OntologyPlugin = {
+  id: "fuzzy-ontology-plugin",
+  name: "Fuzzy Ontology Advanced Plugin",
+  version: "1.0.0",
+  description:
+    "Advanced fuzzy logic reasoning with membership degrees, fuzzy rules, and uncertainty modeling.",
+  author: "OntoCode Team",
+  icon: Sparkles,
+  component: FuzzyOntologyEditor,
+  async activate(context: PluginContext): Promise<boolean> {
+    console.log("✅ Fuzzy Ontology Plugin activated with project:", context?.projectId);
+    return true;
+  },
+  async deactivate(context: PluginContext): Promise<boolean> {
+    console.log("Fuzzy Ontology Plugin deactivated");
     return true;
   },
 };
