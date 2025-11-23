@@ -116,6 +116,11 @@ public class OntologyMutationService {
                   <%s> <%s> %s .
                 }
                 """.formatted(op.iri(), op.property(), literal(op.value()));
+            case "updateAnnotation" -> """
+                DELETE { <%s> <%s> ?oldValue }
+                INSERT { <%s> <%s> %s }
+                WHERE  { <%s> <%s> ?oldValue }
+                """.formatted(op.iri(), op.property(), op.iri(), op.property(), literal(op.value()), op.iri(), op.property());
             case "deleteAnnotation" -> """
                 DELETE DATA {
                   <%s> <%s> %s .

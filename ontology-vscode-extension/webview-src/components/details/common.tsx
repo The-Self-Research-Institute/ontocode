@@ -242,7 +242,11 @@ const getPropertyLabel = (uri: string): string => {
  * and provides a delete button for each.
  *
  */
-export const AnnotationsDisplay = ({ annotations, onDelete }: { annotations?: Record<string, string>, onDelete: (key: string) => void }) => {
+export const AnnotationsDisplay = ({ annotations, onDelete, onEdit }: { 
+  annotations?: Record<string, string>, 
+  onDelete: (key: string) => void,
+  onEdit?: (key: string, currentValue: string) => void 
+}) => {
   if (!annotations || Object.keys(annotations).length === 0) {
     return (
         <div className="p-3 text-xs text-gray-400 italic text-center">No annotations</div>
@@ -270,14 +274,26 @@ export const AnnotationsDisplay = ({ annotations, onDelete }: { annotations?: Re
                   </span>
                 )}
               </div>
-              <button 
-                onClick={() => onDelete(key)} 
-                className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md hover:bg-red-50 transition-all flex-shrink-0"
-                title={`Delete ${propertyLabel} annotation`}
-                aria-label={`Delete ${propertyLabel} annotation`}
-              >
-                <Trash2 size={13} className="text-red-600" />
-              </button>
+              <div className="flex items-center gap-1">
+                {onEdit && (
+                  <button 
+                    onClick={() => onEdit(key, value)} 
+                    className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md hover:bg-blue-50 transition-all flex-shrink-0"
+                    title={`Edit ${propertyLabel} annotation`}
+                    aria-label={`Edit ${propertyLabel} annotation`}
+                  >
+                    <Edit2 size={13} className="text-blue-600" />
+                  </button>
+                )}
+                <button 
+                  onClick={() => onDelete(key)} 
+                  className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md hover:bg-red-50 transition-all flex-shrink-0"
+                  title={`Delete ${propertyLabel} annotation`}
+                  aria-label={`Delete ${propertyLabel} annotation`}
+                >
+                  <Trash2 size={13} className="text-red-600" />
+                </button>
+              </div>
             </div>
             <div className="px-3 py-2.5">
               <AnnotationValue value={value} />

@@ -254,6 +254,7 @@ public class DraftTrackingService {
             case "createDataProperty" -> OntologyChange.ChangeType.ADD_DATA_PROPERTY;
             case "deleteDataProperty" -> OntologyChange.ChangeType.REMOVE_DATA_PROPERTY;
             case "addAnnotation" -> OntologyChange.ChangeType.ADD_ANNOTATION;
+            case "updateAnnotation" -> OntologyChange.ChangeType.MODIFY_ANNOTATION;
             case "deleteAnnotation" -> OntologyChange.ChangeType.REMOVE_ANNOTATION;
             case "addSubClassOf" -> OntologyChange.ChangeType.ADD_SUBCLASS;
             case "deleteSubClassOf" -> OntologyChange.ChangeType.REMOVE_SUBCLASS;
@@ -297,6 +298,7 @@ public class DraftTrackingService {
             case "createObjectProperty" -> "Created property: " + displayName;
             case "deleteObjectProperty" -> "Deleted property: " + displayName;
             case "addAnnotation" -> "Added annotation to: " + displayName;
+            case "updateAnnotation" -> "Updated annotation for: " + displayName;
             case "deleteAnnotation" -> "Removed annotation from: " + displayName;
             case "addSubClassOf" -> "Added subclass axiom for: " + displayName;
             case "deleteSubClassOf" -> "Removed subclass axiom from: " + displayName;

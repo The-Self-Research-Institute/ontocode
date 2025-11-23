@@ -41,7 +41,16 @@ public class ProjectController {
             // Separate into myFiles and sharedFiles
             List<Map<String, Object>> myFiles = allProjects.stream()
                 .filter(doc -> userEmail.equals(doc.getOwnerEmail()))
-                .map(this::mapProjectToInfo)
+                .map(doc -> {
+                    Map<String, Object> info = mapProjectToInfo(doc);
+                    // Add sharedWith info for files owned by user
+                    shareService.getShareByProjectId(doc.getId()).ifPresent(share -> {
+                        if (!share.getSharedWithEmails().isEmpty()) {
+                            info.put("sharedWith", share.getSharedWithEmails());
+                        }
+                    });
+                    return info;
+                })
                 .collect(Collectors.toList());
             
             // Get projects shared with me

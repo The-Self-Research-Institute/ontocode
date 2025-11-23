@@ -8,6 +8,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.model.OntologyChange;
 import self.research.ontology.owlEditor.service.ChangeTrackingService;
+import self.research.ontology.owlEditor.service.GraphDBHistoryService;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -25,6 +26,9 @@ public class ChangeTrackingController {
 
     @Autowired
     private ChangeTrackingService changeTrackingService;
+    
+    @Autowired
+    private GraphDBHistoryService graphDBHistoryService;
 
     /**
      * Get change history for a project
@@ -160,13 +164,12 @@ public class ChangeTrackingController {
             @RequestParam(defaultValue = "20") int count
     ) {
         try {
-            List<OntologyChange> changes = changeTrackingService.getRecentChanges(projectId, count);
+            // Use GraphDB history service for real-time changes
+            List<Map<String, Object>> changes = graphDBHistoryService.getHistory(projectId, count);
             
             return ResponseEntity.ok(Map.of(
                 "success", true,
-                "changes", changes.stream()
-                    .map(this::changeToMap)
-                    .collect(Collectors.toList())
+                "changes", changes
             ));
             
         } catch (Exception e) {
