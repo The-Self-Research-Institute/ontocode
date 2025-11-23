@@ -1,15 +1,13 @@
 // src/Dashboard.tsx
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
-  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, DatabaseZap, Upload, FolderOpen, Sparkles, Clock
+  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, DatabaseZap, Upload, FolderOpen, Sparkles, Clock, Users
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
 import { draftTrackingService } from "../services/draftTrackingService";
 import { notificationService } from "../services/notificationService";
 import { syncService } from "../services/syncService";
-import { pluginManager } from '../plugins/PluginSystem';
-import { SWRLPlugin, ReasoningPlugin, FuzzyOntologyPlugin } from '../plugins/PluginRegistry';
 import type { TreeNode, Property, Individual, OntologyMetadata, SelectableItem, AnnotationProperty, Datatype } from '../types';
 import { useAuth } from '../custom-hook/useAuth';
 import { useCollaboration } from '../contexts/CollaborationContext';
@@ -43,6 +41,7 @@ import { useKeyboardShortcuts, DEFAULT_SHORTCUTS, KeyboardShortcut } from '../ho
 import { useEntityPreferences } from '../contexts/EntityPreferencesContext';
 import { CodeHighlighter } from './CodeHighlighter';
 import { PluginMarketplace } from './PluginMarketplace';
+import { pluginLoader } from '../services/pluginLoader';
 
 type TopLevelClass = TreeNode & { hasChildren: boolean };
 
@@ -786,6 +785,7 @@ const Dashboard = () => {
   const [shareFileId, setShareFileId] = useState<string | null>(null);
   const [isCurrentFileShared, setIsCurrentFileShared] = useState(false);
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
+  const [showCollaborationPanel, setShowCollaborationPanel] = useState(false);
 
   const [visibleMainTabs, setVisibleMainTabs] = useState(['ActiveOntology', 'Entities', 'IndividualsByClass', 'DLQuery', 'CodeView', 'SPARQL']);
   const [showPluginMarketplace, setShowPluginMarketplace] = useState(false);
@@ -802,10 +802,10 @@ const Dashboard = () => {
   const handleInstallPlugin = useCallback(async (pluginId: string) => {
     try {
       // Use pluginLoader to install and load the plugin
-      const { pluginLoader } = await import('../services/pluginLoader');
       await pluginLoader.installPlugin(pluginId);
       await pluginLoader.loadPlugin(pluginId);
       
+      // Only update state if installation and loading succeeded
       setInstalledPlugins(prev => new Set([...prev, pluginId]));
       
       // Map plugin IDs to their corresponding tab IDs and add to visible tabs
@@ -826,15 +826,24 @@ const Dashboard = () => {
       }
       
       console.log(`[Dashboard] Plugin ${pluginId} installed and loaded`);
+      notificationService.success('Plugin Installed', `${pluginId} has been installed successfully`);
     } catch (error) {
       console.error(`[Dashboard] Failed to install plugin ${pluginId}:`, error);
+      notificationService.error('Plugin Installation Failed', `Failed to install ${pluginId}. ${error instanceof Error ? error.message : 'Please check console for details'}`);
+      
+      // Make sure to uninstall if loading failed
+      try {
+        await pluginLoader.uninstallPlugin(pluginId);
+      } catch (uninstallError) {
+        console.error('Failed to cleanup after failed installation:', uninstallError);
+      }
+      
       throw error;
     }
   }, []);
 
   const handleUninstallPlugin = useCallback(async (pluginId: string) => {
     try {
-      const { pluginLoader } = await import('../services/pluginLoader');
       await pluginLoader.uninstallPlugin(pluginId);
       
       setInstalledPlugins(prev => {
@@ -844,17 +853,6 @@ const Dashboard = () => {
       });
       
       // Map plugin IDs to internal plugin IDs and deactivate
-      const pluginToInternalMap: Record<string, string> = {
-        'swrl-editor-plugin': 'swrl-tab',
-        'graph-view-plugin': 'reasoning-graph',
-        'fuzzy-ontology-plugin': 'fuzzy-ontology-plugin'
-      };
-      
-      const internalPluginId = pluginToInternalMap[pluginId];
-      if (internalPluginId && pluginManager.isPluginActive(internalPluginId)) {
-        await pluginManager.deactivatePlugin(internalPluginId);
-      }
-      
       // Remove the corresponding tab from visible tabs
       const pluginToTabMap: Record<string, string> = {
         'swrl-editor-plugin': 'SWRL',
@@ -1683,14 +1681,9 @@ const Dashboard = () => {
   }, [searchQuery, sourceData]);
 
   useEffect(() => {
-    pluginManager.registerPlugin(SWRLPlugin);
-    pluginManager.registerPlugin(ReasoningPlugin);
-    pluginManager.registerPlugin(FuzzyOntologyPlugin);
-    
     // Load previously installed plugins from localStorage
     const loadInstalledPlugins = async () => {
       try {
-        const { pluginLoader } = await import('../services/pluginLoader');
         pluginLoader.loadFromStorage();
         const installed = pluginLoader.getInstalledPlugins();
         
@@ -1736,22 +1729,6 @@ const Dashboard = () => {
     };
     
     loadInstalledPlugins();
-    
-    if (projectId) {
-      const context = {
-        projectId,
-        apiClient,
-        notificationService: {
-          success: (message: string) => console.log('✅', message),
-          error: (message: string) => console.error('❌', message),
-          info: (message: string) => console.info('ℹ️', message)
-        }
-      };
-      pluginManager.setContext(context);
-      pluginManager.activatePlugin('swrl-tab');
-      pluginManager.activatePlugin('reasoning-graph');
-      pluginManager.activatePlugin('fuzzy-ontology-plugin');
-    }
   }, [projectId]);
 
   // #endregion
@@ -2826,28 +2803,33 @@ const Dashboard = () => {
       case 'SPARQL':
         return <SparqlQueryEditor projectId={projectId!} prefixes={(metadata as any)?.prefixes || []} />;
       case 'Graph': {
-        const reasoningPlugin = pluginManager.getPlugin('reasoning-graph');
-        if (reasoningPlugin && pluginManager.isPluginActive('reasoning-graph') && projectId) {
-          const PluginComponent = reasoningPlugin.component;
-          return <PluginComponent projectId={projectId} onNodeClick={handleGraphNodeClick} context={pluginManager.getContext()!} />;
+        // Use dynamically loaded Graph View Plugin
+        const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === 'graph-view-plugin');
+        
+        if (plugin?.component && projectId) {
+          const PluginComponent = plugin.component;
+          return <PluginComponent projectId={projectId} onNodeClick={handleGraphNodeClick} />;
         }
-        return <div className="p-4">Enable the Graph View from the Reasoner menu.</div>;
+        
+        return <div className="p-4">Install Advanced Graph View Plugin v2.0 from the Marketplace.</div>;
       }
       case 'SWRL': {
-        const swrlPlugin = pluginManager.getPlugin('swrl-tab');
-        if (swrlPlugin && pluginManager.isPluginActive('swrl-tab') && pluginManager.getContext()) {
-          const PluginComponent = swrlPlugin.component;
-          return <PluginComponent projectId={projectId!} context={pluginManager.getContext()} />;
+        const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === 'swrl-editor-plugin');
+        
+        if (plugin?.component && projectId) {
+          const PluginComponent = plugin.component;
+          return <PluginComponent projectId={projectId} />;
         }
-        return <div className="p-4">Enable the SWRL tab from the Window menu.</div>;
+        return <div className="p-4">Install SWRL Editor Plugin from the Marketplace.</div>;
       }
       case 'Fuzzy': {
-        const fuzzyPlugin = pluginManager.getPlugin('fuzzy-ontology-plugin');
-        if (fuzzyPlugin && pluginManager.isPluginActive('fuzzy-ontology-plugin') && projectId) {
-          const PluginComponent = fuzzyPlugin.component;
-          return <PluginComponent projectId={projectId} context={pluginManager.getContext()} />;
+        const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === 'fuzzy-ontology-plugin');
+        
+        if (plugin?.component && projectId) {
+          const PluginComponent = plugin.component;
+          return <PluginComponent projectId={projectId} />;
         }
-        return <div className="p-4">Enable the Fuzzy Ontology tab from the Window menu.</div>;
+        return <div className="p-4">Install Fuzzy Ontology Plugin from the Marketplace.</div>;
       }
       case 'ActiveOntology':
         return (
@@ -3284,6 +3266,18 @@ const Dashboard = () => {
               })}
             </div>
             <div className="flex items-center gap-4">
+              <button
+                onClick={() => setShowCollaborationPanel(!showCollaborationPanel)}
+                className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors ${
+                  showCollaborationPanel
+                    ? 'bg-blue-600 text-white hover:bg-blue-700'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+                title="Toggle Collaboration Panel"
+              >
+                <Users size={14} />
+                <span>Collaboration</span>
+              </button>
               {projectId && (
                 <button
                   onClick={handleOpenProjectSelector}
@@ -3446,8 +3440,8 @@ const Dashboard = () => {
         onContinue={handleContinueWorking}
       />
 
-      {/* Collaboration Panel - Only show for shared files */}
-      {isCurrentFileShared && (
+      {/* Collaboration Panel - Toggle visibility manually */}
+      {showCollaborationPanel && (
         <CollaborationPanel ref={collaborationPanelRef} projectId={projectId || undefined} />
       )}
 

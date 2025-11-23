@@ -884,7 +884,7 @@ class OntoCodePanel {
             <meta http-equiv="Content-Security-Policy" content="
                 default-src 'none'; 
                 img-src ${(webview as any).cspSource} https: data: blob:; 
-                script-src 'nonce-${nonce}' https://cdn.tailwindcss.com https://unpkg.com https://aistudiocdn.com ${(webview as any).cspSource};
+                script-src 'nonce-${nonce}' https://cdn.tailwindcss.com https://unpkg.com https://aistudiocdn.com ${GATEWAY_URL} ${(webview as any).cspSource};
                 style-src ${(webview as any).cspSource} 'unsafe-inline' https://unpkg.com https://cdn.tailwindcss.com;
                 font-src ${(webview as any).cspSource} https://unpkg.com data:; 
                 connect-src ${GATEWAY_URL} https://unpkg.com https://aistudiocdn.com;

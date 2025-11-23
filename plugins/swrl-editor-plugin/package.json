@@ -4,7 +4,14 @@
   "displayName": "SWRL Editor",
   "description": "Semantic Web Rule Language editor and validator for ontologies. Create, edit, and execute SWRL rules with syntax validation.",
   "category": "Editor",
-  "keywords": ["swrl", "rules", "reasoning", "semantic-web", "owl", "ontology"],
+  "keywords": [
+    "swrl",
+    "rules",
+    "reasoning",
+    "semantic-web",
+    "owl",
+    "ontology"
+  ],
   "author": "OntoCode Team",
   "publisher": "ontocode",
   "license": "MIT",
@@ -16,7 +23,27 @@
   "engines": {
     "vscode": "^1.80.0"
   },
-  "main": "./dist/extension.js",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "webpack --mode production",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.27",
+    "@types/react-dom": "^18.3.7",
+    "@types/vscode": "^1.80.0",
+    "ts-loader": "^9.5.4",
+    "typescript": "^5.0.0",
+    "webpack": "^5.103.0",
+    "webpack-cli": "^6.0.1"
+  },
+  "peerDependencies": {
+    "lucide-react": "^0.263.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
   "contributes": {
     "views": {
       "explorer": [
@@ -51,16 +78,5 @@
   "dependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
-  },
-  "devDependencies": {
-    "@types/react": "^18.2.0",
-    "@types/react-dom": "^18.2.0",
-    "@types/vscode": "^1.80.0",
-    "typescript": "^5.0.0"
-  },
-  "scripts": {
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "package": "vsce package"
   }
 }

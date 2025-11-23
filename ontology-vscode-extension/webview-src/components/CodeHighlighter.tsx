@@ -310,8 +310,8 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({ content, forma
     if (selectedLines.size === 0) return;
     
     const lines = content.split(/\r?\n/);
-    const sortedLineNumbers = Array.from(selectedLines).sort((a, b) => a - b);
-    const selectedText = sortedLineNumbers.map(lineIndex => lines[lineIndex]).join('\n');
+    const sortedLineNumbers = Array.from(selectedLines).sort((a: number, b: number) => a - b);
+    const selectedText = sortedLineNumbers.map((lineIndex: number) => lines[lineIndex]).join('\n');
     
     try {
       await navigator.clipboard.writeText(selectedText);

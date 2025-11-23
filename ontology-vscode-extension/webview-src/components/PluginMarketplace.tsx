@@ -52,6 +52,8 @@ interface Plugin {
   stats?: PluginStats;
   verified: boolean;
   installed: boolean;
+  installedVersion?: string; // Version currently installed
+  hasUpdate?: boolean; // True if marketplace version is newer
 }
 
 interface PluginMarketplaceProps {
@@ -86,8 +88,16 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
   const [currentUserRating, setCurrentUserRating] = useState<any>(null);
   const [showUninstallConfirm, setShowUninstallConfirm] = useState(false);
   const [uninstallPluginId, setUninstallPluginId] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [updatingPlugin, setUpdatingPlugin] = useState<string | null>(null);
 
   const categories = ['All', 'Visualization', 'Editor', 'Reasoning', 'Query', 'Import/Export', 'Utility'];
+
+  // Show toast helper
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
+  };
 
   // ---------------------------------------------------------------------------
   // EFFECTS
@@ -97,6 +107,33 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
       fetchPluginsWithStats();
     }
   }, [isOpen]);
+
+  // =============================================================================
+  // HELPER FUNCTIONS
+  // =============================================================================
+
+  /**
+   * Compare semantic versions (e.g., "1.2.3" vs "1.2.4")
+   * Returns true if newVersion is greater than currentVersion
+   */
+  const isNewerVersion = (newVersion: string, currentVersion: string): boolean => {
+    const parseVersion = (v: string) => v.split('.').map(n => parseInt(n) || 0);
+    const [newMajor, newMinor, newPatch] = parseVersion(newVersion);
+    const [curMajor, curMinor, curPatch] = parseVersion(currentVersion);
+    
+    if (newMajor !== curMajor) return newMajor > curMajor;
+    if (newMinor !== curMinor) return newMinor > curMinor;
+    return newPatch > curPatch;
+  };
+
+  /**
+   * Get installed plugin version from pluginLoader
+   */
+  const getInstalledVersion = (pluginId: string): string | undefined => {
+    const installedPlugins = pluginLoader.getInstalledPlugins();
+    const plugin = installedPlugins.find(p => p.id === pluginId);
+    return plugin?.manifest?.version;
+  };
 
   // =============================================================================
   // DATA FETCHING
@@ -141,6 +178,12 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
             console.warn(`Failed to fetch stats for ${p.pluginId}:`, error);
           }
 
+          const isInstalled = installedPlugins.has(p.pluginId);
+          const installedVersion = isInstalled ? getInstalledVersion(p.pluginId) : undefined;
+          const hasUpdate = isInstalled && installedVersion 
+            ? isNewerVersion(p.latestVersion, installedVersion) 
+            : false;
+
           return {
             pluginId: p.pluginId,
             name: p.name,
@@ -152,7 +195,9 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
             screenshots: p.screenshots || [],
             stats,
             verified: p.verified || false,
-            installed: installedPlugins.has(p.pluginId)
+            installed: isInstalled,
+            installedVersion,
+            hasUpdate
           };
         })
       );
@@ -207,16 +252,45 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
     try {
       await onInstall(pluginId);
       
+      // Only mark as installed if onInstall succeeded (no error thrown)
       setPlugins(prev => prev.map(p =>
-        p.pluginId === pluginId ? { ...p, installed: true } : p
+        p.pluginId === pluginId ? { ...p, installed: true, installedVersion: p.version, hasUpdate: false } : p
       ));
 
       await refreshPluginStats(pluginId);
+      showToast('Plugin installed successfully!');
     } catch (error) {
       console.error('Failed to install plugin:', error);
-      alert('Failed to install plugin. Please try again.');
+      // Don't mark as installed on error
+      showToast(`Failed to install plugin: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
     } finally {
       setInstallingPlugin(null);
+    }
+  };
+
+  /**
+   * Update a plugin to the latest version
+   */
+  const handleUpdate = async (pluginId: string) => {
+    setUpdatingPlugin(pluginId);
+    try {
+      // Uninstall old version
+      await pluginLoader.uninstallPlugin(pluginId);
+      
+      // Install new version
+      await onInstall(pluginId);
+      
+      setPlugins(prev => prev.map(p =>
+        p.pluginId === pluginId ? { ...p, installedVersion: p.version, hasUpdate: false } : p
+      ));
+
+      await refreshPluginStats(pluginId);
+      showToast('Plugin updated successfully!');
+    } catch (error) {
+      console.error('Failed to update plugin:', error);
+      showToast('Failed to update plugin. Please try again.', 'error');
+    } finally {
+      setUpdatingPlugin(null);
     }
   };
 
@@ -299,10 +373,19 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
 
       await refreshPluginStats(ratingPlugin.pluginId);
       
-      alert('Thank you for your rating!');
-    } catch (error) {
+      showToast('Thank you for your rating!');
+      setShowRatingModal(false);
+      setRatingPlugin(null);
+    } catch (error: any) {
       console.error('Failed to submit rating:', error);
-      throw error;
+      const errorMessage = error?.message || 'Failed to submit rating';
+      showToast(errorMessage, 'error');
+      
+      // If authentication error, close modal
+      if (errorMessage.includes('log in')) {
+        setShowRatingModal(false);
+        setRatingPlugin(null);
+      }
     }
   };
 
@@ -465,6 +548,11 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
                           ✓ Verified
                         </div>
                       )}
+                      {plugin.hasUpdate && (
+                        <div className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-medium animate-pulse">
+                          Update Available
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -479,7 +567,24 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
                   {/* Author and Version */}
                   <div className="text-xs text-gray-700 mb-3">
                     <div>by {plugin.author}</div>
-                    <div>v{plugin.version}</div>
+                    <div className="flex items-center gap-2">
+                      {plugin.installed && plugin.installedVersion && (
+                        <span className="text-gray-500">
+                          Installed: v{plugin.installedVersion}
+                        </span>
+                      )}
+                      {plugin.hasUpdate && (
+                        <span className="text-green-600 font-semibold">
+                          → v{plugin.version}
+                        </span>
+                      )}
+                      {!plugin.installed && (
+                        <span>Latest: v{plugin.version}</span>
+                      )}
+                      {plugin.installed && !plugin.hasUpdate && (
+                        <span className="text-green-600">✓ Up to date</span>
+                      )}
+                    </div>
                   </div>
 
                   {/* Real Stats from Backend */}
@@ -520,9 +625,19 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
                   <div className="space-y-2">
                     {plugin.installed ? (
                       <>
+                        {plugin.hasUpdate && (
+                          <button
+                            onClick={() => handleUpdate(plugin.pluginId)}
+                            disabled={updatingPlugin === plugin.pluginId || installingPlugin === plugin.pluginId}
+                            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 text-sm font-medium disabled:opacity-50"
+                          >
+                            <Download size={16} />
+                            {updatingPlugin === plugin.pluginId ? 'Updating...' : `Update to v${plugin.version}`}
+                          </button>
+                        )}
                         <button
                           onClick={() => handleUninstall(plugin.pluginId)}
-                          disabled={installingPlugin === plugin.pluginId}
+                          disabled={installingPlugin === plugin.pluginId || updatingPlugin === plugin.pluginId}
                           className="w-full px-4 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors flex items-center justify-center gap-2 text-sm font-medium disabled:opacity-50"
                         >
                           <Trash2 size={16} />
@@ -603,6 +718,17 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ===================================================================
+          TOAST NOTIFICATION
+          =================================================================== */}
+      {toast && (
+        <div className={`fixed bottom-4 right-4 px-6 py-3 rounded-lg shadow-lg z-[70] animate-fade-in ${
+          toast.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'
+        }`}>
+          {toast.message}
         </div>
       )}
     </div>

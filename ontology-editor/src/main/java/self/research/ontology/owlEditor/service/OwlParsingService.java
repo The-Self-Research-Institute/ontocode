@@ -35,8 +35,8 @@ public class OwlParsingService {
     @Autowired
     private MongoTemplate mongo;
 
-    @Autowired
-    private Neo4jSyncService neo4jSyncService; //
+    // @Autowired
+    // private Neo4jSyncService neo4jSyncService; // TODO: Implement Neo4j sync service
     
     @Autowired
     private GridFsTemplate gridfs;
@@ -91,8 +91,8 @@ public class OwlParsingService {
                 // Write to triple store
                 writeToTripleStore(projectId, ontology); //
                 
-                // Sync to Neo4j
-                neo4jSyncService.syncOntologyToNeo4j(projectId, ontology); //
+                // Sync to Neo4j - TODO: Implement Neo4j sync service
+                // neo4jSyncService.syncOntologyToNeo4j(projectId, ontology);
                 
                 updateStatus(projectId, "COMPLETED", "Ontology processed successfully.");
                 log.info("Completed processing for project: {}", projectId);

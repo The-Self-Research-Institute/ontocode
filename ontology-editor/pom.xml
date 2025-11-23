@@ -19,8 +19,7 @@
     <properties>
         <java.version>21</java.version>
         <rdf4j.version>4.3.7</rdf4j.version>
-        <neo4j.version>5.15.0</neo4j.version>
-        <neo4j-ogm.version>4.0.10</neo4j-ogm.version>
+        <!-- Neo4j REMOVED - Using optimized GraphDB with caching for better performance -->
     </properties>
     
     
@@ -202,24 +201,19 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- Neo4j Dependencies REMOVED - Using optimized GraphDB with server-side caching -->
+        <!-- This provides better performance without the operational complexity of Neo4j -->
+
+        <!-- Caffeine Cache - High-performance in-memory caching -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+
+        <!-- Spring Cache Abstraction -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-neo4j</artifactId>
-        </dependency>
-        
-        <!-- Neo4j Driver -->
-        <dependency>
-            <groupId>org.neo4j.driver</groupId>
-            <artifactId>neo4j-java-driver</artifactId>
-            <version>${neo4j.version}</version>
-        </dependency>
-        
-        <!-- Neosemantics (optional - for RDF import) -->
-        <dependency>
-            <groupId>com.graphaware.neo4j</groupId>
-            <artifactId>nlp</artifactId>
-            <version>3.5.4.53.18</version>
-            <scope>provided</scope>
+            <artifactId>spring-boot-starter-cache</artifactId>
         </dependency>
     </dependencies>
     

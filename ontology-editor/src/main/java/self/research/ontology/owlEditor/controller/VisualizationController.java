@@ -65,8 +65,9 @@ public class VisualizationController {
     /**
      * Generate complete ontology graph
      * GET /api/ontology/{projectId}/visualization/graph
+     * GET /api/ontology/{projectId}/graph (alias for plugin compatibility)
      */
-    @GetMapping("/{projectId}/visualization/graph")
+    @GetMapping({"/{projectId}/visualization/graph", "/{projectId}/graph"})
     public ResponseEntity<Map<String, Object>> getGraph(
             @PathVariable String projectId,
             @RequestParam(defaultValue = "false") boolean includeIndividuals
