@@ -84,6 +84,8 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
   const [showRatingModal, setShowRatingModal] = useState(false);
   const [ratingPlugin, setRatingPlugin] = useState<Plugin | null>(null);
   const [currentUserRating, setCurrentUserRating] = useState<any>(null);
+  const [showUninstallConfirm, setShowUninstallConfirm] = useState(false);
+  const [uninstallPluginId, setUninstallPluginId] = useState<string | null>(null);
 
   const categories = ['All', 'Visualization', 'Editor', 'Reasoning', 'Query', 'Import/Export', 'Utility'];
 
@@ -223,25 +225,37 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
    */
   const handleUninstall = async (pluginId: string) => {
     const plugin = plugins.find(p => p.pluginId === pluginId);
-    if (!confirm(`Are you sure you want to uninstall ${plugin?.name}?`)) {
-      return;
-    }
+    setUninstallPluginId(pluginId);
+    setShowUninstallConfirm(true);
+  };
 
-    setInstallingPlugin(pluginId);
+  const confirmUninstall = async () => {
+    if (!uninstallPluginId) return;
+    
+    setInstallingPlugin(uninstallPluginId);
+    setShowUninstallConfirm(false);
+    
     try {
-      await onUninstall(pluginId);
+      await onUninstall(uninstallPluginId);
       
       setPlugins(prev => prev.map(p =>
-        p.pluginId === pluginId ? { ...p, installed: false } : p
+        p.pluginId === uninstallPluginId ? { ...p, installed: false } : p
       ));
 
-      await refreshPluginStats(pluginId);
+      await refreshPluginStats(uninstallPluginId);
     } catch (error) {
       console.error('Failed to uninstall plugin:', error);
-      alert('Failed to uninstall plugin. Please try again.');
+      // Use a toast notification instead of alert
+      console.error('Failed to uninstall plugin. Please try again.');
     } finally {
       setInstallingPlugin(null);
+      setUninstallPluginId(null);
     }
+  };
+
+  const cancelUninstall = () => {
+    setShowUninstallConfirm(false);
+    setUninstallPluginId(null);
   };
 
   /**
@@ -555,6 +569,41 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
           }}
           onSubmit={handleSubmitRating}
         />
+      )}
+
+      {/* ===================================================================
+          UNINSTALL CONFIRMATION MODAL
+          =================================================================== */}
+      {showUninstallConfirm && uninstallPluginId && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold text-gray-900 mb-3">
+              Confirm Uninstall
+            </h3>
+            <p className="text-gray-600 mb-6">
+              Are you sure you want to uninstall{' '}
+              <span className="font-semibold">
+                {plugins.find(p => p.pluginId === uninstallPluginId)?.name}
+              </span>
+              ? This will remove the plugin and its tab from the interface.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={cancelUninstall}
+                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmUninstall}
+                className="px-4 py-2 text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2"
+              >
+                <Trash2 size={16} />
+                Uninstall
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
