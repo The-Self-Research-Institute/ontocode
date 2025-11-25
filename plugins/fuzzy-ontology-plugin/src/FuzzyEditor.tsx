@@ -46,7 +46,8 @@ const FuzzyEditor: React.FC<FuzzyEditorProps> = ({ projectId }) => {
   const loadFuzzyData = async () => {
     try {
       // Load existing fuzzy memberships from the ontology
-      const response = await fetch(`${(window as any).API_BASE_URL}/api/projects/${projectId}/query`, {
+      // Use port 8083 directly (ontology-editor) since gateway doesn't route /api/sparql/*
+      const response = await fetch(`http://localhost:8083/api/sparql/query/${projectId}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -61,8 +62,7 @@ const FuzzyEditor: React.FC<FuzzyEditorProps> = ({ projectId }) => {
               ?membership fuzzy:inClass ?class ;
                           fuzzy:degree ?degree .
             }
-          `,
-          type: 'SPARQL'
+          `
         })
       });
 
@@ -153,14 +153,14 @@ const FuzzyEditor: React.FC<FuzzyEditorProps> = ({ projectId }) => {
         }
       `;
 
-      const response = await fetch(`${(window as any).API_BASE_URL}/api/projects/${projectId}/update`, {
+      const response = await fetch(`http://localhost:8083/api/sparql/update/${projectId}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         },
         body: JSON.stringify({
-          update: sparqlUpdate
+          query: sparqlUpdate
         })
       });
 
@@ -182,15 +182,14 @@ const FuzzyEditor: React.FC<FuzzyEditorProps> = ({ projectId }) => {
     }
 
     try {
-      const response = await fetch(`${(window as any).API_BASE_URL}/api/projects/${projectId}/query`, {
+      const response = await fetch(`http://localhost:8083/api/sparql/query/${projectId}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         },
         body: JSON.stringify({
-          query: fuzzyQuery,
-          type: 'SPARQL'
+          query: fuzzyQuery
         })
       });
 

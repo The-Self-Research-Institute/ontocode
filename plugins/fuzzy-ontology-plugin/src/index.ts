@@ -1,3 +1,3 @@
-import FuzzyEditor from './FuzzyEditor';
+import FuzzyEditorEnhanced from './FuzzyEditorEnhanced';
 
-export default FuzzyEditor;
+export default FuzzyEditorEnhanced;
