@@ -23,14 +23,14 @@ const PLUGINS_COLLECTION = 'plugins';
 const DEFAULT_PLUGINS = [
   {
     pluginId: 'fuzzy-ontology-plugin',
-    name: 'Fuzzy Ontology Advanced Plugin',
-    shortDescription: 'Advanced fuzzy ontology support with membership degrees and fuzzy reasoning',
-    description: 'Advanced fuzzy ontology support with membership degrees, fuzzy reasoning, and interactive visualization - beyond Protege capabilities. Includes T-norms, T-conorms, and alpha-decay hierarchical embeddings.',
-    latestVersion: '1.1.0', // Updated version for testing
+    name: 'Fuzzy Ontology',
+    shortDescription: 'Fuzzy ontology editor with modifiers, membership functions, and visual canvas',
+    description: 'Fuzzy ontology editor with 5 fuzzy modifiers (very, more_or_less, slightly, extremely, somewhat), 5 membership functions (singleton, triangular, trapezoidal, Gaussian, sigmoid), visual canvas editor with real-time curve rendering, fuzzy rules with T-norms/T-conorms, and comprehensive SPARQL integration. Features 0.01-precision degree control, effective degree preview, parameter markers, and dark theme UI.',
+    latestVersion: '1.1.0',
     category: 'Reasoning',
     author: 'OntoCode Team',
     authorEmail: 'admin@ontocode.com',
-    keywords: ['fuzzy', 'ontology', 'membership', 'reasoning', 'fuzzy-logic', 'owl', 'visualization'],
+    keywords: ['fuzzy', 'ontology', 'membership', 'reasoning', 'fuzzy-logic', 'owl', 'protege', 'modifiers', 'functions', 'canvas', 'visualization'],
     icon: null,
     screenshots: [],
     verified: true,
@@ -45,10 +45,10 @@ const DEFAULT_PLUGINS = [
   },
   {
     pluginId: 'graph-view-plugin',
-    name: 'Advanced Ontology Graph View',
+    name: 'Ontology Graph Visualization',
     shortDescription: 'D3.js graph visualization with hierarchical lazy loading - show root nodes first, expand on demand',
     description: 'Next-generation D3.js-powered graph visualization with hierarchical lazy loading: Shows only root nodes initially for instant load times, expand/collapse nodes on demand, smart search that shows paths to results with all children visible, visual +/− indicators, dashed borders for expandable nodes, and enterprise-grade 60 FPS performance handling 100,000+ nodes. Includes drag-and-drop, multi-select, property panel, SVG/PNG export, physics simulation, and auto-updates.',
-    latestVersion: '3.1.0',
+    latestVersion: '2.0.0',
     category: 'Visualization',
     author: 'OntoCode Team',
     authorEmail: 'admin@ontocode.com',

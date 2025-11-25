@@ -28,7 +28,7 @@ const PLUGINS_DIR = path.join(__dirname, '..', 'plugins');
 const DEFAULT_PLUGINS = [
   {
     pluginId: 'fuzzy-ontology-plugin',
-    name: 'Fuzzy Ontology Advanced Plugin',
+    name: 'Fuzzy Ontology Plugin',
     description: 'Advanced fuzzy ontology support with membership degrees, fuzzy reasoning, and interactive visualization - beyond Protege capabilities',
     version: '1.0.0',
     category: 'Reasoning',
@@ -40,7 +40,7 @@ const DEFAULT_PLUGINS = [
   },
   {
     pluginId: 'graph-view-plugin',
-    name: 'Ontology Graph View',
+    name: 'Ontology Graph View Plugin',
     description: 'Interactive graph visualization for ontology classes, properties, and relationships using network diagrams',
     version: '1.0.0',
     category: 'Visualization',
@@ -52,7 +52,7 @@ const DEFAULT_PLUGINS = [
   },
   {
     pluginId: 'swrl-editor-plugin',
-    name: 'SWRL Editor',
+    name: 'SWRL Editor Plugin',
     description: 'Semantic Web Rule Language editor and validator for ontologies. Create, edit, and execute SWRL rules with syntax validation.',
     version: '1.0.0',
     category: 'Editor',
