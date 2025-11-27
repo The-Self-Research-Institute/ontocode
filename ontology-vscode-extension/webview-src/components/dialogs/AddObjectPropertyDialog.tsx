@@ -6,6 +6,7 @@ interface AddObjectPropertyDialogProps {
   onCreate: (name: string) => void;
   type: 'subproperty' | 'sibling' | 'root';
   parentLabel: string;
+  propertyType?: 'object' | 'data' | 'annotation';
 }
 
 const AddObjectPropertyDialog: React.FC<AddObjectPropertyDialogProps> = ({ 
@@ -13,7 +14,8 @@ const AddObjectPropertyDialog: React.FC<AddObjectPropertyDialogProps> = ({
   onClose, 
   onCreate,
   type,
-  parentLabel
+  parentLabel,
+  propertyType = 'object'
 }) => {
   const [name, setName] = useState('');
   
@@ -39,9 +41,11 @@ const AddObjectPropertyDialog: React.FC<AddObjectPropertyDialogProps> = ({
   };
 
   const getTitle = () => {
-    if (type === 'root') return 'Create New Object Property';
-    if (type === 'subproperty') return 'Create New Subproperty';
-    return 'Create New Sibling Property';
+    const propertyTypeLabel = propertyType === 'object' ? 'Object Property' : 
+                             propertyType === 'data' ? 'Data Property' : 'Annotation Property';
+    if (type === 'root') return `Create New ${propertyTypeLabel}`;
+    if (type === 'subproperty') return `Create New Subproperty`;
+    return `Create New Sibling Property`;
   };
 
   return (

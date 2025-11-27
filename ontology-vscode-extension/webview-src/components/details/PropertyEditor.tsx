@@ -43,6 +43,8 @@ const PropertyEditor: React.FC<{
     const [isChainDialogOpen, setIsChainDialogOpen] = useState(false);
 
     const isObjectProperty = item.type === 'ObjectProperty';
+    const isDataProperty = item.type === 'DatatypeProperty';
+    const isAnnotationProperty = item.type === 'AnnotationProperty';
     const characteristics = isObjectProperty 
         ? [
             { key: 'Functional', label: 'Functional' },
@@ -53,7 +55,9 @@ const PropertyEditor: React.FC<{
             { key: 'Reflexive', label: 'Reflexive' },
             { key: 'Irreflexive', label: 'Irreflexive' }
           ] 
-        : [{ key: 'Functional', label: 'Functional' }];
+        : isDataProperty 
+        ? [{ key: 'Functional', label: 'Functional' }]
+        : []; // Annotation properties don't have characteristics
     
     const handleCharacteristicChange = async (char: string, checked: boolean) => {
         const currentChars = item.characteristics || [];
@@ -183,8 +187,8 @@ const PropertyEditor: React.FC<{
             {/* Header with IRI */}
             <div className="bg-gray-100 border-b border-gray-200 p-3 flex items-center justify-between">
                 <div className="flex items-center gap-2 overflow-hidden">
-                <div className={`p-1 rounded text-xs font-bold ${isObjectProperty ? 'bg-blue-200 text-blue-800' : 'bg-green-200 text-green-800'}`}>
-                    {isObjectProperty ? 'OP' : 'DP'}
+                <div className={`p-1 rounded text-xs font-bold ${isObjectProperty ? 'bg-blue-200 text-blue-800' : isDataProperty ? 'bg-green-200 text-green-800' : 'bg-orange-200 text-orange-800'}`}>
+                    {isObjectProperty ? 'OP' : isDataProperty ? 'DP' : 'AP'}
                 </div>
                 <div className="flex flex-col min-w-0">
                     <span className="font-bold text-sm truncate">{item.label}</span>
@@ -208,7 +212,7 @@ const PropertyEditor: React.FC<{
                 </Panel>
 
                 {/* Description Section */}
-                <Panel title="Description" defaultOpen={true} themeColor={isObjectProperty ? 'bg-gradient-to-b from-blue-50 to-blue-100 text-blue-900 border-blue-200' : 'bg-gradient-to-b from-green-50 to-green-100 text-green-900 border-green-200'}>
+                <Panel title="Description" defaultOpen={true} themeColor={isObjectProperty ? 'bg-gradient-to-b from-blue-50 to-blue-100 text-blue-900 border-blue-200' : isDataProperty ? 'bg-gradient-to-b from-green-50 to-green-100 text-green-900 border-green-200' : 'bg-gradient-to-b from-orange-50 to-orange-100 text-orange-900 border-orange-200'}>
                     <div className="p-3 space-y-4">
                         {/* Characteristics */}
                         <div className="mb-4">
@@ -256,19 +260,23 @@ const PropertyEditor: React.FC<{
                             />
                         )}
 
+                        {!isAnnotationProperty && (
                         <MultiSelectSection
                             title="Domains (Intersection)"
                             items={item.domains}
                             onAddClick={onAddDomainClick}
                             onDelete={domain => handleDeleteRelation('domain', domain)}
                         />
+                        )}
 
+                        {!isAnnotationProperty && (
                         <MultiSelectSection
                             title="Ranges (Intersection)"
                             items={item.ranges}
                             onAddClick={onAddRangeClick}
                             onDelete={range => handleDeleteRelation('range', range)}
                         />
+                        )}
 
                         <MultiSelectSection
                             title="Disjoint With"

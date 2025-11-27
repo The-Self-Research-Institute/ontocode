@@ -223,11 +223,54 @@ export const ontologyMutationService = {
   },
 
   /**
+   * Create a new data property
+   */
+  async createDataProperty(projectId: string, iri: string, label: string, parentIri: string, userId?: string, username?: string): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'createDataProperty',
+      iri,
+      label,
+      parent: parentIri
+    }], undefined, userId, username);
+  },
+
+  /**
+   * Create a new annotation property
+   */
+  async createAnnotationProperty(projectId: string, iri: string, label: string, userId?: string, username?: string): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'createAnnotationProperty',
+      iri,
+      label
+    }], undefined, userId, username);
+  },
+
+  /**
    * Delete an object property
    */
   async deleteObjectProperty(projectId: string, iri: string, userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'deleteObjectProperty',
+      iri
+    }], undefined, userId, username);
+  },
+
+  /**
+   * Delete a data property
+   */
+  async deleteDataProperty(projectId: string, iri: string, userId?: string, username?: string): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'deleteDataProperty',
+      iri
+    }], undefined, userId, username);
+  },
+
+  /**
+   * Delete an annotation property
+   */
+  async deleteAnnotationProperty(projectId: string, iri: string, userId?: string, username?: string): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'deleteAnnotationProperty',
       iri
     }], undefined, userId, username);
   },

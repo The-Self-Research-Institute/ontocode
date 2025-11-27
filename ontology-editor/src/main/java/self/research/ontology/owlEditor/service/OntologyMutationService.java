@@ -175,7 +175,28 @@ public class OntologyMutationService {
                   <%s> rdfs:subPropertyOf <%s> .
                 }
                 """.formatted(op.iri(), optionalLabel(op.iri(), op.label()), op.iri(), op.parent());
+            case "createDataProperty" -> """
+                INSERT DATA {
+                  <%s> a owl:DatatypeProperty .
+                  %s
+                  <%s> rdfs:subPropertyOf <%s> .
+                }
+                """.formatted(op.iri(), optionalLabel(op.iri(), op.label()), op.iri(), op.parent());
+            case "createAnnotationProperty" -> """
+                INSERT DATA {
+                  <%s> a owl:AnnotationProperty .
+                  %s
+                }
+                """.formatted(op.iri(), optionalLabel(op.iri(), op.label()));
             case "deleteObjectProperty" -> """
+                DELETE { <%s> ?p ?o } WHERE { <%s> ?p ?o };
+                DELETE { ?s ?p <%s> } WHERE { ?s ?p <%s> }
+                """.formatted(op.iri(), op.iri(), op.iri(), op.iri());
+            case "deleteDataProperty" -> """
+                DELETE { <%s> ?p ?o } WHERE { <%s> ?p ?o };
+                DELETE { ?s ?p <%s> } WHERE { ?s ?p <%s> }
+                """.formatted(op.iri(), op.iri(), op.iri(), op.iri());
+            case "deleteAnnotationProperty" -> """
                 DELETE { <%s> ?p ?o } WHERE { <%s> ?p ?o };
                 DELETE { ?s ?p <%s> } WHERE { ?s ?p <%s> }
                 """.formatted(op.iri(), op.iri(), op.iri(), op.iri());

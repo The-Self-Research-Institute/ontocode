@@ -2140,7 +2140,38 @@ const Dashboard = () => {
     }
 
     if (entitiesTab === 'DataProperties') {
-      showNotification('Data property creation is not available yet.', 'warning');
+      if (!selectedItem) {
+        showNotification('Select a data property first.', 'warning');
+        return;
+      }
+
+      // Prevent creating sibling of top-level data property
+      if (type === 'sibling') {
+        const parent = findParentNode(dataPropertyHierarchy, selectedItem.id);
+        const isTopLevel = !parent ||
+                          selectedItem.id.includes('topDataProperty') ||
+                          selectedItem.label === 'owl:topDataProperty';
+
+        if (isTopLevel) {
+          showNotification('Cannot create sibling of top-level data property. Please create a subproperty instead.', 'warning');
+          return;
+        }
+      }
+
+      const parentLabel = type === 'subclass'
+        ? selectedItem.label
+        : (findParentNode(dataPropertyHierarchy, selectedItem.id)?.label || 'owl:topDataProperty');
+
+      setAddPropertyType(type === 'subclass' ? 'subproperty' : 'sibling');
+      setPropertyParentLabel(parentLabel);
+      setAddPropertyDialogOpen(true);
+      return;
+    }
+
+    if (entitiesTab === 'AnnotationProperties') {
+      setAddPropertyType('root');
+      setPropertyParentLabel('Annotation Property');
+      setAddPropertyDialogOpen(true);
       return;
     }
 
@@ -2397,6 +2428,65 @@ const Dashboard = () => {
     }
   }, [projectId, selectedItem, addPropertyType, objectPropertyHierarchy, expandedNodes, metadata, markAsUnsaved]);
 
+  const handleCreateDataProperty = useCallback(async (name: string) => {
+    if (!projectId) return;
+
+    const type = addPropertyType;
+
+    try {
+      const baseIri = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
+      const newIri = `${baseIri}#${name.replace(/\s+/g, '_')}`;
+      
+      let parentIri = 'http://www.w3.org/2002/07/owl#topDataProperty';
+        if (type === 'subproperty' && selectedItem?.id) {
+          parentIri = selectedItem.id;
+        } else if (type === 'sibling' && selectedItem?.id) {
+          const parent = findParentNode(dataPropertyHierarchy, selectedItem.id);
+          parentIri = parent?.id || 'http://www.w3.org/2002/07/owl#topDataProperty';
+        }
+      
+      await ontologyMutationService.createDataProperty(projectId, newIri, name, parentIri);
+      
+      const newProp: any = {
+          id: newIri,
+          label: name,
+          type: 'DatatypeProperty',
+          annotations: { 'rdfs:label': name },
+          children: [],
+          hasChildren: false
+      };
+      
+      setDataProperties(prev => [...prev, newProp]);
+
+      const addNodeRecursively = (nodes: any[]): any[] => {
+        return nodes.map(node => {
+          if (node.id === parentIri) {
+            const children = node.children ? [...node.children, newProp] : [newProp];
+            return { ...node, children, hasChildren: true };
+          }
+          if (node.children) {
+            return { ...node, children: addNodeRecursively(node.children) };
+          }
+          return node;
+        });
+      };
+      
+      setDataPropertyHierarchy(prev => addNodeRecursively(prev));
+      
+      if (parentIri && !expandedNodes.includes(parentIri)) {
+         setExpandedNodes(prev => [...prev, parentIri]);
+      }
+
+      markAsUnsaved();
+      showNotification('Data property created successfully!', 'info');
+      setAddPropertyDialogOpen(false);
+      setPropertyParentLabel('owl:topDataProperty');
+    } catch (error) {
+      console.error('Failed to create data property:', error);
+      showNotification('Failed to create data property. See console for details.', 'error');
+    }
+  }, [projectId, selectedItem, addPropertyType, dataPropertyHierarchy, expandedNodes, metadata, markAsUnsaved]);
+
   const handleCreateDatatype = useCallback(async (name: string) => {
     if (!projectId) return;
 
@@ -2420,6 +2510,33 @@ const Dashboard = () => {
     } catch (error) {
       console.error('Failed to create datatype:', error);
       showNotification('Failed to create datatype. See console for details.', 'error');
+    }
+  }, [projectId, metadata, markAsUnsaved, showNotification]);
+
+  const handleCreateAnnotationProperty = useCallback(async (name: string) => {
+    if (!projectId) return;
+
+    try {
+      const baseIri = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
+      const newIri = `${baseIri}#${name.replace(/\s+/g, '_')}`;
+
+      await ontologyMutationService.createAnnotationProperty(projectId, newIri, name);
+
+      const newProp: any = {
+        id: newIri,
+        label: name,
+        type: 'AnnotationProperty',
+        annotations: { 'rdfs:label': name }
+      };
+
+      setAnnotationProperties(prev => [...prev, newProp]);
+
+      markAsUnsaved();
+      showNotification('Annotation property created successfully!', 'info');
+      setAddPropertyDialogOpen(false);
+    } catch (error) {
+      console.error('Failed to create annotation property:', error);
+      showNotification('Failed to create annotation property. See console for details.', 'error');
     }
   }, [projectId, metadata, markAsUnsaved, showNotification]);
 
@@ -3276,9 +3393,13 @@ const Dashboard = () => {
       <AddObjectPropertyDialog
         isOpen={isAddPropertyDialogOpen}
         onClose={() => setAddPropertyDialogOpen(false)}
-        onCreate={handleCreateObjectProperty}
+        onCreate={entitiesTab === 'ObjectProperties' ? handleCreateObjectProperty : 
+                  entitiesTab === 'DataProperties' ? handleCreateDataProperty : 
+                  handleCreateAnnotationProperty}
         type={addPropertyType}
         parentLabel={propertyParentLabel}
+        propertyType={entitiesTab === 'ObjectProperties' ? 'object' : 
+                     entitiesTab === 'DataProperties' ? 'data' : 'annotation'}
       />
       <AddDatatypeDialog
         isOpen={isAddDatatypeDialogOpen}

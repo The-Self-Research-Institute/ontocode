@@ -477,6 +477,11 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
                <p className="mb-2">No individuals created yet.</p>
                <button onClick={() => onAddItem('individual')} className="text-sm text-purple-600 hover:underline">Create a new Individual</button>
              </div>
+          ) : (entitiesTab === 'AnnotationProperties' && !searchQuery) ? (
+             <div className="p-4 text-center text-gray-400">
+               <p className="mb-2">No annotation properties created yet.</p>
+               <button onClick={() => onAddItem('subclass')} className="text-sm text-purple-600 hover:underline">Create a new Annotation Property</button>
+             </div>
           ) : <div className="p-4 text-center text-gray-400">No items found.</div>)
         }
       </div>

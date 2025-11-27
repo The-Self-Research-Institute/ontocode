@@ -297,6 +297,10 @@ public class DraftTrackingService {
             case "deleteIndividual" -> "Deleted individual: " + displayName;
             case "createObjectProperty" -> "Created property: " + displayName;
             case "deleteObjectProperty" -> "Deleted property: " + displayName;
+            case "createDataProperty" -> "Created data property: " + displayName;
+            case "deleteDataProperty" -> "Deleted data property: " + displayName;
+            case "createAnnotationProperty" -> "Created annotation property: " + displayName;
+            case "deleteAnnotationProperty" -> "Deleted annotation property: " + displayName;
             case "addAnnotation" -> "Added annotation to: " + displayName;
             case "updateAnnotation" -> "Updated annotation for: " + displayName;
             case "deleteAnnotation" -> "Removed annotation from: " + displayName;
