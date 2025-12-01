@@ -1,0 +1,85 @@
+# Ignore files that don't need to be in Docker images
+
+# Git
+.git/
+.gitignore
+.github/
+
+# IDE
+.vscode/
+.idea/
+*.iml
+.eclipse/
+.settings/
+
+# Build artifacts
+**/target/
+**/build/
+**/dist/
+**/out/
+**/bin/
+
+# Logs
+**/logs/
+**/*.log
+
+# Node modules
+**/node_modules/
+**/package-lock.json
+**/yarn.lock
+
+# VS Code Extension artifacts
+ontology-vscode-extension/
+webview-src/
+**/*.vsix
+
+# Documentation and markdown files (keep only in source, not in containers)
+*.md
+!README.md
+
+# Scripts (not needed in containers)
+scripts/
+k8s/
+
+# Test files
+**/src/test/
+**/*Test.java
+**/*Tests.java
+
+# Configuration that will be provided via environment variables
+**/.env
+**/.env.*
+**/application-local.properties
+**/application-dev.properties
+
+# Backup files
+**/backups/
+**/data/
+
+# Docker files (don't copy into images)
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.swp
+*.bak
+*~
+
+# Maven wrapper (keep only what's needed)
+**/.mvn/
+
+# Plugin artifacts
+plugins/
+
+# YJS server (separate service, not in Java containers)
+yjs-websocket-server/
+
+# Note: Service directories ARE included in build context
+# The Dockerfiles handle copying only what's needed

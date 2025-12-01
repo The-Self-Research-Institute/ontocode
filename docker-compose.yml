@@ -1,210 +1,147 @@
-version: '3.8'
+# OntoCode Development Docker Compose
+# Use docker-compose.production.yml for production deployments
+# This file is for quick local development and testing
 
 services:
   # MongoDB Database
-  mongodb:
-    image: mongo:6.0
-    container_name: ontocode-mongodb
-    restart: always
+  mongo:
+    image: mongo:6
+    container_name: ontocode-mongo
+    restart: unless-stopped
     ports:
       - "27017:27017"
     volumes:
-      - mongodb-data:/data/db
-      - mongodb-config:/data/configdb
-      - ./scripts/setup-mongodb.js:/docker-entrypoint-initdb.d/setup.js:ro
-      - ./backups:/backups
+      - mongo-data:/data/db
     environment:
       MONGO_INITDB_DATABASE: ontocode
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-admin}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-changeme}
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: changeme
     networks:
-      - ontocode-network
+      - ontology-net
     healthcheck:
       test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/ontocode --quiet
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
 
-  # Backend Service
-  backend:
+  # GraphDB (RDF Triple Store)
+  graphdb:
+    image: ontotext/graphdb:10.7.1
+    container_name: ontocode-graphdb
+    restart: unless-stopped
+    ports:
+      - "7200:7200"
+    environment:
+      GDB_HEAP_SIZE: 2g
+    networks:
+      - ontology-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7200/rest/repositories"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Authentication Service
+  auth:
     build:
-      context: ./backend/ontology-editor
-      dockerfile: ../../docker/Dockerfile.backend
-    container_name: ontocode-backend
-    restart: always
+      context: .
+      dockerfile: Dockerfile.auth
+    container_name: ontocode-auth
+    restart: unless-stopped
     ports:
       - "8086:8086"
     environment:
-      # MongoDB
-      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme}@mongodb:27017/ontocode?authSource=admin
-      
-      # CORS
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,http://localhost:80}
-      
-      # Application
-      SPRING_PROFILES_ACTIVE: production
-      
-      # Logging
-      LOGGING_LEVEL_ROOT: INFO
-      LOGGING_FILE_NAME: /app/logs/ontocode.log
-      
-      # JVM Options
-      JAVA_OPTS: -Xms512m -Xmx2g -XX:+UseG1GC
+      MONGODB_URI: mongodb://admin:changeme@mongo:27017/ontocode?authSource=admin
+      JWT_SECRET: your-secret-key-change-this
+      SPRING_PROFILES_ACTIVE: dev
     depends_on:
-      mongodb:
+      mongo:
         condition: service_healthy
-    volumes:
-      - backend-logs:/app/logs
-      - plugin-data:/app/plugins
     networks:
-      - ontocode-network
-    healthcheck:
-      test: curl -f http://localhost:8086/actuator/health || exit 1
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+      - ontology-net
+
+  # API Gateway
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    container_name: ontocode-gateway
+    restart: unless-stopped
+    ports:
+      - "8082:8082"
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      JWT_SECRET: your-secret-key-change-this
+    depends_on:
+      auth:
+        condition: service_started
+    networks:
+      - ontology-net
+
+  # Ontology Editor Service
+  owl-editor:
+    build:
+      context: .
+      dockerfile: Dockerfile.editor
+    container_name: ontocode-editor
+    restart: unless-stopped
+    ports:
+      - "8083:8083"
+    environment:
+      MONGODB_URI: mongodb://admin:changeme@mongo:27017/ontocode?authSource=admin
+      GRAPHDB_URL: http://graphdb:7200
+      GRAPHDB_REPOSITORY: ontocode
+      SPRING_PROFILES_ACTIVE: dev
+    depends_on:
+      - mongo
+      - graphdb
+    networks:
+      - ontology-net
+
+  # SWRL Rules Service
+  swrl-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.swrl
+    container_name: ontocode-swrl
+    restart: unless-stopped
+    ports:
+      - "8084:8084"
+    environment:
+      MONGODB_URI: mongodb://admin:changeme@mongo:27017/ontocode?authSource=admin
+      GRAPHDB_URL: http://graphdb:7200
+      SPRING_PROFILES_ACTIVE: dev
+    depends_on:
+      - mongo
+      - graphdb
+    networks:
+      - ontology-net
 
   # Plugin Service
   plugin-service:
     build:
-      context: ./ontology-plugin-service
-      dockerfile: Dockerfile
-    container_name: ontocode-plugin-service
-    restart: always
+      context: .
+      dockerfile: Dockerfile.plugin
+    container_name: ontocode-plugin
+    restart: unless-stopped
     ports:
       - "8087:8087"
     environment:
-      # MongoDB
-      SPRING_DATA_MONGODB_HOST: mongodb
+      SPRING_DATA_MONGODB_HOST: mongo
       SPRING_DATA_MONGODB_PORT: 27017
       SPRING_DATA_MONGODB_DATABASE: ontology
-      SPRING_DATA_MONGODB_AUTHENTICATION-DATABASE: admin
-      SPRING_DATA_MONGODB_USERNAME: ${MONGO_ROOT_USER:-admin}
-      SPRING_DATA_MONGODB_PASSWORD: ${MONGO_ROOT_PASSWORD:-changeme}
-
-      # JWT Secret (same as auth service)
-      JWT_SECRET: ${JWT_SECRET:-your-secret-key-min-256-bits-change-in-production}
-
-      # Application
-      SPRING_PROFILES_ACTIVE: production
-
-      # Logging
-      LOGGING_LEVEL_ROOT: INFO
-      LOGGING_LEVEL_SELF_RESEARCH_ONTOLOGY_PLUGINS: DEBUG
+      SPRING_DATA_MONGODB_USERNAME: admin
+      SPRING_DATA_MONGODB_PASSWORD: changeme
+      JWT_SECRET: your-secret-key-change-this
+      SPRING_PROFILES_ACTIVE: dev
     depends_on:
-      mongodb:
-        condition: service_healthy
-    volumes:
-      - plugin-storage:/app/storage
+      - mongo
     networks:
-      - ontocode-network
-    healthcheck:
-      test: wget --no-verbose --tries=1 --spider http://localhost:8087/actuator/health || exit 1
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-
-  # Frontend Service
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: ../docker/Dockerfile.frontend
-      args:
-        VITE_API_BASE_URL: ${API_BASE_URL:-http://localhost:8086}
-    container_name: ontocode-frontend
-    restart: always
-    ports:
-      - "80:80"
-      - "443:443"
-    depends_on:
-      backend:
-        condition: service_healthy
-      plugin-service:
-        condition: service_healthy
-    volumes:
-      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./ssl:/etc/nginx/ssl:ro
-    networks:
-      - ontocode-network
-    healthcheck:
-      test: curl -f http://localhost/ || exit 1
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # Nginx Reverse Proxy (Optional - for advanced routing)
-  nginx-proxy:
-    image: nginx:alpine
-    container_name: ontocode-nginx-proxy
-    restart: always
-    ports:
-      - "8080:80"
-    volumes:
-      - ./docker/nginx-proxy.conf:/etc/nginx/nginx.conf:ro
-    depends_on:
-      - frontend
-      - backend
-    networks:
-      - ontocode-network
-    profiles:
-      - with-proxy
-
-  # MongoDB Express (Optional - for database management)
-  mongo-express:
-    image: mongo-express:latest
-    container_name: ontocode-mongo-express
-    restart: always
-    ports:
-      - "8081:8081"
-    environment:
-      ME_CONFIG_MONGODB_ADMINUSERNAME: ${MONGO_ROOT_USER:-admin}
-      ME_CONFIG_MONGODB_ADMINPASSWORD: ${MONGO_ROOT_PASSWORD:-changeme}
-      ME_CONFIG_MONGODB_URL: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme}@mongodb:27017/
-      ME_CONFIG_BASICAUTH_USERNAME: ${MONGO_EXPRESS_USER:-admin}
-      ME_CONFIG_BASICAUTH_PASSWORD: ${MONGO_EXPRESS_PASSWORD:-pass}
-    depends_on:
-      - mongodb
-    networks:
-      - ontocode-network
-    profiles:
-      - with-admin-tools
-
-  # Redis Cache (Optional - for future caching)
-  redis:
-    image: redis:7-alpine
-    container_name: ontocode-redis
-    restart: always
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis-data:/data
-    networks:
-      - ontocode-network
-    healthcheck:
-      test: redis-cli ping || exit 1
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    profiles:
-      - with-cache
+      - ontology-net
 
 volumes:
-  mongodb-data:
-    driver: local
-  mongodb-config:
-    driver: local
-  backend-logs:
-    driver: local
-  plugin-data:
-    driver: local
-  plugin-storage:
-    driver: local
-  redis-data:
-    driver: local
+  mongo-data:
 
 networks:
-  ontocode-network:
+  ontology-net:
     driver: bridge

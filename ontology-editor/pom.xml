@@ -232,6 +232,13 @@
                     <!-- Increase heap size for large ontology file imports -->
                     <jvmArguments>-Xms512m -Xmx2048m</jvmArguments>
                 </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
             
             <plugin>
