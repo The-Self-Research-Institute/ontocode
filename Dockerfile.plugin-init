@@ -1,0 +1,22 @@
+# Plugin Initialization Service
+# This service waits for MongoDB to be ready, then inserts default plugins
+FROM node:21-alpine
+
+WORKDIR /app
+
+# Install bash and wait-for-it script
+RUN apk add --no-cache bash curl
+
+# Copy scripts directory
+COPY scripts/insert-default-plugins.sh ./
+COPY scripts/insert-default-plugins.js ./
+COPY scripts/package.json ./
+
+# Make script executable
+RUN chmod +x insert-default-plugins.sh
+
+# Install dependencies
+RUN npm ci --silent
+
+# Wait for MongoDB and then insert plugins
+CMD ["sh", "-c", "echo 'Waiting for MongoDB to be ready...' && sleep 10 && ./insert-default-plugins.sh"]
