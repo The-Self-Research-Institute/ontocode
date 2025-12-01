@@ -139,6 +139,24 @@ services:
     networks:
       - ontology-net
 
+  # Plugin Initialization Service
+  plugin-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.plugin-init
+    container_name: ontocode-plugin-init
+    environment:
+      MONGODB_URI: mongodb://admin:changeme@mongo:27017/ontology?authSource=admin
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - ontology-net
+    profiles:
+      - init
+    # Run once and exit
+    restart: "no"
+
 volumes:
   mongo-data:
 
