@@ -1,8 +1,6 @@
 // Fix: Removed triple-slash directive for node types as we are removing node-specific dependencies.
 
 import * as vscode from 'vscode';
-// Fix: Removed 'path' and 'fs' imports to use VSCode's API and web standards.
-// Fix: Removed node.js form-data import - using native browser FormData instead
 import axios, { AxiosError } from 'axios';
 import { insertCitationCommand } from './features/citationInsertion';
 import { CitationPickerPanel } from './webview/citationPicker';
