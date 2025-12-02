@@ -795,7 +795,21 @@ const Dashboard = () => {
   const [codeViewFormat, setCodeViewFormat] = useState<'turtle' | 'rdfxml' | 'ntriples' | 'owl'>('turtle');
   const [codeViewContent, setCodeViewContent] = useState<string>('');
   const [codeViewLoading, setCodeViewLoading] = useState(false);
+
+  // Calculate active users count for current project
+  const activeUsersInProject = Array.from(collaboration.state.activeUsers.values()).filter(
+    user => user.projectId === projectId
+  );
+  const hasMultipleActiveUsers = activeUsersInProject.length > 1;
   // #endregion
+
+  // Auto-close collaboration panel when only one user remains
+  useEffect(() => {
+    if (!hasMultipleActiveUsers && showCollaborationPanel) {
+      console.log('[Dashboard] 👤 Only one user active - closing collaboration panel');
+      setShowCollaborationPanel(false);
+    }
+  }, [hasMultipleActiveUsers, showCollaborationPanel]);
 
   // #region Data Fetching and Initialization
   // Plugin marketplace handlers
@@ -1620,6 +1634,100 @@ const Dashboard = () => {
       window.removeEventListener("message", handleMessage);
     };
   }, [visibleMainTabs, fetchData]);
+
+  // Handle remote edits from collaborative users in real-time
+  useEffect(() => {
+    const handleRemoteEdit = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      const edit = customEvent.detail;
+      
+      console.log('[Dashboard] 🔄 Handling remote edit event:', edit);
+      
+      // Immediately reload the affected data based on edit type
+      if (!projectId) {
+        console.warn('[Dashboard] No project ID, cannot apply remote edit');
+        return;
+      }
+      
+      // Map edit type to which data needs refreshing
+      switch (edit.type) {
+        case 'CLASS_ADDED':
+        case 'CLASS_MODIFIED':
+        case 'CLASS_DELETED':
+        case 'CLASS_RENAMED':
+          console.log('[Dashboard] 📚 Refreshing class hierarchy due to class edit');
+          // Trigger a refresh of class hierarchy
+          apiClient.get(`/api/ontology/classes/${projectId}`)
+            .then(response => {
+              setClassHierarchy(response.data || []);
+              console.log('[Dashboard] ✅ Class hierarchy refreshed');
+            })
+            .catch(error => console.error('[Dashboard] Failed to refresh class hierarchy:', error));
+          break;
+          
+        case 'ANNOTATION_ADDED':
+        case 'ANNOTATION_MODIFIED':
+        case 'ANNOTATION_DELETED':
+          console.log('[Dashboard] 📝 Refreshing annotation due to annotation edit');
+          // Trigger refresh of current selected item to show updated annotations
+          if (selectedItem) {
+            const entityId = selectedItem.id || selectedItem.iri;
+            apiClient.get(`/api/ontology/class/${projectId}/${encodeURIComponent(entityId)}`)
+              .then(response => {
+                setSelectedItem(response.data);
+                console.log('[Dashboard] ✅ Selected item refreshed with new annotations');
+              })
+              .catch(error => console.error('[Dashboard] Failed to refresh selected item:', error));
+          }
+          break;
+          
+        case 'PROPERTY_ADDED':
+        case 'PROPERTY_MODIFIED':
+        case 'PROPERTY_DELETED':
+          console.log('[Dashboard] 🔗 Refreshing properties due to property edit');
+          // Trigger refresh of properties
+          apiClient.get(`/api/ontology/object-properties/${projectId}`)
+            .then(response => {
+              setObjectProperties(response.data || []);
+              console.log('[Dashboard] ✅ Object properties refreshed');
+            })
+            .catch(error => console.error('[Dashboard] Failed to refresh properties:', error));
+          break;
+          
+        case 'INDIVIDUAL_ADDED':
+        case 'INDIVIDUAL_MODIFIED':
+        case 'INDIVIDUAL_DELETED':
+          console.log('[Dashboard] 👤 Refreshing individuals due to individual edit');
+          // Trigger refresh of individuals
+          apiClient.get(`/api/ontology/individuals/${projectId}`)
+            .then(response => {
+              setIndividuals(response.data || []);
+              console.log('[Dashboard] ✅ Individuals refreshed');
+            })
+            .catch(error => console.error('[Dashboard] Failed to refresh individuals:', error));
+          break;
+          
+        default:
+          console.log('[Dashboard] 🔄 Generic remote edit, refreshing metadata');
+          // Generic refresh for other edit types
+          apiClient.get(`/api/ontology/metadata/${projectId}`)
+            .then(response => {
+              setMetadata(response.data);
+              console.log('[Dashboard] ✅ Metadata refreshed');
+            })
+            .catch(error => console.error('[Dashboard] Failed to refresh metadata:', error));
+      }
+    };
+    
+    // Listen for remoteEditReceived events
+    window.addEventListener('remoteEditReceived', handleRemoteEdit as EventListener);
+    console.log('[Dashboard] 🎧 Registered listener for remote edits');
+    
+    return () => {
+      window.removeEventListener('remoteEditReceived', handleRemoteEdit as EventListener);
+      console.log('[Dashboard] 🎧 Unregistered listener for remote edits');
+    };
+  }, [projectId, selectedItem]);
 
   useEffect(() => {
     // Initialize notification service to show toasts via collaboration context
@@ -3495,18 +3603,20 @@ const Dashboard = () => {
               })}
             </div>
             <div className="flex items-center gap-4">
-              <button
-                onClick={() => setShowCollaborationPanel(!showCollaborationPanel)}
-                className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors ${
-                  showCollaborationPanel
-                    ? 'bg-blue-600 text-white hover:bg-blue-700'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-                title="Toggle Collaboration Panel"
-              >
-                <Users size={14} />
-                <span>Collaboration</span>
-              </button>
+              {isCurrentFileShared && hasMultipleActiveUsers && (
+                <button
+                  onClick={() => setShowCollaborationPanel(!showCollaborationPanel)}
+                  className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors ${
+                    showCollaborationPanel
+                      ? 'bg-blue-600 text-white hover:bg-blue-700'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                  title="Toggle Collaboration Panel"
+                >
+                  <Users size={14} />
+                  <span>Collaboration</span>
+                </button>
+              )}
               {projectId && (
                 <button
                   onClick={handleOpenProjectSelector}

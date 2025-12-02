@@ -1,22 +1,18 @@
 # Plugin Initialization Service
-# This service waits for MongoDB to be ready, then inserts default plugins
+# Inserts default plugins into MongoDB using Node.js script
 FROM node:21-alpine
 
 WORKDIR /app
 
-# Install bash and wait-for-it script
+# Install bash and curl for health checks
 RUN apk add --no-cache bash curl
 
-# Copy scripts directory
-COPY scripts/insert-default-plugins.sh ./
-COPY scripts/insert-default-plugins.js ./
-COPY scripts/package.json ./
+# Copy package.json and install dependencies first (for better caching)
+COPY scripts/package.json ./package.json
+RUN npm install mongodb
 
-# Make script executable
-RUN chmod +x insert-default-plugins.sh
+# Copy the insert plugins script
+COPY scripts/insert-default-plugins.js ./insert-default-plugins.js
 
-# Install dependencies
-RUN npm ci --silent
-
-# Wait for MongoDB and then insert plugins
-CMD ["sh", "-c", "echo 'Waiting for MongoDB to be ready...' && sleep 10 && ./insert-default-plugins.sh"]
+# Wait for MongoDB to be ready, then insert plugins and exit
+CMD ["sh", "-c", "echo 'Waiting for MongoDB to be ready...' && sleep 10 && node insert-default-plugins.js && echo 'Plugin initialization complete!'"]

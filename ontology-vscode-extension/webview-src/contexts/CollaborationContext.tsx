@@ -160,19 +160,7 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
         });
     }, []);
 
-    const handleRemoteEdit = useCallback((edit: any) => {
-        // Add notification for remote edits
-        const notification: Omit<EditNotification, 'id'> = {
-            type: 'info',
-            message: `${edit.username} ${getEditActionDescription(edit.type)}`,
-            userId: edit.userId,
-            username: edit.username,
-            userColor: '#888888', // Will be updated from activeUsers
-            timestamp: edit.timestamp,
-        };
-
-        addNotification(notification);
-    }, []);
+   
 
     const getEditActionDescription = (operationType: string): string => {
         const actionMap: Record<string, string> = {
@@ -226,6 +214,62 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
             ...prev,
             notifications: [],
         }));
+    }, []);
+
+     const handleRemoteEdit = useCallback((edit: any) => {
+        console.log('[CollaborationContext] 📝 Processing remote edit:', edit);
+        
+        // CRITICAL: Dispatch a custom event that the Dashboard/ontology tree can listen to
+        // This ensures the UI updates instantly when receiving annotations or other changes
+        const remoteEditEvent = new CustomEvent('remoteEditReceived', {
+            detail: edit,
+        });
+        
+        window.dispatchEvent(remoteEditEvent);
+        console.log('[CollaborationContext] ✅ Dispatched remoteEditReceived event');
+        
+        // Add notification for remote edits and remove user from active users
+        setState(prev => {
+            const id = `notif-${Date.now()}-${Math.random()}`;
+            const notification: Omit<EditNotification, 'id'> = {
+                type: 'info',
+                message: `${edit.username} ${getEditActionDescription(edit.type)}`,
+                userId: edit.userId,
+                username: edit.username,
+                userColor: '#888888',
+                timestamp: edit.timestamp,
+            };
+            
+            // Get user color from activeUsers
+            const user = prev.activeUsers.get(notification.userId);
+            const userColor = user?.color || notification.userColor;
+
+            // Remove the user who made the edit from active users
+            const newUsers = new Map(prev.activeUsers);
+            newUsers.delete(edit.userId);
+            console.log('[CollaborationContext] 👤 Removed user from active users:', edit.userId, edit.username);
+
+            const newState = {
+                ...prev,
+                activeUsers: newUsers,
+                notifications: [
+                    ...prev.notifications,
+                    { ...notification, id, userColor },
+                ],
+            };
+
+            // Auto-remove after 5 seconds
+            setTimeout(() => {
+                setState(s => ({
+                    ...s,
+                    notifications: s.notifications.filter(n => n.id !== id),
+                }));
+            }, 5000);
+
+            return newState;
+        });
+        
+        console.log('[CollaborationContext] 📢 Added notification for remote edit');
     }, []);
 
     const setCurrentProject = useCallback((projectId: string | null) => {

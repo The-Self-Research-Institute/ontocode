@@ -37,8 +37,10 @@ webview-src/
 *.md
 !README.md
 
-# Scripts (not needed in containers)
-scripts/
+# Scripts (not needed in containers except for plugin-init)
+scripts/*
+!scripts/package.json
+!scripts/insert-default-plugins.js
 k8s/
 
 # Test files
