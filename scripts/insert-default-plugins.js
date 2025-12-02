@@ -14,9 +14,9 @@
 
 const { MongoClient } = require('mongodb');
 
-// Configuration
-const MONGO_URL = 'mongodb://localhost:27017';
-const DB_NAME = 'ontology'; // Must match spring.data.mongodb.database in plugin service
+// Configuration - Use environment variable if available (for Docker), otherwise use local default
+const MONGO_URL = process.env.MONGODB_URI || 'mongodb://localhost:27017';
+const DB_NAME = process.env.MONGODB_DATABASE || 'ontology';
 const PLUGINS_COLLECTION = 'plugins';
 
 // Default plugins
