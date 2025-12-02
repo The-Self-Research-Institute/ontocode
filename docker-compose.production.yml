@@ -1,6 +1,5 @@
-# OntoCode Development Docker Compose
-# Use docker-compose.production.yml for production deployments
-# This file is for quick local development and testing
+# OntoCode Production Docker Compose
+# This file is for production-like deployments with proper configurations
 
 services:
   # MongoDB Database
@@ -12,6 +11,7 @@ services:
       - "27017:27017"
     volumes:
       - mongo-data:/data/db
+      - mongo-init:/docker-entrypoint-initdb.d
     environment:
       MONGO_INITDB_DATABASE: ${MONGODB_DATABASE:-ontocode}
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-admin}
@@ -38,7 +38,6 @@ services:
     volumes:
       - graphdb-data:/opt/graphdb/data
       - ${GDB_LICENSE_FILE:-./CORETOPIA_GRAPHDB_FREE_v11.1.license}:/opt/graphdb/license:ro
-      - ./scripts/init-graphdb.sh:/docker-entrypoint-initdb.d/init-graphdb.sh:ro
     networks:
       - ontology-net
     healthcheck:
@@ -48,29 +47,11 @@ services:
       retries: 5
       start_period: 60s
 
-  # GraphDB Repository Initializer
-  graphdb-init:
-    image: curlimages/curl:latest
-    container_name: ontocode-graphdb-init
-    depends_on:
-      graphdb:
-        condition: service_healthy
-    volumes:
-      - ./scripts/init-graphdb.sh:/init-graphdb.sh:ro
-    networks:
-      - ontology-net
-    command: sh /init-graphdb.sh
-    restart: "no"
-
   # Authentication Service
   auth:
     build:
       context: .
       dockerfile: Dockerfile.auth
-      args:
-        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-        - VCS_REF=$(git rev-parse --short HEAD)
-    image: ontocode-auth:latest
     container_name: ontocode-auth
     restart: unless-stopped
     ports:
@@ -78,8 +59,12 @@ services:
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-this}
-      SPRING_PROFILES_ACTIVE: dev
+      SPRING_PROFILES_ACTIVE: production
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      LOGGING_LEVEL_SELF_RESEARCH: ${LOGGING_LEVEL_SELF_RESEARCH:-DEBUG}
+      EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
+      MAILTRAP_API_TOKEN: ${MAILTRAP_API_TOKEN:-}
+      EMAIL_FROM: ${EMAIL_FROM:-noreply@ontocode.com}
     depends_on:
       mongo:
         condition: service_healthy
@@ -91,34 +76,33 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.gateway
-      args:
-        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-        - VCS_REF=$(git rev-parse --short HEAD)
-    image: ontocode-gateway:latest
     container_name: ontocode-gateway
     restart: unless-stopped
     ports:
       - "8082:8082"
     environment:
-      SPRING_PROFILES_ACTIVE: docker
+      SPRING_PROFILES_ACTIVE: production
       JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-this}
       AUTH_SERVICE_URL: http://auth:8086
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      LOGGING_LEVEL_SELF_RESEARCH: ${LOGGING_LEVEL_SELF_RESEARCH:-DEBUG}
     depends_on:
       auth:
         condition: service_started
     networks:
       - ontology-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # Ontology Editor Service
   owl-editor:
     build:
       context: .
       dockerfile: Dockerfile.editor
-      args:
-        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-        - VCS_REF=$(git rev-parse --short HEAD)
-    image: ontocode-editor:latest
     container_name: ontocode-editor
     restart: unless-stopped
     ports:
@@ -127,24 +111,31 @@ services:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       GRAPHDB_URL: http://graphdb:7200
       GRAPHDB_REPOSITORY: ${GRAPHDB_REPOSITORY:-ontocode}
-      SPRING_PROFILES_ACTIVE: dev
+      SPRING_PROFILES_ACTIVE: production
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      LOGGING_LEVEL_SELF_RESEARCH: ${LOGGING_LEVEL_SELF_RESEARCH:-DEBUG}
       EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
+      GMAIL_USERNAME: ${GMAIL_USERNAME:-}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
     depends_on:
-      - mongo
-      - graphdb
+      mongo:
+        condition: service_healthy
+      graphdb:
+        condition: service_healthy
     networks:
       - ontology-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # SWRL Rules Service
   swrl-service:
     build:
       context: .
       dockerfile: Dockerfile.swrl
-      args:
-        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-        - VCS_REF=$(git rev-parse --short HEAD)
-    image: ontocode-swrl:latest
     container_name: ontocode-swrl
     restart: unless-stopped
     ports:
@@ -153,23 +144,28 @@ services:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       GRAPHDB_URL: http://graphdb:7200
       GRAPHDB_REPOSITORY: ${GRAPHDB_REPOSITORY:-ontocode}
-      SPRING_PROFILES_ACTIVE: dev
+      SPRING_PROFILES_ACTIVE: production
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      LOGGING_LEVEL_SELF_RESEARCH: ${LOGGING_LEVEL_SELF_RESEARCH:-DEBUG}
     depends_on:
-      - mongo
-      - graphdb
+      mongo:
+        condition: service_healthy
+      graphdb:
+        condition: service_healthy
     networks:
       - ontology-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8084/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # Plugin Service
   plugin-service:
     build:
       context: .
       dockerfile: Dockerfile.plugin
-      args:
-        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-        - VCS_REF=$(git rev-parse --short HEAD)
-    image: ontocode-plugin:latest
     container_name: ontocode-plugin
     restart: unless-stopped
     ports:
@@ -178,14 +174,22 @@ services:
       SPRING_DATA_MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       SPRING_DATA_MONGODB_DATABASE: ${MONGODB_DATABASE:-ontocode}
       JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-this}
-      SPRING_PROFILES_ACTIVE: dev
+      SPRING_PROFILES_ACTIVE: production
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      LOGGING_LEVEL_SELF_RESEARCH: ${LOGGING_LEVEL_SELF_RESEARCH:-DEBUG}
     depends_on:
-      - mongo
+      mongo:
+        condition: service_healthy
     networks:
       - ontology-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8087/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
-  # Plugin Initialization Service
+  # Plugin Initialization Service (optional)
   plugin-init:
     build:
       context: .
@@ -201,13 +205,38 @@ services:
       - ontology-net
     profiles:
       - init
-    # Run once and exit
     restart: "no"
+
+  # MongoDB Express Admin UI (optional)
+  mongo-express:
+    image: mongo-express:latest
+    container_name: ontocode-mongo-express
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: ${MONGO_ROOT_USER:-admin}
+      ME_CONFIG_MONGODB_ADMINPASSWORD: ${MONGO_ROOT_PASSWORD:-changeme123}
+      ME_CONFIG_MONGODB_URL: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/?authSource=admin
+      ME_CONFIG_BASICAUTH_USERNAME: ${MONGO_EXPRESS_USER:-admin}
+      ME_CONFIG_BASICAUTH_PASSWORD: ${MONGO_EXPRESS_PASSWORD:-pass}
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - ontology-net
+    profiles:
+      - admin
 
 volumes:
   mongo-data:
+    driver: local
+  mongo-init:
+    driver: local
   graphdb-data:
+    driver: local
 
 networks:
   ontology-net:
     driver: bridge
+

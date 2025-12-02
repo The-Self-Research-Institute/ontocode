@@ -570,7 +570,8 @@ class OntoCodePanel {
             const file = new File([fileBlob], fileName, { type: 'application/rdf+xml' });
             const formData = new FormData();
             formData.append('file', file);
-            
+                        vscode.window.showErrorMessage(`Failed to load ontology: ${formData}`);
+
             // Extract user email from JWT token
             try {
                 const tokenParts = token.split('.');
