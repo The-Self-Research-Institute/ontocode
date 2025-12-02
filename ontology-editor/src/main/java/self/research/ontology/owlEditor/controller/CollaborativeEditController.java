@@ -8,6 +8,7 @@ import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.CrossOrigin;
 import self.research.ontology.owlEditor.model.collaboration.EditOperation;
 import self.research.ontology.owlEditor.model.collaboration.LockMessage;
 import self.research.ontology.owlEditor.model.collaboration.PresenceMessage;
@@ -27,6 +28,7 @@ import self.research.ontology.owlEditor.service.collaboration.CollaborativeEditS
  */
 @Slf4j
 @Controller
+@CrossOrigin(origins = "*", allowedHeaders = "*", methods = {})
 @RequiredArgsConstructor
 public class CollaborativeEditController {
 
