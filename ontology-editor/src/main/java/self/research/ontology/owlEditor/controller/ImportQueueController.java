@@ -15,8 +15,8 @@ import java.util.Map;
  */
 @Slf4j
 @RestController
-@RequestMapping("/api/ontology/queue")
-@CrossOrigin(origins = "*")
+@RequestMapping("/api/import-queue")
+@CrossOrigin(originPatterns = "*", allowCredentials = "true")
 public class ImportQueueController {
 
     private final ImportQueueManager queueManager;

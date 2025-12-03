@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.model.OntologyChange;
 import self.research.ontology.owlEditor.service.ChangeTrackingService;
@@ -19,7 +20,7 @@ import java.util.stream.Collectors;
  */
 @RestController
 @RequestMapping("/api/ontology")
-@CrossOrigin(origins = "*")
+@CrossOrigin(originPatterns = "*")
 public class ChangeTrackingController {
 
     private static final Logger log = LoggerFactory.getLogger(ChangeTrackingController.class);
@@ -29,6 +30,9 @@ public class ChangeTrackingController {
     
     @Autowired
     private GraphDBHistoryService graphDBHistoryService;
+    
+    @Autowired
+    private SimpMessagingTemplate messagingTemplate;
 
     /**
      * Get change history for a project
@@ -220,6 +224,18 @@ public class ChangeTrackingController {
             boolean success = changeTrackingService.revertChange(changeId, userId, username);
             
             if (success) {
+                // Broadcast revert notification to collaborators
+                Map<String, Object> revertNotification = Map.of(
+                    "type", "CHANGE_REVERTED",
+                    "projectId", projectId,
+                    "changeId", changeId,
+                    "userId", userId,
+                    "username", username,
+                    "timestamp", System.currentTimeMillis(),
+                    "message", "A change was reverted - please refresh"
+                );
+                messagingTemplate.convertAndSend("/topic/ontology/" + projectId, revertNotification);
+                
                 return ResponseEntity.ok(Map.of(
                     "success", true,
                     "message", "Change reverted successfully",

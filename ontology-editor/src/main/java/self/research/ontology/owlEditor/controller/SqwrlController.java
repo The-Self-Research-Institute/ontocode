@@ -14,7 +14,7 @@ import java.util.regex.Pattern;
 
 @RestController
 @RequestMapping("/api/sqwrl/{projectId}")
-@CrossOrigin(origins = "*")
+@CrossOrigin(originPatterns = "*")
 public class SqwrlController {
 
     private final GraphDBDatasetService datasetService;

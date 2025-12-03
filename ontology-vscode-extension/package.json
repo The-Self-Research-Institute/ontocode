@@ -52,6 +52,11 @@
         "command": "ontocode.insertCitation",
         "title": "Insert Citation",
         "category": "OntoCode"
+      },
+      {
+        "command": "ontocode.showCollaborationStatus",
+        "title": "OntoCode: Show Collaboration Status",
+        "category": "OntoCode"
       }
     ],
     "menus": {

@@ -18,7 +18,7 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/ontology")
-@CrossOrigin(origins = "*")
+@CrossOrigin(originPatterns = "*")
 public class DraftController {
     
     private static final Logger log = LoggerFactory.getLogger(DraftController.class);

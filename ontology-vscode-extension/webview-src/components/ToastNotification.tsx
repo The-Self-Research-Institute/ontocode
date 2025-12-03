@@ -16,9 +16,11 @@ interface ToastNotificationProps {
     onDismiss: (id: string) => void;
 }
 
-export const ToastNotification: React.FC<ToastNotificationProps> = ({ toasts, onDismiss }) => {
+export const ToastNotification: React.FC<ToastNotificationProps> = ({ toasts = [], onDismiss }) => {
     useEffect(() => {
         // Auto-dismiss toasts after their duration
+        if (!toasts || toasts.length === 0) return;
+        
         toasts.forEach(toast => {
             const duration = toast.duration || 5000;
             const timer = setTimeout(() => {
@@ -42,6 +44,10 @@ export const ToastNotification: React.FC<ToastNotificationProps> = ({ toasts, on
                 return <Info size={16} />;
         }
     };
+
+    if (!toasts || toasts.length === 0) {
+        return null;
+    }
 
     return (
         <div className="toast-container">

@@ -1,5 +1,4 @@
-import { Client, IMessage, StompSubscription } from '@stomp/stompjs';
-import SockJS from 'sockjs-client';
+import { Client, StompSubscription } from '@stomp/stompjs';
 import {
     EditOperation,
     PresenceMessage,
@@ -12,8 +11,8 @@ import {
 } from './types';
 
 /**
- * Manages WebSocket connection for collaborative editing.
- * Handles connection lifecycle, reconnection, and message routing.
+ * Browser-compatible WebSocket manager for collaborative editing.
+ * Uses native WebSocket instead of SockJS for VS Code web compatibility.
  */
 export class CollaborationManager implements ICollaborationManager {
     private client: Client | null = null;
@@ -46,14 +45,20 @@ export class CollaborationManager implements ICollaborationManager {
     }
 
     /**
-     * Connect to the WebSocket server.
+     * Connect to the WebSocket server using native WebSocket.
      */
     connect(): Promise<void> {
         return new Promise((resolve, reject) => {
             try {
-                // Create STOMP client with SockJS
+                // Convert http/https URL to ws/wss
+                const wsUrl = this.serverUrl.replace(/^http/, 'ws') + '/ws';
+                
+                console.log('[CollaborationManager] Connecting to WebSocket:', wsUrl);
+                
+                // Create STOMP client with native WebSocket
                 this.client = new Client({
-                    webSocketFactory: () => new SockJS(`${this.serverUrl}/ws`) as any,
+                    // Use native WebSocket (browser-compatible)
+                    brokerURL: wsUrl,
                     
                     connectHeaders: {
                         // Add authentication headers here if needed
@@ -348,7 +353,7 @@ export class CollaborationManager implements ICollaborationManager {
         
         const subscription = this.client.subscribe(
             `/topic/ontology/${projectId}`,
-            (message: IMessage) => {
+            (message: any) => {
                 try {
                     const edit: EditOperation = JSON.parse(message.body);
                     
@@ -374,7 +379,7 @@ export class CollaborationManager implements ICollaborationManager {
         
         const subscription = this.client.subscribe(
             `/topic/presence/${projectId}`,
-            (message: IMessage) => {
+            (message: any) => {
                 try {
                     const presence: PresenceMessage = JSON.parse(message.body);
                     
@@ -420,7 +425,7 @@ export class CollaborationManager implements ICollaborationManager {
         
         const subscription = this.client.subscribe(
             `/topic/locks/${projectId}`,
-            (message: IMessage) => {
+            (message: any) => {
                 try {
                     const lock: LockMessage = JSON.parse(message.body);
                     
@@ -458,7 +463,7 @@ export class CollaborationManager implements ICollaborationManager {
 
         const subscription = this.client.subscribe(
             `/topic/import/${projectId}`,
-            (message: IMessage) => {
+            (message: any) => {
                 console.log('[CollaborationManager] 📨 Received import status message:', message.body);
                 try {
                     const importStatus = JSON.parse(message.body);

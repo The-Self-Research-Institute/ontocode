@@ -25,7 +25,7 @@ import java.util.stream.Collectors;
  */
 @RestController
 @RequestMapping("/api/ontology")
-@CrossOrigin(origins = "*")
+@CrossOrigin(originPatterns = "*")
 public class VisualizationController {
 
     private static final Logger log = LoggerFactory.getLogger(VisualizationController.class);

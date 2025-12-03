@@ -1,12 +1,11 @@
-import { CollaborationManager } from './CollaborationManager';
-import { EditOperation, OperationType, PresenceType } from './types';
+import { ICollaborationManager, EditOperation, OperationType, PresenceType } from './types';
 
 /**
  * Captures local ontology edits and broadcasts them to other users.
  * Provides debouncing to avoid flooding the server with rapid edits.
  */
 export class EditCapture {
-    private collaborationManager: CollaborationManager | null = null;
+    private collaborationManager: ICollaborationManager | null = null;
     private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
     private debounceDelay = 500; // 500ms debounce
     private isApplyingRemoteEdit = false;
@@ -16,7 +15,7 @@ export class EditCapture {
     /**
      * Set the collaboration manager instance.
      */
-    setCollaborationManager(manager: CollaborationManager): void {
+    setCollaborationManager(manager: ICollaborationManager): void {
         this.collaborationManager = manager;
     }
 

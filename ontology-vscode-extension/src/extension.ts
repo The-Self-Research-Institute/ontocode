@@ -4,7 +4,9 @@ import * as vscode from 'vscode';
 import axios, { AxiosError } from 'axios';
 import { insertCitationCommand } from './features/citationInsertion';
 import { CitationPickerPanel } from './webview/citationPicker';
-import { CollaborationManager } from './collaboration/CollaborationManager';
+// Use web-compatible collaboration manager in browser environment
+import { CollaborationManager } from './collaboration/CollaborationManager.web';
+import { ICollaborationManager } from './collaboration/types';
 import { EditCapture } from './collaboration/EditCapture';
 import { RemoteEditApplier } from './collaboration/RemoteEditApplier';
 
@@ -207,7 +209,7 @@ class OntoCodePanel {
     private _lastProjectId: string | null = null; // Track last opened project
 
     // Collaborative editing
-    private collaborationManager: CollaborationManager | null = null;
+    private collaborationManager: ICollaborationManager | null = null;
     private editCapture: EditCapture;
     private remoteEditApplier: RemoteEditApplier;
     private currentProjectId: string | null = null;

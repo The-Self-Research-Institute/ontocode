@@ -8,6 +8,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -56,6 +57,7 @@ public class ProjectLoadController {
     private final DraftTrackingService draftTrackingService;
     private final GraphDBHistoryService historyService;
     private final DraftChangeRepository draftChangeRepository;
+    private final SimpMessagingTemplate messagingTemplate;
 
     public ProjectLoadController(StorageManager storageManager,
                                  ProjectMetadataService metadataService,
@@ -64,7 +66,8 @@ public class ProjectLoadController {
                                  ProjectShareService shareService,
                                  DraftTrackingService draftTrackingService,
                                  GraphDBHistoryService historyService,
-                                 DraftChangeRepository draftChangeRepository) {
+                                 DraftChangeRepository draftChangeRepository,
+                                 SimpMessagingTemplate messagingTemplate) {
         this.storageManager = storageManager;
         this.metadataService = metadataService;
         this.importService = importService;
@@ -73,6 +76,7 @@ public class ProjectLoadController {
         this.draftTrackingService = draftTrackingService;
         this.historyService = historyService;
         this.draftChangeRepository = draftChangeRepository;
+        this.messagingTemplate = messagingTemplate;
     }
 
     @PostMapping("/upload/{projectId}")
@@ -331,6 +335,22 @@ public class ProjectLoadController {
             // STEP 8: Clear applied drafts (cleanup)
             draftTrackingService.clearAppliedDrafts(projectId);
             log.info("[SAVE] Cleared applied drafts");
+            
+            // STEP 9: Notify collaborators that a save completed
+            if (draftResult.getAppliedCount() > 0) {
+                Map<String, Object> saveNotification = Map.of(
+                    "type", "PROJECT_SAVED",
+                    "projectId", projectId,
+                    "userId", userId != null ? userId : "system",
+                    "username", username != null ? username : "System",
+                    "appliedChanges", draftResult.getAppliedCount(),
+                    "timestamp", System.currentTimeMillis(),
+                    "message", (username != null ? username : "Someone") + " saved the project with " + draftResult.getAppliedCount() + " changes"
+                );
+                messagingTemplate.convertAndSend("/topic/ontology/" + projectId, saveNotification);
+                log.info("[SAVE] Notified collaborators of save completion");
+            }
+            
             log.info("[SAVE] ✅ Save completed successfully, releasing lock");
 
             return ResponseEntity.ok(Map.of(

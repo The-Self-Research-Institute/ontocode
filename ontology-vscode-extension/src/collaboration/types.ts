@@ -118,3 +118,27 @@ export interface CollaborationState {
     locks: Map<string, LockMessage>;
     pendingEdits: EditOperation[];
 }
+
+/**
+ * Common interface for CollaborationManager implementations
+ */
+export interface ICollaborationManager {
+    connect(): Promise<void>;
+    disconnect(): Promise<void>;
+    joinProject(projectId: string): Promise<void>;
+    leaveProject(): Promise<void>;
+    sendEdit(edit: Omit<EditOperation, 'userId' | 'username' | 'timestamp'>): Promise<void>;
+    sendPresence(type: PresenceType, data?: Partial<PresenceMessage>): Promise<void>;
+    requestLock(nodeId: string): Promise<void>;
+    releaseLock(nodeId: string): Promise<void>;
+    getState(): Readonly<CollaborationState>;
+    setHandlers(handlers: {
+        onEditReceived?: (edit: EditOperation) => void;
+        onPresenceUpdate?: (presence: PresenceMessage) => void;
+        onLockUpdate?: (lock: LockMessage) => void;
+        onImportStatusUpdate?: (status: any) => void;
+        onConnectionChange?: (connected: boolean) => void;
+        onError?: (error: string) => void;
+    }): void;
+    isConnected(): boolean;
+}

@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.GraphDBHistoryService;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
+import self.research.ontology.owlEditor.service.collaboration.CollaborativeEditService;
 
 import java.util.List;
 import java.util.Map;
@@ -28,13 +29,16 @@ public class OntologyCrudController {
     private final OntologyMutationService mutationService;
     private final DraftTrackingService draftTrackingService;
     private final GraphDBHistoryService historyService;
+    private final CollaborativeEditService collaborativeEditService;
 
     public OntologyCrudController(OntologyMutationService mutationService,
                                  DraftTrackingService draftTrackingService,
-                                 GraphDBHistoryService historyService) {
+                                 GraphDBHistoryService historyService,
+                                 CollaborativeEditService collaborativeEditService) {
         this.mutationService = mutationService;
         this.draftTrackingService = draftTrackingService;
         this.historyService = historyService;
+        this.collaborativeEditService = collaborativeEditService;
     }
 
     @PostMapping("/mutations/{projectId}")
@@ -69,7 +73,7 @@ public class OntologyCrudController {
             
             mutationService.apply(projectId, request.ops());
             
-            // Record each operation to GraphDB history
+            // Record each operation to GraphDB history and broadcast to collaborators
             for (OntologyMutationService.MutationOp op : request.ops()) {
                 String entityIRI = op.iri();
                 String entityLabel = op.label();
@@ -87,6 +91,8 @@ public class OntologyCrudController {
                     newValue, 
                     op.type() + " operation"
                 );
+
+                collaborativeEditService.broadcastMutation(projectId, op, userId, username);
             }
             
             log.info("[MUTATION] Recorded {} changes to GraphDB history", request.ops().size());
@@ -101,8 +107,28 @@ public class OntologyCrudController {
     
     @PostMapping("/make-siblings-disjoint/{projectId}")
     public ResponseEntity<?> makeSiblingsDisjoint(@PathVariable String projectId,
-                                                  @RequestBody MakeSiblingsDisjointRequest request) {
+                                                  @RequestBody MakeSiblingsDisjointRequest request,
+                                                  @RequestParam(required = false, defaultValue = "anonymous") String userId,
+                                                  @RequestParam(required = false, defaultValue = "Anonymous") String username) {
         mutationService.makeSiblingsDisjoint(projectId, request.classIds());
+        
+        // Broadcast disjoint axiom changes to collaborators
+        for (int i = 0; i < request.classIds().size(); i++) {
+            for (int j = i + 1; j < request.classIds().size(); j++) {
+                OntologyMutationService.MutationOp disjointOp = new OntologyMutationService.MutationOp(
+                    "addDisjointWith",
+                    request.classIds().get(i),
+                    null,
+                    null,
+                    null,
+                    null,
+                    request.classIds().get(j),
+                    null
+                );
+                collaborativeEditService.broadcastMutation(projectId, disjointOp, userId, username);
+            }
+        }
+        
         return ResponseEntity.ok(Map.of("success", true));
     }
 
