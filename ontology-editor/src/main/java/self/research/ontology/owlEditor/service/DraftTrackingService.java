@@ -35,6 +35,7 @@ public class DraftTrackingService {
     private final OntologyIndexService indexService;
     private final ProjectMetadataService metadataService;
     private final ChangeTrackingService changeTrackingService;
+    private final GraphDBHistoryService graphDBHistoryService;
     private final Executor metadataExecutor;
     private final CollaborativeEditService collaborativeEditService;
     
@@ -43,6 +44,7 @@ public class DraftTrackingService {
                                OntologyIndexService indexService,
                                ProjectMetadataService metadataService,
                                ChangeTrackingService changeTrackingService,
+                               GraphDBHistoryService graphDBHistoryService,
                                @Qualifier("metadataExecutor") Executor metadataExecutor,
                                CollaborativeEditService collaborativeEditService) {
         this.draftRepository = draftRepository;
@@ -50,6 +52,7 @@ public class DraftTrackingService {
         this.indexService = indexService;
         this.metadataService = metadataService;
         this.changeTrackingService = changeTrackingService;
+        this.graphDBHistoryService = graphDBHistoryService;
         this.metadataExecutor = metadataExecutor;
         this.collaborativeEditService = collaborativeEditService;
     }
@@ -272,6 +275,9 @@ public class DraftTrackingService {
                 Map<String, Object> data = draft.getOperationData();
                 String entityIri = (String) data.get("iri");
                 String label = (String) data.get("label");
+                String oldValue = data.get("oldValue") != null ? data.get("oldValue").toString() : null;
+                String newValue = data.get("value") != null ? data.get("value").toString() : 
+                                  (data.get("newValue") != null ? data.get("newValue").toString() : null);
                 
                 OntologyChange change = new OntologyChange.Builder(
                     projectId, 
@@ -286,9 +292,23 @@ public class DraftTrackingService {
                 .sessionId(draft.getSessionId())
                 .build();
                 
+                // Record to MongoDB via change tracking service
                 changeTrackingService.recordChange(change);
+                
+                // Also record to GraphDB history for Change Assistant plugin
+                graphDBHistoryService.recordEdit(
+                    projectId,
+                    draft.getUserId(),
+                    draft.getUsername(),
+                    draft.getOperationType(),
+                    entityIri,
+                    label != null ? label : entityIri,
+                    oldValue,
+                    newValue,
+                    formatChangeDescription(draft)
+                );
             }
-            log.info("[DRAFT] Recorded {} changes to change tracking", drafts.size());
+            log.info("[DRAFT] Recorded {} changes to change tracking and GraphDB history", drafts.size());
         } catch (Exception e) {
             log.error("[DRAFT] Failed to record changes to change tracking", e);
             // Don't fail the save if change tracking fails

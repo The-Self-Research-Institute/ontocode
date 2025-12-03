@@ -115,7 +115,7 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
     }
     
     // Apply modifier
-    if (membership.modifier && membership.modifier !== 'none') {
+    if (membership.modifier) {
       const modifierFn = FUZZY_MODIFIERS[membership.modifier];
       if (modifierFn) {
         degree = modifierFn(degree);

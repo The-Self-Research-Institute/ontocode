@@ -365,7 +365,7 @@ export class AlphaCutReasoner {
 
     const computeRecursive = (conceptURI: string, depth: number) => {
       if (visited.has(conceptURI)) return;
-      visited.set(conceptURI);
+      visited.add(conceptURI);
 
       const concept = this.ontology.getConcept(conceptURI);
       if (!concept) return;

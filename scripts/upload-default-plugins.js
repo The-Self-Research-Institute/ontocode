@@ -61,6 +61,18 @@ const DEFAULT_PLUGINS = [
     keywords: ['swrl', 'rules', 'reasoning', 'semantic-web', 'owl', 'ontology'],
     icon: null,
     screenshots: []
+  },
+  {
+    pluginId: 'change-assistant-plugin',
+    name: 'Ontology Change Assistant',
+    description: 'Assists in tracking and managing collaborative ontology edits with change history, conflict detection, and version control integration',
+    version: '1.0.0',
+    category: 'Collaboration',
+    author: 'OntoCode Team',
+    authorEmail: 'admin@ontocode.com',
+    keywords: ['change-tracking', 'collaboration', 'ontology', 'version-control', 'history', 'owl', 'diff'],
+    icon: null,
+    screenshots: []
   }
 ];
 

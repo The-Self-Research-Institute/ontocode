@@ -36,6 +36,11 @@ const PLUGIN_BUNDLES = [
     pluginId: 'swrl-editor-plugin',
     version: '1.1.0',
     bundlePath: path.join(PLUGINS_DIR, 'swrl-editor-plugin', 'dist', 'index.js')
+  },
+  {
+    pluginId: 'change-assistant-plugin',
+    version: '1.0.0',
+    bundlePath: path.join(PLUGINS_DIR, 'change-assistant-plugin', 'dist', 'index.js')
   }
 ];
 
