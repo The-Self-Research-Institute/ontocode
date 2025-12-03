@@ -9,6 +9,7 @@ import self.research.ontology.owlEditor.model.collaboration.GraphUpdateMessage;
 import self.research.ontology.owlEditor.model.collaboration.LockMessage;
 import self.research.ontology.owlEditor.model.collaboration.PresenceMessage;
 import self.research.ontology.owlEditor.service.GraphDBHistoryService;
+import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
 import self.research.ontology.owlEditor.websocket.WebSocketEventListener;
 
 import java.util.*;
@@ -79,6 +80,40 @@ public class CollaborativeEditService {
                 operation.getType(), operation.getNodeId(), operation.getUserId());
 
         return operation;
+    }
+
+    /**
+     * Broadcast a mutation that was applied through the REST API so that
+     * collaborative clients still receive real-time updates.
+     */
+    public void broadcastMutation(String projectId, MutationOp mutation,
+                                  String userId, String username) {
+        EditOperation.OperationType operationType = convertStringToOperationType(mutation.type());
+        if (operationType == null) {
+            log.debug("Skipping broadcast for unsupported mutation type: {}", mutation.type());
+            return;
+        }
+
+        String nodeId = resolveNodeId(mutation);
+        if (nodeId == null || nodeId.isBlank()) {
+            log.debug("Skipping broadcast for mutation without node id: {}", mutation);
+            return;
+        }
+
+        EditOperation operation = EditOperation.builder()
+            .type(operationType)
+            .projectId(projectId)
+            .nodeId(nodeId)
+            .property(resolvePropertyName(mutation))
+            .value(resolveValue(mutation))
+            .metadata(buildMetadata(mutation))
+            .userId(userId)
+            .username(username)
+            .sessionId("rest-mutation")
+            .timestamp(System.currentTimeMillis())
+            .build();
+
+        processEdit(operation);
     }
 
     /**
@@ -248,6 +283,9 @@ public class CollaborativeEditService {
         // Convert string operation type to enum
         String typeStr = (String) data.get("type");
         EditOperation.OperationType operationType = convertStringToOperationType(typeStr);
+        if (operationType == null) {
+            operationType = EditOperation.OperationType.CLASS_MODIFIED;
+        }
         op.setType(operationType);
         
         op.setProjectId(""); // Not stored in GraphDB history
@@ -268,7 +306,7 @@ public class CollaborativeEditService {
     }
     
     private EditOperation.OperationType convertStringToOperationType(String type) {
-        if (type == null) return EditOperation.OperationType.CLASS_MODIFIED;
+        if (type == null) return null;
         
         return switch (type) {
             case "createClass" -> EditOperation.OperationType.CLASS_ADDED;
@@ -282,10 +320,77 @@ public class CollaborativeEditService {
             case "deleteAnnotation" -> EditOperation.OperationType.ANNOTATION_DELETED;
             case "createIndividual" -> EditOperation.OperationType.INDIVIDUAL_ADDED;
             case "deleteIndividual" -> EditOperation.OperationType.INDIVIDUAL_DELETED;
-            case "addSubClass" -> EditOperation.OperationType.SUBCLASS_ADDED;
-            case "removeSubClass" -> EditOperation.OperationType.SUBCLASS_REMOVED;
-            default -> EditOperation.OperationType.CLASS_MODIFIED;
+            case "addSubClass", "addSubClassOf" -> EditOperation.OperationType.SUBCLASS_ADDED;
+            case "removeSubClass", "deleteSubClassOf" -> EditOperation.OperationType.SUBCLASS_REMOVED;
+            case "addDisjointWith" -> EditOperation.OperationType.DISJOINT_ADDED;
+            case "deleteDisjointWith" -> EditOperation.OperationType.DISJOINT_REMOVED;
+            case "addEquivalentClass" -> EditOperation.OperationType.EQUIVALENT_ADDED;
+            case "deleteEquivalentClass" -> EditOperation.OperationType.EQUIVALENT_REMOVED;
+            default -> null;
         };
+    }
+
+    private String resolveNodeId(MutationOp mutation) {
+        if (mutation.iri() != null && !mutation.iri().isBlank()) {
+            return mutation.iri();
+        }
+        return mutation.target();
+    }
+
+    private String resolvePropertyName(MutationOp mutation) {
+        if (mutation.property() != null && !mutation.property().isBlank()) {
+            return mutation.property();
+        }
+        return switch (mutation.type()) {
+            case "createClass", "updateClassLabel" -> "label";
+            case "addSubClassOf", "deleteSubClassOf" -> "subClassOf";
+            case "addEquivalentClass", "deleteEquivalentClass" -> "equivalentClass";
+            case "addDisjointWith", "deleteDisjointWith" -> "disjointWith";
+            case "addPropertyDomain", "deletePropertyDomain" -> "domain";
+            case "addPropertyRange", "deletePropertyRange" -> "range";
+            case "addSubPropertyOf", "deleteSubPropertyOf" -> "subPropertyOf";
+            case "addInverseProperty", "deleteInverseProperty" -> "inverseOf";
+            case "addDisjointProperty", "deleteDisjointProperty" -> "propertyDisjointWith";
+            case "addEquivalentProperty", "deleteEquivalentProperty" -> "equivalentProperty";
+            case "addCharacteristic", "deleteCharacteristic" -> "characteristic";
+            default -> null;
+        };
+    }
+
+    private Object resolveValue(MutationOp mutation) {
+        if (mutation.value() != null && !mutation.value().isBlank()) {
+            return mutation.value();
+        }
+        if (mutation.target() != null && !mutation.target().isBlank()) {
+            return mutation.target();
+        }
+        if (mutation.label() != null && !mutation.label().isBlank()) {
+            return mutation.label();
+        }
+        if (mutation.parent() != null && !mutation.parent().isBlank()) {
+            return mutation.parent();
+        }
+        return null;
+    }
+
+    private Map<String, Object> buildMetadata(MutationOp mutation) {
+        Map<String, Object> metadata = new HashMap<>();
+        if (mutation.label() != null) {
+            metadata.put("label", mutation.label());
+        }
+        if (mutation.parent() != null) {
+            metadata.put("parent", mutation.parent());
+        }
+        if (mutation.property() != null) {
+            metadata.put("property", mutation.property());
+        }
+        if (mutation.target() != null) {
+            metadata.put("target", mutation.target());
+        }
+        if (mutation.classIri() != null) {
+            metadata.put("classIri", mutation.classIri());
+        }
+        return metadata.isEmpty() ? null : metadata;
     }
 
     /**

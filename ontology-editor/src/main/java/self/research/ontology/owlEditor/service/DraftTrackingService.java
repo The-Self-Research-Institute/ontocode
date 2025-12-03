@@ -8,11 +8,14 @@ import self.research.ontology.owlEditor.model.DraftChange;
 import self.research.ontology.owlEditor.model.OntologyChange;
 import self.research.ontology.owlEditor.repository.DraftChangeRepository;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
+import self.research.ontology.owlEditor.service.collaboration.CollaborativeEditService;
 
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
 /**
@@ -24,25 +27,31 @@ public class DraftTrackingService {
     
     private static final Logger log = LoggerFactory.getLogger(DraftTrackingService.class);
     
+    // Project-level locks for draft operations to prevent race conditions
+    private final Map<String, ReentrantLock> projectLocks = new ConcurrentHashMap<>();
+    
     private final DraftChangeRepository draftRepository;
     private final OntologyMutationService mutationService;
     private final OntologyIndexService indexService;
     private final ProjectMetadataService metadataService;
     private final ChangeTrackingService changeTrackingService;
     private final Executor metadataExecutor;
+    private final CollaborativeEditService collaborativeEditService;
     
     public DraftTrackingService(DraftChangeRepository draftRepository,
                                OntologyMutationService mutationService,
                                OntologyIndexService indexService,
                                ProjectMetadataService metadataService,
                                ChangeTrackingService changeTrackingService,
-                               @Qualifier("metadataExecutor") Executor metadataExecutor) {
+                               @Qualifier("metadataExecutor") Executor metadataExecutor,
+                               CollaborativeEditService collaborativeEditService) {
         this.draftRepository = draftRepository;
         this.mutationService = mutationService;
         this.indexService = indexService;
         this.metadataService = metadataService;
         this.changeTrackingService = changeTrackingService;
         this.metadataExecutor = metadataExecutor;
+        this.collaborativeEditService = collaborativeEditService;
     }
     
     /**
@@ -108,11 +117,47 @@ public class DraftTrackingService {
     }
     
     /**
+     * Get or create a lock for a specific project
+     */
+    private ReentrantLock getProjectLock(String projectId) {
+        return projectLocks.computeIfAbsent(projectId, k -> new ReentrantLock());
+    }
+    
+    /**
      * Apply all unapplied drafts to GraphDB and mark them as applied
+     * Uses project-level locking to prevent race conditions
      */
     public ApplyDraftsResult applyDrafts(String projectId) {
         log.info("[DRAFT] Applying drafts for project {}", projectId);
         
+        ReentrantLock lock = getProjectLock(projectId);
+        
+        // Try to acquire lock with timeout to avoid deadlocks
+        boolean lockAcquired = false;
+        try {
+            lockAcquired = lock.tryLock(30, java.util.concurrent.TimeUnit.SECONDS);
+            if (!lockAcquired) {
+                log.warn("[DRAFT] Could not acquire lock for project {} - another operation in progress", projectId);
+                return new ApplyDraftsResult(false, 0, "Another save operation is in progress. Please try again.");
+            }
+            
+            return applyDraftsInternal(projectId);
+            
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("[DRAFT] Interrupted while waiting for lock on project {}", projectId);
+            return new ApplyDraftsResult(false, 0, "Operation interrupted");
+        } finally {
+            if (lockAcquired) {
+                lock.unlock();
+            }
+        }
+    }
+    
+    /**
+     * Internal method to apply drafts (called within lock)
+     */
+    private ApplyDraftsResult applyDraftsInternal(String projectId) {
         List<DraftChange> unappliedDrafts = getUnappliedDrafts(projectId);
         
         if (unappliedDrafts.isEmpty()) {
@@ -128,6 +173,17 @@ public class DraftTrackingService {
             
             // Apply all mutations to GraphDB
             mutationService.apply(projectId, operations);
+
+            // Broadcast each applied draft to collaborative clients
+            unappliedDrafts.forEach(draft -> {
+                MutationOp op = draftToMutationOp(draft);
+                collaborativeEditService.broadcastMutation(
+                    projectId,
+                    op,
+                    draft.getUserId(),
+                    draft.getUsername()
+                );
+            });
             
             // Record changes to change tracking for Recent Activity
             recordDraftsAsChanges(projectId, unappliedDrafts);

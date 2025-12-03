@@ -54,9 +54,10 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ isOpen, onClose, projectId, u
       }
     } catch (err: any) {
       console.error('[ShareDialog] Failed to fetch share data:', err);
-      // If share doesn't exist (404), create it
-      if (err?.status === 404 || err?.message?.includes('not found')) {
-        console.log('[ShareDialog] Share not found, creating new one');
+      // If share doesn't exist (404, 500, or any error), create it
+      // Backend may return 500 if share record doesn't exist
+      if (err?.status === 404 || err?.status === 500 || err?.message?.includes('not found')) {
+        console.log('[ShareDialog] Share not found or error occurred, creating new one');
         await createShare();
       } else {
         setError('Failed to load share data: ' + (err?.message || 'Unknown error'));
@@ -84,7 +85,10 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ isOpen, onClose, projectId, u
       }
     } catch (err: any) {
       console.error('[ShareDialog] Failed to create share:', err);
-      setError('Failed to create share link: ' + (err?.message || 'Unknown error'));
+      const errorMsg = err?.response?.status === 500 
+        ? 'Server error: Please ensure backend services are running'
+        : (err?.message || 'Unknown error');
+      setError('Failed to create share link: ' + errorMsg);
     }
   };
 

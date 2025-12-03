@@ -469,7 +469,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
       
       {/* Tree/List View */}
       <div className="flex-1 overflow-y-auto p-1">
-        {filteredData.length > 0 ? filteredData.map(node => renderItem(node)) : 
+        {filteredData && filteredData.length > 0 ? filteredData.map(node => renderItem(node)) : 
           (searchQuery ? (
              <div className="p-4 text-center text-gray-400">No items found for "{searchQuery}".</div>
           ) : (entitiesTab === 'Individuals' && !searchQuery) ? (

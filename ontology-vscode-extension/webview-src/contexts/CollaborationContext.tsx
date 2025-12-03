@@ -66,10 +66,24 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
             switch (message.type) {
                 case 'collaborationStatus':
                     console.log('[CollaborationContext] ✅ Updating connection status to:', message.connected);
-                    setState(prev => ({
-                        ...prev,
-                        connected: message.connected,
-                    }));
+                    setState(prev => {
+                        const wasDisconnected = !prev.connected;
+                        const isNowConnected = message.connected;
+                        
+                        // If reconnecting after a disconnection, dispatch event to refresh data
+                        if (wasDisconnected && isNowConnected) {
+                            console.log('[CollaborationContext] 🔄 Reconnected! Dispatching refresh event...');
+                            const reconnectEvent = new CustomEvent('collaborationReconnected', {
+                                detail: { timestamp: Date.now() }
+                            });
+                            window.dispatchEvent(reconnectEvent);
+                        }
+                        
+                        return {
+                            ...prev,
+                            connected: message.connected,
+                        };
+                    });
                     break;
 
                 case 'presenceUpdate':
@@ -176,6 +190,22 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
             ANNOTATION_DELETED: 'deleted an annotation',
             SUBCLASS_ADDED: 'added a subclass relationship',
             SUBCLASS_REMOVED: 'removed a subclass relationship',
+            INDIVIDUAL_ADDED: 'added an individual',
+            INDIVIDUAL_MODIFIED: 'modified an individual',
+            INDIVIDUAL_DELETED: 'deleted an individual',
+            // New types for axioms
+            DISJOINT_ADDED: 'made classes disjoint',
+            DISJOINT_REMOVED: 'removed disjoint axiom',
+            EQUIVALENT_ADDED: 'added equivalent class',
+            EQUIVALENT_REMOVED: 'removed equivalent class',
+            // SPARQL and revert notifications
+            SPARQL_UPDATE: 'executed a SPARQL update',
+            CHANGE_REVERTED: 'reverted a change',
+            PROJECT_SAVED: 'saved the project',
+            // SWRL rule notifications
+            SWRL_RULE_ADDED: 'added a SWRL rule',
+            SWRL_RULE_MODIFIED: 'modified a SWRL rule',
+            SWRL_RULE_DELETED: 'deleted a SWRL rule',
         };
         return actionMap[operationType] || 'made a change';
     };

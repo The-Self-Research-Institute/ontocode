@@ -28,7 +28,7 @@ import self.research.ontology.owlEditor.service.collaboration.CollaborativeEditS
  */
 @Slf4j
 @Controller
-@CrossOrigin(origins = "*", allowedHeaders = "*", methods = {})
+@CrossOrigin(originPatterns = "*", allowedHeaders = "*", allowCredentials = "true", methods = {})
 @RequiredArgsConstructor
 public class CollaborativeEditController {
 

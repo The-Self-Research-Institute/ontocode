@@ -34,7 +34,7 @@ import java.util.Map;
 @Slf4j
 @RestController
 @RequestMapping("/api/collab-graph")
-@CrossOrigin(origins = "*")
+@CrossOrigin(originPatterns = "*")
 @RequiredArgsConstructor
 public class GraphViewController {
 

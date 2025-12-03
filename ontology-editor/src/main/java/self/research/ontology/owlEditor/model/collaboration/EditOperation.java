@@ -116,6 +116,14 @@ public class EditOperation {
         // Axiom operations
         AXIOM_ADDED,
         AXIOM_REMOVED,
+        DISJOINT_ADDED,
+        DISJOINT_REMOVED,
+        EQUIVALENT_ADDED,
+        EQUIVALENT_REMOVED,
+        
+        // SPARQL and special operations
+        SPARQL_UPDATE,
+        CHANGE_REVERTED,
         
         // Bulk operations
         BULK_IMPORT,

@@ -40,6 +40,13 @@ export const ontologyMutationService = {
     // Use the draft parameter if explicitly provided, otherwise use the inverse of realTimeSyncEnabled
     const useDraft = draft !== undefined ? draft : !realTimeSyncEnabled;
     
+    console.log(`[MutationService] 🔄 Applying mutations to ${projectId}`, {
+      opsCount: ops.length,
+      draft: useDraft,
+      realTimeSyncEnabled,
+      ops: ops.map(o => o.type)
+    });
+    
     await apiClient.post(`/api/ontology/mutations/${projectId}?draft=${useDraft}`, { 
       ops,
       userId: userId || 'anonymous',

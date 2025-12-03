@@ -175,6 +175,8 @@ const TopMenuBar = ({
   onOpenDialog,
   onOpenPluginMarketplace,
   onOpenHistory,
+  syncMode,
+  onToggleSyncMode,
 }: {
   fileList: FileInfo[];
   myFiles: FileInfo[];
@@ -189,6 +191,8 @@ const TopMenuBar = ({
   onOpenDialog: () => void;
   onOpenPluginMarketplace: () => void;
   onOpenHistory: () => void;
+  syncMode: 'private' | 'public';
+  onToggleSyncMode: () => void;
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -368,6 +372,25 @@ const TopMenuBar = ({
             )}
           </div>
         ))}
+      </div>
+
+      <div className="flex items-center ml-auto mr-4 gap-2">
+        <span className={`text-xs font-medium ${syncMode === 'public' ? 'text-green-600' : 'text-gray-500'}`}>
+          {syncMode === 'public' ? 'Public (Live)' : 'Private (Draft)'}
+        </span>
+        <button
+          onClick={onToggleSyncMode}
+          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 ${
+            syncMode === 'public' ? 'bg-green-500' : 'bg-gray-300'
+          }`}
+          title={syncMode === 'public' ? "Switch to Private Draft Mode" : "Switch to Public Live Mode"}
+        >
+          <span
+            className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+              syncMode === 'public' ? 'translate-x-5' : 'translate-x-1'
+            }`}
+          />
+        </button>
       </div>
 
     </header>
@@ -712,6 +735,7 @@ const Dashboard = () => {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [draftCount, setDraftCount] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
+  const [syncMode, setSyncMode] = useState<'private' | 'public'>('private');
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Import status state - Removed (ImportProgressToast removed per user request)
@@ -802,14 +826,6 @@ const Dashboard = () => {
   );
   const hasMultipleActiveUsers = activeUsersInProject.length > 1;
   // #endregion
-
-  // Auto-close collaboration panel when only one user remains
-  useEffect(() => {
-    if (!hasMultipleActiveUsers && showCollaborationPanel) {
-      console.log('[Dashboard] 👤 Only one user active - closing collaboration panel');
-      setShowCollaborationPanel(false);
-    }
-  }, [hasMultipleActiveUsers, showCollaborationPanel]);
 
   // #region Data Fetching and Initialization
   // Plugin marketplace handlers
@@ -1254,6 +1270,7 @@ const Dashboard = () => {
         
         // Configure mutation service based on whether file is shared
         ontologyMutationService.setRealTimeSync(isShared);
+        setSyncMode(isShared ? 'public' : 'private');
         
         // Only start monitoring for shared files (real-time collaboration)
         if (isShared) {
@@ -1309,6 +1326,20 @@ const Dashboard = () => {
       setIsInitialLoading(false);
     }
   }, []); // waitForProcessingComplete doesn't depend on state/props, stable reference
+
+  // Update real-time sync status based on collaboration state
+  useEffect(() => {
+    if (!projectId) return;
+    
+    const activeUsersInProject = Array.from(collaboration.state.activeUsers.values())
+        .filter(u => u.projectId === projectId && u.userId !== user?.id);
+        
+    if (activeUsersInProject.length > 0) {
+        console.log('[Dashboard] 👥 Collaborators detected, enabling real-time sync');
+        ontologyMutationService.setRealTimeSync(true);
+        setSyncMode('public');
+    }
+  }, [projectId, collaboration.state.activeUsers, user?.id]);
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -1635,6 +1666,147 @@ const Dashboard = () => {
     };
   }, [visibleMainTabs, fetchData]);
 
+  const loadChildren = useCallback(async (nodeId: string) => {
+    if (!projectId) return;
+    try {
+      console.log(`Loading children for node: ${nodeId}`);
+      const response = await apiClient.get<any>(`/api/ontology/classes/children/${projectId}?parentIri=${encodeURIComponent(nodeId)}`);
+      console.log('Children response:', response);
+      
+      // Extract array from response - handle both direct array and wrapped responses
+      const children = Array.isArray(response) ? response : 
+                      Array.isArray(response?.data) ? response.data : 
+                      Array.isArray(response?.classes) ? response.classes : [];
+      console.log('Extracted children:', children);
+
+      const updateTree = (nodes: TreeNode[]): TreeNode[] =>
+        nodes.map((n: TreeNode) => {
+          if (n.id === nodeId) {
+            return {
+              ...n,
+              children: children.map((c: TopLevelClass) => ({
+                ...c,
+                children: c.hasChildren ? undefined : undefined, // Use undefined for consistency
+                hasChildren: c.hasChildren,
+                subClassOfAxioms: [{ id: nodeId, type: 'SubClassOf', definition: n.label }]
+              }))
+            };
+          }
+          if (n.children) {
+            return { ...n, children: updateTree(n.children) };
+          }
+          return n;
+        });
+
+      setClassHierarchy(prevHierarchy => updateTree(prevHierarchy));
+    } catch (error) {
+      console.error(`Failed to load children for ${nodeId}`, error);
+    }
+  }, [projectId]);
+
+  const updateItemInState = useCallback((updatedItem: SelectableItem) => {
+    console.log('[DEBUG] updateItemInState called for item:', updatedItem.id);
+    console.log('[CHANGE TRACKING] Entity updated:', {
+      entityId: updatedItem.id,
+      entityLabel: updatedItem.label,
+      entityType: entitiesTab,
+      modifiedBy: user?.username || 'anonymous',
+      timestamp: new Date().toISOString()
+    });
+
+    const updateRecursively = (items: SelectableItem[]): SelectableItem[] => {
+      return items.map(item => {
+        if (item.id === updatedItem.id) {
+          // Preserve children from the existing item if the new item doesn't have them populated
+          // The updatedItem from details endpoint usually doesn't have the full children tree
+          const existingChildren = (item as TreeNode).children;
+          const newChildren = (updatedItem as TreeNode).children;
+          
+          return { 
+            ...updatedItem, 
+            children: newChildren && newChildren.length > 0 ? newChildren : existingChildren 
+          };
+        }
+        const treeNode = item as TreeNode;
+        if (treeNode.children) {
+          return { ...item, children: updateRecursively(treeNode.children) };
+        }
+        return item;
+      });
+    };
+
+    // Update selected item if it matches
+    setSelectedItem(prev => {
+      if (prev?.id === updatedItem.id) {
+        console.log('[Dashboard] Updating selected item in state (ID match)');
+        return updatedItem;
+      }
+      return prev;
+    });
+
+    switch (entitiesTab) {
+      case 'Classes':
+        setClassHierarchy(prev => updateRecursively(prev) as TreeNode[]);
+        break;
+      case 'ObjectProperties':
+        setObjectProperties(prev => prev.map(p => p.id === updatedItem.id ? updatedItem as Property : p));
+        break;
+      case 'DataProperties':
+        setDataProperties(prev => prev.map(p => p.id === updatedItem.id ? updatedItem as Property : p));
+        break;
+      case 'AnnotationProperties':
+        setAnnotationProperties(prev => prev.map(p => p.id === updatedItem.id ? updatedItem as AnnotationProperty : p));
+        break;
+      case 'Individuals':
+        setIndividuals(prev => prev.map(i => i.id === updatedItem.id ? updatedItem as Individual : i));
+        break;
+      case 'Datatypes':
+        setDatatypes(prev => prev.map(d => d.id === updatedItem.id ? updatedItem as Datatype : d));
+        break;
+    }
+
+    // Mark as unsaved to enable Save button
+    setHasUnsavedChanges(true);
+  }, [entitiesTab, user]);
+
+  const refreshClassHierarchy = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const topLevelRes = await apiClient.get<any>(`/api/ontology/classes/top-level/${projectId}`);
+      
+      let classes: any[] = [];
+      if (Array.isArray(topLevelRes?.classes)) {
+        classes = topLevelRes.classes;
+      } else if (Array.isArray(topLevelRes?.data?.classes)) {
+        classes = topLevelRes.data.classes;
+      } else if (Array.isArray(topLevelRes?.data)) {
+        classes = topLevelRes.data;
+      } else if (Array.isArray(topLevelRes)) {
+        classes = topLevelRes;
+      }
+
+      const topLevelNodes: TreeNode[] = classes.map((c: TopLevelClass) => ({
+        ...c,
+        children: [],
+        hasChildren: c.hasChildren,
+        subClassOfAxioms: [{ id: 'sub1', type: 'SubClassOf', definition: 'Thing' }]
+      }));
+
+      const owlThingNode: TreeNode = {
+        id: "http://www.w3.org/2002/07/owl#Thing",
+        label: "owl:Thing",
+        children: topLevelNodes,
+        hasChildren: topLevelNodes.length > 0,
+        annotations: {}
+      };
+
+      setClassHierarchy([owlThingNode]);
+      console.log('[Dashboard] ✅ Class hierarchy refreshed via refreshClassHierarchy');
+    } catch (error) {
+      console.error('[Dashboard] Failed to refresh class hierarchy:', error);
+    }
+  }, [projectId]);
+
   // Handle remote edits from collaborative users in real-time
   useEffect(() => {
     const handleRemoteEdit = (event: Event) => {
@@ -1652,33 +1824,104 @@ const Dashboard = () => {
       // Map edit type to which data needs refreshing
       switch (edit.type) {
         case 'CLASS_ADDED':
-        case 'CLASS_MODIFIED':
+          console.log('[Dashboard] 📚 Class added, refreshing hierarchy');
+          // If we have parent info, try to refresh just that part of the tree
+          if ((edit as any).parent) {
+            const parentId = (edit as any).parent;
+            console.log(`[Dashboard] Refreshing children of parent: ${parentId}`);
+            loadChildren(parentId);
+          } else {
+            // Fallback to full refresh
+            refreshClassHierarchy();
+          }
+          break;
+
         case 'CLASS_DELETED':
+          console.log('[Dashboard] 🗑️ Class deleted, refreshing hierarchy');
+          if ((edit as any).parent) {
+            const parentId = (edit as any).parent;
+            console.log(`[Dashboard] Refreshing children of parent: ${parentId}`);
+            loadChildren(parentId);
+          } else {
+             // Fallback to full refresh
+             refreshClassHierarchy();
+          }
+          break;
+
+        case 'CLASS_MODIFIED':
         case 'CLASS_RENAMED':
-          console.log('[Dashboard] 📚 Refreshing class hierarchy due to class edit');
-          // Trigger a refresh of class hierarchy
-          apiClient.get(`/api/ontology/classes/${projectId}`)
-            .then(response => {
-              setClassHierarchy(response.data || []);
-              console.log('[Dashboard] ✅ Class hierarchy refreshed');
-            })
-            .catch(error => console.error('[Dashboard] Failed to refresh class hierarchy:', error));
+          console.log('[Dashboard] ✏️ Class modified/renamed:', edit);
+          // For modification, we can just fetch details and update state
+          // This preserves the tree structure
+          const classId = (edit as any).iri || (edit as any).id;
+          if (classId) {
+             console.log(`[Dashboard] Fetching details for modified class: ${classId}`);
+             // Add delay to ensure backend is ready
+             setTimeout(() => {
+               apiClient.get(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(classId)}`)
+                .then(response => {
+                  const newData = response.data || response;
+                  // Ensure ID is present
+                  if (!newData.id && newData.iri) {
+                    newData.id = newData.iri;
+                  }
+                  console.log('[Dashboard] Received updated class data:', newData);
+                  updateItemInState(newData);
+                  console.log('[Dashboard] ✅ Class updated in state');
+                })
+                .catch(error => console.error('[Dashboard] Failed to refresh class details:', error));
+             }, 200);
+          } else {
+             // Fallback
+             console.warn('[Dashboard] No class ID in edit event, falling back to full refresh');
+             refreshClassHierarchy();
+          }
           break;
           
         case 'ANNOTATION_ADDED':
         case 'ANNOTATION_MODIFIED':
         case 'ANNOTATION_DELETED':
-          console.log('[Dashboard] 📝 Refreshing annotation due to annotation edit');
-          // Trigger refresh of current selected item to show updated annotations
-          if (selectedItem) {
-            const entityId = selectedItem.id || selectedItem.iri;
-            apiClient.get(`/api/ontology/class/${projectId}/${encodeURIComponent(entityId)}`)
-              .then(response => {
-                setSelectedItem(response.data);
-                console.log('[Dashboard] ✅ Selected item refreshed with new annotations');
-              })
-              .catch(error => console.error('[Dashboard] Failed to refresh selected item:', error));
-          }
+          console.log('[Dashboard] 📝 Refreshing annotation due to annotation edit:', edit);
+          
+          // Add a small delay to ensure backend consistency
+          setTimeout(() => {
+            // Trigger refresh of current selected item to show updated annotations
+            if (selectedItem) {
+              const entityId = selectedItem.id || selectedItem.iri;
+              // Check if the edit is relevant to the selected item (optional optimization, but good for correctness)
+              // The edit object usually has 'subject' or 'iri'
+              const editSubject = (edit as any).subject || (edit as any).iri || (edit as any).id;
+              
+              if (editSubject && editSubject !== entityId) {
+                console.log(`[Dashboard] Edit subject (${editSubject}) does not match selected item (${entityId}), but refreshing anyway to be safe`);
+              }
+
+              console.log(`[Dashboard] Refreshing selected item: ${entityId}`);
+              
+              // Use the appropriate endpoint based on entity type to ensure we get full details (including annotations)
+              let url = `/api/ontology/class/${projectId}/${encodeURIComponent(entityId)}`;
+              if (entitiesTab === 'Classes') {
+                url = `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(entityId)}`;
+              }
+              
+              apiClient.get(url)
+                .then(response => {
+                  const newData = response.data || response;
+                  // Ensure ID is present (map IRI to ID if needed)
+                  if (!newData.id && newData.iri) {
+                    newData.id = newData.iri;
+                  }
+                  
+                  console.log('[Dashboard] Received updated entity data:', newData);
+                  // Update both selected item and the item in the state/tree
+                  updateItemInState(newData);
+                  console.log('[Dashboard] ✅ Selected item refreshed with new annotations');
+                })
+                .catch(error => console.error('[Dashboard] Failed to refresh selected item:', error));
+            } else {
+              console.log('[Dashboard] No item selected, skipping annotation refresh');
+            }
+          }, 200); // 200ms delay
           break;
           
         case 'PROPERTY_ADDED':
@@ -1706,6 +1949,37 @@ const Dashboard = () => {
             })
             .catch(error => console.error('[Dashboard] Failed to refresh individuals:', error));
           break;
+        
+        // Handle SPARQL updates - need full refresh since we don't know what changed
+        case 'SPARQL_UPDATE':
+          console.log('[Dashboard] 📊 SPARQL update detected, refreshing all data');
+          showNotification(`${(edit as any).username || 'Someone'} executed a SPARQL update. Refreshing...`, 'info');
+          // Full refresh since SPARQL can change anything
+          fetchData(projectId, false);
+          break;
+        
+        // Handle change reverts - need full refresh
+        case 'CHANGE_REVERTED':
+          console.log('[Dashboard] ⏪ Change reverted, refreshing all data');
+          showNotification(`${(edit as any).username || 'Someone'} reverted a change. Refreshing...`, 'info');
+          // Full refresh to get the reverted state
+          fetchData(projectId, false);
+          break;
+        
+        // Handle project saved by another user
+        case 'PROJECT_SAVED':
+          console.log('[Dashboard] 💾 Project saved by another user');
+          showNotification(`${(edit as any).username || 'Someone'} saved the project with ${(edit as any).appliedChanges || 0} changes`, 'info');
+          // Refresh to get the latest saved state
+          fetchData(projectId, false);
+          break;
+        
+        // Handle disjoint axiom changes
+        case 'DISJOINT_ADDED':
+        case 'DISJOINT_REMOVED':
+          console.log('[Dashboard] 🔗 Disjoint axiom changed, refreshing class hierarchy');
+          refreshClassHierarchy();
+          break;
           
         default:
           console.log('[Dashboard] 🔄 Generic remote edit, refreshing metadata');
@@ -1717,6 +1991,12 @@ const Dashboard = () => {
             })
             .catch(error => console.error('[Dashboard] Failed to refresh metadata:', error));
       }
+
+      // Refresh collaboration panel changes list to show the new edit immediately
+      if (collaborationPanelRef.current) {
+        console.log('[Dashboard] 🔄 Refreshing collaboration panel changes');
+        collaborationPanelRef.current.refreshChanges();
+      }
     };
     
     // Listen for remoteEditReceived events
@@ -1727,7 +2007,27 @@ const Dashboard = () => {
       window.removeEventListener('remoteEditReceived', handleRemoteEdit as EventListener);
       console.log('[Dashboard] 🎧 Unregistered listener for remote edits');
     };
-  }, [projectId, selectedItem]);
+  }, [projectId, selectedItem, entitiesTab, updateItemInState, refreshClassHierarchy, loadChildren, fetchData, showNotification]);
+
+  // Handle reconnection after WebSocket disconnect - refresh data to sync
+  useEffect(() => {
+    const handleReconnection = (event: Event) => {
+      console.log('[Dashboard] 🔄 Collaboration reconnected, refreshing data...');
+      if (projectId) {
+        showNotification('Reconnected! Refreshing data...', 'info');
+        // Give server a moment to be ready
+        setTimeout(() => {
+          fetchData(projectId, false);
+        }, 500);
+      }
+    };
+    
+    window.addEventListener('collaborationReconnected', handleReconnection as EventListener);
+    
+    return () => {
+      window.removeEventListener('collaborationReconnected', handleReconnection as EventListener);
+    };
+  }, [projectId, fetchData, showNotification]);
 
   useEffect(() => {
     // Initialize notification service to show toasts via collaboration context
@@ -1842,43 +2142,7 @@ const Dashboard = () => {
   // #endregion
 
   // #region Event Handlers
-  const loadChildren = useCallback(async (nodeId: string) => {
-    if (!projectId) return;
-    try {
-      console.log(`Loading children for node: ${nodeId}`);
-      const response = await apiClient.get<any>(`/api/ontology/classes/children/${projectId}?parentIri=${encodeURIComponent(nodeId)}`);
-      console.log('Children response:', response);
-      
-      // Extract array from response - handle both direct array and wrapped responses
-      const children = Array.isArray(response) ? response : 
-                      Array.isArray(response?.data) ? response.data : 
-                      Array.isArray(response?.classes) ? response.classes : [];
-      console.log('Extracted children:', children);
 
-      const updateTree = (nodes: TreeNode[]): TreeNode[] =>
-        nodes.map((n: TreeNode) => {
-          if (n.id === nodeId) {
-            return {
-              ...n,
-              children: children.map((c: TopLevelClass) => ({
-                ...c,
-                children: c.hasChildren ? undefined : undefined, // Use undefined for consistency
-                hasChildren: c.hasChildren,
-                subClassOfAxioms: [{ id: nodeId, type: 'SubClassOf', definition: n.label }]
-              }))
-            };
-          }
-          if (n.children) {
-            return { ...n, children: updateTree(n.children) };
-          }
-          return n;
-        });
-
-      setClassHierarchy(prevHierarchy => updateTree(prevHierarchy));
-    } catch (error) {
-      console.error(`Failed to load children for ${nodeId}`, error);
-    }
-  }, [projectId]);
 
   const toggleNode = useCallback(async (nodeId: string) => {
     console.log('[DEBUG] toggleNode called for nodeId:', nodeId);
@@ -1916,54 +2180,7 @@ const Dashboard = () => {
     };
   }, [toggleNode]);
 
-  const updateItemInState = useCallback((updatedItem: SelectableItem) => {
-    console.log('[DEBUG] updateItemInState called for item:', updatedItem.id);
-    console.log('[CHANGE TRACKING] Entity updated:', {
-      entityId: updatedItem.id,
-      entityLabel: updatedItem.label,
-      entityType: entitiesTab,
-      modifiedBy: user?.username || 'anonymous',
-      timestamp: new Date().toISOString()
-    });
 
-    const updateRecursively = (items: SelectableItem[]): SelectableItem[] => {
-      return items.map(item => {
-        if (item.id === updatedItem.id) return updatedItem;
-        const treeNode = item as TreeNode;
-        if (treeNode.children) {
-          return { ...item, children: updateRecursively(treeNode.children) };
-        }
-        return item;
-      });
-    };
-
-    // Update selected item if it matches
-    setSelectedItem(prev => prev?.id === updatedItem.id ? updatedItem : prev);
-
-    switch (entitiesTab) {
-      case 'Classes':
-        setClassHierarchy(prev => updateRecursively(prev) as TreeNode[]);
-        break;
-      case 'ObjectProperties':
-        setObjectProperties(prev => prev.map(p => p.id === updatedItem.id ? updatedItem as Property : p));
-        break;
-      case 'DataProperties':
-        setDataProperties(prev => prev.map(p => p.id === updatedItem.id ? updatedItem as Property : p));
-        break;
-      case 'AnnotationProperties':
-        setAnnotationProperties(prev => prev.map(p => p.id === updatedItem.id ? updatedItem as AnnotationProperty : p));
-        break;
-      case 'Individuals':
-        setIndividuals(prev => prev.map(i => i.id === updatedItem.id ? updatedItem as Individual : i));
-        break;
-      case 'Datatypes':
-        setDatatypes(prev => prev.map(d => d.id === updatedItem.id ? updatedItem as Datatype : d));
-        break;
-    }
-
-    // Mark as unsaved to enable Save button
-    setHasUnsavedChanges(true);
-  }, [entitiesTab, user]);
 
   // Update draft count
   const updateDraftCount = useCallback(async () => {
@@ -3583,6 +3800,17 @@ const Dashboard = () => {
           onOpenDialog={() => setShowOpenDialog(true)}
           onOpenPluginMarketplace={() => setShowPluginMarketplace(true)}
           onOpenHistory={() => setIsHistoryPanelOpen(true)}
+          syncMode={syncMode}
+          onToggleSyncMode={() => {
+            const newMode = syncMode === 'public' ? 'private' : 'public';
+            setSyncMode(newMode);
+            ontologyMutationService.setRealTimeSync(newMode === 'public');
+            if (newMode === 'public') {
+              notificationService.success('Live Mode Enabled', 'Changes will be broadcast immediately.');
+            } else {
+              notificationService.info('Draft Mode Enabled', 'Changes will be saved locally until you save.');
+            }
+          }}
         />
 
         <div className="bg-white border-b border-gray-200 flex-shrink-0">
@@ -3603,18 +3831,28 @@ const Dashboard = () => {
               })}
             </div>
             <div className="flex items-center gap-4">
-              {isCurrentFileShared && hasMultipleActiveUsers && (
+              {projectId && (
                 <button
                   onClick={() => setShowCollaborationPanel(!showCollaborationPanel)}
                   className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors ${
                     showCollaborationPanel
                       ? 'bg-blue-600 text-white hover:bg-blue-700'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      : isCurrentFileShared 
+                        ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                   }`}
-                  title="Toggle Collaboration Panel"
+                  title={`Toggle Collaboration Panel${hasMultipleActiveUsers ? ` (${activeUsersInProject.length} users)` : isCurrentFileShared ? ' (Shared file)' : ' (Enable sharing to collaborate)'}`}
                 >
                   <Users size={14} />
                   <span>Collaboration</span>
+                  {hasMultipleActiveUsers && (
+                    <span className="bg-blue-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-semibold">
+                      {activeUsersInProject.length}
+                    </span>
+                  )}
+                  {isCurrentFileShared && !hasMultipleActiveUsers && (
+                    <span className="bg-green-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">✓</span>
+                  )}
                 </button>
               )}
               {projectId && (
