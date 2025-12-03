@@ -133,7 +133,13 @@ public class HistorySyncService {
      * Get a specific history change by ID.
      */
     public HistoryChange getHistoryChange(String changeId) {
-        return historyChangeRepository.findById(changeId).orElse(null);
+        // Try to find by MongoDB id first, then by editId
+        HistoryChange change = historyChangeRepository.findById(changeId).orElse(null);
+        if (change == null) {
+            // Try finding by editId (GraphDB ID)
+            change = historyChangeRepository.findByEditId(changeId).orElse(null);
+        }
+        return change;
     }
 
     /**
@@ -176,8 +182,14 @@ public class HistorySyncService {
      * Add a comment to a change.
      */
     public boolean addComment(String changeId, String userId, String username, String text) {
+        // Try to find by MongoDB id first, then by editId
         HistoryChange change = historyChangeRepository.findById(changeId).orElse(null);
         if (change == null) {
+            // Try finding by editId (GraphDB ID)
+            change = historyChangeRepository.findByEditId(changeId).orElse(null);
+        }
+        if (change == null) {
+            log.warn("Change not found for comment: {}", changeId);
             return false;
         }
         

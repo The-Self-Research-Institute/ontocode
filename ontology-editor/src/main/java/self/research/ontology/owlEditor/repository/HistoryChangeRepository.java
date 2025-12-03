@@ -16,6 +16,8 @@ public interface HistoryChangeRepository extends MongoRepository<HistoryChange, 
     
     Optional<HistoryChange> findByProjectIdAndEditId(String projectId, String editId);
     
+    Optional<HistoryChange> findByEditId(String editId);
+    
     boolean existsByProjectIdAndEditId(String projectId, String editId);
     
     List<HistoryChange> findByProjectIdAndHasConflictOrderByTimestampDesc(String projectId, boolean hasConflict);

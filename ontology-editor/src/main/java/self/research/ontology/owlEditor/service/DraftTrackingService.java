@@ -174,6 +174,13 @@ public class DraftTrackingService {
                 .map(this::draftToMutationOp)
                 .collect(Collectors.toList());
             
+            // Log each operation for debugging
+            log.info("[DRAFT] Converting {} drafts to mutation operations:", unappliedDrafts.size());
+            for (MutationOp op : operations) {
+                log.info("[DRAFT]   Operation: type={}, iri={}, label={}, parent={}", 
+                    op.type(), op.iri(), op.label(), op.parent());
+            }
+            
             // Apply all mutations to GraphDB
             mutationService.apply(projectId, operations);
 
