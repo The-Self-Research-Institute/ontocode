@@ -86,6 +86,28 @@ const DEFAULT_PLUGINS = [
     totalRatings: 0,
     createdAt: new Date(),
     updatedAt: new Date()
+  },
+  {
+    pluginId: 'change-assistant-plugin',
+    name: 'Ontology Change Assistant',
+    shortDescription: 'Track and manage collaborative ontology edits with change history and conflict detection',
+    description: 'Comprehensive change tracking and collaboration tool for ontology development. Features real-time change monitoring, conflict detection, approval workflows, diff visualization, team comments, version control integration, change history timeline, and rollback support. Track changes across classes, properties, individuals, axioms, annotations, and imports with detailed analytics and insights.',
+    latestVersion: '1.0.0',
+    category: 'Collaboration',
+    author: 'OntoCode Team',
+    authorEmail: 'admin@ontocode.com',
+    keywords: ['change-tracking', 'collaboration', 'ontology', 'version-control', 'history', 'owl', 'diff', 'conflict-detection', 'review', 'approval'],
+    icon: null,
+    screenshots: [],
+    verified: true,
+    active: true,
+    featured: true,
+    totalDownloads: 0,
+    totalInstalls: 0,
+    averageRating: 0.0,
+    totalRatings: 0,
+    createdAt: new Date(),
+    updatedAt: new Date()
   }
 ];
 

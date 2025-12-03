@@ -10,6 +10,8 @@ import org.eclipse.rdf4j.query.BindingSet;
 import org.eclipse.rdf4j.query.TupleQuery;
 import org.eclipse.rdf4j.query.TupleQueryResult;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -27,6 +29,10 @@ import java.util.*;
 public class GraphDBHistoryService {
 
     private final GraphDBDatasetService graphDBDatasetService;
+    
+    @Autowired
+    @Lazy
+    private HistorySyncService historySyncService;
     private static final ValueFactory vf = SimpleValueFactory.getInstance();
     
     // History vocabulary
@@ -52,6 +58,7 @@ public class GraphDBHistoryService {
         IRI historyGraph = vf.createIRI(HISTORY_NS + "graph/" + projectId);
         String editId = UUID.randomUUID().toString();
         IRI editIRI = vf.createIRI(HISTORY_NS + "edit/" + editId);
+        long timestamp = System.currentTimeMillis();
         
         try (RepositoryConnection conn = graphDBDatasetService.getRepository().getConnection()) {
             conn.begin();
@@ -60,7 +67,7 @@ public class GraphDBHistoryService {
             conn.add(editIRI, org.eclipse.rdf4j.model.vocabulary.RDF.TYPE, EDIT_OPERATION, historyGraph);
             conn.add(editIRI, HAS_USER_ID, vf.createLiteral(userId), historyGraph);
             conn.add(editIRI, HAS_USERNAME, vf.createLiteral(username), historyGraph);
-            conn.add(editIRI, HAS_TIMESTAMP, vf.createLiteral(System.currentTimeMillis()), historyGraph);
+            conn.add(editIRI, HAS_TIMESTAMP, vf.createLiteral(timestamp), historyGraph);
             conn.add(editIRI, HAS_OPERATION_TYPE, vf.createLiteral(operationType), historyGraph);
             
             if (entityIRI != null) {
@@ -81,9 +88,48 @@ public class GraphDBHistoryService {
             
             conn.commit();
             log.debug("[GraphDBHistory] Recorded edit: {} by {} on {}", operationType, username, entityIRI);
+            
+            // Sync to MongoDB for collaboration features
+            try {
+                Map<String, Object> changeData = new HashMap<>();
+                changeData.put("userId", userId);
+                changeData.put("username", username);
+                changeData.put("operationType", operationType);
+                changeData.put("timestamp", timestamp);
+                
+                if (entityIRI != null) changeData.put("entityIRI", entityIRI);
+                if (entityLabel != null) changeData.put("entityLabel", entityLabel);
+                if (oldValue != null) changeData.put("oldValue", oldValue);
+                if (newValue != null) changeData.put("newValue", newValue);
+                if (description != null) changeData.put("description", description);
+                
+                // Determine entity type from operation
+                String entityType = determineEntityType(operationType);
+                changeData.put("entityType", entityType);
+                
+                historySyncService.syncChange(projectId, editId, changeData);
+            } catch (Exception e) {
+                log.error("[GraphDBHistory] Failed to sync change to MongoDB", e);
+            }
         } catch (Exception e) {
             log.error("[GraphDBHistory] Failed to record edit history", e);
         }
+    }
+    
+    /**
+     * Determine entity type from operation type.
+     */
+    private String determineEntityType(String operationType) {
+        if (operationType == null) return "OTHER";
+        
+        String upper = operationType.toUpperCase();
+        if (upper.contains("CLASS")) return "CLASS";
+        if (upper.contains("PROPERTY")) return "PROPERTY";
+        if (upper.contains("INDIVIDUAL")) return "INDIVIDUAL";
+        if (upper.contains("ANNOTATION")) return "ANNOTATION";
+        if (upper.contains("AXIOM")) return "AXIOM";
+        
+        return "OTHER";
     }
 
     /**

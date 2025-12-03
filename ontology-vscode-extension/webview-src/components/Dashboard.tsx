@@ -842,7 +842,8 @@ const Dashboard = () => {
       const pluginToTabMap: Record<string, string> = {
         'swrl-editor-plugin': 'SWRL',
         'graph-view-plugin': 'Graph',
-        'fuzzy-ontology-plugin': 'Fuzzy'
+        'fuzzy-ontology-plugin': 'Fuzzy',
+        'change-assistant-plugin': 'Changes'
       };
       
       const tabId = pluginToTabMap[pluginId];
@@ -887,7 +888,8 @@ const Dashboard = () => {
       const pluginToTabMap: Record<string, string> = {
         'swrl-editor-plugin': 'SWRL',
         'graph-view-plugin': 'Graph',
-        'fuzzy-ontology-plugin': 'Fuzzy'
+        'fuzzy-ontology-plugin': 'Fuzzy',
+        'change-assistant-plugin': 'Changes'
       };
       
       const tabId = pluginToTabMap[pluginId];
@@ -1665,7 +1667,7 @@ const Dashboard = () => {
       window.removeEventListener("message", handleMessage);
     };
   }, [visibleMainTabs, fetchData]);
-
+  
   const loadChildren = useCallback(async (nodeId: string) => {
     if (!projectId) return;
     try {
@@ -2103,7 +2105,8 @@ const Dashboard = () => {
         const pluginToTabMap: Record<string, string> = {
           'swrl-editor-plugin': 'SWRL',
           'graph-view-plugin': 'Graph',
-          'fuzzy-ontology-plugin': 'Fuzzy'
+          'fuzzy-ontology-plugin': 'Fuzzy',
+          'change-assistant-plugin': 'Changes'
         };
         
         const tabsToShow = pluginIds
@@ -3381,6 +3384,15 @@ const Dashboard = () => {
         }
         return <div className="p-4">Install Fuzzy Ontology Plugin from the Marketplace.</div>;
       }
+      case 'Changes': {
+        const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === 'change-assistant-plugin');
+        
+        if (plugin?.component && projectId) {
+          const PluginComponent = plugin.component;
+          return <PluginComponent projectId={projectId} />;
+        }
+        return <div className="p-4">Install Change Assistant Plugin from the Marketplace.</div>;
+      }
       case 'ActiveOntology':
         return (
           <div className="flex h-full bg-gray-100">
@@ -3689,6 +3701,7 @@ const Dashboard = () => {
     SPARQL: { label: "SPARQL Query", icon: DatabaseZap },
     SWRL: { label: "SWRL Rules", icon: Code },
     Fuzzy: { label: "Fuzzy Ontology", icon: Sparkles },
+    Changes: { label: "Change Assistant", icon: GitBranch },
   };
 
   const entitiesTabs = [
