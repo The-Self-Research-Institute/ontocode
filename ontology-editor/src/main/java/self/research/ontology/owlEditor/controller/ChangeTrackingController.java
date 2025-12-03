@@ -167,20 +167,27 @@ public class ChangeTrackingController {
     }
 
     /**
-     * Get recent changes
+     * Get recent changes - Uses MongoDB as the single source of truth
      * GET /api/ontology/{projectId}/changes/recent
      */
     @GetMapping("/{projectId}/changes/recent")
     public ResponseEntity<Map<String, Object>> getRecentChanges(
             @PathVariable String projectId,
-            @RequestParam(defaultValue = "20") int count
+            @RequestParam(defaultValue = "100") int count
     ) {
         try {
-            // Use GraphDB history service for real-time changes
-            List<Map<String, Object>> changes = graphDBHistoryService.getHistory(projectId, count);
+            // Use MongoDB as the single source for change tracking
+            List<HistoryChange> historyChanges = historySyncService.getHistoryChanges(projectId);
             
-            // Trigger sync to MongoDB for any new changes
-            historySyncService.syncRecentChanges(projectId, count);
+            // Limit results
+            if (historyChanges.size() > count) {
+                historyChanges = historyChanges.subList(0, count);
+            }
+            
+            // Convert to response format
+            List<Map<String, Object>> changes = historyChanges.stream()
+                .map(this::historyChangeToMap)
+                .collect(Collectors.toList());
             
             return ResponseEntity.ok(Map.of(
                 "success", true,
@@ -194,6 +201,35 @@ public class ChangeTrackingController {
                 "error", e.getMessage()
             ));
         }
+    }
+    
+    /**
+     * Convert HistoryChange to Map for API response
+     */
+    private Map<String, Object> historyChangeToMap(HistoryChange change) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("id", change.getId());
+        map.put("editId", change.getEditId());
+        map.put("timestamp", change.getTimestamp() != null ? change.getTimestamp().toString() : null);
+        map.put("userId", change.getUserId());
+        map.put("username", change.getUsername());
+        map.put("changeType", change.getOperationType());
+        map.put("operationType", change.getOperationType());
+        map.put("entityType", change.getEntityType());
+        map.put("changeCategory", change.getEntityType());
+        map.put("entityIRI", change.getEntityIRI());
+        map.put("entityLabel", change.getEntityLabel());
+        map.put("oldValue", change.getOldValue());
+        map.put("newValue", change.getNewValue());
+        map.put("description", change.getDescription());
+        map.put("status", change.getStatus());
+        map.put("hasConflict", change.isHasConflict());
+        
+        // Include comments count
+        int commentCount = change.getComments() != null ? change.getComments().size() : 0;
+        map.put("commentCount", commentCount);
+        
+        return map;
     }
     
     /**
@@ -431,93 +467,107 @@ public class ChangeTrackingController {
         try {
             log.info("[ROLLBACK] Starting rollback for change {} in project {}", changeId, projectId);
             
-            // Try to mark the change as reverted in MongoDB (may fail if change is from GraphDB only)
-            boolean mongoSuccess = changeTrackingService.revertChange(changeId, "system", "System");
+            // First, try to get the change details from MongoDB
+            HistoryChange historyChange = historySyncService.getHistoryChange(changeId);
             
-            if (!mongoSuccess) {
-                log.info("[ROLLBACK] Change not found in MongoDB, will proceed with GraphDB rollback only");
+            // Extract values - prefer MongoDB data, fallback to request body
+            String action = null;
+            String entityIRI = null;
+            String entityLabel = null;
+            String oldValue = null;
+            String newValue = null;
+            String changeType = null;
+            
+            if (historyChange != null) {
+                log.info("[ROLLBACK] Found change in MongoDB: {}", historyChange.getId());
+                action = mapOperationToAction(historyChange.getOperationType());
+                entityIRI = historyChange.getEntityIRI();
+                entityLabel = historyChange.getEntityLabel();
+                oldValue = historyChange.getOldValue();
+                newValue = historyChange.getNewValue();
+                changeType = historyChange.getEntityType();
+                log.info("[ROLLBACK] MongoDB data - action: {}, entityIRI: {}, changeType: {}", action, entityIRI, changeType);
             }
             
-            // If request body contains mutation details, apply inverse mutation to GraphDB
-            if (request != null && request.containsKey("action") && request.containsKey("entityIRI")) {
-                String action = (String) request.get("action");
-                String entityIRI = (String) request.get("entityIRI");
-                String entityLabel = (String) request.get("entityLabel");
-                String oldValue = (String) request.get("oldValue");
-                String newValue = (String) request.get("newValue");
-                String changeType = (String) request.get("changeType");
+            // Override with request body if provided (allows frontend to provide additional context)
+            if (request != null) {
+                if (request.get("action") != null) action = (String) request.get("action");
+                if (request.get("entityIRI") != null) entityIRI = (String) request.get("entityIRI");
+                if (request.get("entityLabel") != null) entityLabel = (String) request.get("entityLabel");
+                if (request.get("oldValue") != null) oldValue = (String) request.get("oldValue");
+                if (request.get("newValue") != null) newValue = (String) request.get("newValue");
+                if (request.get("changeType") != null) changeType = (String) request.get("changeType");
+            }
+            
+            log.info("[ROLLBACK] Final values - action: {}, entityIRI: {}, changeType: {}, entityLabel: {}", 
+                action, entityIRI, changeType, entityLabel);
+            log.info("[ROLLBACK] oldValue: '{}', newValue: '{}'", oldValue, newValue);
+            
+            // Validate entityIRI is not null, empty, or literal "null"
+            if (entityIRI == null || entityIRI.trim().isEmpty() || "null".equalsIgnoreCase(entityIRI.trim())) {
+                log.error("[ROLLBACK] entityIRI is null, empty, or 'null' string: '{}'", entityIRI);
+                return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "error", "Entity IRI is required for rollback (received: " + entityIRI + ")"
+                ));
+            }
+            
+            if (action == null || action.trim().isEmpty()) {
+                log.error("[ROLLBACK] action is null or empty");
+                return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "error", "Action is required for rollback"
+                ));
+            }
+            
+            try {
+                // Create inverse mutation
+                List<self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp> inverseMutations = 
+                    createInverseMutation(action, changeType, entityIRI, entityLabel, oldValue, newValue);
                 
-                log.info("[ROLLBACK] Request details - action: {}, entityIRI: {}, changeType: {}, entityLabel: {}", 
-                    action, entityIRI, changeType, entityLabel);
-                log.info("[ROLLBACK] oldValue: {}, newValue: {}", oldValue, newValue);
-                
-                // Validate entityIRI is not null, empty, or literal "null"
-                if (entityIRI == null || entityIRI.trim().isEmpty() || "null".equalsIgnoreCase(entityIRI.trim())) {
-                    log.error("[ROLLBACK] entityIRI is null, empty, or 'null' string: '{}'", entityIRI);
-                    return ResponseEntity.badRequest().body(Map.of(
-                        "success", false,
-                        "error", "Entity IRI is required for rollback (received: " + entityIRI + ")"
-                    ));
-                }
-                
-                try {
-                    // Create inverse mutation
-                    List<self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp> inverseMutations = 
-                        createInverseMutation(action, changeType, entityIRI, entityLabel, oldValue, newValue);
-                    
-                    boolean mutationApplied = false;
-                    if (!inverseMutations.isEmpty()) {
-                        log.info("[ROLLBACK] Applying {} inverse mutations to GraphDB", inverseMutations.size());
-                        ontologyMutationService.apply(projectId, inverseMutations);
-                        mutationApplied = true;
-                    } else {
-                        log.info("[ROLLBACK] No inverse mutations created (unsupported change type), will only record in history");
-                    }
-                    
-                    // Always record the rollback in GraphDB history
-                    graphDBHistoryService.recordEdit(
-                        projectId,
-                        "system",
-                        "System",
-                        "ROLLBACK_" + action.toUpperCase(),
-                        entityIRI,
-                        entityLabel,
-                        newValue, // What we're rolling back FROM
-                        oldValue, // What we're rolling back TO
-                        "Rolled back: " + changeType + " on " + entityLabel
-                    );
-                    
-                    log.info("[ROLLBACK] Successfully rolled back change {}", changeId);
-                    return ResponseEntity.ok(Map.of(
-                        "success", true,
-                        "message", mutationApplied ? "Change rolled back successfully" : "Rollback recorded (no mutation applied for this change type)",
-                        "changeId", changeId,
-                        "mutationApplied", mutationApplied,
-                        "mongoUpdated", mongoSuccess
-                    ));
-                } catch (Exception e) {
-                    log.error("[ROLLBACK] Failed to apply inverse mutation", e);
-                    return ResponseEntity.status(500).body(Map.of(
-                        "success", false,
-                        "error", "Failed to apply inverse mutation: " + e.getMessage(),
-                        "changeId", changeId
-                    ));
-                }
-            } else {
-                // No mutation details provided - only MongoDB was updated
-                if (mongoSuccess) {
-                    return ResponseEntity.ok(Map.of(
-                        "success", true,
-                        "message", "Change marked as reverted in MongoDB (no GraphDB mutation applied)",
-                        "changeId", changeId,
-                        "mutationApplied", false
-                    ));
+                boolean mutationApplied = false;
+                if (!inverseMutations.isEmpty()) {
+                    log.info("[ROLLBACK] Applying {} inverse mutations to GraphDB", inverseMutations.size());
+                    ontologyMutationService.apply(projectId, inverseMutations);
+                    mutationApplied = true;
                 } else {
-                    return ResponseEntity.badRequest().body(Map.of(
-                        "success", false,
-                        "error", "Change not found and no mutation details provided for rollback"
-                    ));
+                    log.info("[ROLLBACK] No inverse mutations created (unsupported change type), will only record in history");
                 }
+                
+                // Mark as reverted in MongoDB if found
+                boolean mongoSuccess = false;
+                if (historyChange != null) {
+                    mongoSuccess = changeTrackingService.revertChange(changeId, "system", "System");
+                }
+                
+                // Always record the rollback in GraphDB history
+                graphDBHistoryService.recordEdit(
+                    projectId,
+                    "system",
+                    "System",
+                    "ROLLBACK_" + action.toUpperCase(),
+                    entityIRI,
+                    entityLabel,
+                    newValue, // What we're rolling back FROM
+                    oldValue, // What we're rolling back TO
+                    "Rolled back: " + (changeType != null ? changeType : "change") + " on " + (entityLabel != null ? entityLabel : entityIRI)
+                );
+                
+                log.info("[ROLLBACK] Successfully rolled back change {}", changeId);
+                return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", mutationApplied ? "Change rolled back successfully" : "Rollback recorded (no mutation applied for this change type)",
+                    "changeId", changeId,
+                    "mutationApplied", mutationApplied,
+                    "mongoUpdated", mongoSuccess
+                ));
+            } catch (Exception e) {
+                log.error("[ROLLBACK] Failed to apply inverse mutation", e);
+                return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "error", "Failed to apply inverse mutation: " + e.getMessage(),
+                    "changeId", changeId
+                ));
             }
             
         } catch (Exception e) {
@@ -530,6 +580,17 @@ public class ChangeTrackingController {
     }
     
     /**
+     * Map operation type to action (added, deleted, modified)
+     */
+    private String mapOperationToAction(String operationType) {
+        if (operationType == null) return "modified";
+        String lower = operationType.toLowerCase();
+        if (lower.contains("create") || lower.contains("add") || lower.contains("insert")) return "added";
+        if (lower.contains("delete") || lower.contains("remove")) return "deleted";
+        return "modified";
+    }
+    
+    /**
      * Create inverse mutation operations for rollback
      */
     private List<self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp> createInverseMutation(
@@ -538,30 +599,53 @@ public class ChangeTrackingController {
         List<self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp> mutations = new ArrayList<>();
         
         log.info("[ROLLBACK] Creating inverse mutation - action: {}, changeType: {}, entityIRI: {}", action, changeType, entityIRI);
-        log.info("[ROLLBACK] oldValue: {}, newValue: {}, entityLabel: {}", oldValue, newValue, entityLabel);
+        log.info("[ROLLBACK] oldValue: '{}', newValue: '{}', entityLabel: '{}'", oldValue, newValue, entityLabel);
         
         String actionLower = action != null ? action.toLowerCase() : "";
         String typeLower = changeType != null ? changeType.toLowerCase() : "";
+        
+        // For 'modified' actions, check if oldValue exists - if so, it's likely a label/annotation change
+        boolean hasOldAndNewValue = oldValue != null && !oldValue.isEmpty() && newValue != null && !newValue.isEmpty();
+        
+        log.info("[ROLLBACK] actionLower: '{}', typeLower: '{}', hasOldAndNewValue: {}", actionLower, typeLower, hasOldAndNewValue);
         
         // Determine the inverse operation based on action type
         switch (actionLower) {
             case "added":
                 // If something was added, we need to delete it
-                if (typeLower.contains("class")) {
+                if (typeLower.contains("class") && !typeLower.contains("annotation")) {
                     mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
                         "deleteClass", entityIRI, null, null, null, null, null, null
                     ));
-                } else if (typeLower.contains("property")) {
+                } else if (typeLower.contains("objectproperty") || typeLower.contains("object_property")) {
                     mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                        "deleteProperty", entityIRI, null, null, null, null, null, null
+                        "deleteObjectProperty", entityIRI, null, null, null, null, null, null
+                    ));
+                } else if (typeLower.contains("dataproperty") || typeLower.contains("data_property") || typeLower.contains("datatypeproperty")) {
+                    mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
+                        "deleteDataProperty", entityIRI, null, null, null, null, null, null
+                    ));
+                } else if (typeLower.contains("annotationproperty") || typeLower.contains("annotation_property")) {
+                    mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
+                        "deleteAnnotationProperty", entityIRI, null, null, null, null, null, null
+                    ));
+                } else if (typeLower.contains("property") && !typeLower.contains("annotation")) {
+                    // Generic property - assume object property
+                    mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
+                        "deleteObjectProperty", entityIRI, null, null, null, null, null, null
                     ));
                 } else if (typeLower.contains("individual")) {
                     mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
                         "deleteIndividual", entityIRI, null, null, null, null, null, null
                     ));
-                } else if (typeLower.contains("annotation")) {
-                    // Annotation rollback requires property info - skip mutation but record in history
-                    log.warn("[ROLLBACK] Annotation rollback requires property info - skipping mutation");
+                } else if (typeLower.contains("annotation") || typeLower.contains("label") || typeLower.contains("comment")) {
+                    // For annotation added, delete it - use rdfs:label as default property
+                    String annotationProp = determineAnnotationProperty(typeLower);
+                    if (newValue != null && !newValue.isEmpty()) {
+                        mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
+                            "deleteAnnotation", entityIRI, null, null, annotationProp, newValue, null, null
+                        ));
+                    }
                 } else {
                     log.warn("[ROLLBACK] Unknown type for 'added' action: {}, skipping mutation", changeType);
                 }
@@ -569,23 +653,43 @@ public class ChangeTrackingController {
                 
             case "deleted":
                 // If something was deleted, we need to add it back
-                if (typeLower.contains("class")) {
+                if (typeLower.contains("class") && !typeLower.contains("annotation")) {
                     // For deleted class, we recreate it with label - use owl:Thing as parent
                     mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
                         "createClass", entityIRI, entityLabel != null ? entityLabel : extractLabel(entityIRI), 
                         "http://www.w3.org/2002/07/owl#Thing", null, null, null, null
                     ));
-                } else if (typeLower.contains("property")) {
+                } else if (typeLower.contains("objectproperty") || typeLower.contains("object_property")) {
+                    // No parent for rollback - create as standalone property
                     mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                        "createProperty", entityIRI, entityLabel, null, null, null, null, null
+                        "createObjectProperty", entityIRI, entityLabel, null, null, null, null, null
+                    ));
+                } else if (typeLower.contains("dataproperty") || typeLower.contains("data_property") || typeLower.contains("datatypeproperty")) {
+                    mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
+                        "createDataProperty", entityIRI, entityLabel, null, null, null, null, null
+                    ));
+                } else if (typeLower.contains("annotationproperty") || typeLower.contains("annotation_property")) {
+                    mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
+                        "createAnnotationProperty", entityIRI, entityLabel, null, null, null, null, null
+                    ));
+                } else if (typeLower.contains("property") && !typeLower.contains("annotation")) {
+                    // Generic property - assume object property, no parent
+                    mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
+                        "createObjectProperty", entityIRI, entityLabel, null, null, null, null, null
                     ));
                 } else if (typeLower.contains("individual")) {
+                    // For individual, we need a class - use owl:Thing if unknown
                     mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                        "createIndividual", entityIRI, entityLabel, null, null, null, null, null
+                        "createIndividual", entityIRI, entityLabel, null, null, null, null, "http://www.w3.org/2002/07/owl#Thing"
                     ));
-                } else if (typeLower.contains("annotation")) {
-                    // Annotation rollback requires property info - skip mutation but record in history
-                    log.warn("[ROLLBACK] Annotation rollback requires property info - skipping mutation");
+                } else if (typeLower.contains("annotation") || typeLower.contains("label") || typeLower.contains("comment")) {
+                    // For annotation deleted, add it back
+                    String annotationProp = determineAnnotationProperty(typeLower);
+                    if (oldValue != null && !oldValue.isEmpty()) {
+                        mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
+                            "addAnnotation", entityIRI, null, null, annotationProp, oldValue, null, null
+                        ));
+                    }
                 } else {
                     log.warn("[ROLLBACK] Unknown type for 'deleted' action: {}, skipping mutation", changeType);
                 }
@@ -593,14 +697,35 @@ public class ChangeTrackingController {
                 
             case "modified":
                 // If something was modified, we need to change it back
-                if (typeLower.contains("label")) {
-                    // For label change, restore old label
+                // Check if this is a label/annotation change based on having old and new values
+                if (hasOldAndNewValue) {
+                    // This is likely an annotation/label change - use updateAnnotation with rdfs:label
+                    log.info("[ROLLBACK] Detected label/annotation change, applying updateAnnotation with oldValue: '{}'", oldValue);
                     mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                        "updateClassLabel", entityIRI, oldValue != null ? oldValue : entityLabel, null, null, null, null, null
+                        "updateAnnotation", entityIRI, null, null, "http://www.w3.org/2000/01/rdf-schema#label", oldValue, null, null
                     ));
+                } else if (typeLower.contains("label")) {
+                    // For label change, use updateAnnotation with rdfs:label
+                    if (oldValue != null && !oldValue.isEmpty()) {
+                        mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
+                            "updateAnnotation", entityIRI, null, null, "http://www.w3.org/2000/01/rdf-schema#label", oldValue, null, null
+                        ));
+                    }
+                } else if (typeLower.contains("comment")) {
+                    // For comment change
+                    if (oldValue != null && !oldValue.isEmpty()) {
+                        mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
+                            "updateAnnotation", entityIRI, null, null, "http://www.w3.org/2000/01/rdf-schema#comment", oldValue, null, null
+                        ));
+                    }
                 } else if (typeLower.contains("annotation")) {
-                    // Annotation rollback requires property info - skip mutation but record in history
-                    log.warn("[ROLLBACK] Annotation rollback requires property info - skipping mutation");
+                    // Generic annotation change - try with rdfs:label
+                    String annotationProp = determineAnnotationProperty(typeLower);
+                    if (oldValue != null && !oldValue.isEmpty()) {
+                        mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
+                            "updateAnnotation", entityIRI, null, null, annotationProp, oldValue, null, null
+                        ));
+                    }
                 } else {
                     log.warn("[ROLLBACK] Unknown type for 'modified' action: {}, skipping mutation", changeType);
                 }
@@ -615,12 +740,109 @@ public class ChangeTrackingController {
     }
     
     /**
+     * Determine annotation property from change type
+     */
+    private String determineAnnotationProperty(String changeType) {
+        if (changeType == null) return "http://www.w3.org/2000/01/rdf-schema#label";
+        String lower = changeType.toLowerCase();
+        if (lower.contains("comment")) return "http://www.w3.org/2000/01/rdf-schema#comment";
+        if (lower.contains("seealso")) return "http://www.w3.org/2000/01/rdf-schema#seeAlso";
+        if (lower.contains("isdefinedby")) return "http://www.w3.org/2000/01/rdf-schema#isDefinedBy";
+        // Default to label
+        return "http://www.w3.org/2000/01/rdf-schema#label";
+    }
+    
+    /**
      * Extract label from IRI
      */
     private String extractLabel(String iri) {
         if (iri == null) return "Unknown";
         String[] parts = iri.split("[#/]");
         return parts.length > 0 ? parts[parts.length - 1] : "Unknown";
+    }
+
+    /**
+     * Get change details including comments
+     * GET /api/ontology/{projectId}/changes/{changeId}/details
+     */
+    @GetMapping("/{projectId}/changes/{changeId}/details")
+    public ResponseEntity<Map<String, Object>> getChangeDetails(
+            @PathVariable String projectId,
+            @PathVariable String changeId
+    ) {
+        try {
+            // Try to find in MongoDB synced changes first (has comments)
+            HistoryChange historyChange = historySyncService.getHistoryChange(changeId);
+            
+            if (historyChange != null) {
+                Map<String, Object> details = new HashMap<>();
+                details.put("id", historyChange.getId());
+                details.put("projectId", historyChange.getProjectId());
+                details.put("timestamp", historyChange.getTimestamp().toString());
+                details.put("userId", historyChange.getUserId());
+                details.put("username", historyChange.getUsername());
+                details.put("operationType", historyChange.getOperationType());
+                details.put("entityType", historyChange.getEntityType());
+                details.put("entityIRI", historyChange.getEntityIRI());
+                details.put("entityLabel", historyChange.getEntityLabel());
+                details.put("oldValue", historyChange.getOldValue());
+                details.put("newValue", historyChange.getNewValue());
+                details.put("description", historyChange.getDescription());
+                details.put("status", historyChange.getStatus());
+                details.put("hasConflict", historyChange.isHasConflict());
+                
+                // Convert comments to list format
+                List<Map<String, Object>> commentsList = new ArrayList<>();
+                if (historyChange.getComments() != null) {
+                    historyChange.getComments().forEach((commentId, comment) -> {
+                        Map<String, Object> commentMap = new HashMap<>();
+                        commentMap.put("id", commentId);
+                        commentMap.put("userId", comment.getUserId());
+                        commentMap.put("username", comment.getUsername());
+                        commentMap.put("text", comment.getText());
+                        commentMap.put("timestamp", comment.getTimestamp() != null ? comment.getTimestamp().toString() : null);
+                        commentsList.add(commentMap);
+                    });
+                }
+                // Sort comments by timestamp
+                commentsList.sort((a, b) -> {
+                    String tsA = (String) a.get("timestamp");
+                    String tsB = (String) b.get("timestamp");
+                    if (tsA == null && tsB == null) return 0;
+                    if (tsA == null) return 1;
+                    if (tsB == null) return -1;
+                    return tsA.compareTo(tsB);
+                });
+                details.put("comments", commentsList);
+                
+                // Add approval/rejection info
+                if (historyChange.getApprovedBy() != null) {
+                    details.put("approvedBy", historyChange.getApprovedBy());
+                    details.put("approvedAt", historyChange.getApprovedAt() != null ? historyChange.getApprovedAt().toString() : null);
+                }
+                if (historyChange.getRejectedBy() != null) {
+                    details.put("rejectedBy", historyChange.getRejectedBy());
+                    details.put("rejectedAt", historyChange.getRejectedAt() != null ? historyChange.getRejectedAt().toString() : null);
+                }
+                
+                return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "change", details
+                ));
+            }
+            
+            return ResponseEntity.status(404).body(Map.of(
+                "success", false,
+                "error", "Change not found"
+            ));
+            
+        } catch (Exception e) {
+            log.error("Error getting change details", e);
+            return ResponseEntity.status(500).body(Map.of(
+                "success", false,
+                "error", e.getMessage()
+            ));
+        }
     }
 
     /**

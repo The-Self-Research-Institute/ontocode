@@ -1136,6 +1136,9 @@ const Dashboard = () => {
       setObjectPropertyHierarchy([topObjectProperty]);
 
       const dpList = allProps.filter((p: Property) => p.type === "DatatypeProperty");
+      console.log("Data Properties filtered (dpList):", dpList);
+      console.log("Data Properties count:", dpList.length);
+      console.log("All property types:", allProps.map((p: Property) => ({ id: p.id, type: p.type })));
       setDataProperties(dpList);
 
       // Build Data Property Hierarchy
@@ -2010,6 +2013,48 @@ const Dashboard = () => {
       console.log('[Dashboard] 🎧 Unregistered listener for remote edits');
     };
   }, [projectId, selectedItem, entitiesTab, updateItemInState, refreshClassHierarchy, loadChildren, fetchData, showNotification]);
+
+  // Handle rollback events from Change Assistant plugin - refresh data
+  useEffect(() => {
+    const handleRollback = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      const detail = customEvent.detail;
+      console.log('[Dashboard] 🔄 Rollback event received:', detail);
+      
+      if (!projectId || detail?.projectId !== projectId) {
+        return;
+      }
+      
+      showNotification('Rollback applied. Refreshing data...', 'info');
+      
+      // Refresh the data after rollback
+      setTimeout(() => {
+        // Refresh hierarchy
+        refreshClassHierarchy();
+        
+        // If we have the entity IRI, refresh its details
+        if (detail?.entityIRI && selectedItem?.id === detail.entityIRI) {
+          apiClient.get(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(detail.entityIRI)}`)
+            .then(response => {
+              const newData = response.data || response;
+              if (!newData.id && newData.iri) {
+                newData.id = newData.iri;
+              }
+              console.log('[Dashboard] ✅ Refreshed entity after rollback:', newData);
+              updateItemInState(newData);
+            })
+            .catch(error => console.error('[Dashboard] Failed to refresh entity after rollback:', error));
+        }
+      }, 300);
+    };
+    
+    window.addEventListener('ontologyRollback', handleRollback as EventListener);
+    console.log('[Dashboard] 🎧 Registered listener for rollback events');
+    
+    return () => {
+      window.removeEventListener('ontologyRollback', handleRollback as EventListener);
+    };
+  }, [projectId, selectedItem, refreshClassHierarchy, updateItemInState, showNotification]);
 
   // Handle reconnection after WebSocket disconnect - refresh data to sync
   useEffect(() => {
@@ -2941,6 +2986,13 @@ const Dashboard = () => {
     const activeTab = tabOverride || entitiesTab;
     if (!item || !projectId) return;
     
+    // Validate item has a valid IRI
+    if (!item.id) {
+      console.error('[DELETE] Item has no IRI:', item);
+      showNotification('Cannot delete: item has no valid IRI', 'error');
+      return;
+    }
+    
     // Show confirm dialog instead of using confirm()
     setConfirmDialog({
       isOpen: true,
@@ -2948,6 +3000,8 @@ const Dashboard = () => {
       message: `Are you sure you want to delete "${item.label}"? This action cannot be undone.`,
       onConfirm: async () => {
         try {
+          console.log('[DELETE] Deleting item:', { id: item.id, label: item.label, tab: activeTab });
+          
           // Call backend API based on entity type
           switch (activeTab) {
             case 'Classes':
@@ -2959,10 +3013,15 @@ const Dashboard = () => {
             case 'ObjectProperties':
               await ontologyMutationService.deleteObjectProperty(projectId, item.id, user?.email || 'anonymous', user?.username || 'Anonymous');
               break;
+            case 'DataProperties':
+              await ontologyMutationService.deleteDataProperty(projectId, item.id, user?.email || 'anonymous', user?.username || 'Anonymous');
+              break;
+            case 'AnnotationProperties':
+              await ontologyMutationService.deleteAnnotationProperty(projectId, item.id, user?.email || 'anonymous', user?.username || 'Anonymous');
+              break;
             case 'Datatypes':
               await ontologyMutationService.deleteDatatype(projectId, item.id, user?.email || 'anonymous', user?.username || 'Anonymous');
               break;
-            // Add other entity types as needed
           }
 
           // Update local state
@@ -2978,7 +3037,7 @@ const Dashboard = () => {
             case 'Individuals':
               setIndividuals(prev => prev.filter(ind => ind.id !== item.id));
               break;
-            case 'ObjectProperties':
+            case 'ObjectProperties': {
               setObjectProperties(prev => prev.filter(p => p.id !== item.id));
               const removeOpRecursively = (nodes: any[], id: string): any[] =>
                 nodes
@@ -2986,12 +3045,19 @@ const Dashboard = () => {
                   .map(node => node.children ? { ...node, children: removeOpRecursively(node.children, id) } : node);
               setObjectPropertyHierarchy(prev => removeOpRecursively(prev, item.id));
               break;
-            case 'DataProperties':
+            }
+            case 'DataProperties': {
               setDataProperties(prev => prev.filter(p => p.id !== item.id));
+              const removeDpRecursively = (nodes: any[], id: string): any[] =>
+                nodes
+                  .filter(node => node.id !== id)
+                  .map(node => node.children ? { ...node, children: removeDpRecursively(node.children, id) } : node);
+              setDataPropertyHierarchy(prev => removeDpRecursively(prev, item.id));
               break;
-        case 'AnnotationProperties':
-          setAnnotationProperties(prev => prev.filter(p => p.id !== item.id));
-          break;
+            }
+            case 'AnnotationProperties':
+              setAnnotationProperties(prev => prev.filter(p => p.id !== item.id));
+              break;
             case 'Datatypes':
               setDatatypes(prev => prev.filter(d => d.id !== item.id));
               break;

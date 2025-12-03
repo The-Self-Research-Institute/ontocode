@@ -33,6 +33,8 @@ interface OntologyChange {
   comments: ChangeComment[];
   conflicts?: ConflictInfo[];
   warnings?: ChangeWarning[];
+  commentCount?: number;
+  operationType?: string; // Original operation type for rollback (e.g., createObjectProperty, deleteDataProperty)
 }
 
 interface ChangeComment {
@@ -106,6 +108,9 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
   const [newComment, setNewComment] = useState('');
   const [selectedConflict, setSelectedConflict] = useState<any>(null);
   const [showConflictResolver, setShowConflictResolver] = useState(false);
+  const [showDetailsDialog, setShowDetailsDialog] = useState(false);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [changeDetails, setChangeDetails] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   
@@ -304,12 +309,10 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
   const loadChanges = async () => {
     setIsLoading(true);
     try {
-      // Use GraphDB history endpoint for real-time changes
+      // Use MongoDB as single source of truth for change tracking
       const apiBase = (window as any).API_BASE_URL || 'http://localhost:8082';
       const url = `${apiBase}/api/ontology/${projectId}/changes/recent?count=100`;
-      console.log('[ChangeAssistant] Loading changes from:', url);
-      console.log('[ChangeAssistant] API_BASE_URL:', apiBase);
-      console.log('[ChangeAssistant] projectId:', projectId);
+      console.log('[ChangeAssistant] Loading changes from MongoDB:', url);
       
       const response = await fetch(url);
       const data = await response.json();
@@ -323,30 +326,31 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
         return;
       }
       
-      console.log('[ChangeAssistant] Raw changes from API:', data.changes);
-      
-      // Convert GraphDB history format to frontend format
+      // Convert MongoDB format to frontend format (single source - no sync needed)
       const parsedChanges = data.changes.map((change: any) => {
+        // Preserve original operation type for accurate rollback
+        const originalOperationType = change.changeType || change.operationType || '';
         const parsed = {
-          id: change.id || `change-${Date.now()}-${Math.random()}`,
+          id: change.id,
           timestamp: new Date(change.timestamp),
-          author: change.username || change.user || 'System',
+          author: change.username || 'System',
           authorEmail: change.userId || '',
-          type: mapChangeTypeFromGraphDB(change.changeType || change.operationType, change.changeCategory || change.entityType),
-          action: mapActionFromGraphDB(change.changeType || change.operationType),
-          status: 'approved' as ChangeStatus,
+          type: mapChangeTypeFromGraphDB(originalOperationType, change.changeCategory || change.entityType),
+          action: mapActionFromGraphDB(originalOperationType),
+          status: (change.status?.toLowerCase() || 'approved') as ChangeStatus,
           entityUri: change.entityIRI,
           entityLabel: change.entityLabel || extractLabelFromIRI(change.entityIRI),
           oldValue: change.oldValue,
           newValue: change.newValue,
-          description: change.description || `${change.changeType || change.operationType}`,
-          commitId: change.commitId,
+          description: change.description || `${originalOperationType}`,
+          commitId: change.editId,
           branch: undefined,
-          comments: [],
-          conflicts: [],
-          warnings: []
+          comments: [], // Comments loaded on-demand via details
+          conflicts: change.hasConflict ? [{ conflictType: 'concurrent_edit' as const, description: 'Conflict detected' }] : [],
+          warnings: [],
+          commentCount: change.commentCount || 0,
+          operationType: originalOperationType // Preserve for rollback
         };
-        console.log('[ChangeAssistant] Parsed change:', { id: parsed.id, entityUri: parsed.entityUri, entityLabel: parsed.entityLabel });
         return parsed;
       });
       
@@ -446,6 +450,72 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
     }
   };
 
+  // Load change details with comments
+  const loadChangeDetails = async (changeId: string) => {
+    setDetailsLoading(true);
+    setShowDetailsDialog(true);
+    try {
+      const apiBase = (window as any).API_BASE_URL || 'http://localhost:8082';
+      const response = await fetch(`${apiBase}/api/ontology/${projectId}/changes/${changeId}/details`);
+      const data = await response.json();
+      
+      if (data.success && data.change) {
+        setChangeDetails(data.change);
+      } else {
+        // Fallback: use local change data
+        const localChange = changes.find(c => c.id === changeId);
+        if (localChange) {
+          setChangeDetails({
+            ...localChange,
+            comments: localChange.comments || []
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load change details:', error);
+      // Fallback to local data
+      const localChange = changes.find(c => c.id === changeId);
+      if (localChange) {
+        setChangeDetails({
+          ...localChange,
+          comments: localChange.comments || []
+        });
+      }
+    } finally {
+      setDetailsLoading(false);
+    }
+  };
+
+  // Add comment to a change
+  const addCommentToChange = async (changeId: string, text: string) => {
+    if (!text.trim()) return;
+    
+    try {
+      const apiBase = (window as any).API_BASE_URL || 'http://localhost:8082';
+      const response = await fetch(`${apiBase}/api/ontology/${projectId}/changes/${changeId}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          text,
+          userId: 'current-user',
+          username: 'You'
+        })
+      });
+      
+      const data = await response.json();
+      if (data.success) {
+        showNotification('Comment added successfully', 'success');
+        // Reload details to show new comment
+        loadChangeDetails(changeId);
+      } else {
+        showNotification('Failed to add comment: ' + (data.error || 'Unknown error'), 'error');
+      }
+    } catch (error) {
+      console.error('Failed to add comment:', error);
+      showNotification('Failed to add comment', 'error');
+    }
+  };
+
   const [rollbackLoading, setRollbackLoading] = useState<string | null>(null);
   const [rollbackError, setRollbackError] = useState<string | null>(null);
 
@@ -481,9 +551,13 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
     
     try {
       const apiBase = (window as any).API_BASE_URL || 'http://localhost:8082';
+      // Use the original operation type for accurate rollback, fallback to generic type
+      const rollbackChangeType = change.operationType || change.type;
       console.log('[Rollback] Executing rollback with:', {
         changeId,
-        changeType: change.type,
+        changeType: rollbackChangeType,
+        originalOperationType: change.operationType,
+        genericType: change.type,
         action: change.action,
         entityIRI: change.entityUri,
         entityLabel: change.entityLabel
@@ -496,7 +570,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
         },
         body: JSON.stringify({
           changeId: changeId,
-          changeType: change.type,
+          changeType: rollbackChangeType,
           action: change.action,
           entityIRI: change.entityUri,
           entityLabel: change.entityLabel,
@@ -1087,58 +1161,46 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
 
                   {/* Action Buttons */}
                   <div className="flex gap-2 mt-3">
-                    {change.status === 'pending' && (
-                      <>
-                        <button
-                          onClick={() => approveChange(change.id)}
-                          className="flex items-center gap-1 px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700"
-                        >
-                          <ThumbsUp className="w-3 h-3" />
-                          Approve
-                        </button>
-                        <button
-                          onClick={() => rejectChange(change.id)}
-                          className="flex items-center gap-1 px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700"
-                        >
-                          <ThumbsDown className="w-3 h-3" />
-                          Reject
-                        </button>
-                      </>
-                    )}
                     <button
                       onClick={() => {
                         setSelectedChange(change);
-                        setShowCommentDialog(true);
+                        loadChangeDetails(change.id);
                       }}
                       className="flex items-center gap-1 px-3 py-1 text-sm border rounded hover:bg-gray-50"
                     >
                       <MessageSquare className="w-3 h-3" />
                       Comment
+                      {(change.commentCount || 0) > 0 && (
+                        <span className="px-1.5 py-0.5 text-xs bg-purple-100 text-purple-600 rounded-full">
+                          {change.commentCount}
+                        </span>
+                      )}
                     </button>
-                    {change.status !== 'pending' && (
-                      <button
-                        onClick={() => rollbackChange(change.id, change)}
-                        disabled={rollbackLoading === change.id || !change.entityUri}
-                        title={!change.entityUri ? 'Cannot rollback: Entity IRI is missing' : 'Rollback this change'}
-                        className={`flex items-center gap-1 px-3 py-1 text-sm border border-orange-600 text-orange-600 rounded hover:bg-orange-50 ${
-                          (rollbackLoading === change.id || !change.entityUri) ? 'opacity-50 cursor-not-allowed' : ''
-                        }`}
-                      >
-                        {rollbackLoading === change.id ? (
-                          <>
-                            <RefreshCw className="w-3 h-3 animate-spin" />
-                            Rolling back...
-                          </>
-                        ) : (
-                          <>
-                            <Undo2 className="w-3 h-3" />
-                            Rollback
-                          </>
-                        )}
-                      </button>
-                    )}
                     <button
-                      onClick={() => {/* View details */}}
+                      onClick={() => rollbackChange(change.id, change)}
+                      disabled={rollbackLoading === change.id || !change.entityUri}
+                      title={!change.entityUri ? 'Cannot rollback: Entity IRI is missing' : 'Rollback this change'}
+                      className={`flex items-center gap-1 px-3 py-1 text-sm border border-orange-600 text-orange-600 rounded hover:bg-orange-50 ${
+                        (rollbackLoading === change.id || !change.entityUri) ? 'opacity-50 cursor-not-allowed' : ''
+                      }`}
+                    >
+                      {rollbackLoading === change.id ? (
+                        <>
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                          Rolling back...
+                        </>
+                      ) : (
+                        <>
+                          <Undo2 className="w-3 h-3" />
+                          Rollback
+                        </>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setSelectedChange(change);
+                        loadChangeDetails(change.id);
+                      }}
                       className="flex items-center gap-1 px-3 py-1 text-sm border rounded hover:bg-gray-50"
                     >
                       <Eye className="w-3 h-3" />
@@ -1375,6 +1437,189 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
                 className="px-4 py-2 border rounded hover:bg-gray-50"
               >
                 Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Details Dialog */}
+      {showDetailsDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-4 w-[500px] max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-medium flex items-center gap-2">
+                <FileText className="w-5 h-5 text-purple-600" />
+                Change Details
+              </h3>
+              <button
+                onClick={() => {
+                  setShowDetailsDialog(false);
+                  setChangeDetails(null);
+                }}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            {detailsLoading ? (
+              <div className="py-8 text-center text-gray-500">
+                <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2" />
+                <p>Loading details...</p>
+              </div>
+            ) : changeDetails ? (
+              <div className="flex-1 overflow-auto space-y-4">
+                {/* Change Info */}
+                <div className="bg-gray-50 rounded-lg p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl">{getChangeIcon(changeDetails.entityType?.toLowerCase() || changeDetails.type || 'axiom')}</span>
+                    <div>
+                      <p className="font-medium">{changeDetails.entityLabel || 'Unknown Entity'}</p>
+                      <p className="text-xs text-gray-500 font-mono truncate max-w-[350px]" title={changeDetails.entityIRI}>
+                        {changeDetails.entityIRI}
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div>
+                      <span className="text-gray-500">Action:</span>
+                      <span className={`ml-2 capitalize ${
+                        (changeDetails.operationType || changeDetails.action || '').toLowerCase().includes('add') ? 'text-green-600' :
+                        (changeDetails.operationType || changeDetails.action || '').toLowerCase().includes('delete') ? 'text-red-600' :
+                        'text-blue-600'
+                      }`}>
+                        {changeDetails.operationType || changeDetails.action || 'Unknown'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Type:</span>
+                      <span className="ml-2 capitalize">{changeDetails.entityType || changeDetails.type || 'Unknown'}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Author:</span>
+                      <span className="ml-2">{changeDetails.username || changeDetails.author || 'Unknown'}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Status:</span>
+                      <span className={`ml-2 px-1.5 py-0.5 text-xs rounded ${
+                        changeDetails.status === 'APPROVED' ? 'bg-green-100 text-green-700' :
+                        changeDetails.status === 'REJECTED' ? 'bg-red-100 text-red-700' :
+                        changeDetails.status === 'PENDING' ? 'bg-yellow-100 text-yellow-700' :
+                        'bg-gray-100 text-gray-700'
+                      }`}>
+                        {changeDetails.status || 'approved'}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <div className="text-xs text-gray-500 pt-1 border-t">
+                    <Clock className="w-3 h-3 inline mr-1" />
+                    {changeDetails.timestamp ? new Date(changeDetails.timestamp).toLocaleString() : 'Unknown time'}
+                  </div>
+                </div>
+                
+                {/* Value Changes */}
+                {(changeDetails.oldValue || changeDetails.newValue) && (
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <h4 className="font-medium text-sm mb-2 flex items-center gap-1">
+                      <GitBranch className="w-4 h-4" />
+                      Value Changes
+                    </h4>
+                    <div className="space-y-2">
+                      {changeDetails.oldValue && (
+                        <div>
+                          <span className="text-xs text-red-500 font-medium">Before:</span>
+                          <div className="mt-1 px-2 py-1 bg-red-50 text-red-700 rounded text-sm font-mono border border-red-200 break-all">
+                            {changeDetails.oldValue}
+                          </div>
+                        </div>
+                      )}
+                      {changeDetails.newValue && (
+                        <div>
+                          <span className="text-xs text-green-500 font-medium">After:</span>
+                          <div className="mt-1 px-2 py-1 bg-green-50 text-green-700 rounded text-sm font-mono border border-green-200 break-all">
+                            {changeDetails.newValue}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                
+                {/* Description */}
+                {changeDetails.description && (
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <h4 className="font-medium text-sm mb-1">Description</h4>
+                    <p className="text-sm text-gray-600">{changeDetails.description}</p>
+                  </div>
+                )}
+                
+                {/* Comments Section */}
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <h4 className="font-medium text-sm mb-2 flex items-center gap-1">
+                    <MessageSquare className="w-4 h-4" />
+                    Comments ({Array.isArray(changeDetails.comments) ? changeDetails.comments.length : 0})
+                  </h4>
+                  
+                  {/* Existing Comments */}
+                  {Array.isArray(changeDetails.comments) && changeDetails.comments.length > 0 ? (
+                    <div className="space-y-2 mb-3 max-h-40 overflow-y-auto">
+                      {changeDetails.comments.map((comment: any, idx: number) => (
+                        <div key={comment.id || idx} className="bg-white p-2 rounded border text-sm">
+                          <div className="flex items-center gap-2 text-gray-600 mb-1">
+                            <span className="font-medium">{comment.username || 'User'}</span>
+                            <span className="text-xs">
+                              {comment.timestamp ? new Date(comment.timestamp).toLocaleString() : ''}
+                            </span>
+                          </div>
+                          <p className="text-gray-700">{comment.text}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500 mb-3">No comments yet</p>
+                  )}
+                  
+                  {/* Add Comment */}
+                  <div className="border-t pt-2">
+                    <textarea
+                      value={newComment}
+                      onChange={(e) => setNewComment(e.target.value)}
+                      placeholder="Add a comment..."
+                      className="w-full border rounded p-2 text-sm h-16 resize-none"
+                    />
+                    <button
+                      onClick={() => {
+                        if (changeDetails.id && newComment.trim()) {
+                          addCommentToChange(changeDetails.id, newComment);
+                          setNewComment('');
+                        }
+                      }}
+                      disabled={!newComment.trim()}
+                      className="mt-2 px-3 py-1 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Add Comment
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="py-8 text-center text-gray-500">
+                <p>No details available</p>
+              </div>
+            )}
+            
+            <div className="mt-4 pt-3 border-t flex justify-end">
+              <button
+                onClick={() => {
+                  setShowDetailsDialog(false);
+                  setChangeDetails(null);
+                }}
+                className="px-4 py-2 border rounded hover:bg-gray-50"
+              >
+                Close
               </button>
             </div>
           </div>

@@ -302,19 +302,28 @@ public class GraphDBDatasetService {
         String[] statements = operations.toString().split(";");
         StringBuilder result = new StringBuilder(prefixes);
         
+        log.info("[GRAPH-INJECT] Processing {} statements", statements.length);
+        
         for (int i = 0; i < statements.length; i++) {
             String stmt = statements[i].trim();
             if (stmt.isEmpty()) continue;
             
+            log.info("[GRAPH-INJECT] Statement {}: '{}'", i, stmt.substring(0, Math.min(100, stmt.length())));
+            
             // For INSERT DATA and DELETE DATA, wrap in GRAPH clause
             if (stmt.matches("(?is)INSERT\\s+DATA\\s*\\{.*")) {
                 stmt = stmt.replaceFirst("(?is)(INSERT\\s+DATA\\s*\\{)", "$1 GRAPH <" + graphUri + "> {") + " }";
+                log.info("[GRAPH-INJECT] Matched INSERT DATA");
             } else if (stmt.matches("(?is)DELETE\\s+DATA\\s*\\{.*")) {
                 stmt = stmt.replaceFirst("(?is)(DELETE\\s+DATA\\s*\\{)", "$1 GRAPH <" + graphUri + "> {") + " }";
+                log.info("[GRAPH-INJECT] Matched DELETE DATA");
             }
             // For DELETE/INSERT WHERE, add WITH clause
-            else if (stmt.matches("(?is)DELETE\\s*\\{.*") && !stmt.trim().startsWith("WITH")) {
+            else if (stmt.matches("(?is)DELETE\\s*\\{.*") && !stmt.trim().toUpperCase().startsWith("WITH")) {
                 stmt = "WITH <" + graphUri + "> " + stmt;
+                log.info("[GRAPH-INJECT] Matched DELETE WHERE, added WITH clause");
+            } else {
+                log.info("[GRAPH-INJECT] No pattern matched for statement");
             }
             
             result.append(stmt);

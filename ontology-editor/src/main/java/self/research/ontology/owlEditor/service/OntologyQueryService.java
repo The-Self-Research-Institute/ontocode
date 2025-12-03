@@ -98,6 +98,7 @@ public class OntologyQueryService {
             default -> "";
         };
 
+        // Simplified query that reliably finds all explicitly typed properties
         String query = PREFIXES + """
             SELECT ?prop (SAMPLE(?lbl) AS ?label) ?kind
                    (GROUP_CONCAT(DISTINCT ?domain; SEPARATOR="|") AS ?domains)
@@ -108,25 +109,11 @@ public class OntologyQueryService {
                    (GROUP_CONCAT(DISTINCT ?equiv; SEPARATOR="|") AS ?equivalentProperties)
                    (GROUP_CONCAT(DISTINCT ?char; SEPARATOR="|") AS ?characteristics)
             WHERE {
-              {
-                # Explicitly typed properties
-                ?prop a ?kind .
-                VALUES ?kind { owl:ObjectProperty owl:DatatypeProperty }
-              } UNION {
-                # Properties used in domain/range/subPropertyOf but not explicitly typed
-                {
-                  { ?prop rdfs:domain ?any } UNION 
-                  { ?prop rdfs:range ?any } UNION 
-                  { ?prop rdfs:subPropertyOf ?any } UNION 
-                  { ?any rdfs:subPropertyOf ?prop }
-                }
-                # Infer type based on usage or default to ObjectProperty
-                OPTIONAL { ?prop a ?explicitKind . VALUES ?explicitKind { owl:ObjectProperty owl:DatatypeProperty } }
-                BIND(COALESCE(?explicitKind, owl:ObjectProperty) AS ?kind)
-                # Exclude annotation properties
-                FILTER NOT EXISTS { ?prop a owl:AnnotationProperty }
-                FILTER(isIRI(?prop))
-              }
+              # Find all properties that are explicitly typed as ObjectProperty or DatatypeProperty
+              ?prop a ?kind .
+              FILTER(?kind IN (owl:ObjectProperty, owl:DatatypeProperty))
+              # Exclude built-in top properties
+              FILTER(?prop != owl:topObjectProperty && ?prop != owl:topDataProperty)
               %s
               OPTIONAL { ?prop rdfs:label ?lbl }
               OPTIONAL { ?prop rdfs:domain ?domain . FILTER(isIRI(?domain)) }
@@ -170,7 +157,12 @@ public class OntologyQueryService {
             dto.setIri(iri);
             String label = literal(sol, "label");
             dto.setLabel(label.isBlank() ? localName(iri) : label);
-            dto.setType(localName(resource(sol, "kind")));
+            String kind = resource(sol, "kind");
+            dto.setType(localName(kind));
+            
+            // Debug logging for each property
+            System.out.println("[PROPERTY] IRI: " + iri + ", Label: " + dto.getLabel() + ", Kind: " + kind + ", Type: " + dto.getType());
+            
             dto.setDomains(splitPipe(literal(sol, "domains")));
             dto.setRanges(splitPipe(literal(sol, "ranges")));
             dto.setSuperProperties(splitPipe(literal(sol, "superProperties")));

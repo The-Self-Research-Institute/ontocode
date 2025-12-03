@@ -94,6 +94,12 @@ public class OntologyMutationService {
     }
 
     private String toUpdate(MutationOp op) {
+        // Validate IRI is not null for operations that require it
+        if (op.iri() == null || op.iri().isBlank() || "null".equals(op.iri())) {
+            log.error("[MUTATION] Invalid IRI for operation {}: iri={}", op.type(), op.iri());
+            throw new IllegalArgumentException("IRI cannot be null or empty for operation: " + op.type());
+        }
+        
         return switch (op.type()) {
             case "createClass" -> """
                 INSERT DATA {
@@ -168,20 +174,8 @@ public class OntologyMutationService {
                 DELETE { ?s ?p <%s> } WHERE { ?s ?p <%s> }
                 """.formatted(op.iri(), op.iri(), op.iri(), op.iri());
             
-            case "createObjectProperty" -> """
-                INSERT DATA {
-                  <%s> a owl:ObjectProperty .
-                  %s
-                  <%s> rdfs:subPropertyOf <%s> .
-                }
-                """.formatted(op.iri(), optionalLabel(op.iri(), op.label()), op.iri(), op.parent());
-            case "createDataProperty" -> """
-                INSERT DATA {
-                  <%s> a owl:DatatypeProperty .
-                  %s
-                  <%s> rdfs:subPropertyOf <%s> .
-                }
-                """.formatted(op.iri(), optionalLabel(op.iri(), op.label()), op.iri(), op.parent());
+            case "createObjectProperty" -> createPropertySparql(op.iri(), op.label(), op.parent(), "owl:ObjectProperty");
+            case "createDataProperty" -> createPropertySparql(op.iri(), op.label(), op.parent(), "owl:DatatypeProperty");
             case "createAnnotationProperty" -> """
                 INSERT DATA {
                   <%s> a owl:AnnotationProperty .
@@ -302,6 +296,46 @@ public class OntologyMutationService {
             .replace("\r", "\\r")    // Carriage return
             .replace("\t", "\\t");   // Tab
         return "\"%s\"".formatted(escaped);
+    }
+
+    /**
+     * Create SPARQL for property creation - only adds subPropertyOf if parent is not a top-level property
+     */
+    private String createPropertySparql(String iri, String label, String parent, String propertyType) {
+        log.info("[MUTATION] createPropertySparql called:");
+        log.info("[MUTATION]   IRI: {}", iri);
+        log.info("[MUTATION]   Label: {}", label);
+        log.info("[MUTATION]   Parent: {}", parent);
+        log.info("[MUTATION]   PropertyType: {}", propertyType);
+        
+        boolean hasRealParent = parent != null && !parent.isEmpty() 
+            && !parent.contains("topObjectProperty") 
+            && !parent.contains("topDataProperty")
+            && !parent.equals("http://www.w3.org/2002/07/owl#topObjectProperty")
+            && !parent.equals("http://www.w3.org/2002/07/owl#topDataProperty");
+        
+        log.info("[MUTATION]   hasRealParent: {}", hasRealParent);
+        
+        String sparql;
+        if (hasRealParent) {
+            sparql = """
+                INSERT DATA {
+                  <%s> a %s .
+                  %s
+                  <%s> rdfs:subPropertyOf <%s> .
+                }
+                """.formatted(iri, propertyType, optionalLabel(iri, label), iri, parent);
+        } else {
+            sparql = """
+                INSERT DATA {
+                  <%s> a %s .
+                  %s
+                }
+                """.formatted(iri, propertyType, optionalLabel(iri, label));
+        }
+        
+        log.info("[MUTATION]   Generated SPARQL: {}", sparql);
+        return sparql;
     }
 
     public record MutationOp(

@@ -434,7 +434,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
                 title="Delete selected entity"
                 aria-label="Delete selected entity"
                 disabled={!selectedItem || viewMode === 'inferred'}
-                onClick={onDeleteItem} //
+                onClick={() => onDeleteItem()}
                 className="p-0.5 rounded text-gray-600 hover:text-red-600 disabled:text-gray-400 disabled:opacity-80"
              >
                 <Trash2 size={14} />
