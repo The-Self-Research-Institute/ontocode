@@ -274,6 +274,40 @@ public class OntologyMutationService {
                 yield ""; 
             }
 
+            // --- Datatype Mutations ---
+            case "createDatatype" -> """
+                INSERT DATA {
+                  <%s> a rdfs:Datatype .
+                  %s
+                }
+                """.formatted(op.iri(), optionalLabel(op.iri(), op.label()));
+            case "deleteDatatype" -> """
+                DELETE { <%s> ?p ?o } WHERE { <%s> ?p ?o };
+                DELETE { ?s ?p <%s> } WHERE { ?s ?p <%s> }
+                """.formatted(op.iri(), op.iri(), op.iri(), op.iri());
+
+            // --- Property Assertions on Individuals ---
+            case "addObjectPropertyAssertion" -> """
+                INSERT DATA {
+                  <%s> <%s> <%s> .
+                }
+                """.formatted(op.iri(), op.property(), op.target());
+            case "deleteObjectPropertyAssertion" -> """
+                DELETE DATA {
+                  <%s> <%s> <%s> .
+                }
+                """.formatted(op.iri(), op.property(), op.target());
+            case "addDataPropertyAssertion" -> """
+                INSERT DATA {
+                  <%s> <%s> %s .
+                }
+                """.formatted(op.iri(), op.property(), literal(op.value()));
+            case "deleteDataPropertyAssertion" -> """
+                DELETE DATA {
+                  <%s> <%s> %s .
+                }
+                """.formatted(op.iri(), op.property(), literal(op.value()));
+
             default -> throw new IllegalArgumentException("Unsupported op " + op.type());
         };
     }
