@@ -361,6 +361,36 @@ export const ontologyMutationService = {
     await this.applyMutations(projectId, [{ type: 'deleteCharacteristic', iri: propertyIri, target: characteristicIri }], undefined, userId, username);
   },
 
+  // --- Property Assertions on Individuals ---
+
+  /**
+   * Add an object property assertion to an individual
+   */
+  async addObjectPropertyAssertion(projectId: string, individualIri: string, propertyIri: string, targetIndividualIri: string, userId?: string, username?: string): Promise<void> {
+    await this.applyMutations(projectId, [{ type: 'addObjectPropertyAssertion', iri: individualIri, property: propertyIri, target: targetIndividualIri }], undefined, userId, username);
+  },
+
+  /**
+   * Delete an object property assertion from an individual
+   */
+  async deleteObjectPropertyAssertion(projectId: string, individualIri: string, propertyIri: string, targetIndividualIri: string, userId?: string, username?: string): Promise<void> {
+    await this.applyMutations(projectId, [{ type: 'deleteObjectPropertyAssertion', iri: individualIri, property: propertyIri, target: targetIndividualIri }], undefined, userId, username);
+  },
+
+  /**
+   * Add a data property assertion to an individual
+   */
+  async addDataPropertyAssertion(projectId: string, individualIri: string, propertyIri: string, literalValue: string, userId?: string, username?: string): Promise<void> {
+    await this.applyMutations(projectId, [{ type: 'addDataPropertyAssertion', iri: individualIri, property: propertyIri, value: literalValue }], undefined, userId, username);
+  },
+
+  /**
+   * Delete a data property assertion from an individual
+   */
+  async deleteDataPropertyAssertion(projectId: string, individualIri: string, propertyIri: string, literalValue: string, userId?: string, username?: string): Promise<void> {
+    await this.applyMutations(projectId, [{ type: 'deleteDataPropertyAssertion', iri: individualIri, property: propertyIri, value: literalValue }], undefined, userId, username);
+  },
+
   /**
    * Make siblings disjoint - adds pairwise disjointWith axioms
    */

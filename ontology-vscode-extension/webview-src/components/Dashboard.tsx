@@ -653,7 +653,9 @@ const DetailsPanel = ({
     onEditAnnotation,
     onDeleteAnnotation,
     activeTheme,
-    projectId: projectId || ''
+    projectId: projectId || '',
+    // userId: user?.email || 'anonymous',
+    // username: user?.username || 'Anonymous'
   };
 
   switch (entitiesTab) {
@@ -1425,11 +1427,11 @@ const Dashboard = () => {
       const childCount = classHierarchy[0].children?.length || 0;
       console.log('[Dashboard] Class hierarchy loaded, owl:Thing has', childCount, 'top-level children');
       
-      // Always auto-expand owl:Thing when it has children
+      // Auto-expand owl:Thing when it has children (preserve other expanded nodes)
       if (childCount > 0 && !expandedNodes.includes(owlThingId)) {
-        console.log('[Dashboard] Auto-expanding owl:Thing');
+        console.log('[Dashboard] Auto-expanding owl:Thing (preserving existing expanded nodes)');
         console.log('[DEBUG] useEffect[classHierarchy] triggering setExpandedNodes');
-        setExpandedNodes([owlThingId]);
+        setExpandedNodes(prev => prev.includes(owlThingId) ? prev : [...prev, owlThingId]);
       }
     }
   }, [classHierarchy]);
@@ -1826,10 +1828,18 @@ const Dashboard = () => {
         return;
       }
       
+      // Check if this is an edit made by the current user - skip refresh since we already updated local state
+      const editUserId = (edit as any).userId || (edit as any).user?.id || (edit as any).user;
+      const currentUserId = user?.email || user?.id;
+      if (editUserId && currentUserId && editUserId === currentUserId) {
+        console.log('[Dashboard] ⏭️ Skipping refresh - edit was made by current user');
+        return;
+      }
+      
       // Map edit type to which data needs refreshing
       switch (edit.type) {
         case 'CLASS_ADDED':
-          console.log('[Dashboard] 📚 Class added, refreshing hierarchy');
+          console.log('[Dashboard] 📚 Class added by another user, refreshing hierarchy');
           // If we have parent info, try to refresh just that part of the tree
           if ((edit as any).parent) {
             const parentId = (edit as any).parent;
@@ -2913,18 +2923,41 @@ const Dashboard = () => {
     }
   }, [projectId, metadata, markAsUnsaved, showNotification]);
 
-  const handleAddIndividual = useCallback((name: string) => {
+  const handleAddIndividual = useCallback(async (name: string) => {
+    if (!projectId) {
+      showNotification('No project loaded.', 'error');
+      return;
+    }
+    
     const base = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
     const id = `${base}#${name.replace(/\s+/g, '_')}`;
-    const newIndividual: Individual = {
-      id,
-      iri: id,
-      label: name,
-      annotations: { 'rdfs:label': name },
-      types: []
-    };
-    setIndividuals(prev => [...prev, newIndividual]);
-  }, [metadata]);
+    
+    // Determine the class IRI - use selected class if available, otherwise owl:Thing
+    const classIri = (entitiesTab === 'Classes' && selectedItem?.id) 
+      ? selectedItem.id 
+      : 'http://www.w3.org/2002/07/owl#Thing';
+    
+    try {
+      // Call the mutation service to persist the individual
+      await ontologyMutationService.createIndividual(projectId, id, name, classIri);
+      
+      // Update local state
+      const newIndividual: Individual = {
+        id,
+        iri: id,
+        label: name,
+        annotations: { 'rdfs:label': name },
+        types: [classIri]
+      };
+      setIndividuals(prev => [...prev, newIndividual]);
+      
+      markAsUnsaved();
+      showNotification(`Individual "${name}" created successfully!`, 'info');
+    } catch (error) {
+      console.error('Failed to create individual:', error);
+      showNotification('Failed to create individual. See console for details.', 'error');
+    }
+  }, [projectId, metadata, entitiesTab, selectedItem, markAsUnsaved, showNotification]);
 
   const handleMakeSiblingsDisjoint = useCallback(async () => {
     console.log('[DEBUG] handleMakeSiblingsDisjoint called');

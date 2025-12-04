@@ -13,7 +13,9 @@ const IndividualEditor: React.FC<{
   onDeleteAnnotation: (key: string) => void;
   activeTheme?: string;
   projectId: string;
-}> = ({ item, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, projectId }) => {
+  userId?: string;
+  username?: string;
+}> = ({ item, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, projectId, userId, username }) => {
   const [isAddingAssertion, setIsAddingAssertion] = useState(false);
   const [newAssertion, setNewAssertion] = useState({ propertyLabel: '', targetLabel: '', isObjectProperty: true });
   
@@ -21,26 +23,74 @@ const IndividualEditor: React.FC<{
   const [editorTitle, setEditorTitle] = useState("");
   const [editorAction, setEditorAction] = useState<((val: string) => void) | null>(null);
 
-  const handleAddAssertion = () => {
+  const handleAddAssertion = async () => {
     if (!newAssertion.propertyLabel || !newAssertion.targetLabel) {
         alert("Property and value cannot be empty.");
         return;
     }
-    const newAssertionObject: PropertyAssertion = {
-        id: `assertion-${Date.now()}`,
-        propertyIri: `:${newAssertion.propertyLabel}`,
-        propertyLabel: newAssertion.propertyLabel,
-        [newAssertion.isObjectProperty ? 'targetIri' : 'targetLiteral']: newAssertion.isObjectProperty ? `:${newAssertion.targetLabel}` : `"${newAssertion.targetLabel}"`,
-        [newAssertion.isObjectProperty ? 'targetLabel' : '']: newAssertion.targetLabel,
-        isObjectProperty: newAssertion.isObjectProperty,
-    };
-    onUpdate({ ...item, propertyAssertions: [...(item.propertyAssertions || []), newAssertionObject] });
-    setNewAssertion({ propertyLabel: '', targetLabel: '', isObjectProperty: true });
-    setIsAddingAssertion(false);
+    
+    // Build proper IRIs from the input
+    const baseIri = item.id.substring(0, item.id.lastIndexOf('#') + 1) || 'http://example.com/onto#';
+    const propertyIri = newAssertion.propertyLabel.startsWith('http') 
+      ? newAssertion.propertyLabel 
+      : `${baseIri}${newAssertion.propertyLabel.replace(/\s+/g, '_')}`;
+    const targetIri = newAssertion.isObjectProperty 
+      ? (newAssertion.targetLabel.startsWith('http') 
+        ? newAssertion.targetLabel 
+        : `${baseIri}${newAssertion.targetLabel.replace(/\s+/g, '_')}`)
+      : newAssertion.targetLabel;
+    
+    try {
+      // Call mutation service to persist
+      if (newAssertion.isObjectProperty) {
+        await ontologyMutationService.addObjectPropertyAssertion(
+          projectId, item.id, propertyIri, targetIri, userId, username
+        );
+      } else {
+        await ontologyMutationService.addDataPropertyAssertion(
+          projectId, item.id, propertyIri, newAssertion.targetLabel, userId, username
+        );
+      }
+      
+      // Update local state
+      const newAssertionObject: PropertyAssertion = {
+          id: `assertion-${Date.now()}`,
+          propertyIri: propertyIri,
+          propertyLabel: newAssertion.propertyLabel,
+          [newAssertion.isObjectProperty ? 'targetIri' : 'targetLiteral']: newAssertion.isObjectProperty ? targetIri : `"${newAssertion.targetLabel}"`,
+          [newAssertion.isObjectProperty ? 'targetLabel' : '']: newAssertion.targetLabel,
+          isObjectProperty: newAssertion.isObjectProperty,
+      };
+      onUpdate({ ...item, propertyAssertions: [...(item.propertyAssertions || []), newAssertionObject] });
+      setNewAssertion({ propertyLabel: '', targetLabel: '', isObjectProperty: true });
+      setIsAddingAssertion(false);
+    } catch (error) {
+      console.error('Failed to add property assertion:', error);
+      alert('Failed to add property assertion. See console for details.');
+    }
   };
 
-  const handleDeleteAssertion = (id: string) => {
-    onUpdate({ ...item, propertyAssertions: item.propertyAssertions?.filter(a => a.id !== id) });
+  const handleDeleteAssertion = async (assertion: PropertyAssertion) => {
+    try {
+      // Call mutation service to persist deletion
+      if (assertion.isObjectProperty && assertion.targetIri) {
+        await ontologyMutationService.deleteObjectPropertyAssertion(
+          projectId, item.id, assertion.propertyIri, assertion.targetIri, userId, username
+        );
+      } else if (assertion.targetLiteral) {
+        // Remove quotes from literal value if present
+        const literalValue = assertion.targetLiteral.replace(/^"|"$/g, '');
+        await ontologyMutationService.deleteDataPropertyAssertion(
+          projectId, item.id, assertion.propertyIri, literalValue, userId, username
+        );
+      }
+      
+      // Update local state
+      onUpdate({ ...item, propertyAssertions: item.propertyAssertions?.filter(a => a.id !== assertion.id) });
+    } catch (error) {
+      console.error('Failed to delete property assertion:', error);
+      alert('Failed to delete property assertion. See console for details.');
+    }
   };
 
   const handleAddSameAs = async (iri: string) => {
@@ -140,7 +190,7 @@ const IndividualEditor: React.FC<{
                                 <span className="mx-1.5 text-gray-400">{assertion.isObjectProperty ? '→' : '='}</span>
                                 <span>{assertion.isObjectProperty ? assertion.targetLabel : assertion.targetLiteral}</span>
                             </div>
-                            <button onClick={() => handleDeleteAssertion(assertion.id)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200">
+                            <button onClick={() => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200">
                                 <Trash2 size={12} className="text-red-600"/>
                             </button>
                         </div>
