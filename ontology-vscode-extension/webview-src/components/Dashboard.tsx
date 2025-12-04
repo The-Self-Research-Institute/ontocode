@@ -619,7 +619,13 @@ const DetailsPanel = ({
   onAddDisjointClick,
   onAddEquivalentClick,
   classHierarchy,
-  objectProperties
+  objectProperties,
+  expandedNodes,
+  onToggleNode,
+  onAddClass,
+  onDeleteClass,
+  onRefreshClasses,
+  metadata
 }: {
   selectedItem: SelectableItem | null;
   entitiesTab: string;
@@ -637,6 +643,12 @@ const DetailsPanel = ({
   onAddEquivalentClick?: () => void;
   classHierarchy: TreeNode[];
   objectProperties: Property[];
+  expandedNodes?: string[];
+  onToggleNode?: (nodeId: string) => Promise<void> | void;
+  onAddClass?: (type: 'subclass' | 'sibling') => void;
+  onDeleteClass?: () => void;
+  onRefreshClasses?: () => Promise<void>;
+  metadata?: { ontologyIRI?: string } | null;
 }) => {
   if (!selectedItem) {
     return (
@@ -664,6 +676,12 @@ const DetailsPanel = ({
         item={selectedItem as TreeNode}
         onUpdate={onUpdate}
         classHierarchy={classHierarchy}
+        expandedNodes={expandedNodes}
+        onToggleNode={onToggleNode}
+        onAddClass={onAddClass}
+        onDeleteClass={onDeleteClass}
+        onRefreshClasses={onRefreshClasses}
+        metadata={metadata ?? undefined}
         {...sharedProps}
       />;
     case 'ObjectProperties':
@@ -1809,10 +1827,22 @@ const Dashboard = () => {
 
       setClassHierarchy([owlThingNode]);
       console.log('[Dashboard] ✅ Class hierarchy refreshed via refreshClassHierarchy');
+      
+      // Re-load children for all previously expanded nodes to preserve tree state
+      // We need to reload children in order (parent before child) to maintain tree structure
+      const currentExpandedNodes = expandedNodes.filter(id => id !== "http://www.w3.org/2002/07/owl#Thing");
+      for (const nodeId of currentExpandedNodes) {
+        try {
+          await loadChildren(nodeId);
+        } catch (err) {
+          // Node might not exist anymore after refresh, ignore error
+          console.log(`[Dashboard] Could not reload children for ${nodeId}:`, err);
+        }
+      }
     } catch (error) {
       console.error('[Dashboard] Failed to refresh class hierarchy:', error);
     }
-  }, [projectId]);
+  }, [projectId, expandedNodes, loadChildren]);
 
   // Handle remote edits from collaborative users in real-time
   useEffect(() => {
@@ -3734,7 +3764,7 @@ const Dashboard = () => {
     setIsPropertyExpressionDialogOpen(true);
   };
 
-  const handleManchesterConfirm = async (expression: string) => {
+  const handleManchesterConfirm = async (expression: string, _restrictionData?: unknown) => {
     if (!selectedItem || !projectId || !selectorTarget) return;
 
     try {
@@ -4049,6 +4079,12 @@ const Dashboard = () => {
                     onAddEquivalentClick={() => handleOpenPropertySelector('equivalent')}
                     classHierarchy={classHierarchy}
                     objectProperties={objectProperties}
+                    expandedNodes={expandedNodes}
+                    onToggleNode={toggleNode}
+                    onAddClass={(type) => handleAddItem(type)}
+                    onDeleteClass={() => handleDeleteItem()}
+                    onRefreshClasses={refreshClassHierarchy}
+                    metadata={metadata}
                   />
                 </div>
               </section>
@@ -4076,7 +4112,10 @@ const Dashboard = () => {
         title={`Add ${selectorTarget === 'domain' ? 'Domain' : 'Range'} Class Expression`}
         expandedNodes={expandedNodes}
         onToggleNode={toggleNode}
-        onCreateProperty={handleCreatePropertyFromDialog}
+        onAddClass={(type) => handleAddItem(type)}
+        onDeleteClass={() => handleDeleteItem()}
+        onRefreshClasses={refreshClassHierarchy}
+        metadata={metadata}
       />
 
       {/* Class Selector Dialog - kept for other uses if needed */}

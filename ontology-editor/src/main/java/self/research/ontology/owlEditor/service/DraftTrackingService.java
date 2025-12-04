@@ -403,6 +403,19 @@ public class DraftTrackingService {
     private MutationOp draftToMutationOp(DraftChange draft) {
         Map<String, Object> data = draft.getOperationData();
         
+        // Handle cardinality conversion
+        Integer cardinality = null;
+        Object cardObj = data.get("cardinality");
+        if (cardObj instanceof Number) {
+            cardinality = ((Number) cardObj).intValue();
+        } else if (cardObj instanceof String) {
+            try {
+                cardinality = Integer.parseInt((String) cardObj);
+            } catch (NumberFormatException e) {
+                // ignore
+            }
+        }
+        
         return new MutationOp(
             draft.getOperationType(),
             (String) data.get("iri"),
@@ -411,7 +424,10 @@ public class DraftTrackingService {
             (String) data.get("property"),
             (String) data.get("value"),
             (String) data.get("target"),
-            (String) data.get("classIri")
+            (String) data.get("classIri"),
+            (String) data.get("restrictionType"),
+            cardinality,
+            (String) data.get("axiomType")
         );
     }
     

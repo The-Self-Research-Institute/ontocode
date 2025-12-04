@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, Search, ExternalLink, AlertCircle, Edit3 } from 'lucide-react';
 import { Panel, AnnotationsDisplay, AxiomSubsection } from './common';
-import { ClassExpressionDialog, MultiClassSelectorDialog, IRIEditorDialog } from '../dialogs';
+import { ClassExpressionDialog, MultiClassSelectorDialog, MultiPropertySelectorDialog, IRIEditorDialog, RestrictionData } from '../dialogs';
 import apiClient from '../../services/apiClient';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import type { TreeNode, Axiom, ClassUsage, AxiomUsage } from '../../types';
@@ -49,8 +49,11 @@ const UsageTab: React.FC<{
     try {
       // Query for all usages of this class
       const response = await apiClient.get<any>(`/api/ontology/classes/usage/${projectId}?classIri=${encodeURIComponent(classIri)}`);
-      const usageData = response?.data || response || [];
-      setUsages(usageData);
+      // Backend returns {success: true, data: [...]}
+      // apiClient might wrap it in {data: {...}}
+      const usageData = response?.data?.data || response?.data || response || [];
+      console.log('[UsageTab] Loaded usages:', usageData);
+      setUsages(Array.isArray(usageData) ? usageData : []);
     } catch (error) {
       console.error('Failed to load usage data:', error);
       setUsages([]);
@@ -190,7 +193,12 @@ const ClassEditor: React.FC<{
   classHierarchy?: TreeNode[];
   onToggleNode?: (nodeId: string) => Promise<void> | void;
   expandedNodes?: string[];
-}> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes }) => {
+  // Callbacks for creating entities inside dialogs
+  onAddClass?: (type: 'subclass' | 'sibling') => void;
+  onDeleteClass?: () => void;
+  onRefreshClasses?: () => void;
+  metadata?: { ontologyIRI?: string };
+}> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes = [], onAddClass, onDeleteClass, onRefreshClasses, metadata }) => {
   const [activeTab, setActiveTab] = useState<'annotations' | 'usage' | 'description'>('annotations');
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [classDetails, setClassDetails] = useState<any>(null);
@@ -208,6 +216,9 @@ const ClassEditor: React.FC<{
 
   // Disjoint Union State
   const [isDisjointUnionOpen, setIsDisjointUnionOpen] = useState(false);
+
+  // Has Key State
+  const [isHasKeyOpen, setIsHasKeyOpen] = useState(false);
 
   // IRI Editor State
   const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
@@ -245,7 +256,9 @@ const ClassEditor: React.FC<{
     try {
       // Load all properties (both object and data)
       const allPropsResponse = await apiClient.get(`/api/ontology/properties/${projectId}`);
-      const allProps = allPropsResponse?.data?.properties || [];
+      // Backend returns { success: true, data: [...] }
+      // apiClient might wrap it in { data: {...} }
+      const allProps = allPropsResponse?.data?.data || allPropsResponse?.data || [];
 
       // Separate object and data properties
       const objProps = allProps.filter((p: any) => p.type === 'ObjectProperty');
@@ -344,14 +357,22 @@ const ClassEditor: React.FC<{
     setLoadingDetails(true);
     try {
       const response = await apiClient.get<any>(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(item.id)}`);
-      const details = response?.data || response;
-      console.log('Class details loaded:', details);
+      // Backend returns {success: true, data: {...}}
+      const details = response?.data?.data || response?.data || response;
+      console.log('[ClassEditor] Class details loaded:', details);
       setClassDetails(details);
       
-      // Update the item with loaded annotations
-      if (details.annotations) {
-        onUpdate({ ...item, annotations: details.annotations });
-      }
+      // Update the item with all loaded details (annotations, axioms, etc.)
+      const updatedItem: TreeNode = {
+        ...item,
+        annotations: details.annotations || item.annotations,
+        subClassOfAxioms: details.subClassOfAxioms || item.subClassOfAxioms,
+        equivalentClassesAxioms: details.equivalentClassesAxioms || item.equivalentClassesAxioms,
+        disjointClassesAxioms: details.disjointClassesAxioms || item.disjointClassesAxioms,
+        disjointUnionAxioms: details.disjointUnionAxioms || item.disjointUnionAxioms,
+        hasKeyAxioms: details.hasKeyAxioms || item.hasKeyAxioms
+      };
+      onUpdate(updatedItem);
     } catch (error) {
       console.error('Failed to load class details:', error);
     } finally {
@@ -365,17 +386,69 @@ const ClassEditor: React.FC<{
     setIsEditorOpen(true);
   };
 
-  const handleEditorConfirm = (expression: string) => {
+  const handleEditorConfirm = (expression: string, restrictionData?: RestrictionData) => {
     if (editorType) {
-      handleAddAxiom(editorType, expression);
+      handleAddAxiom(editorType, expression, restrictionData);
     }
     setIsEditorOpen(false);
     setEditorType(null);
   };
 
-  const handleAddAxiom = async (type: AxiomType, definition: string) => {
+  const handleAddAxiom = async (type: AxiomType, definition: string, restrictionData?: RestrictionData) => {
     try {
-      await ontologyMutationService.addAxiom(projectId, item.id, type, definition);
+      // If we have structured restriction data, use the specific restriction methods
+      // NOTE: DisjointWith does NOT support restrictions - it's only for class-to-class disjointness
+      if (restrictionData && type !== 'DisjointWith') {
+        // Set the axiom type from the editor type
+        restrictionData.axiomType = type;
+        
+        if (restrictionData.type === 'objectRestriction') {
+          await ontologyMutationService.addObjectRestriction(
+            projectId,
+            item.id,
+            restrictionData.axiomType,
+            restrictionData.propertyIri,
+            restrictionData.restrictionType,
+            restrictionData.fillerIri,
+            restrictionData.cardinality
+          );
+        } else if (restrictionData.type === 'dataRestriction') {
+          await ontologyMutationService.addDataRestriction(
+            projectId,
+            item.id,
+            restrictionData.axiomType,
+            restrictionData.propertyIri,
+            restrictionData.restrictionType,
+            restrictionData.fillerIri,
+            restrictionData.cardinality
+          );
+        }
+        // Reload details to get the updated axioms
+        await loadClassDetails();
+        return;
+      }
+
+      // Check if definition is a simple class IRI (starts with http:// or urn:)
+      // For simple IRIs, use the specific mutation methods that work with the backend
+      const isSimpleIRI = definition.startsWith('http://') || definition.startsWith('https://') || definition.startsWith('urn:');
+      
+      if (isSimpleIRI) {
+        // Use specific mutation methods for simple class relationships
+        switch (type) {
+          case 'EquivalentTo':
+            await ontologyMutationService.addEquivalentClass(projectId, item.id, definition);
+            break;
+          case 'SubClassOf':
+            await ontologyMutationService.addSubClassOf(projectId, item.id, definition);
+            break;
+          case 'DisjointWith':
+            await ontologyMutationService.addDisjointWith(projectId, item.id, definition);
+            break;
+        }
+      } else {
+        // For complex Manchester Syntax expressions, use addAxiom (requires backend Manchester parser)
+        await ontologyMutationService.addAxiom(projectId, item.id, type, definition);
+      }
       // Reload details to get the updated axioms (assuming backend processed it)
       await loadClassDetails();
       // Also notify parent to update tree if needed (though axioms usually don't change tree structure unless it's subclassof)
@@ -387,43 +460,169 @@ const ClassEditor: React.FC<{
   };
 
   const handleDeleteAxiom = async (type: AxiomType, id: string) => {
-    // For deletion, we need the axiom ID or the definition. 
-    // The current backend API for delete might need the definition if IDs are not persistent/consistent.
-    // For now, let's assume we can't easily delete complex axioms without more backend support.
-    console.warn("Delete axiom not fully implemented for complex expressions");
-    
-    // Optimistic update for UI
-    switch (type) {
-        case 'EquivalentTo':
-            onUpdate({ ...item, equivalentClassesAxioms: item.equivalentClassesAxioms?.filter(a => a.id !== id) });
+    try {
+      // Find the axiom object to check if it's a restriction
+      let axiomArrays: { EquivalentTo?: Axiom[], SubClassOf?: Axiom[], DisjointWith?: Axiom[] } = {
+        EquivalentTo: item.equivalentClassesAxioms,
+        SubClassOf: item.subClassOfAxioms,
+        DisjointWith: item.disjointClassesAxioms
+      };
+      const axiom = axiomArrays[type]?.find(a => a.id === id);
+      
+      // Check if this is a restriction (isRestriction can be boolean or string "true")
+      const isRestriction = axiom?.isRestriction === true || axiom?.isRestriction === 'true';
+      
+      if (isRestriction && axiom?.propertyIri && axiom?.restrictionType && axiom?.fillerIri) {
+        // Delete restriction
+        const axiomType = type === 'EquivalentTo' ? 'owl:equivalentClass' : 'rdfs:subClassOf';
+        await ontologyMutationService.deleteObjectRestriction(
+          projectId,
+          item.id,
+          axiom.propertyIri,
+          axiom.restrictionType,
+          axiom.fillerIri,
+          axiomType,
+          axiom.cardinality ? Number(axiom.cardinality) : undefined
+        );
+        await loadClassDetails();
+      } else {
+        // The id is usually the IRI of the related class
+        // For simple class-to-class relationships, call the specific delete methods
+        const isSimpleIRI = id.startsWith('http://') || id.startsWith('https://') || id.startsWith('urn:');
+        
+        if (isSimpleIRI) {
+          switch (type) {
+            case 'EquivalentTo':
+              await ontologyMutationService.deleteEquivalentClass(projectId, item.id, id);
+              break;
+            case 'SubClassOf':
+              await ontologyMutationService.deleteSubClassOf(projectId, item.id, id);
+              break;
+            case 'DisjointWith':
+              await ontologyMutationService.deleteDisjointWith(projectId, item.id, id);
+              break;
+          }
+          // Reload to reflect changes
+          await loadClassDetails();
+        } else {
+          // For complex expressions, we don't have backend support yet
+          console.warn("Delete axiom not fully implemented for complex expressions");
+          // Optimistic update for UI only
+          switch (type) {
+            case 'EquivalentTo':
+              onUpdate({ ...item, equivalentClassesAxioms: item.equivalentClassesAxioms?.filter(a => a.id !== id) });
+              break;
+            case 'SubClassOf':
+              onUpdate({ ...item, subClassOfAxioms: item.subClassOfAxioms?.filter(a => a.id !== id) });
+              break;
+            case 'DisjointWith':
+              onUpdate({ ...item, disjointClassesAxioms: item.disjointClassesAxioms?.filter(a => a.id !== id) });
+              break;
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to delete axiom:', error);
+    }
+  };
+
+  const handleEditAxiom = async (type: AxiomType, oldId: string, newDefinition: string) => {
+    try {
+      // Edit is implemented as delete + add
+      // First delete the old axiom
+      const isOldSimpleIRI = oldId.startsWith('http://') || oldId.startsWith('https://') || oldId.startsWith('urn:');
+      if (isOldSimpleIRI) {
+        switch (type) {
+          case 'EquivalentTo':
+            await ontologyMutationService.deleteEquivalentClass(projectId, item.id, oldId);
             break;
-        case 'SubClassOf':
-            onUpdate({ ...item, subClassOfAxioms: item.subClassOfAxioms?.filter(a => a.id !== id) });
+          case 'SubClassOf':
+            await ontologyMutationService.deleteSubClassOf(projectId, item.id, oldId);
             break;
-        case 'DisjointWith':
-            onUpdate({ ...item, disjointClassesAxioms: item.disjointClassesAxioms?.filter(a => a.id !== id) });
+          case 'DisjointWith':
+            await ontologyMutationService.deleteDisjointWith(projectId, item.id, oldId);
             break;
+        }
+      }
+      
+      // Then add the new one
+      const isNewSimpleIRI = newDefinition.startsWith('http://') || newDefinition.startsWith('https://') || newDefinition.startsWith('urn:');
+      if (isNewSimpleIRI) {
+        switch (type) {
+          case 'EquivalentTo':
+            await ontologyMutationService.addEquivalentClass(projectId, item.id, newDefinition);
+            break;
+          case 'SubClassOf':
+            await ontologyMutationService.addSubClassOf(projectId, item.id, newDefinition);
+            break;
+          case 'DisjointWith':
+            await ontologyMutationService.addDisjointWith(projectId, item.id, newDefinition);
+            break;
+        }
+      } else {
+        // For complex expressions
+        await ontologyMutationService.addAxiom(projectId, item.id, type, newDefinition);
+      }
+      
+      await loadClassDetails();
+    } catch (error) {
+      console.error('Failed to edit axiom:', error);
     }
   };
 
   const handleDisjointUnionConfirm = async (nodes: TreeNode[]) => {
     try {
-      const expression = nodes.map(n => n.label || n.id).join(", ");
-      // We treat Disjoint Union as a special axiom type or just use addAxiom with a specific flag if backend supported it.
-      // For now, let's assume we send it as a "DisjointUnion" axiom type (which we need to add to AxiomType or handle loosely)
-      // But AxiomType is strict. Let's cast or extend it.
-      // Actually, DisjointUnion is usually a set of classes.
-      // We can format it as "DisjointUnionOf(A, B, C)" or just "A, B, C" and let the backend handle it.
+      // Get the IRIs of the selected classes
+      const memberIris = nodes.map(n => n.id);
       
-      // Since we don't have a specific "DisjointUnion" type in AxiomType, we might need to extend it or use a custom call.
-      // Let's use addAxiom with a custom type string if possible, or just log it for now as backend support is partial.
+      if (memberIris.length < 2) {
+        console.warn('Disjoint Union requires at least 2 classes');
+        alert('Please select at least 2 classes for the disjoint union.');
+        return;
+      }
       
-      await ontologyMutationService.addAxiom(projectId, item.id, 'DisjointUnion' as any, expression);
+      // Use the new addDisjointUnion method
+      await ontologyMutationService.addDisjointUnion(projectId, item.id, memberIris);
       await loadClassDetails();
     } catch (error) {
       console.error('Failed to add disjoint union:', error);
+      alert('Failed to add disjoint union. See console for details.');
     }
     setIsDisjointUnionOpen(false);
+  };
+
+  const handleDeleteDisjointUnion = async (listNodeId: string) => {
+    try {
+      await ontologyMutationService.deleteDisjointUnion(projectId, item.id, listNodeId);
+      await loadClassDetails();
+    } catch (error) {
+      console.error('Failed to delete disjoint union:', error);
+    }
+  };
+
+  const handleDeleteHasKey = async (listNodeId: string) => {
+    try {
+      await ontologyMutationService.deleteHasKey(projectId, item.id, listNodeId);
+      await loadClassDetails();
+    } catch (error) {
+      console.error('Failed to delete has key:', error);
+    }
+  };
+
+  const handleAddHasKey = async (propertyIris: string[]) => {
+    try {
+      if (propertyIris.length < 1) {
+        console.warn('HasKey requires at least 1 property');
+        alert('Please select at least 1 property for the key.');
+        return;
+      }
+      
+      await ontologyMutationService.addHasKey(projectId, item.id, propertyIris);
+      await loadClassDetails();
+    } catch (error) {
+      console.error('Failed to add has key:', error);
+      alert('Failed to add has key. See console for details.');
+    }
   };
 
   const annotationCount = Object.keys(item.annotations || {}).length;
@@ -505,6 +704,7 @@ const ClassEditor: React.FC<{
                   title="Equivalent To"
                   axioms={item.equivalentClassesAxioms}
                   onAdd={(def) => handleAddAxiom('EquivalentTo', def)}
+                  onEdit={(id, newDef) => handleEditAxiom('EquivalentTo', id, newDef)}
                   onDelete={(id) => handleDeleteAxiom('EquivalentTo', id)}
                   onAddClick={() => openEditor('EquivalentTo', 'Edit Equivalent Class Expression')}
                 />
@@ -513,6 +713,7 @@ const ClassEditor: React.FC<{
                   title="SubClass Of"
                   axioms={item.subClassOfAxioms}
                   onAdd={(def) => handleAddAxiom('SubClassOf', def)}
+                  onEdit={(id, newDef) => handleEditAxiom('SubClassOf', id, newDef)}
                   onDelete={(id) => handleDeleteAxiom('SubClassOf', id)}
                   onAddClick={() => openEditor('SubClassOf', 'Edit SubClass Expression')}
                 />
@@ -521,6 +722,7 @@ const ClassEditor: React.FC<{
                   title="Disjoint With"
                   axioms={item.disjointClassesAxioms}
                   onAdd={(def) => handleAddAxiom('DisjointWith', def)}
+                  onEdit={(id, newDef) => handleEditAxiom('DisjointWith', id, newDef)}
                   onDelete={(id) => handleDeleteAxiom('DisjointWith', id)}
                   onAddClick={() => openEditor('DisjointWith', 'Edit Disjoint Class Expression')}
                 />
@@ -529,7 +731,7 @@ const ClassEditor: React.FC<{
                   title="Disjoint Union Of"
                   axioms={item.disjointUnionAxioms}
                   onAdd={() => {}}
-                  onDelete={(id) => handleDeleteAxiom('DisjointUnion' as any, id)}
+                  onDelete={(id) => handleDeleteDisjointUnion(id)}
                   onAddClick={() => setIsDisjointUnionOpen(true)}
                   emptyMessage="No disjoint unions defined"
                 />
@@ -537,9 +739,9 @@ const ClassEditor: React.FC<{
                 <AxiomSubsection
                   title="Has Key"
                   axioms={item.hasKeyAxioms}
-                  onAdd={(def) => handleAddAxiom('HasKey' as any, def)}
-                  onDelete={(id) => handleDeleteAxiom('HasKey' as any, id)}
-                  onAddClick={() => openEditor('HasKey' as any, 'Edit Has Key (Properties)')}
+                  onAdd={() => {}}
+                  onDelete={(id) => handleDeleteHasKey(id)}
+                  onAddClick={() => setIsHasKeyOpen(true)}
                   emptyMessage="No keys defined"
                 />
                 
@@ -568,6 +770,11 @@ const ClassEditor: React.FC<{
         dataPropertiesTree={dataPropertyHierarchy}
         expandedNodes={expandedNodes}
         onToggleNode={onToggleNode}
+        projectId={projectId}
+        onAddClass={onAddClass}
+        onDeleteClass={onDeleteClass}
+        onRefreshClasses={onRefreshClasses}
+        metadata={metadata}
       />
 
       {/* Disjoint Union Selector */}
@@ -580,6 +787,17 @@ const ClassEditor: React.FC<{
         onToggleNode={onToggleNode}
         externalExpandedNodes={expandedNodes}
         title="Select Classes for Disjoint Union"
+      />
+
+      {/* Has Key Property Selector */}
+      <MultiPropertySelectorDialog
+        isOpen={isHasKeyOpen}
+        onClose={() => setIsHasKeyOpen(false)}
+        onConfirm={handleAddHasKey}
+        objectProperties={properties}
+        dataProperties={dataProperties}
+        title="Select Key Properties (HasKey)"
+        minSelection={1}
       />
 
       {/* IRI Editor Dialog */}

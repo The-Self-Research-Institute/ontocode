@@ -1,12 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import EntityHierarchy from '../EntityHierarchy';
+import ontologyMutationService from '../../services/ontologyMutationService';
 import type { TreeNode, Property } from '../../types';
+
+// Structured data for object/data restrictions
+export interface RestrictionData {
+  type: 'objectRestriction' | 'dataRestriction';
+  axiomType: 'EquivalentTo' | 'SubClassOf';
+  propertyIri: string;
+  restrictionType: 'some' | 'only' | 'min' | 'max' | 'exactly' | 'value';
+  fillerIri: string; // Class IRI for object restrictions, datatype IRI for data restrictions
+  cardinality?: number;
+}
 
 interface ClassExpressionDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (expression: string) => void;
+  onConfirm: (expression: string, restrictionData?: RestrictionData) => void;
   classHierarchy: TreeNode[];
   objectProperties: Property[];
   dataProperties: Property[];
@@ -23,6 +34,11 @@ interface ClassExpressionDialogProps {
   // NEW: Property toggle handlers for loading children
   onToggleObjectProperty?: (nodeId: string) => void;
   onToggleDataProperty?: (nodeId: string) => void;
+  // NEW: Callbacks for refreshing data after mutations
+  onRefreshClasses?: () => void;
+  onRefreshProperties?: () => void;
+  // NEW: Metadata for generating IRIs
+  metadata?: { ontologyIRI?: string };
 }
 
 type TabType = 'hierarchy' | 'objectRestriction' | 'classExpression' | 'dataRestriction';
@@ -53,7 +69,10 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   objectPropertiesTree: externalObjectPropertiesTree,
   dataPropertiesTree: externalDataPropertiesTree,
   onToggleObjectProperty,
-  onToggleDataProperty
+  onToggleDataProperty,
+  onRefreshClasses,
+  onRefreshProperties,
+  metadata
 }) => {
   const [activeTab, setActiveTab] = useState<TabType>('hierarchy');
 
@@ -61,6 +80,9 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   const [selectedClass, setSelectedClass] = useState<TreeNode | null>(null);
   const [classSearchQuery, setClassSearchQuery] = useState('');
   const [localExpandedNodes, setLocalExpandedNodes] = useState<string[]>([]);
+  
+  // Selected items for restriction panels
+  const [selectedFillerClass, setSelectedFillerClass] = useState<TreeNode | null>(null);
 
   // Object Restriction state
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null);
@@ -80,6 +102,16 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
 
   // Class Expression (Manchester) state
   const [manchesterExpression, setManchesterExpression] = useState(initialValue);
+
+  // Inline class creation state
+  const [showInlineCreate, setShowInlineCreate] = useState(false);
+  const [inlineCreateType, setInlineCreateType] = useState<'subclass' | 'sibling'>('subclass');
+  const [inlineClassName, setInlineClassName] = useState('');
+  const [isCreatingClass, setIsCreatingClass] = useState(false);
+
+  // Inline class deletion state
+  const [showInlineDelete, setShowInlineDelete] = useState(false);
+  const [isDeletingClass, setIsDeletingClass] = useState(false);
 
   // Reset state when dialog opens with initialValue
   useEffect(() => {
@@ -157,16 +189,6 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
       children: topPropertyChildren.map(buildNode)
     }];
 
-    // Debug logging
-    console.log(`[propertiesToTree] ${isDataProperty ? 'Data' : 'Object'} Properties:`, {
-      inputCount: properties.length,
-      topPropertyChildren: topPropertyChildren.length,
-      hasChildren: topPropertyChildren.length > 0,
-      firstFewProps: properties.slice(0, 3).map(p => ({ label: p.label, superProperties: p.superProperties })),
-      childrenMapKeys: Array.from(childrenMap.keys()),
-      result: result[0]
-    });
-
     return result;
   };
 
@@ -217,6 +239,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
 
   const handleConfirm = () => {
     let expression = '';
+    let restrictionData: RestrictionData | undefined = undefined;
 
     switch (activeTab) {
       case 'hierarchy':
@@ -224,17 +247,39 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
         break;
       case 'objectRestriction':
         expression = buildObjectRestriction();
+        // Also build structured restriction data for backend
+        if (selectedProperty && restrictionFiller) {
+          restrictionData = {
+            type: 'objectRestriction',
+            axiomType: 'SubClassOf', // Default - caller can change this if needed
+            propertyIri: selectedProperty.id,
+            restrictionType: restrictionType,
+            fillerIri: restrictionFiller.id,
+            cardinality: ['min', 'max', 'exactly'].includes(restrictionType) ? cardinality : undefined
+          };
+        }
         break;
       case 'classExpression':
         expression = manchesterExpression.trim();
         break;
       case 'dataRestriction':
         expression = buildDataRestriction();
+        // Also build structured restriction data for backend
+        if (selectedDataProperty) {
+          restrictionData = {
+            type: 'dataRestriction',
+            axiomType: 'SubClassOf', // Default - caller can change this if needed
+            propertyIri: selectedDataProperty.id,
+            restrictionType: dataRestrictionType,
+            fillerIri: datatype.startsWith('http://') ? datatype : `http://www.w3.org/2001/XMLSchema#${datatype.replace('xsd:', '')}`,
+            cardinality: ['min', 'max', 'exactly'].includes(dataRestrictionType) ? dataCardinality : undefined
+          };
+        }
         break;
     }
 
     if (expression) {
-      onConfirm(expression);
+      onConfirm(expression, restrictionData);
       handleClose();
     }
   };
@@ -249,6 +294,11 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
     setClassSearchQuery('');
     setFillerSearchQuery('');
     setActiveTab('hierarchy');
+    // Reset inline create state
+    setShowInlineCreate(false);
+    setInlineClassName('');
+    // Reset inline delete state
+    setShowInlineDelete(false);
     onClose();
   };
 
@@ -318,6 +368,127 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
     }
   };
 
+  // Helper to find parent of a node in the hierarchy
+  const findParentNode = (nodes: TreeNode[], targetId: string, parent: TreeNode | null = null): TreeNode | null => {
+    for (const node of nodes) {
+      if (node.id === targetId) return parent;
+      if (node.children && node.children.length > 0) {
+        const found = findParentNode(node.children, targetId, node);
+        if (found !== null) return found;
+      }
+    }
+    return null;
+  };
+
+  // Handle inline class creation
+  const handleInlineAddClass = (type: 'subclass' | 'sibling') => {
+    setInlineCreateType(type);
+    setInlineClassName('');
+    setShowInlineCreate(true);
+  };
+
+  // Submit inline class creation
+  const handleInlineCreateSubmit = async () => {
+    if (!inlineClassName.trim() || !projectId) return;
+    
+    setIsCreatingClass(true);
+    try {
+      let parentIri = 'http://www.w3.org/2002/07/owl#Thing';
+      
+      if (inlineCreateType === 'subclass' && selectedClass) {
+        parentIri = selectedClass.id;
+      } else if (inlineCreateType === 'sibling' && selectedClass) {
+        const parent = findParentNode(classHierarchy, selectedClass.id);
+        parentIri = parent?.id || 'http://www.w3.org/2002/07/owl#Thing';
+      }
+      
+      // Generate IRI from class name
+      const baseIri = metadata?.ontologyIRI || 'http://example.org/ontology#';
+      const cleanName = inlineClassName.trim().replace(/\s+/g, '_');
+      const newClassIri = baseIri.endsWith('#') || baseIri.endsWith('/') 
+        ? `${baseIri}${cleanName}` 
+        : `${baseIri}#${cleanName}`;
+      
+      // Ensure parent node is expanded so new class will be visible
+      // Add parent to local expanded nodes if not already expanded
+      if (!localExpandedNodes.includes(parentIri)) {
+        setLocalExpandedNodes(prev => [...prev, parentIri]);
+      }
+      // Also trigger parent's toggle to ensure it's expanded in external state
+      if (onToggleNode && !expandedNodes.includes(parentIri)) {
+        await onToggleNode(parentIri);
+      }
+      
+      // Create the class via the mutation service
+      await ontologyMutationService.createClass(
+        projectId,
+        newClassIri,
+        inlineClassName.trim(),
+        parentIri,
+        'anonymous',
+        'Anonymous'
+      );
+      
+      // Refresh the class hierarchy
+      if (onRefreshClasses) {
+        onRefreshClasses();
+      }
+      
+      // Reset inline create state
+      setShowInlineCreate(false);
+      setInlineClassName('');
+    } catch (error) {
+      console.error('Failed to create class:', error);
+    } finally {
+      setIsCreatingClass(false);
+    }
+  };
+
+  // Cancel inline creation
+  const handleInlineCreateCancel = () => {
+    setShowInlineCreate(false);
+    setInlineClassName('');
+  };
+
+  // Show inline delete confirmation
+  const handleInlineDeleteStart = () => {
+    if (!selectedClass || selectedClass.id.includes('Thing')) return;
+    setShowInlineDelete(true);
+  };
+
+  // Confirm and execute inline delete
+  const handleInlineDeleteConfirm = async () => {
+    if (!selectedClass || !projectId) return;
+    
+    setIsDeletingClass(true);
+    try {
+      await ontologyMutationService.deleteClass(
+        projectId,
+        selectedClass.id,
+        'anonymous',
+        'Anonymous'
+      );
+      
+      // Clear selection and hide confirmation
+      setSelectedClass(null);
+      setShowInlineDelete(false);
+      
+      // Refresh the class hierarchy
+      if (onRefreshClasses) {
+        onRefreshClasses();
+      }
+    } catch (error) {
+      console.error('Failed to delete class:', error);
+    } finally {
+      setIsDeletingClass(false);
+    }
+  };
+
+  // Cancel inline delete
+  const handleInlineDeleteCancel = () => {
+    setShowInlineDelete(false);
+  };
+
   const datatypes = [
     'owl:rational',
     'owl:real',
@@ -363,15 +534,6 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   // Use external property trees if provided, otherwise convert from flat list
   const objectPropertiesTree = externalObjectPropertiesTree || propertiesToTree(objectProperties, false);
   const dataPropertiesTree = externalDataPropertiesTree || propertiesToTree(dataProperties, true);
-
-  // Debug logging
-  console.log('[ClassExpressionDialog] Object Properties Tree Debug:', {
-    externalProvided: !!externalObjectPropertiesTree,
-    treeLength: objectPropertiesTree.length,
-    firstNode: objectPropertiesTree[0],
-    hasChildren: objectPropertiesTree[0]?.hasChildren,
-    childrenCount: objectPropertiesTree[0]?.children?.length
-  });
 
   // Use parent's expanded nodes if available, otherwise use local
   const effectiveExpandedNodes = onToggleNode ? expandedNodes : localExpandedNodes;
@@ -440,19 +602,89 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
         <div className="flex-1 overflow-hidden min-h-0 bg-white">
           {/* Class Hierarchy Tab */}
           {activeTab === 'hierarchy' && (
-            <div className="h-full">
-              <EntityHierarchy
-                entitiesTab="Classes"
-                filteredData={classHierarchy}
-                selectedItem={selectedClass}
-                expandedNodes={effectiveExpandedNodes}
-                searchQuery={classSearchQuery}
-                onSearchQueryChange={setClassSearchQuery}
-                onSelectItem={(item) => setSelectedClass(item as TreeNode)}
-                onToggleNode={handleHierarchyToggle}
-                onAddItem={onAddClass || (() => {})}
-                onDeleteItem={onDeleteClass || (() => {})}
-              />
+            <div className="h-full flex flex-col">
+              {/* Inline Create Form */}
+              {showInlineCreate && (
+                <div className="px-3 py-2 bg-amber-50 border-b border-amber-200">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-amber-800 font-medium">
+                      New {inlineCreateType === 'subclass' ? 'subclass of' : 'sibling of'} {selectedClass?.label || 'owl:Thing'}:
+                    </span>
+                    <input
+                      type="text"
+                      value={inlineClassName}
+                      onChange={(e) => setInlineClassName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && inlineClassName.trim()) {
+                          handleInlineCreateSubmit();
+                        } else if (e.key === 'Escape') {
+                          handleInlineCreateCancel();
+                        }
+                      }}
+                      placeholder="Enter class name..."
+                      className="flex-1 px-2 py-1 text-sm border border-amber-300 rounded focus:outline-none focus:ring-1 focus:ring-amber-500 bg-white"
+                      autoFocus
+                      disabled={isCreatingClass}
+                    />
+                    <button
+                      onClick={handleInlineCreateSubmit}
+                      disabled={!inlineClassName.trim() || isCreatingClass}
+                      className="px-3 py-1 text-xs bg-amber-600 text-white rounded hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isCreatingClass ? 'Creating...' : 'Create'}
+                    </button>
+                    <button
+                      onClick={handleInlineCreateCancel}
+                      disabled={isCreatingClass}
+                      className="px-2 py-1 text-xs text-gray-600 hover:text-gray-800"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+              
+              {/* Inline Delete Confirmation */}
+              {showInlineDelete && selectedClass && (
+                <div className="px-3 py-2 bg-red-50 border-b border-red-200">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-red-800 font-medium">
+                      Delete "{selectedClass.label}"?
+                    </span>
+                    <span className="flex-1" />
+                    <button
+                      onClick={handleInlineDeleteConfirm}
+                      disabled={isDeletingClass}
+                      className="px-3 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isDeletingClass ? 'Deleting...' : 'Delete'}
+                    </button>
+                    <button
+                      onClick={handleInlineDeleteCancel}
+                      disabled={isDeletingClass}
+                      className="px-2 py-1 text-xs text-gray-600 hover:text-gray-800"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+              
+              <div className="flex-1 overflow-hidden">
+                <EntityHierarchy
+                  entitiesTab="Classes"
+                  filteredData={classHierarchy}
+                  selectedItem={selectedClass}
+                  expandedNodes={effectiveExpandedNodes}
+                  searchQuery={classSearchQuery}
+                  onSearchQueryChange={setClassSearchQuery}
+                  onSelectItem={(item) => setSelectedClass(item as TreeNode)}
+                  onToggleNode={handleHierarchyToggle}
+                  onAddItem={projectId ? (type) => handleInlineAddClass(type as 'subclass' | 'sibling') : () => {}}
+                  onDeleteItem={projectId ? handleInlineDeleteStart : () => {}}
+                  hideToolbarActions={!projectId}
+                />
+              </div>
             </div>
           )}
 
@@ -476,6 +708,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                     onToggleNode={handleObjectPropertyToggle}
                     onAddItem={() => {}}
                     onDeleteItem={() => {}}
+                    hideToolbarActions={true}
                   />
                 </div>
               </div>
@@ -497,6 +730,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                     onToggleNode={handleFillerToggle}
                     onAddItem={() => {}}
                     onDeleteItem={() => {}}
+                    hideToolbarActions={true}
                   />
                 </div>
               </div>
@@ -559,6 +793,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                     onToggleNode={handleDataPropertyToggle}
                     onAddItem={() => {}}
                     onDeleteItem={() => {}}
+                    hideToolbarActions={true}
                   />
                 </div>
               </div>

@@ -130,69 +130,69 @@ export const ontologyMutationService = {
   },
 
   /**
-   * Add SubClassOf axiom
+   * Add SubClassOf axiom (applied immediately, not as draft)
    */
   async addSubClassOf(projectId: string, classIri: string, superClassIri: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'addSubClassOf',
       iri: classIri,
       target: superClassIri
-    }]);
+    }], false); // Apply immediately
   },
 
   /**
-   * Delete SubClassOf axiom
+   * Delete SubClassOf axiom (applied immediately, not as draft)
    */
   async deleteSubClassOf(projectId: string, classIri: string, superClassIri: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'deleteSubClassOf',
       iri: classIri,
       target: superClassIri
-    }]);
+    }], false); // Apply immediately
   },
 
   /**
-   * Add EquivalentClass axiom
+   * Add EquivalentClass axiom (applied immediately, not as draft)
    */
   async addEquivalentClass(projectId: string, classIri: string, equivalentClassIri: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'addEquivalentClass',
       iri: classIri,
       target: equivalentClassIri
-    }]);
+    }], false); // Apply immediately
   },
 
   /**
-   * Delete EquivalentClass axiom
+   * Delete EquivalentClass axiom (applied immediately, not as draft)
    */
   async deleteEquivalentClass(projectId: string, classIri: string, equivalentClassIri: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'deleteEquivalentClass',
       iri: classIri,
       target: equivalentClassIri
-    }]);
+    }], false); // Apply immediately
   },
 
   /**
-   * Add DisjointWith axiom
+   * Add DisjointWith axiom (applied immediately, not as draft)
    */
   async addDisjointWith(projectId: string, classIri: string, disjointClassIri: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'addDisjointWith',
       iri: classIri,
       target: disjointClassIri
-    }]);
+    }], false); // Apply immediately
   },
 
   /**
-   * Delete DisjointWith axiom
+   * Delete DisjointWith axiom (applied immediately, not as draft)
    */
   async deleteDisjointWith(projectId: string, classIri: string, disjointClassIri: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'deleteDisjointWith',
       iri: classIri,
       target: disjointClassIri
-    }]);
+    }], false); // Apply immediately
   },
 
   /**
@@ -399,7 +399,62 @@ export const ontologyMutationService = {
   },
 
   /**
-   * Add an axiom using Manchester Syntax
+   * Add DisjointUnionOf axiom (applied immediately)
+   * This creates a disjoint union: the class becomes equivalent to the disjoint union of the member classes
+   * @param classIri - The class IRI that will have the disjoint union
+   * @param memberClassIris - Array of member class IRIs
+   */
+  async addDisjointUnion(projectId: string, classIri: string, memberClassIris: string[]): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'addDisjointUnion',
+      iri: classIri,
+      value: memberClassIris.join(',')
+    }], false); // Apply immediately
+  },
+
+  /**
+   * Delete DisjointUnionOf axiom (applied immediately)
+   * @param classIri - The class IRI
+   * @param listNodeId - The list node ID (from the axiom's id field)
+   */
+  async deleteDisjointUnion(projectId: string, classIri: string, listNodeId: string): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'deleteDisjointUnion',
+      iri: classIri,
+      target: listNodeId
+    }], false); // Apply immediately
+  },
+
+  /**
+   * Add HasKey axiom (applied immediately)
+   * HasKey defines properties that uniquely identify individuals of a class
+   * @param classIri - The class IRI
+   * @param propertyIris - Array of property IRIs that form the key
+   */
+  async addHasKey(projectId: string, classIri: string, propertyIris: string[]): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'addHasKey',
+      iri: classIri,
+      value: propertyIris.join(',')
+    }], false); // Apply immediately
+  },
+
+  /**
+   * Delete HasKey axiom (applied immediately)
+   * @param classIri - The class IRI
+   * @param listNodeId - The list node ID (from the axiom's id field)
+   */
+  async deleteHasKey(projectId: string, classIri: string, listNodeId: string): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'deleteHasKey',
+      iri: classIri,
+      target: listNodeId
+    }], false); // Apply immediately
+  },
+
+  /**
+   * Add an axiom using Manchester Syntax (applied immediately, not as draft)
+   * NOTE: Backend Manchester parser not yet implemented - complex expressions may not work
    */
   async addAxiom(projectId: string, classIri: string, type: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith', expression: string): Promise<void> {
     await this.applyMutations(projectId, [{
@@ -407,7 +462,97 @@ export const ontologyMutationService = {
       classIri,
       target: expression, // We use 'target' for the expression
       value: type // We use 'value' for the axiom type
-    }]);
+    }], false); // Apply immediately
+  },
+
+  /**
+   * Add an object restriction (e.g., "hasProperty some ClassName")
+   * This sends structured data that the backend can process without Manchester parsing
+   */
+  async addObjectRestriction(
+    projectId: string, 
+    classIri: string, 
+    axiomType: 'EquivalentTo' | 'SubClassOf',
+    propertyIri: string,
+    restrictionType: 'some' | 'only' | 'min' | 'max' | 'exactly' | 'value',
+    fillerClassIri: string,
+    cardinality?: number
+  ): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'addObjectRestriction',
+      iri: classIri,
+      property: propertyIri,
+      restrictionType,
+      target: fillerClassIri,
+      cardinality: cardinality,
+      axiomType // EquivalentTo or SubClassOf
+    }], false); // Apply immediately
+  },
+
+  /**
+   * Add a data restriction (e.g., "hasAge some xsd:integer")
+   * This sends structured data that the backend can process without Manchester parsing
+   */
+  async addDataRestriction(
+    projectId: string,
+    classIri: string,
+    axiomType: 'EquivalentTo' | 'SubClassOf',
+    propertyIri: string,
+    restrictionType: 'some' | 'only' | 'min' | 'max' | 'exactly',
+    datatypeIri: string,
+    cardinality?: number
+  ): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'addDataRestriction',
+      iri: classIri,
+      property: propertyIri,
+      restrictionType,
+      target: datatypeIri,
+      cardinality: cardinality,
+      axiomType
+    }], false); // Apply immediately
+  },
+
+  /**
+   * Delete an object restriction
+   */
+  async deleteObjectRestriction(
+    projectId: string,
+    classIri: string,
+    axiomType: 'EquivalentTo' | 'SubClassOf',
+    propertyIri: string,
+    restrictionType: 'some' | 'only' | 'min' | 'max' | 'exactly' | 'value',
+    fillerClassIri: string
+  ): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'deleteObjectRestriction',
+      iri: classIri,
+      property: propertyIri,
+      restrictionType,
+      target: fillerClassIri,
+      axiomType
+    }], false);
+  },
+
+  /**
+   * Delete a data restriction
+   */
+  async deleteDataRestriction(
+    projectId: string,
+    classIri: string,
+    axiomType: 'EquivalentTo' | 'SubClassOf',
+    propertyIri: string,
+    restrictionType: 'some' | 'only' | 'min' | 'max' | 'exactly',
+    datatypeIri: string
+  ): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'deleteDataRestriction',
+      iri: classIri,
+      property: propertyIri,
+      restrictionType,
+      target: datatypeIri,
+      axiomType
+    }], false);
   },
 };
 

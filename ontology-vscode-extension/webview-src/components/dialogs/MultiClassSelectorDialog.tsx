@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { X, Check } from 'lucide-react';
-import EntityHierarchy from '../EntityHierarchy';
+import { X, Check, Package, ChevronRight, ChevronDown } from 'lucide-react';
 import type { TreeNode } from '../../types';
 import apiClient from '../../services/apiClient';
 
@@ -28,10 +27,19 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
   const [selectedClasses, setSelectedClasses] = useState<TreeNode[]>([]);
   const [expandedNodes, setExpandedNodes] = useState<string[]>([]);
   const [treeData, setTreeData] = useState<TreeNode[]>(classHierarchy);
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     setTreeData(classHierarchy);
   }, [classHierarchy]);
+
+  // Reset state when dialog opens
+  useEffect(() => {
+    if (isOpen) {
+      setSelectedClasses([]);
+      setSearchQuery('');
+    }
+  }, [isOpen]);
 
   const loadChildren = useCallback(async (nodeId: string) => {
     if (!projectId) return;
@@ -66,7 +74,8 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
   }, [projectId]);
 
   const handleToggleNode = async (nodeId: string) => {
-    const isExpanded = (externalExpandedNodes || expandedNodes).includes(nodeId);
+    const currentExpanded = externalExpandedNodes || expandedNodes;
+    const isExpanded = currentExpanded.includes(nodeId);
     if (isExpanded) {
       setExpandedNodes(prev => prev.filter(id => id !== nodeId));
     } else {
@@ -93,53 +102,150 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
     onClose();
   };
 
+  const isSelected = (nodeId: string) => selectedClasses.some(n => n.id === nodeId);
+
+  // Render a tree node with checkbox for multi-select
+  const renderTreeNode = (node: TreeNode, level: number = 0): React.ReactNode => {
+    const currentExpanded = externalExpandedNodes || expandedNodes;
+    const isExpanded = currentExpanded.includes(node.id);
+    const hasChildren = node.hasChildren || (node.children && node.children.length > 0);
+    const selected = isSelected(node.id);
+    
+    // Filter by search
+    if (searchQuery && !node.label.toLowerCase().includes(searchQuery.toLowerCase())) {
+      // Check if any children match
+      const hasMatchingChildren = node.children?.some(child => 
+        child.label.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+      if (!hasMatchingChildren) return null;
+    }
+
+    return (
+      <div key={node.id}>
+        <div
+          className={`flex items-center px-2 py-1 cursor-pointer hover:bg-gray-100 ${selected ? 'bg-purple-100' : ''}`}
+          style={{ paddingLeft: `${level * 16 + 8}px` }}
+        >
+          {/* Expand/Collapse button */}
+          <button
+            className="p-0.5 mr-1"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (hasChildren) handleToggleNode(node.id);
+            }}
+            disabled={!hasChildren}
+          >
+            {!hasChildren ? (
+              <span className="w-4" />
+            ) : isExpanded ? (
+              <ChevronDown size={14} />
+            ) : (
+              <ChevronRight size={14} />
+            )}
+          </button>
+
+          {/* Checkbox */}
+          <div
+            onClick={() => handleNodeSelect(node)}
+            className={`w-4 h-4 rounded border mr-2 flex items-center justify-center cursor-pointer ${
+              selected ? 'bg-purple-600 border-purple-600' : 'border-gray-300 hover:border-purple-400'
+            }`}
+          >
+            {selected && <Check size={12} className="text-white" />}
+          </div>
+
+          {/* Icon */}
+          <div className="w-4 h-4 rounded bg-amber-400 border border-amber-600 mr-2 flex items-center justify-center">
+            <Package size={10} className="text-white" />
+          </div>
+
+          {/* Label */}
+          <span
+            className={`text-sm ${selected ? 'font-semibold text-purple-900' : 'text-gray-800'}`}
+            onClick={() => handleNodeSelect(node)}
+          >
+            {node.label}
+          </span>
+        </div>
+
+        {/* Children */}
+        {isExpanded && node.children?.map(child => renderTreeNode(child, level + 1))}
+      </div>
+    );
+  };
+
   // Early return AFTER all hooks to comply with React Rules of Hooks
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 flex flex-col max-h-[80vh]">
-        <div className="p-4 border-b flex justify-between items-center">
-          <h3 className="text-lg font-semibold">{title}</h3>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 flex flex-col max-h-[80vh]" onClick={e => e.stopPropagation()}>
+        <div className="p-4 border-b flex justify-between items-center bg-gray-50">
+          <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
             <X size={20} />
           </button>
         </div>
         
-        <div className="p-4 flex-1 overflow-y-auto">
-          <div className="mb-2 text-sm text-gray-600">
-            Selected: {selectedClasses.map(c => c.label).join(", ") || "None"}
+        <div className="p-4 flex-1 overflow-hidden flex flex-col min-h-0">
+          {/* Selected classes display */}
+          <div className="mb-3">
+            <div className="text-xs font-medium text-gray-500 uppercase mb-1">Selected Classes ({selectedClasses.length})</div>
+            {selectedClasses.length > 0 ? (
+              <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
+                {selectedClasses.map(c => (
+                  <span 
+                    key={c.id}
+                    className="inline-flex items-center gap-1 px-2 py-1 bg-purple-100 text-purple-800 rounded-full text-xs cursor-pointer hover:bg-purple-200"
+                    onClick={() => handleNodeSelect(c)}
+                  >
+                    {c.label}
+                    <X size={12} />
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <div className="text-sm text-gray-400 italic">Click classes below to select them</div>
+            )}
           </div>
-          <div className="border rounded h-64 overflow-y-auto">
-             {/* We reuse EntityHierarchy but we need to handle multi-select visually. 
-                 EntityHierarchy might not support multi-select props. 
-                 For now, let's assume we can just click to toggle. 
-                 But EntityHierarchy usually has onSelect which takes one node.
-             */}
-             <EntityHierarchy 
-               entitiesTab="Classes"
-               filteredData={treeData}
-               selectedItem={selectedClasses.length > 0 ? selectedClasses[selectedClasses.length - 1] : null}
-               expandedNodes={externalExpandedNodes || expandedNodes}
-               searchQuery=""
-               onSearchQueryChange={() => {}}
-               onSelectItem={(item) => handleNodeSelect(item as TreeNode)}
-               onToggleNode={handleToggleNode}
-               onAddItem={() => {}}
-               onDeleteItem={() => {}}
-             />
+
+          {/* Search */}
+          <input
+            type="text"
+            placeholder="Search classes..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 mb-3"
+          />
+
+          {/* Class tree with checkboxes */}
+          <div className="flex-1 border rounded overflow-y-auto min-h-0 bg-white">
+            {treeData.length > 0 ? (
+              treeData.map(node => renderTreeNode(node))
+            ) : (
+              <div className="p-4 text-center text-gray-400 text-sm">
+                No classes available. Make sure the class hierarchy is loaded.
+              </div>
+            )}
           </div>
         </div>
 
-        <div className="p-4 border-t flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 border rounded hover:bg-gray-50">Cancel</button>
-          <button 
-            onClick={handleConfirm} 
-            disabled={selectedClasses.length < 2}
-            className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50"
-          >
-            Confirm ({selectedClasses.length})
-          </button>
+        <div className="p-4 border-t bg-gray-50 flex justify-between items-center">
+          <div className="text-xs text-gray-500">
+            Select at least 2 classes for the disjoint union
+          </div>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50">
+              Cancel
+            </button>
+            <button 
+              onClick={handleConfirm} 
+              disabled={selectedClasses.length < 2}
+              className="px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Confirm ({selectedClasses.length})
+            </button>
+          </div>
         </div>
       </div>
     </div>

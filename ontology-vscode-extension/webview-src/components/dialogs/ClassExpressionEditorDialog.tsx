@@ -1,11 +1,12 @@
 import React from 'react';
 import ClassExpressionDialog from './ClassExpressionDialog';
+import type { RestrictionData } from './ClassExpressionDialog';
 import type { TreeNode, Property } from '../../types';
 
 interface ClassExpressionEditorDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (expression: string) => void;
+  onConfirm: (expression: string, restrictionData?: RestrictionData) => void;
   title?: string;
   initialValue?: string;
   projectId: string;
