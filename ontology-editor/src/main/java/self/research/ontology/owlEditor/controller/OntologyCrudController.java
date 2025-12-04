@@ -123,7 +123,10 @@ public class OntologyCrudController {
                     null,
                     null,
                     request.classIds().get(j),
-                    null
+                    null,
+                    null, // restrictionType
+                    null, // cardinality
+                    null  // axiomType
                 );
                 collaborativeEditService.broadcastMutation(projectId, disjointOp, userId, username);
             }

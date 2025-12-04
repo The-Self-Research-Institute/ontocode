@@ -70,8 +70,18 @@ export interface PropertyAssertion {
 
 export interface Axiom {
   id: string;
-  type: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith';
+  type: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith' | 'DisjointUnionOf' | 'HasKey';
   definition: string;
+  // Fields for restrictions (returned by backend when axiom is a restriction)
+  isRestriction?: boolean | string;
+  propertyIri?: string;
+  restrictionType?: 'some' | 'only' | 'min' | 'max' | 'exactly' | 'value';
+  fillerIri?: string;
+  cardinality?: string | number;
+  // Fields for DisjointUnionOf
+  members?: string[];
+  // Fields for HasKey
+  properties?: string[];
 }
 
 // ============ Metadata Types ============

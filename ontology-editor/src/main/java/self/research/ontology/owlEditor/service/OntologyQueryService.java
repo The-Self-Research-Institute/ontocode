@@ -3,6 +3,8 @@ package self.research.ontology.owlEditor.service;
 import org.eclipse.rdf4j.query.BindingSet;
 import org.eclipse.rdf4j.query.TupleQueryResult;
 import org.eclipse.rdf4j.model.Value;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.dto.AnnotationPropertyDto;
 import self.research.ontology.owlEditor.dto.DatatypeDto;
@@ -20,6 +22,8 @@ import java.util.Set;
 
 @Service
 public class OntologyQueryService {
+
+    private static final Logger log = LoggerFactory.getLogger(OntologyQueryService.class);
 
     private static final String PREFIXES = """
         PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
@@ -774,12 +778,8 @@ public class OntologyQueryService {
             usage.put("type", "annotation_on_class");
             String propIri = resource(sol, "prop");
             if (propIri != null) {
-                // Skip standard RDF/RDFS/OWL properties that aren't custom annotations
-                if (propIri.startsWith("http://www.w3.org/2000/01/rdf-schema#") && 
-                    (propIri.endsWith("#label") || propIri.endsWith("#comment"))) {
-                    continue;
-                }
-                if (propIri.startsWith("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")) {
+                // Skip rdf:type as it's shown elsewhere
+                if (propIri.equals("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")) {
                     continue;
                 }
                 
@@ -862,9 +862,376 @@ public class OntologyQueryService {
                 subClassAxioms.add(axiom);
             }
         }
+        
+        // Get SubClassOf restrictions (anonymous superclasses that are owl:Restriction)
+        String subClassRestrictionQuery = PREFIXES + """
+            SELECT ?restriction ?prop ?propLabel ?restrictionType ?filler ?fillerLabel ?card WHERE {
+              <%s> rdfs:subClassOf ?restriction .
+              ?restriction a owl:Restriction ;
+                          owl:onProperty ?prop .
+              OPTIONAL { ?prop rdfs:label ?propLabel }
+              OPTIONAL {
+                ?restriction owl:someValuesFrom ?filler .
+                BIND("some" AS ?restrictionType)
+              }
+              OPTIONAL {
+                ?restriction owl:allValuesFrom ?filler .
+                BIND("only" AS ?restrictionType)
+              }
+              OPTIONAL {
+                ?restriction owl:hasValue ?filler .
+                BIND("value" AS ?restrictionType)
+              }
+              OPTIONAL {
+                ?restriction owl:minQualifiedCardinality ?card ;
+                            owl:onClass ?filler .
+                BIND("min" AS ?restrictionType)
+              }
+              OPTIONAL {
+                ?restriction owl:maxQualifiedCardinality ?card ;
+                            owl:onClass ?filler .
+                BIND("max" AS ?restrictionType)
+              }
+              OPTIONAL {
+                ?restriction owl:qualifiedCardinality ?card ;
+                            owl:onClass ?filler .
+                BIND("exactly" AS ?restrictionType)
+              }
+              OPTIONAL { ?filler rdfs:label ?fillerLabel }
+              FILTER(BOUND(?restrictionType))
+            }
+            """.formatted(classIri);
+        TupleQueryResult subClassRestrictionRs = datasetService.execSelect(projectId, subClassRestrictionQuery);
+        while (subClassRestrictionRs.hasNext()) {
+            BindingSet sol = subClassRestrictionRs.next();
+            Map<String, String> axiom = new LinkedHashMap<>();
+            String restrictionNode = sol.getValue("restriction").stringValue();
+            String propIri = resource(sol, "prop");
+            String propLabel = sol.hasBinding("propLabel") ? literal(sol, "propLabel") : localName(propIri);
+            String restrictionType = sol.hasBinding("restrictionType") ? literal(sol, "restrictionType") : "some";
+            String fillerIri = sol.hasBinding("filler") ? sol.getValue("filler").stringValue() : "";
+            String fillerLabel = sol.hasBinding("fillerLabel") ? literal(sol, "fillerLabel") : localName(fillerIri);
+            String cardinality = sol.hasBinding("card") ? literal(sol, "card") : "";
+            
+            // Build Manchester-style display string
+            String definition;
+            if (!cardinality.isEmpty()) {
+                definition = propLabel + " " + restrictionType + " " + cardinality + " " + fillerLabel;
+            } else {
+                definition = propLabel + " " + restrictionType + " " + fillerLabel;
+            }
+            
+            axiom.put("id", restrictionNode); // Use blank node ID
+            axiom.put("type", "SubClassOf");
+            axiom.put("definition", definition);
+            axiom.put("isRestriction", "true");
+            axiom.put("propertyIri", propIri);
+            axiom.put("restrictionType", restrictionType);
+            axiom.put("fillerIri", fillerIri);
+            if (!cardinality.isEmpty()) {
+                axiom.put("cardinality", cardinality);
+            }
+            subClassAxioms.add(axiom);
+        }
+        
         details.put("subClassOfAxioms", subClassAxioms);
         
+        // Get EquivalentClass axioms (simple IRI-based)
+        String equivQuery = PREFIXES + """
+            SELECT ?equiv ?label WHERE {
+              <%s> owl:equivalentClass ?equiv .
+              FILTER(isIRI(?equiv))
+              OPTIONAL { ?equiv rdfs:label ?label }
+            }
+            """.formatted(classIri);
+        TupleQueryResult equivRs = datasetService.execSelect(projectId, equivQuery);
+        List<Map<String, String>> equivAxioms = new ArrayList<>();
+        while (equivRs.hasNext()) {
+            BindingSet sol = equivRs.next();
+            Map<String, String> axiom = new LinkedHashMap<>();
+            String equivIri = resource(sol, "equiv");
+            if (equivIri != null) {
+                axiom.put("id", equivIri);
+                axiom.put("type", "EquivalentTo");
+                axiom.put("definition", sol.hasBinding("label") ? literal(sol, "label") : localName(equivIri));
+                equivAxioms.add(axiom);
+            }
+        }
+        
+        // Get EquivalentClass restrictions
+        String equivRestrictionQuery = PREFIXES + """
+            SELECT ?restriction ?prop ?propLabel ?restrictionType ?filler ?fillerLabel ?card WHERE {
+              <%s> owl:equivalentClass ?restriction .
+              ?restriction a owl:Restriction ;
+                          owl:onProperty ?prop .
+              OPTIONAL { ?prop rdfs:label ?propLabel }
+              OPTIONAL {
+                ?restriction owl:someValuesFrom ?filler .
+                BIND("some" AS ?restrictionType)
+              }
+              OPTIONAL {
+                ?restriction owl:allValuesFrom ?filler .
+                BIND("only" AS ?restrictionType)
+              }
+              OPTIONAL {
+                ?restriction owl:hasValue ?filler .
+                BIND("value" AS ?restrictionType)
+              }
+              OPTIONAL {
+                ?restriction owl:minQualifiedCardinality ?card ;
+                            owl:onClass ?filler .
+                BIND("min" AS ?restrictionType)
+              }
+              OPTIONAL {
+                ?restriction owl:maxQualifiedCardinality ?card ;
+                            owl:onClass ?filler .
+                BIND("max" AS ?restrictionType)
+              }
+              OPTIONAL {
+                ?restriction owl:qualifiedCardinality ?card ;
+                            owl:onClass ?filler .
+                BIND("exactly" AS ?restrictionType)
+              }
+              OPTIONAL { ?filler rdfs:label ?fillerLabel }
+              FILTER(BOUND(?restrictionType))
+            }
+            """.formatted(classIri);
+        TupleQueryResult equivRestrictionRs = datasetService.execSelect(projectId, equivRestrictionQuery);
+        while (equivRestrictionRs.hasNext()) {
+            BindingSet sol = equivRestrictionRs.next();
+            Map<String, String> axiom = new LinkedHashMap<>();
+            String restrictionNode = sol.getValue("restriction").stringValue();
+            String propIri = resource(sol, "prop");
+            String propLabel = sol.hasBinding("propLabel") ? literal(sol, "propLabel") : localName(propIri);
+            String restrictionType = sol.hasBinding("restrictionType") ? literal(sol, "restrictionType") : "some";
+            String fillerIri = sol.hasBinding("filler") ? sol.getValue("filler").stringValue() : "";
+            String fillerLabel = sol.hasBinding("fillerLabel") ? literal(sol, "fillerLabel") : localName(fillerIri);
+            String cardinality = sol.hasBinding("card") ? literal(sol, "card") : "";
+            
+            String definition;
+            if (!cardinality.isEmpty()) {
+                definition = propLabel + " " + restrictionType + " " + cardinality + " " + fillerLabel;
+            } else {
+                definition = propLabel + " " + restrictionType + " " + fillerLabel;
+            }
+            
+            axiom.put("id", restrictionNode);
+            axiom.put("type", "EquivalentTo");
+            axiom.put("definition", definition);
+            axiom.put("isRestriction", "true");
+            axiom.put("propertyIri", propIri);
+            axiom.put("restrictionType", restrictionType);
+            axiom.put("fillerIri", fillerIri);
+            if (!cardinality.isEmpty()) {
+                axiom.put("cardinality", cardinality);
+            }
+            equivAxioms.add(axiom);
+        }
+        
+        details.put("equivalentClassesAxioms", equivAxioms);
+        
+        // Get DisjointWith axioms
+        String disjointQuery = PREFIXES + """
+            SELECT ?disjoint ?label WHERE {
+              {
+                <%s> owl:disjointWith ?disjoint .
+              } UNION {
+                ?disjoint owl:disjointWith <%s> .
+              }
+              FILTER(isIRI(?disjoint))
+              OPTIONAL { ?disjoint rdfs:label ?label }
+            }
+            """.formatted(classIri, classIri);
+        TupleQueryResult disjointRs = datasetService.execSelect(projectId, disjointQuery);
+        List<Map<String, String>> disjointAxioms = new ArrayList<>();
+        while (disjointRs.hasNext()) {
+            BindingSet sol = disjointRs.next();
+            Map<String, String> axiom = new LinkedHashMap<>();
+            String disjointIri = resource(sol, "disjoint");
+            if (disjointIri != null) {
+                axiom.put("id", disjointIri);
+                axiom.put("type", "DisjointWith");
+                axiom.put("definition", sol.hasBinding("label") ? literal(sol, "label") : localName(disjointIri));
+                disjointAxioms.add(axiom);
+            }
+        }
+        details.put("disjointClassesAxioms", disjointAxioms);
+        
+        // Get DisjointUnionOf axioms (owl:disjointUnionOf)
+        // In OWL 2, a DisjointUnion is represented as: :A owl:disjointUnionOf (:B :C :D)
+        // where the class :A is equivalent to the disjoint union of :B, :C, :D
+        // Query directly traverses the RDF list using property paths
+        String disjointUnionQuery = PREFIXES + """
+            SELECT ?list ?member WHERE {
+              <%s> owl:disjointUnionOf ?list .
+              ?list rdf:rest*/rdf:first ?member .
+            }
+            """.formatted(classIri);
+        log.info("[QUERY] DisjointUnion query: {}", disjointUnionQuery);
+        TupleQueryResult disjointUnionRs = datasetService.execSelect(projectId, disjointUnionQuery);
+        Map<String, List<String>> disjointUnionGroups = new LinkedHashMap<>();
+        while (disjointUnionRs.hasNext()) {
+            BindingSet sol = disjointUnionRs.next();
+            String listNode = sol.getValue("list").stringValue();
+            String memberIri = sol.getValue("member").stringValue();
+            log.info("[QUERY] DisjointUnion found: list={}, member={}", listNode, memberIri);
+            
+            disjointUnionGroups.computeIfAbsent(listNode, k -> new ArrayList<>()).add(memberIri);
+        }
+        
+        List<Map<String, Object>> disjointUnionAxioms = new ArrayList<>();
+        for (Map.Entry<String, List<String>> entry : disjointUnionGroups.entrySet()) {
+            String listNode = entry.getKey();
+            List<String> members = entry.getValue();
+            if (!members.isEmpty()) {
+                Map<String, Object> axiom = new LinkedHashMap<>();
+                axiom.put("id", listNode);
+                axiom.put("type", "DisjointUnionOf");
+                axiom.put("members", members);
+                
+                // Build display definition from member labels
+                StringBuilder defBuilder = new StringBuilder();
+                for (int i = 0; i < members.size(); i++) {
+                    if (i > 0) defBuilder.append(", ");
+                    defBuilder.append(localName(members.get(i)));
+                }
+                axiom.put("definition", defBuilder.toString());
+                disjointUnionAxioms.add(axiom);
+                log.info("[QUERY] DisjointUnion axiom: {}", axiom);
+            }
+        }
+        details.put("disjointUnionAxioms", disjointUnionAxioms);
+        
+        // Get HasKey axioms (owl:hasKey)
+        // In OWL 2, HasKey is represented as: :A owl:hasKey (:prop1 :prop2)
+        // Query directly traverses the RDF list using property paths
+        String hasKeyQuery = PREFIXES + """
+            SELECT ?keyList ?prop WHERE {
+              <%s> owl:hasKey ?keyList .
+              ?keyList rdf:rest*/rdf:first ?prop .
+            }
+            """.formatted(classIri);
+        log.info("[QUERY] HasKey query: {}", hasKeyQuery);
+        TupleQueryResult hasKeyRs = datasetService.execSelect(projectId, hasKeyQuery);
+        Map<String, List<String>> hasKeyGroups = new LinkedHashMap<>();
+        while (hasKeyRs.hasNext()) {
+            BindingSet sol = hasKeyRs.next();
+            String listNode = sol.getValue("keyList").stringValue();
+            String propIri = sol.getValue("prop").stringValue();
+            log.info("[QUERY] HasKey found: list={}, prop={}", listNode, propIri);
+            
+            hasKeyGroups.computeIfAbsent(listNode, k -> new ArrayList<>()).add(propIri);
+        }
+        
+        List<Map<String, Object>> hasKeyAxioms = new ArrayList<>();
+        for (Map.Entry<String, List<String>> entry : hasKeyGroups.entrySet()) {
+            String listNode = entry.getKey();
+            List<String> keyProperties = entry.getValue();
+            if (!keyProperties.isEmpty()) {
+                Map<String, Object> axiom = new LinkedHashMap<>();
+                axiom.put("id", listNode);
+                axiom.put("type", "HasKey");
+                axiom.put("properties", keyProperties);
+                
+                // Build display definition from property labels
+                StringBuilder defBuilder = new StringBuilder();
+                for (int i = 0; i < keyProperties.size(); i++) {
+                    if (i > 0) defBuilder.append(", ");
+                    defBuilder.append(localName(keyProperties.get(i)));
+                }
+                axiom.put("definition", defBuilder.toString());
+                hasKeyAxioms.add(axiom);
+                log.info("[QUERY] HasKey axiom: {}", axiom);
+            }
+        }
+        details.put("hasKeyAxioms", hasKeyAxioms);
+        
         return details;
+    }
+    
+    /**
+     * Parse an RDF list (rdf:List) and return the list of member IRIs.
+     * Handles both regular IRIs and skolemized blank nodes from GraphDB.
+     */
+    private List<String> parseRdfList(String projectId, String listNode) {
+        List<String> members = new ArrayList<>();
+        
+        log.info("[QUERY] Parsing RDF list with node: {}", listNode);
+        
+        // Method 1: Use property path from the class directly 
+        // This approach navigates the list structure regardless of blank node representation
+        // We get items in order using rdf:rest* then rdf:first
+        String listQuery = PREFIXES + """
+            SELECT ?item WHERE {
+              BIND(<%s> AS ?list)
+              ?list rdf:rest* ?node .
+              ?node rdf:first ?item .
+            }
+            """.formatted(listNode);
+        
+        try {
+            TupleQueryResult rs = datasetService.execSelect(projectId, listQuery);
+            while (rs.hasNext()) {
+                BindingSet sol = rs.next();
+                if (sol.hasBinding("item")) {
+                    String itemValue = sol.getValue("item").stringValue();
+                    if (!members.contains(itemValue)) { // Avoid duplicates from multiple paths
+                        members.add(itemValue);
+                        log.info("[QUERY]   Found list member: {}", itemValue);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.error("[QUERY] Error parsing RDF list with property path: {}", e.getMessage());
+        }
+        
+        // If first method failed, try iterative approach
+        if (members.isEmpty()) {
+            log.info("[QUERY] Trying iterative list parsing for node: {}", listNode);
+            String currentNode = listNode;
+            int maxIterations = 100;
+            int iteration = 0;
+            
+            while (currentNode != null && iteration < maxIterations) {
+                iteration++;
+                String stepQuery = PREFIXES + """
+                    SELECT ?first ?rest WHERE {
+                      BIND(<%s> AS ?node)
+                      ?node rdf:first ?first .
+                      ?node rdf:rest ?rest .
+                    }
+                    """.formatted(currentNode);
+                
+                try {
+                    TupleQueryResult rs = datasetService.execSelect(projectId, stepQuery);
+                    if (rs.hasNext()) {
+                        BindingSet sol = rs.next();
+                        if (sol.hasBinding("first")) {
+                            String firstValue = sol.getValue("first").stringValue();
+                            members.add(firstValue);
+                            log.info("[QUERY]   Iterative - found member: {}", firstValue);
+                        }
+                        if (sol.hasBinding("rest")) {
+                            String restValue = sol.getValue("rest").stringValue();
+                            if (restValue.equals("http://www.w3.org/1999/02/22-rdf-syntax-ns#nil")) {
+                                break;
+                            }
+                            currentNode = restValue;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                } catch (Exception e) {
+                    log.error("[QUERY] Iterative parsing failed: {}", e.getMessage());
+                    break;
+                }
+            }
+        }
+        
+        log.info("[QUERY] Parsed RDF list, found {} members", members.size());
+        return members;
     }
 }
 
