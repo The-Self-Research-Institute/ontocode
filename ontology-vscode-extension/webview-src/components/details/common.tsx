@@ -60,6 +60,8 @@ export const AxiomRow: React.FC<{
         || dataProperties.some(p => p.id === axiom.propertyIri);
       
       return {
+        type: isDataProperty ? 'dataRestriction' : 'objectRestriction',
+        axiomType: axiom.type, // Include the axiom type (EquivalentTo, SubClassOf, etc.)
         propertyIri: axiom.propertyIri,
         restrictionType: axiom.restrictionType,
         fillerIri: axiom.fillerIri,

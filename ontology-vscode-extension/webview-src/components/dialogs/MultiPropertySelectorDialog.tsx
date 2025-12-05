@@ -10,6 +10,7 @@ interface MultiPropertySelectorDialogProps {
   dataProperties: any[];
   title?: string;
   minSelection?: number;
+  initialSelectedIds?: string[]; // Pre-selected property IRIs for edit mode
 }
 
 const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = ({
@@ -19,16 +20,39 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
   objectProperties,
   dataProperties,
   title = "Select Properties",
-  minSelection = 1
+  minSelection = 1,
+  initialSelectedIds = []
 }) => {
   const [selectedProperties, setSelectedProperties] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'object' | 'data'>('object');
+  const [hasInitialized, setHasInitialized] = useState(false);
 
   useEffect(() => {
-    if (!isOpen) {
-      setSelectedProperties([]);
+    if (isOpen && !hasInitialized) {
+      setHasInitialized(true);
       setSearchQuery('');
+      // Load initial selections if provided
+      if (initialSelectedIds.length > 0) {
+        setSelectedProperties(initialSelectedIds);
+        // Auto-switch to the appropriate tab based on first selected property
+        const hasObjectProperty = objectProperties.some(p => initialSelectedIds.includes(p.id));
+        const hasDataProperty = dataProperties.some(p => initialSelectedIds.includes(p.id));
+        if (hasDataProperty && !hasObjectProperty) {
+          setActiveTab('data');
+        } else {
+          setActiveTab('object');
+        }
+      } else {
+        setSelectedProperties([]);
+      }
+    }
+  }, [isOpen, hasInitialized, initialSelectedIds, objectProperties, dataProperties]);
+
+  // Reset hasInitialized when dialog closes
+  useEffect(() => {
+    if (!isOpen) {
+      setHasInitialized(false);
     }
   }, [isOpen]);
 

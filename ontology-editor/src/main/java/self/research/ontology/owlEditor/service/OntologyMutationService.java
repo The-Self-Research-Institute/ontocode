@@ -138,358 +138,282 @@ public class OntologyMutationService {
             log.error("[MUTATION] Invalid IRI for operation {}: iri={}", op.type(), op.iri());
             throw new IllegalArgumentException("IRI cannot be null or empty for operation: " + op.type());
         }
-        
-        return switch (op.type()) {
-            case "createClass" -> """
-                INSERT DATA {
-                  <%s> a owl:Class .
-                  %s
-                  <%s> rdfs:subClassOf <%s> .
-                }
-                """.formatted(op.iri(), optionalLabel(op.iri(), op.label()), op.iri(), op.parent());
-            case "updateClassLabel" -> """
-                DELETE { <%s> rdfs:label ?o }
-                INSERT { <%s> rdfs:label %s }
-                WHERE  { OPTIONAL { <%s> rdfs:label ?o } }
-                """.formatted(op.iri(), op.iri(), literal(op.label()), op.iri());
-            case "deleteClass" -> """
-                DELETE { <%s> ?p ?o } WHERE { <%s> ?p ?o };
-                DELETE { ?s ?p <%s> } WHERE { ?s ?p <%s> }
-                """.formatted(op.iri(), op.iri(), op.iri(), op.iri());
-            case "addAnnotation" -> """
-                INSERT DATA {
-                  <%s> <%s> %s .
-                }
-                """.formatted(op.iri(), op.property(), literal(op.value()));
-            case "updateAnnotation" -> """
-                DELETE { <%s> <%s> ?oldValue }
-                INSERT { <%s> <%s> %s }
-                WHERE  { <%s> <%s> ?oldValue }
-                """.formatted(op.iri(), op.property(), op.iri(), op.property(), literal(op.value()), op.iri(), op.property());
-            case "deleteAnnotation" -> """
-                DELETE DATA {
-                  <%s> <%s> %s .
-                }
-                """.formatted(op.iri(), op.property(), literal(op.value()));
-            case "addSubClassOf" -> """
-                INSERT DATA {
-                  <%s> rdfs:subClassOf <%s> .
-                }
-                """.formatted(op.iri(), op.target());
-            case "deleteSubClassOf" -> """
-                DELETE DATA {
-                  <%s> rdfs:subClassOf <%s> .
-                }
-                """.formatted(op.iri(), op.target());
-            case "addEquivalentClass" -> """
-                INSERT DATA {
-                  <%s> owl:equivalentClass <%s> .
-                }
-                """.formatted(op.iri(), op.target());
-            case "deleteEquivalentClass" -> """
-                DELETE DATA {
-                  <%s> owl:equivalentClass <%s> .
-                }
-                """.formatted(op.iri(), op.target());
-            case "addDisjointWith" -> """
-                INSERT DATA {
-                  <%s> owl:disjointWith <%s> .
-                }
-                """.formatted(op.iri(), op.target());
-            case "deleteDisjointWith" -> """
-                DELETE DATA {
-                  <%s> owl:disjointWith <%s> .
-                }
-                """.formatted(op.iri(), op.target());
-            case "createIndividual" -> """
-                INSERT DATA {
-                  <%s> a owl:NamedIndividual .
-                  %s
-                  <%s> a <%s> .
-                }
-                """.formatted(op.iri(), optionalLabel(op.iri(), op.label()), op.iri(), op.classIri());
-            case "deleteIndividual" -> """
-                DELETE { <%s> ?p ?o } WHERE { <%s> ?p ?o };
-                DELETE { ?s ?p <%s> } WHERE { ?s ?p <%s> }
-                """.formatted(op.iri(), op.iri(), op.iri(), op.iri());
-            
-            case "createObjectProperty" -> createPropertySparql(op.iri(), op.label(), op.parent(), "owl:ObjectProperty");
-            case "createDataProperty" -> createPropertySparql(op.iri(), op.label(), op.parent(), "owl:DatatypeProperty");
-            case "createAnnotationProperty" -> """
-                INSERT DATA {
-                  <%s> a owl:AnnotationProperty .
-                  %s
-                }
-                """.formatted(op.iri(), optionalLabel(op.iri(), op.label()));
-            case "deleteObjectProperty" -> """
-                DELETE { <%s> ?p ?o } WHERE { <%s> ?p ?o };
-                DELETE { ?s ?p <%s> } WHERE { ?s ?p <%s> }
-                """.formatted(op.iri(), op.iri(), op.iri(), op.iri());
-            case "deleteDataProperty" -> """
-                DELETE { <%s> ?p ?o } WHERE { <%s> ?p ?o };
-                DELETE { ?s ?p <%s> } WHERE { ?s ?p <%s> }
-                """.formatted(op.iri(), op.iri(), op.iri(), op.iri());
-            case "deleteAnnotationProperty" -> """
-                DELETE { <%s> ?p ?o } WHERE { <%s> ?p ?o };
-                DELETE { ?s ?p <%s> } WHERE { ?s ?p <%s> }
-                """.formatted(op.iri(), op.iri(), op.iri(), op.iri());
 
-            // --- Property Mutations ---
-            case "addPropertyDomain" -> """
-                INSERT DATA {
-                  <%s> rdfs:domain <%s> .
-                }
-                """.formatted(op.iri(), op.target());
-            case "deletePropertyDomain" -> """
-                DELETE DATA {
-                  <%s> rdfs:domain <%s> .
-                }
-                """.formatted(op.iri(), op.target());
-            case "addPropertyRange" -> """
-                INSERT DATA {
-                  <%s> rdfs:range <%s> .
-                }
-                """.formatted(op.iri(), op.target());
-            case "deletePropertyRange" -> """
-                DELETE DATA {
-                  <%s> rdfs:range <%s> .
-                }
-                """.formatted(op.iri(), op.target());
-            case "addSubPropertyOf" -> """
-                INSERT DATA {
-                  <%s> rdfs:subPropertyOf <%s> .
-                }
-                """.formatted(op.iri(), op.target());
-            case "deleteSubPropertyOf" -> """
-                DELETE DATA {
-                  <%s> rdfs:subPropertyOf <%s> .
-                }
-                """.formatted(op.iri(), op.target());
-            case "addInverseProperty" -> """
-                INSERT DATA {
-                  <%s> owl:inverseOf <%s> .
-                }
-                """.formatted(op.iri(), op.target());
-            case "deleteInverseProperty" -> """
-                DELETE DATA {
-                  <%s> owl:inverseOf <%s> .
-                }
-                """.formatted(op.iri(), op.target());
-            case "addDisjointProperty" -> """
-                INSERT DATA {
-                  <%s> owl:propertyDisjointWith <%s> .
-                }
-                """.formatted(op.iri(), op.target());
-            case "deleteDisjointProperty" -> """
-                DELETE DATA {
-                  <%s> owl:propertyDisjointWith <%s> .
-                }
-                """.formatted(op.iri(), op.target());
-            case "addEquivalentProperty" -> """
-                INSERT DATA {
-                  <%s> owl:equivalentProperty <%s> .
-                }
-                """.formatted(op.iri(), op.target());
-            case "deleteEquivalentProperty" -> """
-                DELETE DATA {
-                  <%s> owl:equivalentProperty <%s> .
-                }
-                """.formatted(op.iri(), op.target());
-            case "addCharacteristic" -> """
-                INSERT DATA {
-                  <%s> a <%s> .
-                }
-                """.formatted(op.iri(), op.target());
-            case "deleteCharacteristic" -> """
-                DELETE DATA {
-                  <%s> a <%s> .
-                }
-                """.formatted(op.iri(), op.target());
-            case "addAxiom" -> {
-                // Placeholder for Manchester Syntax parsing
-                // op.target() contains the expression
-                // op.value() contains the axiom type (SubClassOf, EquivalentTo, etc.)
-                // For now, we just log or ignore because we lack the parser
-                yield ""; 
-            }
-            
-            // --- Disjoint Union Mutations ---
-            case "addDisjointUnion" -> {
-                // op.iri() = class IRI
-                // op.value() = comma-separated list of class IRIs for the union
-                log.info("[MUTATION] Processing addDisjointUnion: iri={}, value={}", op.iri(), op.value());
-                String[] memberIris = op.value() != null ? op.value().split(",") : new String[0];
-                log.info("[MUTATION] Parsed {} member IRIs", memberIris.length);
-                if (memberIris.length < 2) {
-                    log.warn("[MUTATION] DisjointUnion requires at least 2 member classes, got {}", memberIris.length);
-                    yield "";
-                }
-                String sparql = buildDisjointUnionSparql(op.iri(), memberIris);
-                log.info("[MUTATION] Generated DisjointUnion SPARQL: {}", sparql);
-                
-                // Verify the sparql is not empty
-                if (sparql == null || sparql.trim().isEmpty()) {
-                    log.error("[MUTATION] Generated empty SPARQL for DisjointUnion!");
-                    yield "";
-                }
-                
-                yield sparql;
-            }
-            case "deleteDisjointUnion" -> {
-                // op.iri() = class IRI
-                // op.target() = list node ID to delete
-                log.info("[MUTATION] Processing deleteDisjointUnion: iri={}, target={}", op.iri(), op.target());
-                yield buildDeleteDisjointUnionSparql(op.iri(), op.target());
-            }
-            
-            // --- Has Key Mutations ---
-            case "addHasKey" -> {
-                // op.iri() = class IRI
-                // op.value() = comma-separated list of property IRIs for the key
-                String[] propertyIris = op.value() != null ? op.value().split(",") : new String[0];
-                if (propertyIris.length < 1) {
-                    log.warn("[MUTATION] HasKey requires at least 1 property");
-                    yield "";
-                }
-                yield buildHasKeySparql(op.iri(), propertyIris);
-            }
-            case "deleteHasKey" -> {
-                // op.iri() = class IRI
-                // op.target() = list node ID to delete
-                yield buildDeleteHasKeySparql(op.iri(), op.target());
-            }
-            
-            // --- Complex Class Expression Mutations ---
-            case "addIntersection" -> {
-                // op.iri() = class IRI to add intersection to
-                // op.value() = comma-separated list of class IRIs for intersection
-                // op.axiomType() = SubClassOf or EquivalentTo
-                String[] memberIris = op.value() != null ? op.value().split(",") : new String[0];
-                if (memberIris.length < 2) {
-                    log.warn("[MUTATION] Intersection requires at least 2 member classes");
-                    yield "";
-                }
-                yield buildIntersectionSparql(op.iri(), memberIris, op.axiomType());
-            }
-            case "deleteIntersection" -> {
-                // op.iri() = class IRI
-                // op.target() = blank node ID to delete
-                // op.axiomType() = SubClassOf or EquivalentTo
-                yield buildDeleteComplexExpressionSparql(op.iri(), op.target(), op.axiomType());
-            }
-            case "addUnion" -> {
-                // op.iri() = class IRI to add union to
-                // op.value() = comma-separated list of class IRIs for union
-                // op.axiomType() = SubClassOf or EquivalentTo
-                String[] memberIris = op.value() != null ? op.value().split(",") : new String[0];
-                if (memberIris.length < 2) {
-                    log.warn("[MUTATION] Union requires at least 2 member classes");
-                    yield "";
-                }
-                yield buildUnionSparql(op.iri(), memberIris, op.axiomType());
-            }
-            case "deleteUnion" -> {
-                // op.iri() = class IRI
-                // op.target() = blank node ID to delete
-                // op.axiomType() = SubClassOf or EquivalentTo
-                yield buildDeleteComplexExpressionSparql(op.iri(), op.target(), op.axiomType());
-            }
-            case "addComplement" -> {
-                // op.iri() = class IRI to add complement to
-                // op.target() = class IRI to complement
-                // op.axiomType() = SubClassOf or EquivalentTo
-                yield buildComplementSparql(op.iri(), op.target(), op.axiomType());
-            }
-            case "deleteComplement" -> {
-                // op.iri() = class IRI
-                // op.target() = blank node ID to delete
-                // op.axiomType() = SubClassOf or EquivalentTo
-                yield buildDeleteComplexExpressionSparql(op.iri(), op.target(), op.axiomType());
-            }
-            case "addOneOf" -> {
-                // op.iri() = class IRI to add oneOf enumeration to
-                // op.value() = comma-separated list of individual IRIs
-                // op.axiomType() = typically EquivalentTo
-                String[] individualIris = op.value() != null ? op.value().split(",") : new String[0];
-                if (individualIris.length < 1) {
-                    log.warn("[MUTATION] OneOf requires at least 1 individual");
-                    yield "";
-                }
-                yield buildOneOfSparql(op.iri(), individualIris, op.axiomType());
-            }
-            case "deleteOneOf" -> {
-                // op.iri() = class IRI
-                // op.target() = blank node ID to delete
-                // op.axiomType() = SubClassOf or EquivalentTo
-                yield buildDeleteComplexExpressionSparql(op.iri(), op.target(), op.axiomType());
-            }
-            
-            // --- Object Restriction Mutations ---
-            case "addObjectRestriction" -> {
-                // Build an OWL restriction using structured data
-                // op.iri() = class IRI to add restriction to
-                // op.property() = object property IRI
-                // op.restrictionType() = some, only, min, max, exactly, value
-                // op.target() = filler class IRI
-                // op.cardinality() = cardinality value (for min, max, exactly)
-                // op.axiomType() = SubClassOf or EquivalentTo
-                yield buildRestrictionSparql(op, false);
-            }
-            case "deleteObjectRestriction" -> {
-                yield buildDeleteRestrictionSparql(op, false);
-            }
-            
-            // --- Data Restriction Mutations ---
-            case "addDataRestriction" -> {
-                // Build an OWL data restriction
-                // op.iri() = class IRI to add restriction to
-                // op.property() = data property IRI
-                // op.restrictionType() = some, only, min, max, exactly
-                // op.target() = datatype IRI
-                // op.cardinality() = cardinality value (for min, max, exactly)
-                // op.axiomType() = SubClassOf or EquivalentTo
-                yield buildRestrictionSparql(op, true);
-            }
-            case "deleteDataRestriction" -> {
-                yield buildDeleteRestrictionSparql(op, true);
-            }
+        String type = op.type();
+        if (type == null) throw new IllegalArgumentException("Unsupported op " + type);
 
-            // --- Datatype Mutations ---
-            case "createDatatype" -> """
-                INSERT DATA {
-                  <%s> a rdfs:Datatype .
-                  %s
-                }
-                """.formatted(op.iri(), optionalLabel(op.iri(), op.label()));
-            case "deleteDatatype" -> """
-                DELETE { <%s> ?p ?o } WHERE { <%s> ?p ?o };
-                DELETE { ?s ?p <%s> } WHERE { ?s ?p <%s> }
-                """.formatted(op.iri(), op.iri(), op.iri(), op.iri());
-
-            // --- Property Assertions on Individuals ---
-            case "addObjectPropertyAssertion" -> """
-                INSERT DATA {
-                  <%s> <%s> <%s> .
-                }
-                """.formatted(op.iri(), op.property(), op.target());
-            case "deleteObjectPropertyAssertion" -> """
-                DELETE DATA {
-                  <%s> <%s> <%s> .
-                }
-                """.formatted(op.iri(), op.property(), op.target());
-            case "addDataPropertyAssertion" -> """
-                INSERT DATA {
-                  <%s> <%s> %s .
-                }
-                """.formatted(op.iri(), op.property(), literal(op.value()));
-            case "deleteDataPropertyAssertion" -> """
-                DELETE DATA {
-                  <%s> <%s> %s .
-                }
-                """.formatted(op.iri(), op.property(), literal(op.value()));
-
-            default -> throw new IllegalArgumentException("Unsupported op " + op.type());
-        };
+        if (type.equals("createClass")) {
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> a owl:Class .\n"
+                + optionalLabel(op.iri(), op.label()) + "\n"
+                + "<" + op.iri() + "> rdfs:subClassOf <" + op.parent() + "> .\n"
+                + "}";
+        } else if (type.equals("updateClassLabel")) {
+            return "DELETE { <" + op.iri() + "> rdfs:label ?o }\n"
+                + "INSERT { <" + op.iri() + "> rdfs:label " + literal(op.label()) + " }\n"
+                + "WHERE  { OPTIONAL { <" + op.iri() + "> rdfs:label ?o } }";
+        } else if (type.equals("deleteClass")) {
+            return "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
+                + "DELETE { ?s ?p <" + op.iri() + "> } WHERE { ?s ?p <" + op.iri() + "> }";
+        } else if (type.equals("addAnnotation")) {
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> <" + op.property() + "> " + literal(op.value()) + " .\n"
+                + "}";
+        } else if (type.equals("updateAnnotation")) {
+            return "DELETE { <" + op.iri() + "> <" + op.property() + "> ?oldValue }\n"
+                + "INSERT { <" + op.iri() + "> <" + op.property() + "> " + literal(op.value()) + " }\n"
+                + "WHERE  { <" + op.iri() + "> <" + op.property() + "> ?oldValue }";
+        } else if (type.equals("deleteAnnotation")) {
+            return "DELETE DATA {\n"
+                + "<" + op.iri() + "> <" + op.property() + "> " + literal(op.value()) + " .\n"
+                + "}";
+        } else if (type.equals("addSubClassOf")) {
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> rdfs:subClassOf <" + op.target() + "> .\n"
+                + "}";
+        } else if (type.equals("deleteSubClassOf")) {
+            // Handle both named IRIs and blank nodes
+            if (op.target().startsWith("_:")) {
+                // For blank nodes, use DELETE/WHERE pattern
+                return "DELETE { <" + op.iri() + "> rdfs:subClassOf ?target }\n"
+                    + "WHERE { <" + op.iri() + "> rdfs:subClassOf ?target .\n"
+                    + "  FILTER(isBlank(?target) && str(?target) = \"" + op.target() + "\") }";
+            } else {
+                // For named IRIs, use DELETE DATA
+                return "DELETE DATA {\n"
+                    + "<" + op.iri() + "> rdfs:subClassOf <" + op.target() + "> .\n"
+                    + "}";
+            }
+        } else if (type.equals("updateSubClassOf")) {
+            // Update operation: replace old target with new target
+            // op.value contains the old target IRI, op.target contains the new target IRI
+            return "DELETE { <" + op.iri() + "> rdfs:subClassOf <" + op.value() + "> }\n"
+                + "INSERT { <" + op.iri() + "> rdfs:subClassOf <" + op.target() + "> }\n"
+                + "WHERE { <" + op.iri() + "> rdfs:subClassOf <" + op.value() + "> }";
+        } else if (type.equals("addEquivalentClass")) {
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> owl:equivalentClass <" + op.target() + "> .\n"
+                + "}";
+        } else if (type.equals("deleteEquivalentClass")) {
+            // Handle both named IRIs and blank nodes (anonymous nodes starting with _:)
+            if (op.target().startsWith("_:")) {
+                // For blank nodes, use DELETE/WHERE pattern
+                return "DELETE { <" + op.iri() + "> owl:equivalentClass ?target }\n"
+                    + "WHERE { <" + op.iri() + "> owl:equivalentClass ?target .\n"
+                    + "  FILTER(isBlank(?target) && str(?target) = \"" + op.target() + "\") }";
+            } else {
+                // For named IRIs, use DELETE DATA
+                return "DELETE DATA {\n"
+                    + "<" + op.iri() + "> owl:equivalentClass <" + op.target() + "> .\n"
+                    + "}";
+            }
+        } else if (type.equals("updateEquivalentClass")) {
+            // Update operation: replace old target with new target
+            // op.value contains the old target IRI, op.target contains the new target IRI
+            return "DELETE { <" + op.iri() + "> owl:equivalentClass <" + op.value() + "> }\n"
+                + "INSERT { <" + op.iri() + "> owl:equivalentClass <" + op.target() + "> }\n"
+                + "WHERE { <" + op.iri() + "> owl:equivalentClass <" + op.value() + "> }";
+        } else if (type.equals("addDisjointWith")) {
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> owl:disjointWith <" + op.target() + "> .\n"
+                + "}";
+        } else if (type.equals("deleteDisjointWith")) {
+            // Handle both named IRIs and blank nodes
+            if (op.target().startsWith("_:")) {
+                // For blank nodes, use DELETE/WHERE pattern
+                return "DELETE { <" + op.iri() + "> owl:disjointWith ?target }\n"
+                    + "WHERE { <" + op.iri() + "> owl:disjointWith ?target .\n"
+                    + "  FILTER(isBlank(?target) && str(?target) = \"" + op.target() + "\") }";
+            } else {
+                // For named IRIs, use DELETE DATA
+                return "DELETE DATA {\n"
+                    + "<" + op.iri() + "> owl:disjointWith <" + op.target() + "> .\n"
+                    + "}";
+            }
+        } else if (type.equals("updateDisjointWith")) {
+            // Update operation: replace old target with new target
+            // op.value contains the old target IRI, op.target contains the new target IRI
+            return "DELETE { <" + op.iri() + "> owl:disjointWith <" + op.value() + "> }\n"
+                + "INSERT { <" + op.iri() + "> owl:disjointWith <" + op.target() + "> }\n"
+                + "WHERE { <" + op.iri() + "> owl:disjointWith <" + op.value() + "> }";
+        } else if (type.equals("createIndividual")) {
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> a owl:NamedIndividual .\n"
+                + optionalLabel(op.iri(), op.label()) + "\n"
+                + "<" + op.iri() + "> a <" + op.classIri() + "> .\n"
+                + "}";
+        } else if (type.equals("deleteIndividual")) {
+            return "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
+                + "DELETE { ?s ?p <" + op.iri() + "> } WHERE { ?s ?p <" + op.iri() + "> }";
+        } else if (type.equals("createObjectProperty")) {
+            return createPropertySparql(op.iri(), op.label(), op.parent(), "owl:ObjectProperty");
+        } else if (type.equals("createDataProperty")) {
+            return createPropertySparql(op.iri(), op.label(), op.parent(), "owl:DatatypeProperty");
+        } else if (type.equals("createAnnotationProperty")) {
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> a owl:AnnotationProperty .\n"
+                + optionalLabel(op.iri(), op.label()) + "\n"
+                + "}";
+        } else if (type.equals("deleteObjectProperty")) {
+            return "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
+                + "DELETE { ?s ?p <" + op.iri() + "> } WHERE { ?s ?p <" + op.iri() + "> }";
+        } else if (type.equals("deleteDataProperty")) {
+            return "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
+                + "DELETE { ?s ?p <" + op.iri() + "> } WHERE { ?s ?p <" + op.iri() + "> }";
+        } else if (type.equals("deleteAnnotationProperty")) {
+            return "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
+                + "DELETE { ?s ?p <" + op.iri() + "> } WHERE { ?s ?p <" + op.iri() + "> }";
+        } else if (type.equals("addPropertyDomain")) {
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> rdfs:domain <" + op.target() + "> .\n"
+                + "}";
+        } else if (type.equals("deletePropertyDomain")) {
+            return "DELETE DATA {\n"
+                + "<" + op.iri() + "> rdfs:domain <" + op.target() + "> .\n"
+                + "}";
+        } else if (type.equals("addPropertyRange")) {
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> rdfs:range <" + op.target() + "> .\n"
+                + "}";
+        } else if (type.equals("deletePropertyRange")) {
+            return "DELETE DATA {\n"
+                + "<" + op.iri() + "> rdfs:range <" + op.target() + "> .\n"
+                + "}";
+        } else if (type.equals("addSubPropertyOf")) {
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> rdfs:subPropertyOf <" + op.target() + "> .\n"
+                + "}";
+        } else if (type.equals("deleteSubPropertyOf")) {
+            return "DELETE DATA {\n"
+                + "<" + op.iri() + "> rdfs:subPropertyOf <" + op.target() + "> .\n"
+                + "}";
+        } else if (type.equals("addInverseProperty")) {
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> owl:inverseOf <" + op.target() + "> .\n"
+                + "}";
+        } else if (type.equals("deleteInverseProperty")) {
+            return "DELETE DATA {\n"
+                + "<" + op.iri() + "> owl:inverseOf <" + op.target() + "> .\n"
+                + "}";
+        } else if (type.equals("addDisjointProperty")) {
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> owl:propertyDisjointWith <" + op.target() + "> .\n"
+                + "}";
+        } else if (type.equals("deleteDisjointProperty")) {
+            return "DELETE DATA {\n"
+                + "<" + op.iri() + "> owl:propertyDisjointWith <" + op.target() + "> .\n"
+                + "}";
+        } else if (type.equals("addEquivalentProperty")) {
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> owl:equivalentProperty <" + op.target() + "> .\n"
+                + "}";
+        } else if (type.equals("deleteEquivalentProperty")) {
+            return "DELETE DATA {\n"
+                + "<" + op.iri() + "> owl:equivalentProperty <" + op.target() + "> .\n"
+                + "}";
+        } else if (type.equals("addCharacteristic")) {
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> a <" + op.target() + "> .\n"
+                + "}";
+        } else if (type.equals("deleteCharacteristic")) {
+            return "DELETE DATA {\n"
+                + "<" + op.iri() + "> a <" + op.target() + "> .\n"
+                + "}";
+        } else if (type.equals("addAxiom")) {
+            return "";
+        } else if (type.equals("addDisjointUnion")) {
+            log.info("[MUTATION] Processing addDisjointUnion: iri={}, value={}", op.iri(), op.value());
+            String[] memberIris = op.value() != null ? op.value().split(",") : new String[0];
+            log.info("[MUTATION] Parsed {} member IRIs", memberIris.length);
+            if (memberIris.length < 2) {
+                log.warn("[MUTATION] DisjointUnion requires at least 2 member classes, got {}", memberIris.length);
+                return "";
+            }
+            String sparql = buildDisjointUnionSparql(op.iri(), memberIris);
+            log.info("[MUTATION] Generated DisjointUnion SPARQL: {}", sparql);
+            if (sparql == null || sparql.trim().isEmpty()) {
+                log.error("[MUTATION] Generated empty SPARQL for DisjointUnion!");
+                return "";
+            }
+            return sparql;
+        } else if (type.equals("deleteDisjointUnion")) {
+            log.info("[MUTATION] Processing deleteDisjointUnion: iri={}, target={}", op.iri(), op.target());
+            return buildDeleteDisjointUnionSparql(op.iri(), op.target());
+        } else if (type.equals("addHasKey")) {
+            String[] propertyIris = op.value() != null ? op.value().split(",") : new String[0];
+            if (propertyIris.length < 1) {
+                log.warn("[MUTATION] HasKey requires at least 1 property");
+                return "";
+            }
+            return buildHasKeySparql(op.iri(), propertyIris);
+        } else if (type.equals("deleteHasKey")) {
+            return buildDeleteHasKeySparql(op.iri(), op.target());
+        } else if (type.equals("addIntersection")) {
+            String[] memberIris = op.value() != null ? op.value().split(",") : new String[0];
+            if (memberIris.length < 2) {
+                log.warn("[MUTATION] Intersection requires at least 2 member classes");
+                return "";
+            }
+            return buildIntersectionSparql(op.iri(), memberIris, op.axiomType());
+        } else if (type.equals("deleteIntersection")) {
+            return buildDeleteComplexExpressionSparql(op.iri(), op.target(), op.axiomType());
+        } else if (type.equals("addUnion")) {
+            String[] memberIris = op.value() != null ? op.value().split(",") : new String[0];
+            if (memberIris.length < 2) {
+                log.warn("[MUTATION] Union requires at least 2 member classes");
+                return "";
+            }
+            return buildUnionSparql(op.iri(), memberIris, op.axiomType());
+        } else if (type.equals("deleteUnion")) {
+            return buildDeleteComplexExpressionSparql(op.iri(), op.target(), op.axiomType());
+        } else if (type.equals("addComplement")) {
+            return buildComplementSparql(op.iri(), op.target(), op.axiomType());
+        } else if (type.equals("deleteComplement")) {
+            return buildDeleteComplexExpressionSparql(op.iri(), op.target(), op.axiomType());
+        } else if (type.equals("addOneOf")) {
+            String[] individualIris = op.value() != null ? op.value().split(",") : new String[0];
+            if (individualIris.length < 1) {
+                log.warn("[MUTATION] OneOf requires at least 1 individual");
+                return "";
+            }
+            return buildOneOfSparql(op.iri(), individualIris, op.axiomType());
+        } else if (type.equals("deleteOneOf")) {
+            return buildDeleteComplexExpressionSparql(op.iri(), op.target(), op.axiomType());
+        } else if (type.equals("addObjectRestriction")) {
+            return buildRestrictionSparql(op, false);
+        } else if (type.equals("deleteObjectRestriction")) {
+            return buildDeleteRestrictionSparql(op, false);
+        } else if (type.equals("addDataRestriction")) {
+            return buildRestrictionSparql(op, true);
+        } else if (type.equals("deleteDataRestriction")) {
+            return buildDeleteRestrictionSparql(op, true);
+        } else if (type.equals("createDatatype")) {
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> a rdfs:Datatype .\n"
+                + optionalLabel(op.iri(), op.label()) + "\n"
+                + "}";
+        } else if (type.equals("deleteDatatype")) {
+            return "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
+                + "DELETE { ?s ?p <" + op.iri() + "> } WHERE { ?s ?p <" + op.iri() + "> }";
+        } else if (type.equals("addObjectPropertyAssertion")) {
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> <" + op.property() + "> <" + op.target() + "> .\n"
+                + "}";
+        } else if (type.equals("deleteObjectPropertyAssertion")) {
+            return "DELETE DATA {\n"
+                + "<" + op.iri() + "> <" + op.property() + "> <" + op.target() + "> .\n"
+                + "}";
+        } else if (type.equals("addDataPropertyAssertion")) {
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> <" + op.property() + "> " + literal(op.value()) + " .\n"
+                + "}";
+        } else if (type.equals("deleteDataPropertyAssertion")) {
+            return "DELETE DATA {\n"
+                + "<" + op.iri() + "> <" + op.property() + "> " + literal(op.value()) + " .\n"
+                + "}";
+        } else {
+            throw new IllegalArgumentException("Unsupported op " + op.type());
+        }
     }
 
     private String optionalLabel(String iri, String label) {
@@ -511,6 +435,9 @@ public class OntologyMutationService {
             .replace("\t", "\\t");   // Tab
         return "\"%s\"".formatted(escaped);
     }
+
+    // Helper method to generate an rdfs:label triple if label is present
+    // (Duplicate removed)
 
     /**
      * Create SPARQL for property creation - only adds subPropertyOf if parent is not a top-level property
@@ -734,11 +661,11 @@ public class OntologyMutationService {
             throw new IllegalArgumentException("Unknown restriction type: " + restrictionType);
         }
         
-        // Build WHERE clause that matches the EXACT restriction including the filler
-        // (We use a nested SELECT approach now, so we don't need to build complex patterns here)
-        
-        // SIMPLIFIED APPROACH: Delete by matching property + filler without requiring owl:Restriction type
-        // Some restrictions may not have explicit rdf:type, so we just match on the properties
+        // IMPORTANT: We need to be very specific about which restriction to delete
+        // The WHERE clause must match ONLY the restriction connected via the correct axiom predicate
+        // This prevents accidentally deleting a similar restriction from a different axiom type
+        // (e.g., deleting from SubClassOf should not affect EquivalentTo)
+        // Also require rdf:type owl:Restriction to match the query pattern
         String sparql = """
             DELETE {
               <%s> %s ?restriction .
@@ -746,13 +673,15 @@ public class OntologyMutationService {
             }
             WHERE {
               <%s> %s ?restriction .
-              ?restriction owl:onProperty <%s> ;
-                          %s <%s> ;
-                          ?p ?o .
+              ?restriction a owl:Restriction .
+              ?restriction owl:onProperty <%s> .
+              ?restriction %s <%s> .
+              ?restriction ?p ?o .
+              FILTER(isBlank(?restriction))
             }
             """.formatted(classIri, axiomPredicate, classIri, axiomPredicate, propertyIri, fillerPredicate, fillerIri);
         
-        log.info("[MUTATION] Generated delete restriction SPARQL (simplified - no type check):");
+        log.info("[MUTATION] Generated delete restriction SPARQL:");
         log.info("[MUTATION] {}", sparql);
         
         return sparql;
