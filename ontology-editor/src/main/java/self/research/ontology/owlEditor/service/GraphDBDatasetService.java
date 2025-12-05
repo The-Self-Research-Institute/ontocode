@@ -269,10 +269,31 @@ public class GraphDBDatasetService {
             log.info("[GRAPHDB] Graph-aware SPARQL:");
             log.info("{}", graphAwareUpdate);
             
-            Update update = conn.prepareUpdate(graphAwareUpdate);
-            update.execute();
+            // Explicitly manage transaction for immediate visibility
+            boolean autoCommit = conn.isAutoCommit();
+            if (autoCommit) {
+                conn.begin();
+            }
             
-            log.info("[GRAPHDB] ✅ UPDATE executed successfully!");
+            try {
+                Update update = conn.prepareUpdate(graphAwareUpdate);
+                update.execute();
+                
+                // Explicitly commit for immediate visibility
+                if (autoCommit) {
+                    conn.commit();
+                    log.info("[GRAPHDB] ✅ Transaction committed");
+                }
+                
+                log.info("[GRAPHDB] ✅ UPDATE executed successfully!");
+                
+            } catch (Exception e) {
+                if (autoCommit) {
+                    conn.rollback();
+                    log.error("[GRAPHDB] ⚠️ Transaction rolled back");
+                }
+                throw e;
+            }
             
         } catch (Exception e) {
             log.error("[GRAPHDB] ❌ UPDATE failed for project: {}", projectId, e);

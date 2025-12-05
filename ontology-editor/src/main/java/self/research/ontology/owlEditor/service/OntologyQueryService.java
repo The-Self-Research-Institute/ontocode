@@ -903,9 +903,12 @@ public class OntologyQueryService {
         // - owl:Thing (implicit superclass of all classes)
         // - Self-references
         // - Blank nodes (restrictions are handled separately)
+        // - Inferred triples (only queries explicit graph to avoid showing inferred subClassOf from equivalentClass)
         String subClassQuery = PREFIXES + """
             SELECT DISTINCT ?super ?label WHERE {
-              <%s> rdfs:subClassOf ?super .
+              GRAPH <http://www.ontotext.com/explicit> {
+                <%s> rdfs:subClassOf ?super .
+              }
               FILTER(isIRI(?super))
               FILTER(?super != owl:Thing)
               FILTER(?super != <%s>)
@@ -940,9 +943,11 @@ public class OntologyQueryService {
         // - hasSelf
         String subClassRestrictionQuery = PREFIXES + """
             SELECT DISTINCT ?restriction ?prop ?propLabel ?restrictionType ?filler ?fillerLabel ?card ?propType WHERE {
-              <%s> rdfs:subClassOf ?restriction .
-              ?restriction a owl:Restriction ;
-                          owl:onProperty ?prop .
+              GRAPH <http://www.ontotext.com/explicit> {
+                <%s> rdfs:subClassOf ?restriction .
+                ?restriction a owl:Restriction ;
+                            owl:onProperty ?prop .
+              }
               OPTIONAL { ?prop rdfs:label ?propLabel }
               OPTIONAL { ?prop a ?propType . FILTER(?propType IN (owl:ObjectProperty, owl:DatatypeProperty)) }
               
@@ -1157,7 +1162,9 @@ public class OntologyQueryService {
         // Exclude self-equivalence (a class is trivially equivalent to itself)
         String equivQuery = PREFIXES + """
             SELECT ?equiv ?label WHERE {
-              <%s> owl:equivalentClass ?equiv .
+              GRAPH <http://www.ontotext.com/explicit> {
+                <%s> owl:equivalentClass ?equiv .
+              }
               FILTER(isIRI(?equiv) && ?equiv != <%s>)
               OPTIONAL { ?equiv rdfs:label ?label }
             }
@@ -1179,9 +1186,11 @@ public class OntologyQueryService {
         // Get EquivalentClass restrictions (enhanced query like Protégé)
         String equivRestrictionQuery = PREFIXES + """
             SELECT ?restriction ?prop ?propLabel ?restrictionType ?filler ?fillerLabel ?card WHERE {
-              <%s> owl:equivalentClass ?restriction .
-              ?restriction a owl:Restriction ;
-                          owl:onProperty ?prop .
+              GRAPH <http://www.ontotext.com/explicit> {
+                <%s> owl:equivalentClass ?restriction .
+                ?restriction a owl:Restriction ;
+                            owl:onProperty ?prop .
+              }
               OPTIONAL { ?prop rdfs:label ?propLabel }
               
               # Existential restriction (some)
@@ -1422,17 +1431,23 @@ public class OntologyQueryService {
         String disjointQuery = PREFIXES + """
             SELECT DISTINCT ?disjoint ?label WHERE {
               {
-                # Direct pairwise disjoint
-                <%s> owl:disjointWith ?disjoint .
+                # Direct pairwise disjoint (explicit only)
+                GRAPH <http://www.ontotext.com/explicit> {
+                  <%s> owl:disjointWith ?disjoint .
+                }
               } UNION {
-                # Reverse direction
-                ?disjoint owl:disjointWith <%s> .
+                # Reverse direction (explicit only)
+                GRAPH <http://www.ontotext.com/explicit> {
+                  ?disjoint owl:disjointWith <%s> .
+                }
               } UNION {
-                # From AllDisjointClasses
-                ?allDisjoint a owl:AllDisjointClasses ;
-                             owl:members ?list .
-                ?list rdf:rest*/rdf:first <%s> .
-                ?list rdf:rest*/rdf:first ?disjoint .
+                # From AllDisjointClasses (explicit only)
+                GRAPH <http://www.ontotext.com/explicit> {
+                  ?allDisjoint a owl:AllDisjointClasses ;
+                               owl:members ?list .
+                  ?list rdf:rest*/rdf:first <%s> .
+                  ?list rdf:rest*/rdf:first ?disjoint .
+                }
                 FILTER(?disjoint != <%s>)
               }
               FILTER(isIRI(?disjoint) && ?disjoint != <%s>)

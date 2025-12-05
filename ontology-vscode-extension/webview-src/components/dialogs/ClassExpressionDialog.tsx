@@ -123,9 +123,13 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   const [showInlineDelete, setShowInlineDelete] = useState(false);
   const [isDeletingClass, setIsDeletingClass] = useState(false);
 
+  // Track if we've already initialized the dialog to prevent re-initialization
+  const [hasInitialized, setHasInitialized] = useState(false);
+
   // Reset state when dialog opens with initialValue
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !hasInitialized) {
+      setHasInitialized(true);
       setManchesterExpression(initialValue);
       // Set the active tab based on initialTab prop or default behavior
       if (initialTab) {
@@ -235,7 +239,14 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
         }
       }
     }
-  }, [isOpen, initialValue, initialTab, initialRestrictionData, objectProperties, dataProperties, classHierarchy]);
+  }, [isOpen, hasInitialized, initialValue, initialTab, initialRestrictionData, objectProperties, dataProperties, classHierarchy]);
+
+  // Reset hasInitialized when dialog closes
+  useEffect(() => {
+    if (!isOpen) {
+      setHasInitialized(false);
+    }
+  }, [isOpen]);
 
   // Convert flat property list to tree structure with top property
   const propertiesToTree = (properties: Property[], isDataProperty: boolean = false): TreeNode[] => {

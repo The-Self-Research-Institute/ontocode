@@ -14,6 +14,7 @@ interface MultiClassSelectorDialogProps {
   title?: string;
   excludeClassIds?: string[]; // Classes to exclude from selection (e.g., the current class)
   minSelection?: number; // Minimum number of classes required
+  initialSelectedIds?: string[]; // Pre-selected class IRIs for edit mode
 }
 
 const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
@@ -26,22 +27,55 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
   externalExpandedNodes,
   title = "Select Classes",
   excludeClassIds = [],
-  minSelection = 1
+  minSelection = 1,
+  initialSelectedIds = []
 }) => {
   const [selectedClasses, setSelectedClasses] = useState<TreeNode[]>([]);
   const [expandedNodes, setExpandedNodes] = useState<string[]>([]);
   const [treeData, setTreeData] = useState<TreeNode[]>(classHierarchy);
   const [searchQuery, setSearchQuery] = useState('');
+  const [hasInitialized, setHasInitialized] = useState(false);
 
   useEffect(() => {
     setTreeData(classHierarchy);
   }, [classHierarchy]);
 
-  // Reset state when dialog opens
+  // Reset state when dialog opens and load initial selections
   useEffect(() => {
-    if (isOpen) {
-      setSelectedClasses([]);
+    if (isOpen && !hasInitialized) {
+      setHasInitialized(true);
       setSearchQuery('');
+      
+      // Load initial selections if provided
+      if (initialSelectedIds.length > 0) {
+        const findNodesByIds = (nodes: TreeNode[], ids: string[]): TreeNode[] => {
+          const result: TreeNode[] = [];
+          const search = (nodeList: TreeNode[]) => {
+            for (const node of nodeList) {
+              if (ids.includes(node.id)) {
+                result.push(node);
+              }
+              if (node.children && node.children.length > 0) {
+                search(node.children);
+              }
+            }
+          };
+          search(nodes);
+          return result;
+        };
+        
+        const initialNodes = findNodesByIds(classHierarchy, initialSelectedIds);
+        setSelectedClasses(initialNodes);
+      } else {
+        setSelectedClasses([]);
+      }
+    }
+  }, [isOpen, hasInitialized, initialSelectedIds, classHierarchy]);
+
+  // Reset hasInitialized when dialog closes
+  useEffect(() => {
+    if (!isOpen) {
+      setHasInitialized(false);
     }
   }, [isOpen]);
 

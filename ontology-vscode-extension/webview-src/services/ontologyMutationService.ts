@@ -152,6 +152,18 @@ export const ontologyMutationService = {
   },
 
   /**
+   * Update SubClassOf axiom (replaces old target with new target in a single transaction)
+   */
+  async updateSubClassOf(projectId: string, classIri: string, oldSuperClassIri: string, newSuperClassIri: string): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'updateSubClassOf',
+      iri: classIri,
+      value: oldSuperClassIri,  // old target
+      target: newSuperClassIri   // new target
+    }], false); // Apply immediately
+  },
+
+  /**
    * Add EquivalentClass axiom (applied immediately, not as draft)
    */
   async addEquivalentClass(projectId: string, classIri: string, equivalentClassIri: string): Promise<void> {
@@ -174,6 +186,18 @@ export const ontologyMutationService = {
   },
 
   /**
+   * Update EquivalentClass axiom (replaces old target with new target in a single transaction)
+   */
+  async updateEquivalentClass(projectId: string, classIri: string, oldEquivalentClassIri: string, newEquivalentClassIri: string): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'updateEquivalentClass',
+      iri: classIri,
+      value: oldEquivalentClassIri,  // old target
+      target: newEquivalentClassIri   // new target
+    }], false); // Apply immediately
+  },
+
+  /**
    * Add DisjointWith axiom (applied immediately, not as draft)
    */
   async addDisjointWith(projectId: string, classIri: string, disjointClassIri: string): Promise<void> {
@@ -192,6 +216,18 @@ export const ontologyMutationService = {
       type: 'deleteDisjointWith',
       iri: classIri,
       target: disjointClassIri
+    }], false); // Apply immediately
+  },
+
+  /**
+   * Update DisjointWith axiom (replaces old target with new target in a single transaction)
+   */
+  async updateDisjointWith(projectId: string, classIri: string, oldDisjointClassIri: string, newDisjointClassIri: string): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'updateDisjointWith',
+      iri: classIri,
+      value: oldDisjointClassIri,  // old target
+      target: newDisjointClassIri   // new target
     }], false); // Apply immediately
   },
 
