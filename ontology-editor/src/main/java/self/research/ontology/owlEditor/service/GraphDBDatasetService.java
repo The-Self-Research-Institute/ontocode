@@ -298,8 +298,22 @@ public class GraphDBDatasetService {
             }
         }
         
-        // Split operations by semicolon
-        String[] statements = operations.toString().split(";");
+        String operationsStr = operations.toString().trim();
+        
+        // Check if this is INSERT { ... } WHERE { ... } with Turtle syntax (contains blank nodes or semicolons within braces)
+        // Don't split by semicolon in this case as it's part of Turtle syntax
+        if (operationsStr.matches("(?is)INSERT\\s*\\{.*WHERE.*")) {
+            // Add WITH clause before INSERT
+            if (!operationsStr.trim().toUpperCase().startsWith("WITH")) {
+                operationsStr = "WITH <" + graphUri + "> " + operationsStr;
+                log.info("[GRAPH-INJECT] Added WITH clause to INSERT...WHERE statement");
+            }
+            return prefixes.toString() + operationsStr;
+        }
+        
+        // For other cases, split by semicolon and process each statement
+        // Split operations by semicolon - BUT only at top level, not inside {}
+        String[] statements = splitUpdateStatements(operationsStr);
         StringBuilder result = new StringBuilder(prefixes);
         
         log.info("[GRAPH-INJECT] Processing {} statements", statements.length);
@@ -312,13 +326,19 @@ public class GraphDBDatasetService {
             
             // For INSERT DATA and DELETE DATA, wrap in GRAPH clause
             if (stmt.matches("(?is)INSERT\\s+DATA\\s*\\{.*")) {
-                stmt = stmt.replaceFirst("(?is)(INSERT\\s+DATA\\s*\\{)", "$1 GRAPH <" + graphUri + "> {") + " }";
+                // Replace the opening brace to add GRAPH context
+                stmt = stmt.replaceFirst("(?is)(INSERT\\s+DATA\\s*\\{)", "$1 GRAPH <" + graphUri + "> {");
+                // Add closing brace for GRAPH context before the final brace
+                stmt = stmt.replaceFirst("(?is)(.*)(\\}\\s*)$", "$1 }$2");
                 log.info("[GRAPH-INJECT] Matched INSERT DATA");
             } else if (stmt.matches("(?is)DELETE\\s+DATA\\s*\\{.*")) {
-                stmt = stmt.replaceFirst("(?is)(DELETE\\s+DATA\\s*\\{)", "$1 GRAPH <" + graphUri + "> {") + " }";
+                // Replace the opening brace to add GRAPH context
+                stmt = stmt.replaceFirst("(?is)(DELETE\\s+DATA\\s*\\{)", "$1 GRAPH <" + graphUri + "> {");
+                // Add closing brace for GRAPH context before the final brace
+                stmt = stmt.replaceFirst("(?is)(.*)(\\}\\s*)$", "$1 }$2");
                 log.info("[GRAPH-INJECT] Matched DELETE DATA");
             }
-            // For DELETE/INSERT WHERE, add WITH clause
+            // For DELETE { ... } WHERE { ... }, add WITH clause
             else if (stmt.matches("(?is)DELETE\\s*\\{.*") && !stmt.trim().toUpperCase().startsWith("WITH")) {
                 stmt = "WITH <" + graphUri + "> " + stmt;
                 log.info("[GRAPH-INJECT] Matched DELETE WHERE, added WITH clause");
@@ -333,6 +353,40 @@ public class GraphDBDatasetService {
         }
         
         return result.toString();
+    }
+    
+    /**
+     * Split UPDATE statements by semicolon, but only at top level (not inside braces)
+     */
+    private String[] splitUpdateStatements(String operations) {
+        List<String> statements = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        int braceDepth = 0;
+        
+        for (int i = 0; i < operations.length(); i++) {
+            char c = operations.charAt(i);
+            
+            if (c == '{') {
+                braceDepth++;
+                current.append(c);
+            } else if (c == '}') {
+                braceDepth--;
+                current.append(c);
+            } else if (c == ';' && braceDepth == 0) {
+                // Top-level semicolon - this is a statement separator
+                statements.add(current.toString().trim());
+                current = new StringBuilder();
+            } else {
+                current.append(c);
+            }
+        }
+        
+        // Add the last statement
+        if (current.length() > 0) {
+            statements.add(current.toString().trim());
+        }
+        
+        return statements.toArray(new String[0]);
     }
     
     /**

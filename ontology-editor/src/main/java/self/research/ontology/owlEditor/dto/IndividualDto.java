@@ -8,6 +8,7 @@ public class IndividualDto {
     private String id;
     private String iri;
     private String label;
+    private String description;
     private Map<String, String> annotations;
     private List<String> types;
     private List<String> sameAs;
@@ -23,6 +24,9 @@ public class IndividualDto {
 
     public String getLabel() { return label; }
     public void setLabel(String label) { this.label = label; }
+
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
 
     public Map<String, String> getAnnotations() { return annotations; }
     public void setAnnotations(Map<String, String> annotations) { this.annotations = annotations; }

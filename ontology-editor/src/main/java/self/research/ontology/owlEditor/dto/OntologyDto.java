@@ -12,6 +12,7 @@ public class OntologyDto {
     public static class TreeNode {
         private String id;
         private String label;
+        private String description;
         private String parent;
         private List<TreeNode> children;
         private Boolean hasChildren;
@@ -22,6 +23,8 @@ public class OntologyDto {
         public void setId(String id) { this.id = id; }
         public String getLabel() { return label; }
         public void setLabel(String label) { this.label = label; }
+        public String getDescription() { return description; }
+        public void setDescription(String description) { this.description = description; }
         public String getParent() { return parent; }
         public void setParent(String parent) { this.parent = parent; }
         public List<TreeNode> getChildren() { return children; }

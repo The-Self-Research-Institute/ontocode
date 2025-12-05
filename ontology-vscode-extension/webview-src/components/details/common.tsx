@@ -7,11 +7,14 @@ export const AxiomRow: React.FC<{
   axiom: Axiom;
   onDelete: (id: string) => void;
   onEdit?: (id: string, newDefinition: string) => void;
+  onEditClick?: (axiom: Axiom, initialTab?: 'hierarchy' | 'objectRestriction' | 'dataRestriction' | 'classExpression', restrictionData?: any) => void;
   isInferred?: boolean;
   isInActiveOntology?: boolean;
   ontologyIri?: string;
   hasAxiomAnnotations?: boolean;
-}> = ({ axiom, onDelete, onEdit, isInferred = false, isInActiveOntology = false, ontologyIri, hasAxiomAnnotations = false }) => {
+  properties?: any[];
+  dataProperties?: any[];
+}> = ({ axiom, onDelete, onEdit, onEditClick, isInferred = false, isInActiveOntology = false, ontologyIri, hasAxiomAnnotations = false, properties = [], dataProperties = [] }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [showAxiomAnnotations, setShowAxiomAnnotations] = useState(false);
 
@@ -20,6 +23,52 @@ export const AxiomRow: React.FC<{
       onEdit(axiom.id, newDefinition);
     }
     setIsEditing(false);
+  };
+
+  // Determine which tab to open based on axiom properties
+  const determineInitialTab = (): 'hierarchy' | 'objectRestriction' | 'dataRestriction' | 'classExpression' | undefined => {
+    const isRestriction = axiom.isRestriction === true || axiom.isRestriction === 'true';
+    
+    if (isRestriction && axiom.propertyIri) {
+      // Check if it's a data property restriction (including owl:topDataProperty)
+      const isDataProperty = axiom.propertyIri === 'http://www.w3.org/2002/07/owl#topDataProperty' 
+        || dataProperties.some(p => p.id === axiom.propertyIri);
+      if (isDataProperty) {
+        return 'dataRestriction';
+      }
+      // Otherwise it's an object property restriction
+      return 'objectRestriction';
+    }
+    
+    // Check if it's a complex expression (intersection, union, complement, oneOf)
+    const isComplex = axiom.isComplex === true || axiom.isComplex === 'true';
+    if (isComplex && axiom.expressionType) {
+      return 'classExpression';
+    }
+    
+    // Default to hierarchy for simple class references
+    return 'hierarchy';
+  };
+
+  // Build restriction data from axiom properties
+  const buildRestrictionData = (): any => {
+    const isRestriction = axiom.isRestriction === true || axiom.isRestriction === 'true';
+    
+    if (isRestriction && axiom.propertyIri && axiom.restrictionType && axiom.fillerIri) {
+      // Check if it's a data property (including owl:topDataProperty)
+      const isDataProperty = axiom.propertyIri === 'http://www.w3.org/2002/07/owl#topDataProperty' 
+        || dataProperties.some(p => p.id === axiom.propertyIri);
+      
+      return {
+        propertyIri: axiom.propertyIri,
+        restrictionType: axiom.restrictionType,
+        fillerIri: axiom.fillerIri,
+        cardinality: axiom.cardinality ? (typeof axiom.cardinality === 'string' ? parseInt(axiom.cardinality) : axiom.cardinality) : undefined,
+        isDataProperty
+      };
+    }
+    
+    return undefined;
   };
 
   return (
@@ -68,9 +117,17 @@ export const AxiomRow: React.FC<{
             </button>
 
             {/* Edit button - only for asserted axioms */}
-            {!isInferred && onEdit && (
+            {!isInferred && (onEdit || onEditClick) && (
               <button 
-                onClick={() => setIsEditing(true)}
+                onClick={() => {
+                  if (onEditClick) {
+                    const initialTab = determineInitialTab();
+                    const restrictionData = buildRestrictionData();
+                    onEditClick(axiom, initialTab, restrictionData);
+                  } else if (onEdit) {
+                    setIsEditing(true);
+                  }
+                }}
                 className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-blue-100 text-gray-400 hover:text-blue-600 transition-all" 
                 title="Edit axiom"
                 aria-label="Edit"
@@ -113,11 +170,14 @@ export const AxiomSubsection: React.FC<{
   inferredAxioms?: Axiom[];
   onAdd: (definition: string) => void;
   onEdit?: (id: string, newDefinition: string) => void;
+  onEditClick?: (axiom: Axiom, initialTab?: 'hierarchy' | 'objectRestriction' | 'dataRestriction' | 'classExpression', restrictionData?: any) => void;
   onDelete: (id: string) => void;
   emptyMessage?: string;
   onAddClick?: () => void;
   activeOntologyIri?: string;
-}> = ({ title, axioms, inferredAxioms, onAdd, onEdit, onDelete, emptyMessage, onAddClick, activeOntologyIri }) => {
+  properties?: any[];
+  dataProperties?: any[];
+}> = ({ title, axioms, inferredAxioms, onAdd, onEdit, onEditClick, onDelete, emptyMessage, onAddClick, activeOntologyIri, properties = [], dataProperties = [] }) => {
   const [isAdding, setIsAdding] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
 
@@ -176,10 +236,13 @@ export const AxiomSubsection: React.FC<{
                 axiom={axiom} 
                 onDelete={onDelete}
                 onEdit={onEdit}
+                onEditClick={onEditClick}
                 isInferred={false}
                 isInActiveOntology={axiom.ontologyIri === activeOntologyIri}
                 ontologyIri={axiom.ontologyIri}
                 hasAxiomAnnotations={false}
+                properties={properties}
+                dataProperties={dataProperties}
               />
             ))}
             {/* Inferred axioms */}
@@ -240,7 +303,7 @@ const getPropertyLabel = (uri: string): string => {
 /**
  * A component that displays a list of annotations (key-value pairs)
  * and provides a delete button for each.
- *
+ * Sorts annotations to show rdfs:comment first, then rdfs:label, then others alphabetically.
  */
 export const AnnotationsDisplay = ({ annotations, onDelete, onEdit }: { 
   annotations?: Record<string, string>, 
@@ -253,21 +316,59 @@ export const AnnotationsDisplay = ({ annotations, onDelete, onEdit }: {
     );
   }
   
+  // Priority annotation properties (shown first)
+  const priorityProps = [
+    'http://www.w3.org/2000/01/rdf-schema#comment',
+    'http://www.w3.org/2000/01/rdf-schema#label',
+    'http://www.w3.org/2000/01/rdf-schema#isDefinedBy',
+    'http://www.w3.org/2000/01/rdf-schema#seeAlso'
+  ];
+  
   const sortedAnnotations = Object.entries(annotations).sort(([keyA], [keyB]) => {
+    const priorityA = priorityProps.indexOf(keyA);
+    const priorityB = priorityProps.indexOf(keyB);
+    
+    // If both have priority, sort by priority order
+    if (priorityA !== -1 && priorityB !== -1) {
+      return priorityA - priorityB;
+    }
+    // If only A has priority, A comes first
+    if (priorityA !== -1) return -1;
+    // If only B has priority, B comes first
+    if (priorityB !== -1) return 1;
+    // Otherwise sort alphabetically by label
     const labelA = getPropertyLabel(keyA);
     const labelB = getPropertyLabel(keyB);
     return labelA.localeCompare(labelB);
   });
   
+  // Check if this is a description annotation (rdfs:comment)
+  const isDescription = (key: string) => key === 'http://www.w3.org/2000/01/rdf-schema#comment';
+  
   return (
     <div className="space-y-1">
       {sortedAnnotations.map(([key, value]) => {
         const propertyLabel = getPropertyLabel(key);
+        const isDesc = isDescription(key);
+        
         return (
-          <div key={key} className="group bg-white border border-gray-200 rounded-lg overflow-hidden hover:border-purple-300 hover:shadow-sm transition-all">
-            <div className="flex items-center justify-between px-3 py-2 bg-gradient-to-r from-purple-50 via-blue-50 to-gray-50 border-b border-gray-200">
+          <div 
+            key={key} 
+            className={`group bg-white border rounded-lg overflow-hidden hover:shadow-sm transition-all ${
+              isDesc 
+                ? 'border-blue-300 hover:border-blue-400 ring-1 ring-blue-100' 
+                : 'border-gray-200 hover:border-purple-300'
+            }`}
+          >
+            <div className={`flex items-center justify-between px-3 py-2 border-b ${
+              isDesc 
+                ? 'bg-gradient-to-r from-blue-100 via-blue-50 to-white border-blue-200' 
+                : 'bg-gradient-to-r from-purple-50 via-blue-50 to-gray-50 border-gray-200'
+            }`}>
               <div className="flex items-center gap-2 flex-1 min-w-0">
-                <span className="text-xs font-bold text-purple-900">{propertyLabel}</span>
+                <span className={`text-xs font-bold ${isDesc ? 'text-blue-800' : 'text-purple-900'}`}>
+                  {isDesc ? '📝 ' : ''}{propertyLabel}
+                </span>
                 {key !== propertyLabel && (
                   <span className="text-[10px] text-gray-500 font-mono truncate" title={key}>
                     ({key})
@@ -295,7 +396,7 @@ export const AnnotationsDisplay = ({ annotations, onDelete, onEdit }: {
                 </button>
               </div>
             </div>
-            <div className="px-3 py-2.5">
+            <div className={`px-3 py-2.5 ${isDesc ? 'bg-blue-50/30' : ''}`}>
               <AnnotationValue value={value} />
             </div>
           </div>

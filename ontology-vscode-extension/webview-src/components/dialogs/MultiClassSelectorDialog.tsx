@@ -12,6 +12,8 @@ interface MultiClassSelectorDialogProps {
   onToggleNode?: (nodeId: string) => Promise<void> | void;
   externalExpandedNodes?: string[];
   title?: string;
+  excludeClassIds?: string[]; // Classes to exclude from selection (e.g., the current class)
+  minSelection?: number; // Minimum number of classes required
 }
 
 const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
@@ -22,7 +24,9 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
   projectId,
   onToggleNode,
   externalExpandedNodes,
-  title = "Select Classes"
+  title = "Select Classes",
+  excludeClassIds = [],
+  minSelection = 1
 }) => {
   const [selectedClasses, setSelectedClasses] = useState<TreeNode[]>([]);
   const [expandedNodes, setExpandedNodes] = useState<string[]>([]);
@@ -89,6 +93,9 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
   };
 
   const handleNodeSelect = (node: TreeNode) => {
+    // Don't allow selecting excluded classes
+    if (excludeClassIds.includes(node.id)) return;
+    
     if (selectedClasses.find(n => n.id === node.id)) {
       setSelectedClasses(prev => prev.filter(n => n.id !== node.id));
     } else {
@@ -97,12 +104,17 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
   };
 
   const handleConfirm = () => {
+    if (selectedClasses.length < minSelection) {
+      alert(`Please select at least ${minSelection} class${minSelection > 1 ? 'es' : ''}.`);
+      return;
+    }
     onConfirm(selectedClasses);
     setSelectedClasses([]);
     onClose();
   };
 
   const isSelected = (nodeId: string) => selectedClasses.some(n => n.id === nodeId);
+  const isExcluded = (nodeId: string) => excludeClassIds.includes(nodeId);
 
   // Render a tree node with checkbox for multi-select
   const renderTreeNode = (node: TreeNode, level: number = 0): React.ReactNode => {
@@ -110,6 +122,7 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
     const isExpanded = currentExpanded.includes(node.id);
     const hasChildren = node.hasChildren || (node.children && node.children.length > 0);
     const selected = isSelected(node.id);
+    const excluded = isExcluded(node.id);
     
     // Filter by search
     if (searchQuery && !node.label.toLowerCase().includes(searchQuery.toLowerCase())) {
@@ -123,7 +136,7 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
     return (
       <div key={node.id}>
         <div
-          className={`flex items-center px-2 py-1 cursor-pointer hover:bg-gray-100 ${selected ? 'bg-purple-100' : ''}`}
+          className={`flex items-center px-2 py-1 ${excluded ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-gray-100'} ${selected ? 'bg-purple-100' : ''}`}
           style={{ paddingLeft: `${level * 16 + 8}px` }}
         >
           {/* Expand/Collapse button */}
@@ -146,25 +159,28 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
 
           {/* Checkbox */}
           <div
-            onClick={() => handleNodeSelect(node)}
-            className={`w-4 h-4 rounded border mr-2 flex items-center justify-center cursor-pointer ${
-              selected ? 'bg-purple-600 border-purple-600' : 'border-gray-300 hover:border-purple-400'
+            onClick={() => !excluded && handleNodeSelect(node)}
+            className={`w-4 h-4 rounded border mr-2 flex items-center justify-center ${
+              excluded ? 'bg-gray-200 border-gray-300 cursor-not-allowed' :
+              selected ? 'bg-purple-600 border-purple-600 cursor-pointer' : 
+              'border-gray-300 hover:border-purple-400 cursor-pointer'
             }`}
+            title={excluded ? 'Current class (cannot select)' : undefined}
           >
-            {selected && <Check size={12} className="text-white" />}
+            {selected && !excluded && <Check size={12} className="text-white" />}
           </div>
 
           {/* Icon */}
-          <div className="w-4 h-4 rounded bg-amber-400 border border-amber-600 mr-2 flex items-center justify-center">
+          <div className={`w-4 h-4 rounded ${excluded ? 'bg-gray-400 border-gray-500' : 'bg-amber-400 border-amber-600'} border mr-2 flex items-center justify-center`}>
             <Package size={10} className="text-white" />
           </div>
 
           {/* Label */}
           <span
-            className={`text-sm ${selected ? 'font-semibold text-purple-900' : 'text-gray-800'}`}
-            onClick={() => handleNodeSelect(node)}
+            className={`text-sm ${excluded ? 'text-gray-400 italic' : selected ? 'font-semibold text-purple-900' : 'text-gray-800'}`}
+            onClick={() => !excluded && handleNodeSelect(node)}
           >
-            {node.label}
+            {node.label}{excluded && ' (current)'}
           </span>
         </div>
 
@@ -232,7 +248,9 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
 
         <div className="p-4 border-t bg-gray-50 flex justify-between items-center">
           <div className="text-xs text-gray-500">
-            Select at least 2 classes for the disjoint union
+            {minSelection > 1 
+              ? `Select at least ${minSelection} classes` 
+              : 'Select one or more classes'}
           </div>
           <div className="flex gap-2">
             <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50">
@@ -240,10 +258,10 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
             </button>
             <button 
               onClick={handleConfirm} 
-              disabled={selectedClasses.length < 2}
+              disabled={selectedClasses.length < minSelection}
               className="px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Confirm ({selectedClasses.length})
+              Add ({selectedClasses.length})
             </button>
           </div>
         </div>

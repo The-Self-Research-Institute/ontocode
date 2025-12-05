@@ -207,12 +207,19 @@ const ClassEditor: React.FC<{
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editorType, setEditorType] = useState<AxiomType | null>(null);
   const [editorTitle, setEditorTitle] = useState("");
+  const [editorExistingValue, setEditorExistingValue] = useState<string | undefined>();
+  const [editorExistingId, setEditorExistingId] = useState<string | undefined>();
+  const [editorInitialTab, setEditorInitialTab] = useState<'hierarchy' | 'objectRestriction' | 'dataRestriction' | 'classExpression' | undefined>();
+  const [editorInitialRestrictionData, setEditorInitialRestrictionData] = useState<any>();
 
   // Properties for restriction creators
   const [properties, setProperties] = useState<any[]>([]);
   const [dataProperties, setDataProperties] = useState<any[]>([]);
   const [objectPropertyHierarchy, setObjectPropertyHierarchy] = useState<TreeNode[]>([]);
   const [dataPropertyHierarchy, setDataPropertyHierarchy] = useState<TreeNode[]>([]);
+
+  // Disjoint With State (multi-class selector like Protégé)
+  const [isDisjointWithOpen, setIsDisjointWithOpen] = useState(false);
 
   // Disjoint Union State
   const [isDisjointUnionOpen, setIsDisjointUnionOpen] = useState(false);
@@ -363,6 +370,15 @@ const ClassEditor: React.FC<{
       setClassDetails(details);
       
       // Update the item with all loaded details (annotations, axioms, etc.)
+      // Debug logging for axioms
+      console.log('[ClassEditor] Axioms from backend:', {
+        subClassOf: details.subClassOfAxioms?.length || 0,
+        equivalentTo: details.equivalentClassesAxioms?.length || 0,
+        disjointWith: details.disjointClassesAxioms?.length || 0,
+        disjointUnion: details.disjointUnionAxioms?.length || 0,
+        hasKey: details.hasKeyAxioms?.length || 0
+      });
+      
       const updatedItem: TreeNode = {
         ...item,
         annotations: details.annotations || item.annotations,
@@ -372,6 +388,7 @@ const ClassEditor: React.FC<{
         disjointUnionAxioms: details.disjointUnionAxioms || item.disjointUnionAxioms,
         hasKeyAxioms: details.hasKeyAxioms || item.hasKeyAxioms
       };
+      console.log('[ClassEditor] Updated item:', updatedItem);
       onUpdate(updatedItem);
     } catch (error) {
       console.error('Failed to load class details:', error);
@@ -380,18 +397,193 @@ const ClassEditor: React.FC<{
     }
   };
 
-  const openEditor = (type: AxiomType, title: string) => {
+  const openEditor = (type: AxiomType, title: string, existingValue?: string, existingId?: string, initialTab?: 'hierarchy' | 'objectRestriction' | 'dataRestriction' | 'classExpression', restrictionData?: any) => {
     setEditorType(type);
-    setEditorTitle(title);
+    // Update title to indicate edit mode
+    if (existingValue && existingId) {
+      setEditorTitle(`Edit ${title}`);
+      // For hierarchy tab (simple class axioms), pass the IRI as initialValue so it can be pre-selected
+      // For other tabs (restrictions, expressions), pass the definition/label
+      setEditorExistingValue(initialTab === 'hierarchy' ? existingId : existingValue);
+      setEditorExistingId(existingId);
+    } else {
+      setEditorTitle(`Add ${title}`);
+      setEditorExistingValue(undefined);
+      setEditorExistingId(undefined);
+    }
+    setEditorInitialTab(initialTab);
+    setEditorInitialRestrictionData(restrictionData);
     setIsEditorOpen(true);
   };
 
-  const handleEditorConfirm = (expression: string, restrictionData?: RestrictionData) => {
+  const handleEditorConfirm = async (expression: string, restrictionData?: RestrictionData) => {
     if (editorType) {
-      handleAddAxiom(editorType, expression, restrictionData);
+      // If we have an existing axiom ID, this is an edit operation
+      if (editorExistingId) {
+        console.log('[ClassEditor] Edit operation - deleting old axiom:', { 
+          editorExistingId, 
+          editorType, 
+          newExpression: expression,
+          classIri: item.id,
+          editorInitialRestrictionData,
+          restrictionData 
+        });
+        
+        // For edit, we need to delete the old one first, then add the new one
+        // Check if the old axiom was a restriction that needs special handling
+        if (editorInitialRestrictionData) {
+          // Delete the old restriction
+          const axiomType = editorType === 'EquivalentTo' ? 'EquivalentTo' : 'SubClassOf';
+          
+          console.log('[ClassEditor] Deleting old restriction:', editorInitialRestrictionData);
+          if (editorInitialRestrictionData.isDataProperty) {
+            await ontologyMutationService.deleteDataRestriction(
+              projectId,
+              item.id,
+              axiomType,
+              editorInitialRestrictionData.propertyIri!,
+              editorInitialRestrictionData.restrictionType!,
+              editorInitialRestrictionData.fillerIri!
+            );
+          } else {
+            await ontologyMutationService.deleteObjectRestriction(
+              projectId,
+              item.id,
+              axiomType,
+              editorInitialRestrictionData.propertyIri!,
+              editorInitialRestrictionData.restrictionType!,
+              editorInitialRestrictionData.fillerIri!
+            );
+          }
+          // Wait for GraphDB to process the deletion - increased delay for restrictions
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          console.log('[ClassEditor] Waited 1000ms after restriction deletion');
+        } else {
+          // Delete old simple class axiom (not a restriction)
+          // The editorExistingId should be the IRI of the target class
+          console.log('[ClassEditor] Deleting old simple class axiom:', { 
+            editorExistingId, 
+            editorType,
+            classIri: item.id,
+            willCallDelete: true
+          });
+          
+          // Always attempt to delete - the ID is passed as-is from the axiom
+          switch (editorType) {
+            case 'EquivalentTo':
+              console.log('[ClassEditor] Calling deleteEquivalentClass with:', { projectId, classIri: item.id, targetIri: editorExistingId });
+              await ontologyMutationService.deleteEquivalentClass(projectId, item.id, editorExistingId);
+              console.log('[ClassEditor] deleteEquivalentClass completed');
+              break;
+            case 'SubClassOf':
+              console.log('[ClassEditor] Calling deleteSubClassOf with:', { projectId, classIri: item.id, superClassIri: editorExistingId });
+              await ontologyMutationService.deleteSubClassOf(projectId, item.id, editorExistingId);
+              console.log('[ClassEditor] deleteSubClassOf completed');
+              break;
+            case 'DisjointWith':
+              console.log('[ClassEditor] Calling deleteDisjointWith with:', { projectId, classIri: item.id, targetIri: editorExistingId });
+              await ontologyMutationService.deleteDisjointWith(projectId, item.id, editorExistingId);
+              console.log('[ClassEditor] deleteDisjointWith completed');
+              break;
+          }
+          // Wait for GraphDB to process the deletion - increased delay
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          console.log('[ClassEditor] Waited 1000ms after simple axiom deletion');
+        }
+        
+        console.log('[ClassEditor] Adding new axiom after deletion:', { expression, restrictionData, editorType });
+        
+        // SAFETY CHECK: If this is a restriction edit, verify that we're not adding a duplicate
+        // Check if an axiom with the same property and filler already exists
+        if (restrictionData) {
+          // Get the correct axiom array based on axiom type
+          let existingAxioms: any[] = [];
+          if (editorType === 'SubClassOf') {
+            existingAxioms = classDetails?.subClassOfAxioms || item.subClassOfAxioms || [];
+          } else if (editorType === 'EquivalentTo') {
+            existingAxioms = classDetails?.equivalentClassesAxioms || item.equivalentClassesAxioms || [];
+          } else if (editorType === 'DisjointWith') {
+            existingAxioms = classDetails?.disjointWithAxioms || item.disjointWithAxioms || [];
+          }
+          
+          const isDuplicate = existingAxioms.some((axiom: any) => {
+            // Check if axiom has the same property and filler
+            return axiom.propertyIri === restrictionData.propertyIri && 
+                   axiom.fillerIri === restrictionData.fillerIri &&
+                   axiom.restrictionType === restrictionData.restrictionType;
+          });
+          
+          if (isDuplicate) {
+            console.warn('[ClassEditor] ⚠️  DUPLICATE DETECTED - Not adding axiom that already exists with same restriction:', {
+              editorType,
+              propertyIri: restrictionData.propertyIri,
+              fillerIri: restrictionData.fillerIri,
+              restrictionType: restrictionData.restrictionType,
+              existingAxiomsCount: existingAxioms.length
+            });
+            // Skip the add operation - the axiom already exists
+            setEditingAxiomId(null);
+            setShowDialog(false);
+            return;
+          }
+        }
+        
+        // Now add the new axiom (either restriction or simple class reference)
+        if (restrictionData) {
+          await handleAddAxiom(editorType, expression, restrictionData);
+        } else {
+          // Add the new simple class axiom
+          const isNewSimpleIRI = expression.startsWith('http://') || expression.startsWith('https://') || expression.startsWith('urn:');
+          console.log('[ClassEditor] New expression details:', { expression, isNewSimpleIRI });
+          if (isNewSimpleIRI) {
+            switch (editorType) {
+              case 'EquivalentTo':
+                console.log('[ClassEditor] Calling addEquivalentClass with:', { projectId, classIri: item.id, targetIri: expression });
+                await ontologyMutationService.addEquivalentClass(projectId, item.id, expression);
+                console.log('[ClassEditor] addEquivalentClass completed');
+                // Wait for GraphDB to process the addition - increased delay
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                console.log('[ClassEditor] Waited 1000ms after adding new equivalentClass');
+                break;
+              case 'SubClassOf':
+                console.log('[ClassEditor] Calling addSubClassOf with:', { projectId, classIri: item.id, superClassIri: expression });
+                await ontologyMutationService.addSubClassOf(projectId, item.id, expression);
+                console.log('[ClassEditor] addSubClassOf completed');
+                // Wait for GraphDB to process the addition - increased delay
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                console.log('[ClassEditor] Waited 1000ms after adding new subClassOf');
+                break;
+              case 'DisjointWith':
+                console.log('[ClassEditor] Calling addDisjointWith with:', { projectId, classIri: item.id, targetIri: expression });
+                await ontologyMutationService.addDisjointWith(projectId, item.id, expression);
+                console.log('[ClassEditor] addDisjointWith completed');
+                // Wait for GraphDB to process the addition
+                await new Promise(resolve => setTimeout(resolve, 300));
+                console.log('[ClassEditor] Waited 300ms after adding new disjointWith');
+                break;
+            }
+          } else {
+            // For complex expressions
+            console.log('[ClassEditor] Adding complex expression axiom');
+            await ontologyMutationService.addAxiom(projectId, item.id, editorType, expression);
+          }
+          // Reload details to reflect the changes
+          console.log('[ClassEditor] Reloading class details after edit');
+          await loadClassDetails();
+          console.log('[ClassEditor] Class details reloaded');
+        }
+      } else {
+        // Otherwise it's an add operation
+        console.log('[ClassEditor] Add operation:', { expression, restrictionData });
+        await handleAddAxiom(editorType, expression, restrictionData);
+      }
     }
     setIsEditorOpen(false);
     setEditorType(null);
+    setEditorExistingValue(undefined);
+    setEditorExistingId(undefined);
+    setEditorInitialTab(undefined);
+    setEditorInitialRestrictionData(undefined);
   };
 
   const handleAddAxiom = async (type: AxiomType, definition: string, restrictionData?: RestrictionData) => {
@@ -413,15 +605,21 @@ const ClassEditor: React.FC<{
             restrictionData.cardinality
           );
         } else if (restrictionData.type === 'dataRestriction') {
-          await ontologyMutationService.addDataRestriction(
-            projectId,
-            item.id,
-            restrictionData.axiomType,
-            restrictionData.propertyIri,
-            restrictionData.restrictionType,
-            restrictionData.fillerIri,
-            restrictionData.cardinality
-          );
+          // Only allow valid restrictionType values for data restrictions
+          const validDataRestrictionTypes = ['some', 'only', 'min', 'max', 'exactly'];
+          if (validDataRestrictionTypes.includes(restrictionData.restrictionType)) {
+            await ontologyMutationService.addDataRestriction(
+              projectId,
+              item.id,
+              restrictionData.axiomType,
+              restrictionData.propertyIri,
+              restrictionData.restrictionType as 'some' | 'only' | 'min' | 'max' | 'exactly',
+              restrictionData.fillerIri,
+              restrictionData.cardinality
+            );
+          } else {
+            console.warn('Invalid restrictionType for data restriction:', restrictionData.restrictionType);
+          }
         }
         // Reload details to get the updated axioms
         await loadClassDetails();
@@ -460,6 +658,7 @@ const ClassEditor: React.FC<{
   };
 
   const handleDeleteAxiom = async (type: AxiomType, id: string) => {
+    console.log('[ClassEditor] handleDeleteAxiom called:', { type, id, classIri: item.id });
     try {
       // Find the axiom object to check if it's a restriction
       let axiomArrays: { EquivalentTo?: Axiom[], SubClassOf?: Axiom[], DisjointWith?: Axiom[] } = {
@@ -468,61 +667,81 @@ const ClassEditor: React.FC<{
         DisjointWith: item.disjointClassesAxioms
       };
       const axiom = axiomArrays[type]?.find(a => a.id === id);
+      console.log('[ClassEditor] Found axiom:', axiom);
       
       // Check if this is a restriction (isRestriction can be boolean or string "true")
       const isRestriction = axiom?.isRestriction === true || axiom?.isRestriction === 'true';
       
       if (isRestriction && axiom?.propertyIri && axiom?.restrictionType && axiom?.fillerIri) {
-        // Delete restriction
-        const axiomType = type === 'EquivalentTo' ? 'owl:equivalentClass' : 'rdfs:subClassOf';
-        await ontologyMutationService.deleteObjectRestriction(
-          projectId,
-          item.id,
-          axiom.propertyIri,
-          axiom.restrictionType,
-          axiom.fillerIri,
-          axiomType,
-          axiom.cardinality ? Number(axiom.cardinality) : undefined
-        );
+        // Delete restriction - map type to axiomType parameter
+        const axiomType = type === 'EquivalentTo' ? 'EquivalentTo' : 'SubClassOf';
+        
+        // Check if it's a data property restriction
+        const isDataProperty = axiom.propertyIri === 'http://www.w3.org/2002/07/owl#topDataProperty' 
+          || dataProperties.some(p => p.id === axiom.propertyIri);
+        
+        console.log('[ClassEditor] Deleting restriction:', { 
+          classIri: item.id, 
+          axiomType, 
+          propertyIri: axiom.propertyIri,
+          restrictionType: axiom.restrictionType,
+          fillerIri: axiom.fillerIri,
+          isDataProperty
+        });
+        
+        if (isDataProperty) {
+          await ontologyMutationService.deleteDataRestriction(
+            projectId,
+            item.id,
+            axiomType,
+            axiom.propertyIri,
+            axiom.restrictionType as 'some' | 'only' | 'min' | 'max' | 'exactly',
+            axiom.fillerIri
+          );
+        } else {
+          await ontologyMutationService.deleteObjectRestriction(
+            projectId,
+            item.id,
+            axiomType,
+            axiom.propertyIri,
+            axiom.restrictionType as 'some' | 'only' | 'min' | 'max' | 'exactly' | 'value',
+            axiom.fillerIri
+          );
+        }
+        // Wait for GraphDB to process the deletion
+        await new Promise(resolve => setTimeout(resolve, 300));
         await loadClassDetails();
       } else {
         // The id is usually the IRI of the related class
-        // For simple class-to-class relationships, call the specific delete methods
-        const isSimpleIRI = id.startsWith('http://') || id.startsWith('https://') || id.startsWith('urn:');
+        // Always attempt to delete - the backend will handle validation
+        console.log('[ClassEditor] Deleting simple class axiom:', { type, classIri: item.id, targetIri: id });
         
-        if (isSimpleIRI) {
-          switch (type) {
-            case 'EquivalentTo':
-              await ontologyMutationService.deleteEquivalentClass(projectId, item.id, id);
-              break;
-            case 'SubClassOf':
-              await ontologyMutationService.deleteSubClassOf(projectId, item.id, id);
-              break;
-            case 'DisjointWith':
-              await ontologyMutationService.deleteDisjointWith(projectId, item.id, id);
-              break;
-          }
-          // Reload to reflect changes
-          await loadClassDetails();
-        } else {
-          // For complex expressions, we don't have backend support yet
-          console.warn("Delete axiom not fully implemented for complex expressions");
-          // Optimistic update for UI only
-          switch (type) {
-            case 'EquivalentTo':
-              onUpdate({ ...item, equivalentClassesAxioms: item.equivalentClassesAxioms?.filter(a => a.id !== id) });
-              break;
-            case 'SubClassOf':
-              onUpdate({ ...item, subClassOfAxioms: item.subClassOfAxioms?.filter(a => a.id !== id) });
-              break;
-            case 'DisjointWith':
-              onUpdate({ ...item, disjointClassesAxioms: item.disjointClassesAxioms?.filter(a => a.id !== id) });
-              break;
-          }
+        switch (type) {
+          case 'EquivalentTo':
+            console.log('[ClassEditor] Calling deleteEquivalentClass');
+            await ontologyMutationService.deleteEquivalentClass(projectId, item.id, id);
+            break;
+          case 'SubClassOf':
+            console.log('[ClassEditor] Calling deleteSubClassOf with params:', { projectId, classIri: item.id, superClassIri: id });
+            await ontologyMutationService.deleteSubClassOf(projectId, item.id, id);
+            console.log('[ClassEditor] deleteSubClassOf completed');
+            break;
+          case 'DisjointWith':
+            console.log('[ClassEditor] Calling deleteDisjointWith');
+            await ontologyMutationService.deleteDisjointWith(projectId, item.id, id);
+            break;
         }
+        // Small delay to allow GraphDB to process the mutation
+        await new Promise(resolve => setTimeout(resolve, 300));
+        // Reload to reflect changes
+        console.log('[ClassEditor] Reloading class details after delete');
+        await loadClassDetails();
+        console.log('[ClassEditor] loadClassDetails completed');
       }
     } catch (error) {
-      console.error('Failed to delete axiom:', error);
+      console.error('[ClassEditor] Failed to delete axiom:', error);
+      console.error('[ClassEditor] Delete axiom details:', { type, id, classIri: item.id });
+      alert(`Failed to delete axiom: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -570,59 +789,122 @@ const ClassEditor: React.FC<{
     }
   };
 
+  // Handler for Disjoint With - adds owl:disjointWith for each selected class
+  const handleDisjointWithConfirm = async (nodes: TreeNode[]) => {
+    console.log('[ClassEditor] handleDisjointWithConfirm called:', { nodes: nodes.map(n => ({ id: n.id, label: n.label })) });
+    try {
+      const classIris = nodes.map(n => n.id);
+      
+      if (classIris.length < 1) {
+        console.warn('[ClassEditor] Please select at least 1 class');
+        alert('Please select at least 1 class');
+        return;
+      }
+      
+      // Add disjoint with for each selected class
+      for (const targetIri of classIris) {
+        console.log('[ClassEditor] Adding disjoint with:', { classIri: item.id, targetIri });
+        await ontologyMutationService.addDisjointWith(projectId, item.id, targetIri);
+      }
+      
+      // Small delay to allow GraphDB to process the mutations
+      await new Promise(resolve => setTimeout(resolve, 300));
+      console.log('[ClassEditor] Reloading class details after adding disjoint with');
+      await loadClassDetails();
+      console.log('[ClassEditor] loadClassDetails completed after disjoint with');
+    } catch (error) {
+      console.error('[ClassEditor] Failed to add disjoint with:', error);
+      alert(`Failed to add disjoint with: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+    setIsDisjointWithOpen(false);
+  };
+
   const handleDisjointUnionConfirm = async (nodes: TreeNode[]) => {
+    console.log('[ClassEditor] handleDisjointUnionConfirm called:', { nodes: nodes.map(n => ({ id: n.id, label: n.label })) });
     try {
       // Get the IRIs of the selected classes
       const memberIris = nodes.map(n => n.id);
       
       if (memberIris.length < 2) {
-        console.warn('Disjoint Union requires at least 2 classes');
+        console.warn('[ClassEditor] Disjoint Union requires at least 2 classes');
         alert('Please select at least 2 classes for the disjoint union.');
         return;
       }
       
+      console.log('[ClassEditor] Adding disjoint union:', { classIri: item.id, memberIris });
       // Use the new addDisjointUnion method
       await ontologyMutationService.addDisjointUnion(projectId, item.id, memberIris);
+      console.log('[ClassEditor] addDisjointUnion completed');
+      
+      // Small delay to allow GraphDB to process the mutation
+      await new Promise(resolve => setTimeout(resolve, 300));
+      console.log('[ClassEditor] Reloading class details after adding disjoint union');
       await loadClassDetails();
+      console.log('[ClassEditor] loadClassDetails completed after disjoint union');
     } catch (error) {
-      console.error('Failed to add disjoint union:', error);
-      alert('Failed to add disjoint union. See console for details.');
+      console.error('[ClassEditor] Failed to add disjoint union:', error);
+      alert(`Failed to add disjoint union: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
     setIsDisjointUnionOpen(false);
   };
 
   const handleDeleteDisjointUnion = async (listNodeId: string) => {
+    console.log('[ClassEditor] handleDeleteDisjointUnion called:', { classIri: item.id, listNodeId });
     try {
       await ontologyMutationService.deleteDisjointUnion(projectId, item.id, listNodeId);
+      console.log('[ClassEditor] deleteDisjointUnion completed');
+      
+      // Small delay to allow GraphDB to process the mutation
+      await new Promise(resolve => setTimeout(resolve, 300));
+      console.log('[ClassEditor] Reloading class details after deleting disjoint union');
       await loadClassDetails();
+      console.log('[ClassEditor] loadClassDetails completed after delete disjoint union');
     } catch (error) {
-      console.error('Failed to delete disjoint union:', error);
+      console.error('[ClassEditor] Failed to delete disjoint union:', error);
+      alert(`Failed to delete disjoint union: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
   const handleDeleteHasKey = async (listNodeId: string) => {
+    console.log('[ClassEditor] handleDeleteHasKey called:', { classIri: item.id, listNodeId });
     try {
       await ontologyMutationService.deleteHasKey(projectId, item.id, listNodeId);
+      console.log('[ClassEditor] deleteHasKey completed');
+      
+      // Small delay to allow GraphDB to process the mutation
+      await new Promise(resolve => setTimeout(resolve, 300));
+      console.log('[ClassEditor] Reloading class details after deleting has key');
       await loadClassDetails();
+      console.log('[ClassEditor] loadClassDetails completed after delete has key');
     } catch (error) {
-      console.error('Failed to delete has key:', error);
+      console.error('[ClassEditor] Failed to delete has key:', error);
+      alert(`Failed to delete has key: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
   const handleAddHasKey = async (propertyIris: string[]) => {
+    console.log('[ClassEditor] handleAddHasKey called:', { classIri: item.id, propertyIris });
     try {
       if (propertyIris.length < 1) {
-        console.warn('HasKey requires at least 1 property');
+        console.warn('[ClassEditor] HasKey requires at least 1 property');
         alert('Please select at least 1 property for the key.');
         return;
       }
       
+      console.log('[ClassEditor] Adding has key:', { classIri: item.id, propertyIris });
       await ontologyMutationService.addHasKey(projectId, item.id, propertyIris);
+      console.log('[ClassEditor] addHasKey completed');
+      
+      // Small delay to allow GraphDB to process the mutation
+      await new Promise(resolve => setTimeout(resolve, 300));
+      console.log('[ClassEditor] Reloading class details after adding has key');
       await loadClassDetails();
+      console.log('[ClassEditor] loadClassDetails completed after has key');
     } catch (error) {
-      console.error('Failed to add has key:', error);
-      alert('Failed to add has key. See console for details.');
+      console.error('[ClassEditor] Failed to add has key:', error);
+      alert(`Failed to add has key: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+    setIsHasKeyOpen(false);
   };
 
   const annotationCount = Object.keys(item.annotations || {}).length;
@@ -706,7 +988,10 @@ const ClassEditor: React.FC<{
                   onAdd={(def) => handleAddAxiom('EquivalentTo', def)}
                   onEdit={(id, newDef) => handleEditAxiom('EquivalentTo', id, newDef)}
                   onDelete={(id) => handleDeleteAxiom('EquivalentTo', id)}
-                  onAddClick={() => openEditor('EquivalentTo', 'Edit Equivalent Class Expression')}
+                  onAddClick={() => openEditor('EquivalentTo', 'Equivalent Class Expression')}
+                  onEditClick={(axiom, initialTab, restrictionData) => openEditor('EquivalentTo', 'Equivalent Class Expression', axiom.definition, axiom.id, initialTab, restrictionData)}
+                  properties={properties}
+                  dataProperties={dataProperties}
                 />
                 
                 <AxiomSubsection
@@ -715,16 +1000,19 @@ const ClassEditor: React.FC<{
                   onAdd={(def) => handleAddAxiom('SubClassOf', def)}
                   onEdit={(id, newDef) => handleEditAxiom('SubClassOf', id, newDef)}
                   onDelete={(id) => handleDeleteAxiom('SubClassOf', id)}
-                  onAddClick={() => openEditor('SubClassOf', 'Edit SubClass Expression')}
+                  onAddClick={() => openEditor('SubClassOf', 'SubClass Expression')}
+                  onEditClick={(axiom, initialTab, restrictionData) => openEditor('SubClassOf', 'SubClass Expression', axiom.definition, axiom.id, initialTab, restrictionData)}
+                  properties={properties}
+                  dataProperties={dataProperties}
                 />
                 
                 <AxiomSubsection
                   title="Disjoint With"
                   axioms={item.disjointClassesAxioms}
                   onAdd={(def) => handleAddAxiom('DisjointWith', def)}
-                  onEdit={(id, newDef) => handleEditAxiom('DisjointWith', id, newDef)}
                   onDelete={(id) => handleDeleteAxiom('DisjointWith', id)}
-                  onAddClick={() => openEditor('DisjointWith', 'Edit Disjoint Class Expression')}
+                  onAddClick={() => setIsDisjointWithOpen(true)}
+                  emptyMessage="No disjoint classes defined"
                 />
                 
                 <AxiomSubsection
@@ -760,9 +1048,18 @@ const ClassEditor: React.FC<{
       {/* Class Expression Editor Dialog (Better UI) */}
       <ClassExpressionDialog
         isOpen={isEditorOpen}
-        onClose={() => setIsEditorOpen(false)}
+        onClose={() => {
+          setIsEditorOpen(false);
+          setEditorExistingValue(undefined);
+          setEditorExistingId(undefined);
+          setEditorInitialTab(undefined);
+          setEditorInitialRestrictionData(undefined);
+        }}
         onConfirm={handleEditorConfirm}
         title={editorTitle}
+        initialValue={editorExistingValue}
+        initialTab={editorInitialTab}
+        initialRestrictionData={editorInitialRestrictionData}
         classHierarchy={classHierarchy}
         objectProperties={properties}
         dataProperties={dataProperties}
@@ -777,6 +1074,20 @@ const ClassEditor: React.FC<{
         metadata={metadata}
       />
 
+      {/* Disjoint With Class Selector (like Desktop Protégé) */}
+      <MultiClassSelectorDialog
+        isOpen={isDisjointWithOpen}
+        onClose={() => setIsDisjointWithOpen(false)}
+        onConfirm={handleDisjointWithConfirm}
+        classHierarchy={classHierarchy}
+        projectId={projectId}
+        onToggleNode={onToggleNode}
+        externalExpandedNodes={expandedNodes}
+        title="Select Disjoint Classes"
+        excludeClassIds={[item.id]}
+        minSelection={1}
+      />
+
       {/* Disjoint Union Selector */}
       <MultiClassSelectorDialog
         isOpen={isDisjointUnionOpen}
@@ -787,6 +1098,7 @@ const ClassEditor: React.FC<{
         onToggleNode={onToggleNode}
         externalExpandedNodes={expandedNodes}
         title="Select Classes for Disjoint Union"
+        minSelection={2}
       />
 
       {/* Has Key Property Selector */}
