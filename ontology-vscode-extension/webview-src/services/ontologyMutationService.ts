@@ -405,11 +405,17 @@ export const ontologyMutationService = {
    * @param memberClassIris - Array of member class IRIs
    */
   async addDisjointUnion(projectId: string, classIri: string, memberClassIris: string[]): Promise<void> {
+    console.log('[MutationService] addDisjointUnion called:', { projectId, classIri, memberClassIris });
+    const valueStr = memberClassIris.join(',');
+    console.log('[MutationService] DisjointUnion value string:', valueStr);
+    
     await this.applyMutations(projectId, [{
       type: 'addDisjointUnion',
       iri: classIri,
-      value: memberClassIris.join(',')
+      value: valueStr
     }], false); // Apply immediately
+    
+    console.log('[MutationService] addDisjointUnion completed');
   },
 
   /**

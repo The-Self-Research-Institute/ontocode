@@ -23,6 +23,14 @@ interface ClassExpressionDialogProps {
   dataProperties: Property[];
   title?: string;
   initialValue?: string;
+  initialTab?: 'hierarchy' | 'objectRestriction' | 'classExpression' | 'dataRestriction';
+  initialRestrictionData?: {
+    propertyIri?: string;
+    restrictionType?: 'some' | 'only' | 'min' | 'max' | 'exactly' | 'value';
+    fillerIri?: string;
+    cardinality?: number;
+    isDataProperty?: boolean;
+  };
   projectId?: string;
   expandedNodes?: string[];
   onToggleNode?: (nodeId: string) => void;
@@ -61,6 +69,8 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   dataProperties,
   title = "Class Expression Editor",
   initialValue = "",
+  initialTab,
+  initialRestrictionData,
   projectId,
   expandedNodes = [],
   onToggleNode,
@@ -117,11 +127,115 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   useEffect(() => {
     if (isOpen) {
       setManchesterExpression(initialValue);
-      if (initialValue) {
+      // Set the active tab based on initialTab prop or default behavior
+      if (initialTab) {
+        setActiveTab(initialTab);
+        
+        // If opening hierarchy tab and initialValue looks like an IRI, try to find and select that class
+        if (initialTab === 'hierarchy' && initialValue && (initialValue.startsWith('http://') || initialValue.startsWith('https://') || initialValue.startsWith('urn:'))) {
+          const findClassWithPath = (nodes: TreeNode[], targetId: string, path: string[] = []): { node: TreeNode | null, path: string[] } => {
+            for (const node of nodes) {
+              if (node.id === targetId) {
+                return { node, path };
+              }
+              if (node.children && node.children.length > 0) {
+                const result = findClassWithPath(node.children, targetId, [...path, node.id]);
+                if (result.node) return result;
+              }
+            }
+            return { node: null, path: [] };
+          };
+          
+          const { node: foundClass, path: pathToClass } = findClassWithPath(classHierarchy, initialValue);
+          if (foundClass) {
+            setSelectedClass(foundClass);
+            // Expand parent nodes so the selected class is visible
+            if (pathToClass.length > 0) {
+              setLocalExpandedNodes(pathToClass);
+            }
+          }
+        }
+      } else if (initialValue) {
         setActiveTab('classExpression');
+      } else {
+        setActiveTab('hierarchy');
+      }
+
+      // Pre-populate restriction data if provided
+      if (initialRestrictionData) {
+        if (initialRestrictionData.isDataProperty) {
+          // Data property restriction
+          if (initialRestrictionData.propertyIri) {
+            // Check if it's owl:topDataProperty (not in dataProperties array)
+            if (initialRestrictionData.propertyIri === 'http://www.w3.org/2002/07/owl#topDataProperty') {
+              setSelectedDataProperty({
+                id: 'http://www.w3.org/2002/07/owl#topDataProperty',
+                label: 'owl:topDataProperty',
+                type: 'DatatypeProperty'
+              });
+            } else {
+              const dataProp = dataProperties.find(p => p.id === initialRestrictionData.propertyIri);
+              if (dataProp) setSelectedDataProperty(dataProp);
+            }
+          }
+          if (initialRestrictionData.restrictionType) {
+            setDataRestrictionType(initialRestrictionData.restrictionType);
+          }
+          if (initialRestrictionData.cardinality !== undefined) {
+            setDataCardinality(initialRestrictionData.cardinality);
+          }
+          if (initialRestrictionData.fillerIri) {
+            setDatatype(initialRestrictionData.fillerIri);
+          }
+        } else {
+          // Object property restriction
+          if (initialRestrictionData.propertyIri) {
+            // Check if it's owl:topObjectProperty (not in objectProperties array)
+            if (initialRestrictionData.propertyIri === 'http://www.w3.org/2002/07/owl#topObjectProperty') {
+              setSelectedProperty({
+                id: 'http://www.w3.org/2002/07/owl#topObjectProperty',
+                label: 'owl:topObjectProperty',
+                type: 'ObjectProperty'
+              });
+            } else {
+              const objProp = objectProperties.find(p => p.id === initialRestrictionData.propertyIri);
+              if (objProp) setSelectedProperty(objProp);
+            }
+          }
+          if (initialRestrictionData.restrictionType) {
+            setRestrictionType(initialRestrictionData.restrictionType);
+          }
+          if (initialRestrictionData.cardinality !== undefined) {
+            setCardinality(initialRestrictionData.cardinality);
+          }
+          if (initialRestrictionData.fillerIri) {
+            // Find the filler class in the hierarchy and build path to it
+            const findClassWithPath = (nodes: TreeNode[], targetId: string, path: string[] = []): { node: TreeNode | null, path: string[] } => {
+              for (const node of nodes) {
+                if (node.id === targetId) {
+                  return { node, path };
+                }
+                if (node.children && node.children.length > 0) {
+                  const result = findClassWithPath(node.children, targetId, [...path, node.id]);
+                  if (result.node) return result;
+                }
+              }
+              return { node: null, path: [] };
+            };
+            
+            const { node: fillerClass, path: pathToFiller } = findClassWithPath(classHierarchy, initialRestrictionData.fillerIri);
+            if (fillerClass) {
+              setRestrictionFiller(fillerClass);
+              // Expand all parent nodes so the selected node is visible
+              if (pathToFiller.length > 0) {
+                setFillerExpandedNodes(pathToFiller);
+              }
+            }
+          }
+        }
       }
     }
-  }, [isOpen, initialValue]);
+  }, [isOpen, initialValue, initialTab, initialRestrictionData, objectProperties, dataProperties, classHierarchy]);
 
   // Convert flat property list to tree structure with top property
   const propertiesToTree = (properties: Property[], isDataProperty: boolean = false): TreeNode[] => {

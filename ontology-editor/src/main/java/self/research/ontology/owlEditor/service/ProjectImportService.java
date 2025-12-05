@@ -172,12 +172,10 @@ public class ProjectImportService {
             RDFFormat format = detectFormat(owlFile);
             log.info("[Import {}] Detected RDF format: {}", projectId, format);
 
-            // Clear dataset
-            stage = "clear-dataset";
-            log.info("[Import {}] Clearing dataset", projectId);
-            long clearStart = System.nanoTime();
-            datasetService.clearDataset(projectId);
-            log.info("[Import {}] Dataset cleared in {} ms", projectId, elapsedMillis(clearStart));
+            // NOTE: Dataset clearing is now done INSIDE bulkLoadChunked as part of the same
+            // transaction. This ensures that if the bulk load fails, the clear is rolled back
+            // and the original data is preserved. Previously, clearing was done here which
+            // caused data loss if the subsequent bulk load failed.
 
             // Load data with progress updates
             stage = "bulk-load";

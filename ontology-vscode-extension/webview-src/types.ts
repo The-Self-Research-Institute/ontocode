@@ -78,6 +78,9 @@ export interface Axiom {
   restrictionType?: 'some' | 'only' | 'min' | 'max' | 'exactly' | 'value';
   fillerIri?: string;
   cardinality?: string | number;
+  // Fields for complex class expressions (intersection, union, complement, oneOf)
+  isComplex?: boolean | string;
+  expressionType?: 'intersection' | 'union' | 'complement' | 'oneOf';
   // Fields for DisjointUnionOf
   members?: string[];
   // Fields for HasKey
