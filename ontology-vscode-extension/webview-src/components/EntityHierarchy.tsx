@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronRight, ChevronDown, PlusCircle, Trash2, Search, Package, GitBranch, Database, Tag, User, Type, Binary, MousePointer2, Eye, Settings, Edit3 } from "lucide-react";
+import { ChevronRight, ChevronDown, PlusCircle, Trash2, Search, Package, GitBranch, Database, Tag, User, Type, Binary, MousePointer2, Eye, Settings, Edit3, Check } from "lucide-react";
 import type { SelectableItem, TreeNode } from '../types';
 import { useCollaboration } from '../contexts/CollaborationContext';
 import InlineRenameInput from './InlineRenameInput';
@@ -19,6 +19,9 @@ interface EntityHierarchyProps {
   onMoveClass?: (classId: string, newParentId: string) => void;
   onOpenPreferences?: () => void;
   onRenameItem?: (itemId: string, newLabel: string) => void;
+  hideToolbarActions?: boolean; // Hide add/delete buttons
+  selectedProperties?: string[]; // For multi-select mode (HasKey dialog)
+  multiSelectMode?: boolean; // Enable checkbox multi-select
 }
 
 const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
@@ -36,6 +39,9 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
   onMoveClass,
   onOpenPreferences,
   onRenameItem,
+  hideToolbarActions = false,
+  selectedProperties = [],
+  multiSelectMode = false,
 }) => {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: SelectableItem } | null>(null);
   const [viewMode, setViewMode] = useState<'asserted' | 'inferred'>('asserted');
@@ -234,6 +240,25 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
             <span className="w-5 mr-1" /> 
           )}
           
+          {/* Checkbox for multi-select mode (HasKey dialog) */}
+          {multiSelectMode && (
+            <div 
+              className={`w-4 h-4 mr-2 rounded border flex items-center justify-center flex-shrink-0 ${
+                selectedProperties.includes(item.id)
+                  ? 'bg-purple-600 border-purple-600'
+                  : 'border-gray-300 bg-white'
+              }`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelectItem(item);
+              }}
+            >
+              {selectedProperties.includes(item.id) && (
+                <Check size={12} className="text-white" />
+              )}
+            </div>
+          )}
+          
           {/* Entity Icon with defined class indicator */}
            <div 
              title={isDefined ? 'Defined class (has equivalent classes)' : itemType.slice(0, -1)} 
@@ -307,8 +332,9 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
   const currentLabel = currentTabConfig?.label || entitiesTab;
 
   return (
-    <aside className={`${sidebarWidthClass} bg-white border-r border-gray-200 flex flex-col h-full`}>
+    <aside className={`${hideToolbarActions ? 'w-full' : sidebarWidthClass} bg-white ${hideToolbarActions ? '' : 'border-r border-gray-200'} flex flex-col h-full`}>
       {/* Header with CUD buttons and Asserted/Inferred toggle */}
+      {!hideToolbarActions && (
       <div className="text-xs font-semibold p-1 flex items-center justify-center gap-1 flex-wrap border-b text-center">
         <span className="text-gray-600">{currentLabel} hierarchy</span>
         <div className="flex items-center gap-0.5">
@@ -341,6 +367,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
             </div>
           )}
           
+          {!hideToolbarActions && (
           <div className="flex items-center gap-0.5">
               {entitiesTab === 'Classes' && viewMode === 'asserted' && (
                  <>
@@ -448,8 +475,10 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
                 <Settings size={14} />
              </button>
         </div>
+          )}
         </div>
       </div>
+      )}
       
       {/* Search Bar */}
       <div className="p-2 border-b border-gray-200 flex-shrink-0">
@@ -460,7 +489,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
           </div>
           
           {/* Tips banner */}
-          {entitiesTab === 'Classes' && viewMode === 'asserted' && (
+          {!hideToolbarActions && entitiesTab === 'Classes' && viewMode === 'asserted' && (
             <div className="mt-2 text-[10px] text-gray-500 bg-blue-50 border border-blue-200 rounded p-2">
               💡 <strong>Tip:</strong> Drag &amp; drop to reorganize | <kbd className="px-1 py-0.5 bg-gray-200 rounded">A</kbd> Asserted | <kbd className="px-1 py-0.5 bg-gray-200 rounded">I</kbd> Inferred | <kbd className="px-1 py-0.5 bg-gray-200 rounded">Ctrl+E</kbd> Add subclass
             </div>

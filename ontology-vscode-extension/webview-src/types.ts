@@ -16,6 +16,7 @@ export interface TreeNode {
   disjointUnionAxioms?: Axiom[];
   hasKeyAxioms?: Axiom[];
   usage?: ClassUsage;
+  type?: 'Class' | 'ObjectProperty' | 'DatatypeProperty' | 'AnnotationProperty';
 }
 
 export interface Property {

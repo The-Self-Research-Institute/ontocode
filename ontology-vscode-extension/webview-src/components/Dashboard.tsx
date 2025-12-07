@@ -625,6 +625,11 @@ const DetailsPanel = ({
   onAddClass,
   onDeleteClass,
   onRefreshClasses,
+  onAddObjectProperty,
+  onAddDataProperty,
+  dataPropertyHierarchy,
+  objectPropertyHierarchy,
+  dataProperties,
   metadata
 }: {
   selectedItem: SelectableItem | null;
@@ -648,6 +653,11 @@ const DetailsPanel = ({
   onAddClass?: (type: 'subclass' | 'sibling') => void;
   onDeleteClass?: () => void;
   onRefreshClasses?: () => Promise<void>;
+  onAddObjectProperty?: (type: 'subclass' | 'sibling', parentId?: string, name?: string) => Promise<void>;
+  onAddDataProperty?: (type: 'subclass' | 'sibling', parentId?: string, name?: string) => Promise<void>;
+  dataPropertyHierarchy: TreeNode[];
+  objectPropertyHierarchy: TreeNode[];
+  dataProperties: Property[];
   metadata?: { ontologyIRI?: string } | null;
 }) => {
   if (!selectedItem) {
@@ -681,7 +691,14 @@ const DetailsPanel = ({
         onAddClass={onAddClass}
         onDeleteClass={onDeleteClass}
         onRefreshClasses={onRefreshClasses}
+        onAddObjectProperty={onAddObjectProperty}
+        onAddDataProperty={onAddDataProperty}
+        onDeleteProperty={() => {}}
         metadata={metadata ?? undefined}
+        objectPropertyHierarchy={objectPropertyHierarchy}
+        dataPropertyHierarchy={dataPropertyHierarchy}
+        objectProperties={objectProperties}
+        dataProperties={dataProperties}
         {...sharedProps}
       />;
     case 'ObjectProperties':
@@ -1109,10 +1126,10 @@ const Dashboard = () => {
         opMap.set(p.id, { ...p, children: [], hasChildren: false });
       });
 
-      const topObjectProperty = {
+      const topObjectProperty: any = {
         id: 'http://www.w3.org/2002/07/owl#topObjectProperty',
         label: 'owl:topObjectProperty',
-        type: 'ObjectProperty',
+        type: 'ObjectProperty' as const,
         children: [] as any[],
         hasChildren: false,
         annotations: {}
@@ -1167,7 +1184,7 @@ const Dashboard = () => {
         dpMap.set(p.id, { ...p, children: [], hasChildren: false });
       });
 
-      const topDataProperty = {
+      const topDataProperty: any = {
         id: 'http://www.w3.org/2002/07/owl#topDataProperty',
         label: 'owl:topDataProperty',
         type: 'DatatypeProperty',
@@ -2515,6 +2532,225 @@ const Dashboard = () => {
     });
   }, [selectedItem, updateItemInState, projectId]);
 
+  
+  // Function to refresh only properties (not classes) to avoid closing dialogs
+  const refreshProperties = useCallback(async () => {
+    if (!projectId) return;
+    
+    try {
+      console.log('[refreshProperties] Starting property refresh...');
+      const propertiesRes = await apiClient.get<any>(`/api/ontology/properties/${projectId}`);
+      
+      const allProps = Array.isArray(propertiesRes?.data) 
+        ? propertiesRes.data 
+        : Array.isArray(propertiesRes?.properties) 
+        ? propertiesRes.properties 
+        : Array.isArray(propertiesRes) 
+        ? propertiesRes 
+        : [];
+      
+      console.log('[refreshProperties] Total properties fetched:', allProps.length);
+      
+      const opList = allProps.filter((p: any) => p.type === 'ObjectProperty');
+      console.log('[refreshProperties] Object properties:', opList.length);
+      setObjectProperties(opList);
+      
+      // Build object property hierarchy
+      const opMap = new Map<string, TreeNode>();
+      opList.forEach((p: any) => {
+        opMap.set(p.id, { ...p, children: [], hasChildren: false });
+      });
+      
+      const topOpNode: TreeNode = {
+        id: 'http://www.w3.org/2002/07/owl#topObjectProperty',
+        label: 'owl:topObjectProperty',
+        type: 'ObjectProperty',
+        children: [],
+        hasChildren: false,
+        annotations: {}
+      };
+      
+      opList.forEach((p: any) => {
+        const node = opMap.get(p.id)!;
+        if (p.superProperties && p.superProperties.length > 0) {
+          let added = false;
+          p.superProperties.forEach((parentId: string) => {
+            if (parentId === topOpNode.id) {
+              topOpNode.children!.push(node);
+              topOpNode.hasChildren = true;
+              added = true;
+            } else if (opMap.has(parentId)) {
+              const parentNode = opMap.get(parentId)!;
+              parentNode.children!.push(node);
+              parentNode.hasChildren = true;
+              added = true;
+            }
+          });
+          if (!added) {
+            topOpNode.children!.push(node);
+            topOpNode.hasChildren = true;
+          }
+        } else {
+          topOpNode.children!.push(node);
+          topOpNode.hasChildren = true;
+        }
+      });
+      
+      console.log('[refreshProperties] Built object property hierarchy with', topOpNode.children?.length, 'top-level properties');
+      // Create a new array to ensure React detects the change
+      setObjectPropertyHierarchy([{ ...topOpNode, children: [...(topOpNode.children || [])] }]);
+      
+      // Build data property hierarchy
+      const dpList = allProps.filter((p: any) => p.type === 'DatatypeProperty');
+      console.log('[refreshProperties] Data properties:', dpList.length);
+      setDataProperties(dpList);
+      
+      const dpMap = new Map<string, TreeNode>();
+      dpList.forEach((p: any) => {
+        dpMap.set(p.id, { ...p, children: [], hasChildren: false });
+      });
+      
+      const topDpNode: TreeNode = {
+        id: 'http://www.w3.org/2002/07/owl#topDataProperty',
+        label: 'owl:topDataProperty',
+        type: 'DatatypeProperty',
+        children: [],
+        hasChildren: false,
+        annotations: {}
+      };
+      
+      dpList.forEach((p: any) => {
+        const node = dpMap.get(p.id)!;
+        if (p.superProperties && p.superProperties.length > 0) {
+          let added = false;
+          p.superProperties.forEach((parentId: string) => {
+            if (parentId === topDpNode.id) {
+              topDpNode.children!.push(node);
+              topDpNode.hasChildren = true;
+              added = true;
+            } else if (dpMap.has(parentId)) {
+              const parentNode = dpMap.get(parentId)!;
+              parentNode.children!.push(node);
+              parentNode.hasChildren = true;
+              added = true;
+            }
+          });
+          if (!added) {
+            topDpNode.children!.push(node);
+            topDpNode.hasChildren = true;
+          }
+        } else {
+          topDpNode.children!.push(node);
+          topDpNode.hasChildren = true;
+        }
+      });
+      
+      console.log('[refreshProperties] Built data property hierarchy with', topDpNode.children?.length, 'top-level properties');
+      // Create a new array to ensure React detects the change
+      setDataPropertyHierarchy([{ ...topDpNode, children: [...(topDpNode.children || [])] }]);
+      console.log('[refreshProperties] Property refresh complete');
+    } catch (error) {
+      console.error('Failed to refresh properties:', error);
+    }
+  }, [projectId]);
+
+  // Handler for creating object properties with name parameter
+  const handleAddObjectProperty = useCallback(async (
+    type: 'subclass' | 'sibling',
+    parentId?: string,
+    name?: string
+  ) => {
+    if (!projectId) return;
+
+    try {
+      console.log('[handleAddObjectProperty] Creating property:', name, 'type:', type, 'parentId:', parentId);
+      const baseIri = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
+      const cleanName = (name || 'NewObjectProperty').replace(/\s+/g, '_');
+      const newIri = `${baseIri}${baseIri.endsWith('#') || baseIri.endsWith('/') ? '' : '#'}${cleanName}`;
+
+      let parentIri = 'http://www.w3.org/2002/07/owl#topObjectProperty';
+      
+      if (parentId) {
+        if (type === 'subclass') {
+          parentIri = parentId;
+        } else if (type === 'sibling') {
+          const parent = findParentNode(objectPropertyHierarchy, parentId);
+          if (parent) parentIri = parent.id;
+        }
+      }
+
+      console.log('[handleAddObjectProperty] Creating with IRI:', newIri, 'parent:', parentIri);
+      await ontologyMutationService.createObjectProperty(
+        projectId,
+        newIri,
+        name || 'NewObjectProperty',
+        parentIri,
+        user?.email || 'anonymous',
+        user?.username || 'Anonymous'
+      );
+
+      console.log('[handleAddObjectProperty] Property created, refreshing...');
+      // Add a small delay to ensure backend has processed the property
+      await new Promise(resolve => setTimeout(resolve, 300));
+      await refreshProperties();
+      console.log('[handleAddObjectProperty] Refresh complete');
+      showNotification(`Object property "${name}" created successfully!`);
+    } catch (error) {
+      console.error('Failed to create object property:', error);
+      showNotification('Failed to create object property. See console for details.', 'error');
+      throw error;
+    }
+  }, [projectId, metadata, objectPropertyHierarchy, user, refreshProperties, showNotification]);
+
+
+  // Handler for creating data properties with name parameter
+  const handleAddDataProperty = useCallback(async (
+    type: 'subclass' | 'sibling',
+    parentId?: string,
+    name?: string
+  ) => {
+    if (!projectId) return;
+
+    try {
+      console.log('[handleAddDataProperty] Creating property:', name, 'type:', type, 'parentId:', parentId);
+      const baseIri = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
+      const cleanName = (name || 'NewDataProperty').replace(/\s+/g, '_');
+      const newIri = `${baseIri}${baseIri.endsWith('#') || baseIri.endsWith('/') ? '' : '#'}${cleanName}`;
+
+      let parentIri = 'http://www.w3.org/2002/07/owl#topDataProperty';
+      
+      if (parentId) {
+        if (type === 'subclass') {
+          parentIri = parentId;
+        } else if (type === 'sibling') {
+          const parent = findParentNode(dataPropertyHierarchy, parentId);
+          if (parent) parentIri = parent.id;
+        }
+      }
+
+      console.log('[handleAddDataProperty] Creating with IRI:', newIri, 'parent:', parentIri);
+      await ontologyMutationService.createDataProperty(
+        projectId,
+        newIri,
+        name || 'NewDataProperty',
+        parentIri,
+        user?.email || 'anonymous',
+        user?.username || 'Anonymous'
+      );
+
+      console.log('[handleAddDataProperty] Property created, refreshing...');
+      // Add a small delay to ensure backend has processed the property
+      await new Promise(resolve => setTimeout(resolve, 300));
+      await refreshProperties();
+      console.log('[handleAddDataProperty] Refresh complete');
+      showNotification(`Data property "${name}" created successfully!`);
+    } catch (error) {
+      console.error('Failed to create data property:', error);
+      showNotification('Failed to create data property. See console for details.', 'error');
+      throw error;
+    }
+  }, [projectId, metadata, dataPropertyHierarchy, user, refreshProperties, showNotification]);
+
   const handleAddItem = useCallback(async (type: 'subclass' | 'sibling' | 'individual') => {
     if (!projectId) return;
     
@@ -2742,10 +2978,10 @@ const Dashboard = () => {
           
           await ontologyMutationService.createObjectProperty(projectId, newIri, name, parentIri, user?.email || 'anonymous', user?.username || 'Anonymous');
           
-          const newProp: any = {
+          const newProp: Property & TreeNode = {
               id: newIri,
               label: name,
-              type: 'ObjectProperty',
+              type: 'ObjectProperty' as const,
               annotations: { 'rdfs:label': name },
               children: [],
               hasChildren: false
@@ -2801,7 +3037,7 @@ const Dashboard = () => {
       
       await ontologyMutationService.createObjectProperty(projectId, newIri, name, parentIri);
       
-      const newProp: any = {
+      const newProp: Property & TreeNode = {
           id: newIri,
           label: name,
           type: 'ObjectProperty',
@@ -2860,10 +3096,10 @@ const Dashboard = () => {
       
       await ontologyMutationService.createDataProperty(projectId, newIri, name, parentIri);
       
-      const newProp: any = {
+      const newProp: Property & TreeNode = {
           id: newIri,
           label: name,
-          type: 'DatatypeProperty',
+          type: 'DatatypeProperty' as const,
           annotations: { 'rdfs:label': name },
           children: [],
           hasChildren: false
@@ -2935,10 +3171,9 @@ const Dashboard = () => {
 
       await ontologyMutationService.createAnnotationProperty(projectId, newIri, name);
 
-      const newProp: any = {
+      const newProp: AnnotationProperty = {
         id: newIri,
         label: name,
-        type: 'AnnotationProperty',
         annotations: { 'rdfs:label': name }
       };
 
@@ -4079,12 +4314,17 @@ const Dashboard = () => {
                     onAddEquivalentClick={() => handleOpenPropertySelector('equivalent')}
                     classHierarchy={classHierarchy}
                     objectProperties={objectProperties}
+                    dataProperties={dataProperties}
                     expandedNodes={expandedNodes}
                     onToggleNode={toggleNode}
                     onAddClass={(type) => handleAddItem(type)}
                     onDeleteClass={() => handleDeleteItem()}
                     onRefreshClasses={refreshClassHierarchy}
+                    onAddObjectProperty={handleAddObjectProperty}
+                    onAddDataProperty={handleAddDataProperty}
                     metadata={metadata}
+                    objectPropertyHierarchy={objectPropertyHierarchy}
+                    dataPropertyHierarchy={dataPropertyHierarchy}
                   />
                 </div>
               </section>
@@ -4109,11 +4349,15 @@ const Dashboard = () => {
         classHierarchy={classHierarchy}
         objectProperties={objectProperties}
         dataProperties={dataProperties}
+        objectPropertiesTree={objectPropertyHierarchy}
+        dataPropertiesTree={dataPropertyHierarchy}
         title={`Add ${selectorTarget === 'domain' ? 'Domain' : 'Range'} Class Expression`}
         expandedNodes={expandedNodes}
         onToggleNode={toggleNode}
         onAddClass={(type) => handleAddItem(type)}
         onDeleteClass={() => handleDeleteItem()}
+        onAddProperty={(type) => handleAddItem(type)}
+        onDeleteProperty={() => handleDeleteItem()}
         onRefreshClasses={refreshClassHierarchy}
         metadata={metadata}
       />

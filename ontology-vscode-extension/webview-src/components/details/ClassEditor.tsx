@@ -197,8 +197,15 @@ const ClassEditor: React.FC<{
   onAddClass?: (type: 'subclass' | 'sibling') => void;
   onDeleteClass?: () => void;
   onRefreshClasses?: () => void;
+  onAddObjectProperty?: (type: 'subclass' | 'sibling', parentId?: string, name?: string) => Promise<void>;
+  onAddDataProperty?: (type: 'subclass' | 'sibling', parentId?: string, name?: string) => Promise<void>;
+  onDeleteProperty?: () => void;
   metadata?: { ontologyIRI?: string };
-}> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes = [], onAddClass, onDeleteClass, onRefreshClasses, metadata }) => {
+  objectPropertyHierarchy?: TreeNode[];
+  dataPropertyHierarchy?: TreeNode[];
+  objectProperties?: any[];
+  dataProperties?: any[];
+}> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes = [], onAddClass, onDeleteClass, onRefreshClasses, onAddObjectProperty, onAddDataProperty, onDeleteProperty, metadata, objectPropertyHierarchy: propObjectPropertyHierarchy, dataPropertyHierarchy: propDataPropertyHierarchy, objectProperties: propObjectProperties, dataProperties: propDataProperties }) => {
   const [activeTab, setActiveTab] = useState<'annotations' | 'usage' | 'description'>('annotations');
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [classDetails, setClassDetails] = useState<any>(null);
@@ -212,11 +219,40 @@ const ClassEditor: React.FC<{
   const [editorInitialTab, setEditorInitialTab] = useState<'hierarchy' | 'objectRestriction' | 'dataRestriction' | 'classExpression' | undefined>();
   const [editorInitialRestrictionData, setEditorInitialRestrictionData] = useState<any>();
 
-  // Properties for restriction creators
-  const [properties, setProperties] = useState<any[]>([]);
-  const [dataProperties, setDataProperties] = useState<any[]>([]);
-  const [objectPropertyHierarchy, setObjectPropertyHierarchy] = useState<TreeNode[]>([]);
-  const [dataPropertyHierarchy, setDataPropertyHierarchy] = useState<TreeNode[]>([]);
+  // Properties for restriction creators - use props if available, otherwise local state
+  const [properties, setProperties] = useState<any[]>(propObjectProperties || []);
+  const [dataProperties, setDataProperties] = useState<any[]>(propDataProperties || []);
+  const [objectPropertyHierarchy, setObjectPropertyHierarchy] = useState<TreeNode[]>(propObjectPropertyHierarchy || []);
+  const [dataPropertyHierarchy, setDataPropertyHierarchy] = useState<TreeNode[]>(propDataPropertyHierarchy || []);
+
+  // Update local state when props change
+  useEffect(() => {
+    if (propObjectProperties) {
+      console.log('[ClassEditor] Updating object properties from props:', propObjectProperties.length);
+      setProperties(propObjectProperties);
+    }
+  }, [propObjectProperties]);
+
+  useEffect(() => {
+    if (propDataProperties) {
+      console.log('[ClassEditor] Updating data properties from props:', propDataProperties.length);
+      setDataProperties(propDataProperties);
+    }
+  }, [propDataProperties]);
+
+  useEffect(() => {
+    if (propObjectPropertyHierarchy) {
+      console.log('[ClassEditor] Updating object property hierarchy from props, nodes:', propObjectPropertyHierarchy.length);
+      setObjectPropertyHierarchy(propObjectPropertyHierarchy);
+    }
+  }, [propObjectPropertyHierarchy]);
+
+  useEffect(() => {
+    if (propDataPropertyHierarchy) {
+      console.log('[ClassEditor] Updating data property hierarchy from props, nodes:', propDataPropertyHierarchy.length);
+      setDataPropertyHierarchy(propDataPropertyHierarchy);
+    }
+  }, [propDataPropertyHierarchy]);
 
   // Disjoint With State (multi-class selector like Protégé)
   const [isDisjointWithOpen, setIsDisjointWithOpen] = useState(false);
@@ -1196,6 +1232,9 @@ const ClassEditor: React.FC<{
         projectId={projectId}
         onAddClass={onAddClass}
         onDeleteClass={onDeleteClass}
+        onAddObjectProperty={onAddObjectProperty}
+        onAddDataProperty={onAddDataProperty}
+        onDeleteProperty={onDeleteProperty}
         onRefreshClasses={onRefreshClasses}
         metadata={metadata}
       />
@@ -1248,9 +1287,17 @@ const ClassEditor: React.FC<{
         onConfirm={handleAddHasKey}
         objectProperties={properties}
         dataProperties={dataProperties}
+        objectPropertyHierarchy={objectPropertyHierarchy}
+        dataPropertyHierarchy={dataPropertyHierarchy}
+        expandedNodes={expandedNodes}
+        onToggleNode={onToggleNode}
         title={editingHasKeyId ? "Edit Key Properties (HasKey)" : "Select Key Properties (HasKey)"}
         minSelection={1}
         initialSelectedIds={editingHasKeyProperties}
+        projectId={projectId}
+        onAddObjectProperty={onAddObjectProperty}
+        onAddDataProperty={onAddDataProperty}
+        onDeleteProperty={onDeleteProperty}
       />
 
       {/* IRI Editor Dialog */}

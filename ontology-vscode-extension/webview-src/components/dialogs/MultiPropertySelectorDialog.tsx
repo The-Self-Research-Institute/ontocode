@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Check, GitBranch, Database } from 'lucide-react';
 import type { TreeNode } from '../../types';
+import EntityHierarchy from '../EntityHierarchy';
 
 interface MultiPropertySelectorDialogProps {
   isOpen: boolean;
@@ -8,9 +9,18 @@ interface MultiPropertySelectorDialogProps {
   onConfirm: (propertyIris: string[]) => void;
   objectProperties: any[];
   dataProperties: any[];
+  objectPropertyHierarchy?: TreeNode[]; // Hierarchical structure for object properties
+  dataPropertyHierarchy?: TreeNode[]; // Hierarchical structure for data properties
+  expandedNodes?: string[];
+  onToggleNode?: (nodeId: string) => void;
   title?: string;
   minSelection?: number;
   initialSelectedIds?: string[]; // Pre-selected property IRIs for edit mode
+  projectId?: string;
+  onAddObjectProperty?: (type: 'subclass' | 'sibling', parentId?: string, name?: string) => Promise<void>;
+  onAddDataProperty?: (type: 'subclass' | 'sibling', parentId?: string, name?: string) => Promise<void>;
+  onDeleteProperty?: () => void;
+  onRefreshProperties?: () => void;
 }
 
 const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = ({
@@ -19,14 +29,55 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
   onConfirm,
   objectProperties,
   dataProperties,
+  objectPropertyHierarchy,
+  dataPropertyHierarchy,
+  expandedNodes = [],
+  onToggleNode,
   title = "Select Properties",
   minSelection = 1,
-  initialSelectedIds = []
+  initialSelectedIds = [],
+  projectId,
+  onAddObjectProperty,
+  onAddDataProperty,
+  onDeleteProperty,
+  onRefreshProperties
 }) => {
   const [selectedProperties, setSelectedProperties] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'object' | 'data'>('object');
   const [hasInitialized, setHasInitialized] = useState(false);
+  const [selectedProperty, setSelectedProperty] = useState<TreeNode | null>(null);
+  const [localExpandedNodes, setLocalExpandedNodes] = useState<string[]>([]);
+  
+  // Inline property creation state
+  const [showInlinePropertyCreate, setShowInlinePropertyCreate] = useState(false);
+  const [inlinePropertyName, setInlinePropertyName] = useState('');
+  const [isCreatingProperty, setIsCreatingProperty] = useState(false);
+
+  // Track hierarchy updates to ensure re-renders
+  const [objectPropertiesTree, setObjectPropertiesTree] = useState<TreeNode[]>([]);
+  const [dataPropertiesTree, setDataPropertiesTree] = useState<TreeNode[]>([]);
+
+  // Update local tree state when hierarchies change
+  useEffect(() => {
+    const newObjectTree = objectPropertyHierarchy || objectProperties.map(p => ({
+      ...p,
+      children: [],
+      hasChildren: false
+    } as TreeNode));
+    console.log('[MultiPropertySelectorDialog] Object hierarchy updated, nodes:', newObjectTree.length, 'first node children:', newObjectTree[0]?.children?.length);
+    setObjectPropertiesTree(newObjectTree);
+  }, [objectPropertyHierarchy, objectProperties]);
+
+  useEffect(() => {
+    const newDataTree = dataPropertyHierarchy || dataProperties.map(p => ({
+      ...p,
+      children: [],
+      hasChildren: false
+    } as TreeNode));
+    console.log('[MultiPropertySelectorDialog] Data hierarchy updated, nodes:', newDataTree.length, 'first node children:', newDataTree[0]?.children?.length);
+    setDataPropertiesTree(newDataTree);
+  }, [dataPropertyHierarchy, dataProperties]);
 
   useEffect(() => {
     if (isOpen && !hasInitialized) {
@@ -58,6 +109,30 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
 
   if (!isOpen) return null;
 
+  // Use external toggle handler if provided, otherwise use local
+  const handleToggleNode = (nodeId: string) => {
+    if (onToggleNode) {
+      onToggleNode(nodeId);
+    } else {
+      setLocalExpandedNodes(prev => 
+        prev.includes(nodeId) ? prev.filter(id => id !== nodeId) : [...prev, nodeId]
+      );
+    }
+  };
+
+  const effectiveExpandedNodes = onToggleNode ? expandedNodes : localExpandedNodes;
+
+  // Handle property selection (multi-select with checkboxes)
+  const handleSelectProperty = (property: TreeNode) => {
+    setSelectedProperty(property);
+    // Toggle selection
+    if (selectedProperties.includes(property.id)) {
+      setSelectedProperties(prev => prev.filter(id => id !== property.id));
+    } else {
+      setSelectedProperties(prev => [...prev, property.id]);
+    }
+  };
+
   const handleToggleProperty = (propertyId: string) => {
     if (selectedProperties.includes(propertyId)) {
       setSelectedProperties(prev => prev.filter(id => id !== propertyId));
@@ -72,14 +147,6 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
     onClose();
   };
 
-  const filteredObjectProperties = objectProperties.filter(p => 
-    (p.label || p.id).toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  const filteredDataProperties = dataProperties.filter(p => 
-    (p.label || p.id).toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
   const getPropertyLabel = (id: string): string => {
     const objProp = objectProperties.find(p => p.id === id);
     if (objProp) return objProp.label || id.split('#').pop() || id;
@@ -88,9 +155,84 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
     return id.split('#').pop() || id;
   };
 
+  // Filter based on search
+  const filterTree = (nodes: TreeNode[], query: string): TreeNode[] => {
+    if (!query) return nodes;
+    const lowerQuery = query.toLowerCase();
+    return nodes.filter(node => {
+      const matches = (node.label || node.id).toLowerCase().includes(lowerQuery);
+      const childMatches = node.children && filterTree(node.children, query).length > 0;
+      return matches || childMatches;
+    });
+  };
+
+  const filteredObjectProperties = filterTree(objectPropertiesTree, searchQuery);
+  const filteredDataProperties = filterTree(dataPropertiesTree, searchQuery);
+
+  // Inline property creation handlers
+  const handleInlineAddProperty = (type: 'subclass' | 'sibling') => {
+    setShowInlinePropertyCreate(true);
+    setInlinePropertyName('');
+  };
+
+  const handleInlinePropertyCreateSubmit = async () => {
+    if (!inlinePropertyName.trim()) return;
+    
+    const handler = activeTab === 'object' ? onAddObjectProperty : onAddDataProperty;
+    if (!handler) return;
+    
+    console.log('[MultiPropertySelectorDialog] Creating property:', inlinePropertyName, 'in tab:', activeTab);
+    setIsCreatingProperty(true);
+    try {
+      const parentId = selectedProperty?.id;
+      const type = selectedProperty ? 'subclass' : 'sibling';
+      
+      console.log('[MultiPropertySelectorDialog] Parent:', parentId, 'Type:', type);
+      
+      // Expand parent node to show new property
+      if (parentId && !effectiveExpandedNodes.includes(parentId)) {
+        console.log('[MultiPropertySelectorDialog] Expanding parent node:', parentId);
+        handleToggleNode(parentId);
+      }
+      
+      // Also expand the top property node if creating at root
+      const topNodeId = activeTab === 'object' 
+        ? 'http://www.w3.org/2002/07/owl#topObjectProperty'
+        : 'http://www.w3.org/2002/07/owl#topDataProperty';
+      
+      if (!selectedProperty && !effectiveExpandedNodes.includes(topNodeId)) {
+        console.log('[MultiPropertySelectorDialog] Expanding top node:', topNodeId);
+        handleToggleNode(topNodeId);
+      }
+      
+      // Call the appropriate property creation handler (this already refreshes data via refreshProperties())
+      console.log('[MultiPropertySelectorDialog] Calling handler...');
+      await handler(type, parentId, inlinePropertyName.trim());
+      console.log('[MultiPropertySelectorDialog] Handler completed');
+      
+      // Reset form
+      setShowInlinePropertyCreate(false);
+      setInlinePropertyName('');
+      
+      // Note: The handlers already refresh properties via refreshProperties()
+      // The hierarchy will update automatically through props
+    } catch (error) {
+      console.error('[MultiPropertySelectorDialog] Failed to create property:', error);
+      // Don't close the form on error so user can try again
+      setShowInlinePropertyCreate(true);
+    } finally {
+      setIsCreatingProperty(false);
+    }
+  };
+
+  const handleInlinePropertyCreateCancel = () => {
+    setShowInlinePropertyCreate(false);
+    setInlinePropertyName('');
+  };
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 flex flex-col max-h-[80vh]" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
         <div className="p-4 border-b flex justify-between items-center bg-gray-50">
           <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
@@ -120,107 +262,144 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
             )}
           </div>
 
-          {/* Search input */}
-          <input
-            type="text"
-            placeholder="Search properties..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 mb-3"
-          />
-
           {/* Tabs */}
           <div className="flex border-b border-gray-200 mb-2">
             <button
               onClick={() => setActiveTab('object')}
               className={`px-4 py-2 text-sm font-medium flex items-center gap-2 border-b-2 transition-colors ${
                 activeTab === 'object'
-                  ? 'border-blue-600 text-blue-700'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
+                  ? 'border-blue-600 text-blue-700 bg-white'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100'
               }`}
             >
               <GitBranch size={14} />
-              Object Properties ({filteredObjectProperties.length})
+              Object Properties ({objectProperties.length})
             </button>
             <button
               onClick={() => setActiveTab('data')}
               className={`px-4 py-2 text-sm font-medium flex items-center gap-2 border-b-2 transition-colors ${
                 activeTab === 'data'
-                  ? 'border-green-600 text-green-700'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
+                  ? 'border-green-600 text-green-700 bg-white'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100'
               }`}
             >
               <Database size={14} />
-              Data Properties ({filteredDataProperties.length})
+              Data Properties ({dataProperties.length})
             </button>
           </div>
 
-          {/* Property list */}
-          <div className="flex-1 overflow-y-auto border rounded min-h-0">
+          {/* Property hierarchy using EntityHierarchy component */}
+          <div className="flex-1 overflow-hidden border rounded min-h-0 bg-white flex flex-col">
+            {/* Inline Object Property Creation Form */}
+            {activeTab === 'object' && showInlinePropertyCreate && (
+              <div className="p-3 bg-blue-50 border-b border-blue-200">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={inlinePropertyName}
+                    onChange={(e) => setInlinePropertyName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && inlinePropertyName.trim()) {
+                        handleInlinePropertyCreateSubmit();
+                      } else if (e.key === 'Escape') {
+                        handleInlinePropertyCreateCancel();
+                      }
+                    }}
+                    placeholder="Enter object property name..."
+                    className="flex-1 px-2 py-1 text-sm border border-blue-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    autoFocus
+                  />
+                  <button
+                    onClick={handleInlinePropertyCreateSubmit}
+                    disabled={!inlinePropertyName.trim() || isCreatingProperty}
+                    className="px-3 py-1 text-xs font-semibold text-white bg-blue-600 rounded hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  >
+                    {isCreatingProperty ? 'Creating...' : 'Create'}
+                  </button>
+                  <button
+                    onClick={handleInlinePropertyCreateCancel}
+                    className="px-3 py-1 text-xs font-semibold text-blue-800 bg-white border border-blue-300 rounded hover:bg-blue-100"
+                  >
+                    Cancel
+                  </button>
+                </div>
+                <p className="mt-1 text-xs text-blue-700">Press Enter to create, Escape to cancel</p>
+              </div>
+            )}
+            
+            {/* Inline Data Property Creation Form */}
+            {activeTab === 'data' && showInlinePropertyCreate && (
+              <div className="p-3 bg-green-50 border-b border-green-200">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={inlinePropertyName}
+                    onChange={(e) => setInlinePropertyName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && inlinePropertyName.trim()) {
+                        handleInlinePropertyCreateSubmit();
+                      } else if (e.key === 'Escape') {
+                        handleInlinePropertyCreateCancel();
+                      }
+                    }}
+                    placeholder="Enter data property name..."
+                    className="flex-1 px-2 py-1 text-sm border border-green-300 rounded focus:outline-none focus:ring-2 focus:ring-green-500"
+                    autoFocus
+                  />
+                  <button
+                    onClick={handleInlinePropertyCreateSubmit}
+                    disabled={!inlinePropertyName.trim() || isCreatingProperty}
+                    className="px-3 py-1 text-xs font-semibold text-white bg-green-600 rounded hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  >
+                    {isCreatingProperty ? 'Creating...' : 'Create'}
+                  </button>
+                  <button
+                    onClick={handleInlinePropertyCreateCancel}
+                    className="px-3 py-1 text-xs font-semibold text-green-800 bg-white border border-green-300 rounded hover:bg-green-100"
+                  >
+                    Cancel
+                  </button>
+                </div>
+                <p className="mt-1 text-xs text-green-700">Press Enter to create, Escape to cancel</p>
+              </div>
+            )}
+            
             {activeTab === 'object' && (
-              <div className="divide-y">
-                {filteredObjectProperties.length > 0 ? (
-                  filteredObjectProperties.map(prop => (
-                    <div
-                      key={prop.id}
-                      onClick={() => handleToggleProperty(prop.id)}
-                      className={`p-2 cursor-pointer flex items-center gap-2 hover:bg-gray-50 ${
-                        selectedProperties.includes(prop.id) ? 'bg-blue-50' : ''
-                      }`}
-                    >
-                      <div className={`w-4 h-4 rounded border flex items-center justify-center ${
-                        selectedProperties.includes(prop.id)
-                          ? 'bg-blue-600 border-blue-600'
-                          : 'border-gray-300'
-                      }`}>
-                        {selectedProperties.includes(prop.id) && (
-                          <Check size={12} className="text-white" />
-                        )}
-                      </div>
-                      <div className="w-4 h-4 rounded bg-blue-400 flex items-center justify-center">
-                        <GitBranch size={10} className="text-white" />
-                      </div>
-                      <span className="text-sm">{prop.label || prop.id.split('#').pop()}</span>
-                    </div>
-                  ))
-                ) : (
-                  <div className="p-4 text-center text-gray-400 text-sm">
-                    No object properties found
-                  </div>
-                )}
+              <div className="flex-1 overflow-hidden">
+                <EntityHierarchy
+                  entitiesTab="ObjectProperties"
+                  filteredData={filteredObjectProperties}
+                  selectedItem={selectedProperty}
+                  expandedNodes={effectiveExpandedNodes}
+                  searchQuery={searchQuery}
+                  onSearchQueryChange={setSearchQuery}
+                  onSelectItem={handleSelectProperty}
+                  onToggleNode={handleToggleNode}
+                  onAddItem={projectId ? handleInlineAddProperty : undefined}
+                  onDeleteItem={onDeleteProperty || (() => {})}
+                  hideToolbarActions={!onAddObjectProperty && !onDeleteProperty}
+                  selectedProperties={selectedProperties}
+                  multiSelectMode={true}
+                />
               </div>
             )}
             {activeTab === 'data' && (
-              <div className="divide-y">
-                {filteredDataProperties.length > 0 ? (
-                  filteredDataProperties.map(prop => (
-                    <div
-                      key={prop.id}
-                      onClick={() => handleToggleProperty(prop.id)}
-                      className={`p-2 cursor-pointer flex items-center gap-2 hover:bg-gray-50 ${
-                        selectedProperties.includes(prop.id) ? 'bg-green-50' : ''
-                      }`}
-                    >
-                      <div className={`w-4 h-4 rounded border flex items-center justify-center ${
-                        selectedProperties.includes(prop.id)
-                          ? 'bg-green-600 border-green-600'
-                          : 'border-gray-300'
-                      }`}>
-                        {selectedProperties.includes(prop.id) && (
-                          <Check size={12} className="text-white" />
-                        )}
-                      </div>
-                      <div className="w-4 h-4 rounded bg-green-400 flex items-center justify-center">
-                        <Database size={10} className="text-white" />
-                      </div>
-                      <span className="text-sm">{prop.label || prop.id.split('#').pop()}</span>
-                    </div>
-                  ))
-                ) : (
-                  <div className="p-4 text-center text-gray-400 text-sm">
-                    No data properties found
-                  </div>
-                )}
+              <div className="flex-1 overflow-hidden">
+                <EntityHierarchy
+                  entitiesTab="DataProperties"
+                  filteredData={filteredDataProperties}
+                  selectedItem={selectedProperty}
+                  expandedNodes={effectiveExpandedNodes}
+                  searchQuery={searchQuery}
+                  onSearchQueryChange={setSearchQuery}
+                  onSelectItem={handleSelectProperty}
+                  onToggleNode={handleToggleNode}
+                  onAddItem={projectId ? handleInlineAddProperty : undefined}
+                  onDeleteItem={onDeleteProperty || (() => {})}
+                  hideToolbarActions={!onAddDataProperty && !onDeleteProperty}
+                  selectedProperties={selectedProperties}
+                  multiSelectMode={true}
+                />
               </div>
             )}
           </div>
