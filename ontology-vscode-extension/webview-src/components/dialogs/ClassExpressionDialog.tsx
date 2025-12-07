@@ -36,6 +36,9 @@ interface ClassExpressionDialogProps {
   onToggleNode?: (nodeId: string) => void;
   onAddClass?: (type: 'subclass' | 'sibling') => void;
   onDeleteClass?: () => void;
+  onAddObjectProperty?: (type: 'subclass' | 'sibling', parentId?: string, name?: string) => Promise<void>;
+  onAddDataProperty?: (type: 'subclass' | 'sibling', parentId?: string, name?: string) => Promise<void>;
+  onDeleteProperty?: () => void;
   // NEW: Optional property hierarchies as TreeNode[] if they have structure
   objectPropertiesTree?: TreeNode[];
   dataPropertiesTree?: TreeNode[];
@@ -76,6 +79,9 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   onToggleNode,
   onAddClass,
   onDeleteClass,
+  onAddObjectProperty,
+  onAddDataProperty,
+  onDeleteProperty,
   objectPropertiesTree: externalObjectPropertiesTree,
   dataPropertiesTree: externalDataPropertiesTree,
   onToggleObjectProperty,
@@ -122,6 +128,13 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   // Inline class deletion state
   const [showInlineDelete, setShowInlineDelete] = useState(false);
   const [isDeletingClass, setIsDeletingClass] = useState(false);
+
+  // Inline property creation state
+  const [showInlinePropertyCreate, setShowInlinePropertyCreate] = useState(false);
+  const [inlinePropertyCreateType, setInlinePropertyCreateType] = useState<'subclass' | 'sibling'>('subclass');
+  const [inlinePropertyName, setInlinePropertyName] = useState('');
+  const [isCreatingProperty, setIsCreatingProperty] = useState(false);
+  const [propertyCreationTab, setPropertyCreationTab] = useState<'object' | 'data'>('object');
 
   // Track if we've already initialized the dialog to prevent re-initialization
   const [hasInitialized, setHasInitialized] = useState(false);
@@ -614,6 +627,90 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
     setShowInlineDelete(false);
   };
 
+  // Handle inline property creation
+  const handleInlineAddProperty = (type: 'subclass' | 'sibling') => {
+    // Determine which tab we're on (object or data properties)
+    const isDataTab = activeTab === 'dataRestriction';
+    setPropertyCreationTab(isDataTab ? 'data' : 'object');
+    setInlinePropertyCreateType(type);
+    setInlinePropertyName('');
+    setShowInlinePropertyCreate(true);
+  };
+
+  // Submit inline property creation
+  const handleInlinePropertyCreateSubmit = async () => {
+    if (!inlinePropertyName.trim() || !projectId) return;
+    
+    setIsCreatingProperty(true);
+    try {
+      const isDataProperty = propertyCreationTab === 'data';
+      const selectedProp = isDataProperty ? selectedDataProperty : selectedProperty;
+      
+      let parentIri = isDataProperty 
+        ? 'http://www.w3.org/2002/07/owl#topDataProperty'
+        : 'http://www.w3.org/2002/07/owl#topObjectProperty';
+      
+      if (inlinePropertyCreateType === 'subclass' && selectedProp) {
+        parentIri = selectedProp.id;
+      } else if (inlinePropertyCreateType === 'sibling' && selectedProp) {
+        // Find parent of selected property
+        const hierarchy = isDataProperty ? dataPropertiesTree : objectPropertiesTree;
+        const parent = findParentNode(hierarchy, selectedProp.id);
+        if (parent) {
+          parentIri = parent.id;
+        }
+      }
+      
+      // Generate IRI from property name
+      const baseIri = metadata?.ontologyIRI || 'http://example.org/ontology#';
+      const cleanName = inlinePropertyName.trim().replace(/\s+/g, '_');
+      const newPropertyIri = baseIri.endsWith('#') || baseIri.endsWith('/') 
+        ? `${baseIri}${cleanName}` 
+        : `${baseIri}#${cleanName}`;
+      
+      // Create the property via the mutation service
+      if (isDataProperty) {
+        await ontologyMutationService.createDataProperty(
+          projectId,
+          newPropertyIri,
+          inlinePropertyName.trim(),
+          parentIri,
+          'anonymous',
+          'Anonymous'
+        );
+      } else {
+        await ontologyMutationService.createObjectProperty(
+          projectId,
+          newPropertyIri,
+          inlinePropertyName.trim(),
+          parentIri,
+          'anonymous',
+          'Anonymous'
+        );
+      }
+      
+      // Refresh if handler provided
+      if (onRefreshProperties) {
+        onRefreshProperties();
+      }
+      
+      // Reset inline create state
+      setShowInlinePropertyCreate(false);
+      setInlinePropertyName('');
+    } catch (error) {
+      console.error('Failed to create property:', error);
+      alert(`Failed to create property: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsCreatingProperty(false);
+    }
+  };
+
+  // Cancel inline property creation
+  const handleInlinePropertyCreateCancel = () => {
+    setShowInlinePropertyCreate(false);
+    setInlinePropertyName('');
+  };
+
   const datatypes = [
     'owl:rational',
     'owl:real',
@@ -821,6 +918,48 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                 <div className="bg-gray-100 px-3 py-2 border-b border-gray-300">
                   <h4 className="text-sm font-semibold text-gray-700">Restricted property</h4>
                 </div>
+                
+                {/* Inline Property Create Form */}
+                {showInlinePropertyCreate && propertyCreationTab === 'object' && (
+                  <div className="px-3 py-2 bg-blue-50 border-b border-blue-200">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-blue-800 font-medium">
+                        New {inlinePropertyCreateType === 'subclass' ? 'subproperty of' : 'sibling of'} {selectedProperty?.label || 'owl:topObjectProperty'}:
+                      </span>
+                      <input
+                        type="text"
+                        value={inlinePropertyName}
+                        onChange={(e) => setInlinePropertyName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && inlinePropertyName.trim()) {
+                            handleInlinePropertyCreateSubmit();
+                          } else if (e.key === 'Escape') {
+                            handleInlinePropertyCreateCancel();
+                          }
+                        }}
+                        placeholder="Enter property name..."
+                        className="flex-1 px-2 py-1 text-sm border border-blue-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
+                        autoFocus
+                        disabled={isCreatingProperty}
+                      />
+                      <button
+                        onClick={handleInlinePropertyCreateSubmit}
+                        disabled={!inlinePropertyName.trim() || isCreatingProperty}
+                        className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isCreatingProperty ? 'Creating...' : 'Create'}
+                      </button>
+                      <button
+                        onClick={handleInlinePropertyCreateCancel}
+                        disabled={isCreatingProperty}
+                        className="px-2 py-1 text-xs text-gray-600 hover:text-gray-800"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+                
                 <div className="flex-1 overflow-hidden">
                   <EntityHierarchy
                     entitiesTab="ObjectProperties"
@@ -831,9 +970,9 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                     onSearchQueryChange={() => {}}
                     onSelectItem={(item) => setSelectedProperty(item as any as Property)}
                     onToggleNode={handleObjectPropertyToggle}
-                    onAddItem={() => {}}
-                    onDeleteItem={() => {}}
-                    hideToolbarActions={true}
+                    onAddItem={projectId ? (type) => handleInlineAddProperty(type as 'subclass' | 'sibling') : () => {}}
+                    onDeleteItem={onDeleteProperty || (() => {})}
+                    hideToolbarActions={!projectId}
                   />
                 </div>
               </div>
@@ -853,9 +992,9 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                     onSearchQueryChange={setFillerSearchQuery}
                     onSelectItem={(item) => setRestrictionFiller(item as TreeNode)}
                     onToggleNode={handleFillerToggle}
-                    onAddItem={() => {}}
-                    onDeleteItem={() => {}}
-                    hideToolbarActions={true}
+                    onAddItem={projectId ? (type) => handleInlineAddClass(type as 'subclass' | 'sibling') : () => {}}
+                    onDeleteItem={projectId ? handleInlineDeleteStart : () => {}}
+                    hideToolbarActions={!projectId}
                   />
                 </div>
               </div>
@@ -906,6 +1045,44 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                 <div className="bg-gray-100 px-3 py-2 border-b border-gray-300">
                   <h4 className="text-sm font-semibold text-gray-700">Restricted property</h4>
                 </div>
+                
+                {/* Inline Data Property Creation Form */}
+                {showInlinePropertyCreate && propertyCreationTab === 'data' && (
+                  <div className="p-3 bg-green-50 border-b border-green-200">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={inlinePropertyName}
+                        onChange={(e) => setInlinePropertyName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && inlinePropertyName.trim()) {
+                            handleInlinePropertyCreateSubmit();
+                          } else if (e.key === 'Escape') {
+                            handleInlinePropertyCreateCancel();
+                          }
+                        }}
+                        placeholder="Enter data property name..."
+                        className="flex-1 px-2 py-1 text-sm border border-green-300 rounded focus:outline-none focus:ring-2 focus:ring-green-500"
+                        autoFocus
+                      />
+                      <button
+                        onClick={handleInlinePropertyCreateSubmit}
+                        disabled={!inlinePropertyName.trim() || isCreatingProperty}
+                        className="px-3 py-1 text-xs font-semibold text-white bg-green-600 rounded hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                      >
+                        {isCreatingProperty ? 'Creating...' : 'Create'}
+                      </button>
+                      <button
+                        onClick={handleInlinePropertyCreateCancel}
+                        className="px-3 py-1 text-xs font-semibold text-green-800 bg-white border border-green-300 rounded hover:bg-green-100"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    <p className="mt-1 text-xs text-green-700">Press Enter to create, Escape to cancel</p>
+                  </div>
+                )}
+                
                 <div className="flex-1 overflow-hidden">
                   <EntityHierarchy
                     entitiesTab="DataProperties"
@@ -916,9 +1093,9 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                     onSearchQueryChange={() => {}}
                     onSelectItem={(item) => setSelectedDataProperty(item as any as Property)}
                     onToggleNode={handleDataPropertyToggle}
-                    onAddItem={() => {}}
-                    onDeleteItem={() => {}}
-                    hideToolbarActions={true}
+                    onAddItem={projectId ? (type) => handleInlineAddProperty(type as 'subclass' | 'sibling') : () => {}}
+                    onDeleteItem={onDeleteProperty || (() => {})}
+                    hideToolbarActions={!projectId}
                   />
                 </div>
               </div>
