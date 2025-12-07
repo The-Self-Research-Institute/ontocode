@@ -195,6 +195,7 @@ const ClassEditor: React.FC<{
   expandedNodes?: string[];
   // Callbacks for creating entities inside dialogs
   onAddClass?: (type: 'subclass' | 'sibling') => void;
+  onAddClassInline?: (type: 'subclass' | 'sibling', parentId?: string, name?: string) => Promise<void>;
   onDeleteClass?: () => void;
   onRefreshClasses?: () => void;
   onAddObjectProperty?: (type: 'subclass' | 'sibling', parentId?: string, name?: string) => Promise<void>;
@@ -205,7 +206,8 @@ const ClassEditor: React.FC<{
   dataPropertyHierarchy?: TreeNode[];
   objectProperties?: any[];
   dataProperties?: any[];
-}> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes = [], onAddClass, onDeleteClass, onRefreshClasses, onAddObjectProperty, onAddDataProperty, onDeleteProperty, metadata, objectPropertyHierarchy: propObjectPropertyHierarchy, dataPropertyHierarchy: propDataPropertyHierarchy, objectProperties: propObjectProperties, dataProperties: propDataProperties }) => {
+}> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes = [], onAddClass, onAddClassInline, onDeleteClass, onRefreshClasses, onAddObjectProperty, onAddDataProperty, onDeleteProperty, metadata, objectPropertyHierarchy: propObjectPropertyHierarchy, dataPropertyHierarchy: propDataPropertyHierarchy, objectProperties: propObjectProperties, dataProperties: propDataProperties }) => {
+  console.log('[ClassEditor] Received props - onAddClassInline exists:', !!onAddClassInline);
   const [activeTab, setActiveTab] = useState<'annotations' | 'usage' | 'description'>('annotations');
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [classDetails, setClassDetails] = useState<any>(null);
@@ -1256,6 +1258,8 @@ const ClassEditor: React.FC<{
         excludeClassIds={[item.id]}
         minSelection={1}
         initialSelectedIds={editingDisjointWithTarget ? [editingDisjointWithTarget] : []}
+        onAddClass={onAddClassInline}
+        onDeleteClass={onDeleteClass}
       />
 
       {/* Disjoint Union Selector */}
@@ -1274,6 +1278,11 @@ const ClassEditor: React.FC<{
         title={editingDisjointUnionId ? "Edit Disjoint Union Classes" : "Select Classes for Disjoint Union"}
         minSelection={2}
         initialSelectedIds={editingDisjointUnionMembers}
+        onAddClass={(() => {
+          console.log('[ClassEditor] onAddClass prop for Disjoint Union dialog - onAddClassInline exists:', !!onAddClassInline);
+          return onAddClassInline;
+        })()}
+        onDeleteClass={onDeleteClass}
       />
 
       {/* Has Key Property Selector */}
