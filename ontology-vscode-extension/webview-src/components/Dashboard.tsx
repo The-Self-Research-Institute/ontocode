@@ -623,6 +623,7 @@ const DetailsPanel = ({
   expandedNodes,
   onToggleNode,
   onAddClass,
+  onAddClassInline,
   onDeleteClass,
   onRefreshClasses,
   onAddObjectProperty,
@@ -651,6 +652,7 @@ const DetailsPanel = ({
   expandedNodes?: string[];
   onToggleNode?: (nodeId: string) => Promise<void> | void;
   onAddClass?: (type: 'subclass' | 'sibling') => void;
+  onAddClassInline?: (type: 'subclass' | 'sibling', parentId?: string, name?: string) => Promise<void>;
   onDeleteClass?: () => void;
   onRefreshClasses?: () => Promise<void>;
   onAddObjectProperty?: (type: 'subclass' | 'sibling', parentId?: string, name?: string) => Promise<void>;
@@ -689,6 +691,7 @@ const DetailsPanel = ({
         expandedNodes={expandedNodes}
         onToggleNode={onToggleNode}
         onAddClass={onAddClass}
+        onAddClassInline={onAddClassInline}
         onDeleteClass={onDeleteClass}
         onRefreshClasses={onRefreshClasses}
         onAddObjectProperty={onAddObjectProperty}
@@ -2751,6 +2754,66 @@ const Dashboard = () => {
     }
   }, [projectId, metadata, dataPropertyHierarchy, user, refreshProperties, showNotification]);
 
+  // Handler for creating classes with name parameter (for inline creation in dialogs)
+  const handleAddClassInline = useCallback(async (
+    type: 'subclass' | 'sibling',
+    parentId?: string,
+    name?: string
+  ) => {
+    if (!projectId) return;
+
+    try {
+      console.log('[handleAddClassInline] Creating class:', name, 'type:', type, 'parentId:', parentId);
+      const baseIri = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
+      const cleanName = (name || 'NewClass').replace(/\s+/g, '_');
+      const newIri = `${baseIri}${baseIri.endsWith('#') || baseIri.endsWith('/') ? '' : '#'}${cleanName}`;
+
+      let parentIri = 'http://www.w3.org/2002/07/owl#Thing';
+      
+      if (parentId) {
+        if (type === 'subclass') {
+          parentIri = parentId;
+        } else if (type === 'sibling') {
+          const parent = findParentNode(classHierarchy, parentId);
+          if (parent) parentIri = parent.id;
+        }
+      }
+
+      console.log('[handleAddClassInline] Creating with IRI:', newIri, 'parent:', parentIri);
+      await ontologyMutationService.createClass(
+        projectId,
+        newIri,
+        name || 'NewClass',
+        parentIri,
+        user?.email || 'anonymous',
+        user?.username || 'Anonymous'
+      );
+
+      console.log('[handleAddClassInline] Class created, refreshing...');
+      // Add a small delay to ensure backend has processed the class
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // Ensure parent node is in expanded nodes before refresh
+      if (parentIri && !expandedNodes.includes(parentIri)) {
+        setExpandedNodes(prev => [...prev, parentIri]);
+      }
+      
+      await refreshClassHierarchy();
+      
+      // Re-expand the parent node after refresh to ensure it stays open
+      if (parentIri && !expandedNodes.includes(parentIri)) {
+        setExpandedNodes(prev => [...prev, parentIri]);
+      }
+      
+      console.log('[handleAddClassInline] Refresh complete');
+      showNotification(`Class "${name}" created successfully!`);
+    } catch (error) {
+      console.error('Failed to create class:', error);
+      showNotification('Failed to create class. See console for details.', 'error');
+      throw error;
+    }
+  }, [projectId, metadata, classHierarchy, user, refreshClassHierarchy, showNotification, expandedNodes]);
+
   const handleAddItem = useCallback(async (type: 'subclass' | 'sibling' | 'individual') => {
     if (!projectId) return;
     
@@ -4318,6 +4381,7 @@ const Dashboard = () => {
                     expandedNodes={expandedNodes}
                     onToggleNode={toggleNode}
                     onAddClass={(type) => handleAddItem(type)}
+                    onAddClassInline={handleAddClassInline}
                     onDeleteClass={() => handleDeleteItem()}
                     onRefreshClasses={refreshClassHierarchy}
                     onAddObjectProperty={handleAddObjectProperty}
@@ -4378,6 +4442,9 @@ const Dashboard = () => {
         onToggleNode={toggleNode}
         externalExpandedNodes={expandedNodes}
         title="Select Class"
+        onAddClass={handleAddClassInline}
+        onDeleteClass={() => handleDeleteItem()}
+        metadata={metadata}
       />
 
       {/* Property Expression Dialog */}
