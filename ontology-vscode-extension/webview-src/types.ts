@@ -86,6 +86,9 @@ export interface Axiom {
   members?: string[];
   // Fields for HasKey
   properties?: string[];
+  // Fields for inferred axioms
+  isInferred?: boolean | string;
+  ontologyIri?: string;
 }
 
 // ============ Metadata Types ============

@@ -411,6 +411,16 @@ public class OntologyMutationService {
             return "DELETE DATA {\n"
                 + "<" + op.iri() + "> <" + op.property() + "> " + literal(op.value()) + " .\n"
                 + "}";
+        } else if (type.equals("addClassAssertion")) {
+            // Add rdf:type assertion to an existing individual
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> a <" + op.classIri() + "> .\n"
+                + "}";
+        } else if (type.equals("removeClassAssertion")) {
+            // Remove rdf:type assertion from an individual
+            return "DELETE DATA {\n"
+                + "<" + op.iri() + "> a <" + op.classIri() + "> .\n"
+                + "}";
         } else {
             throw new IllegalArgumentException("Unsupported op " + op.type());
         }

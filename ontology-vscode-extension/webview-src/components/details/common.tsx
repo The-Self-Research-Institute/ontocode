@@ -14,7 +14,9 @@ export const AxiomRow: React.FC<{
   hasAxiomAnnotations?: boolean;
   properties?: any[];
   dataProperties?: any[];
-}> = ({ axiom, onDelete, onEdit, onEditClick, isInferred = false, isInActiveOntology = false, ontologyIri, hasAxiomAnnotations = false, properties = [], dataProperties = [] }) => {
+}> = ({ axiom, onDelete, onEdit, onEditClick, isInferred: isInferredProp = false, isInActiveOntology = false, ontologyIri, hasAxiomAnnotations = false, properties = [], dataProperties = [] }) => {
+  // Handle isInferred from prop or axiom object (can be boolean or string 'true')
+  const isInferred = isInferredProp || axiom.isInferred === true || axiom.isInferred === 'true';
   const [isEditing, setIsEditing] = useState(false);
   const [showAxiomAnnotations, setShowAxiomAnnotations] = useState(false);
 
@@ -253,8 +255,12 @@ export const AxiomSubsection: React.FC<{
                 key={`inferred-${axiom.id}`} 
                 axiom={axiom} 
                 onDelete={onDelete}
+                onEdit={onEdit}
+                onEditClick={onEditClick}
                 isInferred={true}
                 ontologyIri="Inferred by reasoner"
+                properties={properties}
+                dataProperties={dataProperties}
               />
             ))}
           </>

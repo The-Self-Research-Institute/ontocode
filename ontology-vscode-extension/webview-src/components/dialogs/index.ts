@@ -17,3 +17,4 @@ export { default as DatatypeDefinitionDialog } from './DatatypeDefinitionDialog'
 export { default as KeyboardShortcutsDialog } from './KeyboardShortcutsDialog';
 export { default as EntityPreferencesDialog } from './EntityPreferencesDialog';
 export { default as IRIEditorDialog } from './IRIEditorDialog';
+export { default as IndividualSelectorDialog } from './IndividualSelectorDialog';
