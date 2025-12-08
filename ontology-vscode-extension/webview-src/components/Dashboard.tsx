@@ -16,6 +16,7 @@ import ClassEditor from './details/ClassEditor';
 import PropertyEditor from './details/PropertyEditor';
 import IndividualEditor from './details/IndividualEditor';
 import DatatypeEditor from './details/DatatypeEditor';
+import AnnotationPropertyEditor from './details/AnnotationPropertyEditor';
 import { Panel, AnnotationsDisplay } from './details/common';
 import SparqlQueryEditor from './SparqlQueryEditor';
 import { ProjectSelector } from './ProjectSelector';
@@ -33,9 +34,15 @@ import {
   AddObjectPropertyDialog,
   ClassExpressionDialog,
   PropertyExpressionDialog,
+  ObjectPropertyExpressionDialog,
   AddDatatypeDialog,
   KeyboardShortcutsDialog,
-  EntityPreferencesDialog
+  EntityPreferencesDialog,
+  AnnotationPropertyDomainDialog,
+  AnnotationPropertyRangeDialog,
+  AnnotationPropertySuperpropertyDialog,
+  DataPropertyRangeDialog,
+  TabType
 } from './dialogs';
 import { useKeyboardShortcuts, DEFAULT_SHORTCUTS, KeyboardShortcut } from '../hooks/useKeyboardShortcuts';
 import { useEntityPreferences } from '../contexts/EntityPreferencesContext';
@@ -618,6 +625,10 @@ const DetailsPanel = ({
   onAddInverseClick,
   onAddDisjointClick,
   onAddEquivalentClick,
+  // Annotation property specific handlers (Protégé-style)
+  onAddAnnotationDomainClick,
+  onAddAnnotationRangeClick,
+  onAddAnnotationSuperpropertyClick,
   classHierarchy,
   objectProperties,
   expandedNodes,
@@ -650,6 +661,10 @@ const DetailsPanel = ({
   onAddInverseClick?: () => void;
   onAddDisjointClick?: () => void;
   onAddEquivalentClick?: () => void;
+  // Annotation property specific handlers (Protégé-style)
+  onAddAnnotationDomainClick?: () => void;
+  onAddAnnotationRangeClick?: () => void;
+  onAddAnnotationSuperpropertyClick?: () => void;
   classHierarchy: TreeNode[];
   objectProperties: Property[];
   expandedNodes?: string[];
@@ -757,11 +772,20 @@ const DetailsPanel = ({
     case 'Individuals':
       return <IndividualEditor item={selectedItem as Individual} onUpdate={onUpdate} {...sharedProps} />;
     case 'AnnotationProperties': {
-      const item = selectedItem as AnnotationProperty;
+      const apItem = selectedItem as AnnotationProperty;
       return (
-        <div className="flex-1 flex flex-col gap-2">
-          <Panel title={`Annotations: ${item.label}`} {...sharedProps}><AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} /></Panel>
-        </div>
+        <AnnotationPropertyEditor
+          item={apItem}
+          onUpdate={onUpdate}
+          onAddAnnotation={onAddAnnotation}
+          onEditAnnotation={onEditAnnotation}
+          onDeleteAnnotation={onDeleteAnnotation}
+          activeTheme={activeTheme}
+          projectId={projectId || ''}
+          onAddSubPropertyClick={onAddAnnotationSuperpropertyClick}
+          onAddDomainClick={onAddAnnotationDomainClick}
+          onAddRangeClick={onAddAnnotationRangeClick}
+        />
       );
     }
     case 'Datatypes':
@@ -846,8 +870,17 @@ const Dashboard = () => {
   // Selector Dialog State
   const [isClassSelectorOpen, setIsClassSelectorOpen] = useState(false);
   const [isPropertyExpressionDialogOpen, setIsPropertyExpressionDialogOpen] = useState(false);
+  const [isObjectPropertyExpressionDialogOpen, setIsObjectPropertyExpressionDialogOpen] = useState(false);
   const [isClassExpressionDialogOpen, setIsClassExpressionDialogOpen] = useState(false);
   const [selectorTarget, setSelectorTarget] = useState<'domain' | 'range' | 'subProperty' | 'inverse' | 'disjoint' | 'equivalent' | null>(null);
+  
+  // Annotation Property Description Dialogs (Protégé-style)
+  const [isAnnotationDomainDialogOpen, setIsAnnotationDomainDialogOpen] = useState(false);
+  const [isAnnotationRangeDialogOpen, setIsAnnotationRangeDialogOpen] = useState(false);
+  const [isAnnotationSuperpropertyDialogOpen, setIsAnnotationSuperpropertyDialogOpen] = useState(false);
+  
+  // Data Property Range Dialog (Protégé-style - shows datatypes)
+  const [isDataPropertyRangeDialogOpen, setIsDataPropertyRangeDialogOpen] = useState(false);
   
   // Confirm dialog state
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -4251,25 +4284,84 @@ const Dashboard = () => {
   // #region Selector Handlers
   const handleOpenClassSelector = (target: 'domain' | 'range') => {
     setSelectorTarget(target);
-    setIsClassExpressionDialogOpen(true);
+    
+    // For Data Property ranges, show the datatype selector instead of class expression
+    if (target === 'range' && selectedItem?.type === 'DatatypeProperty') {
+      setIsDataPropertyRangeDialogOpen(true);
+    } else {
+      setIsClassExpressionDialogOpen(true);
+    }
+  };
+
+  // Handler for Data Property Range selection (datatypes)
+  const handleDataPropertyRangeConfirm = async (datatypeIri: string) => {
+    if (!selectedItem || !projectId) return;
+
+    try {
+      // Get display label for the datatype with proper prefix
+      const getDisplayLabel = (iri: string): string => {
+        if (iri.includes('XMLSchema#')) {
+          return 'xsd:' + iri.split('#').pop();
+        } else if (iri.includes('rdf-syntax-ns#')) {
+          return 'rdf:' + iri.split('#').pop();
+        } else if (iri.includes('rdf-schema#') || iri.includes('2000/01/rdf-schema#')) {
+          return 'rdfs:' + iri.split('#').pop();
+        } else if (iri.includes('owl#')) {
+          return 'owl:' + iri.split('#').pop();
+        }
+        return iri.split('#').pop() || iri;
+      };
+      
+      const displayLabel = getDisplayLabel(datatypeIri);
+      
+      await ontologyMutationService.addPropertyRange(
+        projectId, 
+        selectedItem.id, 
+        datatypeIri, 
+        user?.email || 'anonymous', 
+        user?.username || 'Anonymous'
+      );
+      updateItemInState({ ...selectedItem, ranges: [...((selectedItem as Property).ranges || []), displayLabel] });
+    } catch (error) {
+      console.error('Failed to add data property range', error);
+    } finally {
+      setIsDataPropertyRangeDialogOpen(false);
+      setSelectorTarget(null);
+    }
   };
 
   const handleOpenPropertySelector = (target: 'subProperty' | 'inverse' | 'disjoint' | 'equivalent') => {
     setSelectorTarget(target);
-    setIsPropertyExpressionDialogOpen(true);
+    // Use the new ObjectPropertyExpressionDialog for equivalent, inverse, subProperty, and disjoint
+    // This provides the Protégé-style property selection with inverse checkbox
+    setIsObjectPropertyExpressionDialogOpen(true);
   };
 
-  const handleManchesterConfirm = async (expression: string, _restrictionData?: unknown) => {
+  const handleManchesterConfirm = async (expression: string, restrictionData?: any) => {
     if (!selectedItem || !projectId || !selectorTarget) return;
 
     try {
       switch (selectorTarget) {
         case 'domain':
-          await ontologyMutationService.addPropertyDomain(projectId, selectedItem.id, expression, user?.email || 'anonymous', user?.username || 'Anonymous');
+          await ontologyMutationService.addPropertyDomain(
+            projectId, 
+            selectedItem.id, 
+            expression, 
+            user?.email || 'anonymous', 
+            user?.username || 'Anonymous',
+            restrictionData
+          );
           updateItemInState({ ...selectedItem, domains: [...((selectedItem as Property).domains || []), expression] });
           break;
         case 'range':
-          await ontologyMutationService.addPropertyRange(projectId, selectedItem.id, expression, user?.email || 'anonymous', user?.username || 'Anonymous');
+          await ontologyMutationService.addPropertyRange(
+            projectId, 
+            selectedItem.id, 
+            expression, 
+            user?.email || 'anonymous', 
+            user?.username || 'Anonymous',
+            restrictionData
+          );
           updateItemInState({ ...selectedItem, ranges: [...((selectedItem as Property).ranges || []), expression] });
           break;
       }
@@ -4281,6 +4373,7 @@ const Dashboard = () => {
     }
   };
 
+  // Handler for legacy PropertyExpressionDialog (if still needed)
   const handlePropertySelected = async (expression: string) => {
     if (!selectedItem || !projectId || !selectorTarget) return;
 
@@ -4310,6 +4403,112 @@ const Dashboard = () => {
     } finally {
       setIsPropertyExpressionDialogOpen(false);
       setSelectorTarget(null);
+    }
+  };
+
+  // Handler for the new ObjectPropertyExpressionDialog with inverse support
+  const handleObjectPropertySelected = async (expression: string, isInverse: boolean) => {
+    if (!selectedItem || !projectId || !selectorTarget) return;
+
+    try {
+      // Build the final expression - if inverse, wrap with inverse()
+      const finalExpression = isInverse ? `inverse(${expression})` : expression;
+      
+      switch (selectorTarget) {
+        case 'subProperty':
+          await ontologyMutationService.addSubPropertyOf(projectId, selectedItem.id, finalExpression, user?.email || 'anonymous', user?.username || 'Anonymous');
+          updateItemInState({ ...selectedItem, superProperties: [...((selectedItem as Property).superProperties || []), finalExpression] });
+          break;
+        case 'inverse':
+          await ontologyMutationService.addInverseProperty(projectId, selectedItem.id, expression, user?.email || 'anonymous', user?.username || 'Anonymous');
+          updateItemInState({ ...selectedItem, inverseProperties: [...((selectedItem as Property).inverseProperties || []), expression] });
+          break;
+        case 'disjoint':
+          await ontologyMutationService.addDisjointProperty(projectId, selectedItem.id, finalExpression, user?.email || 'anonymous', user?.username || 'Anonymous');
+          updateItemInState({ ...selectedItem, disjointProperties: [...((selectedItem as Property).disjointProperties || []), finalExpression] });
+          break;
+        case 'equivalent': {
+          const existing = (selectedItem as Property).equivalentProperties || [];
+          await ontologyMutationService.addEquivalentProperty(projectId, selectedItem.id, finalExpression, user?.email || 'anonymous', user?.username || 'Anonymous');
+          updateItemInState({ ...selectedItem, equivalentProperties: [...existing, finalExpression] });
+          break;
+        }
+      }
+    } catch (error) {
+      console.error(`Failed to add ${selectorTarget}`, error);
+    } finally {
+      setIsObjectPropertyExpressionDialogOpen(false);
+      setSelectorTarget(null);
+    }
+  };
+
+  // Handlers for Annotation Property Description Dialogs (Protégé-style)
+  const handleOpenAnnotationDomainDialog = () => {
+    if (entitiesTab === 'AnnotationProperties') {
+      setIsAnnotationDomainDialogOpen(true);
+    }
+  };
+
+  const handleOpenAnnotationRangeDialog = () => {
+    if (entitiesTab === 'AnnotationProperties') {
+      setIsAnnotationRangeDialogOpen(true);
+    }
+  };
+
+  const handleOpenAnnotationSuperpropertyDialog = () => {
+    if (entitiesTab === 'AnnotationProperties') {
+      setIsAnnotationSuperpropertyDialogOpen(true);
+    }
+  };
+
+  const handleAnnotationDomainConfirm = async (domainIri: string) => {
+    if (!selectedItem || !projectId) return;
+    
+    try {
+      await ontologyMutationService.addPropertyDomain(projectId, selectedItem.id, domainIri, user?.email || 'anonymous', user?.username || 'Anonymous');
+      const extendedItem = selectedItem as AnnotationProperty & { domains?: string[] };
+      updateItemInState({ 
+        ...selectedItem, 
+        domains: [...(extendedItem.domains || []), domainIri] 
+      });
+    } catch (error) {
+      console.error('Failed to add annotation property domain', error);
+    } finally {
+      setIsAnnotationDomainDialogOpen(false);
+    }
+  };
+
+  const handleAnnotationRangeConfirm = async (rangeIri: string) => {
+    if (!selectedItem || !projectId) return;
+    
+    try {
+      await ontologyMutationService.addPropertyRange(projectId, selectedItem.id, rangeIri, user?.email || 'anonymous', user?.username || 'Anonymous');
+      const extendedItem = selectedItem as AnnotationProperty & { ranges?: string[] };
+      updateItemInState({ 
+        ...selectedItem, 
+        ranges: [...(extendedItem.ranges || []), rangeIri] 
+      });
+    } catch (error) {
+      console.error('Failed to add annotation property range', error);
+    } finally {
+      setIsAnnotationRangeDialogOpen(false);
+    }
+  };
+
+  const handleAnnotationSuperpropertyConfirm = async (superpropertyIri: string) => {
+    if (!selectedItem || !projectId) return;
+    
+    try {
+      await ontologyMutationService.addSubPropertyOf(projectId, selectedItem.id, superpropertyIri, user?.email || 'anonymous', user?.username || 'Anonymous');
+      const extendedItem = selectedItem as AnnotationProperty & { superProperties?: string[] };
+      updateItemInState({ 
+        ...selectedItem, 
+        superProperties: [...(extendedItem.superProperties || []), superpropertyIri] 
+      });
+    } catch (error) {
+      console.error('Failed to add annotation property superproperty', error);
+    } finally {
+      setIsAnnotationSuperpropertyDialogOpen(false);
     }
   };
   // #endregion
@@ -4451,15 +4650,15 @@ const Dashboard = () => {
         />
 
         <div className="bg-white border-b border-gray-200 flex-shrink-0">
-          <div className="flex items-center justify-between px-4 h-10">
-      <div className="flex items-center flex-nowrap overflow-x-auto no-scrollbar gap-1">
+          <div className="flex items-start justify-between px-4 py-1.5 gap-4">
+            <div className="flex items-center flex-wrap gap-x-1 gap-y-0.5 flex-1">
               {visibleMainTabs.map((tabId) => {
                 const tab = ALL_MAIN_TABS[tabId];
                 if (!tab) return null;
                 return (
                 <button
                   key={tabId}
-                  className={`flex items-center gap-2 px-3 h-full text-xs font-medium border-b-2 -mb-px whitespace-nowrap flex-shrink-0 ${mainTab === tabId ? "text-purple-600 border-purple-600" : "text-gray-500 hover:text-gray-800 border-transparent"}`}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border-b-2 whitespace-nowrap ${mainTab === tabId ? "text-purple-600 border-purple-600" : "text-gray-500 hover:text-gray-800 border-transparent"}`}
                   onClick={() => setMainTab(tabId)}
                 >
                     <tab.icon size={14} /> {tab.label}
@@ -4467,7 +4666,7 @@ const Dashboard = () => {
                 );
               })}
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 flex-shrink-0">
               {projectId && (
                 <button
                   onClick={() => setShowCollaborationPanel(!showCollaborationPanel)}
@@ -4572,6 +4771,9 @@ const Dashboard = () => {
                     onAddInverseClick={() => handleOpenPropertySelector('inverse')}
                     onAddDisjointClick={() => handleOpenPropertySelector('disjoint')}
                     onAddEquivalentClick={() => handleOpenPropertySelector('equivalent')}
+                    onAddAnnotationDomainClick={handleOpenAnnotationDomainDialog}
+                    onAddAnnotationRangeClick={handleOpenAnnotationRangeDialog}
+                    onAddAnnotationSuperpropertyClick={handleOpenAnnotationSuperpropertyDialog}
                     classHierarchy={classHierarchy}
                     objectProperties={objectProperties}
                     dataProperties={dataProperties}
@@ -4602,7 +4804,7 @@ const Dashboard = () => {
       </div>
 
       {/* Class Selector Dialog */}
-      {/* Class Expression Dialog for Domain/Range with 4 tabs */}
+      {/* Class Expression Dialog for Domain/Range */}
       <ClassExpressionDialog
         isOpen={isClassExpressionDialogOpen}
         onClose={() => {
@@ -4658,6 +4860,75 @@ const Dashboard = () => {
         propertyHierarchy={objectPropertyHierarchy}
         propertyType={selectedItem?.type === 'DataProperty' ? 'data' : 'object'}
         title={`Select ${selectorTarget ? selectorTarget.charAt(0).toUpperCase() + selectorTarget.slice(1) : 'Property'}`}
+      />
+
+      {/* Object Property Expression Dialog - Protégé-style with inverse checkbox */}
+      <ObjectPropertyExpressionDialog
+        isOpen={isObjectPropertyExpressionDialogOpen}
+        onClose={() => {
+          setIsObjectPropertyExpressionDialogOpen(false);
+          setSelectorTarget(null);
+        }}
+        onConfirm={handleObjectPropertySelected}
+        objectPropertyHierarchy={selectedItem?.type === 'DatatypeProperty' ? dataPropertyHierarchy : objectPropertyHierarchy}
+        title={selectedItem ? `'${(selectedItem as Property).label || selectedItem.id.split('#').pop()}'` : 'Select Property'}
+        projectId={projectId || undefined}
+        onRefresh={refreshProperties}
+        showInverseOption={selectedItem?.type !== 'DatatypeProperty'}
+        propertyType={selectedItem?.type === 'DatatypeProperty' ? 'data' : 'object'}
+      />
+
+      {/* Annotation Property Domain Dialog (Protégé-style) */}
+      <AnnotationPropertyDomainDialog
+        isOpen={isAnnotationDomainDialogOpen}
+        onClose={() => setIsAnnotationDomainDialogOpen(false)}
+        onConfirm={handleAnnotationDomainConfirm}
+        classHierarchy={classHierarchy}
+        projectId={projectId || undefined}
+        onToggleNode={toggleNode}
+        externalExpandedNodes={expandedNodes}
+        title="Domain (intersection)"
+        selectedDomains={(selectedItem as AnnotationProperty & { domains?: string[] })?.domains}
+      />
+
+      {/* Annotation Property Range Dialog (Protégé-style) */}
+      <AnnotationPropertyRangeDialog
+        isOpen={isAnnotationRangeDialogOpen}
+        onClose={() => setIsAnnotationRangeDialogOpen(false)}
+        onConfirm={handleAnnotationRangeConfirm}
+        datatypes={datatypes}
+        title="Range (intersection)"
+        selectedRanges={(selectedItem as AnnotationProperty & { ranges?: string[] })?.ranges}
+      />
+
+      {/* Annotation Property Superproperty Dialog (Protégé-style) */}
+      <AnnotationPropertySuperpropertyDialog
+        isOpen={isAnnotationSuperpropertyDialogOpen}
+        onClose={() => setIsAnnotationSuperpropertyDialogOpen(false)}
+        onConfirm={handleAnnotationSuperpropertyConfirm}
+        annotationPropertyHierarchy={annotationProperties.map(ap => ({
+          id: ap.id,
+          label: ap.label,
+          type: 'AnnotationProperty' as const,
+          children: [],
+          hasChildren: false
+        }))}
+        currentPropertyId={selectedItem?.id}
+        title="Superproperties"
+        selectedSuperproperties={(selectedItem as AnnotationProperty & { superProperties?: string[] })?.superProperties}
+      />
+
+      {/* Data Property Range Dialog (Protégé-style - shows datatypes) */}
+      <DataPropertyRangeDialog
+        isOpen={isDataPropertyRangeDialogOpen}
+        onClose={() => {
+          setIsDataPropertyRangeDialogOpen(false);
+          setSelectorTarget(null);
+        }}
+        onConfirm={handleDataPropertyRangeConfirm}
+        datatypes={datatypes}
+        title={selectedItem ? `'${(selectedItem as Property).label || selectedItem.id.split('#').pop()}'` : 'Select Range'}
+        selectedRanges={(selectedItem as Property)?.ranges}
       />
 
       {/* Project Selector Modal */}

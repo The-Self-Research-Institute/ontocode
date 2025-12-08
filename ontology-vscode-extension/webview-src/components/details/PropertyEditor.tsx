@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Trash2, CheckSquare, Square } from 'lucide-react';
+import { Plus, Trash2, CheckSquare, Square, Edit3 } from 'lucide-react';
 import { Panel, AnnotationsDisplay, MultiSelectSection } from './common';
 import { ManchesterSyntaxEditor, PropertyChainDialog } from '../dialogs';
 import ontologyMutationService from '../../services/ontologyMutationService';
@@ -37,6 +37,7 @@ const PropertyEditor: React.FC<{
     onAddEquivalentClick,
     objectProperties = []
 }) => {
+    const [activeTab, setActiveTab] = useState<'annotations' | 'description'>('annotations');
     const [isEditorOpen, setIsEditorOpen] = useState(false);
     const [editorTitle, setEditorTitle] = useState("");
     const [editorAction, setEditorAction] = useState<((val: string) => void) | null>(null);
@@ -45,6 +46,15 @@ const PropertyEditor: React.FC<{
     const isObjectProperty = item.type === 'ObjectProperty';
     const isDataProperty = item.type === 'DatatypeProperty';
     const isAnnotationProperty = item.type === 'AnnotationProperty';
+    
+    // Theme colors based on property type
+    const themeColor = isObjectProperty ? 'blue' : isDataProperty ? 'green' : 'orange';
+    const headerGradient = isObjectProperty 
+        ? 'bg-gradient-to-r from-blue-500 to-blue-600' 
+        : isDataProperty 
+        ? 'bg-gradient-to-r from-green-500 to-green-600' 
+        : 'bg-gradient-to-r from-orange-500 to-amber-500';
+    
     const characteristics = isObjectProperty 
         ? [
             { key: 'Functional', label: 'Functional' },
@@ -182,73 +192,126 @@ const PropertyEditor: React.FC<{
         setIsChainDialogOpen(true);
     };
 
+    const annotationCount = Object.keys(item.annotations || {}).length;
+
     return (
         <div className="flex flex-col h-full bg-white">
             {/* Header with IRI */}
             <div className="bg-gray-100 border-b border-gray-200 p-3 flex items-center justify-between">
                 <div className="flex items-center gap-2 overflow-hidden">
-                <div className={`p-1 rounded text-xs font-bold ${isObjectProperty ? 'bg-blue-200 text-blue-800' : isDataProperty ? 'bg-green-200 text-green-800' : 'bg-orange-200 text-orange-800'}`}>
-                    {isObjectProperty ? 'OP' : isDataProperty ? 'DP' : 'AP'}
+                    <div className={`p-1 rounded text-xs font-bold ${isObjectProperty ? 'bg-blue-200 text-blue-800' : isDataProperty ? 'bg-green-200 text-green-800' : 'bg-orange-200 text-orange-800'}`}>
+                        {isObjectProperty ? 'OP' : isDataProperty ? 'DP' : 'AP'}
+                    </div>
+                    <div className="flex flex-col min-w-0">
+                        <span className="font-bold text-sm truncate">{item.label}</span>
+                        <span className="text-xs text-gray-500 truncate font-mono">{item.id}</span>
+                    </div>
                 </div>
-                <div className="flex flex-col min-w-0">
-                    <span className="font-bold text-sm truncate">{item.label}</span>
-                    <span className="text-xs text-gray-500 truncate font-mono">{item.id}</span>
-                </div>
-                </div>
+                <button
+                    className="p-1.5 hover:bg-gray-200 rounded text-gray-600 hover:text-purple-600 flex-shrink-0"
+                    title="Edit IRI and Label"
+                >
+                    <Edit3 size={16} />
+                </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto bg-gray-50 p-3 space-y-4">
-                {/* Annotations Section */}
-                <Panel title="Annotations" defaultOpen={true} themeColor="bg-gradient-to-b from-gray-50 to-gray-100 text-gray-800 border-gray-200"
-                    actions={
-                        <button onClick={onAddAnnotation} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600" title="Add annotation">
-                        <Plus size={14} />
-                        </button>
-                    }
+            {/* Tabs - Protégé style */}
+            <div className="flex border-b border-gray-200 bg-gray-50">
+                <button 
+                    onClick={() => setActiveTab('annotations')}
+                    className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors ${
+                        activeTab === 'annotations' 
+                            ? `border-${themeColor}-600 text-${themeColor}-700 bg-white` 
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                    }`}
+                    style={activeTab === 'annotations' ? { borderColor: isObjectProperty ? '#2563eb' : isDataProperty ? '#16a34a' : '#ea580c' } : {}}
                 >
-                    <div className="p-2">
-                        <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} />
-                    </div>
-                </Panel>
+                    Annotations ({annotationCount})
+                </button>
+                <button 
+                    onClick={() => setActiveTab('description')}
+                    className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors ${
+                        activeTab === 'description' 
+                            ? `border-${themeColor}-600 text-${themeColor}-700 bg-white` 
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                    }`}
+                    style={activeTab === 'description' ? { borderColor: isObjectProperty ? '#2563eb' : isDataProperty ? '#16a34a' : '#ea580c' } : {}}
+                >
+                    Description
+                </button>
+            </div>
 
-                {/* Description Section */}
-                <Panel title="Description" defaultOpen={true} themeColor={isObjectProperty ? 'bg-gradient-to-b from-blue-50 to-blue-100 text-blue-900 border-blue-200' : isDataProperty ? 'bg-gradient-to-b from-green-50 to-green-100 text-green-900 border-green-200' : 'bg-gradient-to-b from-orange-50 to-orange-100 text-orange-900 border-orange-200'}>
-                    <div className="p-3 space-y-4">
-                        {/* Characteristics */}
-                        <div className="mb-4">
-                            <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Characteristics</h4>
-                            <div className="grid grid-cols-2 gap-2 bg-white p-2 border border-gray-200 rounded-md">
-                                {characteristics.map(({ key, label }) => (
-                                    <label key={key} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 p-1 rounded">
-                                        <input 
-                                            type="checkbox" 
-                                            checked={item.characteristics?.includes(key)} 
-                                            onChange={e => handleCharacteristicChange(key, e.target.checked)}
-                                            className="hidden"
-                                        />
-                                        {item.characteristics?.includes(key) ? (
-                                            <CheckSquare size={16} className="text-purple-600" />
-                                        ) : (
-                                            <Square size={16} className="text-gray-300" />
-                                        )}
-                                        <span className={item.characteristics?.includes(key) ? 'text-gray-900 font-medium' : 'text-gray-500'}>{label}</span>
-                                    </label>
-                                ))}
+            {/* Main Content */}
+            <div className="flex-1 overflow-y-auto bg-gray-50 p-3 min-h-0">
+                {activeTab === 'annotations' && (
+                    <div className="space-y-0">
+                        {/* Annotations Panel Header - Protégé style */}
+                        <div className={`${headerGradient} text-white px-3 py-2 flex items-center justify-between rounded-t-sm`}>
+                            <span className="text-sm font-semibold">Annotations: {item.label}</span>
+                            <div className="flex items-center gap-1">
+                                <button onClick={onAddAnnotation} className="p-1 hover:bg-white/20 rounded transition-colors" title="Add annotation">
+                                    <Plus size={16} />
+                                </button>
                             </div>
                         </div>
+                        {/* Annotations Content */}
+                        <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm">
+                            <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} />
+                        </div>
+                    </div>
+                )}
 
-                        <MultiSelectSection
-                            title="Equivalent To"
-                            items={item.equivalentProperties}
-                            onAddClick={onAddEquivalentClick}
-                            onDelete={prop => handleDeleteRelation('equivalent', prop)}
-                        />
+                {activeTab === 'description' && (
+                    <div className="space-y-0">
+                        {/* Description Panel Header - Protégé style */}
+                        <div className={`${headerGradient} text-white px-3 py-2 flex items-center justify-between rounded-t-sm`}>
+                            <span className="text-sm font-semibold">Description: {item.label}</span>
+                        </div>
+                        {/* Description Content */}
+                        <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm p-3 space-y-3">
+                            {/* Characteristics - only for Object/Data properties */}
+                            {!isAnnotationProperty && characteristics.length > 0 && (
+                                <div className="mb-3">
+                                    <div className={`${isObjectProperty ? 'bg-blue-600' : 'bg-green-600'} text-white px-2 py-1.5 rounded-t-sm text-xs font-medium`}>
+                                        Characteristics
+                                    </div>
+                                    <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm p-2">
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {characteristics.map(({ key, label }) => (
+                                                <label key={key} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 p-1 rounded">
+                                                    <input 
+                                                        type="checkbox" 
+                                                        checked={item.characteristics?.includes(key)} 
+                                                        onChange={e => handleCharacteristicChange(key, e.target.checked)}
+                                                        className="hidden"
+                                                    />
+                                                    {item.characteristics?.includes(key) ? (
+                                                        <CheckSquare size={16} className={isObjectProperty ? 'text-blue-600' : 'text-green-600'} />
+                                                    ) : (
+                                                        <Square size={16} className="text-gray-300" />
+                                                    )}
+                                                    <span className={item.characteristics?.includes(key) ? 'text-gray-900 font-medium' : 'text-gray-500'}>{label}</span>
+                                                </label>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            <MultiSelectSection
+                                title="Equivalent To"
+                                items={item.equivalentProperties}
+                                onAddClick={onAddEquivalentClick}
+                                onDelete={prop => handleDeleteRelation('equivalent', prop)}
+                                themeColor={isObjectProperty ? 'blue' : 'green'}
+                            />
 
                         <MultiSelectSection
                             title="SubProperty Of"
                             items={item.superProperties}
                             onAddClick={onAddSubPropertyClick}
                             onDelete={prop => handleDeleteRelation('subProperty', prop)}
+                            themeColor={isObjectProperty ? 'blue' : 'green'}
                         />
 
                         {isObjectProperty && (
@@ -257,6 +320,7 @@ const PropertyEditor: React.FC<{
                                 items={item.inverseProperties}
                                 onAddClick={onAddInverseClick}
                                 onDelete={prop => handleDeleteRelation('inverse', prop)}
+                                themeColor="blue"
                             />
                         )}
 
@@ -266,6 +330,7 @@ const PropertyEditor: React.FC<{
                             items={item.domains}
                             onAddClick={onAddDomainClick}
                             onDelete={domain => handleDeleteRelation('domain', domain)}
+                            themeColor={isObjectProperty ? 'blue' : 'green'}
                         />
                         )}
 
@@ -275,6 +340,7 @@ const PropertyEditor: React.FC<{
                             items={item.ranges}
                             onAddClick={onAddRangeClick}
                             onDelete={range => handleDeleteRelation('range', range)}
+                            themeColor={isObjectProperty ? 'blue' : 'green'}
                         />
                         )}
 
@@ -283,18 +349,21 @@ const PropertyEditor: React.FC<{
                             items={item.disjointProperties}
                             onAddClick={onAddDisjointClick}
                             onDelete={prop => handleDeleteRelation('disjoint', prop)}
+                            themeColor={isObjectProperty ? 'blue' : 'green'}
                         />
 
                         {isObjectProperty && (
                             <MultiSelectSection
-                                title="Property Chains"
+                                title="SuperProperty Of (Chain)"
                                 items={item.propertyChains}
                                 onAddClick={openChainEditor}
                                 onDelete={handleDeletePropertyChain}
+                                themeColor="blue"
                             />
                         )}
+                        </div>
                     </div>
-                </Panel>
+                )}
             </div>
 
             <ManchesterSyntaxEditor

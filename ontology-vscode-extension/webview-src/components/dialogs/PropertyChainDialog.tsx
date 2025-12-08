@@ -36,7 +36,7 @@ const PropertyChainDialog: React.FC<PropertyChainDialogProps> = ({
   };
 
   const handleConfirm = () => {
-    if (chain.length >= 2) {
+    if (chain.length >= 1) {
       onConfirm(chain);
       setChain([]);
       onClose();
@@ -171,7 +171,7 @@ const PropertyChainDialog: React.FC<PropertyChainDialogProps> = ({
             {chain.length > 0 ? (
               <span>{chain.length} {chain.length === 1 ? 'property' : 'properties'} in chain</span>
             ) : (
-              <span>Select at least 2 properties to create a chain</span>
+              <span>Select at least 1 property to create a chain</span>
             )}
           </div>
           <div className="flex gap-2">
@@ -183,7 +183,7 @@ const PropertyChainDialog: React.FC<PropertyChainDialogProps> = ({
             </button>
             <button
               onClick={handleConfirm}
-              disabled={chain.length < 2}
+              disabled={chain.length < 1}
               className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               OK

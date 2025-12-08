@@ -24,6 +24,8 @@ interface ClassExpressionDialogProps {
   title?: string;
   initialValue?: string;
   initialTab?: 'hierarchy' | 'objectRestriction' | 'classExpression' | 'dataRestriction';
+  /** Restrict which tabs are shown. If not specified, all tabs are shown. */
+  allowedTabs?: TabType[];
   initialRestrictionData?: {
     propertyIri?: string;
     restrictionType?: 'some' | 'only' | 'min' | 'max' | 'exactly' | 'value';
@@ -52,7 +54,7 @@ interface ClassExpressionDialogProps {
   metadata?: { ontologyIRI?: string };
 }
 
-type TabType = 'hierarchy' | 'objectRestriction' | 'classExpression' | 'dataRestriction';
+export type TabType = 'hierarchy' | 'objectRestriction' | 'classExpression' | 'dataRestriction';
 
 /**
  * ClassExpressionDialog - Protégé desktop-style class expression builder
@@ -74,6 +76,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   initialValue = "",
   initialTab,
   initialRestrictionData,
+  allowedTabs,
   projectId,
   expandedNodes = [],
   onToggleNode,
@@ -90,6 +93,9 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   onRefreshProperties,
   metadata
 }) => {
+  // If allowedTabs is specified, use it; otherwise show all tabs
+  const visibleTabs = allowedTabs || ['hierarchy', 'objectRestriction', 'classExpression', 'dataRestriction'];
+  
   const [activeTab, setActiveTab] = useState<TabType>('hierarchy');
 
   // Class hierarchy state
@@ -355,9 +361,19 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   };
 
   const buildDataRestriction = (): string => {
-    if (!selectedDataProperty) return '';
+    console.log('[ClassExpressionDialog] buildDataRestriction called', {
+      selectedDataProperty,
+      datatype,
+      dataRestrictionType,
+      dataCardinality
+    });
+    if (!selectedDataProperty) {
+      console.warn('[ClassExpressionDialog] buildDataRestriction: No data property selected');
+      return '';
+    }
 
     const propName = selectedDataProperty.label;
+    console.log('[ClassExpressionDialog] buildDataRestriction: propName=', propName, 'datatype=', datatype);
 
     switch (dataRestrictionType) {
       case 'some':
@@ -414,17 +430,29 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
         expression = manchesterExpression.trim();
         break;
       case 'dataRestriction':
+        console.log('[ClassExpressionDialog] dataRestriction case - calling buildDataRestriction');
         expression = buildDataRestriction();
+        console.log('[ClassExpressionDialog] dataRestriction expression result:', expression);
         // Also build structured restriction data for backend
         if (selectedDataProperty) {
+          const fillerIri = datatype.startsWith('http://') || datatype.startsWith('rdf:') || datatype.startsWith('rdfs:') || datatype.startsWith('owl:')
+            ? (datatype.includes(':') && !datatype.startsWith('http') 
+              ? (datatype.startsWith('rdf:') ? `http://www.w3.org/1999/02/22-rdf-syntax-ns#${datatype.replace('rdf:', '')}` 
+                : datatype.startsWith('rdfs:') ? `http://www.w3.org/2000/01/rdf-schema#${datatype.replace('rdfs:', '')}`
+                : datatype.startsWith('owl:') ? `http://www.w3.org/2002/07/owl#${datatype.replace('owl:', '')}`
+                : datatype)
+              : datatype) 
+            : `http://www.w3.org/2001/XMLSchema#${datatype.replace('xsd:', '')}`;
+          console.log('[ClassExpressionDialog] dataRestriction fillerIri:', fillerIri);
           restrictionData = {
             type: 'dataRestriction',
             axiomType: 'SubClassOf', // Default - caller can change this if needed
             propertyIri: selectedDataProperty.id,
             restrictionType: dataRestrictionType,
-            fillerIri: datatype.startsWith('http://') ? datatype : `http://www.w3.org/2001/XMLSchema#${datatype.replace('xsd:', '')}`,
+            fillerIri: fillerIri,
             cardinality: ['min', 'max', 'exactly'].includes(dataRestrictionType) ? dataCardinality : undefined
           };
+          console.log('[ClassExpressionDialog] dataRestriction restrictionData:', restrictionData);
         }
         break;
     }
@@ -774,9 +802,14 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
       isOkEnabled,
       activeTab,
       selectedClass: selectedClass?.id,
-      selectedClassExists: selectedClass !== null
+      selectedClassExists: selectedClass !== null,
+      selectedProperty: selectedProperty?.id,
+      restrictionFiller: restrictionFiller?.id,
+      selectedDataProperty: selectedDataProperty?.id,
+      datatype,
+      dataRestrictionType
     });
-  }, [isOkEnabled, activeTab, selectedClass]);
+  }, [isOkEnabled, activeTab, selectedClass, selectedProperty, restrictionFiller, selectedDataProperty, datatype, dataRestrictionType]);
 
   if (!isOpen) return null;
 
@@ -804,48 +837,56 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
           </button>
         </div>
 
-        {/* Tabs */}
+        {/* Tabs - only show tabs that are in visibleTabs */}
         <div className="flex border-b border-gray-300 bg-gray-100">
-          <button
-            onClick={() => setActiveTab('hierarchy')}
-            className={`px-4 py-2 text-sm font-medium transition-colors ${
-              activeTab === 'hierarchy'
-                ? 'bg-white text-gray-900 border-t-2 border-t-blue-500'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
-            }`}
-          >
-            Class hierarchy
-          </button>
-          <button
-            onClick={() => setActiveTab('objectRestriction')}
-            className={`px-4 py-2 text-sm font-medium transition-colors ${
-              activeTab === 'objectRestriction'
-                ? 'bg-white text-gray-900 border-t-2 border-t-blue-500'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
-            }`}
-          >
-            Object restriction creator
-          </button>
-          <button
-            onClick={() => setActiveTab('classExpression')}
-            className={`px-4 py-2 text-sm font-medium transition-colors ${
-              activeTab === 'classExpression'
-                ? 'bg-white text-gray-900 border-t-2 border-t-blue-500'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
-            }`}
-          >
-            Class expression editor
-          </button>
-          <button
-            onClick={() => setActiveTab('dataRestriction')}
-            className={`px-4 py-2 text-sm font-medium transition-colors ${
-              activeTab === 'dataRestriction'
-                ? 'bg-white text-gray-900 border-t-2 border-t-blue-500'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
-            }`}
-          >
-            Data restriction creator
-          </button>
+          {visibleTabs.includes('hierarchy') && (
+            <button
+              onClick={() => setActiveTab('hierarchy')}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                activeTab === 'hierarchy'
+                  ? 'bg-white text-gray-900 border-t-2 border-t-blue-500'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
+              }`}
+            >
+              Class hierarchy
+            </button>
+          )}
+          {visibleTabs.includes('objectRestriction') && (
+            <button
+              onClick={() => setActiveTab('objectRestriction')}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                activeTab === 'objectRestriction'
+                  ? 'bg-white text-gray-900 border-t-2 border-t-blue-500'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
+              }`}
+            >
+              Object restriction creator
+            </button>
+          )}
+          {visibleTabs.includes('classExpression') && (
+            <button
+              onClick={() => setActiveTab('classExpression')}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                activeTab === 'classExpression'
+                  ? 'bg-white text-gray-900 border-t-2 border-t-blue-500'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
+              }`}
+            >
+              Class expression editor
+            </button>
+          )}
+          {visibleTabs.includes('dataRestriction') && (
+            <button
+              onClick={() => setActiveTab('dataRestriction')}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                activeTab === 'dataRestriction'
+                  ? 'bg-white text-gray-900 border-t-2 border-t-blue-500'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
+              }`}
+            >
+              Data restriction creator
+            </button>
+          )}
         </div>
 
         {/* Content Area */}
