@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Search, ExternalLink, AlertCircle, Edit3 } from 'lucide-react';
+import { Plus, Trash2, Search, ExternalLink, AlertCircle, Edit3, User } from 'lucide-react';
 import { Panel, AnnotationsDisplay, AxiomSubsection } from './common';
-import { ClassExpressionDialog, MultiClassSelectorDialog, MultiPropertySelectorDialog, IRIEditorDialog, RestrictionData } from '../dialogs';
+import { ClassExpressionDialog, MultiClassSelectorDialog, MultiPropertySelectorDialog, IRIEditorDialog, IndividualSelectorDialog, RestrictionData } from '../dialogs';
 import apiClient from '../../services/apiClient';
 import ontologyMutationService from '../../services/ontologyMutationService';
-import type { TreeNode, Axiom, ClassUsage, AxiomUsage } from '../../types';
+import type { TreeNode, Axiom, ClassUsage, AxiomUsage, Individual } from '../../types';
 
 type AxiomType = 'EquivalentTo' | 'SubClassOf' | 'DisjointWith';
 
@@ -206,8 +206,12 @@ const ClassEditor: React.FC<{
   dataPropertyHierarchy?: TreeNode[];
   objectProperties?: any[];
   dataProperties?: any[];
-}> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes = [], onAddClass, onAddClassInline, onDeleteClass, onRefreshClasses, onAddObjectProperty, onAddDataProperty, onDeleteProperty, metadata, objectPropertyHierarchy: propObjectPropertyHierarchy, dataPropertyHierarchy: propDataPropertyHierarchy, objectProperties: propObjectProperties, dataProperties: propDataProperties }) => {
-  console.log('[ClassEditor] Received props - onAddClassInline exists:', !!onAddClassInline);
+  // Individual-related props
+  individuals?: Individual[];
+  onAddIndividual?: (name: string, classIri: string) => Promise<void>;
+  onDeleteIndividual?: (id: string) => Promise<void>;
+  onRefreshIndividuals?: () => void;
+}> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes = [], onAddClass, onAddClassInline, onDeleteClass, onRefreshClasses, onAddObjectProperty, onAddDataProperty, onDeleteProperty, metadata, objectPropertyHierarchy: propObjectPropertyHierarchy, dataPropertyHierarchy: propDataPropertyHierarchy, objectProperties: propObjectProperties, dataProperties: propDataProperties, individuals: propIndividuals = [], onAddIndividual, onDeleteIndividual, onRefreshIndividuals }) => {
   const [activeTab, setActiveTab] = useState<'annotations' | 'usage' | 'description'>('annotations');
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [classDetails, setClassDetails] = useState<any>(null);
@@ -271,6 +275,12 @@ const ClassEditor: React.FC<{
   const [editingHasKeyId, setEditingHasKeyId] = useState<string | undefined>();
   const [editingHasKeyProperties, setEditingHasKeyProperties] = useState<string[]>([]);
 
+  // Instances State
+  const [isInstancesOpen, setIsInstancesOpen] = useState(false);
+  const [classInstances, setClassInstances] = useState<Individual[]>([]);
+  const [loadingInstances, setLoadingInstances] = useState(false);
+  const [editingInstanceId, setEditingInstanceId] = useState<string | undefined>();
+
   // IRI Editor State
   const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
 
@@ -300,6 +310,7 @@ const ClassEditor: React.FC<{
     if (item.id && projectId) {
       loadClassDetails();
       loadProperties();
+      loadInstances();
     }
   }, [item.id, projectId]);
 
@@ -441,7 +452,24 @@ const ClassEditor: React.FC<{
     }
   };
 
+  const loadInstances = async () => {
+    setLoadingInstances(true);
+    try {
+      const response = await apiClient.get<any>(`/api/ontology/classes/instances/${projectId}?classIri=${encodeURIComponent(item.id)}`);
+      // Backend returns {success: true, data: [...]} or just the array
+      const instances = response?.data?.data || response?.data || response || [];
+      console.log('[ClassEditor] Class instances loaded:', instances.length);
+      setClassInstances(Array.isArray(instances) ? instances : []);
+    } catch (error) {
+      console.error('Failed to load class instances:', error);
+      setClassInstances([]);
+    } finally {
+      setLoadingInstances(false);
+    }
+  };
+
   const openEditor = (type: AxiomType, title: string, existingValue?: string, existingId?: string, initialTab?: 'hierarchy' | 'objectRestriction' | 'dataRestriction' | 'classExpression', restrictionData?: any) => {
+    console.log('[ClassEditor] openEditor called:', { type, title, classHierarchyLength: classHierarchy.length });
     setEditorType(type);
     // Update title to indicate edit mode
     if (existingValue && existingId) {
@@ -461,6 +489,14 @@ const ClassEditor: React.FC<{
   };
 
   const handleEditorConfirm = async (expression: string, restrictionData?: RestrictionData) => {
+    console.log('[ClassEditor] handleEditorConfirm called:', { 
+      expression, 
+      restrictionData, 
+      editorType,
+      editorExistingId,
+      classIri: item.id 
+    });
+    
     if (editorType) {
       // If we have an existing axiom ID, this is an edit operation
       if (editorExistingId) {
@@ -636,6 +672,7 @@ const ClassEditor: React.FC<{
   };
 
   const handleAddAxiom = async (type: AxiomType, definition: string, restrictionData?: RestrictionData) => {
+    console.log('[ClassEditor] handleAddAxiom called:', { type, definition, restrictionData, classHierarchyLength: classHierarchy.length });
     try {
       // If we have structured restriction data, use the specific restriction methods
       // NOTE: DisjointWith does NOT support restrictions - it's only for class-to-class disjointness
@@ -683,21 +720,32 @@ const ClassEditor: React.FC<{
         // Use specific mutation methods for simple class relationships
         switch (type) {
           case 'EquivalentTo':
+            console.log('[ClassEditor] Calling addEquivalentClass:', { projectId, classIri: item.id, equivalentClassIri: definition });
             await ontologyMutationService.addEquivalentClass(projectId, item.id, definition);
+            console.log('[ClassEditor] addEquivalentClass completed successfully');
             break;
           case 'SubClassOf':
+            console.log('[ClassEditor] Calling addSubClassOf:', { projectId, classIri: item.id, parentIri: definition });
             await ontologyMutationService.addSubClassOf(projectId, item.id, definition);
+            console.log('[ClassEditor] addSubClassOf completed successfully');
             break;
           case 'DisjointWith':
+            console.log('[ClassEditor] Calling addDisjointWith:', { projectId, classIri: item.id, disjointIri: definition });
             await ontologyMutationService.addDisjointWith(projectId, item.id, definition);
+            console.log('[ClassEditor] addDisjointWith completed successfully');
             break;
         }
       } else {
         // For complex Manchester Syntax expressions, use addAxiom (requires backend Manchester parser)
         await ontologyMutationService.addAxiom(projectId, item.id, type, definition);
       }
-      // Reload details to get the updated axioms (assuming backend processed it)
+      // Wait for GraphDB to index the new axiom (increased delay for SPARQL consistency)
+      console.log('[ClassEditor] Waiting 800ms for GraphDB to index...');
+      await new Promise(resolve => setTimeout(resolve, 800));
+      // Reload details to get the updated axioms
+      console.log('[ClassEditor] Reloading class details after axiom addition');
       await loadClassDetails();
+      console.log('[ClassEditor] Class details reloaded after axiom addition');
       // Also notify parent to update tree if needed (though axioms usually don't change tree structure unless it's subclassof)
       // onUpdate(item); // We might not need this if we reload details
     } catch (error) {
@@ -1063,6 +1111,100 @@ const ClassEditor: React.FC<{
     }
   };
 
+  // Instance handlers
+  const handleAddInstance = async (name: string) => {
+    console.log('[ClassEditor] handleAddInstance called:', { name, classIri: item.id });
+    try {
+      if (onAddIndividual) {
+        await onAddIndividual(name, item.id);
+      } else {
+        // Fallback to direct mutation service call
+        await ontologyMutationService.addIndividual(projectId, name, item.id);
+      }
+      
+      // Small delay to allow GraphDB to process the mutation
+      await new Promise(resolve => setTimeout(resolve, 300));
+      console.log('[ClassEditor] Reloading instances after adding');
+      await loadInstances();
+      
+      // Refresh individuals in parent if callback provided
+      if (onRefreshIndividuals) {
+        onRefreshIndividuals();
+      }
+    } catch (error) {
+      console.error('[ClassEditor] Failed to add instance:', error);
+      alert(`Failed to add instance: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const handleDeleteInstance = async (individualIri: string) => {
+    console.log('[ClassEditor] handleDeleteInstance called:', { individualIri, classIri: item.id });
+    try {
+      // Remove the class assertion (type) from the individual
+      await ontologyMutationService.removeClassAssertion(projectId, individualIri, item.id);
+      
+      // Small delay to allow GraphDB to process the mutation
+      await new Promise(resolve => setTimeout(resolve, 300));
+      console.log('[ClassEditor] Reloading instances after removing class assertion');
+      await loadInstances();
+      
+      // Refresh individuals in parent if callback provided
+      if (onRefreshIndividuals) {
+        onRefreshIndividuals();
+      }
+    } catch (error) {
+      console.error('[ClassEditor] Failed to remove instance:', error);
+      alert(`Failed to remove instance: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const handleEditInstance = (instanceId: string) => {
+    console.log('[ClassEditor] handleEditInstance called:', { instanceId, classIri: item.id });
+    setEditingInstanceId(instanceId);
+    setIsInstancesOpen(true);
+  };
+
+  const handleInstancesConfirm = async (selectedIndividuals: Individual[]) => {
+    console.log('[ClassEditor] handleInstancesConfirm called:', { selectedCount: selectedIndividuals.length, classIri: item.id, isEditing: !!editingInstanceId });
+    // This handles adding existing individuals as instances of this class
+    try {
+      // If editing, remove the old instance first
+      if (editingInstanceId) {
+        console.log('[ClassEditor] Editing instance - removing old:', editingInstanceId);
+        await ontologyMutationService.removeClassAssertion(projectId, editingInstanceId, item.id);
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+      
+      // Add class assertions for selected individuals
+      for (const individual of selectedIndividuals) {
+        // Check if this individual is already an instance of this class
+        if (!classInstances.some(i => i.id === individual.id)) {
+          // Add class assertion for this existing individual (not creating a new one)
+          console.log('[ClassEditor] Adding class assertion:', { individualIri: individual.id, classIri: item.id });
+          await ontologyMutationService.addClassAssertion(projectId, individual.id, item.id);
+          console.log('[ClassEditor] Class assertion added successfully');
+        }
+      }
+      
+      // Small delay to allow GraphDB to process the mutations
+      console.log('[ClassEditor] Waiting for GraphDB to process...');
+      await new Promise(resolve => setTimeout(resolve, 500));
+      console.log('[ClassEditor] Reloading instances...');
+      await loadInstances();
+      console.log('[ClassEditor] Instances reloaded');
+      
+      if (onRefreshIndividuals) {
+        onRefreshIndividuals();
+      }
+    } catch (error) {
+      console.error('[ClassEditor] Failed to add instances:', error);
+      alert(`Failed to add instances: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsInstancesOpen(false);
+      setEditingInstanceId(undefined);
+    }
+  };
+
   const annotationCount = Object.keys(item.annotations || {}).length;
   const displayAnnotations = loadingDetails ? {} : (item.annotations || {});
 
@@ -1138,9 +1280,11 @@ const ClassEditor: React.FC<{
         {activeTab === 'description' && (
             <Panel title="Description" defaultOpen={true} themeColor="bg-gradient-to-b from-[#F5F0E6] to-[#E1C688] text-black border-[#D6C9AD]">
               <div className="p-3 space-y-4">
+                {/* Equivalent To Section */}
                 <AxiomSubsection
                   title="Equivalent To"
                   axioms={classDetails?.equivalentClassesAxioms || item.equivalentClassesAxioms}
+                  inferredAxioms={classDetails?.inferredEquivalentClassesAxioms}
                   onAdd={(def) => handleAddAxiom('EquivalentTo', def)}
                   onEdit={(id, newDef) => handleEditAxiom('EquivalentTo', id, newDef)}
                   onDelete={(id) => handleDeleteAxiom('EquivalentTo', id)}
@@ -1150,9 +1294,11 @@ const ClassEditor: React.FC<{
                   dataProperties={dataProperties}
                 />
                 
+                {/* SubClass Of Section */}
                 <AxiomSubsection
                   title="SubClass Of"
                   axioms={classDetails?.subClassOfAxioms || item.subClassOfAxioms}
+                  inferredAxioms={classDetails?.inferredSubClassOfAxioms}
                   onAdd={(def) => handleAddAxiom('SubClassOf', def)}
                   onEdit={(id, newDef) => handleEditAxiom('SubClassOf', id, newDef)}
                   onDelete={(id) => handleDeleteAxiom('SubClassOf', id)}
@@ -1162,9 +1308,33 @@ const ClassEditor: React.FC<{
                   dataProperties={dataProperties}
                 />
                 
+                {/* General Class Axioms Section (if available) */}
+                {(classDetails?.generalClassAxioms && classDetails.generalClassAxioms.length > 0) && (
+                  <div className="mb-4">
+                    <div className="flex justify-between items-center mb-1 px-2 py-1">
+                      <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">
+                        General Class Axioms
+                      </h4>
+                      <span className="text-[10px] text-gray-400 italic">View only</span>
+                    </div>
+                    <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm">
+                      {classDetails.generalClassAxioms.map((axiom: any, idx: number) => (
+                        <div key={idx} className="group p-1.5 border-b border-gray-100 last:border-0 hover:bg-blue-50 transition-colors">
+                          <div className="text-sm font-mono text-gray-800 break-all leading-relaxed">
+                            {axiom.definition}
+                          </div>
+                          <div className="text-[10px] text-gray-400 mt-1">Complex axiom mentioning this class</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                {/* Disjoint With Section */}
                 <AxiomSubsection
                   title="Disjoint With"
                   axioms={classDetails?.disjointClassesAxioms || item.disjointClassesAxioms}
+                  inferredAxioms={classDetails?.inferredDisjointClassesAxioms}
                   onAdd={(def) => handleAddAxiom('DisjointWith', def)}
                   onEdit={(id, newDef) => handleEditDisjointWith(id)}
                   onDelete={(id) => handleDeleteAxiom('DisjointWith', id)}
@@ -1175,6 +1345,21 @@ const ClassEditor: React.FC<{
                   dataProperties={dataProperties}
                 />
                 
+                {/* Target for Key Section (Has Key) */}
+                <AxiomSubsection
+                  title="Target for Key"
+                  axioms={classDetails?.hasKeyAxioms || item.hasKeyAxioms}
+                  onAdd={() => {}}
+                  onEdit={(id, newDef) => handleEditHasKey(id)}
+                  onDelete={(id) => handleDeleteHasKey(id)}
+                  onAddClick={() => setIsHasKeyOpen(true)}
+                  onEditClick={(axiom) => handleEditHasKey(axiom.id)}
+                  emptyMessage="No keys defined"
+                  properties={properties}
+                  dataProperties={dataProperties}
+                />
+                
+                {/* Disjoint Union Of Section */}
                 <AxiomSubsection
                   title="Disjoint Union Of"
                   axioms={classDetails?.disjointUnionAxioms || item.disjointUnionAxioms}
@@ -1184,26 +1369,50 @@ const ClassEditor: React.FC<{
                   onAddClick={() => setIsDisjointUnionOpen(true)}
                   onEditClick={(axiom) => handleEditDisjointUnion(axiom.id)}
                   emptyMessage="No disjoint unions defined"
-                />
-
-                <AxiomSubsection
-                  title="Has Key"
-                  axioms={classDetails?.hasKeyAxioms || item.hasKeyAxioms}
-                  onAdd={() => {}}
-                  onEdit={(id, newDef) => handleEditHasKey(id)}
-                  onDelete={(id) => handleDeleteHasKey(id)}
-                  onAddClick={() => setIsHasKeyOpen(true)}
-                  onEditClick={(axiom) => handleEditHasKey(axiom.id)}
-                  emptyMessage="No keys defined"
+                  properties={properties}
+                  dataProperties={dataProperties}
                 />
                 
-                {/* Members Section (Placeholder for now, could fetch instances) */}
-                <div className="mt-4 pt-4 border-t border-gray-200">
-                   <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Members</h4>
-                   <div className="p-2 text-xs text-gray-500 italic bg-gray-50 border border-gray-200 rounded">
-                     Instances of this class are listed in the "Individuals by class" tab.
-                   </div>
-                </div>
+                {/* Instances Section */}
+                <AxiomSubsection
+                  title="Instances"
+                  axioms={classInstances.map(instance => ({
+                    id: instance.id,
+                    type: 'Instance',
+                    definition: instance.label
+                  }))}
+                  onAdd={() => {}}
+                  onEdit={(id, newDef) => handleEditInstance(id)}
+                  onDelete={(id) => handleDeleteInstance(id)}
+                  onAddClick={() => {
+                    setEditingInstanceId(undefined);
+                    setIsInstancesOpen(true);
+                  }}
+                  emptyMessage="No instances defined for this class"
+                  properties={properties}
+                  dataProperties={dataProperties}
+                />
+                
+                {/* SubClass Of (Anonymous Ancestor) Section */}
+                {(classDetails?.anonymousAncestorAxioms && classDetails.anonymousAncestorAxioms.length > 0) && (
+                  <div className="mb-4">
+                    <div className="flex justify-between items-center mb-1 px-2 py-1">
+                      <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">
+                        SubClass Of (Anonymous Ancestor)
+                      </h4>
+                      <span className="text-[10px] text-gray-400 italic">Inherited restrictions</span>
+                    </div>
+                    <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm">
+                      {classDetails.anonymousAncestorAxioms.map((axiom: any, idx: number) => (
+                        <div key={idx} className="group p-1.5 border-b border-gray-100 last:border-0 hover:bg-blue-50 transition-colors">
+                          <div className="text-sm font-mono text-gray-800 break-all leading-relaxed">
+                            {axiom.definition}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </Panel>
         )}
@@ -1278,10 +1487,7 @@ const ClassEditor: React.FC<{
         title={editingDisjointUnionId ? "Edit Disjoint Union Classes" : "Select Classes for Disjoint Union"}
         minSelection={2}
         initialSelectedIds={editingDisjointUnionMembers}
-        onAddClass={(() => {
-          console.log('[ClassEditor] onAddClass prop for Disjoint Union dialog - onAddClassInline exists:', !!onAddClassInline);
-          return onAddClassInline;
-        })()}
+        onAddClass={onAddClassInline}
         onDeleteClass={onDeleteClass}
       />
 
@@ -1307,6 +1513,26 @@ const ClassEditor: React.FC<{
         onAddObjectProperty={onAddObjectProperty}
         onAddDataProperty={onAddDataProperty}
         onDeleteProperty={onDeleteProperty}
+      />
+
+      {/* Instances Selector Dialog */}
+      <IndividualSelectorDialog
+        isOpen={isInstancesOpen}
+        onClose={() => {
+          setIsInstancesOpen(false);
+          setEditingInstanceId(undefined);
+        }}
+        onConfirm={handleInstancesConfirm}
+        individuals={propIndividuals}
+        projectId={projectId}
+        title={editingInstanceId ? "Edit Instance" : "Add Instance"}
+        classIri={item.id}
+        classLabel={item.label}
+        excludeIndividualIds={classInstances.filter(i => i.id !== editingInstanceId).map(i => i.id)}
+        minSelection={editingInstanceId ? 1 : 0}
+        initialSelectedIds={editingInstanceId ? [editingInstanceId] : []}
+        onAddIndividual={handleAddInstance}
+        onDeleteIndividual={onDeleteIndividual}
       />
 
       {/* IRI Editor Dialog */}

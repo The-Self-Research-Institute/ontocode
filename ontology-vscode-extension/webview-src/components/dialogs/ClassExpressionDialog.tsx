@@ -376,12 +376,25 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   };
 
   const handleConfirm = () => {
+    console.log('[ClassExpressionDialog] handleConfirm called', {
+      activeTab,
+      selectedClass: selectedClass?.id,
+      selectedProperty: selectedProperty?.id,
+      restrictionFiller: restrictionFiller?.id,
+      selectedDataProperty: selectedDataProperty?.id
+    });
+    
     let expression = '';
     let restrictionData: RestrictionData | undefined = undefined;
 
     switch (activeTab) {
       case 'hierarchy':
-        if (selectedClass) expression = selectedClass.id;
+        if (selectedClass) {
+          expression = selectedClass.id;
+          console.log('[ClassExpressionDialog] Hierarchy tab - selected class:', expression);
+        } else {
+          console.warn('[ClassExpressionDialog] Hierarchy tab - no class selected!');
+        }
         break;
       case 'objectRestriction':
         expression = buildObjectRestriction();
@@ -417,8 +430,11 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
     }
 
     if (expression) {
+      console.log('[ClassExpressionDialog] Calling onConfirm with expression:', expression);
       onConfirm(expression, restrictionData);
       handleClose();
+    } else {
+      console.warn('[ClassExpressionDialog] No expression to confirm! activeTab:', activeTab, 'selectedClass:', selectedClass);
     }
   };
 
@@ -442,16 +458,17 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
 
   // Handle toggle for hierarchy tab
   const handleHierarchyToggle = async (nodeId: string) => {
+    // Always update local expanded state first for immediate UI feedback
+    const isExpanded = localExpandedNodes.includes(nodeId);
+    setLocalExpandedNodes(
+      isExpanded
+        ? localExpandedNodes.filter(id => id !== nodeId)
+        : [...localExpandedNodes, nodeId]
+    );
+    
+    // Also call parent's toggle if provided (to load children)
     if (onToggleNode) {
       await onToggleNode(nodeId);
-    } else {
-      // Fallback to local state
-      const isExpanded = localExpandedNodes.includes(nodeId);
-      setLocalExpandedNodes(
-        isExpanded
-          ? localExpandedNodes.filter(id => id !== nodeId)
-          : [...localExpandedNodes, nodeId]
-      );
     }
   };
 
@@ -746,10 +763,20 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   const manchesterKeywords = ['and', 'or', 'not', 'some', 'only', 'min', 'max', 'exactly', 'value'];
 
   const isOkEnabled =
-    (activeTab === 'hierarchy' && selectedClass) ||
+    (activeTab === 'hierarchy' && selectedClass !== null) ||
     (activeTab === 'objectRestriction' && selectedProperty && restrictionFiller) ||
     (activeTab === 'classExpression' && manchesterExpression.trim()) ||
     (activeTab === 'dataRestriction' && selectedDataProperty);
+  
+  // Debug logging for OK button state
+  useEffect(() => {
+    console.log('[ClassExpressionDialog] OK button state:', {
+      isOkEnabled,
+      activeTab,
+      selectedClass: selectedClass?.id,
+      selectedClassExists: selectedClass !== null
+    });
+  }, [isOkEnabled, activeTab, selectedClass]);
 
   if (!isOpen) return null;
 
@@ -757,9 +784,10 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   const objectPropertiesTree = externalObjectPropertiesTree || propertiesToTree(objectProperties, false);
   const dataPropertiesTree = externalDataPropertiesTree || propertiesToTree(dataProperties, true);
 
-  // Use parent's expanded nodes if available, otherwise use local
-  const effectiveExpandedNodes = onToggleNode ? expandedNodes : localExpandedNodes;
-  const effectiveFillerExpandedNodes = onToggleNode ? [...expandedNodes, ...fillerExpandedNodes] : fillerExpandedNodes;
+  // Combine external and local expanded nodes for immediate UI feedback
+  // External nodes come from parent (for lazy loading), local nodes track immediate user interactions
+  const effectiveExpandedNodes = [...new Set([...expandedNodes, ...localExpandedNodes])];
+  const effectiveFillerExpandedNodes = [...new Set([...expandedNodes, ...fillerExpandedNodes])];
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -900,7 +928,10 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                   expandedNodes={effectiveExpandedNodes}
                   searchQuery={classSearchQuery}
                   onSearchQueryChange={setClassSearchQuery}
-                  onSelectItem={(item) => setSelectedClass(item as TreeNode)}
+                  onSelectItem={(item) => {
+                    console.log('[ClassExpressionDialog] Class selected from hierarchy:', item);
+                    setSelectedClass(item as TreeNode);
+                  }}
                   onToggleNode={handleHierarchyToggle}
                   onAddItem={projectId ? (type) => handleInlineAddClass(type as 'subclass' | 'sibling') : () => {}}
                   onDeleteItem={projectId ? handleInlineDeleteStart : () => {}}

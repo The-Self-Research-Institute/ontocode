@@ -631,7 +631,10 @@ const DetailsPanel = ({
   dataPropertyHierarchy,
   objectPropertyHierarchy,
   dataProperties,
-  metadata
+  metadata,
+  individuals,
+  setIndividuals,
+  markAsUnsaved
 }: {
   selectedItem: SelectableItem | null;
   entitiesTab: string;
@@ -661,6 +664,9 @@ const DetailsPanel = ({
   objectPropertyHierarchy: TreeNode[];
   dataProperties: Property[];
   metadata?: { ontologyIRI?: string } | null;
+  individuals: Individual[];
+  setIndividuals: React.Dispatch<React.SetStateAction<Individual[]>>;
+  markAsUnsaved: () => void;
 }) => {
   if (!selectedItem) {
     return (
@@ -702,6 +708,36 @@ const DetailsPanel = ({
         dataPropertyHierarchy={dataPropertyHierarchy}
         objectProperties={objectProperties}
         dataProperties={dataProperties}
+        individuals={individuals}
+        onAddIndividual={async (name: string, classIri: string) => {
+          const id = `${metadata?.ontologyIRI || 'http://example.org/ontology'}#${name.replace(/\s+/g, '_')}`;
+          await ontologyMutationService.createIndividual(projectId || '', id, name, classIri);
+          const newIndividual: Individual = {
+            id,
+            iri: id,
+            label: name,
+            annotations: { 'rdfs:label': name },
+            types: [classIri]
+          };
+          setIndividuals(prev => [...prev, newIndividual]);
+          markAsUnsaved();
+        }}
+        onDeleteIndividual={async (id: string) => {
+          await ontologyMutationService.deleteIndividual(projectId || '', id);
+          setIndividuals(prev => prev.filter(ind => ind.id !== id));
+          markAsUnsaved();
+        }}
+        onRefreshIndividuals={() => {
+          // Reload individuals from backend
+          if (projectId) {
+            apiClient.get<any>(`/api/ontology/individuals/${projectId}`)
+              .then(res => {
+                setIndividuals(Array.isArray(res?.data) ? res.data : 
+                              Array.isArray(res?.individuals) ? res.individuals : []);
+              })
+              .catch(err => console.error('Failed to refresh individuals:', err));
+          }
+        }}
         {...sharedProps}
       />;
     case 'ObjectProperties':
@@ -2087,25 +2123,58 @@ const Dashboard = () => {
       
       showNotification('Rollback applied. Refreshing data...', 'info');
       
-      // Refresh the data after rollback
+      // Refresh the data after rollback with longer delay to ensure GraphDB has processed
       setTimeout(() => {
-        // Refresh hierarchy
+        // Refresh hierarchy and properties
         refreshClassHierarchy();
         
-        // If we have the entity IRI, refresh its details
-        if (detail?.entityIRI && selectedItem?.id === detail.entityIRI) {
-          apiClient.get(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(detail.entityIRI)}`)
-            .then(response => {
-              const newData = response.data || response;
-              if (!newData.id && newData.iri) {
-                newData.id = newData.iri;
-              }
-              console.log('[Dashboard] ✅ Refreshed entity after rollback:', newData);
-              updateItemInState(newData);
-            })
-            .catch(error => console.error('[Dashboard] Failed to refresh entity after rollback:', error));
+        // Refresh all entity tabs to ensure data is current
+        if (entitiesTab === 'ObjectProperties') {
+          refreshProperties();
+        } else if (entitiesTab === 'DataProperties') {
+          refreshProperties();
         }
-      }, 300);
+        
+        // If we have the entity IRI and it matches the selected item, refresh its details
+        if (detail?.entityIRI && selectedItem?.id === detail.entityIRI) {
+          console.log('[Dashboard] 🔄 Refreshing entity details for:', detail.entityIRI);
+          
+          // Determine the correct API endpoint based on entity type
+          // Try to use entity type from the event, fallback to current tab
+          let apiEndpoint = '';
+          const entityType = detail.entityType ? detail.entityType.toLowerCase() : '';
+          
+          if (entitiesTab === 'Classes' || entityType.includes('class')) {
+            apiEndpoint = `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(detail.entityIRI)}`;
+          } else if (entitiesTab === 'ObjectProperties' || entityType.includes('objectproperty') || entityType.includes('object_property')) {
+            apiEndpoint = `/api/ontology/${projectId}/object-properties/${encodeURIComponent(detail.entityIRI)}`;
+          } else if (entitiesTab === 'DataProperties' || entityType.includes('dataproperty') || entityType.includes('data_property')) {
+            apiEndpoint = `/api/ontology/${projectId}/data-properties/${encodeURIComponent(detail.entityIRI)}`;
+          } else if (entitiesTab === 'Individuals' || entityType.includes('individual')) {
+            apiEndpoint = `/api/ontology/${projectId}/individuals/${encodeURIComponent(detail.entityIRI)}`;
+          }
+          
+          if (apiEndpoint) {
+            apiClient.get(apiEndpoint)
+              .then(response => {
+                const newData = response.data || response;
+                if (!newData.id && newData.iri) {
+                  newData.id = newData.iri;
+                }
+                console.log('[Dashboard] ✅ Refreshed entity after rollback:', newData);
+                updateItemInState(newData);
+                
+                // Update selected item to reflect the rollback
+                setSelectedItem(newData);
+              })
+              .catch(error => console.error('[Dashboard] Failed to refresh entity after rollback:', error));
+          }
+        } else if (detail?.entityIRI) {
+          // Even if it's not the selected item, we should refresh the view
+          console.log('[Dashboard] 🔄 Entity rollback for non-selected item, refreshing view');
+          fetchData();
+        }
+      }, 600); // Increased delay to match backend processing time
     };
     
     window.addEventListener('ontologyRollback', handleRollback as EventListener);
@@ -2114,7 +2183,7 @@ const Dashboard = () => {
     return () => {
       window.removeEventListener('ontologyRollback', handleRollback as EventListener);
     };
-  }, [projectId, selectedItem, refreshClassHierarchy, updateItemInState, showNotification]);
+  }, [projectId, selectedItem, entitiesTab, refreshClassHierarchy, updateItemInState, showNotification, fetchData]);
 
   // Handle reconnection after WebSocket disconnect - refresh data to sync
   useEffect(() => {
@@ -2557,7 +2626,11 @@ const Dashboard = () => {
       const opList = allProps.filter((p: any) => p.type === 'ObjectProperty');
       console.log('[refreshProperties] Object properties:', opList.length);
       setObjectProperties(opList);
-      
+       const objectRes = await apiClient.get(`/api/ontology/object-properties/${projectId}`);
+    setObjectProperties(objectRes.data || []);
+    const dataRes = await apiClient.get(`/api/ontology/data-properties/${projectId}`);
+    setDataProperties(dataRes.data || []);
+    console.log('[Dashboard] ✅ Properties refreshed');
       // Build object property hierarchy
       const opMap = new Map<string, TreeNode>();
       opList.forEach((p: any) => {
@@ -4389,6 +4462,9 @@ const Dashboard = () => {
                     metadata={metadata}
                     objectPropertyHierarchy={objectPropertyHierarchy}
                     dataPropertyHierarchy={dataPropertyHierarchy}
+                    individuals={individuals}
+                    setIndividuals={setIndividuals}
+                    markAsUnsaved={markAsUnsaved}
                   />
                 </div>
               </section>

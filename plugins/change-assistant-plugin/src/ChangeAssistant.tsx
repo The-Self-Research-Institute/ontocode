@@ -592,15 +592,16 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
             entityIRI: change.entityUri,
             entityLabel: change.entityLabel,
             action: change.action,
+            entityType: change.type, // Include entity type for proper refresh
             success: true
           }
         }));
         
-        // Small delay to allow GraphDB to process the change before refreshing
+        // Increase delay to allow GraphDB to fully process the change before refreshing
         setTimeout(() => {
           loadChanges();
           loadDraftChanges();
-        }, 500);
+        }, 800);
       } else {
         setRollbackError(data.error || 'Failed to rollback change');
         showNotification('Failed to rollback: ' + (data.error || 'Unknown error'), 'error');
