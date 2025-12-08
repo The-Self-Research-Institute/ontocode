@@ -40,7 +40,9 @@ import {
   EntityPreferencesDialog,
   AnnotationPropertyDomainDialog,
   AnnotationPropertyRangeDialog,
-  AnnotationPropertySuperpropertyDialog
+  AnnotationPropertySuperpropertyDialog,
+  DataPropertyRangeDialog,
+  TabType
 } from './dialogs';
 import { useKeyboardShortcuts, DEFAULT_SHORTCUTS, KeyboardShortcut } from '../hooks/useKeyboardShortcuts';
 import { useEntityPreferences } from '../contexts/EntityPreferencesContext';
@@ -632,6 +634,7 @@ const DetailsPanel = ({
   expandedNodes,
   onToggleNode,
   onAddClass,
+  onAddClassInline,
   onDeleteClass,
   onRefreshClasses,
   onAddObjectProperty,
@@ -639,7 +642,10 @@ const DetailsPanel = ({
   dataPropertyHierarchy,
   objectPropertyHierarchy,
   dataProperties,
-  metadata
+  metadata,
+  individuals,
+  setIndividuals,
+  markAsUnsaved
 }: {
   selectedItem: SelectableItem | null;
   entitiesTab: string;
@@ -664,6 +670,7 @@ const DetailsPanel = ({
   expandedNodes?: string[];
   onToggleNode?: (nodeId: string) => Promise<void> | void;
   onAddClass?: (type: 'subclass' | 'sibling') => void;
+  onAddClassInline?: (type: 'subclass' | 'sibling', parentId?: string, name?: string) => Promise<void>;
   onDeleteClass?: () => void;
   onRefreshClasses?: () => Promise<void>;
   onAddObjectProperty?: (type: 'subclass' | 'sibling', parentId?: string, name?: string) => Promise<void>;
@@ -672,6 +679,9 @@ const DetailsPanel = ({
   objectPropertyHierarchy: TreeNode[];
   dataProperties: Property[];
   metadata?: { ontologyIRI?: string } | null;
+  individuals: Individual[];
+  setIndividuals: React.Dispatch<React.SetStateAction<Individual[]>>;
+  markAsUnsaved: () => void;
 }) => {
   if (!selectedItem) {
     return (
@@ -702,6 +712,7 @@ const DetailsPanel = ({
         expandedNodes={expandedNodes}
         onToggleNode={onToggleNode}
         onAddClass={onAddClass}
+        onAddClassInline={onAddClassInline}
         onDeleteClass={onDeleteClass}
         onRefreshClasses={onRefreshClasses}
         onAddObjectProperty={onAddObjectProperty}
@@ -712,6 +723,36 @@ const DetailsPanel = ({
         dataPropertyHierarchy={dataPropertyHierarchy}
         objectProperties={objectProperties}
         dataProperties={dataProperties}
+        individuals={individuals}
+        onAddIndividual={async (name: string, classIri: string) => {
+          const id = `${metadata?.ontologyIRI || 'http://example.org/ontology'}#${name.replace(/\s+/g, '_')}`;
+          await ontologyMutationService.createIndividual(projectId || '', id, name, classIri);
+          const newIndividual: Individual = {
+            id,
+            iri: id,
+            label: name,
+            annotations: { 'rdfs:label': name },
+            types: [classIri]
+          };
+          setIndividuals(prev => [...prev, newIndividual]);
+          markAsUnsaved();
+        }}
+        onDeleteIndividual={async (id: string) => {
+          await ontologyMutationService.deleteIndividual(projectId || '', id);
+          setIndividuals(prev => prev.filter(ind => ind.id !== id));
+          markAsUnsaved();
+        }}
+        onRefreshIndividuals={() => {
+          // Reload individuals from backend
+          if (projectId) {
+            apiClient.get<any>(`/api/ontology/individuals/${projectId}`)
+              .then(res => {
+                setIndividuals(Array.isArray(res?.data) ? res.data : 
+                              Array.isArray(res?.individuals) ? res.individuals : []);
+              })
+              .catch(err => console.error('Failed to refresh individuals:', err));
+          }
+        }}
         {...sharedProps}
       />;
     case 'ObjectProperties':
@@ -837,6 +878,9 @@ const Dashboard = () => {
   const [isAnnotationDomainDialogOpen, setIsAnnotationDomainDialogOpen] = useState(false);
   const [isAnnotationRangeDialogOpen, setIsAnnotationRangeDialogOpen] = useState(false);
   const [isAnnotationSuperpropertyDialogOpen, setIsAnnotationSuperpropertyDialogOpen] = useState(false);
+  
+  // Data Property Range Dialog (Protégé-style - shows datatypes)
+  const [isDataPropertyRangeDialogOpen, setIsDataPropertyRangeDialogOpen] = useState(false);
   
   // Confirm dialog state
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -2112,25 +2156,58 @@ const Dashboard = () => {
       
       showNotification('Rollback applied. Refreshing data...', 'info');
       
-      // Refresh the data after rollback
+      // Refresh the data after rollback with longer delay to ensure GraphDB has processed
       setTimeout(() => {
-        // Refresh hierarchy
+        // Refresh hierarchy and properties
         refreshClassHierarchy();
         
-        // If we have the entity IRI, refresh its details
-        if (detail?.entityIRI && selectedItem?.id === detail.entityIRI) {
-          apiClient.get(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(detail.entityIRI)}`)
-            .then(response => {
-              const newData = response.data || response;
-              if (!newData.id && newData.iri) {
-                newData.id = newData.iri;
-              }
-              console.log('[Dashboard] ✅ Refreshed entity after rollback:', newData);
-              updateItemInState(newData);
-            })
-            .catch(error => console.error('[Dashboard] Failed to refresh entity after rollback:', error));
+        // Refresh all entity tabs to ensure data is current
+        if (entitiesTab === 'ObjectProperties') {
+          refreshProperties();
+        } else if (entitiesTab === 'DataProperties') {
+          refreshProperties();
         }
-      }, 300);
+        
+        // If we have the entity IRI and it matches the selected item, refresh its details
+        if (detail?.entityIRI && selectedItem?.id === detail.entityIRI) {
+          console.log('[Dashboard] 🔄 Refreshing entity details for:', detail.entityIRI);
+          
+          // Determine the correct API endpoint based on entity type
+          // Try to use entity type from the event, fallback to current tab
+          let apiEndpoint = '';
+          const entityType = detail.entityType ? detail.entityType.toLowerCase() : '';
+          
+          if (entitiesTab === 'Classes' || entityType.includes('class')) {
+            apiEndpoint = `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(detail.entityIRI)}`;
+          } else if (entitiesTab === 'ObjectProperties' || entityType.includes('objectproperty') || entityType.includes('object_property')) {
+            apiEndpoint = `/api/ontology/${projectId}/object-properties/${encodeURIComponent(detail.entityIRI)}`;
+          } else if (entitiesTab === 'DataProperties' || entityType.includes('dataproperty') || entityType.includes('data_property')) {
+            apiEndpoint = `/api/ontology/${projectId}/data-properties/${encodeURIComponent(detail.entityIRI)}`;
+          } else if (entitiesTab === 'Individuals' || entityType.includes('individual')) {
+            apiEndpoint = `/api/ontology/${projectId}/individuals/${encodeURIComponent(detail.entityIRI)}`;
+          }
+          
+          if (apiEndpoint) {
+            apiClient.get(apiEndpoint)
+              .then(response => {
+                const newData = response.data || response;
+                if (!newData.id && newData.iri) {
+                  newData.id = newData.iri;
+                }
+                console.log('[Dashboard] ✅ Refreshed entity after rollback:', newData);
+                updateItemInState(newData);
+                
+                // Update selected item to reflect the rollback
+                setSelectedItem(newData);
+              })
+              .catch(error => console.error('[Dashboard] Failed to refresh entity after rollback:', error));
+          }
+        } else if (detail?.entityIRI) {
+          // Even if it's not the selected item, we should refresh the view
+          console.log('[Dashboard] 🔄 Entity rollback for non-selected item, refreshing view');
+          fetchData();
+        }
+      }, 600); // Increased delay to match backend processing time
     };
     
     window.addEventListener('ontologyRollback', handleRollback as EventListener);
@@ -2139,7 +2216,7 @@ const Dashboard = () => {
     return () => {
       window.removeEventListener('ontologyRollback', handleRollback as EventListener);
     };
-  }, [projectId, selectedItem, refreshClassHierarchy, updateItemInState, showNotification]);
+  }, [projectId, selectedItem, entitiesTab, refreshClassHierarchy, updateItemInState, showNotification, fetchData]);
 
   // Handle reconnection after WebSocket disconnect - refresh data to sync
   useEffect(() => {
@@ -2582,7 +2659,11 @@ const Dashboard = () => {
       const opList = allProps.filter((p: any) => p.type === 'ObjectProperty');
       console.log('[refreshProperties] Object properties:', opList.length);
       setObjectProperties(opList);
-      
+       const objectRes = await apiClient.get(`/api/ontology/object-properties/${projectId}`);
+    setObjectProperties(objectRes.data || []);
+    const dataRes = await apiClient.get(`/api/ontology/data-properties/${projectId}`);
+    setDataProperties(dataRes.data || []);
+    console.log('[Dashboard] ✅ Properties refreshed');
       // Build object property hierarchy
       const opMap = new Map<string, TreeNode>();
       opList.forEach((p: any) => {
@@ -2778,6 +2859,66 @@ const Dashboard = () => {
       throw error;
     }
   }, [projectId, metadata, dataPropertyHierarchy, user, refreshProperties, showNotification]);
+
+  // Handler for creating classes with name parameter (for inline creation in dialogs)
+  const handleAddClassInline = useCallback(async (
+    type: 'subclass' | 'sibling',
+    parentId?: string,
+    name?: string
+  ) => {
+    if (!projectId) return;
+
+    try {
+      console.log('[handleAddClassInline] Creating class:', name, 'type:', type, 'parentId:', parentId);
+      const baseIri = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
+      const cleanName = (name || 'NewClass').replace(/\s+/g, '_');
+      const newIri = `${baseIri}${baseIri.endsWith('#') || baseIri.endsWith('/') ? '' : '#'}${cleanName}`;
+
+      let parentIri = 'http://www.w3.org/2002/07/owl#Thing';
+      
+      if (parentId) {
+        if (type === 'subclass') {
+          parentIri = parentId;
+        } else if (type === 'sibling') {
+          const parent = findParentNode(classHierarchy, parentId);
+          if (parent) parentIri = parent.id;
+        }
+      }
+
+      console.log('[handleAddClassInline] Creating with IRI:', newIri, 'parent:', parentIri);
+      await ontologyMutationService.createClass(
+        projectId,
+        newIri,
+        name || 'NewClass',
+        parentIri,
+        user?.email || 'anonymous',
+        user?.username || 'Anonymous'
+      );
+
+      console.log('[handleAddClassInline] Class created, refreshing...');
+      // Add a small delay to ensure backend has processed the class
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // Ensure parent node is in expanded nodes before refresh
+      if (parentIri && !expandedNodes.includes(parentIri)) {
+        setExpandedNodes(prev => [...prev, parentIri]);
+      }
+      
+      await refreshClassHierarchy();
+      
+      // Re-expand the parent node after refresh to ensure it stays open
+      if (parentIri && !expandedNodes.includes(parentIri)) {
+        setExpandedNodes(prev => [...prev, parentIri]);
+      }
+      
+      console.log('[handleAddClassInline] Refresh complete');
+      showNotification(`Class "${name}" created successfully!`);
+    } catch (error) {
+      console.error('Failed to create class:', error);
+      showNotification('Failed to create class. See console for details.', 'error');
+      throw error;
+    }
+  }, [projectId, metadata, classHierarchy, user, refreshClassHierarchy, showNotification, expandedNodes]);
 
   const handleAddItem = useCallback(async (type: 'subclass' | 'sibling' | 'individual') => {
     if (!projectId) return;
@@ -4019,7 +4160,50 @@ const Dashboard = () => {
   // #region Selector Handlers
   const handleOpenClassSelector = (target: 'domain' | 'range') => {
     setSelectorTarget(target);
-    setIsClassExpressionDialogOpen(true);
+    
+    // For Data Property ranges, show the datatype selector instead of class expression
+    if (target === 'range' && selectedItem?.type === 'DatatypeProperty') {
+      setIsDataPropertyRangeDialogOpen(true);
+    } else {
+      setIsClassExpressionDialogOpen(true);
+    }
+  };
+
+  // Handler for Data Property Range selection (datatypes)
+  const handleDataPropertyRangeConfirm = async (datatypeIri: string) => {
+    if (!selectedItem || !projectId) return;
+
+    try {
+      // Get display label for the datatype with proper prefix
+      const getDisplayLabel = (iri: string): string => {
+        if (iri.includes('XMLSchema#')) {
+          return 'xsd:' + iri.split('#').pop();
+        } else if (iri.includes('rdf-syntax-ns#')) {
+          return 'rdf:' + iri.split('#').pop();
+        } else if (iri.includes('rdf-schema#') || iri.includes('2000/01/rdf-schema#')) {
+          return 'rdfs:' + iri.split('#').pop();
+        } else if (iri.includes('owl#')) {
+          return 'owl:' + iri.split('#').pop();
+        }
+        return iri.split('#').pop() || iri;
+      };
+      
+      const displayLabel = getDisplayLabel(datatypeIri);
+      
+      await ontologyMutationService.addPropertyRange(
+        projectId, 
+        selectedItem.id, 
+        datatypeIri, 
+        user?.email || 'anonymous', 
+        user?.username || 'Anonymous'
+      );
+      updateItemInState({ ...selectedItem, ranges: [...((selectedItem as Property).ranges || []), displayLabel] });
+    } catch (error) {
+      console.error('Failed to add data property range', error);
+    } finally {
+      setIsDataPropertyRangeDialogOpen(false);
+      setSelectorTarget(null);
+    }
   };
 
   const handleOpenPropertySelector = (target: 'subProperty' | 'inverse' | 'disjoint' | 'equivalent') => {
@@ -4029,17 +4213,31 @@ const Dashboard = () => {
     setIsObjectPropertyExpressionDialogOpen(true);
   };
 
-  const handleManchesterConfirm = async (expression: string, _restrictionData?: unknown) => {
+  const handleManchesterConfirm = async (expression: string, restrictionData?: any) => {
     if (!selectedItem || !projectId || !selectorTarget) return;
 
     try {
       switch (selectorTarget) {
         case 'domain':
-          await ontologyMutationService.addPropertyDomain(projectId, selectedItem.id, expression, user?.email || 'anonymous', user?.username || 'Anonymous');
+          await ontologyMutationService.addPropertyDomain(
+            projectId, 
+            selectedItem.id, 
+            expression, 
+            user?.email || 'anonymous', 
+            user?.username || 'Anonymous',
+            restrictionData
+          );
           updateItemInState({ ...selectedItem, domains: [...((selectedItem as Property).domains || []), expression] });
           break;
         case 'range':
-          await ontologyMutationService.addPropertyRange(projectId, selectedItem.id, expression, user?.email || 'anonymous', user?.username || 'Anonymous');
+          await ontologyMutationService.addPropertyRange(
+            projectId, 
+            selectedItem.id, 
+            expression, 
+            user?.email || 'anonymous', 
+            user?.username || 'Anonymous',
+            restrictionData
+          );
           updateItemInState({ ...selectedItem, ranges: [...((selectedItem as Property).ranges || []), expression] });
           break;
       }
@@ -4458,6 +4656,7 @@ const Dashboard = () => {
                     expandedNodes={expandedNodes}
                     onToggleNode={toggleNode}
                     onAddClass={(type) => handleAddItem(type)}
+                    onAddClassInline={handleAddClassInline}
                     onDeleteClass={() => handleDeleteItem()}
                     onRefreshClasses={refreshClassHierarchy}
                     onAddObjectProperty={handleAddObjectProperty}
@@ -4465,6 +4664,9 @@ const Dashboard = () => {
                     metadata={metadata}
                     objectPropertyHierarchy={objectPropertyHierarchy}
                     dataPropertyHierarchy={dataPropertyHierarchy}
+                    individuals={individuals}
+                    setIndividuals={setIndividuals}
+                    markAsUnsaved={markAsUnsaved}
                   />
                 </div>
               </section>
@@ -4478,7 +4680,7 @@ const Dashboard = () => {
       </div>
 
       {/* Class Selector Dialog */}
-      {/* Class Expression Dialog for Domain/Range with 4 tabs */}
+      {/* Class Expression Dialog for Domain/Range */}
       <ClassExpressionDialog
         isOpen={isClassExpressionDialogOpen}
         onClose={() => {
@@ -4518,6 +4720,9 @@ const Dashboard = () => {
         onToggleNode={toggleNode}
         externalExpandedNodes={expandedNodes}
         title="Select Class"
+        onAddClass={handleAddClassInline}
+        onDeleteClass={() => handleDeleteItem()}
+        metadata={metadata}
       />
 
       {/* Property Expression Dialog */}
@@ -4541,10 +4746,12 @@ const Dashboard = () => {
           setSelectorTarget(null);
         }}
         onConfirm={handleObjectPropertySelected}
-        objectPropertyHierarchy={objectPropertyHierarchy}
+        objectPropertyHierarchy={selectedItem?.type === 'DatatypeProperty' ? dataPropertyHierarchy : objectPropertyHierarchy}
         title={selectedItem ? `'${(selectedItem as Property).label || selectedItem.id.split('#').pop()}'` : 'Select Property'}
         projectId={projectId || undefined}
         onRefresh={refreshProperties}
+        showInverseOption={selectedItem?.type !== 'DatatypeProperty'}
+        propertyType={selectedItem?.type === 'DatatypeProperty' ? 'data' : 'object'}
       />
 
       {/* Annotation Property Domain Dialog (Protégé-style) */}
@@ -4585,6 +4792,19 @@ const Dashboard = () => {
         currentPropertyId={selectedItem?.id}
         title="Superproperties"
         selectedSuperproperties={(selectedItem as AnnotationProperty & { superProperties?: string[] })?.superProperties}
+      />
+
+      {/* Data Property Range Dialog (Protégé-style - shows datatypes) */}
+      <DataPropertyRangeDialog
+        isOpen={isDataPropertyRangeDialogOpen}
+        onClose={() => {
+          setIsDataPropertyRangeDialogOpen(false);
+          setSelectorTarget(null);
+        }}
+        onConfirm={handleDataPropertyRangeConfirm}
+        datatypes={datatypes}
+        title={selectedItem ? `'${(selectedItem as Property).label || selectedItem.id.split('#').pop()}'` : 'Select Range'}
+        selectedRanges={(selectedItem as Property)?.ranges}
       />
 
       {/* Project Selector Modal */}

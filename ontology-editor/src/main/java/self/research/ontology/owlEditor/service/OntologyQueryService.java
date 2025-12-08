@@ -904,10 +904,11 @@ public class OntologyQueryService {
         // - Self-references
         // - Blank nodes (restrictions are handled separately)
         // - Inferred triples (only queries explicit graph to avoid showing inferred subClassOf from equivalentClass)
+        // Check both explicit graph and default graph for triples added via SPARQL UPDATE
         String subClassQuery = PREFIXES + """
             SELECT DISTINCT ?super ?label WHERE {
-              GRAPH <http://www.ontotext.com/explicit> {
-                <%s> rdfs:subClassOf ?super .
+                GRAPH <http://www.ontotext.com/explicit> {
+                  <%s> rdfs:subClassOf ?super .
               }
               FILTER(isIRI(?super))
               FILTER(?super != owl:Thing)
@@ -918,7 +919,7 @@ public class OntologyQueryService {
               OPTIONAL { ?super rdfs:label ?label }
             }
             ORDER BY ?label
-            """.formatted(classIri, classIri);
+            """.formatted(classIri, classIri, classIri);
         TupleQueryResult subClassRs = datasetService.execSelect(projectId, subClassQuery);
         List<Map<String, String>> subClassAxioms = new ArrayList<>();
         while (subClassRs.hasNext()) {
@@ -941,9 +942,10 @@ public class OntologyQueryService {
         // - minCardinality, maxCardinality, cardinality (unqualified)
         // - minQualifiedCardinality, maxQualifiedCardinality, qualifiedCardinality (qualified)
         // - hasSelf
+        // Check both explicit graph and default graph for triples added via SPARQL UPDATE
         String subClassRestrictionQuery = PREFIXES + """
             SELECT DISTINCT ?restriction ?prop ?propLabel ?restrictionType ?filler ?fillerLabel ?card ?propType WHERE {
-              GRAPH <http://www.ontotext.com/explicit> {
+                GRAPH <http://www.ontotext.com/explicit> {
                 <%s> rdfs:subClassOf ?restriction .
                 ?restriction a owl:Restriction ;
                             owl:onProperty ?prop .
@@ -1014,7 +1016,7 @@ public class OntologyQueryService {
               OPTIONAL { ?filler rdfs:label ?fillerLabel }
               FILTER(BOUND(?restrictionType))
             }
-            """.formatted(classIri);
+            """.formatted(classIri, classIri);
         TupleQueryResult subClassRestrictionRs = datasetService.execSelect(projectId, subClassRestrictionQuery);
         Set<String> seenRestrictions = new LinkedHashSet<>(); // Track to avoid duplicates
         while (subClassRestrictionRs.hasNext()) {
@@ -1160,15 +1162,17 @@ public class OntologyQueryService {
         
         // Get EquivalentClass axioms (simple IRI-based)
         // Exclude self-equivalence (a class is trivially equivalent to itself)
+        // Check both explicit graph and default graph for triples added via SPARQL UPDATE
         String equivQuery = PREFIXES + """
             SELECT ?equiv ?label WHERE {
-              GRAPH <http://www.ontotext.com/explicit> {
+                GRAPH <http://www.ontotext.com/explicit> {
+                  <%s> owl:equivalentClass ?equiv .
                 <%s> owl:equivalentClass ?equiv .
               }
               FILTER(isIRI(?equiv) && ?equiv != <%s>)
               OPTIONAL { ?equiv rdfs:label ?label }
             }
-            """.formatted(classIri, classIri);
+            """.formatted(classIri, classIri, classIri);
         TupleQueryResult equivRs = datasetService.execSelect(projectId, equivQuery);
         List<Map<String, String>> equivAxioms = new ArrayList<>();
         while (equivRs.hasNext()) {
@@ -1184,9 +1188,10 @@ public class OntologyQueryService {
         }
         
         // Get EquivalentClass restrictions (enhanced query like Protégé)
+        // Check both explicit graph and default graph for triples added via SPARQL UPDATE
         String equivRestrictionQuery = PREFIXES + """
             SELECT ?restriction ?prop ?propLabel ?restrictionType ?filler ?fillerLabel ?card WHERE {
-              GRAPH <http://www.ontotext.com/explicit> {
+                GRAPH <http://www.ontotext.com/explicit> {
                 <%s> owl:equivalentClass ?restriction .
                 ?restriction a owl:Restriction ;
                             owl:onProperty ?prop .
@@ -1253,7 +1258,7 @@ public class OntologyQueryService {
               OPTIONAL { ?filler rdfs:label ?fillerLabel }
               FILTER(BOUND(?restrictionType))
             }
-            """.formatted(classIri);
+            """.formatted(classIri, classIri);
         TupleQueryResult equivRestrictionRs = datasetService.execSelect(projectId, equivRestrictionQuery);
         while (equivRestrictionRs.hasNext()) {
             BindingSet sol = equivRestrictionRs.next();
@@ -1428,6 +1433,7 @@ public class OntologyQueryService {
         // Get DisjointWith axioms
         // Include both direct owl:disjointWith and owl:AllDisjointClasses
         // Exclude self-disjointness (which would be contradictory)
+        // Check both explicit graph and default graph for triples added via SPARQL UPDATE
         String disjointQuery = PREFIXES + """
             SELECT DISTINCT ?disjoint ?label WHERE {
               {
@@ -1454,7 +1460,7 @@ public class OntologyQueryService {
               OPTIONAL { ?disjoint rdfs:label ?label }
             }
             ORDER BY ?label
-            """.formatted(classIri, classIri, classIri, classIri, classIri);
+            """.formatted(classIri, classIri, classIri, classIri, classIri, classIri, classIri);
         TupleQueryResult disjointRs = datasetService.execSelect(projectId, disjointQuery);
         List<Map<String, String>> disjointAxioms = new ArrayList<>();
         while (disjointRs.hasNext()) {
@@ -1559,7 +1565,388 @@ public class OntologyQueryService {
         }
         details.put("hasKeyAxioms", hasKeyAxioms);
         
+        // Get inferred equivalent classes (from reasoner)
+        String inferredEquivQuery = PREFIXES + """
+            SELECT DISTINCT ?equiv ?label WHERE {
+              GRAPH <http://www.ontotext.com/inferred> {
+                <%s> owl:equivalentClass ?equiv .
+              }
+              FILTER NOT EXISTS {
+                GRAPH <http://www.ontotext.com/explicit> {
+                  <%s> owl:equivalentClass ?equiv .
+                }
+              }
+              FILTER(isIRI(?equiv) && ?equiv != <%s>)
+              OPTIONAL { ?equiv rdfs:label ?label }
+            }
+            """.formatted(classIri, classIri, classIri);
+        TupleQueryResult inferredEquivRs = datasetService.execSelect(projectId, inferredEquivQuery);
+        List<Map<String, String>> inferredEquivAxioms = new ArrayList<>();
+        while (inferredEquivRs.hasNext()) {
+            BindingSet sol = inferredEquivRs.next();
+            Map<String, String> axiom = new LinkedHashMap<>();
+            String equivIri = resource(sol, "equiv");
+            if (equivIri != null) {
+                axiom.put("id", equivIri);
+                axiom.put("type", "EquivalentTo");
+                axiom.put("definition", sol.hasBinding("label") ? literal(sol, "label") : localName(equivIri));
+                axiom.put("isInferred", "true");
+                inferredEquivAxioms.add(axiom);
+            }
+        }
+        details.put("inferredEquivalentClassesAxioms", inferredEquivAxioms);
+        
+        // Get inferred superclasses (from reasoner)
+        String inferredSuperQuery = PREFIXES + """
+            SELECT DISTINCT ?super ?label WHERE {
+              GRAPH <http://www.ontotext.com/inferred> {
+                <%s> rdfs:subClassOf ?super .
+              }
+              FILTER NOT EXISTS {
+                GRAPH <http://www.ontotext.com/explicit> {
+                  <%s> rdfs:subClassOf ?super .
+                }
+              }
+              FILTER(isIRI(?super) && ?super != owl:Thing && ?super != <%s>)
+              OPTIONAL { ?super rdfs:label ?label }
+            }
+            """.formatted(classIri, classIri, classIri);
+        TupleQueryResult inferredSuperRs = datasetService.execSelect(projectId, inferredSuperQuery);
+        List<Map<String, String>> inferredSubClassAxioms = new ArrayList<>();
+        while (inferredSuperRs.hasNext()) {
+            BindingSet sol = inferredSuperRs.next();
+            Map<String, String> axiom = new LinkedHashMap<>();
+            String superIri = resource(sol, "super");
+            if (superIri != null) {
+                axiom.put("id", superIri);
+                axiom.put("type", "SubClassOf");
+                axiom.put("definition", sol.hasBinding("label") ? literal(sol, "label") : localName(superIri));
+                axiom.put("isInferred", "true");
+                inferredSubClassAxioms.add(axiom);
+            }
+        }
+        details.put("inferredSubClassOfAxioms", inferredSubClassAxioms);
+        
+        // Get inferred disjoint classes (from reasoner)
+        String inferredDisjointQuery = PREFIXES + """
+            SELECT DISTINCT ?disjoint ?label WHERE {
+              GRAPH <http://www.ontotext.com/inferred> {
+                {
+                  <%s> owl:disjointWith ?disjoint .
+                } UNION {
+                  ?disjoint owl:disjointWith <%s> .
+                }
+              }
+              FILTER NOT EXISTS {
+                GRAPH <http://www.ontotext.com/explicit> {
+                  {
+                    <%s> owl:disjointWith ?disjoint .
+                  } UNION {
+                    ?disjoint owl:disjointWith <%s> .
+                  }
+                }
+              }
+              FILTER(isIRI(?disjoint) && ?disjoint != <%s>)
+              OPTIONAL { ?disjoint rdfs:label ?label }
+            }
+            """.formatted(classIri, classIri, classIri, classIri, classIri);
+        TupleQueryResult inferredDisjointRs = datasetService.execSelect(projectId, inferredDisjointQuery);
+        List<Map<String, String>> inferredDisjointAxioms = new ArrayList<>();
+        while (inferredDisjointRs.hasNext()) {
+            BindingSet sol = inferredDisjointRs.next();
+            Map<String, String> axiom = new LinkedHashMap<>();
+            String disjointIri = resource(sol, "disjoint");
+            if (disjointIri != null) {
+                axiom.put("id", disjointIri);
+                axiom.put("type", "DisjointWith");
+                axiom.put("definition", sol.hasBinding("label") ? literal(sol, "label") : localName(disjointIri));
+                axiom.put("isInferred", "true");
+                inferredDisjointAxioms.add(axiom);
+            }
+        }
+        details.put("inferredDisjointClassesAxioms", inferredDisjointAxioms);
+        
+        // Get General Class Axioms (GCIs) that mention this class
+        // GCIs are SubClassOf axioms where the subclass is an anonymous class expression
+        String gciQuery = PREFIXES + """
+            SELECT DISTINCT ?subExpr ?superClass WHERE {
+              GRAPH <http://www.ontotext.com/explicit> {
+                ?subExpr rdfs:subClassOf ?superClass .
+                ?subExpr ?p ?o .
+              }
+              FILTER(isBlank(?subExpr))
+              FILTER(?o = <%s> || ?superClass = <%s>)
+            }
+            LIMIT 20
+            """.formatted(classIri, classIri);
+        TupleQueryResult gciRs = datasetService.execSelect(projectId, gciQuery);
+        List<Map<String, String>> generalClassAxioms = new ArrayList<>();
+        while (gciRs.hasNext()) {
+            BindingSet sol = gciRs.next();
+            Map<String, String> axiom = new LinkedHashMap<>();
+            String subExpr = sol.getValue("subExpr").stringValue();
+            String superClass = resource(sol, "superClass");
+            // Build a simple display string
+            axiom.put("id", subExpr);
+            axiom.put("type", "GCI");
+            axiom.put("definition", "Complex axiom involving " + localName(classIri));
+            generalClassAxioms.add(axiom);
+        }
+        details.put("generalClassAxioms", generalClassAxioms);
+        
+        // Get Anonymous Ancestor superclasses
+        // Collect all superclasses from all ancestors
+        String ancestorQuery = PREFIXES + """
+            SELECT DISTINCT ?super ?label WHERE {
+              <%s> rdfs:subClassOf+ ?ancestor .
+              ?ancestor rdfs:subClassOf ?super .
+              FILTER(isBlank(?super) || (?super != owl:Thing && ?super != <%s>))
+              OPTIONAL { ?super rdfs:label ?label }
+            }
+            """.formatted(classIri, classIri);
+        TupleQueryResult ancestorRs = datasetService.execSelect(projectId, ancestorQuery);
+        List<Map<String, String>> anonymousAncestorAxioms = new ArrayList<>();
+        Set<String> seenAncestors = new LinkedHashSet<>();
+        while (ancestorRs.hasNext()) {
+            BindingSet sol = ancestorRs.next();
+            String superIri = sol.getValue("super").stringValue();
+            if (!seenAncestors.contains(superIri)) {
+                seenAncestors.add(superIri);
+                Map<String, String> axiom = new LinkedHashMap<>();
+                axiom.put("id", superIri);
+                axiom.put("type", "SubClassOf");
+                if (superIri.startsWith("_:")) {
+                    axiom.put("definition", "Anonymous superclass");
+                } else {
+                    axiom.put("definition", sol.hasBinding("label") ? literal(sol, "label") : localName(superIri));
+                }
+                anonymousAncestorAxioms.add(axiom);
+            }
+        }
+        details.put("anonymousAncestorAxioms", anonymousAncestorAxioms);
+        
+        return details;
+    }
+
+    /**
+     * Get all instances (individuals) of a given class
+     * Returns both asserted and inferred instances
+     */
+    public List<Map<String, Object>> getClassInstances(String projectId, String classIri) {
+        List<Map<String, Object>> instances = new ArrayList<>();
+        
+        // Get asserted instances - check both explicit graph and default graph
+        String assertedQuery = PREFIXES + """
+            SELECT DISTINCT ?individual ?label WHERE {
+              {
+                GRAPH <http://www.ontotext.com/explicit> {
+                  ?individual a <%s> .
+                }
+              } UNION {
+                ?individual a <%s> .
+              }
+              OPTIONAL { ?individual rdfs:label ?label }
+            }
+            ORDER BY ?label
+            """.formatted(classIri, classIri);
+        
+        TupleQueryResult assertedRs = datasetService.execSelect(projectId, assertedQuery);
+        Set<String> seenIndividuals = new LinkedHashSet<>();
+        
+        while (assertedRs.hasNext()) {
+            BindingSet sol = assertedRs.next();
+            String individualIri = resource(sol, "individual");
+            if (individualIri != null && !seenIndividuals.contains(individualIri)) {
+                seenIndividuals.add(individualIri);
+                Map<String, Object> individual = new LinkedHashMap<>();
+                individual.put("id", individualIri);
+                individual.put("label", sol.hasBinding("label") ? literal(sol, "label") : localName(individualIri));
+                individual.put("isInferred", false);
+                
+                // Get all types for this individual
+                List<String> types = new ArrayList<>();
+                types.add(classIri);
+                individual.put("types", types);
+                
+                instances.add(individual);
+            }
+        }
+        
+        // Get inferred instances
+        String inferredQuery = PREFIXES + """
+            SELECT DISTINCT ?individual ?label WHERE {
+              GRAPH <http://www.ontotext.com/inferred> {
+                ?individual a <%s> .
+              }
+              FILTER NOT EXISTS {
+                GRAPH <http://www.ontotext.com/explicit> {
+                  ?individual a <%s> .
+                }
+              }
+              OPTIONAL { ?individual rdfs:label ?label }
+            }
+            ORDER BY ?label
+            """.formatted(classIri, classIri);
+        
+        TupleQueryResult inferredRs = datasetService.execSelect(projectId, inferredQuery);
+        
+        while (inferredRs.hasNext()) {
+            BindingSet sol = inferredRs.next();
+            String individualIri = resource(sol, "individual");
+            if (individualIri != null && !seenIndividuals.contains(individualIri)) {
+                seenIndividuals.add(individualIri);
+                Map<String, Object> individual = new LinkedHashMap<>();
+                individual.put("id", individualIri);
+                individual.put("label", sol.hasBinding("label") ? literal(sol, "label") : localName(individualIri));
+                individual.put("isInferred", true);
+                
+                // Get all types for this individual
+                List<String> types = new ArrayList<>();
+                types.add(classIri);
+                individual.put("types", types);
+                
+                instances.add(individual);
+            }
+        }
+        
+        return instances;
+    }
+
+    /**
+     * Get detailed information about an individual
+     */
+    public Map<String, Object> getIndividualDetails(String projectId, String individualIri) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("id", individualIri);
+        
+        // Get label
+        String labelQuery = PREFIXES + """
+            SELECT ?label WHERE {
+              <%s> rdfs:label ?label
+            } LIMIT 1
+            """.formatted(individualIri);
+        TupleQueryResult labelRs = datasetService.execSelect(projectId, labelQuery);
+        if (labelRs.hasNext()) {
+            BindingSet labelSol = labelRs.next();
+            details.put("label", literal(labelSol, "label"));
+        } else {
+            details.put("label", localName(individualIri));
+        }
+        
+        // Get types
+        String typesQuery = PREFIXES + """
+            SELECT DISTINCT ?type ?typeLabel WHERE {
+              <%s> a ?type .
+              FILTER(isIRI(?type) && ?type != owl:NamedIndividual)
+              OPTIONAL { ?type rdfs:label ?typeLabel }
+            }
+            """.formatted(individualIri);
+        TupleQueryResult typesRs = datasetService.execSelect(projectId, typesQuery);
+        List<String> types = new ArrayList<>();
+        while (typesRs.hasNext()) {
+            BindingSet sol = typesRs.next();
+            String typeIri = resource(sol, "type");
+            if (typeIri != null) {
+                types.add(typeIri);
+            }
+        }
+        details.put("types", types);
+        
+        // Get annotations
+        String annQuery = PREFIXES + """
+            SELECT ?prop ?value WHERE {
+              <%s> ?prop ?value .
+              FILTER(isLiteral(?value))
+              {
+                ?prop a owl:AnnotationProperty .
+              } UNION {
+                VALUES ?prop { rdfs:label rdfs:comment rdfs:seeAlso rdfs:isDefinedBy }
+              }
+            }
+            """.formatted(individualIri);
+        TupleQueryResult annRs = datasetService.execSelect(projectId, annQuery);
+        Map<String, Object> annotations = new LinkedHashMap<>();
+        while (annRs.hasNext()) {
+            BindingSet sol = annRs.next();
+            String propIri = resource(sol, "prop");
+            if (propIri != null && sol.hasBinding("value")) {
+                String value = sol.getValue("value").stringValue();
+                annotations.put(propIri, value);
+            }
+        }
+        details.put("annotations", annotations);
+        
+        // Get property assertions
+        String propsQuery = PREFIXES + """
+            SELECT ?prop ?obj ?objLabel WHERE {
+              <%s> ?prop ?obj .
+              FILTER(?prop != rdf:type)
+              FILTER NOT EXISTS { ?prop a owl:AnnotationProperty }
+              OPTIONAL { ?obj rdfs:label ?objLabel }
+            }
+            """.formatted(individualIri);
+        TupleQueryResult propsRs = datasetService.execSelect(projectId, propsQuery);
+        List<Map<String, Object>> propertyAssertions = new ArrayList<>();
+        while (propsRs.hasNext()) {
+            BindingSet sol = propsRs.next();
+            String propIri = resource(sol, "prop");
+            if (propIri != null) {
+                Map<String, Object> assertion = new LinkedHashMap<>();
+                assertion.put("id", "assertion-" + propertyAssertions.size());
+                assertion.put("propertyIri", propIri);
+                assertion.put("propertyLabel", localName(propIri));
+                
+                Value objValue = sol.getValue("obj");
+                if (objValue.isIRI()) {
+                    assertion.put("targetIri", objValue.stringValue());
+                    assertion.put("targetLabel", sol.hasBinding("objLabel") ? literal(sol, "objLabel") : localName(objValue.stringValue()));
+                    assertion.put("isObjectProperty", true);
+                } else {
+                    assertion.put("targetLiteral", objValue.stringValue());
+                    assertion.put("isObjectProperty", false);
+                }
+                
+                propertyAssertions.add(assertion);
+            }
+        }
+        details.put("propertyAssertions", propertyAssertions);
+        
+        // Get sameAs
+        String sameAsQuery = PREFIXES + """
+            SELECT ?same WHERE {
+              <%s> owl:sameAs ?same .
+            }
+            """.formatted(individualIri);
+        TupleQueryResult sameRs = datasetService.execSelect(projectId, sameAsQuery);
+        List<String> sameAs = new ArrayList<>();
+        while (sameRs.hasNext()) {
+            BindingSet sol = sameRs.next();
+            String same = resource(sol, "same");
+            if (same != null) {
+                sameAs.add(same);
+            }
+        }
+        details.put("sameIndividualAs", sameAs);
+        
+        // Get differentFrom
+        String diffQuery = PREFIXES + """
+            SELECT ?diff WHERE {
+              <%s> owl:differentFrom ?diff .
+            }
+            """.formatted(individualIri);
+        TupleQueryResult diffRs = datasetService.execSelect(projectId, diffQuery);
+        List<String> differentFrom = new ArrayList<>();
+        while (diffRs.hasNext()) {
+            BindingSet sol = diffRs.next();
+            String diff = resource(sol, "diff");
+            if (diff != null) {
+                differentFrom.add(diff);
+            }
+        }
+        details.put("differentIndividualFrom", differentFrom);
+        
         return details;
     }
 }
+
 

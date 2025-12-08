@@ -17,6 +17,8 @@ interface ObjectPropertyExpressionDialogProps {
   // Pre-selected property for edit mode
   initialSelectedId?: string;
   initialIsInverse?: boolean;
+  showInverseOption?: boolean;
+  propertyType?: 'object' | 'data';
 }
 
 type ViewMode = 'Asserted' | 'Inferred';
@@ -33,8 +35,24 @@ const ObjectPropertyExpressionDialog: React.FC<ObjectPropertyExpressionDialogPro
   onDeleteProperty,
   onRefresh,
   initialSelectedId,
-  initialIsInverse = false
+  initialIsInverse = false,
+  showInverseOption = true,
+  propertyType = 'object'
 }) => {
+  // Color scheme based on property type
+  const isDataProperty = propertyType === 'data';
+  const themeColors = {
+    primary: isDataProperty ? 'bg-green-500' : 'bg-blue-500',
+    primaryLight: isDataProperty ? 'bg-green-300' : 'bg-blue-300',
+    primaryDark: isDataProperty ? 'bg-green-600' : 'bg-blue-600',
+    selected: isDataProperty ? 'bg-green-600' : 'bg-blue-600',
+    selectedHover: isDataProperty ? 'hover:bg-green-500' : 'hover:bg-blue-500',
+    text: isDataProperty ? 'text-green-600' : 'text-blue-600',
+    button: isDataProperty ? 'bg-green-600 hover:bg-green-700' : 'bg-blue-600 hover:bg-blue-700',
+    focusRing: isDataProperty ? 'focus:ring-green-500' : 'focus:ring-blue-500',
+    checkbox: isDataProperty ? 'text-green-600' : 'text-blue-600'
+  };
+
   const [selectedProperty, setSelectedProperty] = useState<TreeNode | null>(null);
   const [isInverseProperty, setIsInverseProperty] = useState(false);
   const [expandedNodes, setExpandedNodes] = useState<string[]>([]);
@@ -208,7 +226,7 @@ const ObjectPropertyExpressionDialog: React.FC<ObjectPropertyExpressionDialogPro
           <div
             className={`flex items-center gap-1 px-1 py-1 cursor-pointer transition-colors select-none ${
               isSelected 
-                ? 'bg-blue-600 text-white' 
+                ? `${themeColors.selected} text-white` 
                 : 'hover:bg-gray-100 text-gray-900'
             }`}
             style={{ paddingLeft: `${level * 16 + 4}px` }}
@@ -223,7 +241,7 @@ const ObjectPropertyExpressionDialog: React.FC<ObjectPropertyExpressionDialogPro
                   handleToggleNode(node.id);
                 }}
                 className={`p-0.5 rounded flex-shrink-0 ${
-                  isSelected ? 'hover:bg-blue-500' : 'hover:bg-gray-200'
+                  isSelected ? themeColors.selectedHover : 'hover:bg-gray-200'
                 }`}
               >
                 {isExpanded ? (
@@ -236,9 +254,9 @@ const ObjectPropertyExpressionDialog: React.FC<ObjectPropertyExpressionDialogPro
               <span className="w-5 flex-shrink-0" />
             )}
             
-            {/* Property Icon (blue rectangle like Protégé) */}
+            {/* Property Icon (colored rectangle like Protégé) */}
             <span className={`w-3 h-3 rounded-sm flex-shrink-0 ${
-              isSelected ? 'bg-blue-300' : 'bg-blue-500'
+              isSelected ? themeColors.primaryLight : themeColors.primary
             }`} />
             
             {/* Property Label */}
@@ -275,7 +293,7 @@ const ObjectPropertyExpressionDialog: React.FC<ObjectPropertyExpressionDialogPro
         {/* Header */}
         <div className="px-4 py-3 border-b bg-gray-100 flex justify-between items-center">
           <div className="flex items-center gap-2">
-            <span className="w-4 h-4 bg-blue-500 rounded-sm" />
+            <span className={`w-4 h-4 rounded-sm ${themeColors.primary}`} />
             <h3 className="text-sm font-medium text-gray-900">{title}</h3>
           </div>
           <button
@@ -383,33 +401,35 @@ const ObjectPropertyExpressionDialog: React.FC<ObjectPropertyExpressionDialogPro
             </div>
           ) : (
             <div className="flex items-center justify-center h-full text-sm text-gray-400 italic p-4">
-              No object properties available
+              No {isDataProperty ? 'data' : 'object'} properties available
             </div>
           )}
         </div>
 
-        {/* Inverse Property Checkbox */}
+        {/* Inverse Property Checkbox and Preview */}
         <div className="px-4 py-3 border-t bg-gray-50">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={isInverseProperty}
-              onChange={(e) => setIsInverseProperty(e.target.checked)}
-              className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-            />
-            <span className="text-sm text-gray-700">Inverse Property</span>
-          </label>
+          {showInverseOption && (
+            <label className="flex items-center gap-2 cursor-pointer mb-2">
+              <input
+                type="checkbox"
+                checked={isInverseProperty}
+                onChange={(e) => setIsInverseProperty(e.target.checked)}
+                className={`w-4 h-4 ${themeColors.checkbox} border-gray-300 rounded ${themeColors.focusRing}`}
+              />
+              <span className="text-sm text-gray-700">Inverse Property</span>
+            </label>
+          )}
           
           {/* Preview of selection */}
           {selectedProperty && (
-            <div className="mt-2 p-2 bg-white border border-gray-200 rounded">
+            <div className="p-2 bg-white border border-gray-200 rounded">
               <span className="text-xs text-gray-500">Selected:</span>
               <div className="flex items-center gap-2 mt-1">
-                <span className="w-3 h-3 bg-blue-500 rounded-sm flex-shrink-0" />
+                <span className={`w-3 h-3 rounded-sm flex-shrink-0 ${themeColors.primary}`} />
                 <span className="text-sm font-mono text-gray-900">
                   {isInverseProperty ? (
                     <>
-                      <span className="text-blue-600">inverse</span>
+                      <span className={themeColors.text}>inverse</span>
                       <span className="text-gray-600"> ('{getDisplayLabel(selectedProperty)}')</span>
                     </>
                   ) : (
@@ -432,7 +452,7 @@ const ObjectPropertyExpressionDialog: React.FC<ObjectPropertyExpressionDialogPro
           <button
             onClick={handleConfirm}
             disabled={!selectedProperty}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className={`px-4 py-2 text-sm font-medium text-white rounded disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${themeColors.button}`}
           >
             OK
           </button>

@@ -375,8 +375,8 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
                   onSearchQueryChange={setSearchQuery}
                   onSelectItem={handleSelectProperty}
                   onToggleNode={handleToggleNode}
-                  onAddItem={projectId ? handleInlineAddProperty : undefined}
-                  onDeleteItem={onDeleteProperty || (() => {})}
+                  onAddItem={onAddObjectProperty ? handleInlineAddProperty : undefined}
+                  onDeleteItem={onDeleteProperty ? onDeleteProperty : undefined}
                   hideToolbarActions={!onAddObjectProperty && !onDeleteProperty}
                   selectedProperties={selectedProperties}
                   multiSelectMode={true}
@@ -394,8 +394,8 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
                   onSearchQueryChange={setSearchQuery}
                   onSelectItem={handleSelectProperty}
                   onToggleNode={handleToggleNode}
-                  onAddItem={projectId ? handleInlineAddProperty : undefined}
-                  onDeleteItem={onDeleteProperty || (() => {})}
+                  onAddItem={onAddDataProperty ? handleInlineAddProperty : undefined}
+                  onDeleteItem={onDeleteProperty ? onDeleteProperty : undefined}
                   hideToolbarActions={!onAddDataProperty && !onDeleteProperty}
                   selectedProperties={selectedProperties}
                   multiSelectMode={true}

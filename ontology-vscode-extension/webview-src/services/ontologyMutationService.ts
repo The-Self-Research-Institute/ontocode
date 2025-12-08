@@ -232,7 +232,7 @@ export const ontologyMutationService = {
   },
 
   /**
-   * Create a new individual
+   * Create a new individual (named individual)
    */
   async createIndividual(projectId: string, iri: string, label: string, classIri: string): Promise<void> {
     await this.applyMutations(projectId, [{
@@ -244,7 +244,47 @@ export const ontologyMutationService = {
   },
 
   /**
-   * Delete an individual
+   * Add an individual with just a name and create class assertion axiom
+   * Backend generates IRI from name and adds class assertion axiom
+   */
+  async addIndividual(projectId: string, name: string, classIri: string): Promise<void> {
+    // Backend will generate IRI from name and create class assertion axiom
+    await this.applyMutations(projectId, [{
+      type: 'createIndividual',
+      iri: name, // If it's not a full IRI, backend will generate one
+      label: name,
+      classIri
+    }]);
+  },
+
+  /**
+   * Add a class assertion axiom to an existing individual
+   * Adds: <individualIri> rdf:type <classIri>
+   * Used when adding an existing individual as an instance of a class
+   */
+  async addClassAssertion(projectId: string, individualIri: string, classIri: string): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'addClassAssertion',
+      iri: individualIri,
+      classIri
+    }]);
+  },
+
+  /**
+   * Remove a class assertion axiom from an individual
+   * Removes: <individualIri> rdf:type <classIri>
+   * The individual itself remains, only the type assertion is removed
+   */
+  async removeClassAssertion(projectId: string, individualIri: string, classIri: string): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'removeClassAssertion',
+      iri: individualIri,
+      classIri
+    }]);
+  },
+
+  /**
+   * Delete an individual completely (removes all axioms about the individual)
    */
   async deleteIndividual(projectId: string, iri: string, userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{
@@ -341,15 +381,61 @@ export const ontologyMutationService = {
 
   // --- Property Mutations ---
 
-  async addPropertyDomain(projectId: string, propertyIri: string, domainIri: string, userId?: string, username?: string): Promise<void> {
-    await this.applyMutations(projectId, [{ type: 'addPropertyDomain', iri: propertyIri, target: domainIri }], undefined, userId, username);
+  async addPropertyDomain(
+    projectId: string, 
+    propertyIri: string, 
+    domainIri: string, 
+    userId?: string, 
+    username?: string,
+    restrictionData?: {
+      propertyIri: string;
+      restrictionType: string;
+      fillerIri: string;
+      cardinality?: number;
+      isDataProperty?: boolean;
+    }
+  ): Promise<void> {
+    const op: any = { type: 'addPropertyDomain', iri: propertyIri, target: domainIri };
+    
+    if (restrictionData) {
+      op.property = restrictionData.propertyIri;
+      op.restrictionType = restrictionData.restrictionType;
+      op.target = restrictionData.fillerIri; // Override target with filler
+      op.cardinality = restrictionData.cardinality;
+      op.axiomType = restrictionData.isDataProperty ? 'DataRestriction' : 'ObjectRestriction';
+    }
+    
+    await this.applyMutations(projectId, [op], undefined, userId, username);
   },
   async deletePropertyDomain(projectId: string, propertyIri: string, domainIri: string, userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{ type: 'deletePropertyDomain', iri: propertyIri, target: domainIri }], undefined, userId, username);
   },
 
-  async addPropertyRange(projectId: string, propertyIri: string, rangeIri: string, userId?: string, username?: string): Promise<void> {
-    await this.applyMutations(projectId, [{ type: 'addPropertyRange', iri: propertyIri, target: rangeIri }], undefined, userId, username);
+  async addPropertyRange(
+    projectId: string, 
+    propertyIri: string, 
+    rangeIri: string, 
+    userId?: string, 
+    username?: string,
+    restrictionData?: {
+      propertyIri: string;
+      restrictionType: string;
+      fillerIri: string;
+      cardinality?: number;
+      isDataProperty?: boolean;
+    }
+  ): Promise<void> {
+    const op: any = { type: 'addPropertyRange', iri: propertyIri, target: rangeIri };
+    
+    if (restrictionData) {
+      op.property = restrictionData.propertyIri;
+      op.restrictionType = restrictionData.restrictionType;
+      op.target = restrictionData.fillerIri; // Override target with filler
+      op.cardinality = restrictionData.cardinality;
+      op.axiomType = restrictionData.isDataProperty ? 'DataRestriction' : 'ObjectRestriction';
+    }
+
+    await this.applyMutations(projectId, [op], undefined, userId, username);
   },
   async deletePropertyRange(projectId: string, propertyIri: string, rangeIri: string, userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{ type: 'deletePropertyRange', iri: propertyIri, target: rangeIri }], undefined, userId, username);
