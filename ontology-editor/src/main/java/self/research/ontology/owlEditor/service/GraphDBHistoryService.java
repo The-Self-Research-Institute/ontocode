@@ -54,6 +54,16 @@ public class GraphDBHistoryService {
     public void recordEdit(String projectId, String userId, String username, 
                           String operationType, String entityIRI, String entityLabel,
                           String oldValue, String newValue, String description) {
+        recordEdit(projectId, userId, username, operationType, entityIRI, entityLabel, 
+                   oldValue, newValue, description, null);
+    }
+    
+    /**
+     * Record an edit operation with annotation property
+     */
+    public void recordEdit(String projectId, String userId, String username, 
+                          String operationType, String entityIRI, String entityLabel,
+                          String oldValue, String newValue, String description, String annotationProperty) {
         
         IRI historyGraph = vf.createIRI(HISTORY_NS + "graph/" + projectId);
         String editId = UUID.randomUUID().toString();
@@ -85,6 +95,10 @@ public class GraphDBHistoryService {
             if (description != null) {
                 conn.add(editIRI, HAS_DESCRIPTION, vf.createLiteral(description), historyGraph);
             }
+            if (annotationProperty != null) {
+                conn.add(editIRI, vf.createIRI(HISTORY_NS + "hasAnnotationProperty"), 
+                        vf.createLiteral(annotationProperty), historyGraph);
+            }
             
             conn.commit();
             log.debug("[GraphDBHistory] Recorded edit: {} by {} on {}", operationType, username, entityIRI);
@@ -102,6 +116,7 @@ public class GraphDBHistoryService {
                 if (oldValue != null) changeData.put("oldValue", oldValue);
                 if (newValue != null) changeData.put("newValue", newValue);
                 if (description != null) changeData.put("description", description);
+                if (annotationProperty != null) changeData.put("annotationProperty", annotationProperty);
                 
                 // Determine entity type from operation
                 String entityType = determineEntityType(operationType);

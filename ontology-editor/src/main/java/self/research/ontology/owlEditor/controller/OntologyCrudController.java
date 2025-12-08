@@ -77,8 +77,9 @@ public class OntologyCrudController {
             for (OntologyMutationService.MutationOp op : request.ops()) {
                 String entityIRI = op.iri();
                 String entityLabel = op.label();
-                String oldValue = null; // Not available in MutationOp
+                String oldValue = op.oldValue(); // Get oldValue from MutationOp
                 String newValue = op.value();
+                String annotationProperty = op.property(); // Get annotation property for annotation operations
                 
                 historyService.recordEdit(
                     projectId, 
@@ -89,7 +90,8 @@ public class OntologyCrudController {
                     entityLabel, 
                     oldValue, 
                     newValue, 
-                    op.type() + " operation"
+                    op.type() + " operation",
+                    annotationProperty
                 );
 
                 collaborativeEditService.broadcastMutation(projectId, op, userId, username);
@@ -126,7 +128,8 @@ public class OntologyCrudController {
                     null,
                     null, // restrictionType
                     null, // cardinality
-                    null  // axiomType
+                    null,  // axiomType
+                    null   // oldValue
                 );
                 collaborativeEditService.broadcastMutation(projectId, disjointOp, userId, username);
             }

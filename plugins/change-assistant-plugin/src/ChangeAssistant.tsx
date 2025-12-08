@@ -329,6 +329,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
       // Convert MongoDB format to frontend format (single source - no sync needed)
       const parsedChanges = data.changes.map((change: any) => {
         // Preserve original operation type for accurate rollback
+        console.log(change,"change")
         const originalOperationType = change.changeType || change.operationType || '';
         const parsed = {
           id: change.id,
@@ -491,14 +492,19 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
     if (!text.trim()) return;
     
     try {
+      // Get current user info from window or local storage
+      const currentUser = (window as any).vscodeUser || JSON.parse(localStorage.getItem('user') || '{}');
+      const userId = currentUser?.id || currentUser?.email || 'anonymous';
+      const username = currentUser?.username || 'Anonymous';
+      
       const apiBase = (window as any).API_BASE_URL || 'http://localhost:8082';
       const response = await fetch(`${apiBase}/api/ontology/${projectId}/changes/${changeId}/comments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           text,
-          userId: 'current-user',
-          username: 'You'
+          userId: userId,
+          username: username
         })
       });
       
@@ -562,6 +568,12 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
         entityIRI: change.entityUri,
         entityLabel: change.entityLabel
       });
+      
+      // Get current user info
+      const currentUser = (window as any).vscodeUser || JSON.parse(localStorage.getItem('user') || '{}');
+      const userId = currentUser?.email || 'anonymous';
+      const username = currentUser?.username || 'Anonymous';
+      
       // Use a simpler endpoint that accepts changeId in the body instead of URL path
       const response = await fetch(`${apiBase}/api/ontology/${projectId}/changes/rollback`, { 
         method: 'POST',
@@ -575,7 +587,9 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
           entityIRI: change.entityUri,
           entityLabel: change.entityLabel,
           oldValue: change.oldValue,
-          newValue: change.newValue
+          newValue: change.newValue,
+          userId: userId,
+          username: username
         })
       });
       
@@ -584,15 +598,36 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
       if (data.success) {
         showNotification(data.message || 'Change rolled back successfully!', 'success');
         
+        // Get current user info from window or local storage
+        const currentUser = (window as any).vscodeUser || JSON.parse(localStorage.getItem('user') || '{}');
+        const username = currentUser?.username || 'Unknown User';
+        
+        // Use the entityIRI from the response if provided (updated after rollback), otherwise use original
+        const updatedEntityIRI = data.entityIRI || change.entityUri;
+        const updatedEntityLabel = data.entityLabel || change.oldValue || change.entityLabel; // Use old value as new label for annotation changes
+        
+        console.log('[Rollback] Entity info after rollback:', {
+          originalEntityIRI: change.entityUri,
+          updatedEntityIRI: updatedEntityIRI,
+          originalLabel: change.entityLabel,
+          updatedLabel: updatedEntityLabel,
+          oldValue: change.newValue,
+          newValue: change.oldValue
+        });
+        
         // Dispatch event to notify other components about the rollback
         window.dispatchEvent(new CustomEvent('ontologyRollback', {
           detail: {
             projectId,
             changeId,
-            entityIRI: change.entityUri,
-            entityLabel: change.entityLabel,
+            entityIRI: updatedEntityIRI, // Use potentially updated IRI from backend
+            entityLabel: updatedEntityLabel, // Use updated label (reverted to old value)
             action: change.action,
             entityType: change.type, // Include entity type for proper refresh
+            username: username, // Who performed the rollback
+            originalAuthor: change.author, // Who made the original change
+            oldValue: change.newValue, // What we're rolling back FROM (was the new value)
+            newValue: change.oldValue, // What we're rolling back TO (the original old value)
             success: true
           }
         }));
@@ -601,7 +636,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
         setTimeout(() => {
           loadChanges();
           loadDraftChanges();
-        }, 800);
+        }, 1200);
       } else {
         setRollbackError(data.error || 'Failed to rollback change');
         showNotification('Failed to rollback: ' + (data.error || 'Unknown error'), 'error');
@@ -807,7 +842,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
           {[
             { id: 'live', label: 'Live', icon: Activity, count: liveActivity.length > 0 ? liveActivity.length : undefined },
             { id: 'drafts', label: 'Drafts', icon: Edit3, count: stats.draftChanges > 0 ? stats.draftChanges : undefined },
-            { id: 'changes', label: 'Saved', icon: GitCommit },
+            { id: 'changes', label: 'Saved', icon: GitCommit, count: stats.totalChanges },
             { id: 'conflicts', label: 'Conflicts', icon: AlertTriangle, count: stats.conflicts > 0 ? stats.conflicts : undefined },
             { id: 'history', label: 'Timeline', icon: History },
             { id: 'stats', label: 'Stats', icon: BarChart3 }
@@ -823,7 +858,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
             >
               <tab.icon className="w-4 h-4" />
               {tab.label}
-              {tab.count !== undefined && (
+              {tab.count !== undefined && tab.count > 0 && (
                 <span className={`px-1.5 py-0.5 text-xs rounded-full ${
                   tab.id === 'drafts' ? 'bg-yellow-100 text-yellow-600' :
                   tab.id === 'conflicts' ? 'bg-red-100 text-red-600' :
@@ -1399,18 +1434,18 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
         <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 ${
           notification.type === 'success' ? 'bg-green-100 border border-green-400 text-green-800' :
           notification.type === 'error' ? 'bg-red-100 border border-red-400 text-red-800' :
-          'bg-blue-100 border border-blue-400 text-blue-800'
+          'd-none'
         }`}>
           {notification.type === 'success' && <CheckCircle size={18} />}
           {notification.type === 'error' && <AlertTriangle size={18} />}
-          {notification.type === 'info' && <Info size={18} />}
+          {/* {notification.type === 'info' && <Info size={18} />} */}
           <span className="text-sm">{notification.message}</span>
-          <button 
+          {/* <button 
             onClick={() => setNotification({ show: false, type: 'info', message: '' })}
             className="ml-2 hover:opacity-70"
           >
             <X size={16} />
-          </button>
+          </button> */}
         </div>
       )}
 

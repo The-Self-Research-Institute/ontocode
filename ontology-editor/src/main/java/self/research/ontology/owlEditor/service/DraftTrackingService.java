@@ -89,6 +89,10 @@ public class DraftTrackingService {
                 if (op.value() != null) data.put("value", op.value());
                 if (op.target() != null) data.put("target", op.target());
                 if (op.classIri() != null) data.put("classIri", op.classIri());
+                if (op.oldValue() != null) data.put("oldValue", op.oldValue());
+                
+                log.info("[DRAFT CREATION] operationType: {}, iri: {}, value: '{}', oldValue: '{}'", 
+                    op.type(), op.iri(), op.value(), op.oldValue());
                 
                 return new DraftChange(projectId, userId, username, op.type(), data);
             })
@@ -286,6 +290,10 @@ public class DraftTrackingService {
                 String newValue = data.get("value") != null ? data.get("value").toString() : 
                                   (data.get("newValue") != null ? data.get("newValue").toString() : null);
                 
+                log.info("[DRAFT] Recording change - operationType: {}, oldValue: '{}', newValue: '{}', entityIRI: {}", 
+                    draft.getOperationType(), oldValue, newValue, entityIri);
+                log.info("[DRAFT] Operation data keys: {}", data.keySet());
+                
                 OntologyChange change = new OntologyChange.Builder(
                     projectId, 
                     draft.getUserId(), 
@@ -297,12 +305,15 @@ public class DraftTrackingService {
                 .entityLabel(label != null ? label : entityIri)
                 .description(formatChangeDescription(draft))
                 .sessionId(draft.getSessionId())
+                .oldValue(oldValue)
+                .newValue(newValue)
                 .build();
                 
                 // Record to MongoDB via change tracking service
                 changeTrackingService.recordChange(change);
                 
                 // Also record to GraphDB history for Change Assistant plugin
+                String annotationProperty = data.get("property") != null ? data.get("property").toString() : null;
                 graphDBHistoryService.recordEdit(
                     projectId,
                     draft.getUserId(),
@@ -312,7 +323,8 @@ public class DraftTrackingService {
                     label != null ? label : entityIri,
                     oldValue,
                     newValue,
-                    formatChangeDescription(draft)
+                    formatChangeDescription(draft),
+                    annotationProperty
                 );
             }
             log.info("[DRAFT] Recorded {} changes to change tracking and GraphDB history", drafts.size());
@@ -427,7 +439,8 @@ public class DraftTrackingService {
             (String) data.get("classIri"),
             (String) data.get("restrictionType"),
             cardinality,
-            (String) data.get("axiomType")
+            (String) data.get("axiomType"),
+            (String) data.get("oldValue")
         );
     }
     
