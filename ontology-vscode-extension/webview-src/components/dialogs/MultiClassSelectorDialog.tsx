@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { X, Check, Package, ChevronRight, ChevronDown } from 'lucide-react';
 import type { TreeNode } from '../../types';
 import apiClient from '../../services/apiClient';
+import EntityHierarchy from '../EntityHierarchy';
 
 interface MultiClassSelectorDialogProps {
   isOpen: boolean;
@@ -15,6 +16,8 @@ interface MultiClassSelectorDialogProps {
   excludeClassIds?: string[]; // Classes to exclude from selection (e.g., the current class)
   minSelection?: number; // Minimum number of classes required
   initialSelectedIds?: string[]; // Pre-selected class IRIs for edit mode
+  onAddClass?: (type: 'subclass' | 'sibling', parentId?: string, name?: string) => Promise<void>;
+  onDeleteClass?: () => void;
 }
 
 const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
@@ -28,15 +31,25 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
   title = "Select Classes",
   excludeClassIds = [],
   minSelection = 1,
-  initialSelectedIds = []
+  initialSelectedIds = [],
+  onAddClass,
+  onDeleteClass
 }) => {
   const [selectedClasses, setSelectedClasses] = useState<TreeNode[]>([]);
   const [expandedNodes, setExpandedNodes] = useState<string[]>([]);
   const [treeData, setTreeData] = useState<TreeNode[]>(classHierarchy);
   const [searchQuery, setSearchQuery] = useState('');
   const [hasInitialized, setHasInitialized] = useState(false);
+  const [selectedNode, setSelectedNode] = useState<TreeNode | null>(null);
+  
+  // Inline class creation state
+  const [showInlineClassCreate, setShowInlineClassCreate] = useState(false);
+  const [inlineCreateType, setInlineCreateType] = useState<'subclass' | 'sibling'>('subclass');
+  const [inlineClassName, setInlineClassName] = useState('');
+  const [isCreatingClass, setIsCreatingClass] = useState(false);
 
   useEffect(() => {
+    console.log('[MultiClassSelectorDialog] Class hierarchy updated, nodes:', classHierarchy.length);
     setTreeData(classHierarchy);
   }, [classHierarchy]);
 
@@ -130,11 +143,111 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
     // Don't allow selecting excluded classes
     if (excludeClassIds.includes(node.id)) return;
     
+    // Set selected node for inline creation
+    setSelectedNode(node);
+    
+    // Toggle selection for multi-select
     if (selectedClasses.find(n => n.id === node.id)) {
       setSelectedClasses(prev => prev.filter(n => n.id !== node.id));
     } else {
       setSelectedClasses(prev => [...prev, node]);
     }
+  };
+
+  // Handle checkbox toggle for multi-select
+  const handleToggleClass = (classId: string) => {
+    if (excludeClassIds.includes(classId)) return;
+    
+    const node = findNodeById(treeData, classId);
+    if (!node) return;
+    
+    if (selectedClasses.find(n => n.id === classId)) {
+      setSelectedClasses(prev => prev.filter(n => n.id !== classId));
+    } else {
+      setSelectedClasses(prev => [...prev, node]);
+    }
+  };
+
+  // Helper to find node by ID
+  const findNodeById = (nodes: TreeNode[], id: string): TreeNode | null => {
+    for (const node of nodes) {
+      if (node.id === id) return node;
+      if (node.children) {
+        const found = findNodeById(node.children, id);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  // Get selected class IDs for EntityHierarchy
+  const selectedClassIds = selectedClasses.map(c => c.id);
+
+  // Use external or local expanded nodes
+  const effectiveExpandedNodes = externalExpandedNodes || expandedNodes;
+
+  // Inline class creation handlers
+  const handleInlineAddClass = (type: 'subclass' | 'sibling' | 'individual') => {
+    console.log('[MultiClassSelectorDialog] handleInlineAddClass called with type:', type);
+    console.log('[MultiClassSelectorDialog] onAddClass exists:', !!onAddClass);
+    console.log('[MultiClassSelectorDialog] selectedNode:', selectedNode?.label);
+    
+    // EntityHierarchy can pass 'individual' but we only handle 'subclass' and 'sibling' for classes
+    if (type === 'individual') {
+      console.log('[MultiClassSelectorDialog] Ignoring individual type');
+      return;
+    }
+    
+    setInlineCreateType(type);
+    setShowInlineClassCreate(true);
+    setInlineClassName('');
+    console.log('[MultiClassSelectorDialog] Inline form should now be visible');
+  };
+
+  const handleInlineClassCreateSubmit = async () => {
+    if (!inlineClassName.trim() || !onAddClass) return;
+    
+    console.log('[MultiClassSelectorDialog] Creating class:', inlineClassName);
+    setIsCreatingClass(true);
+    try {
+      const parentId = selectedNode?.id;
+      const type = selectedNode ? 'subclass' : 'sibling';
+      
+      console.log('[MultiClassSelectorDialog] Parent:', parentId, 'Type:', type);
+      
+      // Expand parent node to show new class
+      if (parentId && !effectiveExpandedNodes.includes(parentId)) {
+        console.log('[MultiClassSelectorDialog] Expanding parent node:', parentId);
+        await handleToggleNode(parentId);
+      }
+      
+      // Also expand the top class node if creating at root
+      const topNodeId = 'http://www.w3.org/2002/07/owl#Thing';
+      if (!selectedNode && !effectiveExpandedNodes.includes(topNodeId)) {
+        console.log('[MultiClassSelectorDialog] Expanding top node:', topNodeId);
+        await handleToggleNode(topNodeId);
+      }
+      
+      // Call the class creation handler
+      console.log('[MultiClassSelectorDialog] Calling handler...');
+      await onAddClass(type, parentId, inlineClassName.trim());
+      console.log('[MultiClassSelectorDialog] Handler completed');
+      
+      // Reset form
+      setShowInlineClassCreate(false);
+      setInlineClassName('');
+    } catch (error) {
+      console.error('[MultiClassSelectorDialog] Failed to create class:', error);
+      // Don't close the form on error so user can try again
+      setShowInlineClassCreate(true);
+    } finally {
+      setIsCreatingClass(false);
+    }
+  };
+
+  const handleInlineClassCreateCancel = () => {
+    setShowInlineClassCreate(false);
+    setInlineClassName('');
   };
 
   const handleConfirm = () => {
@@ -145,83 +258,6 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
     onConfirm(selectedClasses);
     setSelectedClasses([]);
     onClose();
-  };
-
-  const isSelected = (nodeId: string) => selectedClasses.some(n => n.id === nodeId);
-  const isExcluded = (nodeId: string) => excludeClassIds.includes(nodeId);
-
-  // Render a tree node with checkbox for multi-select
-  const renderTreeNode = (node: TreeNode, level: number = 0): React.ReactNode => {
-    const currentExpanded = externalExpandedNodes || expandedNodes;
-    const isExpanded = currentExpanded.includes(node.id);
-    const hasChildren = node.hasChildren || (node.children && node.children.length > 0);
-    const selected = isSelected(node.id);
-    const excluded = isExcluded(node.id);
-    
-    // Filter by search
-    if (searchQuery && !node.label.toLowerCase().includes(searchQuery.toLowerCase())) {
-      // Check if any children match
-      const hasMatchingChildren = node.children?.some(child => 
-        child.label.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-      if (!hasMatchingChildren) return null;
-    }
-
-    return (
-      <div key={node.id}>
-        <div
-          className={`flex items-center px-2 py-1 ${excluded ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-gray-100'} ${selected ? 'bg-purple-100' : ''}`}
-          style={{ paddingLeft: `${level * 16 + 8}px` }}
-        >
-          {/* Expand/Collapse button */}
-          <button
-            className="p-0.5 mr-1"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (hasChildren) handleToggleNode(node.id);
-            }}
-            disabled={!hasChildren}
-          >
-            {!hasChildren ? (
-              <span className="w-4" />
-            ) : isExpanded ? (
-              <ChevronDown size={14} />
-            ) : (
-              <ChevronRight size={14} />
-            )}
-          </button>
-
-          {/* Checkbox */}
-          <div
-            onClick={() => !excluded && handleNodeSelect(node)}
-            className={`w-4 h-4 rounded border mr-2 flex items-center justify-center ${
-              excluded ? 'bg-gray-200 border-gray-300 cursor-not-allowed' :
-              selected ? 'bg-purple-600 border-purple-600 cursor-pointer' : 
-              'border-gray-300 hover:border-purple-400 cursor-pointer'
-            }`}
-            title={excluded ? 'Current class (cannot select)' : undefined}
-          >
-            {selected && !excluded && <Check size={12} className="text-white" />}
-          </div>
-
-          {/* Icon */}
-          <div className={`w-4 h-4 rounded ${excluded ? 'bg-gray-400 border-gray-500' : 'bg-amber-400 border-amber-600'} border mr-2 flex items-center justify-center`}>
-            <Package size={10} className="text-white" />
-          </div>
-
-          {/* Label */}
-          <span
-            className={`text-sm ${excluded ? 'text-gray-400 italic' : selected ? 'font-semibold text-purple-900' : 'text-gray-800'}`}
-            onClick={() => !excluded && handleNodeSelect(node)}
-          >
-            {node.label}{excluded && ' (current)'}
-          </span>
-        </div>
-
-        {/* Children */}
-        {isExpanded && node.children?.map(child => renderTreeNode(child, level + 1))}
-      </div>
-    );
   };
 
   // Early return AFTER all hooks to comply with React Rules of Hooks
@@ -268,15 +304,68 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
             className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 mb-3"
           />
 
-          {/* Class tree with checkboxes */}
-          <div className="flex-1 border rounded overflow-y-auto min-h-0 bg-white">
-            {treeData.length > 0 ? (
-              treeData.map(node => renderTreeNode(node))
-            ) : (
-              <div className="p-4 text-center text-gray-400 text-sm">
-                No classes available. Make sure the class hierarchy is loaded.
+          {/* Inline Class Creation Form */}
+          {showInlineClassCreate && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded mb-3">{!onAddClass && (
+                <div className="mb-2 p-2 bg-red-50 border border-red-200 rounded">
+                  <p className="text-xs text-red-600">Cannot create class: handler not available</p>
+                </div>
+              )}
+              <p className="text-xs text-amber-800 font-medium mb-2">
+                New {inlineCreateType === 'subclass' ? 'subclass of' : 'sibling of'} {selectedNode?.label || 'owl:Thing'}:
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={inlineClassName}
+                  onChange={(e) => setInlineClassName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && inlineClassName.trim()) {
+                      handleInlineClassCreateSubmit();
+                    } else if (e.key === 'Escape') {
+                      handleInlineClassCreateCancel();
+                    }
+                  }}
+                  placeholder="Enter class name..."
+                  className="flex-1 px-2 py-1 text-sm border border-amber-300 rounded focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  autoFocus
+                />
+                <button
+                  onClick={handleInlineClassCreateSubmit}
+                  disabled={!inlineClassName.trim() || isCreatingClass}
+                  className="px-3 py-1 text-xs font-semibold text-white bg-amber-600 rounded hover:bg-amber-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                >
+                  {isCreatingClass ? 'Creating...' : 'Create'}
+                </button>
+                <button
+                  onClick={handleInlineClassCreateCancel}
+                  className="px-3 py-1 text-xs font-semibold text-amber-800 bg-white border border-amber-300 rounded hover:bg-amber-100"
+                >
+                  Cancel
+                </button>
               </div>
-            )}
+              <p className="mt-1 text-xs text-amber-700">Press Enter to create, Escape to cancel</p>
+            </div>
+          )}
+
+          {/* Class tree with EntityHierarchy component */}
+          <div className="flex-1 overflow-hidden">
+            <EntityHierarchy
+              entitiesTab="Classes"
+              filteredData={treeData}
+              selectedItem={selectedNode}
+              expandedNodes={effectiveExpandedNodes}
+              searchQuery={searchQuery}
+              onSearchQueryChange={setSearchQuery}
+              onSelectItem={handleNodeSelect}
+              onToggleNode={handleToggleNode}
+              onAddItem={handleInlineAddClass}
+              onDeleteItem={onDeleteClass || (() => {})}
+              hideToolbarActions={!onAddClass && !onDeleteClass}
+              selectedProperties={selectedClassIds}
+              multiSelectMode={true}
+              excludeIds={excludeClassIds}
+            />
           </div>
         </div>
 

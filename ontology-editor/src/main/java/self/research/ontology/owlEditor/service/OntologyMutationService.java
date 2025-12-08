@@ -264,17 +264,37 @@ public class OntologyMutationService {
             return "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
                 + "DELETE { ?s ?p <" + op.iri() + "> } WHERE { ?s ?p <" + op.iri() + "> }";
         } else if (type.equals("addPropertyDomain")) {
-            return "INSERT DATA {\n"
-                + "<" + op.iri() + "> rdfs:domain <" + op.target() + "> .\n"
-                + "}";
+            if (op.restrictionType() != null) {
+                // Domain is a restriction
+                boolean isDataRestriction = "DataRestriction".equals(op.axiomType());
+                String restrictionBody = buildRestrictionBody(op.property(), op.restrictionType(), op.target(), op.cardinality(), isDataRestriction);
+                if (restrictionBody.isEmpty()) return "";
+                return "INSERT {\n"
+                    + "<" + op.iri() + "> rdfs:domain " + restrictionBody + " .\n"
+                    + "} WHERE {}";
+            } else {
+                return "INSERT DATA {\n"
+                    + "<" + op.iri() + "> rdfs:domain <" + op.target() + "> .\n"
+                    + "}";
+            }
         } else if (type.equals("deletePropertyDomain")) {
             return "DELETE DATA {\n"
                 + "<" + op.iri() + "> rdfs:domain <" + op.target() + "> .\n"
                 + "}";
         } else if (type.equals("addPropertyRange")) {
-            return "INSERT DATA {\n"
-                + "<" + op.iri() + "> rdfs:range <" + op.target() + "> .\n"
-                + "}";
+            if (op.restrictionType() != null) {
+                // Range is a restriction
+                boolean isDataRestriction = "DataRestriction".equals(op.axiomType());
+                String restrictionBody = buildRestrictionBody(op.property(), op.restrictionType(), op.target(), op.cardinality(), isDataRestriction);
+                if (restrictionBody.isEmpty()) return "";
+                return "INSERT {\n"
+                    + "<" + op.iri() + "> rdfs:range " + restrictionBody + " .\n"
+                    + "} WHERE {}";
+            } else {
+                return "INSERT DATA {\n"
+                    + "<" + op.iri() + "> rdfs:range <" + op.target() + "> .\n"
+                    + "}";
+            }
         } else if (type.equals("deletePropertyRange")) {
             return "DELETE DATA {\n"
                 + "<" + op.iri() + "> rdfs:range <" + op.target() + "> .\n"
@@ -411,6 +431,16 @@ public class OntologyMutationService {
             return "DELETE DATA {\n"
                 + "<" + op.iri() + "> <" + op.property() + "> " + literal(op.value()) + " .\n"
                 + "}";
+        } else if (type.equals("addClassAssertion")) {
+            // Add rdf:type assertion to an existing individual
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> a <" + op.classIri() + "> .\n"
+                + "}";
+        } else if (type.equals("removeClassAssertion")) {
+            // Remove rdf:type assertion from an individual
+            return "DELETE DATA {\n"
+                + "<" + op.iri() + "> a <" + op.classIri() + "> .\n"
+                + "}";
         } else {
             throw new IllegalArgumentException("Unsupported op " + op.type());
         }
@@ -487,6 +517,69 @@ public class OntologyMutationService {
      * @param isDataRestriction true for data restrictions, false for object restrictions
      * @return SPARQL UPDATE string
      */
+    private String buildRestrictionBody(String propertyIri, String restrictionType, String fillerIri, Integer cardinality, boolean isDataRestriction) {
+        return switch (restrictionType) {
+            case "some" -> {
+                String fillerPredicate = "owl:someValuesFrom";
+                yield """
+                    [
+                      a owl:Restriction ;
+                      owl:onProperty <%s> ;
+                      %s <%s>
+                    ]""".formatted(propertyIri, fillerPredicate, fillerIri);
+            }
+            case "only" -> {
+                String fillerPredicate = "owl:allValuesFrom";
+                yield """
+                    [
+                      a owl:Restriction ;
+                      owl:onProperty <%s> ;
+                      %s <%s>
+                    ]""".formatted(propertyIri, fillerPredicate, fillerIri);
+            }
+            case "value" -> """
+                [
+                  a owl:Restriction ;
+                  owl:onProperty <%s> ;
+                  owl:hasValue <%s>
+                ]""".formatted(propertyIri, fillerIri);
+            case "min" -> {
+                int card = cardinality != null ? cardinality : 1;
+                String onClassPredicate = isDataRestriction ? "owl:onDataRange" : "owl:onClass";
+                yield """
+                [
+                  a owl:Restriction ;
+                  owl:onProperty <%s> ;
+                  owl:minQualifiedCardinality "%d"^^xsd:nonNegativeInteger ;
+                  %s <%s>
+                ]""".formatted(propertyIri, card, onClassPredicate, fillerIri);
+            }
+            case "max" -> {
+                int card = cardinality != null ? cardinality : 1;
+                String onClassPredicate = isDataRestriction ? "owl:onDataRange" : "owl:onClass";
+                yield """
+                [
+                  a owl:Restriction ;
+                  owl:onProperty <%s> ;
+                  owl:maxQualifiedCardinality "%d"^^xsd:nonNegativeInteger ;
+                  %s <%s>
+                ]""".formatted(propertyIri, card, onClassPredicate, fillerIri);
+            }
+            case "exactly" -> {
+                int card = cardinality != null ? cardinality : 1;
+                String onClassPredicate = isDataRestriction ? "owl:onDataRange" : "owl:onClass";
+                yield """
+                [
+                  a owl:Restriction ;
+                  owl:onProperty <%s> ;
+                  owl:qualifiedCardinality "%d"^^xsd:nonNegativeInteger ;
+                  %s <%s>
+                ]""".formatted(propertyIri, card, onClassPredicate, fillerIri);
+            }
+            default -> "";
+        };
+    }
+
     private String buildRestrictionSparql(MutationOp op, boolean isDataRestriction) {
         String classIri = op.iri();
         String propertyIri = op.property();
@@ -521,92 +614,19 @@ public class OntologyMutationService {
             };
         }
         
-        // Build the restriction based on type using INSERT WHERE pattern
-        // This allows blank nodes to be properly created
-        String sparql = switch (restrictionType) {
-            case "some" -> {
-                String fillerPredicate = "owl:someValuesFrom";
-                yield """
-                    INSERT {
-                      <%s> %s [
-                        a owl:Restriction ;
-                        owl:onProperty <%s> ;
-                        %s <%s>
-                      ] .
-                    } WHERE { }
-                    """.formatted(classIri, axiomPredicate, propertyIri, fillerPredicate, fillerIri);
-            }
-            case "only" -> {
-                String fillerPredicate = "owl:allValuesFrom";
-                yield """
-                    INSERT {
-                      <%s> %s [
-                        a owl:Restriction ;
-                        owl:onProperty <%s> ;
-                        %s <%s>
-                      ] .
-                    } WHERE { }
-                    """.formatted(classIri, axiomPredicate, propertyIri, fillerPredicate, fillerIri);
-            }
-            case "value" -> {
-                yield """
-                    INSERT {
-                      <%s> %s [
-                        a owl:Restriction ;
-                        owl:onProperty <%s> ;
-                        owl:hasValue <%s>
-                      ] .
-                    } WHERE { }
-                    """.formatted(classIri, axiomPredicate, propertyIri, fillerIri);
-            }
-            case "min" -> {
-                int card = cardinality != null ? cardinality : 1;
-                String onClassPredicate = isDataRestriction ? "owl:onDataRange" : "owl:onClass";
-                yield """
-                    INSERT {
-                      <%s> %s [
-                        a owl:Restriction ;
-                        owl:onProperty <%s> ;
-                        owl:minQualifiedCardinality "%d"^^xsd:nonNegativeInteger ;
-                        %s <%s>
-                      ] .
-                    } WHERE { }
-                    """.formatted(classIri, axiomPredicate, propertyIri, card, onClassPredicate, fillerIri);
-            }
-            case "max" -> {
-                int card = cardinality != null ? cardinality : 1;
-                String onClassPredicate = isDataRestriction ? "owl:onDataRange" : "owl:onClass";
-                yield """
-                    INSERT {
-                      <%s> %s [
-                        a owl:Restriction ;
-                        owl:onProperty <%s> ;
-                        owl:maxQualifiedCardinality "%d"^^xsd:nonNegativeInteger ;
-                        %s <%s>
-                      ] .
-                    } WHERE { }
-                    """.formatted(classIri, axiomPredicate, propertyIri, card, onClassPredicate, fillerIri);
-            }
-            case "exactly" -> {
-                int card = cardinality != null ? cardinality : 1;
-                String onClassPredicate = isDataRestriction ? "owl:onDataRange" : "owl:onClass";
-                yield """
-                    INSERT {
-                      <%s> %s [
-                        a owl:Restriction ;
-                        owl:onProperty <%s> ;
-                        owl:qualifiedCardinality "%d"^^xsd:nonNegativeInteger ;
-                        %s <%s>
-                      ] .
-                    } WHERE { }
-                    """.formatted(classIri, axiomPredicate, propertyIri, card, onClassPredicate, fillerIri);
-            }
-            default -> {
-                log.warn("[MUTATION] Unknown restriction type: {}", restrictionType);
-                yield "";
-            }
-        };
+        String restrictionBody = buildRestrictionBody(propertyIri, restrictionType, fillerIri, cardinality, isDataRestriction);
         
+        if (restrictionBody.isEmpty()) {
+            log.warn("[MUTATION] Unknown restriction type: {}", restrictionType);
+            return "";
+        }
+
+        String sparql = """
+            INSERT {
+              <%s> %s %s .
+            } WHERE { }
+            """.formatted(classIri, axiomPredicate, restrictionBody);
+            
         log.info("[MUTATION]   Generated restriction SPARQL: {}", sparql);
         return sparql;
     }

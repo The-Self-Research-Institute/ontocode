@@ -14,7 +14,9 @@ export const AxiomRow: React.FC<{
   hasAxiomAnnotations?: boolean;
   properties?: any[];
   dataProperties?: any[];
-}> = ({ axiom, onDelete, onEdit, onEditClick, isInferred = false, isInActiveOntology = false, ontologyIri, hasAxiomAnnotations = false, properties = [], dataProperties = [] }) => {
+}> = ({ axiom, onDelete, onEdit, onEditClick, isInferred: isInferredProp = false, isInActiveOntology = false, ontologyIri, hasAxiomAnnotations = false, properties = [], dataProperties = [] }) => {
+  // Handle isInferred from prop or axiom object (can be boolean or string 'true')
+  const isInferred = isInferredProp || axiom.isInferred === true || axiom.isInferred === 'true';
   const [isEditing, setIsEditing] = useState(false);
   const [showAxiomAnnotations, setShowAxiomAnnotations] = useState(false);
 
@@ -314,8 +316,12 @@ export const AxiomSubsection: React.FC<{
                 key={`inferred-${axiom.id}`} 
                 axiom={axiom} 
                 onDelete={onDelete}
+                onEdit={onEdit}
+                onEditClick={onEditClick}
                 isInferred={true}
                 ontologyIri="Inferred by reasoner"
+                properties={properties}
+                dataProperties={dataProperties}
               />
             ))}
           </>
@@ -525,52 +531,115 @@ export const MultiSelectItem: React.FC<{
   item: string;
   onDelete: (item: string) => void;
   entityType?: 'class' | 'property' | 'datatype' | 'annotationProperty';
-}> = ({ item, onDelete, entityType }) => {
+  themeColor?: 'blue' | 'green' | 'orange' | 'yellow';
+}> = ({ item, onDelete, entityType, themeColor = 'blue' }) => {
     // Check if this is an inverse property expression
     const inverseMatch = item.match(/^inverse\((.+)\)$/i);
     const isInverse = !!inverseMatch;
     const propertyIri = isInverse ? inverseMatch[1] : item;
-    const displayName = propertyIri.split('#').pop() || propertyIri;
     
-    // Detect entity type from IRI if not provided
+    // Check if this is a restriction expression (contains 'some', 'only', 'min', 'max', 'exactly', 'value')
+    const restrictionKeywords = ['some', 'only', 'min', 'max', 'exactly', 'value', 'and', 'or', 'not'];
+    const isRestrictionExpression = restrictionKeywords.some(kw => 
+        item.includes(` ${kw} `) || item.startsWith(`${kw} `) || item.endsWith(` ${kw}`)
+    );
+    
+    // Format display name - keep prefix for datatypes
+    const getDisplayName = (iri: string): string => {
+        // Check if it's a datatype with known prefixes
+        if (iri.includes('XMLSchema#')) {
+            return 'xsd:' + iri.split('#').pop();
+        } else if (iri.includes('rdf-syntax-ns#')) {
+            return 'rdf:' + iri.split('#').pop();
+        } else if (iri.includes('rdf-schema#') || iri.includes('2000/01/rdf-schema#')) {
+            return 'rdfs:' + iri.split('#').pop();
+        } else if (iri.includes('owl#')) {
+            return 'owl:' + iri.split('#').pop();
+        }
+        // Default: just get the local name
+        return iri.split('#').pop() || iri;
+    };
+    
+    const displayName = getDisplayName(propertyIri);
+    
+    // Detect entity type from IRI/content if not provided
     let detectedType = entityType;
     if (!detectedType) {
-        if (item.includes('XMLSchema#') || item.includes('rdf-syntax-ns#') || item.includes('rdfs#Literal')) {
+        if (item.includes('XMLSchema#') || item.includes('rdf-syntax-ns#') || item.includes('rdf-schema#') || 
+            item.startsWith('xsd:') || item.startsWith('rdf:') || item.startsWith('rdfs:') ||
+            item.includes('Literal') || item.includes('PlainLiteral') || item.includes('XMLLiteral')) {
             detectedType = 'datatype';
         } else if (item.includes('owl#') && (item.includes('AnnotationProperty') || item.includes('deprecated') || item.includes('versionInfo'))) {
             detectedType = 'annotationProperty';
-        } else if (item.includes('ObjectProperty') || item.includes('DataProperty')) {
+        } else if (item.includes('ObjectProperty') || item.includes('DataProperty') || item.includes('topObjectProperty') || item.includes('topDataProperty')) {
             detectedType = 'property';
         } else {
             detectedType = 'class';
         }
     }
     
+    // Property icon color based on theme
+    const propertyIconColor = themeColor === 'green' ? 'bg-green-500' : themeColor === 'orange' ? 'bg-orange-500' : 'bg-blue-500';
+    
     // Icon based on entity type
     const getIcon = () => {
         switch (detectedType) {
             case 'datatype':
-                return <span className="w-3 h-3 bg-purple-500 rounded-sm flex-shrink-0" />;
+                return <span className="w-3 h-3 bg-red-600 rounded-full flex-shrink-0" />;
             case 'annotationProperty':
                 return <Tag size={12} className="text-orange-500 flex-shrink-0" />;
             case 'property':
-                return <span className="w-3 h-3 bg-blue-500 rounded-sm flex-shrink-0" />;
+                return <span className={`w-3 h-3 ${propertyIconColor} rounded-sm flex-shrink-0`} />;
             case 'class':
             default:
                 return <span className="w-3 h-3 bg-amber-400 rounded-full flex-shrink-0" />;
         }
     };
     
+    // Format restriction expression with colored keywords
+    const formatRestrictionExpression = (expr: string): React.ReactNode => {
+        // Split by restriction keywords and color them
+        const parts: React.ReactNode[] = [];
+        let remaining = expr;
+        let keyIndex = 0;
+        
+        // Find and replace keywords with colored versions
+        const regex = /\b(some|only|min|max|exactly|value|and|or|not)\b/gi;
+        let lastIndex = 0;
+        let match;
+        
+        while ((match = regex.exec(expr)) !== null) {
+            // Add text before the keyword
+            if (match.index > lastIndex) {
+                parts.push(<span key={`text-${keyIndex++}`} className="text-gray-800">{expr.slice(lastIndex, match.index)}</span>);
+            }
+            // Add the colored keyword
+            parts.push(<span key={`kw-${keyIndex++}`} className="text-fuchsia-600 font-medium">{match[0]}</span>);
+            lastIndex = regex.lastIndex;
+        }
+        // Add remaining text
+        if (lastIndex < expr.length) {
+            parts.push(<span key={`text-${keyIndex++}`} className="text-gray-800">{expr.slice(lastIndex)}</span>);
+        }
+        
+        return parts.length > 0 ? parts : expr;
+    };
+    
+    // Hover background color based on theme
+    const hoverBgColor = themeColor === 'green' ? 'hover:bg-green-50' : themeColor === 'orange' ? 'hover:bg-orange-50' : 'hover:bg-blue-50';
+    
     return (
-        <div className="group flex justify-between items-center bg-white p-1.5 border-b border-gray-100 last:border-0 hover:bg-blue-50 transition-colors">
+        <div className={`group flex justify-between items-center bg-white p-1.5 border-b border-gray-100 last:border-0 ${hoverBgColor} transition-colors`}>
             <div className="flex items-center gap-1.5">
                 {/* Entity type icon */}
                 {getIcon()}
                 {isInverse ? (
                     <span className="text-sm">
-                        <span className="text-blue-600">inverse</span>
+                        <span className={themeColor === 'green' ? 'text-green-600' : themeColor === 'orange' ? 'text-orange-600' : 'text-blue-600'}>inverse</span>
                         <span className="text-gray-600"> ('{displayName}')</span>
                     </span>
+                ) : isRestrictionExpression ? (
+                    <span className="text-sm">{formatRestrictionExpression(item)}</span>
                 ) : (
                     <span className="text-sm text-gray-800">'{displayName}'</span>
                 )}
@@ -683,7 +752,7 @@ export const MultiSelectSection: React.FC<{
              {/* Content area */}
              <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm overflow-hidden">
                  {items && items.length > 0 ? (
-                    items.map(item => <MultiSelectItem key={item} item={item} onDelete={onDelete} />)
+                    items.map(item => <MultiSelectItem key={item} item={item} onDelete={onDelete} themeColor={themeColor} />)
                  ) : (
                     <div className="p-2 text-xs text-gray-400 italic">
                         {/* Empty - matches Protégé's minimal empty state */}

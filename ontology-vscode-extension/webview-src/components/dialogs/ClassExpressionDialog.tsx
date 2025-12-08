@@ -24,6 +24,8 @@ interface ClassExpressionDialogProps {
   title?: string;
   initialValue?: string;
   initialTab?: 'hierarchy' | 'objectRestriction' | 'classExpression' | 'dataRestriction';
+  /** Restrict which tabs are shown. If not specified, all tabs are shown. */
+  allowedTabs?: TabType[];
   initialRestrictionData?: {
     propertyIri?: string;
     restrictionType?: 'some' | 'only' | 'min' | 'max' | 'exactly' | 'value';
@@ -52,7 +54,7 @@ interface ClassExpressionDialogProps {
   metadata?: { ontologyIRI?: string };
 }
 
-type TabType = 'hierarchy' | 'objectRestriction' | 'classExpression' | 'dataRestriction';
+export type TabType = 'hierarchy' | 'objectRestriction' | 'classExpression' | 'dataRestriction';
 
 /**
  * ClassExpressionDialog - Protégé desktop-style class expression builder
@@ -74,6 +76,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   initialValue = "",
   initialTab,
   initialRestrictionData,
+  allowedTabs,
   projectId,
   expandedNodes = [],
   onToggleNode,
@@ -90,6 +93,9 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   onRefreshProperties,
   metadata
 }) => {
+  // If allowedTabs is specified, use it; otherwise show all tabs
+  const visibleTabs = allowedTabs || ['hierarchy', 'objectRestriction', 'classExpression', 'dataRestriction'];
+  
   const [activeTab, setActiveTab] = useState<TabType>('hierarchy');
 
   // Class hierarchy state
@@ -355,9 +361,19 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   };
 
   const buildDataRestriction = (): string => {
-    if (!selectedDataProperty) return '';
+    console.log('[ClassExpressionDialog] buildDataRestriction called', {
+      selectedDataProperty,
+      datatype,
+      dataRestrictionType,
+      dataCardinality
+    });
+    if (!selectedDataProperty) {
+      console.warn('[ClassExpressionDialog] buildDataRestriction: No data property selected');
+      return '';
+    }
 
     const propName = selectedDataProperty.label;
+    console.log('[ClassExpressionDialog] buildDataRestriction: propName=', propName, 'datatype=', datatype);
 
     switch (dataRestrictionType) {
       case 'some':
@@ -376,12 +392,25 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   };
 
   const handleConfirm = () => {
+    console.log('[ClassExpressionDialog] handleConfirm called', {
+      activeTab,
+      selectedClass: selectedClass?.id,
+      selectedProperty: selectedProperty?.id,
+      restrictionFiller: restrictionFiller?.id,
+      selectedDataProperty: selectedDataProperty?.id
+    });
+    
     let expression = '';
     let restrictionData: RestrictionData | undefined = undefined;
 
     switch (activeTab) {
       case 'hierarchy':
-        if (selectedClass) expression = selectedClass.id;
+        if (selectedClass) {
+          expression = selectedClass.id;
+          console.log('[ClassExpressionDialog] Hierarchy tab - selected class:', expression);
+        } else {
+          console.warn('[ClassExpressionDialog] Hierarchy tab - no class selected!');
+        }
         break;
       case 'objectRestriction':
         expression = buildObjectRestriction();
@@ -401,24 +430,39 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
         expression = manchesterExpression.trim();
         break;
       case 'dataRestriction':
+        console.log('[ClassExpressionDialog] dataRestriction case - calling buildDataRestriction');
         expression = buildDataRestriction();
+        console.log('[ClassExpressionDialog] dataRestriction expression result:', expression);
         // Also build structured restriction data for backend
         if (selectedDataProperty) {
+          const fillerIri = datatype.startsWith('http://') || datatype.startsWith('rdf:') || datatype.startsWith('rdfs:') || datatype.startsWith('owl:')
+            ? (datatype.includes(':') && !datatype.startsWith('http') 
+              ? (datatype.startsWith('rdf:') ? `http://www.w3.org/1999/02/22-rdf-syntax-ns#${datatype.replace('rdf:', '')}` 
+                : datatype.startsWith('rdfs:') ? `http://www.w3.org/2000/01/rdf-schema#${datatype.replace('rdfs:', '')}`
+                : datatype.startsWith('owl:') ? `http://www.w3.org/2002/07/owl#${datatype.replace('owl:', '')}`
+                : datatype)
+              : datatype) 
+            : `http://www.w3.org/2001/XMLSchema#${datatype.replace('xsd:', '')}`;
+          console.log('[ClassExpressionDialog] dataRestriction fillerIri:', fillerIri);
           restrictionData = {
             type: 'dataRestriction',
             axiomType: 'SubClassOf', // Default - caller can change this if needed
             propertyIri: selectedDataProperty.id,
             restrictionType: dataRestrictionType,
-            fillerIri: datatype.startsWith('http://') ? datatype : `http://www.w3.org/2001/XMLSchema#${datatype.replace('xsd:', '')}`,
+            fillerIri: fillerIri,
             cardinality: ['min', 'max', 'exactly'].includes(dataRestrictionType) ? dataCardinality : undefined
           };
+          console.log('[ClassExpressionDialog] dataRestriction restrictionData:', restrictionData);
         }
         break;
     }
 
     if (expression) {
+      console.log('[ClassExpressionDialog] Calling onConfirm with expression:', expression);
       onConfirm(expression, restrictionData);
       handleClose();
+    } else {
+      console.warn('[ClassExpressionDialog] No expression to confirm! activeTab:', activeTab, 'selectedClass:', selectedClass);
     }
   };
 
@@ -442,16 +486,17 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
 
   // Handle toggle for hierarchy tab
   const handleHierarchyToggle = async (nodeId: string) => {
+    // Always update local expanded state first for immediate UI feedback
+    const isExpanded = localExpandedNodes.includes(nodeId);
+    setLocalExpandedNodes(
+      isExpanded
+        ? localExpandedNodes.filter(id => id !== nodeId)
+        : [...localExpandedNodes, nodeId]
+    );
+    
+    // Also call parent's toggle if provided (to load children)
     if (onToggleNode) {
       await onToggleNode(nodeId);
-    } else {
-      // Fallback to local state
-      const isExpanded = localExpandedNodes.includes(nodeId);
-      setLocalExpandedNodes(
-        isExpanded
-          ? localExpandedNodes.filter(id => id !== nodeId)
-          : [...localExpandedNodes, nodeId]
-      );
     }
   };
 
@@ -746,10 +791,25 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   const manchesterKeywords = ['and', 'or', 'not', 'some', 'only', 'min', 'max', 'exactly', 'value'];
 
   const isOkEnabled =
-    (activeTab === 'hierarchy' && selectedClass) ||
+    (activeTab === 'hierarchy' && selectedClass !== null) ||
     (activeTab === 'objectRestriction' && selectedProperty && restrictionFiller) ||
     (activeTab === 'classExpression' && manchesterExpression.trim()) ||
     (activeTab === 'dataRestriction' && selectedDataProperty);
+  
+  // Debug logging for OK button state
+  useEffect(() => {
+    console.log('[ClassExpressionDialog] OK button state:', {
+      isOkEnabled,
+      activeTab,
+      selectedClass: selectedClass?.id,
+      selectedClassExists: selectedClass !== null,
+      selectedProperty: selectedProperty?.id,
+      restrictionFiller: restrictionFiller?.id,
+      selectedDataProperty: selectedDataProperty?.id,
+      datatype,
+      dataRestrictionType
+    });
+  }, [isOkEnabled, activeTab, selectedClass, selectedProperty, restrictionFiller, selectedDataProperty, datatype, dataRestrictionType]);
 
   if (!isOpen) return null;
 
@@ -757,9 +817,10 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   const objectPropertiesTree = externalObjectPropertiesTree || propertiesToTree(objectProperties, false);
   const dataPropertiesTree = externalDataPropertiesTree || propertiesToTree(dataProperties, true);
 
-  // Use parent's expanded nodes if available, otherwise use local
-  const effectiveExpandedNodes = onToggleNode ? expandedNodes : localExpandedNodes;
-  const effectiveFillerExpandedNodes = onToggleNode ? [...expandedNodes, ...fillerExpandedNodes] : fillerExpandedNodes;
+  // Combine external and local expanded nodes for immediate UI feedback
+  // External nodes come from parent (for lazy loading), local nodes track immediate user interactions
+  const effectiveExpandedNodes = [...new Set([...expandedNodes, ...localExpandedNodes])];
+  const effectiveFillerExpandedNodes = [...new Set([...expandedNodes, ...fillerExpandedNodes])];
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -776,48 +837,56 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
           </button>
         </div>
 
-        {/* Tabs */}
+        {/* Tabs - only show tabs that are in visibleTabs */}
         <div className="flex border-b border-gray-300 bg-gray-100">
-          <button
-            onClick={() => setActiveTab('hierarchy')}
-            className={`px-4 py-2 text-sm font-medium transition-colors ${
-              activeTab === 'hierarchy'
-                ? 'bg-white text-gray-900 border-t-2 border-t-blue-500'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
-            }`}
-          >
-            Class hierarchy
-          </button>
-          <button
-            onClick={() => setActiveTab('objectRestriction')}
-            className={`px-4 py-2 text-sm font-medium transition-colors ${
-              activeTab === 'objectRestriction'
-                ? 'bg-white text-gray-900 border-t-2 border-t-blue-500'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
-            }`}
-          >
-            Object restriction creator
-          </button>
-          <button
-            onClick={() => setActiveTab('classExpression')}
-            className={`px-4 py-2 text-sm font-medium transition-colors ${
-              activeTab === 'classExpression'
-                ? 'bg-white text-gray-900 border-t-2 border-t-blue-500'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
-            }`}
-          >
-            Class expression editor
-          </button>
-          <button
-            onClick={() => setActiveTab('dataRestriction')}
-            className={`px-4 py-2 text-sm font-medium transition-colors ${
-              activeTab === 'dataRestriction'
-                ? 'bg-white text-gray-900 border-t-2 border-t-blue-500'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
-            }`}
-          >
-            Data restriction creator
-          </button>
+          {visibleTabs.includes('hierarchy') && (
+            <button
+              onClick={() => setActiveTab('hierarchy')}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                activeTab === 'hierarchy'
+                  ? 'bg-white text-gray-900 border-t-2 border-t-blue-500'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
+              }`}
+            >
+              Class hierarchy
+            </button>
+          )}
+          {visibleTabs.includes('objectRestriction') && (
+            <button
+              onClick={() => setActiveTab('objectRestriction')}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                activeTab === 'objectRestriction'
+                  ? 'bg-white text-gray-900 border-t-2 border-t-blue-500'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
+              }`}
+            >
+              Object restriction creator
+            </button>
+          )}
+          {visibleTabs.includes('classExpression') && (
+            <button
+              onClick={() => setActiveTab('classExpression')}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                activeTab === 'classExpression'
+                  ? 'bg-white text-gray-900 border-t-2 border-t-blue-500'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
+              }`}
+            >
+              Class expression editor
+            </button>
+          )}
+          {visibleTabs.includes('dataRestriction') && (
+            <button
+              onClick={() => setActiveTab('dataRestriction')}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                activeTab === 'dataRestriction'
+                  ? 'bg-white text-gray-900 border-t-2 border-t-blue-500'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
+              }`}
+            >
+              Data restriction creator
+            </button>
+          )}
         </div>
 
         {/* Content Area */}
@@ -900,7 +969,10 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                   expandedNodes={effectiveExpandedNodes}
                   searchQuery={classSearchQuery}
                   onSearchQueryChange={setClassSearchQuery}
-                  onSelectItem={(item) => setSelectedClass(item as TreeNode)}
+                  onSelectItem={(item) => {
+                    console.log('[ClassExpressionDialog] Class selected from hierarchy:', item);
+                    setSelectedClass(item as TreeNode);
+                  }}
                   onToggleNode={handleHierarchyToggle}
                   onAddItem={projectId ? (type) => handleInlineAddClass(type as 'subclass' | 'sibling') : () => {}}
                   onDeleteItem={projectId ? handleInlineDeleteStart : () => {}}

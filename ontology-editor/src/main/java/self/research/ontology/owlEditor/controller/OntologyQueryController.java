@@ -105,6 +105,18 @@ public class OntologyQueryController {
                 queryService.classDetails(projectId, classIri)));
     }
 
+    @GetMapping("/classes/instances/{projectId}")
+    public ResponseEntity<?> classInstances(@PathVariable String projectId,
+                                           @RequestParam String classIri) {
+        return ResponseEntity.ok(queryService.getClassInstances(projectId, classIri));
+    }
+
+    @GetMapping("/{projectId}/individuals/{individualIri}")
+    public ResponseEntity<?> individualDetails(@PathVariable String projectId,
+                                              @PathVariable String individualIri) {
+        return ResponseEntity.ok(queryService.getIndividualDetails(projectId, individualIri));
+    }
+
     @GetMapping("/debug/{projectId}")
     public ResponseEntity<?> debug(@PathVariable String projectId) {
         return ResponseEntity.ok(queryService.debugInfo(projectId));
