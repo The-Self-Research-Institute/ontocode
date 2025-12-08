@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { ChevronRight, ChevronDown, Plus, Trash2, Edit2, MessageCircle, HelpCircle } from "lucide-react";
+import { ChevronRight, ChevronDown, Plus, Trash2, Edit2, MessageCircle, HelpCircle, Tag } from "lucide-react";
 import ManchesterSyntaxEditor from './ManchesterSyntaxEditor';
 import type { Axiom } from '../../types';
 
@@ -179,7 +179,8 @@ export const AxiomSubsection: React.FC<{
   activeOntologyIri?: string;
   properties?: any[];
   dataProperties?: any[];
-}> = ({ title, axioms, inferredAxioms, onAdd, onEdit, onEditClick, onDelete, emptyMessage, onAddClick, activeOntologyIri, properties = [], dataProperties = [] }) => {
+  themeColor?: 'yellow' | 'blue' | 'green' | 'orange' | 'purple'; // Protégé-style colored headers
+}> = ({ title, axioms, inferredAxioms, onAdd, onEdit, onEditClick, onDelete, emptyMessage, onAddClick, activeOntologyIri, properties = [], dataProperties = [], themeColor }) => {
   const [isAdding, setIsAdding] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
 
@@ -207,28 +208,88 @@ export const AxiomSubsection: React.FC<{
   const allAxioms = [...(axioms || []), ...(inferredAxioms || [])];
   const hasContent = allAxioms.length > 0;
 
+  // Clean minimal theme colors - subtle and professional
+  const themes = {
+    yellow: {
+      headerBg: 'bg-amber-50 border-l-2 border-l-amber-400',
+      headerText: 'text-stone-700',
+      hoverBg: 'hover:bg-amber-100',
+      focusRing: 'ring-amber-300',
+      plusHover: 'hover:text-amber-600'
+    },
+    blue: {
+      headerBg: 'bg-blue-50 border-l-2 border-l-blue-400',
+      headerText: 'text-stone-700',
+      hoverBg: 'hover:bg-blue-100',
+      focusRing: 'ring-blue-300',
+      plusHover: 'hover:text-blue-600'
+    },
+    green: {
+      headerBg: 'bg-emerald-50 border-l-2 border-l-emerald-400',
+      headerText: 'text-stone-700',
+      hoverBg: 'hover:bg-emerald-100',
+      focusRing: 'ring-emerald-300',
+      plusHover: 'hover:text-emerald-600'
+    },
+    orange: {
+      headerBg: 'bg-orange-50 border-l-2 border-l-orange-400',
+      headerText: 'text-stone-700',
+      hoverBg: 'hover:bg-orange-100',
+      focusRing: 'ring-orange-300',
+      plusHover: 'hover:text-orange-600'
+    },
+    purple: {
+      headerBg: 'bg-purple-50 border-l-2 border-l-purple-400',
+      headerText: 'text-stone-700',
+      hoverBg: 'hover:bg-purple-100',
+      focusRing: 'ring-purple-300',
+      plusHover: 'hover:text-purple-600'
+    }
+  };
+
+  const theme = themeColor ? themes[themeColor] : null;
+
   return (
-    <div className="mb-4 last:mb-0">
-      <div 
-        className={`flex justify-between items-center mb-1 px-2 py-1 rounded ${isFocused ? 'ring-2 ring-purple-300' : ''}`}
-        tabIndex={0}
-        onFocus={() => setIsFocused(true)}
-        onBlur={() => setIsFocused(false)}
-        onKeyDown={handleHeaderKeyDown}
-      >
-        <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">
-          {title}
-          {isFocused && <span className="ml-2 text-[10px] text-purple-600">(Press Enter to add)</span>}
-        </h4>
+    <div className="mb-3 last:mb-0">
+      {theme ? (
+        // Clean minimal header with accent border
         <button 
-          onClick={handleAddButtonClick} 
-          className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors" 
-          title={`Add ${title} (Enter when focused)`}
+          onClick={handleAddButtonClick}
+          onKeyDown={handleHeaderKeyDown}
+          className={`w-full flex justify-between items-center px-2 py-1.5 transition-colors ${theme.headerBg} ${theme.headerText} ${theme.hoverBg} ${isFocused ? `ring-1 ${theme.focusRing}` : ''}`}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
         >
-          <Plus size={14} />
+          <span className="text-xs font-medium">{title}</span>
+          {onAddClick && (
+            <span className={`text-stone-400 transition-colors ${theme.plusHover}`}>
+              <Plus size={14}/>
+            </span>
+          )}
         </button>
-      </div>
-      <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm">
+      ) : (
+        // Default header style
+        <div 
+          className={`flex justify-between items-center mb-1 px-2 py-1 rounded ${isFocused ? 'ring-2 ring-purple-300' : ''}`}
+          tabIndex={0}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
+          onKeyDown={handleHeaderKeyDown}
+        >
+          <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">
+            {title}
+            {isFocused && <span className="ml-2 text-[10px] text-purple-600">(Press Enter to add)</span>}
+          </h4>
+          <button 
+            onClick={handleAddButtonClick} 
+            className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors" 
+            title={`Add ${title} (Enter when focused)`}
+          >
+            <Plus size={14} />
+          </button>
+        </div>
+      )}
+      <div className={`bg-white border border-gray-200 overflow-hidden shadow-sm ${theme ? 'border-t-0 rounded-b-sm' : 'rounded-md'}`}>
         {hasContent ? (
           <>
             {/* Asserted axioms */}
@@ -261,7 +322,7 @@ export const AxiomSubsection: React.FC<{
         ) : (
           !isAdding && (
             <div className="p-2 text-xs text-gray-400 italic bg-gray-50">
-              {emptyMessage || "No axioms defined"}
+              {emptyMessage !== undefined ? emptyMessage : "No axioms defined"}
             </div>
           )
         )}
@@ -304,7 +365,7 @@ const getPropertyLabel = (uri: string): string => {
 
 /**
  * A component that displays a list of annotations (key-value pairs)
- * and provides a delete button for each.
+ * in Protégé style - grouped by property with full URI displayed.
  * Sorts annotations to show rdfs:comment first, then rdfs:label, then others alphabetically.
  */
 export const AnnotationsDisplay = ({ annotations, onDelete, onEdit }: { 
@@ -320,8 +381,8 @@ export const AnnotationsDisplay = ({ annotations, onDelete, onEdit }: {
   
   // Priority annotation properties (shown first)
   const priorityProps = [
-    'http://www.w3.org/2000/01/rdf-schema#comment',
     'http://www.w3.org/2000/01/rdf-schema#label',
+    'http://www.w3.org/2000/01/rdf-schema#comment',
     'http://www.w3.org/2000/01/rdf-schema#isDefinedBy',
     'http://www.w3.org/2000/01/rdf-schema#seeAlso'
   ];
@@ -344,61 +405,44 @@ export const AnnotationsDisplay = ({ annotations, onDelete, onEdit }: {
     return labelA.localeCompare(labelB);
   });
   
-  // Check if this is a description annotation (rdfs:comment)
-  const isDescription = (key: string) => key === 'http://www.w3.org/2000/01/rdf-schema#comment';
-  
   return (
-    <div className="space-y-1">
+    <div className="divide-y divide-stone-200">
       {sortedAnnotations.map(([key, value]) => {
         const propertyLabel = getPropertyLabel(key);
-        const isDesc = isDescription(key);
         
         return (
-          <div 
-            key={key} 
-            className={`group bg-white border rounded-lg overflow-hidden hover:shadow-sm transition-all ${
-              isDesc 
-                ? 'border-blue-300 hover:border-blue-400 ring-1 ring-blue-100' 
-                : 'border-gray-200 hover:border-purple-300'
-            }`}
-          >
-            <div className={`flex items-center justify-between px-3 py-2 border-b ${
-              isDesc 
-                ? 'bg-gradient-to-r from-blue-100 via-blue-50 to-white border-blue-200' 
-                : 'bg-gradient-to-r from-purple-50 via-blue-50 to-gray-50 border-gray-200'
-            }`}>
+          <div key={key} className="group bg-white hover:bg-stone-50 transition-colors">
+            {/* Property header row - Clean minimal style */}
+            <div className="flex items-center justify-between px-3 py-1.5 bg-stone-50 border-b border-stone-100">
               <div className="flex items-center gap-2 flex-1 min-w-0">
-                <span className={`text-xs font-bold ${isDesc ? 'text-blue-800' : 'text-purple-900'}`}>
-                  {isDesc ? '📝 ' : ''}{propertyLabel}
+                <span className="text-xs font-medium text-stone-600">
+                  {propertyLabel}
                 </span>
-                {key !== propertyLabel && (
-                  <span className="text-[10px] text-gray-500 font-mono truncate" title={key}>
-                    ({key})
-                  </span>
-                )}
+                <span className="text-[10px] text-stone-400 font-mono truncate" title={key}>
+                  ({key})
+                </span>
               </div>
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 {onEdit && (
                   <button 
                     onClick={() => onEdit(key, value)} 
-                    className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md hover:bg-blue-50 transition-all flex-shrink-0"
-                    title={`Edit ${propertyLabel} annotation`}
-                    aria-label={`Edit ${propertyLabel} annotation`}
+                    className="p-1 rounded hover:bg-stone-200 transition-all"
+                    title={`Edit ${propertyLabel}`}
                   >
-                    <Edit2 size={13} className="text-blue-600" />
+                    <Edit2 size={12} className="text-stone-500" />
                   </button>
                 )}
                 <button 
                   onClick={() => onDelete(key)} 
-                  className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md hover:bg-red-50 transition-all flex-shrink-0"
-                  title={`Delete ${propertyLabel} annotation`}
-                  aria-label={`Delete ${propertyLabel} annotation`}
+                  className="p-1 rounded hover:bg-red-100 transition-all"
+                  title={`Delete ${propertyLabel}`}
                 >
-                  <Trash2 size={13} className="text-red-600" />
+                  <Trash2 size={12} className="text-stone-400 hover:text-red-500" />
                 </button>
               </div>
             </div>
-            <div className={`px-3 py-2.5 ${isDesc ? 'bg-blue-50/30' : ''}`}>
+            {/* Value row */}
+            <div className="px-3 py-2">
               <AnnotationValue value={value} />
             </div>
           </div>
@@ -480,47 +524,169 @@ export const Panel = ({
 export const MultiSelectItem: React.FC<{
   item: string;
   onDelete: (item: string) => void;
-}> = ({ item, onDelete }) => (
-    <div className="group flex justify-between items-center bg-white p-1.5 border-b border-gray-100 last:border-0 hover:bg-blue-50 transition-colors">
-        <span className="text-sm text-gray-800">{item.split('#').pop() || item}</span>
-        <button 
-          onClick={() => onDelete(item)} 
-          className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600 transition-all"
-          title={`Remove ${item.split('#').pop()}`}
-          aria-label={`Remove ${item.split('#').pop()}`}
-        >
-            <Trash2 size={14} />
-        </button>
-    </div>
-);
+  entityType?: 'class' | 'property' | 'datatype' | 'annotationProperty';
+}> = ({ item, onDelete, entityType }) => {
+    // Check if this is an inverse property expression
+    const inverseMatch = item.match(/^inverse\((.+)\)$/i);
+    const isInverse = !!inverseMatch;
+    const propertyIri = isInverse ? inverseMatch[1] : item;
+    const displayName = propertyIri.split('#').pop() || propertyIri;
+    
+    // Detect entity type from IRI if not provided
+    let detectedType = entityType;
+    if (!detectedType) {
+        if (item.includes('XMLSchema#') || item.includes('rdf-syntax-ns#') || item.includes('rdfs#Literal')) {
+            detectedType = 'datatype';
+        } else if (item.includes('owl#') && (item.includes('AnnotationProperty') || item.includes('deprecated') || item.includes('versionInfo'))) {
+            detectedType = 'annotationProperty';
+        } else if (item.includes('ObjectProperty') || item.includes('DataProperty')) {
+            detectedType = 'property';
+        } else {
+            detectedType = 'class';
+        }
+    }
+    
+    // Icon based on entity type
+    const getIcon = () => {
+        switch (detectedType) {
+            case 'datatype':
+                return <span className="w-3 h-3 bg-purple-500 rounded-sm flex-shrink-0" />;
+            case 'annotationProperty':
+                return <Tag size={12} className="text-orange-500 flex-shrink-0" />;
+            case 'property':
+                return <span className="w-3 h-3 bg-blue-500 rounded-sm flex-shrink-0" />;
+            case 'class':
+            default:
+                return <span className="w-3 h-3 bg-amber-400 rounded-full flex-shrink-0" />;
+        }
+    };
+    
+    return (
+        <div className="group flex justify-between items-center bg-white p-1.5 border-b border-gray-100 last:border-0 hover:bg-blue-50 transition-colors">
+            <div className="flex items-center gap-1.5">
+                {/* Entity type icon */}
+                {getIcon()}
+                {isInverse ? (
+                    <span className="text-sm">
+                        <span className="text-blue-600">inverse</span>
+                        <span className="text-gray-600"> ('{displayName}')</span>
+                    </span>
+                ) : (
+                    <span className="text-sm text-gray-800">'{displayName}'</span>
+                )}
+            </div>
+            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                <button 
+                  className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600"
+                  title="Help"
+                  aria-label="Help"
+                >
+                    <HelpCircle size={14} />
+                </button>
+                <button 
+                  className="p-1 rounded hover:bg-blue-100 text-gray-400 hover:text-blue-600"
+                  title="Axiom annotations"
+                  aria-label="Axiom annotations"
+                >
+                    <MessageCircle size={14} />
+                </button>
+                <button 
+                  onClick={() => onDelete(item)} 
+                  className="p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600"
+                  title={`Remove ${displayName}`}
+                  aria-label={`Remove ${displayName}`}
+                >
+                    <Trash2 size={14} />
+                </button>
+                <button 
+                  className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600"
+                  title="More options"
+                  aria-label="More options"
+                >
+                    <span className="text-xs">○</span>
+                </button>
+            </div>
+        </div>
+    );
+};
 
 export const MultiSelectSection: React.FC<{
     title: string;
     items: string[] | undefined;
     onAddClick?: () => void;
     onDelete: (item: string) => void;
-}> = ({ title, items, onAddClick, onDelete }) => {
+    themeColor?: 'blue' | 'green' | 'orange' | 'yellow'; // For different property types
+}> = ({ title, items, onAddClick, onDelete, themeColor = 'blue' }) => {
+    const [isSelected, setIsSelected] = useState(false);
+    
+    // Clean minimal theme colors
+    const themes = {
+        blue: {
+            headerBg: 'bg-blue-50 border-l-2 border-l-blue-400',
+            headerText: 'text-stone-700',
+            hoverBg: 'hover:bg-blue-100',
+            selectedBg: 'bg-blue-100',
+            plusColor: 'text-stone-400 hover:text-blue-600'
+        },
+        green: {
+            headerBg: 'bg-emerald-50 border-l-2 border-l-emerald-400',
+            headerText: 'text-stone-700',
+            hoverBg: 'hover:bg-emerald-100',
+            selectedBg: 'bg-emerald-100',
+            plusColor: 'text-stone-400 hover:text-emerald-600'
+        },
+        orange: {
+            headerBg: 'bg-orange-50 border-l-2 border-l-orange-400',
+            headerText: 'text-stone-700',
+            hoverBg: 'hover:bg-orange-100',
+            selectedBg: 'bg-orange-100',
+            plusColor: 'text-stone-400 hover:text-orange-600'
+        },
+        yellow: {
+            headerBg: 'bg-amber-50 border-l-2 border-l-amber-400',
+            headerText: 'text-stone-700',
+            hoverBg: 'hover:bg-amber-100',
+            selectedBg: 'bg-amber-100',
+            plusColor: 'text-stone-400 hover:text-amber-600'
+        }
+    };
+    
+    const theme = themes[themeColor];
+    
+    const handleHeaderClick = () => {
+        setIsSelected(true);
+        // If there's an add handler, trigger it
+        if (onAddClick) {
+            onAddClick();
+        }
+    };
+    
     return (
-         <div className="mb-4 last:mb-0">
-             <div className="flex justify-between items-center mb-1">
-                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">{title}</h4>
+         <div className="mb-3 last:mb-0">
+             {/* Clean minimal clickable header */}
+             <button 
+                onClick={handleHeaderClick}
+                onBlur={() => setIsSelected(false)}
+                className={`w-full flex justify-between items-center px-2 py-1.5 transition-colors ${
+                    isSelected 
+                        ? `${theme.selectedBg} ${theme.headerText}` 
+                        : `${theme.headerBg} ${theme.headerText} ${theme.hoverBg}`
+                }`}
+             >
+                 <span className="text-xs font-medium">{title}</span>
                  {onAddClick && (
-                    <button 
-                    onClick={onAddClick} 
-                    className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors"
-                    title={`Add ${title.slice(0, -1)}`}
-                    aria-label={`Add ${title.slice(0, -1)}`}
-                    >
+                    <span className={`${theme.plusColor} transition-colors`}>
                         <Plus size={14}/>
-                    </button>
+                    </span>
                  )}
-             </div>
-             <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm">
+             </button>
+             {/* Content area */}
+             <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm overflow-hidden">
                  {items && items.length > 0 ? (
                     items.map(item => <MultiSelectItem key={item} item={item} onDelete={onDelete} />)
                  ) : (
-                    <div className="p-2 text-xs text-gray-400 italic bg-gray-50">
-                        No {title.toLowerCase()} defined
+                    <div className="p-2 text-xs text-gray-400 italic">
+                        {/* Empty - matches Protégé's minimal empty state */}
                     </div>
                  )}
              </div>

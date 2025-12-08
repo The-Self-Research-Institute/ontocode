@@ -1120,22 +1120,29 @@ const ClassEditor: React.FC<{
         )}
         
         {activeTab === 'annotations' && (
-            <Panel title="Annotations" defaultOpen={true} themeColor="bg-gradient-to-b from-gray-50 to-gray-100 text-gray-800 border-gray-200" 
-              actions={
-                <button onClick={onAddAnnotation} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600" title="Add annotation">
+            <div className="space-y-0">
+              {/* Annotations Panel Header - Clean minimal style */}
+              <div className="bg-stone-100 border-b border-stone-300 px-3 py-1.5 flex items-center justify-between">
+                <span className="text-xs font-medium text-stone-700">Annotations: {item.label}</span>
+                <button onClick={onAddAnnotation} className="p-1 hover:bg-stone-200 rounded text-stone-500 hover:text-stone-700" title="Add annotation">
                   <Plus size={14} />
                 </button>
-              }
-            >
-              <div className="p-2">
+              </div>
+              {/* Annotations Content */}
+              <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm">
                 <AnnotationsDisplay annotations={displayAnnotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} />
               </div>
-            </Panel>
+            </div>
         )}
 
         {activeTab === 'description' && (
-            <Panel title="Description" defaultOpen={true} themeColor="bg-gradient-to-b from-[#F5F0E6] to-[#E1C688] text-black border-[#D6C9AD]">
-              <div className="p-3 space-y-4">
+            <div className="space-y-0">
+              {/* Description Panel Header - Clean minimal style */}
+              <div className="bg-stone-100 border-b border-stone-300 px-3 py-1.5">
+                <span className="text-xs font-medium text-stone-700">Description: {item.label}</span>
+              </div>
+              {/* Description Content */}
+              <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm p-3 space-y-4">
                 <AxiomSubsection
                   title="Equivalent To"
                   axioms={classDetails?.equivalentClassesAxioms || item.equivalentClassesAxioms}
@@ -1146,6 +1153,7 @@ const ClassEditor: React.FC<{
                   onEditClick={(axiom, initialTab, restrictionData) => openEditor('EquivalentTo', 'Equivalent Class Expression', axiom.definition, axiom.id, initialTab, restrictionData)}
                   properties={properties}
                   dataProperties={dataProperties}
+                  themeColor="yellow"
                 />
                 
                 <AxiomSubsection
@@ -1158,6 +1166,48 @@ const ClassEditor: React.FC<{
                   onEditClick={(axiom, initialTab, restrictionData) => openEditor('SubClassOf', 'SubClass Expression', axiom.definition, axiom.id, initialTab, restrictionData)}
                   properties={properties}
                   dataProperties={dataProperties}
+                  themeColor="yellow"
+                />
+
+                <AxiomSubsection
+                  title="General class axioms"
+                  axioms={[]} // Placeholder - requires backend support
+                  onAdd={() => {}}
+                  onDelete={() => {}}
+                  onAddClick={() => {}}
+                  emptyMessage=""
+                  themeColor="yellow"
+                />
+
+                <AxiomSubsection
+                  title="SubClass Of (Anonymous Ancestor)"
+                  axioms={[]} // Placeholder - derived from reasoner
+                  onAdd={() => {}}
+                  onDelete={() => {}}
+                  emptyMessage=""
+                  themeColor="yellow"
+                />
+
+                <AxiomSubsection
+                  title="Instances"
+                  axioms={[]} // Placeholder - individuals are in separate tab
+                  onAdd={() => {}}
+                  onDelete={() => {}}
+                  onAddClick={() => {}}
+                  emptyMessage=""
+                  themeColor="yellow"
+                />
+
+                <AxiomSubsection
+                  title="Target for Key"
+                  axioms={classDetails?.hasKeyAxioms || item.hasKeyAxioms}
+                  onAdd={() => {}}
+                  onEdit={(id, newDef) => handleEditHasKey(id)}
+                  onDelete={(id) => handleDeleteHasKey(id)}
+                  onAddClick={() => setIsHasKeyOpen(true)}
+                  onEditClick={(axiom) => handleEditHasKey(axiom.id)}
+                  emptyMessage=""
+                  themeColor="yellow"
                 />
                 
                 <AxiomSubsection
@@ -1168,9 +1218,10 @@ const ClassEditor: React.FC<{
                   onDelete={(id) => handleDeleteAxiom('DisjointWith', id)}
                   onAddClick={() => setIsDisjointWithOpen(true)}
                   onEditClick={(axiom) => handleEditDisjointWith(axiom.id)}
-                  emptyMessage="No disjoint classes defined"
+                  emptyMessage=""
                   properties={properties}
                   dataProperties={dataProperties}
+                  themeColor="yellow"
                 />
                 
                 <AxiomSubsection
@@ -1181,29 +1232,11 @@ const ClassEditor: React.FC<{
                   onDelete={(id) => handleDeleteDisjointUnion(id)}
                   onAddClick={() => setIsDisjointUnionOpen(true)}
                   onEditClick={(axiom) => handleEditDisjointUnion(axiom.id)}
-                  emptyMessage="No disjoint unions defined"
+                  emptyMessage=""
+                  themeColor="yellow"
                 />
-
-                <AxiomSubsection
-                  title="Has Key"
-                  axioms={classDetails?.hasKeyAxioms || item.hasKeyAxioms}
-                  onAdd={() => {}}
-                  onEdit={(id, newDef) => handleEditHasKey(id)}
-                  onDelete={(id) => handleDeleteHasKey(id)}
-                  onAddClick={() => setIsHasKeyOpen(true)}
-                  onEditClick={(axiom) => handleEditHasKey(axiom.id)}
-                  emptyMessage="No keys defined"
-                />
-                
-                {/* Members Section (Placeholder for now, could fetch instances) */}
-                <div className="mt-4 pt-4 border-t border-gray-200">
-                   <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Members</h4>
-                   <div className="p-2 text-xs text-gray-500 italic bg-gray-50 border border-gray-200 rounded">
-                     Instances of this class are listed in the "Individuals by class" tab.
-                   </div>
-                </div>
               </div>
-            </Panel>
+            </div>
         )}
       </div>
 
