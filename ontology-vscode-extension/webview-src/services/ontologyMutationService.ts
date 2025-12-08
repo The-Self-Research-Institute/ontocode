@@ -382,15 +382,61 @@ export const ontologyMutationService = {
 
   // --- Property Mutations ---
 
-  async addPropertyDomain(projectId: string, propertyIri: string, domainIri: string, userId?: string, username?: string): Promise<void> {
-    await this.applyMutations(projectId, [{ type: 'addPropertyDomain', iri: propertyIri, target: domainIri }], undefined, userId, username);
+  async addPropertyDomain(
+    projectId: string, 
+    propertyIri: string, 
+    domainIri: string, 
+    userId?: string, 
+    username?: string,
+    restrictionData?: {
+      propertyIri: string;
+      restrictionType: string;
+      fillerIri: string;
+      cardinality?: number;
+      isDataProperty?: boolean;
+    }
+  ): Promise<void> {
+    const op: any = { type: 'addPropertyDomain', iri: propertyIri, target: domainIri };
+    
+    if (restrictionData) {
+      op.property = restrictionData.propertyIri;
+      op.restrictionType = restrictionData.restrictionType;
+      op.target = restrictionData.fillerIri; // Override target with filler
+      op.cardinality = restrictionData.cardinality;
+      op.axiomType = restrictionData.isDataProperty ? 'DataRestriction' : 'ObjectRestriction';
+    }
+    
+    await this.applyMutations(projectId, [op], undefined, userId, username);
   },
   async deletePropertyDomain(projectId: string, propertyIri: string, domainIri: string, userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{ type: 'deletePropertyDomain', iri: propertyIri, target: domainIri }], undefined, userId, username);
   },
 
-  async addPropertyRange(projectId: string, propertyIri: string, rangeIri: string, userId?: string, username?: string): Promise<void> {
-    await this.applyMutations(projectId, [{ type: 'addPropertyRange', iri: propertyIri, target: rangeIri }], undefined, userId, username);
+  async addPropertyRange(
+    projectId: string, 
+    propertyIri: string, 
+    rangeIri: string, 
+    userId?: string, 
+    username?: string,
+    restrictionData?: {
+      propertyIri: string;
+      restrictionType: string;
+      fillerIri: string;
+      cardinality?: number;
+      isDataProperty?: boolean;
+    }
+  ): Promise<void> {
+    const op: any = { type: 'addPropertyRange', iri: propertyIri, target: rangeIri };
+    
+    if (restrictionData) {
+      op.property = restrictionData.propertyIri;
+      op.restrictionType = restrictionData.restrictionType;
+      op.target = restrictionData.fillerIri; // Override target with filler
+      op.cardinality = restrictionData.cardinality;
+      op.axiomType = restrictionData.isDataProperty ? 'DataRestriction' : 'ObjectRestriction';
+    }
+
+    await this.applyMutations(projectId, [op], undefined, userId, username);
   },
   async deletePropertyRange(projectId: string, propertyIri: string, rangeIri: string, userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{ type: 'deletePropertyRange', iri: propertyIri, target: rangeIri }], undefined, userId, username);
