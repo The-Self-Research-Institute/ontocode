@@ -67,6 +67,10 @@ public class HistorySyncService {
                 builder.newValue((String) changeData.get("newValue"));
             }
             
+            if (changeData.containsKey("annotationProperty")) {
+                builder.annotationProperty((String) changeData.get("annotationProperty"));
+            }
+            
             if (changeData.containsKey("description")) {
                 builder.description((String) changeData.get("description"));
             }

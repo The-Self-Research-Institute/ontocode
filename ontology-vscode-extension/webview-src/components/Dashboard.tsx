@@ -345,7 +345,7 @@ const TopMenuBar = ({
                     >
                       Share
                     </button>
-                    <button
+                    {/* <button
                       onClick={(e) => {
                         e.preventDefault();
                         if (currentProjectId) {
@@ -363,7 +363,7 @@ const TopMenuBar = ({
                     >
                       <Clock size={14} />
                       History
-                    </button>
+                    </button> */}
                   </div>
                 ) : (
                   <div className="p-2 text-xs text-gray-400">No actions available</div>
@@ -1785,8 +1785,8 @@ const Dashboard = () => {
     }
   }, [projectId]);
 
-  const updateItemInState = useCallback((updatedItem: SelectableItem) => {
-    console.log('[DEBUG] updateItemInState called for item:', updatedItem.id);
+  const updateItemInState = useCallback((updatedItem: SelectableItem, markUnsaved: boolean = true) => {
+    console.log('[DEBUG] updateItemInState called for item:', updatedItem.id, 'markUnsaved:', markUnsaved);
     console.log('[CHANGE TRACKING] Entity updated:', {
       entityId: updatedItem.id,
       entityLabel: updatedItem.label,
@@ -1846,8 +1846,10 @@ const Dashboard = () => {
         break;
     }
 
-    // Mark as unsaved to enable Save button
-    setHasUnsavedChanges(true);
+    // Mark as unsaved to enable Save button (only if markUnsaved is true)
+    if (markUnsaved) {
+      setHasUnsavedChanges(true);
+    }
   }, [entitiesTab, user]);
 
   const refreshClassHierarchy = useCallback(async () => {
@@ -2121,37 +2123,98 @@ const Dashboard = () => {
         return;
       }
       
-      showNotification('Rollback applied. Refreshing data...', 'info');
+      const rollbackUser = detail.username || 'Someone';
+      const originalAuthor = detail.originalAuthor || 'Unknown';
+      const oldValue = detail.oldValue;
+      const newValue = detail.newValue;
+      
+      // Build notification message with value changes if available
+      let message = `${rollbackUser} rolled back change by ${originalAuthor}`;
+      if (oldValue && newValue) {
+        message += ` (from "${oldValue}" back to "${newValue}")`;
+      } else if (newValue) {
+        message += ` (restored to "${newValue}")`;
+      }
+      message += '. Refreshing data...';
+      
+      showNotification(message, 'info');
+      
+      // Check if this is a rollback of an "added" change (which means deleting the entity)
+      const isAddedRollback = detail.action && detail.action.toLowerCase() === 'added';
+      
+      if (isAddedRollback) {
+        // Entity was deleted by rollback - remove it from UI
+        console.log('[Dashboard] 🗑️ Rollback of added change - removing entity from UI:', detail.entityIRI);
+        
+        // Clear selection if this was the selected item
+        if (selectedItem?.id === detail.entityIRI) {
+          setSelectedItem(null);
+        }
+        
+        // Remove from class hierarchy
+        if (entitiesTab === 'Classes' || detail.changeType?.toLowerCase().includes('class')) {
+          setClassHierarchy(prevHierarchy => {
+            const removeNodeFromTree = (nodes: TreeNode[]): TreeNode[] => {
+              return nodes
+                .filter(node => node.id !== detail.entityIRI)
+                .map(node => ({
+                  ...node,
+                  children: node.children ? removeNodeFromTree(node.children) : []
+                }));
+            };
+            return removeNodeFromTree(prevHierarchy);
+          });
+        }
+        
+        // Remove from properties lists
+        if (detail.changeType?.toLowerCase().includes('objectproperty')) {
+          setObjectProperties(prev => prev.filter(p => p.id !== detail.entityIRI));
+        } else if (detail.changeType?.toLowerCase().includes('dataproperty')) {
+          setDataProperties(prev => prev.filter(p => p.id !== detail.entityIRI));
+        } else if (detail.changeType?.toLowerCase().includes('annotationproperty')) {
+          setAnnotationProperties(prev => prev.filter(p => p.id !== detail.entityIRI));
+        }
+        
+        // Remove from individuals list
+        if (detail.changeType?.toLowerCase().includes('individual')) {
+          setIndividuals(prev => prev.filter(i => i.id !== detail.entityIRI));
+        }
+        
+        return; // Don't try to fetch the deleted entity
+      }
       
       // Refresh the data after rollback with longer delay to ensure GraphDB has processed
       setTimeout(() => {
-        // Refresh hierarchy and properties
-        refreshClassHierarchy();
-        
-        // Refresh all entity tabs to ensure data is current
-        if (entitiesTab === 'ObjectProperties') {
-          refreshProperties();
-        } else if (entitiesTab === 'DataProperties') {
-          refreshProperties();
-        }
-        
-        // If we have the entity IRI and it matches the selected item, refresh its details
-        if (detail?.entityIRI && selectedItem?.id === detail.entityIRI) {
-          console.log('[Dashboard] 🔄 Refreshing entity details for:', detail.entityIRI);
+        // If we have the entity IRI, refresh its details first
+        if (detail?.entityIRI) {
+          console.log('[Dashboard] 🔄 Refreshing entity details after rollback for:', detail.entityIRI);
+          console.log('[Dashboard] 🔄 Entity type from event:', detail.entityType, 'Current tab:', entitiesTab);
           
-          // Determine the correct API endpoint based on entity type
-          // Try to use entity type from the event, fallback to current tab
-          let apiEndpoint = '';
+          // Determine the correct API endpoint based on current tab first, then entity type
+          // Annotation changes should use the entity's actual type (class, property, individual)
           const entityType = detail.entityType ? detail.entityType.toLowerCase() : '';
+          let apiEndpoint = '';
           
-          if (entitiesTab === 'Classes' || entityType.includes('class')) {
+          
+          // For annotation changes, we need to refresh the entity that has the annotation
+          // The entityIRI is the entity whose annotation was changed
+          // Use entitiesTab as primary indicator since that's what the user is viewing
+          if (entitiesTab === 'Classes' || entityType.includes('class') || entityType.includes('annotation')) {
+            // For annotation changes on classes, fetch class details
             apiEndpoint = `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(detail.entityIRI)}`;
           } else if (entitiesTab === 'ObjectProperties' || entityType.includes('objectproperty') || entityType.includes('object_property')) {
             apiEndpoint = `/api/ontology/${projectId}/object-properties/${encodeURIComponent(detail.entityIRI)}`;
           } else if (entitiesTab === 'DataProperties' || entityType.includes('dataproperty') || entityType.includes('data_property')) {
             apiEndpoint = `/api/ontology/${projectId}/data-properties/${encodeURIComponent(detail.entityIRI)}`;
+          } else if (entitiesTab === 'AnnotationProperties') {
+            apiEndpoint = `/api/ontology/${projectId}/annotation-properties/${encodeURIComponent(detail.entityIRI)}`;
           } else if (entitiesTab === 'Individuals' || entityType.includes('individual')) {
             apiEndpoint = `/api/ontology/${projectId}/individuals/${encodeURIComponent(detail.entityIRI)}`;
+          } else {
+            // Fallback: try to determine by the entityIRI or default to class details
+            console.log('[Dashboard] 🔄 No specific tab match, using current entitiesTab:', entitiesTab);
+            // Default to class details as most common case
+            apiEndpoint = `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(detail.entityIRI)}`;
           }
           
           if (apiEndpoint) {
@@ -2162,19 +2225,65 @@ const Dashboard = () => {
                   newData.id = newData.iri;
                 }
                 console.log('[Dashboard] ✅ Refreshed entity after rollback:', newData);
-                updateItemInState(newData);
+                console.log('[Dashboard] 📝 Updated label:', newData.label);
                 
-                // Update selected item to reflect the rollback
-                setSelectedItem(newData);
+                // Update the entity in the appropriate list (don't mark as unsaved - rollback is already in DB)
+                updateItemInState(newData, false);
+                
+                // If this is the selected item, update it to show new values immediately
+                if (selectedItem?.id === detail.entityIRI) {
+                  setSelectedItem(newData);
+                }
+                
+                // For annotation changes, just update the node in place without refreshing hierarchy
+                // This prevents the tree from collapsing
+                const isAnnotationChange = entityType.includes('annotation') || 
+                                          (oldValue && newValue); // Has old/new values = annotation change
+                
+                if (isAnnotationChange && (entitiesTab === 'Classes' || entityType.includes('class'))) {
+                  console.log('[Dashboard] 📝 Soft refresh: updating class node annotations in place');
+                  // Update the class hierarchy node without reloading the tree
+                  setClassHierarchy(prevHierarchy => {
+                    const updateNodeInTree = (nodes: TreeNode[]): TreeNode[] => {
+                      return nodes.map(node => {
+                        if (node.id === detail.entityIRI) {
+                          // Update this node's annotations
+                          return { ...node, annotations: newData.annotations || node.annotations };
+                        }
+                        if (node.children && node.children.length > 0) {
+                          // Recursively update children
+                          return { ...node, children: updateNodeInTree(node.children) };
+                        }
+                        return node;
+                      });
+                    };
+                    return updateNodeInTree(prevHierarchy);
+                  });
+                } else {
+                  // For non-annotation changes, do a full refresh
+                  if (entitiesTab === 'Classes' || entityType.includes('class')) {
+                    refreshClassHierarchy();
+                  } else if (entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties' || entitiesTab === 'AnnotationProperties') {
+                    refreshProperties();
+                  } else if (entitiesTab === 'Individuals') {
+                    // Refresh individuals list
+                    fetchData();
+                  }
+                }
               })
-              .catch(error => console.error('[Dashboard] Failed to refresh entity after rollback:', error));
+              .catch(error => {
+                console.error('[Dashboard] Failed to refresh entity after rollback:', error);
+                // If specific entity fetch fails, try a full data refresh
+                console.log('[Dashboard] Attempting full data refresh after rollback error');
+                fetchData();
+              });
+          } else {
+            // No specific endpoint, do a full refresh
+            console.log('[Dashboard] No API endpoint matched, doing full refresh');
+            fetchData();
           }
-        } else if (detail?.entityIRI) {
-          // Even if it's not the selected item, we should refresh the view
-          console.log('[Dashboard] 🔄 Entity rollback for non-selected item, refreshing view');
-          fetchData();
         }
-      }, 600); // Increased delay to match backend processing time
+      }, 1500); // Increased delay to ensure GraphDB fully processes the rollback
     };
     
     window.addEventListener('ontologyRollback', handleRollback as EventListener);
@@ -2444,7 +2553,18 @@ const Dashboard = () => {
   // Switch to a different file (with unsaved changes check)
   const handleSwitchFile = useCallback((newProjectId: string) => {
     const switchFile = async () => {
-      console.log('[Dashboard] Switching to file:', newProjectId);
+      console.log('[Dashboard] 🔄 Switching to file:', newProjectId);
+      console.log('[Dashboard] 🧹 Clearing current state for:', projectId);
+      
+      // Clear all current state
+      setClassHierarchy([]);
+      setObjectProperties([]);
+      setDataProperties([]);
+      setAnnotationProperties([]);
+      setIndividuals([]);
+      setSelectedItem(null);
+      setSearchQuery('');
+      
       if (window.vscode) {
         window.vscode.postMessage({
           type: "fileLoaded",
@@ -2453,6 +2573,8 @@ const Dashboard = () => {
       }
       setHasUnsavedChanges(false);
       setDraftCount(0);
+      
+      console.log('[Dashboard] ✅ State cleared, loading new file:', newProjectId);
     };
 
     // If no unsaved changes or draft count is 0, switch directly
@@ -2557,11 +2679,13 @@ const Dashboard = () => {
   }, [selectedItem, projectId]);
 
   const handleAnnotationDialogEdit = useCallback(async (propertyIri: string, oldValue: string, newValue: string) => {
+    console.log('[Dashboard] handleAnnotationDialogEdit called with:', propertyIri, oldValue, newValue);
     if (!selectedItem || !projectId) return;
 
     try {
       // Update annotation atomically (single operation instead of delete + add)
-      await ontologyMutationService.updateAnnotation(projectId, selectedItem.id, propertyIri, newValue, user?.email || 'anonymous', user?.username || 'Anonymous');
+      // Pass oldValue so change tracking can record both old and new values
+      await ontologyMutationService.updateAnnotation(projectId, selectedItem.id, propertyIri, newValue, user?.email || 'anonymous', user?.username || 'Anonymous', oldValue);
       
       // Update local state
       const updatedAnnotations = { ...selectedItem.annotations, [propertyIri]: newValue };
