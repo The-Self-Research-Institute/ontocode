@@ -197,12 +197,10 @@ services:
     depends_on:
       mongo:
         condition: service_healthy
+      plugin-service:
+        condition: service_started
     networks:
       - ontology-net
-    profiles:
-      - init
-    # Run once and exit
-    restart: "no"
 
 volumes:
   mongo-data:
