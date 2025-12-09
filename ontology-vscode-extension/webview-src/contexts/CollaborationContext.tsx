@@ -97,6 +97,15 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
                 case 'remoteEdit':
                     handleRemoteEdit(message.edit);
                     break;
+
+                case 'ROLLBACK':
+                    console.log('[CollaborationContext] 🔄 Rollback event received:', message);
+                    // Dispatch a custom event that Dashboard can listen to
+                    const rollbackEvent = new CustomEvent('ontologyRollback', {
+                        detail: message
+                    });
+                    window.dispatchEvent(rollbackEvent);
+                    break;
             }
         };
 

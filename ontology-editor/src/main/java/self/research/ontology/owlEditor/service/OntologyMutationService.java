@@ -1015,6 +1015,7 @@ public class OntologyMutationService {
         // Additional fields for restriction support
         String restrictionType, // some, only, min, max, exactly, value
         Integer cardinality,    // For min, max, exactly restrictions
-        String axiomType        // EquivalentTo, SubClassOf
+        String axiomType,       // EquivalentTo, SubClassOf
+        String oldValue         // For tracking the old value in updates
     ) {}
 }

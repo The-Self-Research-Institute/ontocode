@@ -40,7 +40,7 @@ export const ontologyMutationService = {
     // Use the draft parameter if explicitly provided, otherwise use the inverse of realTimeSyncEnabled
     const useDraft = draft !== undefined ? draft : !realTimeSyncEnabled;
     
-    console.log(`[MutationService] 🔄 Applying mutations to ${projectId}`, {
+    console.log(`[MutationService] 🔄 Applying mutations to ${projectId}`,ops, {
       opsCount: ops.length,
       draft: useDraft,
       realTimeSyncEnabled,
@@ -120,12 +120,13 @@ export const ontologyMutationService = {
    * Update annotation value (atomic operation)
    */
   async updateAnnotation(projectId: string, entityIri: string, propertyIri: string, newValue: string,
-                        userId?: string, username?: string): Promise<void> {
+                        userId?: string, username?: string, oldValue?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'updateAnnotation',
       iri: entityIri,
       property: propertyIri,
-      value: newValue
+      value: newValue,
+      oldValue: oldValue
     }], undefined, userId, username);
   },
 
