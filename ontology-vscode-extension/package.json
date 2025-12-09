@@ -7,7 +7,6 @@
   "engines": {
     "vscode": "^1.74.0"
   },
-  "browser": "./dist/web/extension.js",
   "categories": [
     "Other",
     "Languages",
