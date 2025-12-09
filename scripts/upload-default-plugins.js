@@ -142,7 +142,7 @@ async function uploadPlugin(plugin) {
     // Create form data
     const form = new FormData();
     
-    // Add metadata as JSON
+    // Add metadata as JSON - use Blob to ensure proper content-type
     const metadata = {
       pluginId: plugin.pluginId,
       name: plugin.name,
@@ -156,8 +156,11 @@ async function uploadPlugin(plugin) {
       screenshots: plugin.screenshots
     };
     
-    form.append('metadata', JSON.stringify(metadata), {
-      contentType: 'application/json'
+    // Create a buffer from the JSON and set proper filename to trigger multipart handling
+    const metadataBuffer = Buffer.from(JSON.stringify(metadata));
+    form.append('metadata', metadataBuffer, {
+      contentType: 'application/json',
+      filename: 'metadata.json'
     });
     
     // Add UMD bundle as the plugin file

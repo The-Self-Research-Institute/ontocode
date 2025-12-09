@@ -14,6 +14,10 @@ echo   Starting Ontology Platform
 echo ========================================
 echo.
 
+:: Define Java Versions
+set "JAVA17_HOME=C:\Program Files\Eclipse Adoptium\jdk-17.0.17.10-hotspot"
+set "JAVA21_HOME=C:\Program Files\Eclipse Adoptium\jdk-21.0.9.10-hotspot"
+
 :: Check if Maven daemon is available
 where mvn >nul 2>&1
 if %errorlevel% equ 0 (
@@ -59,9 +63,23 @@ echo.
 echo %BLUE%[2/8] Building all modules...%NC%
 echo.
 cd /d %~dp0..
-call %MVN_CMD% clean install -DskipTests -T 1C -B
+
+:: Build SWRL Service with Java 17
+echo Building SWRL Service with Java 17...
+set "JAVA_HOME=%JAVA17_HOME%"
+call %MVN_CMD% clean install -pl ontology-swrl -am -DskipTests -T 1C -B
 if errorlevel 1 (
-    echo %RED%Build failed! Check logs above.%NC%
+    echo %RED%SWRL Build failed! Check logs above.%NC%
+    pause
+    exit /b 1
+)
+
+:: Build Other Services with Java 21
+echo Building Other Services with Java 21...
+set "JAVA_HOME=%JAVA21_HOME%"
+call %MVN_CMD% clean install -pl shared/common-models,shared/common-utils,ontology-gateway,ontology-editor,ontology-auth,ontology-plugin-service -am -DskipTests -T 1C -B
+if errorlevel 1 (
+    echo %RED%Main Build failed! Check logs above.%NC%
     pause
     exit /b 1
 )
@@ -72,7 +90,7 @@ echo %GREEN%Build successful!%NC%
 :: ========================================
 echo.
 echo %BLUE%[3/8] Starting Auth Service...%NC%
-start "Ontology Auth Service" cmd /k "cd /d %~dp0..\ontology-auth && %MVN_CMD% spring-boot:run -Dspring-boot.run.profiles=dev"
+start "Ontology Auth Service" cmd /k "cd /d %~dp0..\ontology-auth && set JAVA_HOME=%JAVA21_HOME%&& %MVN_CMD% spring-boot:run -Dspring-boot.run.profiles=dev"
 timeout /t 10 /nobreak >nul
 
 :: Health check for Auth
@@ -98,7 +116,7 @@ if %AUTH_READY% equ 1 (
 :: ========================================
 echo.
 echo %BLUE%[4/8] Starting Gateway...%NC%
-start "Ontology Gateway" cmd /k "cd /d %~dp0..\ontology-gateway && %MVN_CMD% spring-boot:run -Dspring-boot.run.profiles=dev"
+start "Ontology Gateway" cmd /k "cd /d %~dp0..\ontology-gateway && set JAVA_HOME=%JAVA21_HOME%&& %MVN_CMD% spring-boot:run -Dspring-boot.run.profiles=dev"
 timeout /t 10 /nobreak >nul
 
 :: Health check for Gateway
@@ -124,7 +142,7 @@ if %GATEWAY_READY% equ 1 (
 :: ========================================
 echo.
 echo %BLUE%[5/8] Starting OWL Editor...%NC%
-start "OWL Editor Service" cmd /k "cd /d %~dp0..\ontology-editor && %MVN_CMD% spring-boot:run -Dspring-boot.run.profiles=dev"
+start "OWL Editor Service" cmd /k "cd /d %~dp0..\ontology-editor && set JAVA_HOME=%JAVA21_HOME%&& %MVN_CMD% spring-boot:run -Dspring-boot.run.profiles=dev"
 timeout /t 15 /nobreak >nul
 
 :: Health check for OWL Editor
@@ -146,11 +164,22 @@ if %OWL_READY% equ 1 (
 )
 
 :: ========================================
-:: Start SWRL Service
+:: Start SWRL Service (Requires Java 17)
 :: ========================================
 echo.
 echo %BLUE%[6/8] Starting SWRL Service...%NC%
-start "SWRL Service" cmd /k "cd /d %~dp0..\ontology-swrl && %MVN_CMD% spring-boot:run -Dspring-boot.run.profiles=dev"
+echo %YELLOW%Note: SWRL Service requires Java 17 due to SWRLAPI/Drools compatibility%NC%
+
+:: Check for Java 17
+if exist "%JAVA17_HOME%\bin\java.exe" (
+    echo Using Java 17 from: %JAVA17_HOME%
+    start "SWRL Service" cmd /k "cd /d %~dp0..\ontology-swrl && set JAVA_HOME=%JAVA17_HOME%&& %MVN_CMD% spring-boot:run -Dspring-boot.run.profiles=dev -Dspring-boot.run.jvmArguments="-Xmx512m""
+) else (
+    echo %RED%Java 17 not found at %JAVA17_HOME%%NC%
+    echo %YELLOW%Install Java 17: winget install EclipseAdoptium.Temurin.17.JDK%NC%
+    echo %YELLOW%Starting with default Java - may fail if using Java 21+%NC%
+    start "SWRL Service" cmd /k "cd /d %~dp0..\ontology-swrl && %MVN_CMD% spring-boot:run -Dspring-boot.run.profiles=dev"
+)
 timeout /t 10 /nobreak >nul
 
 :: Health check for SWRL
@@ -176,7 +205,7 @@ if %SWRL_READY% equ 1 (
 :: ========================================
 echo.
 echo %BLUE%[7/7] Starting Plugin Service...%NC%
-start "Plugin Service" cmd /k "cd /d %~dp0..\ontology-plugin-service && %MVN_CMD% spring-boot:run -Dspring-boot.run.profiles=dev"
+start "Plugin Service" cmd /k "cd /d %~dp0..\ontology-plugin-service && set JAVA_HOME=%JAVA21_HOME%&& %MVN_CMD% spring-boot:run -Dspring-boot.run.profiles=dev"
 timeout /t 10 /nobreak >nul
 
 :: Health check for Plugin Service

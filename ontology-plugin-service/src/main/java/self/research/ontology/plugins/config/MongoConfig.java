@@ -11,6 +11,7 @@ public class MongoConfig {
 
     @Bean
     public GridFsTemplate gridFsTemplate(MongoDatabaseFactory mongoDbFactory, MappingMongoConverter mappingMongoConverter) {
-        return new GridFsTemplate(mongoDbFactory, mappingMongoConverter);
+        // Use "plugins" bucket for GridFS storage (collections: plugins.files, plugins.chunks)
+        return new GridFsTemplate(mongoDbFactory, mappingMongoConverter, "plugins");
     }
 }

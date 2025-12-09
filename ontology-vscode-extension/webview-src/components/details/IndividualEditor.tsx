@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Plus, Trash2, Loader2 } from 'lucide-react';
 import { Panel, AnnotationsDisplay, MultiSelectSection } from './common';
 import type { Individual, PropertyAssertion } from '../../types';
 import { ManchesterSyntaxEditor } from '../dialogs';
 import ontologyMutationService from '../../services/ontologyMutationService';
+import apiClient from '../../services/apiClient';
 
 const IndividualEditor: React.FC<{
   item: Individual;
@@ -18,6 +19,52 @@ const IndividualEditor: React.FC<{
 }> = ({ item, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, projectId, userId, username }) => {
   const [isAddingAssertion, setIsAddingAssertion] = useState(false);
   const [newAssertion, setNewAssertion] = useState({ propertyLabel: '', targetLabel: '', isObjectProperty: true });
+  const [isLoading, setIsLoading] = useState(false);
+  const [detailsFetched, setDetailsFetched] = useState<string | null>(null);
+
+  // Fetch individual details when component mounts or item changes
+  useEffect(() => {
+    const fetchIndividualDetails = async () => {
+      // Only fetch if we haven't fetched for this item yet
+      if (detailsFetched === item.id || !projectId || !item.id) return;
+      
+      setIsLoading(true);
+      try {
+        // Use query parameter endpoint to avoid URL encoding issues with IRI containing #
+        const response = await apiClient.get<any>(`/api/ontology/individual-details/${projectId}?individualIri=${encodeURIComponent(item.id)}`);
+        
+        console.log('[IndividualEditor] Fetched individual details:', response);
+        
+        // Extract data from response
+        const details = response?.data || response;
+        
+        // Update the item with property assertions from backend
+        if (details) {
+          const updatedItem: Individual = {
+            ...item,
+            types: details.types || item.types,
+            annotations: details.annotations || item.annotations,
+            propertyAssertions: details.propertyAssertions || [],
+            sameIndividualAs: details.sameAs || item.sameIndividualAs,
+            differentIndividualFrom: details.differentFrom || item.differentIndividualFrom,
+          };
+          
+          onUpdate(updatedItem);
+          setDetailsFetched(item.id);
+        }
+      } catch (error) {
+        console.error('[IndividualEditor] Failed to fetch individual details:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchIndividualDetails();
+  }, [item.id, projectId]);
+
+  // Separate object and data property assertions
+  const objectPropertyAssertions = item.propertyAssertions?.filter(a => a.isObjectProperty) || [];
+  const dataPropertyAssertions = item.propertyAssertions?.filter(a => !a.isObjectProperty) || [];
   
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editorTitle, setEditorTitle] = useState("");
@@ -173,48 +220,100 @@ const IndividualEditor: React.FC<{
               </div>
             </div>
 
-            {/* Property Assertions */}
+            {/* Object Property Assertions */}
             <div className="mb-4 last:mb-0">
               <div className="flex justify-between items-center mb-1">
-                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Property assertions</h4>
-                <button onClick={() => setIsAddingAssertion(true)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors" title="Add assertion">
+                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Object property assertions</h4>
+                <button onClick={() => { setNewAssertion(p => ({...p, isObjectProperty: true})); setIsAddingAssertion(true); }} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors" title="Add object property assertion">
                   <Plus size={14} />
                 </button>
               </div>
               <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm">
                 <div className="p-1.5 space-y-1">
-                    {item.propertyAssertions?.map(assertion => (
-                        <div key={assertion.id} className="group flex items-center justify-between text-xs bg-gray-50 p-1.5 rounded-sm border border-gray-100">
-                            <div>
-                                <span className="font-semibold text-purple-700">{assertion.propertyLabel}</span>
-                                <span className="mx-1.5 text-gray-400">{assertion.isObjectProperty ? '→' : '='}</span>
-                                <span>{assertion.isObjectProperty ? assertion.targetLabel : assertion.targetLiteral}</span>
-                            </div>
-                            <button onClick={() => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200">
-                                <Trash2 size={12} className="text-red-600"/>
-                            </button>
-                        </div>
-                    ))}
-                    {isAddingAssertion && (
-                        <div className="p-2 border border-purple-200 rounded-md bg-purple-50 space-y-2 text-xs mt-2">
-                            <div className="flex gap-2 items-center">
-                               <label className="flex items-center gap-1"><input type="radio" name="propType" checked={newAssertion.isObjectProperty} onChange={() => setNewAssertion(p => ({...p, isObjectProperty: true}))} /> Object</label>
-                               <label className="flex items-center gap-1"><input type="radio" name="propType" checked={!newAssertion.isObjectProperty} onChange={() => setNewAssertion(p => ({...p, isObjectProperty: false}))}/> Data</label>
-                            </div>
-                            <input value={newAssertion.propertyLabel} onChange={e => setNewAssertion(p => ({...p, propertyLabel: e.target.value}))} placeholder="Property" className="w-full p-1.5 border rounded"/>
-                            <input value={newAssertion.targetLabel} onChange={e => setNewAssertion(p => ({...p, targetLabel: e.target.value}))} placeholder={newAssertion.isObjectProperty ? "Target Individual" : "Literal Value"} className="w-full p-1.5 border rounded"/>
-                            <div className="flex justify-end gap-2">
-                                 <button onClick={() => setIsAddingAssertion(false)} className="px-2 py-1 bg-gray-200 rounded hover:bg-gray-300">Cancel</button>
-                                 <button onClick={handleAddAssertion} className="px-2 py-1 bg-purple-600 text-white rounded hover:bg-purple-700">Save</button>
-                            </div>
-                        </div>
-                    )}
-                    {!isAddingAssertion && (!item.propertyAssertions || item.propertyAssertions.length === 0) && (
-                        <div className="text-xs text-gray-400 italic p-1">No assertions defined</div>
+                    {isLoading ? (
+                      <div className="flex items-center justify-center p-3 text-gray-500">
+                        <Loader2 size={16} className="animate-spin mr-2" />
+                        <span className="text-xs">Loading...</span>
+                      </div>
+                    ) : (
+                      <>
+                        {objectPropertyAssertions.map(assertion => (
+                          <div key={assertion.id} className="group flex items-center justify-between text-xs bg-blue-50 p-1.5 rounded-sm border border-blue-100">
+                              <div>
+                                  <span className="font-semibold text-blue-700">{assertion.propertyLabel}</span>
+                                  <span className="mx-1.5 text-gray-400">→</span>
+                                  <span className="text-blue-600">{assertion.targetLabel || assertion.targetIri?.split('#').pop()}</span>
+                              </div>
+                              <button onClick={() => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200">
+                                  <Trash2 size={12} className="text-red-600"/>
+                              </button>
+                          </div>
+                        ))}
+                        {objectPropertyAssertions.length === 0 && (
+                          <div className="text-xs text-gray-400 italic p-1">No object property assertions</div>
+                        )}
+                      </>
                     )}
                 </div>
               </div>
             </div>
+
+            {/* Data Property Assertions */}
+            <div className="mb-4 last:mb-0">
+              <div className="flex justify-between items-center mb-1">
+                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Data property assertions</h4>
+                <button onClick={() => { setNewAssertion(p => ({...p, isObjectProperty: false})); setIsAddingAssertion(true); }} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-green-600 transition-colors" title="Add data property assertion">
+                  <Plus size={14} />
+                </button>
+              </div>
+              <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm">
+                <div className="p-1.5 space-y-1">
+                    {isLoading ? (
+                      <div className="flex items-center justify-center p-3 text-gray-500">
+                        <Loader2 size={16} className="animate-spin mr-2" />
+                        <span className="text-xs">Loading...</span>
+                      </div>
+                    ) : (
+                      <>
+                        {dataPropertyAssertions.map(assertion => (
+                          <div key={assertion.id} className="group flex items-center justify-between text-xs bg-green-50 p-1.5 rounded-sm border border-green-100">
+                              <div>
+                                  <span className="font-semibold text-green-700">{assertion.propertyLabel}</span>
+                                  <span className="mx-1.5 text-gray-400">=</span>
+                                  <span className="text-green-600">{assertion.targetLiteral}</span>
+                              </div>
+                              <button onClick={() => handleDeleteAssertion(assertion)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200">
+                                  <Trash2 size={12} className="text-red-600"/>
+                              </button>
+                          </div>
+                        ))}
+                        {dataPropertyAssertions.length === 0 && (
+                          <div className="text-xs text-gray-400 italic p-1">No data property assertions</div>
+                        )}
+                      </>
+                    )}
+                </div>
+              </div>
+            </div>
+
+            {/* Add Assertion Form (shown when adding) */}
+            {isAddingAssertion && (
+                <div className="p-2 border border-purple-200 rounded-md bg-purple-50 space-y-2 text-xs mb-4">
+                    <div className="font-semibold text-purple-800">
+                      Add {newAssertion.isObjectProperty ? 'Object' : 'Data'} Property Assertion
+                    </div>
+                    <div className="flex gap-2 items-center">
+                       <label className="flex items-center gap-1"><input type="radio" name="propType" checked={newAssertion.isObjectProperty} onChange={() => setNewAssertion(p => ({...p, isObjectProperty: true}))} /> Object</label>
+                       <label className="flex items-center gap-1"><input type="radio" name="propType" checked={!newAssertion.isObjectProperty} onChange={() => setNewAssertion(p => ({...p, isObjectProperty: false}))}/> Data</label>
+                    </div>
+                    <input value={newAssertion.propertyLabel} onChange={e => setNewAssertion(p => ({...p, propertyLabel: e.target.value}))} placeholder="Property" className="w-full p-1.5 border rounded"/>
+                    <input value={newAssertion.targetLabel} onChange={e => setNewAssertion(p => ({...p, targetLabel: e.target.value}))} placeholder={newAssertion.isObjectProperty ? "Target Individual" : "Literal Value"} className="w-full p-1.5 border rounded"/>
+                    <div className="flex justify-end gap-2">
+                         <button onClick={() => setIsAddingAssertion(false)} className="px-2 py-1 bg-gray-200 rounded hover:bg-gray-300">Cancel</button>
+                         <button onClick={handleAddAssertion} className="px-2 py-1 bg-purple-600 text-white rounded hover:bg-purple-700">Save</button>
+                    </div>
+                </div>
+            )}
 
             {/* Same Individual As / Different Individual From Section */}
             <div className="mb-4 last:mb-0">

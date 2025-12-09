@@ -69,6 +69,7 @@ type WebviewMessage =
   | { type: 'loadingFailed'; error: string }
   // Fix: Added message type for API responses from the proxy
   | { type: 'apiResponse'; requestId: string; response?: any; error?: any }
+  | { type: 'proxyResponse'; reqId: string; data?: any; error?: any }
   // Collaborative editing messages
   | { type: 'remoteEdit'; edit: any }
   | { type: 'presenceUpdate'; presence: any }
@@ -85,6 +86,7 @@ type ExtensionMessage =
   | { type: 'apiGet'; requestId: string; url: string; params?: Record<string, unknown> }
   | { type: 'apiPost'; requestId: string; url: string; body?: unknown }
   | { type: 'apiDelete'; requestId: string; url: string; params?: Record<string, unknown> }
+  | { type: 'proxyRequest'; reqId: string; config: any }
   | { type: 'webviewReady' }
   | { type: 'downloadOntology'; url: string; filename: string }
   | { type: 'downloadCurrentOntology' }
@@ -298,6 +300,9 @@ class OntoCodePanel {
                     case 'apiDelete':
                         this.handleApiRequest(message);
                         break;
+                    case 'proxyRequest':
+                        this.handleProxyRequest(message);
+                        break;
                     case 'downloadOntology':
                         this.handleDownload(message.url, message.filename);
                         break;
@@ -457,6 +462,47 @@ class OntoCodePanel {
                 console.error('[Proxy] API Request Error:', e.message);
             }
             this.postMessage({ type: 'apiResponse', requestId, error: errorResponse });
+        }
+    }
+
+    private async handleProxyRequest(message: any) {
+        const { reqId, config } = message;
+        
+        // Fix: Cast context to `any` to access the `secrets` property, bypassing outdated type definitions.
+        const token = await (this._context as any).secrets.get(TOKEN_KEY);
+        
+        const headers = { ...config.headers };
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+
+        try {
+            const fullUrl = config.url.startsWith('http') ? config.url : `${GATEWAY_URL}${config.url}`;
+            console.log(`[Proxy] ${config.method}: ${fullUrl}`);
+
+            const response = await axios({
+                method: config.method,
+                url: fullUrl,
+                data: config.data,
+                headers
+            });
+
+            this.postMessage({
+                type: 'proxyResponse',
+                reqId,
+                data: response.data
+            });
+        } catch (error: any) {
+            console.error('[Proxy] Error:', error.message);
+            this.postMessage({
+                type: 'proxyResponse',
+                reqId,
+                error: {
+                    message: error.message,
+                    status: error.response?.status,
+                    data: error.response?.data
+                }
+            });
         }
     }
 
