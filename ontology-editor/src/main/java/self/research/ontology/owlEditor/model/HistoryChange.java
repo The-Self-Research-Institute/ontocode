@@ -43,6 +43,7 @@ public class HistoryChange {
     // Change details from GraphDB
     private String oldValue;
     private String newValue;
+    private String annotationProperty; // For annotation changes, the property IRI
     
     private String description;
     
@@ -171,6 +172,11 @@ public class HistoryChange {
             return this;
         }
 
+        public Builder annotationProperty(String annotationProperty) {
+            change.annotationProperty = annotationProperty;
+            return this;
+        }
+
         public Builder description(String description) {
             change.description = description;
             return this;
@@ -286,6 +292,14 @@ public class HistoryChange {
 
     public void setNewValue(String newValue) {
         this.newValue = newValue;
+    }
+
+    public String getAnnotationProperty() {
+        return annotationProperty;
+    }
+
+    public void setAnnotationProperty(String annotationProperty) {
+        this.annotationProperty = annotationProperty;
     }
 
     public String getDescription() {

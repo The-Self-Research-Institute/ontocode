@@ -308,6 +308,7 @@ public class ProjectLoadController {
                 String entityLabel = null;
                 String oldValue = null;
                 String newValue = null;
+                String annotationProperty = null;
                 
                 // Extract entity details from operation data
                 Map<String, Object> opData = draft.getOperationData();
@@ -315,7 +316,10 @@ public class ProjectLoadController {
                     entityIRI = opData.containsKey("iri") ? opData.get("iri").toString() : null;
                     entityLabel = opData.containsKey("label") ? opData.get("label").toString() : null;
                     oldValue = opData.containsKey("oldValue") ? opData.get("oldValue").toString() : null;
-                    newValue = opData.containsKey("newValue") ? opData.get("newValue").toString() : null;
+                    // newValue can be stored as "value" or "newValue"
+                    newValue = opData.containsKey("value") ? opData.get("value").toString() : 
+                               (opData.containsKey("newValue") ? opData.get("newValue").toString() : null);
+                    annotationProperty = opData.containsKey("property") ? opData.get("property").toString() : null;
                 }
                 
                 historyService.recordEdit(
@@ -327,7 +331,8 @@ public class ProjectLoadController {
                     entityLabel,
                     oldValue,
                     newValue,
-                    draft.getOperationType() + " operation"
+                    draft.getOperationType() + " operation",
+                    annotationProperty
                 );
             }
             log.info("[SAVE] GraphDB history recording complete");

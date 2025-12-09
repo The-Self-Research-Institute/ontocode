@@ -31,7 +31,16 @@ public class ChangeTrackingService {
      * Record a change to the ontology
      */
     public OntologyChange recordChange(OntologyChange change) {
+        log.info("[SAVE] Recording change - type: {}, entityIRI: {}, oldValue: '{}', newValue: '{}'", 
+            change.getChangeType(), 
+            // change.getEntityIri(),
+            change.getOldValue(),
+            change.getNewValue());
         OntologyChange saved = changeRepository.save(change);
+        log.info("[SAVE COMPLETE] Saved change ID: {}, oldValue: '{}', newValue: '{}'",
+            saved.getId(),
+            saved.getOldValue(),
+            saved.getNewValue());
         log.info("Recorded change: {} by {} for project {}", 
             change.getChangeType(), 
             change.getUsername(), 
