@@ -231,13 +231,21 @@ public class SwrlEngineService {
                     "projectId", projectId).increment(inferredAxioms.size());
             }
 
-            return new ExecutionResult(
+            // Extract executed rule names
+            List<String> executedRuleNames = enabledRules.stream()
+                .map(SwrlRule::getRuleName)
+                .collect(Collectors.toList());
+
+            ExecutionResult result = new ExecutionResult(
                 true,
                 executionTime,
                 inferredAxioms.size(),
                 formattedAxioms,
                 null
             );
+            result.setExecutedRuleNames(executedRuleNames);
+            result.setExecutionMode("all");
+            return result;
 
         } catch (TimeoutException e) {
             logger.error("Rule execution timed out for project: {}", projectId);
@@ -278,6 +286,90 @@ public class SwrlEngineService {
     }
 
     /**
+     * ✅ NEW: Execute selected rules by IDs
+     */
+    @CacheEvict(value = "executionResults", key = "#projectId")
+    public ExecutionResult executeSelectedRules(String projectId, List<String> ruleIds) {
+        Timer.Sample sample = meterRegistry != null ? Timer.start(meterRegistry) : null;
+        long startTime = System.currentTimeMillis();
+
+        try {
+            OWLOntology ontology = ontologyClient.fetchOntology(projectId);
+            SWRLRuleEngine engine = getOrCreateEngine(projectId, ontology);
+
+            // Get the selected rules
+            List<SwrlRule> selectedRules = ruleRepository.findAllById(ruleIds);
+            if (selectedRules.isEmpty()) {
+                return new ExecutionResult(false, 0, 0, Collections.emptyList(),
+                    "No valid rules found for the given IDs");
+            }
+            
+            logger.info("Executing {} selected rules for project: {}", selectedRules.size(), projectId);
+
+            // Clear existing rules from engine
+            engine.getSWRLRules().forEach(rule -> engine.deleteSWRLRule(rule.getRuleName()));
+
+            // Add only selected rules
+            for (SwrlRule rule : selectedRules) {
+                try {
+                    engine.createSWRLRule(rule.getRuleName(), rule.getRuleText());
+                } catch (SWRLParseException e) {
+                    logger.error("Failed to add rule {}: {}", rule.getRuleName(), e.getMessage());
+                }
+            }
+
+            // Execute with timeout
+            Set<OWLAxiom> inferredAxioms = executeWithTimeout(engine, projectId);
+            
+            long executionTime = System.currentTimeMillis() - startTime;
+
+            logger.info("Executed {} selected rules in {}ms, inferred {} axioms", 
+                       selectedRules.size(), executionTime, inferredAxioms.size());
+
+            // Update rule execution stats
+            updateRuleExecutionStats(selectedRules, executionTime);
+
+            List<InferredAxiom> formattedAxioms = inferredAxioms.stream()
+                .limit(maxInferredAxioms)
+                .map(this::formatInferredAxiom)
+                .collect(Collectors.toList());
+
+            if (sample != null) {
+                sample.stop(Timer.builder("swrl.execution.selected")
+                    .tag("projectId", projectId)
+                    .tag("status", "success")
+                    .register(meterRegistry));
+            }
+
+            // Extract executed rule names
+            List<String> executedRuleNames = selectedRules.stream()
+                .map(SwrlRule::getRuleName)
+                .collect(Collectors.toList());
+
+            ExecutionResult result = new ExecutionResult(
+                true,
+                executionTime,
+                inferredAxioms.size(),
+                formattedAxioms,
+                null
+            );
+            result.setExecutedRuleNames(executedRuleNames);
+            result.setExecutionMode("selected");
+            return result;
+
+        } catch (TimeoutException e) {
+            logger.error("Selected rules execution timed out for project: {}", projectId);
+            return new ExecutionResult(false, 0, 0, Collections.emptyList(),
+                "Execution timed out after " + executionTimeoutSeconds + " seconds");
+                
+        } catch (Exception e) {
+            logger.error("Selected rules execution error for project {}", projectId, e);
+            return new ExecutionResult(false, 0, 0, Collections.emptyList(),
+                "Execution error: " + e.getMessage());
+        }
+    }
+
+    /**
      * ✅ NEW: Execute inference with timeout protection
      */
     private Set<OWLAxiom> executeWithTimeout(SWRLRuleEngine engine, String projectId) 
@@ -285,7 +377,23 @@ public class SwrlEngineService {
         
         Future<Set<OWLAxiom>> future = executorService.submit(() -> {
             engine.infer();
-            return engine.getInferredOWLAxioms();
+            Set<OWLAxiom> axioms = engine.getInferredOWLAxioms();
+            
+            // Debug: Log axiom type distribution
+            Map<String, Long> axiomTypeCounts = axioms.stream()
+                .collect(java.util.stream.Collectors.groupingBy(
+                    ax -> ax.getAxiomType().getName(),
+                    java.util.stream.Collectors.counting()
+                ));
+            logger.debug("Inferred axiom types for project {}: {}", projectId, axiomTypeCounts);
+            
+            // Count ClassAssertions specifically
+            long classAssertionCount = axioms.stream()
+                .filter(ax -> ax.getAxiomType().getName().equals("ClassAssertion"))
+                .count();
+            logger.info("ClassAssertion axioms inferred: {} (these are SWRL rule results)", classAssertionCount);
+            
+            return axioms;
         });
 
         try {
@@ -556,6 +664,16 @@ public class SwrlEngineService {
     }
 
     /**
+     * Test a single rule by ID
+     */
+    public ExecutionResult testSingleRuleById(String projectId, String ruleId) {
+        SwrlRule rule = ruleRepository.findByIdAndProjectId(ruleId, projectId)
+            .orElseThrow(() -> new IllegalArgumentException("Rule not found: " + ruleId));
+        
+        return testSingleRule(projectId, rule.getRuleText());
+    }
+
+    /**
      * Create multiple rules at once
      */
     public List<SwrlRule> createRulesBatch(String projectId, List<CreateRuleRequest> requests) {
@@ -682,5 +800,144 @@ public class SwrlEngineService {
                 ruleId, newRuleName, original.getProjectId());
 
         return duplicate;
+    }
+
+    /**
+     * Execute a SQWRL query and return tabular results
+     */
+    public SqwrlQueryResult executeSqwrlQuery(String projectId, String queryText, String queryName, Integer maxResults) {
+        long startTime = System.currentTimeMillis();
+        
+        if (queryName == null || queryName.isBlank()) {
+            queryName = "SQWRLQuery_" + System.currentTimeMillis();
+        }
+        
+        int limit = (maxResults != null && maxResults > 0) ? maxResults : 100;
+        
+        try {
+            OWLOntology ontology = ontologyClient.fetchOntology(projectId);
+            
+            // Create SQWRL query engine
+            org.swrlapi.sqwrl.SQWRLQueryEngine queryEngine = SWRLAPIFactory.createSQWRLQueryEngine(ontology);
+            
+            logger.info("Executing SQWRL query for project {}: {}", projectId, queryText);
+            
+            // Execute the query
+            org.swrlapi.sqwrl.SQWRLResult sqwrlResult = queryEngine.runSQWRLQuery(queryName, queryText);
+            
+            long executionTime = System.currentTimeMillis() - startTime;
+            
+            // Extract column names
+            List<String> columnNames = new ArrayList<>();
+            int columnCount = sqwrlResult.getNumberOfColumns();
+            for (int i = 0; i < columnCount; i++) {
+                columnNames.add(sqwrlResult.getColumnName(i));
+            }
+            
+            // Extract rows
+            List<Map<String, String>> rows = new ArrayList<>();
+            int rowIndex = 0;
+            while (sqwrlResult.next() && rowIndex < limit) {
+                Map<String, String> row = new LinkedHashMap<>();
+                for (int i = 0; i < columnCount; i++) {
+                    String colName = columnNames.get(i);
+                    try {
+                        org.swrlapi.sqwrl.values.SQWRLResultValue value = sqwrlResult.getValue(i);
+                        row.put(colName, formatSqwrlValue(value));
+                    } catch (Exception e) {
+                        row.put(colName, "(error)");
+                    }
+                }
+                rows.add(row);
+                rowIndex++;
+            }
+            
+            logger.info("SQWRL query returned {} rows in {}ms", rows.size(), executionTime);
+            
+            return new SqwrlQueryResult(true, queryName, queryText, executionTime, columnNames, rows, null);
+            
+        } catch (org.swrlapi.parser.SWRLParseException e) {
+            logger.error("SQWRL parse error: {}", e.getMessage());
+            return new SqwrlQueryResult(false, queryName, queryText, 0, null, null, 
+                "Query syntax error: " + e.getMessage());
+                
+        } catch (org.swrlapi.sqwrl.exceptions.SQWRLException e) {
+            logger.error("SQWRL execution error: {}", e.getMessage());
+            return new SqwrlQueryResult(false, queryName, queryText, 0, null, null, 
+                "Query execution error: " + e.getMessage());
+                
+        } catch (Exception e) {
+            logger.error("SQWRL query failed for project {}", projectId, e);
+            return new SqwrlQueryResult(false, queryName, queryText, 0, null, null, 
+                "Query failed: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Format a SQWRL result value to a string
+     */
+    private String formatSqwrlValue(org.swrlapi.sqwrl.values.SQWRLResultValue value) {
+        if (value == null) {
+            return "(null)";
+        }
+        
+        if (value instanceof org.swrlapi.sqwrl.values.SQWRLNamedIndividualResultValue) {
+            String iri = ((org.swrlapi.sqwrl.values.SQWRLNamedIndividualResultValue) value).getIRI().toString();
+            // Extract local name from IRI
+            if (iri.contains("#")) {
+                return iri.substring(iri.lastIndexOf('#') + 1);
+            } else if (iri.contains("/")) {
+                return iri.substring(iri.lastIndexOf('/') + 1);
+            }
+            return iri;
+        }
+        
+        if (value instanceof org.swrlapi.sqwrl.values.SQWRLClassResultValue) {
+            String iri = ((org.swrlapi.sqwrl.values.SQWRLClassResultValue) value).getIRI().toString();
+            if (iri.contains("#")) {
+                return iri.substring(iri.lastIndexOf('#') + 1);
+            }
+            return iri;
+        }
+        
+        if (value instanceof org.swrlapi.sqwrl.values.SQWRLLiteralResultValue) {
+            return ((org.swrlapi.sqwrl.values.SQWRLLiteralResultValue) value).getValue();
+        }
+        
+        return value.toString();
+    }
+    
+    /**
+     * Inner class for SQWRL query results
+     */
+    public static class SqwrlQueryResult {
+        private boolean success;
+        private String queryName;
+        private String queryText;
+        private long executionTimeMs;
+        private List<String> columnNames;
+        private List<Map<String, String>> rows;
+        private String errorMessage;
+        
+        public SqwrlQueryResult(boolean success, String queryName, String queryText, 
+                               long executionTimeMs, List<String> columnNames, 
+                               List<Map<String, String>> rows, String errorMessage) {
+            this.success = success;
+            this.queryName = queryName;
+            this.queryText = queryText;
+            this.executionTimeMs = executionTimeMs;
+            this.columnNames = columnNames;
+            this.rows = rows;
+            this.errorMessage = errorMessage;
+        }
+        
+        public boolean isSuccess() { return success; }
+        public String getQueryName() { return queryName; }
+        public String getQueryText() { return queryText; }
+        public long getExecutionTimeMs() { return executionTimeMs; }
+        public List<String> getColumnNames() { return columnNames; }
+        public List<Map<String, String>> getRows() { return rows; }
+        public int getRowCount() { return rows != null ? rows.size() : 0; }
+        public String getErrorMessage() { return errorMessage; }
     }
 }

@@ -127,20 +127,23 @@ public class PluginService {
 
             pluginRepository.save(plugin);
 
-            // Create plugin version
-            PluginVersion version = PluginVersion.builder()
-                .pluginId(request.getPluginId())
-                .version(request.getVersion())
-                .changelog(request.getChangelog())
-                .vsixFileId(fileId)
-                .fileSize(vsixFile.getSize())
-                .dependencies(request.getDependencies())
-                .engines(request.getEngines())
-                .entryPoint(request.getEntryPoint())
-                .deprecated(false)
-                .downloads(0L)
-                .publishedAt(LocalDateTime.now())
-                .build();
+            // Create or update plugin version
+            PluginVersion version = versionRepository.findByPluginIdAndVersion(request.getPluginId(), request.getVersion())
+                .orElse(PluginVersion.builder()
+                    .pluginId(request.getPluginId())
+                    .version(request.getVersion())
+                    .downloads(0L)
+                    .publishedAt(LocalDateTime.now())
+                    .build());
+            
+            // Update version fields (for both new and existing versions)
+            version.setChangelog(request.getChangelog());
+            version.setVsixFileId(fileId);
+            version.setFileSize(vsixFile.getSize());
+            version.setDependencies(request.getDependencies());
+            version.setEngines(request.getEngines());
+            version.setEntryPoint(request.getEntryPoint());
+            version.setDeprecated(false);
 
             versionRepository.save(version);
 

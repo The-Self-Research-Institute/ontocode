@@ -1,6 +1,6 @@
 {
-  "name": "@ontocode/swrl-editor-plugin",
-  "version": "1.0.0",
+  "name": "swrl-editor-plugin",
+  "version": "1.1.2",
   "displayName": "SWRL Editor",
   "description": "Semantic Web Rule Language editor and validator for ontologies. Create, edit, and execute SWRL rules with syntax validation.",
   "category": "Editor",
@@ -15,7 +15,7 @@
   "author": "OntoCode Team",
   "publisher": "ontocode",
   "license": "MIT",
-  "icon": "icon.png",
+
   "repository": {
     "type": "git",
     "url": "https://github.com/The-Self-Research-Institute/ontocode"

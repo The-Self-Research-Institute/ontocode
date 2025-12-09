@@ -115,13 +115,15 @@ public class PluginController {
             return ResponseEntity.badRequest().build();
         }
 
-        if (!vsixFile.getOriginalFilename().endsWith(".vsix")) {
-            log.error("Invalid file type. Must be .vsix file");
+        String filename = vsixFile.getOriginalFilename();
+        // Accept both .vsix and .js files for development (plugins can be UMD bundles)
+        if (filename == null || (!filename.endsWith(".vsix") && !filename.endsWith(".js"))) {
+            log.error("Invalid file type. Must be .vsix or .js file, got: {}", filename);
             return ResponseEntity.badRequest().build();
         }
 
-        // Get user email from JWT
-        String authorEmail = authentication.getName();
+        // Get user email from JWT or use default for development
+        String authorEmail = (authentication != null) ? authentication.getName() : "admin@ontocode.dev";
 
         PluginDTO plugin = pluginService.publishPlugin(request, vsixFile, authorEmail);
         return ResponseEntity.status(HttpStatus.CREATED).body(plugin);

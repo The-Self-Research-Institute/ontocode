@@ -1,7 +1,7 @@
 // src/Dashboard.tsx
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
-  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, DatabaseZap, Upload, FolderOpen, Sparkles, Clock, Users
+  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, DatabaseZap, Upload, FolderOpen, Sparkles, Clock, Users, Download, RefreshCw, AlertCircle, Puzzle, Zap, BookOpen, Brain, Network, GitMerge
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
@@ -163,6 +163,161 @@ const LoadingChoiceDialog = ({
             Continue Working
           </button>
         </div>
+      </div>
+    </div>
+  );
+};
+
+// Plugin Placeholder Component - Beautiful UI for plugin loading states
+interface PluginPlaceholderProps {
+  pluginId: string;
+  pluginName: string;
+  description: string;
+  icon: React.ReactNode;
+  features: string[];
+  accentColor: string;
+  onInstall: () => void;
+  onRetryLoad: () => void;
+  isInstalled: boolean;
+  isLoading: boolean;
+  error?: string | null;
+}
+
+const PluginPlaceholder: React.FC<PluginPlaceholderProps> = ({
+  pluginId,
+  pluginName,
+  description,
+  icon,
+  features,
+  accentColor,
+  onInstall,
+  onRetryLoad,
+  isInstalled,
+  isLoading,
+  error
+}) => {
+  return (
+    <div className="h-full flex items-center justify-center bg-gradient-to-br from-gray-50 via-white to-gray-100 p-8">
+      <div className="max-w-2xl w-full">
+        {/* Main Card */}
+        <div className="bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
+          {/* Header with gradient */}
+          <div className={`bg-gradient-to-r ${accentColor} p-8 text-white relative overflow-hidden`}>
+            {/* Background pattern */}
+            <div className="absolute inset-0 opacity-10">
+              <div className="absolute -right-10 -top-10 w-40 h-40 border-2 border-white rounded-full" />
+              <div className="absolute -right-5 -bottom-5 w-32 h-32 border-2 border-white rounded-full" />
+              <div className="absolute left-1/4 top-1/2 w-20 h-20 border border-white rounded-full" />
+            </div>
+            
+            <div className="relative flex items-start gap-5">
+              <div className="flex-shrink-0 w-16 h-16 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center shadow-lg">
+                {icon}
+              </div>
+              <div className="flex-1">
+                <h2 className="text-2xl font-bold mb-2">{pluginName}</h2>
+                <p className="text-white/90 text-sm leading-relaxed">{description}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Content */}
+          <div className="p-8">
+            {/* Features Grid */}
+            <div className="mb-8">
+              <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-4 flex items-center gap-2">
+                <Sparkles size={16} className="text-purple-500" />
+                Key Features
+              </h3>
+              <div className="grid grid-cols-2 gap-3">
+                {features.map((feature, index) => (
+                  <div key={index} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100 hover:border-purple-200 hover:bg-purple-50 transition-all">
+                    <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center flex-shrink-0">
+                      <Check size={12} className="text-white" />
+                    </div>
+                    <span className="text-sm text-gray-700 font-medium">{feature}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Status & Action */}
+            <div className="border-t border-gray-100 pt-6">
+              {error ? (
+                <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3">
+                  <AlertCircle size={20} className="text-red-500 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-red-800">Failed to load plugin</p>
+                    <p className="text-xs text-red-600 mt-1">{error}</p>
+                  </div>
+                </div>
+              ) : isLoading ? (
+                <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-xl flex items-center gap-3">
+                  <Loader2 size={20} className="text-blue-500 animate-spin" />
+                  <div>
+                    <p className="text-sm font-medium text-blue-800">Loading plugin...</p>
+                    <p className="text-xs text-blue-600 mt-0.5">Downloading and initializing components</p>
+                  </div>
+                </div>
+              ) : isInstalled ? (
+                <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3">
+                  <AlertCircle size={20} className="text-amber-500 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-amber-800">Plugin installed but not loaded</p>
+                    <p className="text-xs text-amber-600 mt-1">Click the button below to load the plugin</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="mb-4 p-4 bg-gray-50 border border-gray-200 rounded-xl flex items-start gap-3">
+                  <Package size={20} className="text-gray-400 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">Plugin not installed</p>
+                    <p className="text-xs text-gray-500 mt-1">Install from the marketplace to unlock these features</p>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                {isInstalled ? (
+                  <button
+                    onClick={onRetryLoad}
+                    disabled={isLoading}
+                    className={`flex-1 px-6 py-3 rounded-xl font-semibold text-white shadow-lg transition-all flex items-center justify-center gap-2 ${
+                      isLoading 
+                        ? 'bg-gray-400 cursor-not-allowed' 
+                        : 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 hover:shadow-xl hover:-translate-y-0.5'
+                    }`}
+                  >
+                    {isLoading ? (
+                      <>
+                        <Loader2 size={18} className="animate-spin" />
+                        Loading...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw size={18} />
+                        Load Plugin
+                      </>
+                    )}
+                  </button>
+                ) : (
+                  <button
+                    onClick={onInstall}
+                    className="flex-1 px-6 py-3 rounded-xl font-semibold text-white bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 shadow-lg hover:shadow-xl transition-all hover:-translate-y-0.5 flex items-center justify-center gap-2"
+                  >
+                    <Download size={18} />
+                    Install from Marketplace
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer tip */}
+        <p className="text-center text-xs text-gray-400 mt-4">
+          Tip: Access all plugins from the <span className="font-medium">Settings → Plugin Marketplace</span>
+        </p>
       </div>
     </div>
   );
@@ -923,6 +1078,7 @@ const Dashboard = () => {
   const [visibleMainTabs, setVisibleMainTabs] = useState(['ActiveOntology', 'Entities', 'IndividualsByClass', 'DLQuery', 'CodeView', 'SPARQL']);
   const [showPluginMarketplace, setShowPluginMarketplace] = useState(false);
   const [installedPlugins, setInstalledPlugins] = useState<Set<string>>(new Set());
+  const [pluginLoadingStates, setPluginLoadingStates] = useState<Record<string, { loading: boolean; error: string | null }>>({});
   
   // Code View states
   const [codeViewFormat, setCodeViewFormat] = useState<'turtle' | 'rdfxml' | 'ntriples' | 'owl'>('turtle');
@@ -940,12 +1096,15 @@ const Dashboard = () => {
   // Plugin marketplace handlers
   const handleInstallPlugin = useCallback(async (pluginId: string) => {
     try {
+      setPluginLoadingStates(prev => ({ ...prev, [pluginId]: { loading: true, error: null } }));
+      
       // Use pluginLoader to install and load the plugin
       await pluginLoader.installPlugin(pluginId);
       await pluginLoader.loadPlugin(pluginId);
       
       // Only update state if installation and loading succeeded
       setInstalledPlugins(prev => new Set([...prev, pluginId]));
+      setPluginLoadingStates(prev => ({ ...prev, [pluginId]: { loading: false, error: null } }));
       
       // Map plugin IDs to their corresponding tab IDs and add to visible tabs
       const pluginToTabMap: Record<string, string> = {
@@ -969,6 +1128,10 @@ const Dashboard = () => {
       notificationService.success('Plugin Installed', `${pluginId} has been installed successfully`);
     } catch (error) {
       console.error(`[Dashboard] Failed to install plugin ${pluginId}:`, error);
+      setPluginLoadingStates(prev => ({ 
+        ...prev, 
+        [pluginId]: { loading: false, error: error instanceof Error ? error.message : 'Unknown error' } 
+      }));
       notificationService.error('Plugin Installation Failed', `Failed to install ${pluginId}. ${error instanceof Error ? error.message : 'Please check console for details'}`);
       
       // Make sure to uninstall if loading failed
@@ -979,6 +1142,31 @@ const Dashboard = () => {
       }
       
       throw error;
+    }
+  }, []);
+
+  // Handler to retry loading an installed plugin
+  const handleRetryLoadPlugin = useCallback(async (pluginId: string) => {
+    try {
+      setPluginLoadingStates(prev => ({ ...prev, [pluginId]: { loading: true, error: null } }));
+      
+      const component = await pluginLoader.loadPlugin(pluginId);
+      
+      if (component) {
+        setPluginLoadingStates(prev => ({ ...prev, [pluginId]: { loading: false, error: null } }));
+        // Force re-render by updating installedPlugins
+        setInstalledPlugins(prev => new Set([...prev]));
+        notificationService.success('Plugin Loaded', `${pluginId} has been loaded successfully`);
+      } else {
+        throw new Error('Failed to load plugin component');
+      }
+    } catch (error) {
+      console.error(`[Dashboard] Failed to load plugin ${pluginId}:`, error);
+      setPluginLoadingStates(prev => ({ 
+        ...prev, 
+        [pluginId]: { loading: false, error: error instanceof Error ? error.message : 'Unknown error' } 
+      }));
+      notificationService.error('Plugin Load Failed', `Failed to load ${pluginId}. ${error instanceof Error ? error.message : 'Please try again'}`);
     }
   }, []);
 
@@ -2332,13 +2520,26 @@ const Dashboard = () => {
           });
         }
         
-        // Auto-load installed plugins
+        // Auto-load installed plugins with loading state tracking
         for (const plugin of installed) {
           try {
+            // Set loading state
+            setPluginLoadingStates(prev => ({ ...prev, [plugin.id]: { loading: true, error: null } }));
+            
             await pluginLoader.loadPlugin(plugin.id);
             console.log(`[Dashboard] Auto-loaded plugin: ${plugin.id}`);
+            
+            // Clear loading state on success
+            setPluginLoadingStates(prev => ({ ...prev, [plugin.id]: { loading: false, error: null } }));
+            // Force re-render
+            setInstalledPlugins(prev => new Set([...prev]));
           } catch (error) {
             console.warn(`[Dashboard] Failed to auto-load plugin ${plugin.id}:`, error);
+            // Set error state
+            setPluginLoadingStates(prev => ({ 
+              ...prev, 
+              [plugin.id]: { loading: false, error: error instanceof Error ? error.message : 'Failed to load plugin' } 
+            }));
           }
         }
       } catch (error) {
@@ -3891,40 +4092,131 @@ const Dashboard = () => {
       case 'Graph': {
         // Use dynamically loaded Graph View Plugin
         const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === 'graph-view-plugin');
+        const loadingState = pluginLoadingStates['graph-view-plugin'];
         
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
           return <PluginComponent projectId={projectId} onNodeClick={handleGraphNodeClick} />;
         }
         
-        return <div className="p-4">Install Advanced Graph View Plugin v2.0 from the Marketplace.</div>;
+        return (
+          <PluginPlaceholder
+            pluginId="graph-view-plugin"
+            pluginName="Graph Visualization"
+            description="Next-generation D3.js-powered graph visualization with hierarchical lazy loading, instant load times, and enterprise-grade 60 FPS performance."
+            icon={<Network size={32} className="text-white" />}
+            features={[
+              "Hierarchical lazy loading",
+              "60 FPS performance",
+              "Drag-and-drop nodes",
+              "Multi-select support",
+              "SVG/PNG export",
+              "Physics simulation"
+            ]}
+            accentColor="from-cyan-500 via-blue-500 to-indigo-600"
+            onInstall={() => handleInstallPlugin('graph-view-plugin')}
+            onRetryLoad={() => handleRetryLoadPlugin('graph-view-plugin')}
+            isInstalled={installedPlugins.has('graph-view-plugin')}
+            isLoading={loadingState?.loading || false}
+            error={loadingState?.error}
+          />
+        );
       }
       case 'SWRL': {
         const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === 'swrl-editor-plugin');
+        const loadingState = pluginLoadingStates['swrl-editor-plugin'];
         
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
           return <PluginComponent projectId={projectId} />;
         }
-        return <div className="p-4">Install SWRL Editor Plugin from the Marketplace.</div>;
+        
+        return (
+          <PluginPlaceholder
+            pluginId="swrl-editor-plugin"
+            pluginName="SWRL Rules Editor"
+            description="Create, edit, and execute Semantic Web Rule Language (SWRL) rules with syntax validation and built-in function support."
+            icon={<Brain size={32} className="text-white" />}
+            features={[
+              "Visual rule editor",
+              "Syntax validation",
+              "Built-in functions",
+              "Rule execution engine",
+              "Template library",
+              "Inference results"
+            ]}
+            accentColor="from-purple-500 via-violet-500 to-indigo-600"
+            onInstall={() => handleInstallPlugin('swrl-editor-plugin')}
+            onRetryLoad={() => handleRetryLoadPlugin('swrl-editor-plugin')}
+            isInstalled={installedPlugins.has('swrl-editor-plugin')}
+            isLoading={loadingState?.loading || false}
+            error={loadingState?.error}
+          />
+        );
       }
       case 'Fuzzy': {
         const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === 'fuzzy-ontology-plugin');
+        const loadingState = pluginLoadingStates['fuzzy-ontology-plugin'];
         
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
           return <PluginComponent projectId={projectId} />;
         }
-        return <div className="p-4">Install Fuzzy Ontology Plugin from the Marketplace.</div>;
+        
+        return (
+          <PluginPlaceholder
+            pluginId="fuzzy-ontology-plugin"
+            pluginName="Fuzzy Ontology"
+            description="Advanced fuzzy ontology support with 5 fuzzy modifiers, 5 membership functions, visual canvas editor, and comprehensive SPARQL integration."
+            icon={<Sparkles size={32} className="text-white" />}
+            features={[
+              "5 fuzzy modifiers",
+              "5 membership functions",
+              "Visual canvas editor",
+              "Real-time curve rendering",
+              "T-norms/T-conorms",
+              "SPARQL integration"
+            ]}
+            accentColor="from-amber-500 via-orange-500 to-red-500"
+            onInstall={() => handleInstallPlugin('fuzzy-ontology-plugin')}
+            onRetryLoad={() => handleRetryLoadPlugin('fuzzy-ontology-plugin')}
+            isInstalled={installedPlugins.has('fuzzy-ontology-plugin')}
+            isLoading={loadingState?.loading || false}
+            error={loadingState?.error}
+          />
+        );
       }
       case 'Changes': {
         const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === 'change-assistant-plugin');
+        const loadingState = pluginLoadingStates['change-assistant-plugin'];
         
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
           return <PluginComponent projectId={projectId} />;
         }
-        return <div className="p-4">Install Change Assistant Plugin from the Marketplace.</div>;
+        
+        return (
+          <PluginPlaceholder
+            pluginId="change-assistant-plugin"
+            pluginName="Change Assistant"
+            description="Comprehensive change tracking and collaboration tool with real-time monitoring, conflict detection, approval workflows, and version control integration."
+            icon={<GitMerge size={32} className="text-white" />}
+            features={[
+              "Real-time tracking",
+              "Conflict detection",
+              "Approval workflows",
+              "Diff visualization",
+              "Team comments",
+              "Rollback support"
+            ]}
+            accentColor="from-emerald-500 via-teal-500 to-cyan-600"
+            onInstall={() => handleInstallPlugin('change-assistant-plugin')}
+            onRetryLoad={() => handleRetryLoadPlugin('change-assistant-plugin')}
+            isInstalled={installedPlugins.has('change-assistant-plugin')}
+            isLoading={loadingState?.loading || false}
+            error={loadingState?.error}
+          />
+        );
       }
       case 'ActiveOntology':
         return (

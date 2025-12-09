@@ -15,7 +15,17 @@
 
     <artifactId>ontology-swrl</artifactId>
     <name>SWRL Service</name>
-    <description>SWRL Service Module</description>
+    <description>SWRL Service Module - Requires Java 17 runtime due to SWRLAPI/Drools/MVEL compatibility</description>
+
+    <!-- IMPORTANT: This module MUST compile with and run on Java 17
+         SWRLAPI uses Drools 7.x/MVEL 2.x which are incompatible with Java 21+ -->
+    <properties>
+        <java.version>17</java.version>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <!-- SWRL module needs OWLAPI 4.x for SWRLAPI compatibility -->
+        <owlapi.version>4.5.26</owlapi.version>
+    </properties>
 
     <dependencies>
     <dependency>

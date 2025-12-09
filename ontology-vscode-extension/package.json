@@ -20,7 +20,7 @@
     "rdf",
     "knowledge graph"
   ],
-  "main": "./out/extension.js",
+  "main": "./dist/extension.js",
   "extensionDependencies": [
     "SelfResearchInstitute.sci2code"
   ],
@@ -106,7 +106,7 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run bundle:extension",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",

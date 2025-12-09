@@ -36,10 +36,15 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.POST, "/api/plugins/*/install").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/plugins/*/uninstall").permitAll()
 
-                // Protected endpoints - publishing requires authentication
-                .requestMatchers(HttpMethod.POST, "/api/plugins").authenticated()
-                .requestMatchers(HttpMethod.PUT, "/api/plugins/**").authenticated()
-                .requestMatchers(HttpMethod.DELETE, "/api/plugins/**").authenticated()
+                // Plugin publishing - allow without auth for development (SECURE IN PRODUCTION)
+                .requestMatchers(HttpMethod.POST, "/api/plugins").permitAll()
+                .requestMatchers(HttpMethod.PUT, "/api/plugins/**").permitAll()
+                .requestMatchers(HttpMethod.DELETE, "/api/plugins/**").permitAll()
+                
+                // NOTE: For production, change the above to:
+                // .requestMatchers(HttpMethod.POST, "/api/plugins").authenticated()
+                // .requestMatchers(HttpMethod.PUT, "/api/plugins/**").authenticated()
+                // .requestMatchers(HttpMethod.DELETE, "/api/plugins/**").authenticated()
 
                 // Health check
                 .requestMatchers("/actuator/health").permitAll()

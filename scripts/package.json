@@ -8,8 +8,8 @@
     "upload-plugins": "node upload-default-plugins.js"
   },
   "dependencies": {
-    "mongodb": "^6.3.0",
     "axios": "^1.6.5",
-    "form-data": "^4.0.0"
+    "form-data": "^4.0.0",
+    "mongodb": "^6.21.0"
   }
 }
