@@ -333,6 +333,8 @@ const IndividualEditor: React.FC<{
                     items={item.sameIndividualAs}
                     onAddClick={() => openEditor("Add Same Individual As (IRI)", handleAddSameAs)}
                     onDelete={handleDeleteSameAs}
+                    themeColor="purple"
+                    itemEntityType="individual"
                 />
 
                 {/* Different Individual From */}
@@ -341,6 +343,8 @@ const IndividualEditor: React.FC<{
                     items={item.differentIndividualFrom}
                     onAddClick={() => openEditor("Add Different Individual From (IRI)", handleAddDifferentFrom)}
                     onDelete={handleDeleteDifferentFrom}
+                    themeColor="purple"
+                    itemEntityType="individual"
                 />
               </div>
             </div>
