@@ -73,6 +73,18 @@ const DEFAULT_PLUGINS = [
     keywords: ['change-tracking', 'collaboration', 'ontology', 'version-control', 'history', 'owl', 'diff'],
     icon: null,
     screenshots: []
+  },
+  {
+    pluginId: 'sparql-query-plugin',
+    name: 'SPARQL Query Editor',
+    description: 'Full-featured SPARQL query editor with syntax highlighting, query execution, results display, and query history',
+    version: '1.0.0',
+    category: 'Query',
+    author: 'OntoCode Team',
+    authorEmail: 'admin@ontocode.com',
+    keywords: ['sparql', 'query', 'ontology', 'graphdb', 'rdf', 'owl', 'semantic-web', 'triplestore'],
+    icon: null,
+    screenshots: []
   }
 ];
 

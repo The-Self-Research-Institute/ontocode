@@ -18,7 +18,7 @@ import IndividualEditor from './details/IndividualEditor';
 import DatatypeEditor from './details/DatatypeEditor';
 import AnnotationPropertyEditor from './details/AnnotationPropertyEditor';
 import { Panel, AnnotationsDisplay } from './details/common';
-import SparqlQueryEditor from './SparqlQueryEditor';
+// SparqlQueryEditor moved to plugin: sparql-query-plugin
 import { ProjectSelector } from './ProjectSelector';
 import CollaborationPanel, { CollaborationPanelRef } from './CollaborationPanel';
 import HistoryPanel from './HistoryPanel';
@@ -1076,7 +1076,8 @@ const Dashboard = () => {
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
   const [showCollaborationPanel, setShowCollaborationPanel] = useState(false);
 
-  const [visibleMainTabs, setVisibleMainTabs] = useState(['ActiveOntology', 'Entities', 'IndividualsByClass', 'DLQuery', 'CodeView', 'SPARQL']);
+  // Plugin tabs (SPARQL, SWRL, Fuzzy, Changes, Graph) are added dynamically when plugins are installed
+  const [visibleMainTabs, setVisibleMainTabs] = useState(['ActiveOntology', 'Entities', 'IndividualsByClass', 'DLQuery', 'CodeView']);
   const [showPluginMarketplace, setShowPluginMarketplace] = useState(false);
   const [installedPlugins, setInstalledPlugins] = useState<Set<string>>(new Set());
   const [pluginLoadingStates, setPluginLoadingStates] = useState<Record<string, { loading: boolean; error: string | null }>>({});
@@ -1112,7 +1113,8 @@ const Dashboard = () => {
         'swrl-editor-plugin': 'SWRL',
         'graph-view-plugin': 'Graph',
         'fuzzy-ontology-plugin': 'Fuzzy',
-        'change-assistant-plugin': 'Changes'
+        'change-assistant-plugin': 'Changes',
+        'sparql-query-plugin': 'SPARQL'
       };
       
       const tabId = pluginToTabMap[pluginId];
@@ -1187,7 +1189,8 @@ const Dashboard = () => {
         'swrl-editor-plugin': 'SWRL',
         'graph-view-plugin': 'Graph',
         'fuzzy-ontology-plugin': 'Fuzzy',
-        'change-assistant-plugin': 'Changes'
+        'change-assistant-plugin': 'Changes',
+        'sparql-query-plugin': 'SPARQL'
       };
       
       const tabId = pluginToTabMap[pluginId];
@@ -2677,7 +2680,8 @@ const Dashboard = () => {
           'swrl-editor-plugin': 'SWRL',
           'graph-view-plugin': 'Graph',
           'fuzzy-ontology-plugin': 'Fuzzy',
-          'change-assistant-plugin': 'Changes'
+          'change-assistant-plugin': 'Changes',
+          'sparql-query-plugin': 'SPARQL'
         };
         
         const tabsToShow = pluginIds
@@ -4282,8 +4286,50 @@ const Dashboard = () => {
             </div>
           </div>
         );
-      case 'SPARQL':
-        return <SparqlQueryEditor projectId={projectId!} prefixes={(metadata as any)?.prefixes || []} />;
+      case 'SPARQL': {
+        // Use dynamically loaded SPARQL Query Plugin
+        const sparqlPlugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === 'sparql-query-plugin');
+        const sparqlLoadingState = pluginLoadingStates['sparql-query-plugin'];
+        
+        if (sparqlPlugin?.component && projectId) {
+          const SparqlPluginComponent = sparqlPlugin.component;
+          return (
+            <SparqlPluginComponent 
+              projectId={projectId} 
+              prefixes={(metadata as any)?.prefixes || []}
+              context={{
+                apiClient,
+                showNotification: (msg: string, type: 'info' | 'success' | 'warning' | 'error') => {
+                  console.log(`[${type}] ${msg}`);
+                }
+              }}
+            />
+          );
+        }
+        
+        return (
+          <PluginPlaceholder
+            pluginId="sparql-query-plugin"
+            pluginName="SPARQL Query Editor"
+            description="Full-featured SPARQL query editor with syntax highlighting, query management, CSV export, and live results."
+            icon={<DatabaseZap size={32} className="text-white" />}
+            features={[
+              "Query management (save/load)",
+              "Sample queries library",
+              "Live query execution",
+              "Results in table or JSON",
+              "CSV/JSON export",
+              "Prefix management"
+            ]}
+            accentColor="from-purple-500 via-indigo-500 to-blue-600"
+            onInstall={() => handleInstallPlugin('sparql-query-plugin')}
+            onRetryLoad={() => handleRetryLoadPlugin('sparql-query-plugin')}
+            isInstalled={installedPlugins.has('sparql-query-plugin')}
+            isLoading={sparqlLoadingState?.loading || false}
+            error={sparqlLoadingState?.error}
+          />
+        );
+      }
       case 'Graph': {
         // Use dynamically loaded Graph View Plugin
         const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === 'graph-view-plugin');

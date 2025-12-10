@@ -5,11 +5,13 @@
   "scripts": {
     "clear-all": "node clear-databases.js",
     "clear-mongo": "node clear-mongodb.js",
-    "upload-plugins": "node upload-default-plugins.js"
+    "plugins": "node manage-plugins.js",
+    "plugins:build": "node manage-plugins.js build",
+    "plugins:install": "node manage-plugins.js install",
+    "plugins:list": "node manage-plugins.js list",
+    "plugins:clean": "node manage-plugins.js clean"
   },
   "dependencies": {
-    "axios": "^1.6.5",
-    "form-data": "^4.0.0",
     "mongodb": "^6.21.0"
   }
 }

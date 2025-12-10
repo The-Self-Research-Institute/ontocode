@@ -43,6 +43,12 @@ module.exports = {
       commonjs2: 'ReactDOM',
       commonjs: 'ReactDOM',
       amd: 'ReactDOM'
+    },
+    'lucide-react': {
+      root: 'LucideReact',
+      commonjs2: 'LucideReact',
+      commonjs: 'LucideReact',
+      amd: 'LucideReact'
     }
   }
 };
