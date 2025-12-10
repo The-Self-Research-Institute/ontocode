@@ -3,7 +3,7 @@ package self.research.ontology.owlEditor.service;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.reasoner.*;
 import org.semanticweb.owlapi.reasoner.structural.StructuralReasonerFactory;
-import org.semanticweb.HermiT.ReasonerFactory;
+import openllet.owlapi.OpenlletReasonerFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -12,7 +12,7 @@ import java.util.*;
 
 /**
  * Service for ontology reasoning operations.
- * Supports multiple reasoners: HermiT, Structural, and Openllet.
+ * Supports multiple reasoners: Openllet, Structural.
  */
 @Service
 public class ReasonerService {
@@ -22,9 +22,9 @@ public class ReasonerService {
     private final Map<String, OWLReasoner> reasonerCache = new HashMap<>();
     
     public enum ReasonerType {
-        HERMIT("HermiT"),
+        OPENLLET("Openllet"),
         STRUCTURAL("Structural"),
-        PELLET("Pellet");  // Openllet is the modern version of Pellet
+        PELLET("Pellet");  // Alias for Openllet
 
         private final String displayName;
 
@@ -67,19 +67,10 @@ public class ReasonerService {
         
         try {
             switch (type) {
-                case HERMIT:
-                    return new ReasonerFactory().createReasoner(ontology, config);
-                    
+                case OPENLLET:
                 case PELLET:
-                    // Try to use Openllet (modern Pellet)
-                    try {
-                        Class<?> openlletFactory = Class.forName("openllet.owlapi.OpenlletReasonerFactory");
-                        OWLReasonerFactory factory = (OWLReasonerFactory) openlletFactory.getDeclaredConstructor().newInstance();
-                        return factory.createReasoner(ontology, config);
-                    } catch (ClassNotFoundException e) {
-                        log.warn("Openllet not found, falling back to Structural reasoner");
-                        return new StructuralReasonerFactory().createReasoner(ontology, config);
-                    }
+                    // Use Openllet (OWLAPI 5.x compatible reasoner)
+                    return OpenlletReasonerFactory.getInstance().createReasoner(ontology, config);
                     
                 case STRUCTURAL:
                 default:
