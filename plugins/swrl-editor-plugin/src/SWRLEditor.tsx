@@ -1,9 +1,32 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Trash2, Play, Save, Check, X, AlertCircle, Loader2, Eye, EyeOff, ChevronDown, ChevronRight, Copy, Download, Upload, BarChart2, HelpCircle, BookOpen, GripVertical, Maximize2, Minimize2, LayoutTemplate, Shrink, PanelTopClose, PanelBottomClose, Search } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { 
+  Plus, Trash2, Play, Save, Check, X, AlertCircle, Loader2, 
+  ChevronDown, ChevronRight, ChevronUp, Copy, Download, Upload, BarChart2, 
+  BookOpen, Search, ToggleLeft, ToggleRight, Zap, FileText,
+  Info, Code, List, Grid3X3, Filter, RefreshCw, Settings, LayoutTemplate,
+  HelpCircle, Maximize2, Minimize2, Eye, EyeOff
+} from 'lucide-react';
 import apiClient from './apiClient';
-import type { SwrlRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext, PagedResponse, BuiltInCategory, InferredAxiom } from './types';
+import type { SwrlRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext, BuiltInCategory, InferredAxiom } from './types';
 
-// SWRL Built-in reference based on SWRLAPI (https://github.com/protegeproject/swrlapi)
+// ============================================================================
+// CONSTANTS & HELPERS
+// ============================================================================
+
+const RULE_TEMPLATES = [
+  { name: 'Class Membership', template: 'Person(?p) ^ hasAge(?p, ?age) ^ swrlb:greaterThanOrEqual(?age, 18) -> Adult(?p)', description: 'Classify individuals based on property values' },
+  { name: 'Property Transfer', template: 'hasParent(?x, ?y) ^ hasBrother(?y, ?z) -> hasUncle(?x, ?z)', description: 'Infer a relationship based on a chain of properties' },
+  { name: 'Math Calculation', template: 'Item(?i) ^ hasPrice(?i, ?p) ^ swrlb:multiply(?tax, ?p, 0.08) -> hasTax(?i, ?tax)', description: 'Calculate a value using math built-ins' },
+  { name: 'String Matching', template: 'Person(?p) ^ hasName(?p, ?name) ^ swrlb:startsWith(?name, "Dr.") -> Doctor(?p)', description: 'Classify based on string patterns' },
+  { name: 'Temporal Relation', template: 'Event(?e1) ^ Event(?e2) ^ hasTime(?e1, ?t1) ^ hasTime(?e2, ?t2) ^ temporal:before(?t1, ?t2) -> Precedes(?e1, ?e2)', description: 'Infer temporal order of events' },
+];
+
+const SWRL_BUILTINS_QUICK = [
+  { category: 'Compare', items: ['swrlb:equal', 'swrlb:notEqual', 'swrlb:lessThan', 'swrlb:greaterThan', 'swrlb:lessThanOrEqual', 'swrlb:greaterThanOrEqual'] },
+  { category: 'Math', items: ['swrlb:add', 'swrlb:subtract', 'swrlb:multiply', 'swrlb:divide', 'swrlb:abs', 'swrlb:round'] },
+  { category: 'String', items: ['swrlb:stringConcat', 'swrlb:contains', 'swrlb:startsWith', 'swrlb:endsWith', 'swrlb:matches'] },
+];
+
 const SWRL_BUILTINS: BuiltInCategory[] = [
   {
     prefix: 'swrlb',
@@ -120,16 +143,18 @@ const SWRL_BUILTINS: BuiltInCategory[] = [
   }
 ];
 
-const RULE_TEMPLATES = [
-  { name: 'Class Membership', template: 'Person(?p) ^ hasAge(?p, ?age) ^ swrlb:greaterThanOrEqual(?age, 18) -> Adult(?p)', description: 'Classify individuals based on property values' },
-  { name: 'Property Transfer', template: 'hasParent(?x, ?y) ^ hasBrother(?y, ?z) -> hasUncle(?x, ?z)', description: 'Infer a relationship based on a chain of properties' },
-  { name: 'Math Calculation', template: 'Item(?i) ^ hasPrice(?i, ?p) ^ swrlb:multiply(?tax, ?p, 0.08) -> hasTax(?i, ?tax)', description: 'Calculate a value using math built-ins' },
-  { name: 'String Matching', template: 'Person(?p) ^ hasName(?p, ?name) ^ swrlb:startsWith(?name, "Dr.") -> Doctor(?p)', description: 'Classify based on string patterns' },
-  { name: 'Temporal Relation', template: 'Event(?e1) ^ Event(?e2) ^ hasTime(?e1, ?t1) ^ hasTime(?e2, ?t2) ^ temporal:before(?t1, ?t2) -> Precedes(?e1, ?e2)', description: 'Infer temporal order of events' },
-];
+const extractLocalName = (uri: string): string => {
+  if (!uri) return uri;
+  const cleanUri = uri.replace(/^<|>$/g, '');
+  const hashIndex = cleanUri.lastIndexOf('#');
+  if (hashIndex !== -1) return cleanUri.substring(hashIndex + 1);
+  const slashIndex = cleanUri.lastIndexOf('/');
+  if (slashIndex !== -1) return cleanUri.substring(slashIndex + 1);
+  return uri;
+};
 
-// Debounce hook to prevent excessive validation API calls
-function useDebounce(value: string, delay: number) {
+// Debounce hook
+function useDebounce<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => { 
     const t = setTimeout(() => setDebounced(value), delay); 
@@ -138,191 +163,227 @@ function useDebounce(value: string, delay: number) {
   return debounced;
 }
 
-// Resizable Section Component with drag handle
-const ResizableSection: React.FC<{
+// ============================================================================
+// CUSTOM DIALOG COMPONENT
+// ============================================================================
+
+const ConfirmDialog: React.FC<{
+  isOpen: boolean;
   title: string;
-  defaultOpen?: boolean;
-  defaultHeight?: number;
-  minHeight?: number;
-  maxHeight?: number;
-  children: React.ReactNode;
-  headerExtra?: React.ReactNode;
-  onMaximize?: () => void;
-  isMaximized?: boolean;
-}> = ({ title, defaultOpen = true, defaultHeight = 150, minHeight = 80, maxHeight = 500, children, headerExtra, onMaximize, isMaximized }) => {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
-  const [height, setHeight] = useState(defaultHeight);
-  const [isResizing, setIsResizing] = useState(false);
-  const startY = useRef(0);
-  const startHeight = useRef(0);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    setIsResizing(true);
-    startY.current = e.clientY;
-    startHeight.current = height;
-    e.preventDefault();
-    e.stopPropagation();
-  }, [height]);
-
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizing) return;
-      const delta = e.clientY - startY.current;
-      const newHeight = Math.min(maxHeight, Math.max(minHeight, startHeight.current + delta));
-      setHeight(newHeight);
-    };
-
-    const handleMouseUp = () => {
-      setIsResizing(false);
-    };
-
-    if (isResizing) {
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
-      document.body.style.cursor = 'ns-resize';
-      document.body.style.userSelect = 'none';
-    }
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
-  }, [isResizing, minHeight, maxHeight]);
-
+  message: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  confirmText?: string;
+  danger?: boolean;
+}> = ({ isOpen, title, message, onConfirm, onCancel, confirmText = 'Confirm', danger = false }) => {
+  if (!isOpen) return null;
+  
   return (
-    <div ref={containerRef} className="border-2 border-gray-300 rounded-lg overflow-hidden bg-white shadow-sm">
-      {/* Header */}
-      <div className="w-full px-4 py-2.5 flex items-center justify-between bg-gradient-to-r from-gray-100 to-gray-50 border-b border-gray-200">
-        <button
-          onClick={() => setIsOpen(!isOpen)}
-          className="flex items-center gap-2 hover:bg-gray-100 rounded px-1 -ml-1 transition-colors"
-        >
-          {isOpen ? <ChevronDown size={18} className="text-purple-600" /> : <ChevronRight size={18} className="text-purple-600" />}
-          <span className="font-semibold text-gray-800">{title}</span>
-        </button>
-        <div className="flex items-center gap-2">
-          {headerExtra && <div onClick={e => e.stopPropagation()}>{headerExtra}</div>}
-          {onMaximize && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onMaximize(); }}
-              className="p-1.5 text-gray-500 hover:bg-gray-200 rounded transition-colors"
-              title={isMaximized ? "Restore" : "Maximize"}
-            >
-              {isMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-            </button>
-          )}
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full mx-4 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        <div className="p-5 border-b border-gray-100">
+          <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
+        </div>
+        <div className="p-5">
+          <p className="text-gray-600">{message}</p>
+        </div>
+        <div className="flex justify-end gap-3 p-4 bg-gray-50">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className={`px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors ${
+              danger ? 'bg-red-600 hover:bg-red-700' : 'bg-purple-600 hover:bg-purple-700'
+            }`}
+          >
+            {confirmText}
+          </button>
         </div>
       </div>
-      
-      {/* Content */}
-      {isOpen && (
-        <div className="relative">
-          <div 
-            style={{ height: `${height}px` }} 
-            className="overflow-auto transition-none"
+    </div>
+  );
+};
+
+// ============================================================================
+// RULE LIST ITEM COMPONENT
+// ============================================================================
+
+interface RuleListItemProps {
+  rule: SwrlRule;
+  isSelected: boolean;
+  isChecked: boolean;
+  onSelect: () => void;
+  onToggle: () => void;
+  onToggleEnabled: () => void;
+  onDelete: () => void;
+}
+
+const RuleListItem: React.FC<RuleListItemProps> = ({ 
+  rule, isSelected, isChecked, onSelect, onToggle, onToggleEnabled, onDelete 
+}) => (
+  <div
+    className={`group relative flex items-start gap-3 p-3 cursor-pointer transition-all duration-150 border-l-3 ${
+      isSelected 
+        ? 'bg-purple-50 border-l-purple-500' 
+        : isChecked 
+          ? 'bg-green-50/50 border-l-green-400' 
+          : 'border-l-transparent hover:bg-gray-50'
+    }`}
+    onClick={onSelect}
+  >
+    {/* Checkbox */}
+    <div className="pt-0.5" onClick={e => e.stopPropagation()}>
+      <input
+        type="checkbox"
+        checked={isChecked}
+        onChange={onToggle}
+        className="w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500 cursor-pointer"
+      />
+    </div>
+
+    {/* Content */}
+    <div className="flex-1 min-w-0">
+      <div className="flex items-center gap-2">
+        <span className={`font-medium text-sm truncate ${isSelected ? 'text-purple-900' : 'text-gray-800'}`}>
+          {rule.ruleName}
+        </span>
+        {rule.category && (
+          <span className="px-1.5 py-0.5 text-[10px] font-medium bg-gray-200 text-gray-600 rounded">
+            {rule.category}
+          </span>
+        )}
+      </div>
+      <p className="text-xs text-gray-500 font-mono truncate mt-0.5">{rule.ruleText}</p>
+    </div>
+
+    {/* Actions */}
+    <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+      <button
+        onClick={onToggleEnabled}
+        className={`p-1.5 rounded-md transition-colors ${
+          rule.enabled 
+            ? 'bg-green-100 text-green-600 hover:bg-green-200' 
+            : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+        }`}
+        title={rule.enabled ? 'Enabled - Click to disable' : 'Disabled - Click to enable'}
+      >
+        {rule.enabled ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
+      </button>
+      <button
+        onClick={onDelete}
+        className="p-1.5 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
+        title="Delete rule"
+      >
+        <Trash2 size={14} />
+      </button>
+    </div>
+  </div>
+);
+
+// ============================================================================
+// QUICK INSERT PANEL
+// ============================================================================
+
+interface QuickInsertProps {
+  onInsert: (text: string) => void;
+  disabled?: boolean;
+}
+
+const QuickInsertPanel: React.FC<QuickInsertProps> = ({ onInsert, disabled }) => {
+  const [expanded, setExpanded] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
+
+  return (
+    <div className="bg-gray-50 border-t border-gray-200">
+      {/* Quick symbols */}
+      <div className="flex items-center gap-1 p-2 flex-wrap">
+        <span className="text-xs text-gray-500 mr-2">Quick:</span>
+        {['(?x)', '(?y)', ' ^ ', ' -> '].map(sym => (
+          <button
+            key={sym}
+            onClick={() => onInsert(sym)}
+            disabled={disabled}
+            className="px-2 py-1 text-xs font-mono bg-white border border-gray-300 rounded hover:bg-purple-50 hover:border-purple-300 disabled:opacity-50 transition-colors"
           >
-            {children}
-          </div>
-          
-          {/* Resize Handle */}
-          <div
-            onMouseDown={handleMouseDown}
-            className={`absolute bottom-0 left-0 right-0 h-3 cursor-ns-resize flex items-center justify-center group hover:bg-purple-50 transition-colors ${isResizing ? 'bg-purple-100' : 'bg-gray-50'}`}
-            title="Drag to resize"
+            {sym === ' ^ ' ? '∧ AND' : sym === ' -> ' ? '→ THEN' : sym}
+          </button>
+        ))}
+        
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            onClick={() => { setShowTemplates(!showTemplates); setExpanded(false); }}
+            className={`px-2 py-1 text-xs rounded flex items-center gap-1 transition-colors ${showTemplates ? 'bg-purple-100 text-purple-700' : 'text-purple-600 hover:bg-purple-50'}`}
           >
-            <div className={`w-16 h-1 rounded-full transition-colors ${isResizing ? 'bg-purple-500' : 'bg-gray-300 group-hover:bg-purple-400'}`} />
-          </div>
+            <LayoutTemplate size={12} /> Templates
+          </button>
+          <button
+            onClick={() => { setExpanded(!expanded); setShowTemplates(false); }}
+            className={`px-2 py-1 text-xs rounded flex items-center gap-1 transition-colors ${expanded ? 'bg-purple-100 text-purple-700' : 'text-purple-600 hover:bg-purple-50'}`}
+          >
+            <Code size={12} /> Built-ins
+          </button>
+        </div>
+      </div>
+
+      {/* Templates */}
+      {showTemplates && (
+        <div className="p-2 pt-0 grid grid-cols-1 gap-1 max-h-40 overflow-y-auto">
+          {RULE_TEMPLATES.map((t, i) => (
+            <button
+              key={i}
+              onClick={() => { onInsert(t.template); setShowTemplates(false); }}
+              disabled={disabled}
+              className="text-left px-3 py-2 text-xs bg-white border border-gray-200 rounded hover:bg-purple-50 hover:border-purple-300 disabled:opacity-50 group"
+            >
+              <div className="font-medium text-gray-700 group-hover:text-purple-700">{t.name}</div>
+              <div className="text-[10px] text-gray-500 truncate">{t.description}</div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Expanded built-ins */}
+      {expanded && (
+        <div className="p-2 pt-0 space-y-2">
+          {SWRL_BUILTINS_QUICK.map(cat => (
+            <div key={cat.category}>
+              <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1">{cat.category}</div>
+              <div className="flex flex-wrap gap-1">
+                {cat.items.map(item => (
+                  <button
+                    key={item}
+                    onClick={() => onInsert(item + '(')}
+                    disabled={disabled}
+                    className="px-2 py-0.5 text-[11px] font-mono bg-white border border-gray-200 rounded hover:bg-purple-50 hover:border-purple-300 disabled:opacity-50"
+                  >
+                    {item.split(':')[1]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
   );
 };
 
-// Simple Collapsible Section (non-resizable)
-const CollapsibleSection: React.FC<{
-  title: string;
-  defaultOpen?: boolean;
-  children: React.ReactNode;
-  headerExtra?: React.ReactNode;
-  onMaximize?: () => void;
-  isMaximized?: boolean;
-}> = ({ title, defaultOpen = true, children, headerExtra, onMaximize, isMaximized }) => {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
-  
-  return (
-    <div className="border-2 border-gray-300 rounded-lg overflow-hidden bg-white shadow-sm">
-      <div className="w-full px-4 py-2.5 flex items-center justify-between bg-gradient-to-r from-gray-100 to-gray-50 border-b border-gray-200">
-        <button
-          onClick={() => setIsOpen(!isOpen)}
-          className="flex items-center gap-2 hover:bg-gray-100 rounded px-1 -ml-1 transition-colors"
-        >
-          {isOpen ? <ChevronDown size={18} className="text-purple-600" /> : <ChevronRight size={18} className="text-purple-600" />}
-          <span className="font-semibold text-gray-800">{title}</span>
-        </button>
-        <div className="flex items-center gap-2">
-          {headerExtra && <div onClick={e => e.stopPropagation()}>{headerExtra}</div>}
-          {onMaximize && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onMaximize(); }}
-              className="p-1.5 text-gray-500 hover:bg-gray-200 rounded transition-colors"
-              title={isMaximized ? "Restore" : "Maximize"}
-            >
-              {isMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-            </button>
-          )}
-        </div>
-      </div>
-      {isOpen && <div className="border-t border-gray-100">{children}</div>}
-    </div>
-  );
-};
+// ============================================================================
+// RESULTS PANEL
+// ============================================================================
 
-// Resizable Panel Hook (for bottom panel)
-function useResizable(initialHeight: number, minHeight: number = 100, maxHeight: number = 600) {
-  const [height, setHeight] = useState(initialHeight);
-  const [isResizing, setIsResizing] = useState(false);
-  const startY = useRef(0);
-  const startHeight = useRef(0);
-
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    setIsResizing(true);
-    startY.current = e.clientY;
-    startHeight.current = height;
-    e.preventDefault();
-  }, [height]);
-
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizing) return;
-      const delta = startY.current - e.clientY; // Inverted for bottom panel
-      const newHeight = Math.min(maxHeight, Math.max(minHeight, startHeight.current + delta));
-      setHeight(newHeight);
-    };
-
-    const handleMouseUp = () => {
-      setIsResizing(false);
-    };
-
-    if (isResizing) {
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
-      document.body.style.cursor = 'ns-resize';
-      document.body.style.userSelect = 'none';
-    }
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
-  }, [isResizing, minHeight, maxHeight]);
-
-  return { height, handleMouseDown, isResizing };
+interface ResultsPanelProps {
+  results: ExecutionResponse | null;
+  isExecuting: boolean;
 }
+
+// ============================================================================
+// SQWRL QUERY PANEL
+// ============================================================================
 
 const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext }> = ({ projectId, context }) => {
   const [query, setQuery] = useState('Person(?p) ^ hasAge(?p, ?age) -> sqwrl:select(?p, ?age)');
@@ -452,55 +513,16 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext }> =
   );
 };
 
-// Helper function to extract local name from URI
-const extractLocalName = (uri: string): string => {
-  if (!uri) return uri;
-  // Handle full URIs like <http://example.org/swrl-test#Alice>
-  const cleanUri = uri.replace(/^<|>$/g, '');
-  const hashIndex = cleanUri.lastIndexOf('#');
-  if (hashIndex !== -1) return cleanUri.substring(hashIndex + 1);
-  const slashIndex = cleanUri.lastIndexOf('/');
-  if (slashIndex !== -1) return cleanUri.substring(slashIndex + 1);
-  return uri;
-};
+// ============================================================================
+// RESULTS PANEL
+// ============================================================================
 
-// Custom Confirmation Dialog Component (replaces window.confirm which is blocked in sandboxed webviews)
-const ConfirmDialog: React.FC<{
-  isOpen: boolean;
-  title: string;
-  message: string;
-  onConfirm: () => void;
-  onCancel: () => void;
-}> = ({ isOpen, title, message, onConfirm, onCancel }) => {
-  if (!isOpen) return null;
-  
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden">
-        <div className="p-4 border-b border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
-        </div>
-        <div className="p-4">
-          <p className="text-gray-700">{message}</p>
-        </div>
-        <div className="flex justify-end gap-3 p-4 bg-gray-50 border-t border-gray-200">
-          <button
-            onClick={onCancel}
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-purple-500"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500"
-          >
-            Delete
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
+interface ResultsPanelProps {
+  results: ExecutionResponse | null;
+  isExecuting: boolean;
+}
+
+
 
 // Helper function to parse and format axioms for better readability
 const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: string; predicate?: string; object?: string; formatted: string } => {
@@ -510,7 +532,8 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
   const clean = (s: string) => extractLocalName(s);
   
   // Parse ClassAssertion: ClassAssertion(<http://...#Adult> <http://...#Alice>)
-  const classAssertionMatch = readable.match(/ClassAssertion\s*\(\s*<?([^>\s]+)>?\s+<?([^>\s]+)>?\s*\)/i);
+  // Also handles: ClassAssertion(Adult Alice)
+  const classAssertionMatch = readable.match(/ClassAssertion\s*\(\s*(?:<)?([^>\s)]+)(?:>)?\s+(?:<)?([^>\s)]+)(?:>)?\s*\)/i);
   if (classAssertionMatch) {
     const className = clean(classAssertionMatch[1]);
     const individual = clean(classAssertionMatch[2]);
@@ -523,7 +546,7 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
   }
   
   // Parse ObjectPropertyAssertion: ObjectPropertyAssertion(<prop> <subj> <obj>)
-  const objPropMatch = readable.match(/ObjectPropertyAssertion\s*\(\s*<?([^>\s]+)>?\s+<?([^>\s]+)>?\s+<?([^>\s]+)>?\s*\)/i);
+  const objPropMatch = readable.match(/ObjectPropertyAssertion\s*\(\s*(?:<)?([^>\s)]+)(?:>)?\s+(?:<)?([^>\s)]+)(?:>)?\s+(?:<)?([^>\s)]+)(?:>)?\s*\)/i);
   if (objPropMatch) {
     const prop = clean(objPropMatch[1]);
     const subject = clean(objPropMatch[2]);
@@ -538,7 +561,7 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
   }
   
   // Parse DataPropertyAssertion: DataPropertyAssertion(<prop> <subj> "value"^^type)
-  const dataPropMatch = readable.match(/DataPropertyAssertion\s*\(\s*<?([^>\s]+)>?\s+<?([^>\s]+)>?\s+(.+)\s*\)/i);
+  const dataPropMatch = readable.match(/DataPropertyAssertion\s*\(\s*(?:<)?([^>\s)]+)(?:>)?\s+(?:<)?([^>\s)]+)(?:>)?\s+(.+)\s*\)/i);
   if (dataPropMatch) {
     const prop = clean(dataPropMatch[1]);
     const subject = clean(dataPropMatch[2]);
@@ -555,7 +578,7 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
   }
 
   // Parse SubClassOf: SubClassOf(<subClass> <superClass>)
-  const subClassMatch = readable.match(/SubClassOf\s*\(\s*<?([^>\s]+)>?\s+<?([^>\s]+)>?\s*\)/i);
+  const subClassMatch = readable.match(/SubClassOf\s*\(\s*(?:<)?([^>\s)]+)(?:>)?\s+(?:<)?([^>\s)]+)(?:>)?\s*\)/i);
   if (subClassMatch) {
     const subClass = clean(subClassMatch[1]);
     const superClass = clean(subClassMatch[2]);
@@ -824,11 +847,12 @@ const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number }> = ({ item, 
   );
 };
 
-const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = ({ results }) => {
+const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => {
   const [showInferredAxioms, setShowInferredAxioms] = useState(true);
   const [viewMode, setViewMode] = useState<'grouped' | 'table' | 'raw'>('grouped');
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [searchFilter, setSearchFilter] = useState('');
+  const [showWarning, setShowWarning] = useState(false);
 
   const toggleGroup = (type: string) => {
     const newExpanded = new Set(expandedGroups);
@@ -883,6 +907,7 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
   const hasSwrlResults = classAssertions.length > 0;
 
   return (
+    <div className="h-full overflow-y-auto">
     <div className="p-4 space-y-4">
       {/* Execution Summary Card */}
       <div className="bg-gradient-to-r from-white to-gray-50 rounded-xl border-2 border-gray-200 p-5 shadow-sm">
@@ -966,11 +991,27 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
 
       {/* No SWRL Results Warning */}
       {results.success && !hasSwrlResults && results.inferredAxioms.length > 0 && (
-        <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl p-4">
-          <div className="flex items-start gap-3">
+        <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl overflow-hidden">
+          <div 
+            className="p-4 flex items-start gap-3 cursor-pointer hover:bg-yellow-100/50 transition-colors"
+            onClick={() => setShowWarning(!showWarning)}
+          >
             <AlertCircle size={24} className="text-yellow-600 mt-0.5 flex-shrink-0" />
-            <div>
-              <div className="font-bold text-yellow-800">No SWRL ClassAssertion Results</div>
+            <div className="flex-1">
+              <div className="flex justify-between items-center">
+                <div className="font-bold text-yellow-800">No SWRL ClassAssertion Results</div>
+                {showWarning ? <ChevronUp size={20} className="text-yellow-600" /> : <ChevronDown size={20} className="text-yellow-600" />}
+              </div>
+              {!showWarning && (
+                 <div className="text-sm text-yellow-700 mt-1">
+                   {results.inferredAxioms.length} general OWL inferences found. Click to see details.
+                 </div>
+              )}
+            </div>
+          </div>
+          
+          {showWarning && (
+            <div className="px-4 pb-4 pl-12">
               <div className="text-sm text-yellow-700 mt-1">
                 Your SWRL rule should create ClassAssertion axioms (e.g., "Emma → Adult"). 
                 The {results.inferredAxioms.length} inferences below are general OWL reasoning results, not from SWRL rules.
@@ -992,7 +1033,7 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
                 </ul>
               </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -1100,7 +1141,7 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
 
           {/* Grouped View */}
           {showInferredAxioms && viewMode === 'grouped' && (
-            <div className="max-h-[500px] overflow-y-auto">
+            <div className="max-h-[70vh] overflow-y-auto">
               {Array.from(groupedAxioms.entries()).map(([type, items]) => {
                 const style = getAxiomTypeStyle(type);
                 const isExpanded = expandedGroups.has(type);
@@ -1140,7 +1181,7 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
 
           {/* Table View */}
           {showInferredAxioms && viewMode === 'table' && (
-            <div className="max-h-[500px] overflow-auto">
+            <div className="max-h-[70vh] overflow-auto">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 sticky top-0">
                   <tr>
@@ -1176,7 +1217,7 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
 
           {/* Raw View */}
           {showInferredAxioms && viewMode === 'raw' && (
-            <div className="max-h-[500px] overflow-y-auto">
+            <div className="max-h-[70vh] overflow-y-auto">
               {filteredAxioms.map((ax, i) => {
                 const style = getAxiomTypeStyle(ax.axiomType);
                 return (
@@ -1208,14 +1249,37 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
         </div>
       )}
     </div>
+    </div>
   );
 };
 
-const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ projectId, context }) => {
+// ============================================================================
+// MAIN COMPONENT
+// ============================================================================
+
+interface SWRLEditorProps {
+  projectId: string;
+  context?: PluginContext;
+}
+
+export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) => {
+
+  // State
   const [rules, setRules] = useState<SwrlRule[]>([]);
   const [selectedRule, setSelectedRule] = useState<SwrlRule | null>(null);
-  const [selectedRuleIds, setSelectedRuleIds] = useState<Set<string>>(new Set()); // Multi-select state
+  const [selectedRuleIds, setSelectedRuleIds] = useState<Set<string>>(new Set());
+  const [isLoading, setIsLoading] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isExecuting, setIsExecuting] = useState(false);
+  const [executionResult, setExecutionResult] = useState<ExecutionResponse | null>(null);
+  const [validationResult, setValidationResult] = useState<SwrlValidationResult | null>(null);
+  const [activePanel, setActivePanel] = useState<'editor' | 'results' | 'reference' | 'query'>('editor');
+  const [expandedBuiltInCategory, setExpandedBuiltInCategory] = useState<string | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{ isOpen: boolean; ruleName: string; ruleId: string }>({ isOpen: false, ruleName: '', ruleId: '' });
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Form state
   const [editForm, setEditForm] = useState({
     ruleName: '',
     ruleText: '',
@@ -1223,103 +1287,63 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
     category: '',
     enabled: true
   });
-  
-  const [validationResult, setValidationResult] = useState<SwrlValidationResult | null>(null);
-  const [executionResult, setExecutionResult] = useState<ExecutionResponse | null>(null);
-  const [executedRulesInfo, setExecutedRulesInfo] = useState<{ count: number; names: string[] } | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isExecuting, setIsExecuting] = useState(false);
-  const [activeTab, setActiveTab] = useState<'editor' | 'query' | 'results' | 'reference'>('editor');
-  const [showStats, setShowStats] = useState(false);
-  const [stats, setStats] = useState<any>(null);
-  const [expandedBuiltInCategory, setExpandedBuiltInCategory] = useState<string | null>('swrlb');
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  
-  // Panel visibility and maximize state
-  const [editorCollapsed, setEditorCollapsed] = useState(false);
-  const [resultsMaximized, setResultsMaximized] = useState(false);
-  const [editorMaximized, setEditorMaximized] = useState(false);
-  const [ruleDetailsMaximized, setRuleDetailsMaximized] = useState(false);
-  const [ruleExpressionMaximized, setRuleExpressionMaximized] = useState(false);
-  
-  // Confirmation dialog state
-  const [confirmDialog, setConfirmDialog] = useState<{
-    isOpen: boolean;
-    ruleName: string;
-    ruleId: string;
-  }>({ isOpen: false, ruleName: '', ruleId: '' });
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Debounced validation
   const debouncedRuleText = useDebounce(editForm.ruleText, 500);
 
-  // Multi-select handlers
-  const toggleRuleSelection = (ruleId: string) => {
-    const newSelection = new Set(selectedRuleIds);
-    if (newSelection.has(ruleId)) {
-      newSelection.delete(ruleId);
-    } else {
-      newSelection.add(ruleId);
-    }
-    setSelectedRuleIds(newSelection);
-  };
-
-  const selectAllRules = () => {
-    setSelectedRuleIds(new Set(rules.map(r => r.id)));
-  };
-
-  const clearSelection = () => {
-    setSelectedRuleIds(new Set());
-  };
-
-  const selectEnabledRules = () => {
-    setSelectedRuleIds(new Set(rules.filter(r => r.enabled).map(r => r.id)));
-  };
-
-  // Load rules on mount - handle both array and paginated responses
+  // Load rules
   const loadRules = useCallback(async () => {
-    if (!projectId) return;
     setIsLoading(true);
     try {
-      const response = await apiClient.get<SwrlRule[] | PagedResponse<SwrlRule>>(`/api/swrl/${projectId}/rules`);
-      // Handle both direct array and paginated response
-      if (Array.isArray(response)) {
-        setRules(response);
-      } else if (response && typeof response === 'object' && 'content' in response) {
-        setRules((response as PagedResponse<SwrlRule>).content || []);
-      } else {
-        setRules([]);
-      }
-    } catch (error) {
-      console.error('Failed to load SWRL rules:', error);
-      setRules([]);
+      const res = await apiClient.get<{ content: SwrlRule[] }>(`/api/swrl/${projectId}/rules`);
+      setRules(res.content || []);
+    } catch (e) {
+      console.error('Failed to load rules:', e);
     } finally {
       setIsLoading(false);
     }
   }, [projectId]);
 
-  useEffect(() => {
-    loadRules();
-  }, [loadRules]);
+  useEffect(() => { loadRules(); }, [loadRules]);
 
-  // Validate debounced rule text
+  // Validate rule
   useEffect(() => {
+    if (!debouncedRuleText.trim() || !isEditing) {
+      setValidationResult(null);
+      return;
+    }
+
     const validate = async () => {
-      if (!isEditing || !debouncedRuleText.trim()) {
-        setValidationResult(null);
-        return;
-      }
       try {
-        const response = await apiClient.post<SwrlValidationResult>(
-          `/api/swrl/${projectId}/validate`, //
+        const res = await apiClient.post<SwrlValidationResult>(
+          `/api/swrl/${projectId}/rules/validate`,
           { ruleText: debouncedRuleText }
         );
-        setValidationResult(response);
-      } catch (error) {
-        console.error('Validation failed:', error);
+        setValidationResult(res);
+      } catch (e) {
+        setValidationResult({ valid: false, errorMessage: 'Validation failed' });
       }
     };
     validate();
   }, [debouncedRuleText, projectId, isEditing]);
 
+  // Filtered rules
+  const filteredRules = useMemo(() => {
+    if (!searchQuery.trim()) return rules;
+    const q = searchQuery.toLowerCase();
+    return rules.filter(r => 
+      r.ruleName.toLowerCase().includes(q) ||
+      r.ruleText.toLowerCase().includes(q) ||
+      (r.category || '').toLowerCase().includes(q)
+    );
+  }, [rules, searchQuery]);
+
+  const enabledCount = rules.filter(r => r.enabled).length;
+
+  // Handlers
   const handleSelectRule = (rule: SwrlRule) => {
     setSelectedRule(rule);
     setEditForm({
@@ -1331,6 +1355,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
     });
     setIsEditing(false);
     setValidationResult(null);
+    setActivePanel('editor');
   };
 
   const handleNewRule = () => {
@@ -1344,934 +1369,613 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
     });
     setIsEditing(true);
     setValidationResult(null);
+    setActivePanel('editor');
   };
 
   const handleSave = async () => {
+    if (!editForm.ruleName.trim() || !editForm.ruleText.trim()) return;
+    setIsSaving(true);
+
     try {
       if (selectedRule) {
-        // Update existing rule
-        const response = await apiClient.put<SwrlRule>(
-          `/api/swrl/${projectId}/rules/${selectedRule.id}`, //
+        const res = await apiClient.put<SwrlRule>(
+          `/api/swrl/${projectId}/rules/${selectedRule.id}`,
           editForm
         );
-        
-        setRules(rules.map(r => r.id === selectedRule.id ? response : r));
-        setSelectedRule(response);
+        setRules(rules.map(r => r.id === res.id ? res : r));
+        setSelectedRule(res);
       } else {
-        // Create new rule
-        const response = await apiClient.post<SwrlRule>(
-          `/api/swrl/${projectId}/rules`, //
+        const res = await apiClient.post<SwrlRule>(
+          `/api/swrl/${projectId}/rules`,
           editForm
         );
-        
-        setRules([...rules, response]);
-        setSelectedRule(response);
+        setRules([...rules, res]);
+        setSelectedRule(res);
       }
-      
       setIsEditing(false);
-      setValidationResult(null);
-    } catch (error) {
-      console.error('Failed to save rule:', error);
-      alert('Failed to save rule. Please check the console for details.');
+    } catch (e) {
+      console.error('Save failed:', e);
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const handleDelete = async () => {
-    if (!selectedRule) return;
-    
-    // Show custom confirmation dialog instead of browser confirm
-    setConfirmDialog({
-      isOpen: true,
-      ruleName: selectedRule.ruleName,
-      ruleId: selectedRule.id
-    });
-  };
-  
-  // Actual delete handler called after confirmation
-  const executeDelete = async (ruleId: string) => {
+    if (!confirmDialog.ruleId) return;
     try {
-      await apiClient.delete(`/api/swrl/${projectId}/rules/${ruleId}`);
-      setRules(rules.filter(r => r.id !== ruleId));
-      if (selectedRule?.id === ruleId) {
+      await apiClient.delete(`/api/swrl/${projectId}/rules/${confirmDialog.ruleId}`);
+      setRules(rules.filter(r => r.id !== confirmDialog.ruleId));
+      if (selectedRule?.id === confirmDialog.ruleId) {
         setSelectedRule(null);
-        setIsEditing(false);
+        setEditForm({ ruleName: '', ruleText: '', comment: '', category: '', enabled: true });
       }
-      setConfirmDialog({ isOpen: false, ruleName: '', ruleId: '' });
-    } catch (error) {
-      console.error('Failed to delete rule:', error);
+      setSelectedRuleIds(prev => {
+        const next = new Set(prev);
+        next.delete(confirmDialog.ruleId);
+        return next;
+      });
+    } catch (e) {
+      console.error('Delete failed:', e);
+    } finally {
       setConfirmDialog({ isOpen: false, ruleName: '', ruleId: '' });
     }
   };
 
   const handleToggleEnabled = async (rule: SwrlRule) => {
     try {
-      const response = await apiClient.put<SwrlRule>(
-        `/api/swrl/${projectId}/rules/${rule.id}`, //
-        { enabled: !rule.enabled } // Send only the changed field
+      const res = await apiClient.put<SwrlRule>(
+        `/api/swrl/${projectId}/rules/${rule.id}`,
+        { enabled: !rule.enabled }
       );
-      
-      setRules(rules.map(r => r.id === rule.id ? response : r));
-      
+      setRules(rules.map(r => r.id === rule.id ? res : r));
       if (selectedRule?.id === rule.id) {
-        setSelectedRule(response);
-        setEditForm(prev => ({ ...prev, enabled: response.enabled }));
+        setSelectedRule(res);
+        setEditForm(prev => ({ ...prev, enabled: res.enabled }));
       }
-    } catch (error) {
-      console.error('Failed to toggle rule:', error);
+    } catch (e) {
+      console.error('Toggle failed:', e);
     }
   };
 
-  const handleDuplicate = async () => {
-    if (!selectedRule) return;
+  const toggleRuleSelection = (ruleId: string) => {
+    setSelectedRuleIds(prev => {
+      const next = new Set(prev);
+      if (next.has(ruleId)) next.delete(ruleId);
+      else next.add(ruleId);
+      return next;
+    });
+  };
+
+  const handleExecuteAll = async () => {
+    setIsExecuting(true);
+    setExecutionResult(null);
+    setActivePanel('results');
+
     try {
-      const response = await apiClient.post<SwrlRule>(
-        `/api/swrl/${projectId}/rules/${selectedRule.id}/duplicate`
+      const res = await apiClient.post<ExecutionResponse>(`/api/swrl/${projectId}/execute`);
+      setExecutionResult(res);
+    } catch (e) {
+      console.error('Execution failed:', e);
+      setExecutionResult({
+        success: false,
+        errorMessage: 'Execution failed',
+        executionTimeMs: 0,
+        totalRulesExecuted: 0,
+        inferredAxiomsCount: 0,
+        inferredAxioms: []
+      } as ExecutionResponse);
+    } finally {
+      setIsExecuting(false);
+    }
+  };
+
+  const handleExecuteSelected = async () => {
+    if (selectedRuleIds.size === 0) return;
+    setIsExecuting(true);
+    setExecutionResult(null);
+    setActivePanel('results');
+
+    try {
+      const ruleIds = Array.from(selectedRuleIds);
+      const res = await apiClient.post<ExecutionResponse>(
+        `/api/swrl/${projectId}/execute/selected`,
+        { ruleIds }
       );
-      setRules([...rules, response]);
-      setSelectedRule(response);
-      setEditForm({
-        ruleName: response.ruleName,
-        ruleText: response.ruleText,
-        comment: response.comment || '',
-        category: response.category || '',
-        enabled: response.enabled
-      });
-      setIsEditing(true);
-    } catch (error) {
-      console.error('Failed to duplicate rule:', error);
-      alert('Failed to duplicate rule');
+      setExecutionResult(res);
+    } catch (e) {
+      console.error('Execution failed:', e);
+    } finally {
+      setIsExecuting(false);
     }
-  };
-
-  const handleExport = async () => {
-    try {
-      const response = await apiClient.get<SwrlRule[]>(`/api/swrl/${projectId}/rules/export`);
-      const blob = new Blob([JSON.stringify(response, null, 2)], { type: 'application/json' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `swrl-rules-${projectId}.json`;
-      a.click();
-      window.URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error('Failed to export rules:', error);
-      alert('Failed to export rules');
-    }
-  };
-
-  const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      try {
-        const content = e.target?.result as string;
-        const rulesToImport = JSON.parse(content);
-        
-        await apiClient.post(
-          `/api/swrl/${projectId}/rules/import`,
-          rulesToImport
-        );
-        
-        loadRules();
-        alert('Rules imported successfully');
-      } catch (error) {
-        console.error('Failed to import rules:', error);
-        alert('Failed to import rules');
-      }
-    };
-    reader.readAsText(file);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
-
-  const handleTemplateSelect = (template: string) => {
-    setEditForm(prev => ({
-      ...prev,
-      ruleText: template
-    }));
-  };
-
-  const insertSymbol = (symbol: string) => {
-    const textarea = document.querySelector('textarea[placeholder*="Person(?p)"]') as HTMLTextAreaElement;
-    if (textarea) {
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
-      const text = editForm.ruleText;
-      const newText = text.substring(0, start) + symbol + text.substring(end);
-      setEditForm(prev => ({ ...prev, ruleText: newText }));
-      
-      // Restore focus and cursor position
-      setTimeout(() => {
-        textarea.focus();
-        textarea.setSelectionRange(start + symbol.length, start + symbol.length);
-      }, 0);
-    } else {
-      setEditForm(prev => ({ ...prev, ruleText: prev.ruleText + symbol }));
-    }
-  };
-
-  const loadStats = async () => {
-    try {
-      const res = await apiClient.get(`/api/swrl/${projectId}/rules/stats`);
-      setStats(res);
-      setShowStats(true);
-    } catch (e) { console.error(e); }
   };
 
   const handleTestRule = async () => {
     if (!selectedRule) return;
     setIsExecuting(true);
     setExecutionResult(null);
+    setActivePanel('results');
+
     try {
-      const response = await apiClient.post<ExecutionResponse>(
+      const res = await apiClient.post<ExecutionResponse>(
         `/api/swrl/${projectId}/rules/${selectedRule.id}/test`
       );
-      setExecutionResult(response);
-      setExecutedRulesInfo({ count: 1, names: [selectedRule.ruleName] });
-      setActiveTab('results');
-    } catch (error) {
-      console.error('Failed to test rule:', error);
-      alert('Failed to test rule');
+      setExecutionResult(res);
+    } catch (e) {
+      console.error('Test failed:', e);
     } finally {
       setIsExecuting(false);
     }
   };
 
-  // Execute selected rules (multi-select)
-  const handleExecuteSelectedRules = async () => {
-    if (selectedRuleIds.size === 0) return;
-    setIsExecuting(true);
-    setExecutionResult(null);
-    
+  const insertAtCursor = (text: string) => {
+    if (!textareaRef.current) {
+      setEditForm(prev => ({ ...prev, ruleText: prev.ruleText + text }));
+      return;
+    }
+    const el = textareaRef.current;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const newText = editForm.ruleText.slice(0, start) + text + editForm.ruleText.slice(end);
+    setEditForm(prev => ({ ...prev, ruleText: newText }));
+    setTimeout(() => {
+      el.focus();
+      el.setSelectionRange(start + text.length, start + text.length);
+    }, 0);
+  };
+
+  const handleExport = async () => {
     try {
-      const ruleIds = Array.from(selectedRuleIds);
-      const selectedNames = rules.filter(r => selectedRuleIds.has(r.id)).map(r => r.ruleName);
-      
-      const response = await apiClient.post<ExecutionResponse>(
-        `/api/swrl/${projectId}/execute/selected`,
-        { ruleIds }
-      );
-      setExecutionResult(response);
-      setExecutedRulesInfo({ count: ruleIds.length, names: selectedNames });
-      setActiveTab('results');
-      setEditorCollapsed(true); // Collapse editor to show results better
-    } catch (error) {
-      console.error('Selected rules execution failed:', error);
-      alert('Failed to execute selected rules');
-    } finally {
-      setIsExecuting(false);
+      const res = await apiClient.get<SwrlRule[]>(`/api/swrl/${projectId}/rules/export`);
+      const blob = new Blob([JSON.stringify(res, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `swrl-rules-${projectId}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('Export failed:', e);
     }
   };
 
-  // Execute all enabled rules
-  const handleExecuteAllRules = async () => {
-    setIsExecuting(true);
-    setExecutionResult(null);
-    
-    try {
-      const enabledNames = rules.filter(r => r.enabled).map(r => r.ruleName);
-      const response = await apiClient.post<ExecutionResponse>(
-        `/api/swrl/${projectId}/execute`
-      );
-      setExecutionResult(response);
-      setExecutedRulesInfo({ count: enabledCount, names: enabledNames });
-      setActiveTab('results');
-      setEditorCollapsed(true); // Collapse editor to show results better
-    } catch (error) {
-      console.error('Rule execution failed:', error);
-      alert('Failed to execute rules');
-    } finally {
-      setIsExecuting(false);
-    }
-  };
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-  const categories = Array.from(new Set(rules.map(r => r.category).filter((s): s is string => !!s)));
-  const enabledCount = rules.filter(r => r.enabled).length;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const content = JSON.parse(ev.target?.result as string);
+        await apiClient.post(`/api/swrl/${projectId}/rules/import`, content);
+        loadRules();
+      } catch (err) {
+        console.error('Import failed:', err);
+      }
+    };
+    reader.readAsText(file);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
   return (
-    <div className="h-full flex flex-col bg-gray-100">
-      <header className="bg-white p-4 border-b border-gray-200">
+    <div className="h-full flex flex-col bg-gray-50">
+      {/* Header */}
+      <header className="bg-white border-b border-gray-200 px-4 py-3">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-bold text-gray-800">SWRL Rule Editor</h1>
-            <p className="text-sm text-gray-500">
-              Create and manage Semantic Web Rule Language (SWRL) rules
-            </p>
+            <h1 className="text-lg font-bold text-gray-900">SWRL Rule Editor</h1>
+            <p className="text-xs text-gray-500">{enabledCount} of {rules.length} rules enabled</p>
           </div>
           <div className="flex items-center gap-2">
-            <div className="text-right mr-4">
-              <p className="text-sm text-gray-600">
-                {selectedRuleIds.size > 0 
-                  ? `${selectedRuleIds.size} selected` 
-                  : `${enabledCount} of ${rules.length} enabled`}
-              </p>
-            </div>
-            
-            <div className="flex items-center gap-1 mr-2 border-r pr-2">
-              <button onClick={loadStats} className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg" title="Statistics">
-                <BarChart2 size={18} />
+            {/* Tools */}
+            <div className="flex items-center gap-1 border-r border-gray-200 pr-2 mr-2">
+              <button onClick={handleExport} className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg" title="Export">
+                <Download size={16} />
               </button>
-              <button onClick={handleExport} className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg" title="Export Rules">
-                <Download size={18} />
+              <button onClick={() => fileInputRef.current?.click()} className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg" title="Import">
+                <Upload size={16} />
               </button>
-              <button onClick={() => fileInputRef.current?.click()} className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg" title="Import Rules">
-                <Upload size={18} />
+              <input ref={fileInputRef} type="file" accept=".json" onChange={handleImport} className="hidden" />
+              <button onClick={loadRules} className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg" title="Refresh">
+                <RefreshCw size={16} />
               </button>
-              <input 
-                type="file" 
-                ref={fileInputRef} 
-                onChange={handleImport} 
-                className="hidden" 
-                accept=".json" 
-              />
             </div>
 
-            {/* Execute Selected Rules Button */}
+            {/* Execute buttons */}
             {selectedRuleIds.size > 0 && (
               <button
-                onClick={handleExecuteSelectedRules}
+                onClick={handleExecuteSelected}
                 disabled={isExecuting}
-                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-green-300 disabled:cursor-not-allowed transition-colors"
-                title={`Execute ${selectedRuleIds.size} selected rule(s)`}
+                className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:bg-green-300"
               >
-                {isExecuting ? (
-                  <>
-                    <Loader2 size={18} className="animate-spin" />
-                    <span>Running...</span>
-                  </>
-                ) : (
-                  <>
-                    <Play size={18} />
-                    <span>Run Selected ({selectedRuleIds.size})</span>
-                  </>
-                )}
+                {isExecuting ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+                Run {selectedRuleIds.size} Selected
               </button>
             )}
-
-            {/* Execute All Enabled Rules Button */}
             <button
-              onClick={handleExecuteAllRules}
+              onClick={handleExecuteAll}
               disabled={isExecuting || enabledCount === 0}
-              className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-purple-300 disabled:cursor-not-allowed transition-colors"
-              title={`Execute all ${enabledCount} enabled rules`}
+              className="flex items-center gap-2 px-4 py-1.5 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 disabled:bg-purple-300"
             >
-              {isExecuting ? (
-                <>
-                  <Loader2 size={18} className="animate-spin" />
-                  <span>Executing...</span>
-                </>
-              ) : (
-                <>
-                  <Play size={18} />
-                  <span>Execute All ({enabledCount})</span>
-                </>
-              )}
+              {isExecuting ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
+              Execute All ({enabledCount})
             </button>
           </div>
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden p-4 gap-4">
-        {/* Rules List */}
-        <aside className="w-80 bg-white border border-gray-200 rounded-lg flex flex-col">
-          {/* New Rule Button + Selection Controls */}
-          <div className="p-2 border-b border-gray-200 space-y-2">
+      {/* Main Content */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Left: Rule List */}
+        <aside className="w-72 bg-white border-r border-gray-200 flex flex-col">
+          {/* New Rule + Search */}
+          <div className="p-3 border-b border-gray-100 space-y-2">
             <button
               onClick={handleNewRule}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors text-sm"
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-purple-600 text-white text-sm font-medium rounded-lg hover:bg-purple-700"
             >
-              <Plus size={16} />
-              New Rule
+              <Plus size={16} /> New Rule
             </button>
-            
-            {/* Selection Controls */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search rules..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-200"
+              />
+            </div>
+            {/* Selection controls */}
             {rules.length > 0 && (
               <div className="flex items-center gap-1 text-xs">
                 <button 
-                  onClick={selectAllRules} 
+                  onClick={() => setSelectedRuleIds(new Set(rules.map(r => r.id)))}
                   className="px-2 py-1 text-purple-600 hover:bg-purple-50 rounded"
                 >
                   All
                 </button>
                 <button 
-                  onClick={selectEnabledRules} 
+                  onClick={() => setSelectedRuleIds(new Set(rules.filter(r => r.enabled).map(r => r.id)))}
                   className="px-2 py-1 text-purple-600 hover:bg-purple-50 rounded"
                 >
                   Enabled
                 </button>
                 <button 
-                  onClick={clearSelection} 
-                  className="px-2 py-1 text-gray-500 hover:bg-gray-50 rounded"
+                  onClick={() => setSelectedRuleIds(new Set())}
+                  className="px-2 py-1 text-gray-500 hover:bg-gray-100 rounded"
                 >
-                  Clear
+                  None
                 </button>
-                {selectedRuleIds.size > 0 && (
-                  <span className="ml-auto text-gray-500">
-                    {selectedRuleIds.size} selected
-                  </span>
-                )}
               </div>
             )}
           </div>
 
+          {/* Rule List */}
           <div className="flex-1 overflow-y-auto">
             {isLoading ? (
               <div className="flex items-center justify-center p-8">
-                <Loader2 className="animate-spin text-purple-600" size={32} />
+                <Loader2 className="w-8 h-8 text-purple-500 animate-spin" />
               </div>
-            ) : rules.length === 0 ? (
-              <div className="p-4 text-center text-gray-400">
-                <p className="mb-2">No rules yet</p>
-                <button onClick={handleNewRule} className="text-sm text-purple-600 hover:underline">
-                  Create your first rule
-                </button>
+            ) : filteredRules.length === 0 ? (
+              <div className="p-6 text-center text-gray-400">
+                {searchQuery ? 'No matching rules' : 'No rules yet'}
               </div>
             ) : (
-              rules.map(rule => (
-                <div
-                  key={rule.id}
-                  onClick={() => handleSelectRule(rule)}
-                  className={`p-3 cursor-pointer border-l-4 group ${
-                    selectedRule?.id === rule.id
-                      ? 'bg-purple-50 border-purple-500'
-                      : selectedRuleIds.has(rule.id)
-                      ? 'bg-green-50 border-green-400'
-                      : 'border-transparent hover:bg-gray-50'
-                  }`}
-                >
-                  <div className="flex items-start gap-2 mb-1">
-                    {/* Checkbox for multi-select */}
-                    <input
-                      type="checkbox"
-                      checked={selectedRuleIds.has(rule.id)}
-                      onChange={() => toggleRuleSelection(rule.id)}
-                      onClick={(e) => e.stopPropagation()}
-                      className="mt-1 w-4 h-4 text-green-600 rounded border-gray-300 focus:ring-green-500 cursor-pointer"
-                      title="Select for batch execution"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between">
-                        <span className={`text-sm font-medium truncate ${
-                          selectedRule?.id === rule.id ? 'text-purple-800' : 'text-gray-800'
-                        }`}>
-                          {rule.ruleName}
-                        </span>
-                        <div className="flex items-center gap-1 flex-shrink-0">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setConfirmDialog({
-                                isOpen: true,
-                                ruleName: rule.ruleName,
-                                ruleId: rule.id
-                              });
-                            }}
-                            className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-100 text-gray-400 hover:text-red-600 transition-all"
-                            title="Delete rule"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleToggleEnabled(rule);
-                            }}
-                            className={`p-1 rounded ${
-                              rule.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'
-                            }`}
-                            title={rule.enabled ? 'Enabled' : 'Disabled'}
-                          >
-                            {rule.enabled ? <Check size={14} /> : <X size={14} />}
-                          </button>
-                        </div>
-                      </div>
-                      {rule.category && (
-                        <span className="inline-block px-2 py-0.5 text-xs bg-gray-200 text-gray-700 rounded mb-1">
-                          {rule.category}
-                        </span>
-                      )}
-                      <p className="text-xs text-gray-500 truncate font-mono">{rule.ruleText}</p>
-                    </div>
-                  </div>
-                </div>
-              ))
+              <div className="divide-y divide-gray-100">
+                {filteredRules.map(rule => (
+                  <RuleListItem
+                    key={rule.id}
+                    rule={rule}
+                    isSelected={selectedRule?.id === rule.id}
+                    isChecked={selectedRuleIds.has(rule.id)}
+                    onSelect={() => handleSelectRule(rule)}
+                    onToggle={() => toggleRuleSelection(rule.id)}
+                    onToggleEnabled={() => handleToggleEnabled(rule)}
+                    onDelete={() => setConfirmDialog({ isOpen: true, ruleName: rule.ruleName, ruleId: rule.id })}
+                  />
+                ))}
+              </div>
             )}
           </div>
         </aside>
 
-        {/* Rule Editor & Panels - with maximize support */}
-        <main className="flex-1 flex flex-col gap-3 overflow-hidden">
-          {/* Rule editor surface with collapse/expand - only show if not collapsed and not results maximized */}
-          {!editorCollapsed && !resultsMaximized && (
-          <div className={`overflow-y-auto space-y-3 pr-1 ${editorMaximized ? 'flex-1' : ''}`}>
-            {/* Editor Header with controls */}
-            <div className="flex items-center justify-between bg-white border border-gray-200 rounded-lg px-3 py-2">
-              <span className="text-sm font-semibold text-gray-700">📝 Rule Editor</span>
-              <div className="flex items-center gap-1">
-                <button 
-                  onClick={() => setEditorCollapsed(true)} 
-                  className="p-1.5 text-gray-500 hover:bg-gray-100 rounded" 
-                  title="Collapse Editor"
-                >
-                  <PanelTopClose size={16} />
-                </button>
-                <button 
-                  onClick={() => setEditorMaximized(!editorMaximized)} 
-                  className="p-1.5 text-gray-500 hover:bg-gray-100 rounded" 
-                  title={editorMaximized ? "Restore" : "Maximize Editor"}
-                >
-                  {editorMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-                </button>
-              </div>
-            </div>
-            
-            {!selectedRule && !isEditing ? (
-              <div className="flex items-center justify-center h-48 text-gray-500 bg-white border-2 border-gray-200 rounded-lg">
-                <div className="text-center">
-                  <AlertCircle size={36} className="mx-auto mb-2 opacity-30" />
-                  <p className="text-base font-semibold text-gray-700">No rule selected</p>
-                  <p className="text-xs text-gray-500 mt-1">Click a rule to view/edit, or check rules and click "Run Selected"</p>
-                </div>
-              </div>
-            ) : (
-              <>
-              {/* Rule Name Section */}
-              <CollapsibleSection 
-                title="Rule Details" 
-                defaultOpen={false}
-                onMaximize={() => setRuleDetailsMaximized(!ruleDetailsMaximized)}
-                isMaximized={ruleDetailsMaximized}
-                headerExtra={
-                  !isEditing && selectedRule ? (
-                    <div className="flex gap-2">
-                      <button onClick={handleDuplicate} className="px-3 py-1 text-xs bg-gray-200 text-gray-700 rounded hover:bg-gray-300 flex items-center gap-1">
-                        <Copy size={12} /> Duplicate
-                      </button>
-                      <button onClick={() => setIsEditing(true)} className="px-3 py-1 text-xs bg-purple-100 text-purple-700 rounded hover:bg-purple-200">
-                        Edit
-                      </button>
+        {/* Right: Editor/Results */}
+        <main className="flex-1 flex flex-col overflow-hidden">
+          {/* Tab Bar */}
+          <div className="flex items-center gap-1 px-4 py-2 bg-white border-b border-gray-200">
+            <button
+              onClick={() => setActivePanel('editor')}
+              className={`flex items-center gap-2 px-4 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+                activePanel === 'editor' 
+                  ? 'bg-purple-100 text-purple-700' 
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              <Code size={14} /> Editor
+            </button>
+            <button
+              onClick={() => setActivePanel('results')}
+              className={`flex items-center gap-2 px-4 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+                activePanel === 'results' 
+                  ? 'bg-purple-100 text-purple-700' 
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              <BarChart2 size={14} /> Results
+              {executionResult && (
+                <span className={`ml-1 px-1.5 py-0.5 text-[10px] rounded-full ${
+                  executionResult.success ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                }`}>
+                  {executionResult.inferredAxiomsCount}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => setActivePanel('reference')}
+              className={`flex items-center gap-2 px-4 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+                activePanel === 'reference' 
+                  ? 'bg-purple-100 text-purple-700' 
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              <BookOpen size={14} /> Reference
+            </button>
+            <button
+              onClick={() => setActivePanel('query')}
+              className={`flex items-center gap-2 px-4 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+                activePanel === 'query' 
+                  ? 'bg-purple-100 text-purple-700' 
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              <Search size={14} /> SQWRL Query
+            </button>
+          </div>
+
+          {/* Panel Content */}
+          {activePanel === 'editor' ? (
+            <div className="flex-1 overflow-y-auto p-4">
+              {!selectedRule && !isEditing ? (
+                <div className="h-full flex items-center justify-center">
+                  <div className="text-center max-w-sm">
+                    <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <FileText className="w-10 h-10 text-gray-400" />
                     </div>
-                  ) : null
-                }
-              >
-                <div className="p-4 space-y-4">
+                    <h3 className="font-semibold text-gray-700 mb-2">Select a Rule</h3>
+                    <p className="text-sm text-gray-500 mb-4">
+                      Choose a rule from the list to view or edit, or create a new one.
+                    </p>
+                    <button
+                      onClick={handleNewRule}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700"
+                    >
+                      <Plus size={16} /> Create New Rule
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="max-w-3xl mx-auto space-y-4">
                   {/* Rule Name */}
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1.5">Rule Name *</label>
+                  <div className="bg-white rounded-xl border border-gray-200 p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <label className="text-sm font-semibold text-gray-700">Rule Name</label>
+                      {!isEditing && selectedRule && (
+                        <button
+                          onClick={() => setIsEditing(true)}
+                          className="px-3 py-1 text-xs font-medium text-purple-600 bg-purple-50 rounded-lg hover:bg-purple-100"
+                        >
+                          Edit
+                        </button>
+                      )}
+                    </div>
                     <input
                       type="text"
                       value={editForm.ruleName}
-                      onChange={(e) => setEditForm({ ...editForm, ruleName: e.target.value })}
+                      onChange={e => setEditForm(prev => ({ ...prev, ruleName: e.target.value }))}
                       disabled={!isEditing}
-                      className="w-full px-4 py-2.5 text-base font-medium border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 focus:outline-none disabled:bg-gray-50 disabled:border-gray-200 disabled:text-gray-600 text-gray-900 placeholder-gray-400 bg-white"
-                      placeholder="Enter a descriptive name for this rule"
+                      className="w-full px-4 py-2.5 text-base font-medium border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-200 disabled:bg-gray-50 disabled:text-gray-600"
+                      placeholder="Enter rule name"
+                    />
+                    
+                    {/* Category & Status */}
+                    <div className="grid grid-cols-2 gap-4 mt-4">
+                      <div>
+                        <label className="text-xs font-medium text-gray-500 mb-1 block">Category</label>
+                        <input
+                          type="text"
+                          value={editForm.category}
+                          onChange={e => setEditForm(prev => ({ ...prev, category: e.target.value }))}
+                          disabled={!isEditing}
+                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-200 disabled:bg-gray-50"
+                          placeholder="e.g., Classification"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-gray-500 mb-1 block">Status</label>
+                        <button
+                          onClick={() => isEditing && setEditForm(prev => ({ ...prev, enabled: !prev.enabled }))}
+                          disabled={!isEditing}
+                          className={`w-full px-3 py-2 text-sm font-medium rounded-lg border flex items-center gap-2 transition-colors ${
+                            editForm.enabled
+                              ? 'bg-green-50 border-green-200 text-green-700'
+                              : 'bg-gray-50 border-gray-200 text-gray-500'
+                          } ${!isEditing ? 'cursor-not-allowed' : 'cursor-pointer hover:shadow-sm'}`}
+                        >
+                          {editForm.enabled ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
+                          {editForm.enabled ? 'Enabled' : 'Disabled'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Rule Expression */}
+                  <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                    <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">
+                      <label className="text-sm font-semibold text-gray-700">SWRL Expression</label>
+                      {/* Template dropdown */}
+                      <div className="relative group">
+                        <button className="px-3 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 flex items-center gap-1">
+                          <BookOpen size={12} /> Templates
+                          <ChevronDown size={12} />
+                        </button>
+                        <div className="absolute right-0 top-full mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-xl z-50 hidden group-hover:block">
+                          {RULE_TEMPLATES.map((t, i) => (
+                            <button
+                              key={i}
+                              onClick={() => setEditForm(prev => ({ ...prev, ruleText: t.template }))}
+                              className="w-full text-left px-3 py-2 text-sm hover:bg-purple-50 border-b border-gray-100 last:border-0"
+                            >
+                              <div className="font-medium text-gray-800">{t.name}</div>
+                              <div className="text-xs text-gray-500 truncate">{t.template}</div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <textarea
+                      ref={textareaRef}
+                      value={editForm.ruleText}
+                      onChange={e => setEditForm(prev => ({ ...prev, ruleText: e.target.value }))}
+                      disabled={!isEditing}
+                      className="w-full h-32 px-4 py-3 font-mono text-sm resize-none focus:outline-none disabled:bg-gray-50 text-gray-900 disabled:text-gray-700"
+                      placeholder="Person(?p) ^ hasAge(?p, ?age) ^ swrlb:greaterThan(?age, 18) -> Adult(?p)"
+                    />
+
+                    {/* Validation - only show when editing */}
+                    {isEditing && validationResult && (
+                      <div className={`px-4 py-2 flex items-center gap-2 text-sm ${
+                        validationResult.valid ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+                      }`}>
+                        {validationResult.valid ? <Check size={14} /> : <AlertCircle size={14} />}
+                        {validationResult.valid ? 'Valid syntax' : validationResult.errorMessage}
+                      </div>
+                    )}
+
+                    {/* Quick Insert */}
+                    <QuickInsertPanel onInsert={insertAtCursor} disabled={!isEditing} />
+                  </div>
+
+                  {/* Description */}
+                  <div className="bg-white rounded-xl border border-gray-200 p-4">
+                    <label className="text-sm font-semibold text-gray-700 mb-2 block">Description</label>
+                    <textarea
+                      value={editForm.comment}
+                      onChange={e => setEditForm(prev => ({ ...prev, comment: e.target.value }))}
+                      disabled={!isEditing}
+                      className="w-full h-20 px-3 py-2 text-sm border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-purple-200 disabled:bg-gray-50"
+                      placeholder="Add notes or documentation..."
                     />
                   </div>
 
-                  {/* Category and Status Row */}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-1.5">Category</label>
-                      <input
-                        type="text"
-                        value={editForm.category}
-                        onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
-                        disabled={!isEditing}
-                        className="w-full px-4 py-2.5 border-2 border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 focus:outline-none disabled:bg-gray-50 disabled:border-gray-200 text-gray-900 placeholder-gray-400 bg-white"
-                        placeholder="e.g., Classification, Inference"
-                        list="categories"
-                      />
-                      <datalist id="categories">
-                        {categories.map(cat => <option key={cat} value={cat} />)}
-                      </datalist>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-1.5">Status</label>
-                      <label className={`flex items-center gap-3 px-4 py-2.5 border-2 rounded-lg cursor-pointer transition-all ${
-                        editForm.enabled 
-                          ? 'bg-green-50 border-green-400 text-green-800' 
-                          : 'bg-gray-100 border-gray-300 text-gray-600'
-                      } ${!isEditing ? 'opacity-60 cursor-not-allowed' : 'hover:shadow-sm'}`}>
-                        <input
-                          type="checkbox"
-                          checked={editForm.enabled}
-                          onChange={(e) => setEditForm({ ...editForm, enabled: e.target.checked })}
-                          disabled={!isEditing}
-                          className="w-5 h-5 rounded border-2 text-green-600 focus:ring-green-500"
-                        />
-                        <span className="text-sm font-medium">{editForm.enabled ? '● Enabled' : '○ Disabled'}</span>
-                      </label>
-                    </div>
-                  </div>
-                </div>
-              </CollapsibleSection>
-
-              {/* Rule Text Section - Resizable */}
-              <ResizableSection 
-                title="SWRL Rule Expression" 
-                defaultOpen={false}
-                defaultHeight={220}
-                minHeight={150}
-                maxHeight={500}
-                onMaximize={() => setRuleExpressionMaximized(!ruleExpressionMaximized)}
-                isMaximized={ruleExpressionMaximized}
-              >
-                <div className="p-4 h-full flex flex-col">
-                  {/* Toolbar */}
-                  <div className="flex items-center gap-2 mb-2 flex-wrap">
-                    <div className="relative group">
-                      <button className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded flex items-center gap-1">
-                        <LayoutTemplate size={14} /> Templates
+                  {/* Action Buttons */}
+                  {isEditing && (
+                    <div className="flex items-center gap-3 pt-2">
+                      <button
+                        onClick={() => setConfirmDialog({ isOpen: true, ruleName: selectedRule?.ruleName || '', ruleId: selectedRule?.id || '' })}
+                        disabled={!selectedRule}
+                        className="px-4 py-2 text-sm font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 disabled:opacity-50 flex items-center gap-2"
+                      >
+                        <Trash2 size={14} /> Delete
                       </button>
-                      <div className="absolute left-0 top-full mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-xl z-50 hidden group-hover:block p-1">
-                        <div className="text-xs font-semibold text-gray-500 px-2 py-1 bg-gray-50">Select a Template</div>
-                        {RULE_TEMPLATES.map((t, i) => (
-                          <button
-                            key={i}
-                            onClick={() => handleTemplateSelect(t.template)}
-                            className="w-full text-left px-3 py-2 text-xs hover:bg-purple-50 hover:text-purple-700 block truncate"
-                            title={t.description}
-                          >
-                            <span className="font-medium block">{t.name}</span>
-                            <span className="text-gray-400 text-[10px]">{t.template.substring(0, 30)}...</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    
-                    <div className="h-6 w-px bg-gray-300 mx-1"></div>
-                    
-                    <button onClick={() => insertSymbol(' ^ ')} className="px-2 py-1 text-xs font-mono bg-gray-50 border border-gray-300 rounded hover:bg-gray-100" title="Insert AND">^</button>
-                    <button onClick={() => insertSymbol(' -> ')} className="px-2 py-1 text-xs font-mono bg-gray-50 border border-gray-300 rounded hover:bg-gray-100" title="Insert IMPLIES">→</button>
-                    <button onClick={() => insertSymbol('(?x)')} className="px-2 py-1 text-xs font-mono bg-gray-50 border border-gray-300 rounded hover:bg-gray-100" title="Insert Variable">(?x)</button>
-                    <button onClick={() => insertSymbol('swrlb:')} className="px-2 py-1 text-xs font-mono bg-gray-50 border border-gray-300 rounded hover:bg-gray-100" title="Insert swrlb prefix">swrlb:</button>
-                    <button onClick={() => insertSymbol('swrlm:')} className="px-2 py-1 text-xs font-mono bg-gray-50 border border-gray-300 rounded hover:bg-gray-100" title="Insert swrlm prefix">swrlm:</button>
-                    <button onClick={() => insertSymbol('temporal:')} className="px-2 py-1 text-xs font-mono bg-gray-50 border border-gray-300 rounded hover:bg-gray-100" title="Insert temporal prefix">temporal:</button>
-                  </div>
-
-                  <textarea
-                    value={editForm.ruleText}
-                    onChange={(e) => setEditForm({ ...editForm, ruleText: e.target.value })}
-                    disabled={!isEditing}
-                    className="flex-1 w-full px-4 py-3 font-mono text-sm border-2 border-gray-300 rounded-lg bg-slate-50 focus:ring-2 focus:ring-purple-500 focus:border-purple-500 focus:outline-none focus:bg-white disabled:bg-gray-100 disabled:border-gray-200 text-gray-900 placeholder-gray-400 resize-none"
-                    placeholder="Person(?p) ^ hasAge(?p, ?age) ^ swrlb:greaterThan(?age, 18) -> Adult(?p)"
-                  />
-                  <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
-                    <span>Use <kbd className="px-1.5 py-0.5 bg-gray-200 rounded font-mono">^</kbd> for AND, <kbd className="px-1.5 py-0.5 bg-gray-200 rounded font-mono">→</kbd> for THEN</span>
-                    <span className="text-gray-400">{editForm.ruleText.length} chars</span>
-                  </div>
-                  
-                  {/* Validation Result */}
-                  {validationResult && (
-                    <div className={`mt-3 p-3 rounded-lg flex items-start gap-3 ${
-                      validationResult.valid
-                        ? 'bg-green-50 border-2 border-green-300'
-                        : 'bg-red-50 border-2 border-red-300'
-                    }`}>
-                      {validationResult.valid 
-                        ? <Check className="text-green-600 flex-shrink-0" size={18} /> 
-                        : <AlertCircle className="text-red-600 flex-shrink-0" size={18} />
-                      }
-                      <div>
-                        <p className={`text-sm font-semibold ${validationResult.valid ? 'text-green-800' : 'text-red-800'}`}>
-                          {validationResult.valid ? '✓ Valid SWRL Syntax' : '✗ Invalid SWRL Syntax'}
-                        </p>
-                        {validationResult.errorMessage && (
-                          <p className="mt-1 text-xs text-red-700">{validationResult.errorMessage}</p>
-                        )}
-                      </div>
+                      <div className="flex-1" />
+                      <button
+                        onClick={handleTestRule}
+                        disabled={!selectedRule || !editForm.ruleText.trim()}
+                        className="px-4 py-2 text-sm font-medium text-purple-600 bg-purple-50 rounded-lg hover:bg-purple-100 disabled:opacity-50 flex items-center gap-2"
+                      >
+                        <Play size={14} /> Test
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsEditing(false);
+                          if (selectedRule) handleSelectRule(selectedRule);
+                        }}
+                        className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleSave}
+                        disabled={!editForm.ruleName.trim() || !editForm.ruleText.trim() || isSaving}
+                        className="px-5 py-2 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:bg-purple-300 flex items-center gap-2"
+                      >
+                        {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                        Save
+                      </button>
                     </div>
                   )}
                 </div>
-              </ResizableSection>
-
-              {/* Description Section */}
-              <ResizableSection 
-                title="Description / Notes" 
-                defaultOpen={false}
-                defaultHeight={120}
-                minHeight={80}
-                maxHeight={300}
-              >
-                <div className="p-4 h-full">
-                  <textarea
-                    value={editForm.comment}
-                    onChange={(e) => setEditForm({ ...editForm, comment: e.target.value })}
-                    disabled={!isEditing}
-                    className="w-full h-full px-4 py-3 border-2 border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 focus:outline-none disabled:bg-gray-50 disabled:border-gray-200 text-gray-900 placeholder-gray-400 bg-white resize-none"
-                    placeholder="Add notes, documentation, or comments about this rule..."
-                  />
-                </div>
-              </ResizableSection>
-
-              {/* Action Buttons */}
-              {isEditing && (
-                <div className="sticky bottom-0 p-4 bg-gradient-to-t from-gray-100 to-transparent pt-6">
-                  <div className="flex items-center gap-3 p-4 bg-white border-2 border-gray-200 rounded-lg shadow-lg">
-                    <button
-                      onClick={handleDelete}
-                      disabled={!selectedRule}
-                      className="px-4 py-2 text-sm font-medium text-red-700 bg-red-50 border-2 border-red-200 hover:bg-red-100 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-                    >
-                      <Trash2 size={16} />
-                      Delete
-                    </button>
-                    
-                    <div className="flex-grow" />
-                    
-                    <button
-                      onClick={handleTestRule}
-                      disabled={!selectedRule || !editForm.ruleText.trim()}
-                      className="px-4 py-2 text-sm font-medium text-purple-700 bg-purple-50 border-2 border-purple-200 hover:bg-purple-100 rounded-lg disabled:opacity-40 transition-colors flex items-center gap-2"
-                    >
-                      <Play size={16} />
-                      Test Rule
-                    </button>
-                    
-                    <button
-                      onClick={() => {
-                        setIsEditing(false);
-                        if (selectedRule) {
-                          handleSelectRule(selectedRule);
-                        }
-                      }}
-                      className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 border-2 border-gray-300 hover:bg-gray-200 rounded-lg transition-colors"
-                    >
-                      Cancel
-                    </button>
-                    
-                    <button
-                      onClick={handleSave}
-                      disabled={!editForm.ruleText.trim() || !editForm.ruleName.trim()}
-                      className="px-5 py-2 text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 rounded-lg disabled:bg-purple-300 disabled:cursor-not-allowed transition-colors flex items-center gap-2 shadow-md"
-                    >
-                      <Save size={16} />
-                      Save Rule
-                    </button>
-                  </div>
-                </div>
               )}
-              </>
-            )}
-          </div>
-          )}
-          
-          {/* Collapsed Editor Bar */}
-          {editorCollapsed && !resultsMaximized && (
-            <div className="flex items-center justify-between bg-gray-100 border border-gray-200 rounded-lg px-3 py-2">
-              <span className="text-sm font-medium text-gray-600">📝 Rule Editor (collapsed)</span>
-              <button 
-                onClick={() => setEditorCollapsed(false)} 
-                className="p-1.5 text-purple-600 hover:bg-purple-50 rounded flex items-center gap-1 text-xs"
-              >
-                <PanelBottomClose size={14} /> Expand
-              </button>
             </div>
-          )}
-          
-          {/* Tabs for SQWRL/Results/Reference - ALWAYS visible */}
-          <div className={`flex flex-col bg-white border border-gray-200 rounded-lg overflow-hidden ${editorMaximized ? 'hidden' : resultsMaximized ? 'fixed inset-4 z-50 shadow-2xl' : 'flex-1 min-h-[300px]'}`}>
-            <div className="flex items-center gap-2 text-xs p-2 border-b bg-gray-50">
-              <button onClick={() => setActiveTab('query')} className={`px-3 py-1.5 rounded ${activeTab === 'query' ? 'bg-purple-100 text-purple-700 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}>SQWRL Query</button>
-              <button onClick={() => setActiveTab('results')} className={`px-3 py-1.5 rounded flex items-center gap-1 ${activeTab === 'results' ? 'bg-purple-100 text-purple-700 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}>
-                Execution Results
-                {executionResult && (
-                  <span className={`ml-1 px-1.5 py-0.5 text-[10px] rounded-full ${executionResult.success ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                    {executionResult.inferredAxiomsCount}
-                  </span>
-                )}
-              </button>
-              <button onClick={() => setActiveTab('reference')} className={`px-3 py-1.5 rounded flex items-center gap-1 ${activeTab === 'reference' ? 'bg-purple-100 text-purple-700 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}>
-                <BookOpen size={12} /> Built-in Reference
-              </button>
-              
-              <div className="flex-1" />
-              
-              {/* Results panel controls */}
-              <button 
-                onClick={() => { setResultsMaximized(!resultsMaximized); setEditorMaximized(false); }} 
-                className={`p-1.5 rounded transition-colors ${resultsMaximized ? 'bg-purple-100 text-purple-700' : 'text-gray-500 hover:bg-gray-100'}`}
-                title={resultsMaximized ? "Restore panel" : "Maximize panel (fullscreen)"}
-              >
-                {resultsMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-auto">
-              {activeTab === 'query' && <SQWRLQueryPanel projectId={projectId} context={context} />}
-              {activeTab === 'results' && <ExecutionResultsPanel results={executionResult} />}
-              {activeTab === 'reference' && (
-                <div className="p-4 space-y-3">
-                  <div className="text-sm text-gray-600 mb-4">
-                    <p>SWRL Built-in predicates based on <a href="https://github.com/protegeproject/swrlapi" target="_blank" rel="noopener noreferrer" className="text-purple-600 hover:underline">SWRLAPI</a>. Click a built-in to insert it into your rule.</p>
-                  </div>
-                  {SWRL_BUILTINS.map(category => (
-                    <div key={category.prefix} className="border rounded-lg overflow-hidden">
-                      <button
-                        onClick={() => setExpandedBuiltInCategory(expandedBuiltInCategory === category.prefix ? null : category.prefix)}
-                        className="w-full flex items-center justify-between p-3 bg-gray-50 hover:bg-gray-100 text-left"
-                      >
-                        <div>
-                          <span className="font-semibold text-gray-800">{category.name}</span>
-                          <span className="text-xs text-purple-600 ml-2 font-mono">{category.prefix}:</span>
-                        </div>
-                        {expandedBuiltInCategory === category.prefix ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      </button>
-                      {expandedBuiltInCategory === category.prefix && (
-                        <div className="divide-y max-h-64 overflow-y-auto">
-                          {category.builtIns.map(builtin => (
-                            <div
-                              key={builtin.name}
-                              onClick={() => {
-                                if (isEditing) {
-                                  setEditForm(prev => ({
-                                    ...prev,
-                                    ruleText: prev.ruleText + (prev.ruleText ? ' ^ ' : '') + builtin.signature
-                                  }));
-                                }
-                              }}
-                              className={`p-3 hover:bg-purple-50 ${isEditing ? 'cursor-pointer' : 'cursor-default'}`}
-                            >
-                              <div className="flex items-center justify-between">
-                                <code className="text-sm font-mono bg-purple-100 text-purple-800 px-2 py-0.5 rounded border border-purple-200">{builtin.fullName}</code>
-                                {isEditing && <span className="text-xs text-gray-400">Click to insert</span>}
-                              </div>
-                              <p className="text-xs text-gray-600 mt-1">{builtin.description}</p>
-                              <p className="text-xs font-mono text-gray-500 mt-1 bg-gray-100 px-2 py-1 rounded">{builtin.signature}</p>
-                              {builtin.example && (
-                                <p className="text-xs text-gray-400 mt-1">Example: <code className="bg-gray-100 px-1 rounded">{builtin.example}</code></p>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
+          ) : activePanel === 'results' ? (
+            <ResultsPanel results={executionResult} isExecuting={isExecuting} />
+          ) : activePanel === 'query' ? (
+            <SQWRLQueryPanel projectId={projectId} context={context!} />
+          ) : (
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              <div className="text-sm text-gray-600 mb-4">
+                <p>SWRL Built-in predicates based on <a href="https://github.com/protegeproject/swrlapi" target="_blank" rel="noopener noreferrer" className="text-purple-600 hover:underline">SWRLAPI</a>. Click a built-in to insert it into your rule.</p>
+              </div>
+              {SWRL_BUILTINS.map(category => (
+                <div key={category.name} className="border border-gray-200 rounded-lg overflow-hidden">
+                  <button
+                    onClick={() => setExpandedBuiltInCategory(expandedBuiltInCategory === category.name ? null : category.name)}
+                    className="w-full flex items-center justify-between p-3 bg-gray-50 hover:bg-gray-100 text-left transition-colors"
+                  >
+                    <div>
+                      <span className="font-semibold text-gray-800">{category.name}</span>
+                      <span className="text-xs text-purple-600 ml-2 font-mono">{category.prefix}:</span>
                     </div>
-                  ))}
+                    {expandedBuiltInCategory === category.name ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                  </button>
+                  {expandedBuiltInCategory === category.name && (
+                    <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto bg-white">
+                      {category.builtIns.map(builtin => (
+                        <div
+                          key={builtin.name}
+                          onClick={() => {
+                            if (isEditing) {
+                              setEditForm(prev => ({
+                                ...prev,
+                                ruleText: prev.ruleText + (prev.ruleText ? ' ^ ' : '') + builtin.signature
+                              }));
+                              setActivePanel('editor');
+                            }
+                          }}
+                          className={`p-3 hover:bg-purple-50 transition-colors ${isEditing ? 'cursor-pointer' : 'cursor-default'}`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <code className="text-sm font-mono bg-purple-100 text-purple-800 px-2 py-0.5 rounded border border-purple-200">{builtin.fullName}</code>
+                            {isEditing && <span className="text-xs text-gray-400">Click to insert</span>}
+                          </div>
+                          <p className="text-xs text-gray-600 mb-1">{builtin.description}</p>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded">{builtin.signature}</span>
+                            {builtin.example && (
+                              <span className="text-xs text-gray-400">Ex: <code className="bg-gray-50 px-1 rounded">{builtin.example}</code></span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              )}
+              ))}
             </div>
-          </div>
+          )}
         </main>
       </div>
 
-      {/* Backdrop for maximized results panel */}
-      {resultsMaximized && (
-        <div 
-          className="fixed inset-0 bg-black bg-opacity-50 z-40"
-          onClick={() => setResultsMaximized(false)}
-        />
-      )}
-
-      {/* Fullscreen modal for Rule Details */}
-      {ruleDetailsMaximized && (
-        <>
-          <div className="fixed inset-0 bg-black bg-opacity-50 z-40" onClick={() => setRuleDetailsMaximized(false)} />
-          <div className="fixed inset-8 bg-white rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
-            <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50">
-              <h2 className="text-lg font-bold text-gray-800">Rule Details</h2>
-              <button onClick={() => setRuleDetailsMaximized(false)} className="p-2 hover:bg-gray-200 rounded-lg">
-                <X size={20} />
-              </button>
-            </div>
-            <div className="flex-1 overflow-auto p-6">
-              <div className="max-w-3xl mx-auto space-y-4">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">Rule Name *</label>
-                  <input type="text" value={editForm.ruleName} onChange={(e) => setEditForm({ ...editForm, ruleName: e.target.value })} disabled={!isEditing} className="w-full px-4 py-3 text-lg font-medium border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 disabled:bg-gray-50" />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1.5">Category</label>
-                    <input type="text" value={editForm.category} onChange={(e) => setEditForm({ ...editForm, category: e.target.value })} disabled={!isEditing} className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg disabled:bg-gray-50" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1.5">Status</label>
-                    <label className={`flex items-center gap-3 px-4 py-3 border-2 rounded-lg cursor-pointer ${editForm.enabled ? 'bg-green-50 border-green-400' : 'bg-gray-100 border-gray-300'}`}>
-                      <input type="checkbox" checked={editForm.enabled} onChange={(e) => setEditForm({ ...editForm, enabled: e.target.checked })} disabled={!isEditing} className="w-5 h-5" />
-                      <span>{editForm.enabled ? '● Enabled' : '○ Disabled'}</span>
-                    </label>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* Fullscreen modal for Rule Expression */}
-      {ruleExpressionMaximized && (
-        <>
-          <div className="fixed inset-0 bg-black bg-opacity-50 z-40" onClick={() => setRuleExpressionMaximized(false)} />
-          <div className="fixed inset-8 bg-white rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
-            <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50">
-              <h2 className="text-lg font-bold text-gray-800">SWRL Rule Expression</h2>
-              <button onClick={() => setRuleExpressionMaximized(false)} className="p-2 hover:bg-gray-200 rounded-lg">
-                <X size={20} />
-              </button>
-            </div>
-            <div className="flex-1 flex flex-col p-6">
-              <textarea
-                value={editForm.ruleText}
-                onChange={(e) => setEditForm({ ...editForm, ruleText: e.target.value })}
-                disabled={!isEditing}
-                className="flex-1 w-full px-6 py-4 font-mono text-base border-2 border-gray-300 rounded-lg bg-slate-50 focus:ring-2 focus:ring-purple-500 disabled:bg-gray-100 text-gray-900 resize-none"
-                placeholder="Person(?p) ^ hasAge(?p, ?age) ^ swrlb:greaterThan(?age, 18) -> Adult(?p)"
-              />
-              <div className="mt-4 flex items-center justify-between text-sm text-gray-500">
-                <span>Use <kbd className="px-2 py-1 bg-gray-200 rounded font-mono">^</kbd> for AND, <kbd className="px-2 py-1 bg-gray-200 rounded font-mono">→</kbd> for THEN</span>
-                <span>{editForm.ruleText.length} characters</span>
-              </div>
-            </div>
-          </div>
-        </>
-      )}
-
-      {showStats && stats && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-96 shadow-xl">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-bold text-gray-900">Rule Statistics</h3>
-              <button onClick={() => setShowStats(false)} className="text-gray-500 hover:text-gray-700">
-                <X size={20} />
-              </button>
-            </div>
-            <div className="space-y-3">
-              <div className="flex justify-between">
-                <span className="text-gray-600">Total Rules:</span>
-                <span className="font-semibold text-gray-900">{stats.totalRules}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Enabled Rules:</span>
-                <span className="font-semibold text-green-600">{stats.enabledRules}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Disabled Rules:</span>
-                <span className="font-semibold text-red-600">{stats.disabledRules}</span>
-              </div>
-              {stats.rulesByCategory && Object.keys(stats.rulesByCategory).length > 0 && (
-                <div className="border-t pt-2 mt-2">
-                  <p className="text-sm font-medium text-gray-700 mb-2">By Category:</p>
-                  {Object.entries(stats.rulesByCategory).map(([cat, count]) => (
-                    <div key={cat} className="flex justify-between text-sm">
-                      <span className="text-gray-600">{cat || 'Uncategorized'}</span>
-                      <span className="text-gray-900">{count as number}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Delete Confirmation Dialog */}
+      {/* Confirm Dialog */}
       <ConfirmDialog
         isOpen={confirmDialog.isOpen}
         title="Delete Rule"
-        message={`Are you sure you want to delete the rule "${confirmDialog.ruleName}"? This action cannot be undone.`}
-        onConfirm={() => executeDelete(confirmDialog.ruleId)}
+        message={`Are you sure you want to delete "${confirmDialog.ruleName}"? This action cannot be undone.`}
+        onConfirm={handleDelete}
         onCancel={() => setConfirmDialog({ isOpen: false, ruleName: '', ruleId: '' })}
+        confirmText="Delete"
+        danger
       />
     </div>
   );

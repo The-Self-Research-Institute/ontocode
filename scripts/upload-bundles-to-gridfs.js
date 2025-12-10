@@ -41,6 +41,11 @@ const PLUGIN_BUNDLES = [
     pluginId: 'change-assistant-plugin',
     version: '1.0.0',
     bundlePath: path.join(PLUGINS_DIR, 'change-assistant-plugin', 'dist', 'index.js')
+  },
+  {
+    pluginId: 'sparql-query-plugin',
+    version: '1.0.0',
+    bundlePath: path.join(PLUGINS_DIR, 'sparql-query-plugin', 'dist', 'index.js')
   }
 ];
 

@@ -371,29 +371,58 @@ public class SwrlEngineService {
 
     /**
      * ✅ NEW: Execute inference with timeout protection
+     * 
+     * IMPORTANT: SWRLAPI has three types of axioms:
+     * - getAssertedOWLAxioms(): Original axioms from ontology
+     * - getInferredOWLAxioms(): Axioms inferred by OWL reasoner (SubClassOf, etc.)
+     * - getInjectedOWLAxioms(): Axioms created by SWRL rules (ClassAssertions!)
      */
     private Set<OWLAxiom> executeWithTimeout(SWRLRuleEngine engine, String projectId) 
             throws TimeoutException, InterruptedException, ExecutionException {
         
         Future<Set<OWLAxiom>> future = executorService.submit(() -> {
             engine.infer();
-            Set<OWLAxiom> axioms = engine.getInferredOWLAxioms();
             
-            // Debug: Log axiom type distribution
-            Map<String, Long> axiomTypeCounts = axioms.stream()
+            // Get BOTH inferred (from reasoner) AND injected (from SWRL rules) axioms
+            Set<OWLAxiom> inferredAxioms = engine.getInferredOWLAxioms();
+            Set<OWLAxiom> injectedAxioms = engine.getInjectedOWLAxioms();
+            
+            // Combine both sets - injected axioms are the SWRL results we want!
+            Set<OWLAxiom> allAxioms = new java.util.HashSet<>(inferredAxioms);
+            allAxioms.addAll(injectedAxioms);
+            
+            // Debug: Log axiom type distribution for inferred axioms
+            Map<String, Long> inferredTypeCounts = inferredAxioms.stream()
                 .collect(java.util.stream.Collectors.groupingBy(
                     ax -> ax.getAxiomType().getName(),
                     java.util.stream.Collectors.counting()
                 ));
-            logger.debug("Inferred axiom types for project {}: {}", projectId, axiomTypeCounts);
+            logger.debug("Inferred axiom types for project {}: {}", projectId, inferredTypeCounts);
             
-            // Count ClassAssertions specifically
-            long classAssertionCount = axioms.stream()
+            // Debug: Log axiom type distribution for INJECTED axioms (SWRL results)
+            Map<String, Long> injectedTypeCounts = injectedAxioms.stream()
+                .collect(java.util.stream.Collectors.groupingBy(
+                    ax -> ax.getAxiomType().getName(),
+                    java.util.stream.Collectors.counting()
+                ));
+            logger.info("SWRL INJECTED axiom types for project {}: {}", projectId, injectedTypeCounts);
+            
+            // Count ClassAssertions from INJECTED axioms (these are the SWRL rule results!)
+            long injectedClassAssertionCount = injectedAxioms.stream()
                 .filter(ax -> ax.getAxiomType().getName().equals("ClassAssertion"))
                 .count();
-            logger.info("ClassAssertion axioms inferred: {} (these are SWRL rule results)", classAssertionCount);
+            logger.info("ClassAssertion axioms from SWRL rules: {}", injectedClassAssertionCount);
             
-            return axioms;
+            // Also log any ClassAssertions from inferred (usually 0 but log it anyway)
+            long inferredClassAssertionCount = inferredAxioms.stream()
+                .filter(ax -> ax.getAxiomType().getName().equals("ClassAssertion"))
+                .count();
+            logger.debug("ClassAssertion axioms from reasoner: {}", inferredClassAssertionCount);
+            
+            logger.info("Total axioms returned: {} (inferred: {}, injected by SWRL: {})", 
+                allAxioms.size(), inferredAxioms.size(), injectedAxioms.size());
+            
+            return allAxioms;
         });
 
         try {

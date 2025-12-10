@@ -40,7 +40,7 @@ webview-src/
 # Scripts (not needed in containers except for plugin-init)
 scripts/*
 !scripts/package.json
-!scripts/insert-default-plugins.js
+!scripts/manage-plugins.js
 k8s/
 
 # Test files

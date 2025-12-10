@@ -4,18 +4,19 @@ module.exports = {
   mode: 'production',
   entry: './src/index.ts',
   output: {
-    filename: 'index.js',
     path: path.resolve(__dirname, 'dist'),
+    filename: 'index.js',
     library: {
-      name: 'FuzzyOntologyPlugin',
+      name: 'SparqlQueryPlugin',
       type: 'umd',
-      export: 'default'
+      export: 'default',
     },
     globalObject: 'typeof self !== \'undefined\' ? self : this',
-    umdNamedDefine: true
+    umdNamedDefine: true,
+    clean: true,
   },
   resolve: {
-    extensions: ['.ts', '.tsx', '.js', '.jsx']
+    extensions: ['.ts', '.tsx', '.js', '.jsx'],
   },
   module: {
     rules: [
@@ -24,13 +25,16 @@ module.exports = {
         use: {
           loader: 'ts-loader',
           options: {
-            // Only transpile, don't check types to avoid old extension.ts errors
             transpileOnly: true
           }
         },
-        exclude: /node_modules/
-      }
-    ]
+        exclude: /node_modules/,
+      },
+      {
+        test: /\.css$/,
+        use: ['style-loader', 'css-loader'],
+      },
+    ],
   },
   externals: {
     'react': {
@@ -51,5 +55,8 @@ module.exports = {
       commonjs: 'LucideReact',
       amd: 'LucideReact'
     }
-  }
+  },
+  optimization: {
+    minimize: true,
+  },
 };
