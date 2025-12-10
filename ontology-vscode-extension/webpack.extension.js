@@ -3,6 +3,7 @@
 'use strict';
 
 const path = require('path');
+const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
 
 /**@type {import('webpack').Configuration}*/
 const config = {
@@ -34,6 +35,15 @@ const config = {
         ]
       }
     ]
-  }
+  },
+  plugins: [
+    new BundleAnalyzerPlugin({
+      analyzerMode: process.env.ANALYZE ? 'server' : 'disabled',
+      reportFilename: 'bundle-report-extension.html',
+      openAnalyzer: true,
+      generateStatsFile: true,
+      statsFilename: 'bundle-stats-extension.json'
+    })
+  ]
 };
 module.exports = config;

@@ -1,13 +1,12 @@
 
 
 import React, { createContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import axios from 'axios';
-
-const GATEWAY_URL = 'http://localhost:8082';
+import apiClient from '../services/apiClient';
 
 interface User {
     token: string;
     username: string;
+    email?: string;
 }
 
 interface AuthContextType {
@@ -16,13 +15,71 @@ interface AuthContextType {
     login: (username: string, password: string) => Promise<void>;
     signup: (username: string, email: string, password: string) => Promise<void>;
     logout: () => void;
+    sessionExpiredMessage: string | null;
 }
+
+// Decode JWT token to check expiration
+const isTokenExpired = (token: string): boolean => {
+    try {
+        const parts = token.split('.');
+        if (parts.length !== 3) return true;
+        
+        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+        const exp = payload.exp;
+        
+        if (!exp) return false; // No expiration set
+        
+        // Check if token is expired (exp is in seconds, Date.now() is in milliseconds)
+        return Date.now() >= exp * 1000;
+    } catch (error) {
+        console.error('[AuthContext] Error decoding token:', error);
+        return true; // If we can't decode, assume expired
+    }
+};
+
+// Decode JWT token to get user info
+const decodeToken = (token: string): { username: string; email?: string } => {
+    try {
+        const parts = token.split('.');
+        if (parts.length !== 3) return { username: 'unknown' };
+        
+        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+        return {
+            username: payload.sub || 'unknown',
+            email: payload.email
+        };
+    } catch (e) {
+        console.error('[AuthContext] Error decoding token:', e);
+        return { username: 'unknown' };
+    }
+};
 
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
+    const [sessionExpiredMessage, setSessionExpiredMessage] = useState<string | null>(null);
+
+    const logout = useCallback((showExpiredMessage = false) => {
+        console.log('[AuthContext] Logging out...');
+        setUser(null);
+        if (showExpiredMessage) {
+            setSessionExpiredMessage('Session expired. Please login again.');
+        }
+        if (window.vscode) {
+            window.vscode.postMessage({ type: 'logout' });
+        }
+        console.log('[AuthContext] ✅ Logout successful');
+    }, []);
+
+    // Register unauthorized callback with apiClient
+    useEffect(() => {
+        apiClient.setUnauthorizedCallback(() => {
+            console.log('[AuthContext] API returned 401 - Auto logout');
+            logout(true);
+        });
+    }, [logout]);
 
     const requestTokenFromVSCode = useCallback(() => {
         if (window.vscode) {
@@ -41,8 +98,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             switch (message.type) {
                 case 'storedAuthToken':
                     if (message.token) {
-                        // In a real app, decode JWT to get user info. For now, we'll mock it.
-                        setUser({ token: message.token, username: 'vscode_user' });
+                        // Check if token is expired
+                        if (isTokenExpired(message.token)) {
+                            console.log('[AuthContext] ⚠️ Stored token is expired, logging out');
+                            logout(true);
+                            setLoading(false);
+                            return;
+                        }
+                        // Decode JWT to get user info
+                        const userInfo = decodeToken(message.token);
+                        setUser({ token: message.token, username: userInfo.username, email: userInfo.email });
+                        // Clear expired message on successful login
+                        setSessionExpiredMessage(null);
                     }
                     setLoading(false);
                     break;
@@ -58,51 +125,106 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         };
     }, [requestTokenFromVSCode]);
 
-    const login = async (username: string, password: string) => {
-        // This is a mock API call. Replace with your actual authentication endpoint.
-        // The endpoint should return a JWT token upon successful login.
-        try {
-            // const response = await axios.post(`${GATEWAY_URL}/api/auth/login`, { username, password });
-            // const { token } = response.data;
-            
-            // Mocking successful login
-            await new Promise(res => setTimeout(res, 500));
-            const token = `mock-token-for-${username}`;
+    // Check token expiration every minute
+    useEffect(() => {
+        if (!user?.token) return;
 
+        const interval = setInterval(() => {
+            if (isTokenExpired(user.token)) {
+                console.log('[AuthContext] ⚠️ Token expired, logging out');
+                logout(true);
+            }
+        }, 60000); // Check every 60 seconds
+
+        return () => clearInterval(interval);
+    }, [user?.token, logout]);
+
+    const login = async (username: string, password: string) => {
+        try {
+            console.log('[AuthContext] Attempting login for user:', username);
+            
+            // Call actual authentication endpoint through VS Code proxy
+            const response = await apiClient.post('/api/auth/login', { 
+                username, 
+                password 
+            });
+            
+            console.log('[AuthContext] Login response:', response);
+            // Backend returns 'jwt' field, not 'token'
+            const token = response?.jwt || response?.token || response?.data?.jwt || response?.data?.token;
+
+            if (!token) {
+                // Check if it's an error response
+                if (response?.error || response?.data?.error) {
+                    throw new Error(response?.error || response?.data?.error);
+                }
+                throw new Error('No token received from server');
+            }
+
+            console.log('[AuthContext] Saving token to VS Code...');
             if (window.vscode) {
                 window.vscode.postMessage({ type: 'saveAuthToken', token });
             }
-            setUser({ token, username });
-        } catch (error) {
-            console.error("Login failed:", error);
-            throw new Error("Invalid username or password.");
+            
+            // Decode JWT to get user info
+            const userInfo = decodeToken(token);
+            setUser({ token, username: userInfo.username, email: userInfo.email });
+            // Clear expired message on successful login
+            setSessionExpiredMessage(null);
+            console.log('[AuthContext] ✅ Login successful');
+        } catch (error: any) {
+            console.error('[AuthContext] ❌ Login failed:', error);
+            const message = error?.message || error?.data?.message || error?.data?.error || 'Invalid username or password';
+            throw new Error(message.includes('Login failed:') ? message : `Login failed: ${message}`);
         }
     };
     
     const signup = async (username: string, email: string, password: string) => {
         try {
-            // Replace with your actual signup endpoint.
-            // const response = await axios.post(`${GATEWAY_URL}/api/auth/signup`, { username, email, password });
-            // const { token } = response.data;
+            console.log('[AuthContext] Attempting signup for user:', username);
             
-            // Mocking successful signup
-            await new Promise(res => setTimeout(res, 500));
-            const token = `mock-token-for-${username}`;
+            // Call actual signup endpoint through VS Code proxy
+            const response = await apiClient.post('/api/auth/signup', { 
+                username, 
+                email, 
+                password 
+            });
+            
+            console.log('[AuthContext] Signup response:', response);
+            
+            // Backend returns 'jwt' field if immediate login, not 'token'
+            const token = response?.jwt || response?.token || response?.data?.jwt || response?.data?.token;
 
-            if (window.vscode) {
-                window.vscode.postMessage({ type: 'saveAuthToken', token });
+            // Check for errors first
+            if (response?.error || response?.data?.error) {
+                throw new Error(response?.error || response?.data?.error);
             }
-            setUser({ token, username });
-        } catch (error) {
-            console.error("Signup failed:", error);
-            throw new Error("Could not create account. The username or email may already be taken.");
-        }
-    };
 
-    const logout = () => {
-        setUser(null);
-        if (window.vscode) {
-            window.vscode.postMessage({ type: 'logout' });
+            // If we have a token, user is logged in immediately (no email verification)
+            if (token) {
+                console.log('[AuthContext] Saving token to VS Code...');
+                if (window.vscode) {
+                    window.vscode.postMessage({ type: 'saveAuthToken', token });
+                }
+                
+                // Decode JWT to get user info
+                const userInfo = decodeToken(token);
+                setUser({ token, username: userInfo.username, email: userInfo.email });
+                // Clear expired message on successful signup
+                setSessionExpiredMessage(null);
+                console.log('[AuthContext] ✅ Signup successful with immediate login');
+                return;
+            }
+
+            // No token means email verification required
+            const message = response?.message || response?.data?.message || 'Registration successful! Please check your email to verify your account.';
+            console.log('[AuthContext] ✅ Signup successful - awaiting email verification:', message);
+            // Show success message to user through a custom result
+            throw { success: true, message };
+        } catch (error: any) {
+            console.error('[AuthContext] ❌ Signup failed:', error);
+            const message = error?.message || error?.data?.message || error?.data?.error || 'Could not create account';
+            throw new Error(message);
         }
     };
 
@@ -111,7 +233,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         loading,
         login,
         signup,
-        logout,
+        logout: () => logout(false),
+        sessionExpiredMessage,
     };
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

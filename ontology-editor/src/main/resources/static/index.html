@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OntoCode - Ontology Editor</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 60px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 800px;
+            text-align: center;
+        }
+        h1 {
+            color: #667eea;
+            font-size: 3em;
+            margin-bottom: 20px;
+        }
+        p {
+            color: #666;
+            font-size: 1.2em;
+            line-height: 1.8;
+            margin-bottom: 30px;
+        }
+        .links {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            margin-top: 40px;
+        }
+        a {
+            display: inline-block;
+            padding: 15px 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 10px;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        a:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+        .api-link {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+        .feature-list {
+            text-align: left;
+            margin: 30px 0;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+        .feature-list li {
+            margin: 10px 0;
+            color: #333;
+        }
+        .status {
+            display: inline-block;
+            padding: 5px 15px;
+            background: #10b981;
+            color: white;
+            border-radius: 20px;
+            font-size: 0.9em;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧠 OntoCode</h1>
+        <div class="status">✅ Services Running</div>
+        
+        <p>Collaborative Ontology Editor with Real-time Editing, SWRL Rules, and GraphDB Integration</p>
+        
+        <div class="feature-list">
+            <h3>Available Services:</h3>
+            <ul>
+                <li><strong>API Gateway:</strong> Port 8082</li>
+                <li><strong>OWL Editor:</strong> Port 8083 (WebSocket support)</li>
+                <li><strong>Auth Service:</strong> Port 8086</li>
+                <li><strong>GraphDB:</strong> Port 7200</li>
+                <li><strong>SWRL Service:</strong> (Integrated)</li>
+            </ul>
+        </div>
+
+        <div class="links">
+            <a href="http://localhost:7200" target="_blank">
+                🗄️ Open GraphDB Workbench
+            </a>
+        </div>
+
+        <div style="margin-top: 40px; padding-top: 30px; border-top: 2px solid #eee;">
+            <h3 style="color: #667eea; margin-bottom: 15px;">Using VS Code Extension</h3>
+            <p style="font-size: 1em;">For the full editor experience with collaborative features, use the VS Code extension:</p>
+            <ol style="text-align: left; display: inline-block; margin-top: 15px;">
+                <li>Open VS Code</li>
+                <li>Press F5 to launch the extension</li>
+                <li>Run command: <code style="background: #f1f1f1; padding: 3px 8px; border-radius: 4px;">OntoCode: Edit File</code></li>
+            </ol>
+        </div>
+    </div>
+
+    <script>
+        // Check service status
+        fetch('http://localhost:8083/actuator/health')
+            .catch(() => {
+                document.querySelector('.status').textContent = '⚠️ Some services may be offline';
+                document.querySelector('.status').style.background = '#f59e0b';
+            });
+    </script>
+</body>
+</html>

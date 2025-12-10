@@ -1,0 +1,43 @@
+# Multi-stage build for OntoCode VS Code Extension
+# Stage 1: Build the extension
+FROM node:21-alpine AS builder
+
+WORKDIR /app
+
+# Copy package files
+COPY ontology-vscode-extension/package*.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy source code
+COPY ontology-vscode-extension ./
+
+# Build the extension and webview
+RUN npm run compile && npm run bundle:all
+
+# Stage 2: Runtime - Simple web server to serve extension artifacts
+FROM node:21-alpine
+
+WORKDIR /app
+
+# Install http-server for serving static files
+RUN npm install -g http-server
+
+# Copy built extension from builder stage
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/out ./out
+COPY --from=builder /app/package.json ./package.json
+
+# Copy only the necessary files for the extension to reference
+COPY ontology-vscode-extension/language-configuration.json ./
+
+# Expose port for development server
+EXPOSE 3000
+
+# Health check - verify extension files are present
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD [ -f "/app/dist/web/extension.js" ] || exit 1
+
+# Default command: Start development server
+CMD ["http-server", "./dist", "-p", "3000", "--cors", "-g"]

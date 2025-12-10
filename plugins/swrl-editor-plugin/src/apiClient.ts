@@ -1,0 +1,104 @@
+// Simple API Client for Plugin
+// Handles communication with backend, proxying through VS Code if necessary
+
+declare global {
+  interface Window {
+    vscode?: { postMessage: (message: any) => void };
+    API_BASE_URL?: string;
+  }
+}
+
+class ApiClient {
+  private isVSCode = typeof window !== 'undefined' && !!window.vscode;
+  private pending = new Map<string, { resolve: (v: any) => void; reject: (r?: any) => void }>();
+
+  constructor() {
+    if (this.isVSCode) {
+      window.addEventListener('message', (event) => {
+        const message = event.data;
+        if (message.type === 'proxyResponse' && message.reqId) {
+          const p = this.pending.get(message.reqId);
+          if (p) {
+            this.pending.delete(message.reqId);
+            if (message.error) {
+              p.reject(message.error);
+            } else {
+              p.resolve(message.data);
+            }
+          }
+        }
+      });
+    }
+  }
+
+  private async request<T>(method: string, url: string, data?: any): Promise<T> {
+    if (this.isVSCode) {
+      return this.proxyRequest<T>(method, url, data);
+    } else {
+      return this.fetchRequest<T>(method, url, data);
+    }
+  }
+
+  private proxyRequest<T>(method: string, url: string, data?: any): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const reqId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      this.pending.set(reqId, { resolve, reject });
+      
+      window.vscode?.postMessage({
+        type: 'proxyRequest',
+        config: {
+          method,
+          url,
+          data,
+          headers: { 'Content-Type': 'application/json' }
+        },
+        reqId
+      });
+
+      // Timeout after 30s
+      setTimeout(() => {
+        if (this.pending.has(reqId)) {
+          this.pending.delete(reqId);
+          reject(new Error('Request timed out'));
+        }
+      }, 30000);
+    });
+  }
+
+  private async fetchRequest<T>(method: string, url: string, data?: any): Promise<T> {
+    const baseUrl = window.API_BASE_URL || 'http://localhost:8082';
+    const fullUrl = url.startsWith('http') ? url : `${baseUrl}${url}`;
+    
+    const response = await fetch(fullUrl, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: data ? JSON.stringify(data) : undefined,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  public get<T>(url: string): Promise<T> {
+    return this.request<T>('GET', url);
+  }
+
+  public post<T>(url: string, data?: any): Promise<T> {
+    return this.request<T>('POST', url, data);
+  }
+
+  public put<T>(url: string, data?: any): Promise<T> {
+    return this.request<T>('PUT', url, data);
+  }
+
+  public delete<T>(url: string): Promise<T> {
+    return this.request<T>('DELETE', url);
+  }
+}
+
+export default new ApiClient();

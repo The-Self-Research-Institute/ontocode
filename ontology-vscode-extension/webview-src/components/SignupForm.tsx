@@ -1,29 +1,58 @@
 
 import React, { useState } from 'react';
 import { useAuth } from '../custom-hook/useAuth';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Eye, EyeOff } from 'lucide-react';
 
 const SignupForm = ({ onToggleForm }: { onToggleForm: () => void }) => {
     const [username, setUsername] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
+    const [showConfirmPassword, setShowConfirmPassword] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
+    const [successMessage, setSuccessMessage] = useState('');
     const { signup } = useAuth();
+
+    const validatePassword = (pwd: string): string | null => {
+        if (pwd.length < 8) return 'Password must be at least 8 characters';
+        if (!/[A-Z]/.test(pwd)) return 'Password must contain an uppercase letter';
+        if (!/[a-z]/.test(pwd)) return 'Password must contain a lowercase letter';
+        if (!/[0-9]/.test(pwd)) return 'Password must contain a number';
+        if (!/[@#$%^&+=!]/.test(pwd)) return 'Password must contain a special character (@#$%^&+=!)';
+        if (/\s/.test(pwd)) return 'Password cannot contain whitespace';
+        return null;
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
+        setSuccessMessage('');
+        
+        // Validate password
+        const passwordError = validatePassword(password);
+        if (passwordError) {
+            setError(passwordError);
+            return;
+        }
+        
         if (password !== confirmPassword) {
             setError("Passwords don't match.");
             return;
         }
+        
         setIsLoading(true);
         try {
             await signup(username, email, password);
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'An unknown error occurred.');
+            // If we get here without error, signup succeeded with immediate login
+        } catch (err: any) {
+            // Check if it's a success case (verification required)
+            if (err?.success && err?.message) {
+                setSuccessMessage(err.message);
+            } else {
+                setError(err instanceof Error ? err.message : 'An unknown error occurred.');
+            }
         } finally {
             setIsLoading(false);
         }
@@ -51,6 +80,12 @@ const SignupForm = ({ onToggleForm }: { onToggleForm: () => void }) => {
                         {error}
                     </div>
                 )}
+                
+                {successMessage && (
+                    <div className="bg-green-500/10 border border-green-400/30 text-green-400 px-4 py-3 rounded-lg mb-6 text-sm backdrop-blur-sm">
+                        {successMessage}
+                    </div>
+                )}
 
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <input
@@ -71,24 +106,49 @@ const SignupForm = ({ onToggleForm }: { onToggleForm: () => void }) => {
                         className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 text-white"
                         placeholder="Email Address"
                     />
-                    <input
-                        type="password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        required
-                        disabled={isLoading}
-                        className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 text-white"
-                        placeholder="Password"
-                    />
-                     <input
-                        type="password"
-                        value={confirmPassword}
-                        onChange={(e) => setConfirmPassword(e.target.value)}
-                        required
-                        disabled={isLoading}
-                        className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 text-white"
-                        placeholder="Confirm Password"
-                    />
+                    <div>
+                        <div className="relative">
+                            <input
+                                type={showPassword ? "text" : "password"}
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                required
+                                disabled={isLoading}
+                                className="w-full px-4 py-3 pr-12 bg-white/5 border border-white/20 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 text-white"
+                                placeholder="Password"
+                            />
+                            <button
+                                type="button"
+                                onClick={() => setShowPassword(!showPassword)}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-200 focus:outline-none"
+                                tabIndex={-1}
+                            >
+                                {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                            </button>
+                        </div>
+                        <p className="mt-1 text-xs text-gray-400">
+                            Min 8 chars, with uppercase, lowercase, number, and special char (@#$%^&+=!)
+                        </p>
+                    </div>
+                    <div className="relative">
+                        <input
+                            type={showConfirmPassword ? "text" : "password"}
+                            value={confirmPassword}
+                            onChange={(e) => setConfirmPassword(e.target.value)}
+                            required
+                            disabled={isLoading}
+                            className="w-full px-4 py-3 pr-12 bg-white/5 border border-white/20 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 text-white"
+                            placeholder="Confirm Password"
+                        />
+                        <button
+                            type="button"
+                            onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-200 focus:outline-none"
+                            tabIndex={-1}
+                        >
+                            {showConfirmPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                        </button>
+                    </div>
                     <button
                         type="submit"
                         disabled={isLoading}
