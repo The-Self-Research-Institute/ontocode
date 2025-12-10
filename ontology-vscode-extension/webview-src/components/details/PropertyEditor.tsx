@@ -1,132 +1,390 @@
 import React, { useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
-import { Panel, AnnotationsDisplay } from './common';
+import { Plus, Trash2, CheckSquare, Square, Edit3 } from 'lucide-react';
+import { Panel, AnnotationsDisplay, MultiSelectSection } from './common';
+import { ManchesterSyntaxEditor, PropertyChainDialog } from '../dialogs';
+import ontologyMutationService from '../../services/ontologyMutationService';
 import type { Property } from '../../types';
-
-const MultiSelectItem: React.FC<{
-  item: string;
-  onDelete: (item: string) => void;
-}> = ({ item, onDelete }) => (
-    <div className="group flex justify-between items-center bg-gray-50 p-1.5 rounded-sm text-xs">
-        <span>{item.split('#').pop() || item}</span>
-        <button onClick={() => onDelete(item)} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-200">
-            <Trash2 size={12} className="text-red-600"/>
-        </button>
-    </div>
-);
-
-
-const MultiSelectSection: React.FC<{
-    title: string;
-    items: string[] | undefined;
-    onAdd: (item: string) => void;
-    onDelete: (item: string) => void;
-}> = ({ title, items, onAdd, onDelete }) => {
-    const [isAdding, setIsAdding] = useState(false);
-    const [value, setValue] = useState('');
-
-    const handleAdd = () => {
-        if (value.trim()) {
-            onAdd(value.trim());
-            setValue('');
-            setIsAdding(false);
-        }
-    };
-
-    return (
-         <div className="border border-gray-200 rounded-sm">
-             <div className="p-1 text-xs bg-gray-100 border-b flex justify-between items-center">
-                 <span>{title}</span>
-                 <button onClick={() => setIsAdding(true)} className="p-0.5 hover:bg-gray-300 rounded"><Plus size={14}/></button>
-             </div>
-             <div className="p-1.5 space-y-1">
-                 {items?.map(item => <MultiSelectItem key={item} item={item} onDelete={onDelete} />)}
-                 {isAdding && (
-                     <div className="flex gap-1">
-                         <input
-                           type="text"
-                           value={value}
-                           onChange={e => setValue(e.target.value)}
-                           className="flex-grow w-full px-2 py-1 text-xs border border-gray-300 rounded-md"
-                           placeholder={`Enter ${title.slice(0, -1)} IRI...`}
-                           autoFocus
-                           onKeyDown={e => e.key === 'Enter' && handleAdd()}
-                         />
-                         <button onClick={handleAdd} className="px-2 py-1 bg-purple-600 text-white rounded-md text-xs">Add</button>
-                     </div>
-                 )}
-                 {!isAdding && (!items || items.length === 0) && (
-                     <button onClick={() => setIsAdding(true)} className="text-xs text-gray-400 italic hover:text-purple-600 hover:underline">
-                       Add...
-                     </button>
-                 )}
-             </div>
-         </div>
-    );
-};
 
 
 const PropertyEditor: React.FC<{
   item: Property;
   onUpdate: (updatedItem: Property) => void;
   onAddAnnotation: () => void;
+  onEditAnnotation: (propertyIri: string, currentValue: string) => void;
   onDeleteAnnotation: (key: string) => void;
   activeTheme?: string;
-}> = ({ item, onUpdate, onAddAnnotation, onDeleteAnnotation, activeTheme }) => {
+  projectId: string;
+  onAddDomainClick?: () => void;
+  onAddRangeClick?: () => void;
+  onAddSubPropertyClick?: () => void;
+  onAddInverseClick?: () => void;
+  onAddDisjointClick?: () => void;
+  onAddEquivalentClick?: () => void;
+  objectProperties?: Property[];
+}> = ({ 
+    item, 
+    onUpdate, 
+    onAddAnnotation,
+    onEditAnnotation, 
+    onDeleteAnnotation, 
+    activeTheme, 
+    projectId,
+    onAddDomainClick,
+    onAddRangeClick,
+    onAddSubPropertyClick,
+    onAddInverseClick,
+    onAddDisjointClick,
+    onAddEquivalentClick,
+    objectProperties = []
+}) => {
+    const [activeTab, setActiveTab] = useState<'annotations' | 'description'>('annotations');
+    const [isEditorOpen, setIsEditorOpen] = useState(false);
+    const [editorTitle, setEditorTitle] = useState("");
+    const [editorAction, setEditorAction] = useState<((val: string) => void) | null>(null);
+    const [isChainDialogOpen, setIsChainDialogOpen] = useState(false);
+
     const isObjectProperty = item.type === 'ObjectProperty';
-    const characteristics = isObjectProperty ? ['Functional', 'Inverse functional', 'Transitive', 'Symmetric', 'Asymmetric', 'Reflexive', 'Irreflexive'] : ['Functional'];
+    const isDataProperty = item.type === 'DatatypeProperty';
+    const isAnnotationProperty = item.type === 'AnnotationProperty';
     
-    const handleCharacteristicChange = (char: string, checked: boolean) => {
+    // Theme colors based on property type
+    const themeColor = isObjectProperty ? 'blue' : isDataProperty ? 'green' : 'orange';
+    const headerGradient = isObjectProperty 
+        ? 'bg-gradient-to-r from-blue-500 to-blue-600' 
+        : isDataProperty 
+        ? 'bg-gradient-to-r from-green-500 to-green-600' 
+        : 'bg-gradient-to-r from-orange-500 to-amber-500';
+    
+    const characteristics = isObjectProperty 
+        ? [
+            { key: 'Functional', label: 'Functional' },
+            { key: 'InverseFunctional', label: 'Inverse functional' },
+            { key: 'Transitive', label: 'Transitive' },
+            { key: 'Symmetric', label: 'Symmetric' },
+            { key: 'Asymmetric', label: 'Asymmetric' },
+            { key: 'Reflexive', label: 'Reflexive' },
+            { key: 'Irreflexive', label: 'Irreflexive' }
+          ] 
+        : isDataProperty 
+        ? [{ key: 'Functional', label: 'Functional' }]
+        : []; // Annotation properties don't have characteristics
+    
+    const handleCharacteristicChange = async (char: string, checked: boolean) => {
         const currentChars = item.characteristics || [];
         const newChars = checked ? [...currentChars, char] : currentChars.filter(c => c !== char);
+        
+        // Optimistic update
         onUpdate({ ...item, characteristics: newChars });
+
+        try {
+            if (checked) {
+                await ontologyMutationService.addCharacteristic(projectId, item.id, `http://www.w3.org/2002/07/owl#${char}Property`);
+            } else {
+                await ontologyMutationService.deleteCharacteristic(projectId, item.id, `http://www.w3.org/2002/07/owl#${char}Property`);
+            }
+        } catch (error) {
+            console.error("Failed to update characteristic", error);
+            // Revert on error
+            onUpdate({ ...item, characteristics: currentChars });
+        }
     };
 
+    const handleAddRelation = async (relation: 'domain' | 'range' | 'subProperty' | 'inverse' | 'disjoint' | 'equivalent', target: string) => {
+        try {
+            switch (relation) {
+                case 'domain':
+                    await ontologyMutationService.addPropertyDomain(projectId, item.id, target);
+                    onUpdate({ ...item, domains: [...(item.domains || []), target] });
+                    break;
+                case 'range':
+                    await ontologyMutationService.addPropertyRange(projectId, item.id, target);
+                    onUpdate({ ...item, ranges: [...(item.ranges || []), target] });
+                    break;
+                case 'subProperty':
+                    await ontologyMutationService.addSubPropertyOf(projectId, item.id, target);
+                    onUpdate({ ...item, superProperties: [...(item.superProperties || []), target] });
+                    break;
+                case 'inverse':
+                    await ontologyMutationService.addInverseProperty(projectId, item.id, target);
+                    onUpdate({ ...item, inverseProperties: [...(item.inverseProperties || []), target] });
+                    break;
+                case 'disjoint':
+                    await ontologyMutationService.addDisjointProperty(projectId, item.id, target);
+                    onUpdate({ ...item, disjointProperties: [...(item.disjointProperties || []), target] });
+                    break;
+                case 'equivalent': {
+                    const currentEq = item.equivalentProperties || [];
+                    const updatedEq = [...currentEq, target];
+                    onUpdate({ ...item, equivalentProperties: updatedEq });
+                    await ontologyMutationService.addEquivalentProperty(projectId, item.id, target);
+                    break;
+                }
+            }
+        } catch (error) {
+            console.error(`Failed to add ${relation}`, error);
+        }
+    };
+
+    const handleDeleteRelation = async (relation: 'domain' | 'range' | 'subProperty' | 'inverse' | 'disjoint' | 'equivalent', target: string) => {
+        try {
+            switch (relation) {
+                case 'domain':
+                    await ontologyMutationService.deletePropertyDomain(projectId, item.id, target);
+                    onUpdate({ ...item, domains: item.domains?.filter(d => d !== target) });
+                    break;
+                case 'range':
+                    await ontologyMutationService.deletePropertyRange(projectId, item.id, target);
+                    onUpdate({ ...item, ranges: item.ranges?.filter(r => r !== target) });
+                    break;
+                case 'subProperty':
+                    await ontologyMutationService.deleteSubPropertyOf(projectId, item.id, target);
+                    onUpdate({ ...item, superProperties: item.superProperties?.filter(p => p !== target) });
+                    break;
+                case 'inverse':
+                    await ontologyMutationService.deleteInverseProperty(projectId, item.id, target);
+                    onUpdate({ ...item, inverseProperties: item.inverseProperties?.filter(p => p !== target) });
+                    break;
+                case 'disjoint':
+                    await ontologyMutationService.deleteDisjointProperty(projectId, item.id, target);
+                    onUpdate({ ...item, disjointProperties: item.disjointProperties?.filter(p => p !== target) });
+                    break;
+                case 'equivalent': {
+                    const remaining = item.equivalentProperties?.filter(p => p !== target) || [];
+                    onUpdate({ ...item, equivalentProperties: remaining });
+                    await ontologyMutationService.deleteEquivalentProperty(projectId, item.id, target);
+                    break;
+                }
+            }
+        } catch (error) {
+            console.error(`Failed to delete ${relation}`, error);
+        }
+    };
+
+    const handleDeletePropertyChain = async (chain: string) => {
+        const updatedChains = item.propertyChains?.filter(c => c !== chain) || [];
+        onUpdate({ ...item, propertyChains: updatedChains });
+
+        try {
+            await ontologyMutationService.deletePropertyChain(projectId, item.id, chain);
+        } catch (error) {
+            console.error("Failed to delete property chain:", error);
+            // Revert if the API call fails
+            onUpdate({ ...item, propertyChains: item.propertyChains });
+        }
+    };
+
+    const handlePropertyChainConfirm = async (chain: string[]) => {
+        const expression = chain.join(' o ');
+        const updatedChains = [...(item.propertyChains || []), expression];
+        onUpdate({ ...item, propertyChains: updatedChains });
+
+        try {
+            await ontologyMutationService.addPropertyChain(projectId, item.id, expression);
+            console.log("Property chain added:", expression);
+        } catch (error) {
+            console.error("Failed to add property chain:", error);
+            // Revert on failure
+            onUpdate({ ...item, propertyChains: item.propertyChains });
+        }
+    };
+    
+    const openChainEditor = () => {
+        setIsChainDialogOpen(true);
+    };
+
+    const annotationCount = Object.keys(item.annotations || {}).length;
+
     return (
-        <div className="flex gap-2 h-full">
-            <div className="w-1/3 flex flex-col gap-2">
-                <Panel title={`Annotations: ${item.label}`} actions={<button onClick={onAddAnnotation} className="p-0.5 hover:bg-black/20 rounded-full"><Plus size={14}/></button>} themeColor={activeTheme}>
-                    <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} />
-                </Panel>
-                <Panel title="Characteristics" themeColor={activeTheme}>
-                   <div className="p-2 space-y-1.5 text-xs">
-                     {characteristics.map(char => (
-                        <label key={char} className="flex items-center gap-2 cursor-pointer">
-                            <input
-                                type="checkbox"
-                                checked={item.characteristics?.includes(char) || false}
-                                onChange={(e) => handleCharacteristicChange(char, e.target.checked)}
+        <div className="flex flex-col h-full bg-white">
+            {/* Header with IRI */}
+            <div className="bg-gray-100 border-b border-gray-200 p-3 flex items-center justify-between">
+                <div className="flex items-center gap-2 overflow-hidden">
+                    <div className={`p-1 rounded text-xs font-bold ${isObjectProperty ? 'bg-blue-200 text-blue-800' : isDataProperty ? 'bg-green-200 text-green-800' : 'bg-orange-200 text-orange-800'}`}>
+                        {isObjectProperty ? 'OP' : isDataProperty ? 'DP' : 'AP'}
+                    </div>
+                    <div className="flex flex-col min-w-0">
+                        <span className="font-bold text-sm truncate">{item.label}</span>
+                        <span className="text-xs text-gray-500 truncate font-mono">{item.id}</span>
+                    </div>
+                </div>
+                <button
+                    className="p-1.5 hover:bg-gray-200 rounded text-gray-600 hover:text-purple-600 flex-shrink-0"
+                    title="Edit IRI and Label"
+                >
+                    <Edit3 size={16} />
+                </button>
+            </div>
+
+            {/* Tabs - Protégé style */}
+            <div className="flex border-b border-gray-200 bg-gray-50">
+                <button 
+                    onClick={() => setActiveTab('annotations')}
+                    className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors ${
+                        activeTab === 'annotations' 
+                            ? `border-${themeColor}-600 text-${themeColor}-700 bg-white` 
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                    }`}
+                    style={activeTab === 'annotations' ? { borderColor: isObjectProperty ? '#2563eb' : isDataProperty ? '#16a34a' : '#ea580c' } : {}}
+                >
+                    Annotations ({annotationCount})
+                </button>
+                <button 
+                    onClick={() => setActiveTab('description')}
+                    className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors ${
+                        activeTab === 'description' 
+                            ? `border-${themeColor}-600 text-${themeColor}-700 bg-white` 
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                    }`}
+                    style={activeTab === 'description' ? { borderColor: isObjectProperty ? '#2563eb' : isDataProperty ? '#16a34a' : '#ea580c' } : {}}
+                >
+                    Description
+                </button>
+            </div>
+
+            {/* Main Content */}
+            <div className="flex-1 overflow-y-auto bg-gray-50 p-3 min-h-0">
+                {activeTab === 'annotations' && (
+                    <div className="space-y-0">
+                        {/* Annotations Panel Header - Protégé style */}
+                        <div className={`${headerGradient} text-white px-3 py-2 flex items-center justify-between rounded-t-sm`}>
+                            <span className="text-sm font-semibold">Annotations: {item.label}</span>
+                            <div className="flex items-center gap-1">
+                                <button onClick={onAddAnnotation} className="p-1 hover:bg-white/20 rounded transition-colors" title="Add annotation">
+                                    <Plus size={16} />
+                                </button>
+                            </div>
+                        </div>
+                        {/* Annotations Content */}
+                        <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm">
+                            <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} />
+                        </div>
+                    </div>
+                )}
+
+                {activeTab === 'description' && (
+                    <div className="space-y-0">
+                        {/* Description Panel Header - Protégé style */}
+                        <div className={`${headerGradient} text-white px-3 py-2 flex items-center justify-between rounded-t-sm`}>
+                            <span className="text-sm font-semibold">Description: {item.label}</span>
+                        </div>
+                        {/* Description Content */}
+                        <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm p-3 space-y-3">
+                            {/* Characteristics - only for Object/Data properties */}
+                            {!isAnnotationProperty && characteristics.length > 0 && (
+                                <div className="mb-3">
+                                    <div className={`${isObjectProperty ? 'bg-blue-600' : 'bg-green-600'} text-white px-2 py-1.5 rounded-t-sm text-xs font-medium`}>
+                                        Characteristics
+                                    </div>
+                                    <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm p-2">
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {characteristics.map(({ key, label }) => (
+                                                <label key={key} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 p-1 rounded">
+                                                    <input 
+                                                        type="checkbox" 
+                                                        checked={item.characteristics?.includes(key)} 
+                                                        onChange={e => handleCharacteristicChange(key, e.target.checked)}
+                                                        className="hidden"
+                                                    />
+                                                    {item.characteristics?.includes(key) ? (
+                                                        <CheckSquare size={16} className={isObjectProperty ? 'text-blue-600' : 'text-green-600'} />
+                                                    ) : (
+                                                        <Square size={16} className="text-gray-300" />
+                                                    )}
+                                                    <span className={item.characteristics?.includes(key) ? 'text-gray-900 font-medium' : 'text-gray-500'}>{label}</span>
+                                                </label>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            <MultiSelectSection
+                                title="Equivalent To"
+                                items={item.equivalentProperties}
+                                onAddClick={onAddEquivalentClick}
+                                onDelete={prop => handleDeleteRelation('equivalent', prop)}
+                                themeColor={isObjectProperty ? 'blue' : 'green'}
                             />
-                            {char}
-                         </label>
-                     ))}
-                   </div>
-                </Panel>
-            </div>
-            <div className="flex-1 flex flex-col gap-2">
-                 <Panel title={`Description: ${item.label}`} defaultOpen={true} themeColor={activeTheme}>
-                     <div className="space-y-1 p-1">
+
                         <MultiSelectSection
-                            title="SuperProperties"
+                            title="SubProperty Of"
                             items={item.superProperties}
-                            onAdd={( newItem ) => onUpdate({ ...item, superProperties: [...(item.superProperties || []), newItem]})}
-                            onDelete={(itemToDelete) => onUpdate({ ...item, superProperties: item.superProperties?.filter(i => i !== itemToDelete)})}
+                            onAddClick={onAddSubPropertyClick}
+                            onDelete={prop => handleDeleteRelation('subProperty', prop)}
+                            themeColor={isObjectProperty ? 'blue' : 'green'}
                         />
-                         <MultiSelectSection
-                            title="Domains"
+
+                        {isObjectProperty && (
+                            <MultiSelectSection
+                                title="Inverse Of"
+                                items={item.inverseProperties}
+                                onAddClick={onAddInverseClick}
+                                onDelete={prop => handleDeleteRelation('inverse', prop)}
+                                themeColor="blue"
+                            />
+                        )}
+
+                        {!isAnnotationProperty && (
+                        <MultiSelectSection
+                            title="Domains (Intersection)"
                             items={item.domains}
-                            onAdd={( newItem ) => onUpdate({ ...item, domains: [...(item.domains || []), newItem]})}
-                            onDelete={(itemToDelete) => onUpdate({ ...item, domains: item.domains?.filter(i => i !== itemToDelete)})}
+                            onAddClick={onAddDomainClick}
+                            onDelete={domain => handleDeleteRelation('domain', domain)}
+                            themeColor={isObjectProperty ? 'blue' : 'green'}
                         />
-                         <MultiSelectSection
-                            title="Ranges"
+                        )}
+
+                        {!isAnnotationProperty && (
+                        <MultiSelectSection
+                            title="Ranges (Intersection)"
                             items={item.ranges}
-                            onAdd={( newItem ) => onUpdate({ ...item, ranges: [...(item.ranges || []), newItem]})}
-                            onDelete={(itemToDelete) => onUpdate({ ...item, ranges: item.ranges?.filter(i => i !== itemToDelete)})}
+                            onAddClick={onAddRangeClick}
+                            onDelete={range => handleDeleteRelation('range', range)}
+                            themeColor={isObjectProperty ? 'blue' : 'green'}
                         />
-                     </div>
-                 </Panel>
+                        )}
+
+                        <MultiSelectSection
+                            title="Disjoint With"
+                            items={item.disjointProperties}
+                            onAddClick={onAddDisjointClick}
+                            onDelete={prop => handleDeleteRelation('disjoint', prop)}
+                            themeColor={isObjectProperty ? 'blue' : 'green'}
+                        />
+
+                        {isObjectProperty && (
+                            <MultiSelectSection
+                                title="SuperProperty Of (Chain)"
+                                items={item.propertyChains}
+                                onAddClick={openChainEditor}
+                                onDelete={handleDeletePropertyChain}
+                                themeColor="blue"
+                            />
+                        )}
+                        </div>
+                    </div>
+                )}
             </div>
+
+            <ManchesterSyntaxEditor
+                isOpen={isEditorOpen}
+                onClose={() => setIsEditorOpen(false)}
+                onConfirm={(val) => {
+                    if (editorAction) editorAction(val);
+                    setIsEditorOpen(false);
+                }}
+                title={editorTitle}
+                projectId={projectId}
+                initialValue=""
+            />
+
+            <PropertyChainDialog
+                isOpen={isChainDialogOpen}
+                onClose={() => setIsChainDialogOpen(false)}
+                onConfirm={handlePropertyChainConfirm}
+                properties={objectProperties}
+                title="Create Property Chain"
+            />
         </div>
     );
 };

@@ -2,476 +2,443 @@ package self.research.ontology.owlEditor.controller;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Update;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
-import self.research.ontology.owlEditor.document.OntologyDocument;
-import self.research.ontology.owlEditor.dto.*;
-import self.research.ontology.owlEditor.service.OntologyIndexService;
-import self.research.ontology.owlEditor.service.OwlParsingService;
-
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import org.springframework.data.mongodb.gridfs.GridFsTemplate;
-import org.springframework.data.mongodb.gridfs.GridFsResource;
-import com.mongodb.client.gridfs.model.GridFSFile;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
-import org.bson.types.ObjectId;
-import java.io.InputStream;
+import org.springframework.http.ResponseEntity;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
-@CrossOrigin(origins = "*") 
+import self.research.ontology.owlEditor.model.DraftChange;
+import self.research.ontology.owlEditor.model.ProjectStatus;
+import self.research.ontology.owlEditor.repository.DraftChangeRepository;
+import self.research.ontology.owlEditor.service.DraftTrackingService;
+import self.research.ontology.owlEditor.service.GraphDBHistoryService;
+import self.research.ontology.owlEditor.service.GridFSFileService;
+import self.research.ontology.owlEditor.service.ProjectImportService;
+import self.research.ontology.owlEditor.service.ProjectMetadataService;
+import self.research.ontology.owlEditor.service.ProjectShareService;
+import self.research.ontology.owlEditor.service.StorageManager;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+
 @RestController
 @RequestMapping("/api/ontology")
+@CrossOrigin
 public class ProjectLoadController {
 
-    private static final Logger logger = LoggerFactory.getLogger(ProjectLoadController.class);
+    private static final Logger log = LoggerFactory.getLogger(ProjectLoadController.class);
+    
+    // Project-level locks to prevent concurrent saves
+    private final ConcurrentHashMap<String, Object> projectSaveLocks = new ConcurrentHashMap<>();
 
-    @Autowired
-    private OntologyIndexService ontologyIndexService;
+    private final StorageManager storageManager;
+    private final ProjectMetadataService metadataService;
+    private final ProjectImportService importService;
+    private final GridFSFileService gridFSFileService;
+    private final ProjectShareService shareService;
+    private final DraftTrackingService draftTrackingService;
+    private final GraphDBHistoryService historyService;
+    private final DraftChangeRepository draftChangeRepository;
+    private final SimpMessagingTemplate messagingTemplate;
 
-    @Autowired
-    private OwlParsingService owlParsingService;
-
-    @Autowired
-    private MongoTemplate mongoTemplate;
-
-    @Autowired
-    private GridFsTemplate gridFsTemplate;
+    public ProjectLoadController(StorageManager storageManager,
+                                 ProjectMetadataService metadataService,
+                                 ProjectImportService importService,
+                                 GridFSFileService gridFSFileService,
+                                 ProjectShareService shareService,
+                                 DraftTrackingService draftTrackingService,
+                                 GraphDBHistoryService historyService,
+                                 DraftChangeRepository draftChangeRepository,
+                                 SimpMessagingTemplate messagingTemplate) {
+        this.storageManager = storageManager;
+        this.metadataService = metadataService;
+        this.importService = importService;
+        this.gridFSFileService = gridFSFileService;
+        this.shareService = shareService;
+        this.draftTrackingService = draftTrackingService;
+        this.historyService = historyService;
+        this.draftChangeRepository = draftChangeRepository;
+        this.messagingTemplate = messagingTemplate;
+    }
 
     @PostMapping("/upload/{projectId}")
-    public ResponseEntity<Map<String, Object>> uploadOntology(
-            @PathVariable String projectId,
-            @RequestParam("file") MultipartFile file) {
-
-        logger.info("Receiving ontology file upload for project: {}", projectId);
-
+    public ResponseEntity<Map<String, Object>> upload(@PathVariable String projectId,
+                                                      @RequestParam("file") MultipartFile file,
+                                                      @RequestParam(required = false) String ownerEmail) {
         try {
-            if (file.isEmpty()) {
-                return ResponseEntity.badRequest().body(createErrorResponse("File is empty"));
+            // VALIDATION: Check file size (max 300MB)
+            long maxSize = 300 * 1024 * 1024; // 300MB
+            if (file.getSize() > maxSize) {
+                log.warn("File too large: {} bytes (max: {} bytes)", file.getSize(), maxSize);
+                return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                        .body(Map.of(
+                            "success", false,
+                            "error", "File too large. Maximum file size is 300MB. Your file is " + (file.getSize() / (1024 * 1024)) + "MB"
+                        ));
             }
 
+            String actualProjectId = projectId;
+            boolean isReplacement = false;
             String filename = file.getOriginalFilename();
-            String contentType = file.getContentType();
-            logger.info("File received: {} (size: {} bytes) for project: {}", filename, file.getSize(), projectId);
-
-            ObjectId fileId;
-            try (InputStream gridfsStream = file.getInputStream()) {
-                fileId = gridFsTemplate.store(gridfsStream, filename, contentType);
-            }
-            logger.info("Stored file in GridFS with ID: {} for project: {}", fileId, projectId);
-
-            createOrUpdateProject(projectId, filename, fileId.toString(), "PROCESSING", "Starting to process ontology...");
-
-            try (InputStream parseStream = file.getInputStream()) {
-                owlParsingService.parseAndIndexFromStream(projectId, parseStream, filename);
+            
+            // Check for duplicate filename and use existing projectId if found
+            if (ownerEmail != null && !ownerEmail.isEmpty()) {
+                // First, check if filename conflicts with shared files
+                if (shareService.isFilenameInSharedFiles(filename, ownerEmail)) {
+                    log.warn("Upload blocked - filename conflicts with shared file: {} for user: {}", filename, ownerEmail);
+                    return ResponseEntity.status(HttpStatus.CONFLICT)
+                            .body(Map.of(
+                                "success", false, 
+                                "error", "The file '" + filename + "' is already shared with you. Please upload with a different file name or version."
+                            ));
+                }
+                
+                // Then check if user owns a file with this name
+                Optional<String> existingProjectId = metadataService.getExistingProjectId(filename, ownerEmail);
+                if (existingProjectId.isPresent()) {
+                    actualProjectId = existingProjectId.get();
+                    isReplacement = true;
+                    log.info("Replacing existing file: {} for user: {} with projectId: {}", filename, ownerEmail, actualProjectId);
+                }
             }
             
-            Map<String, Object> response = new HashMap<>();
-            response.put("success", true);
-            response.put("message", "File uploaded successfully and processing started");
-            response.put("projectId", projectId);
-            response.put("filename", filename);
-            response.put("fileId", fileId.toString());
-            response.put("status", "PROCESSING");
+            // FIX: Optimize by writing to both GridFS and filesystem in one pass
+            // Save to local filesystem first
+            Path projectDir = storageManager.prepareProjectDir(actualProjectId);
+            Path original = projectDir.resolve("ontology.original.owl");
+            Files.createDirectories(original.getParent());
 
-            return ResponseEntity.ok(response);
+            // Write uploaded file directly to local filesystem
+            try (InputStream in = file.getInputStream();
+                 OutputStream out = Files.newOutputStream(original,
+                         StandardOpenOption.CREATE,
+                         StandardOpenOption.TRUNCATE_EXISTING,
+                         StandardOpenOption.WRITE)) {
+                in.transferTo(out);
+            }
 
-        } catch (Exception e) {
-            logger.error("Error uploading ontology file for project {}: {}", projectId, e.getMessage(), e);
-            createOrUpdateProject(projectId, (file != null ? file.getOriginalFilename() : "unknown"), null, "ERROR", "Failed to upload file: " + e.getMessage());
-            return ResponseEntity.status(500).body(createErrorResponse("Failed to upload file: " + e.getMessage()));
+            log.info("Saved file to local filesystem: {}", original);
+
+            // Then store in GridFS for backup/versioning
+            String gridfsFileId;
+            try (InputStream fileIn = Files.newInputStream(original)) {
+                gridfsFileId = gridFSFileService.storeFile(
+                    actualProjectId,
+                    file.getOriginalFilename(),
+                    file.getContentType(),
+                    fileIn
+                );
+            }
+
+            // FIX: Add error handling - verify GridFS storage succeeded
+            if (gridfsFileId == null || gridfsFileId.isEmpty()) {
+                throw new RuntimeException("Failed to store file in GridFS - no file ID returned");
+            }
+
+            log.info("Stored file in GridFS for project {}: fileId={}", actualProjectId, gridfsFileId);
+
+            // FIX: Batch metadata updates into single operation for better performance
+            ProjectStatus status = ProjectStatus.uploaded(file.getOriginalFilename());
+            metadataService.updateProjectMetadata(actualProjectId, status, gridfsFileId, ownerEmail);
+
+            importService.submitImport(actualProjectId, original, ownerEmail);
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "projectId", actualProjectId,
+                    "gridfsFileId", gridfsFileId,
+                    "isReplacement", isReplacement,
+                    "message", isReplacement ? "File replaced successfully, processing scheduled" : "Upload complete, processing scheduled"));
+        } catch (IOException e) {
+            log.error("Upload failed", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("success", false, "error", e.getMessage()));
         }
     }
 
     @GetMapping("/status/{projectId}")
-    public ResponseEntity<Map<String, Object>> getProcessingStatus(@PathVariable String projectId) {
-        logger.info("Checking processing status for project: {}", projectId);
-
-        try {
-            Query query = new Query(Criteria.where("_id").is(projectId));
-            Map projectData = mongoTemplate.findOne(query, Map.class, "projects");
-
-            Map<String, Object> response = new HashMap<>();
-            Map<String, Object> data = new HashMap<>();
-
-            if (projectData != null) {
-                data.put("status", projectData.get("status"));
-                data.put("statusMessage", projectData.get("statusMessage"));
-                data.put("filename", projectData.get("filename"));
-                data.put("lastUpdated", projectData.get("lastUpdated"));
-            } else {
-                OntologyDocument doc = ontologyIndexService.getOntologyMetadata(projectId);
-                if (doc != null) {
-                    data.put("status", "COMPLETED");
-                    data.put("statusMessage", "Processing complete (project status not found, but data exists).");
-                    data.put("filename", doc.getMetadata() != null ? doc.getMetadata().getFilename() : "Unknown");
-                    data.put("lastUpdated", doc.getUpdatedAt());
-                } else {
-                    data.put("status", "NOT_FOUND");
-                    data.put("statusMessage", "Project not found");
-                }
-            }
-
-            response.put("success", true);
-            response.put("data", data);
-            return ResponseEntity.ok(response);
-
-        } catch (Exception e) {
-            logger.error("Error checking status for project: {}", projectId, e);
-            return ResponseEntity.status(500).body(createErrorResponse("Failed to check status"));
-        }
+    public ResponseEntity<Map<String, Object>> status(@PathVariable String projectId) {
+        return metadataService.readStatus(projectId)
+                .map(status -> ResponseEntity.ok(Map.of("success", true, "data", status)))
+                .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(Map.of("success", false, "error", "Project not found")));
     }
 
     @GetMapping("/export/{projectId}")
-    public ResponseEntity<byte[]> exportOntology(@PathVariable String projectId) {
-        logger.info("Handling export request for project: {}", projectId);
+    public ResponseEntity<Resource> export(@PathVariable String projectId,
+                                           @RequestParam(defaultValue = "rdfxml") String format) {
         try {
-            Query projectQuery = new Query(Criteria.where("_id").is(projectId));
-            Map projectData = mongoTemplate.findOne(projectQuery, Map.class, "projects");
-
-            if (projectData == null || projectData.get("filename") == null) {
-                logger.warn("Project or filename not found for export: {}", projectId);
-                return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                        .body(("Project not found or has no associated file: " + projectId).getBytes());
-            }
-            
-            String filename = (String) projectData.get("filename");
-            logger.info("Found filename: {} for project: {}", filename, projectId);
-
-            GridFSFile file = gridFsTemplate.findOne(new Query(Criteria.where("filename").is(filename)));
-            
-            if (file == null) {
-                logger.warn("File not found in GridFS: {}", filename);
-                return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                        .body(("File not found in GridFS: " + filename).getBytes());
-            }
-
-            GridFsResource resource = gridFsTemplate.getResource(file);
-            byte[] data;
-            try (InputStream inputStream = resource.getInputStream()) {
-                data = inputStream.readAllBytes();
-            }
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
-            headers.setContentDispositionFormData("attachment", filename);
-            headers.setContentLength(data.length);
-
-            logger.info("Successfully exporting {} bytes for file: {}", data.length, filename);
-            
-            return new ResponseEntity<>(data, headers, HttpStatus.OK);
-
+            Path exportPath = storageManager.exportOntology(projectId, format);
+            InputStreamResource resource = new InputStreamResource(Files.newInputStream(exportPath));
+            return ResponseEntity.ok()
+                    .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                    .contentLength(Files.size(exportPath))
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + exportPath.getFileName())
+                    .body(resource);
         } catch (Exception e) {
-            logger.error("Error exporting ontology for project: {}", projectId, e);
+            log.error("Export failed", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    @PostMapping("/reload/{projectId}")
+    public ResponseEntity<Map<String, Object>> reload(@PathVariable String projectId) {
+        try {
+            log.info("[RELOAD] Reloading project {} from saved file", projectId);
+            
+            // Find the original ontology file
+            Path originalFile = storageManager.projectDir(projectId).resolve("ontology.original.owl");
+            if (!Files.exists(originalFile)) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("success", false, "error", "Original ontology file not found"));
+            }
+            
+            // Trigger re-import to reload GraphDB with the saved file
+            importService.submitImport(projectId, originalFile);
+            
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Project reload initiated. Processing in background."
+            ));
+        } catch (Exception e) {
+            log.error("[RELOAD] Reload failed", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(("Failed to export ontology: " + e.getMessage()).getBytes());
+                .body(Map.of("success", false, "error", e.getMessage()));
         }
     }
 
-    @GetMapping("/metadata/{projectId}")
-    public ResponseEntity<Map<String, Object>> getMetadata(@PathVariable String projectId) {
-        logger.info("Fetching metadata for project: {}", projectId);
-        try {
-            OntologyDocument ontologyDoc = ontologyIndexService.getOntologyMetadata(projectId);
-            if (ontologyDoc == null) {
-                return ResponseEntity.status(404).body(createErrorResponse("Metadata not found"));
-            }
-            Map<String, Object> response = new HashMap<>();
-            response.put("success", true);
-            response.put("data", ontologyDoc);
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            logger.error("Error fetching metadata for project: {}", projectId, e);
-            return ResponseEntity.status(500).body(createErrorResponse("Failed to fetch metadata"));
-        }
-    }
-
-    @GetMapping("/classes/tree/{projectId}")
-    public ResponseEntity<List<TreeNode>> getClassHierarchy(@PathVariable String projectId) {
-        logger.info("Fetching class hierarchy for project: {}", projectId);
-        try {
-            List<TreeNode> classHierarchy = ontologyIndexService.getClassHierarchy(projectId);
-            logger.info("Returning {} root nodes for project: {}", classHierarchy.size(), projectId);
-            return ResponseEntity.ok(classHierarchy);
-        } catch (Exception e) {
-            logger.error("Error fetching class hierarchy for project: {}", projectId, e);
-            return ResponseEntity.ok(new ArrayList<>());
-        }
-    }
-
-    @GetMapping("/classes/top-level/{projectId}")
-    public ResponseEntity<Map<String, Object>> getTopLevelClasses(
+    @PostMapping("/save/{projectId}")
+    public ResponseEntity<Map<String, Object>> save(
             @PathVariable String projectId,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "100") int size,
-            @RequestParam(required = false) String search) {
-
-        logger.info("Fetching top-level classes: page={}, size={}, search={}", page, size, search);
-
-        try {
-            Map<String, Object> result = ontologyIndexService.getTopLevelClassesPaginated(projectId, page, size, search);
-            return ResponseEntity.ok(result);
-        } catch (Exception e) {
-            logger.error("Error fetching top-level classes for project: {}", projectId, e);
-            Map<String, Object> errorResponse = new HashMap<>();
-            errorResponse.put("classes", new ArrayList<>());
-            errorResponse.put("total", 0);
-            errorResponse.put("page", page);
-            errorResponse.put("size", size);
-            errorResponse.put("hasMore", false);
-            return ResponseEntity.ok(errorResponse);
-        }
-    }
-
-    @GetMapping("/classes/children/{projectId}")
-    public ResponseEntity<List<TreeNode>> getClassChildren(
-            @PathVariable String projectId,
-            @RequestParam String parentIri) {
-
-        logger.info("Fetching children for parent: {} in project: {}", parentIri, projectId);
-
-        try {
-            List<TreeNode> children = ontologyIndexService.getClassChildren(projectId, parentIri);
-            logger.info("Returning {} children for parent: {}", children.size(), parentIri);
-            return ResponseEntity.ok(children);
-        } catch (Exception e) {
-            logger.error("Error fetching children for parent: {}", parentIri, e);
-            return ResponseEntity.ok(new ArrayList<>());
-        }
-    }
-
-    @GetMapping("/classes/search/{projectId}")
-    public ResponseEntity<List<TreeNode>> searchClasses(
-            @PathVariable String projectId,
-            @RequestParam String query) {
-        logger.info("Searching classes in project: {} with query: {}", projectId, query);
-        try {
-            List<TreeNode> results = ontologyIndexService.searchClasses2(projectId, query);
-            return ResponseEntity.ok(results);
-        } catch (Exception e) {
-            logger.error("Error searching classes", e);
-            return ResponseEntity.ok(new ArrayList<>());
-        }
-    }
-
-    @PostMapping("/classes/{projectId}")
-    public ResponseEntity<Map<String, String>> createClass(
-            @PathVariable String projectId,
-            @RequestBody Map<String, String> classData) {
-        logger.info("Creating class in project: {}", projectId);
-        try {
-            String className = classData.get("name");
-            String parentIri = classData.get("parentIri");
-            String classIri = ontologyIndexService.createClass(projectId, className, parentIri);
-            Map<String, String> response = new HashMap<>();
-            response.put("iri", classIri);
-            response.put("message", "Class created successfully");
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            logger.error("Error creating class", e);
-            return ResponseEntity.internalServerError().build();
-        }
-    }
-
-    @DeleteMapping("/classes/{projectId}/{classIri}")
-    public ResponseEntity<Map<String, String>> deleteClass(
-            @PathVariable String projectId,
-            @PathVariable String classIri) {
-        logger.info("Deleting class {} in project: {}", classIri, projectId);
-        try {
-            ontologyIndexService.deleteClass(projectId, classIri);
-            Map<String, String> response = new HashMap<>();
-            response.put("message", "Class deleted successfully");
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            logger.error("Error deleting class", e);
-            Map<String, String> errorResponse = new HashMap<>();
-            errorResponse.put("error", e.getMessage());
-            return ResponseEntity.badRequest().body(errorResponse);
-        }
-    }
-
-    @GetMapping("/properties/{projectId}")
-    public ResponseEntity<Map<String, Object>> getAllProperties(@PathVariable String projectId) {
-        logger.info("Fetching all properties for project: {}", projectId);
-        try {
-            List<PropertyDto> properties = ontologyIndexService.getAllProperties(projectId);
-            Map<String, Object> response = new HashMap<>();
-            response.put("success", true);
-            response.put("data", properties);
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            logger.error("Error fetching properties", e);
-            return ResponseEntity.status(500).body(createErrorResponse("Failed to fetch properties"));
-        }
-    }
-
-    @GetMapping("/object-properties/tree/{projectId}")
-    public ResponseEntity<List<PropertyDto>> getObjectPropertyHierarchy(@PathVariable String projectId) {
-        logger.info("Fetching object property hierarchy for project: {}", projectId);
-        try {
-            List<PropertyDto> hierarchy = ontologyIndexService.getObjectPropertyHierarchy(projectId);
-            return ResponseEntity.ok(hierarchy);
-        } catch (Exception e) {
-            logger.error("Error fetching object property hierarchy", e);
-            return ResponseEntity.ok(new ArrayList<>());
-        }
-    }
-
-    @GetMapping("/data-properties/tree/{projectId}")
-    public ResponseEntity<List<PropertyDto>> getDataPropertyHierarchy(@PathVariable String projectId) {
-        logger.info("Fetching data property hierarchy for project: {}", projectId);
-        try {
-            List<PropertyDto> hierarchy = ontologyIndexService.getDataPropertyHierarchy(projectId);
-            return ResponseEntity.ok(hierarchy);
-        } catch (Exception e) {
-            logger.error("Error fetching data property hierarchy", e);
-            return ResponseEntity.ok(new ArrayList<>());
-        }
-    }
-
-    @GetMapping("/individuals/{projectId}")
-    public ResponseEntity<Map<String, Object>> getAllIndividuals(@PathVariable String projectId) {
-        logger.info("Fetching all individuals for project: {}", projectId);
-        try {
-            List<IndividualDto> individuals = ontologyIndexService.getAllIndividuals(projectId);
-            Map<String, Object> response = new HashMap<>();
-            response.put("success", true);
-            response.put("data", individuals);
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            logger.error("Error fetching individuals", e);
-            return ResponseEntity.status(500).body(createErrorResponse("Failed to fetch individuals"));
-        }
-    }
-
-    @GetMapping("/annotation-properties/{projectId}")
-    public ResponseEntity<Map<String, Object>> getAllAnnotationProperties(@PathVariable String projectId) {
-        logger.info("Fetching all annotation properties for project: {}", projectId);
-        try {
-            List<AnnotationPropertyDto> properties = ontologyIndexService.getAllAnnotationProperties(projectId);
-            Map<String, Object> response = new HashMap<>();
-            response.put("success", true);
-            response.put("data", properties);
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            logger.error("Error fetching annotation properties", e);
-            return ResponseEntity.status(500).body(createErrorResponse("Failed to fetch annotation properties"));
-        }
-    }
-
-    @GetMapping("/datatypes/{projectId}")
-    public ResponseEntity<Map<String, Object>> getAllDatatypes(@PathVariable String projectId) {
-        logger.info("Fetching all datatypes for project: {}", projectId);
-        try {
-            List<DatatypeDto> datatypes = ontologyIndexService.getAllDatatypes(projectId);
-            Map<String, Object> response = new HashMap<>();
-            response.put("success", true);
-            response.put("data", datatypes);
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            logger.error("Error fetching datatypes", e);
-            return ResponseEntity.status(500).body(createErrorResponse("Failed to fetch datatypes"));
-        }
-    }
-
-    @GetMapping("/classes/usage/{projectId}")
-    public ResponseEntity<UsageInfoDto> getClassUsage(
-            @PathVariable String projectId,
-            @RequestParam String classIri) {
-        logger.info("Fetching usage for class: {} in project: {}", classIri, projectId);
-        try {
-            UsageInfoDto usage = ontologyIndexService.getClassUsage(projectId, classIri);
-            return ResponseEntity.ok(usage);
-        } catch (Exception e) {
-            logger.error("Error fetching class usage", e);
-            return ResponseEntity.internalServerError().build();
-        }
-    }
-
-private void createOrUpdateProject(String projectId, String filename, String gridfsFileId, String status, String message) {
-    try {
-        Query query = new Query(Criteria.where("_id").is(projectId));
-        Update update = new Update()
-                .set("status", status)
-                .set("statusMessage", message)
-                .set("filename", filename)
-                .set("lastUpdated", new Date())
-                .setOnInsert("createdAt", new Date())
-                .setOnInsert("projectId", projectId);
-
-        if (gridfsFileId != null) {
-            update.set("gridfsFileId", gridfsFileId); // <-- This is the new part
-        }
-
-        mongoTemplate.upsert(query, update, "projects");
-
-        logger.info("Created/Updated project document for: {}", projectId);
-    } catch (Exception e) {
-        logger.error("Failed to create/update project document for: {}", projectId, e);
-    }
-}
-
-    private Map<String, Object> createErrorResponse(String message) {
-        Map<String, Object> error = new HashMap<>();
-        error.put("success", false);
-        error.put("error", message);
-        return error;
-    }
-
-    public static class TreeNode {
-        private String id;
-        private String label;
-        private List<TreeNode> children;
-        private Map<String, String> annotations;
-        private Boolean hasChildren;
-
-        public TreeNode() {}
-
-        public TreeNode(String id, String label, List<TreeNode> children, Map<String, String> annotations) {
-            this.id = id;
-            this.label = label;
-            this.children = children;
-            this.annotations = annotations;
-        }
+            @RequestParam(required = false) String userId,
+            @RequestParam(required = false) String username) {
         
-        public TreeNode(String id, String label, List<TreeNode> children, Map<String, String> annotations, Boolean hasChildren) {
-            this.id = id;
-            this.label = label;
-            this.children = children;
-            this.annotations = annotations;
-            this.hasChildren = hasChildren;
-        }
+        // Get or create a lock object for this project
+        Object lock = projectSaveLocks.computeIfAbsent(projectId, k -> new Object());
+        
+        // Synchronize on the project-specific lock to prevent concurrent saves
+        synchronized (lock) {
+            try {
+                log.info("[SAVE] Save requested for project: {} by user: {} (acquiring lock)", projectId, username);
 
-        public String getId() { return id; }
-        public void setId(String id) { this.id = id; }
-        public String getLabel() { return label; }
-        public void setLabel(String label) { this.label = label; }
-        public List<TreeNode> getChildren() { return children; }
-        public void setChildren(List<TreeNode> children) { this.children = children; }
-        public Map<String, String> getAnnotations() { return annotations; }
-        public void setAnnotations(Map<String, String> annotations) { this.annotations = annotations; }
-        public Boolean getHasChildren() { return hasChildren; }
-        public void setHasChildren(Boolean hasChildren) { this.hasChildren = hasChildren; }
+                // STEP 1: Get all unapplied drafts BEFORE applying them (for history recording)
+                log.info("[SAVE] Fetching drafts to record in history...");
+                java.util.List<DraftChange> drafts = draftChangeRepository.findByProjectIdAndAppliedFalseOrderByTimestampAsc(projectId);
+                log.info("[SAVE] Found {} unapplied drafts", drafts.size());
 
-        public void addChild(TreeNode child) {
-            if (this.children == null) {
-                this.children = new ArrayList<>();
+                // STEP 2: Apply all unapplied drafts to GraphDB
+                log.info("[SAVE] Applying drafts to GraphDB...");
+                DraftTrackingService.ApplyDraftsResult draftResult = draftTrackingService.applyDrafts(projectId);
+                
+                if (!draftResult.isSuccess()) {
+                    log.error("[SAVE] Failed to apply drafts: {}", draftResult.getMessage());
+                    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body(Map.of(
+                            "success", false,
+                            "error", "Failed to apply drafts: " + draftResult.getMessage()
+                        ));
+                }
+                
+                log.info("[SAVE] Applied {} draft changes", draftResult.getAppliedCount());
+
+            // STEP 3: Export current state from GraphDB to file system
+            Path exportPath = storageManager.exportOntology(projectId, "rdfxml");
+            log.info("[SAVE] Ontology exported to: {}", exportPath);
+
+            // STEP 4: Update BOTH original AND current files so changes persist when switching files
+            Path originalPath = storageManager.projectDir(projectId).resolve("ontology.original.owl");
+            Path currentPath = storageManager.projectDir(projectId).resolve("ontology.current.owl");
+            
+            if (Files.exists(exportPath)) {
+                // Update original file
+                if (!exportPath.equals(originalPath)) {
+                    Files.copy(exportPath, originalPath,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    log.info("[SAVE] Updated original file: {}", originalPath);
+                }
+                
+                // Update current file (this is what gets loaded when switching back)
+                if (!exportPath.equals(currentPath)) {
+                    Files.copy(exportPath, currentPath,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    log.info("[SAVE] Updated current file: {}", currentPath);
+                }
             }
-            this.children.add(child);
+
+            // STEP 5: Update GridFS with the current state for backup/versioning
+            try (InputStream in = Files.newInputStream(exportPath)) {
+                String gridfsFileId = gridFSFileService.storeFile(
+                    projectId,
+                    "ontology.owl",
+                    "application/rdf+xml",
+                    in
+                );
+                metadataService.setGridfsFileId(projectId, gridfsFileId);
+                log.info("[SAVE] Saved to GridFS with fileId: {}", gridfsFileId);
+            }
+
+            // STEP 6: Update status to COMPLETED after successful save
+            ProjectStatus currentStatus = metadataService.readStatus(projectId)
+                    .orElse(ProjectStatus.uploaded("ontology.owl"));
+            ProjectStatus completedStatus = ProjectStatus.completed(currentStatus.filename());
+            metadataService.writeStatus(projectId, completedStatus);
+            log.info("[SAVE] Updated project status to COMPLETED");
+
+            // STEP 7: Record changes to GraphDB history
+            log.info("[SAVE] Recording {} changes to GraphDB history...", drafts.size());
+            for (DraftChange draft : drafts) {
+                String entityIRI = null;
+                String entityLabel = null;
+                String oldValue = null;
+                String newValue = null;
+                String annotationProperty = null;
+                
+                // Extract entity details from operation data
+                Map<String, Object> opData = draft.getOperationData();
+                if (opData != null) {
+                    entityIRI = opData.containsKey("iri") ? opData.get("iri").toString() : null;
+                    entityLabel = opData.containsKey("label") ? opData.get("label").toString() : null;
+                    oldValue = opData.containsKey("oldValue") ? opData.get("oldValue").toString() : null;
+                    // newValue can be stored as "value" or "newValue"
+                    newValue = opData.containsKey("value") ? opData.get("value").toString() : 
+                               (opData.containsKey("newValue") ? opData.get("newValue").toString() : null);
+                    annotationProperty = opData.containsKey("property") ? opData.get("property").toString() : null;
+                }
+                
+                historyService.recordEdit(
+                    projectId,
+                    userId != null ? userId : "system",
+                    username != null ? username : "System",
+                    draft.getOperationType(),
+                    entityIRI,
+                    entityLabel,
+                    oldValue,
+                    newValue,
+                    draft.getOperationType() + " operation",
+                    annotationProperty
+                );
+            }
+            log.info("[SAVE] GraphDB history recording complete");
+
+            // STEP 8: Clear applied drafts (cleanup)
+            draftTrackingService.clearAppliedDrafts(projectId);
+            log.info("[SAVE] Cleared applied drafts");
+            
+            // STEP 9: Notify collaborators that a save completed
+            if (draftResult.getAppliedCount() > 0) {
+                Map<String, Object> saveNotification = Map.of(
+                    "type", "PROJECT_SAVED",
+                    "projectId", projectId,
+                    "userId", userId != null ? userId : "system",
+                    "username", username != null ? username : "System",
+                    "appliedChanges", draftResult.getAppliedCount(),
+                    "timestamp", System.currentTimeMillis(),
+                    "message", (username != null ? username : "Someone") + " saved the project with " + draftResult.getAppliedCount() + " changes"
+                );
+                messagingTemplate.convertAndSend("/topic/ontology/" + projectId, saveNotification);
+                log.info("[SAVE] Notified collaborators of save completion");
+            }
+            
+            log.info("[SAVE] ✅ Save completed successfully, releasing lock");
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "Ontology saved successfully",
+                    "projectId", projectId,
+                    "savedPath", originalPath.toString(),
+                    "appliedDrafts", draftResult.getAppliedCount()
+            ));
+            } catch (Exception e) {
+                log.error("[SAVE] Save failed for project: {}", projectId, e);
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body(Map.of(
+                                "success", false,
+                                "error", "Failed to save ontology: " + e.getMessage()
+                        ));
+            }
+        }
+    }
+
+    /**
+     * Get ontology content in specified format for code view
+     * @param projectId The project ID
+     * @param format The format (turtle, rdfxml, ntriples, jsonld) - defaults to rdfxml
+     * @return Ontology content as plain text
+     */
+    @GetMapping("/{projectId}/content")
+    public ResponseEntity<Map<String, Object>> getOntologyContent(
+            @PathVariable String projectId,
+            @RequestParam(defaultValue = "rdfxml") String format) {
+        try {
+            log.info("Fetching ontology content for project: {} in format: {}", projectId, format);
+            
+            // Export the ontology in the requested format
+            Path exportPath = storageManager.exportOntology(projectId, format);
+            String content = Files.readString(exportPath);
+            
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "content", content,
+                    "format", format,
+                    "projectId", projectId
+            ));
+        } catch (Exception e) {
+            log.error("Failed to get ontology content for project: {}", projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of(
+                            "success", false,
+                            "error", "Failed to get ontology content: " + e.getMessage()
+                    ));
+        }
+    }
+
+    /**
+     * Get the last modified timestamp for a project (for sync checking)
+     */
+    @GetMapping("/metadata/{projectId}/timestamp")
+    public ResponseEntity<Map<String, Object>> getProjectTimestamp(@PathVariable String projectId) {
+        try {
+            log.debug("Fetching timestamp for project: {}", projectId);
+            java.time.Instant updatedAt = metadataService.getUpdatedAt(projectId);
+            
+            if (updatedAt != null) {
+                return ResponseEntity.ok(Map.of(
+                        "success", true,
+                        "projectId", projectId,
+                        "updatedAt", updatedAt.toString()
+                ));
+            } else {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(Map.of(
+                                "success", false,
+                                "error", "Project not found"
+                        ));
+            }
+        } catch (Exception e) {
+            log.error("Failed to get timestamp for project: {}", projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of(
+                            "success", false,
+                            "error", "Failed to get timestamp: " + e.getMessage()
+                    ));
         }
     }
 }
+

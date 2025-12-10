@@ -18,7 +18,8 @@
         <module>ontology-gateway</module>
         <module>ontology-editor</module>
         <module>ontology-auth</module>
-         <module>ontology-swrl</module>
+        <module>ontology-swrl</module>
+        <module>ontology-plugin-service</module>
     </modules>
 
     <properties>
@@ -34,8 +35,10 @@
         <!-- Latest Spring Cloud (compatible with Spring Boot 3.4.x) -->
         <spring-cloud.version>2024.0.0</spring-cloud.version>
 
+        <!-- OWLAPI 5.5.0 for main services (Java 21 compatible) -->
         <owlapi.version>5.5.0</owlapi.version>
-        <swrlapi.version>2.1.3</swrlapi.version>
+        <!-- SWRLAPI versions - only used by ontology-swrl module which has its own OWLAPI -->
+        <swrlapi.version>2.1.2</swrlapi.version>
         <lombok.version>1.18.34</lombok.version>
     </properties>
 
@@ -96,6 +99,13 @@
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-maven-plugin</artifactId>
                     <version>${spring-boot.version}</version>
+                    <executions>
+                        <execution>
+                            <goals>
+                                <goal>repackage</goal>
+                            </goals>
+                        </execution>
+                    </executions>
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>

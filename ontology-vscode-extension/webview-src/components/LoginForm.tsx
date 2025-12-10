@@ -1,14 +1,15 @@
 
 import React, { useState } from 'react';
 import { useAuth } from '../custom-hook/useAuth';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Eye, EyeOff } from 'lucide-react';
 
 const LoginForm = ({ onToggleForm }: { onToggleForm: () => void }) => {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
-    const { login } = useAuth();
+    const { login, sessionExpiredMessage } = useAuth();
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -40,6 +41,12 @@ const LoginForm = ({ onToggleForm }: { onToggleForm: () => void }) => {
                     </p>
                 </div>
 
+                {sessionExpiredMessage && (
+                    <div className="bg-amber-500/10 border border-amber-400/30 text-amber-400 px-4 py-3 rounded-lg mb-6 text-sm backdrop-blur-sm">
+                        {sessionExpiredMessage}
+                    </div>
+                )}
+
                 {error && (
                     <div className="bg-red-500/10 border border-red-400/30 text-red-400 px-4 py-3 rounded-lg mb-6 text-sm backdrop-blur-sm">
                         {error}
@@ -67,16 +74,26 @@ const LoginForm = ({ onToggleForm }: { onToggleForm: () => void }) => {
                         <label htmlFor="password" className="block text-sm font-medium text-gray-200 mb-2">
                             Password
                         </label>
-                        <input
-                            type="password"
-                            id="password"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            required
-                            disabled={isLoading}
-                            className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 text-white"
-                            placeholder="Enter your password"
-                        />
+                        <div className="relative">
+                            <input
+                                type={showPassword ? "text" : "password"}
+                                id="password"
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                required
+                                disabled={isLoading}
+                                className="w-full px-4 py-3 pr-12 bg-white/5 border border-white/20 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 text-white"
+                                placeholder="Enter your password"
+                            />
+                            <button
+                                type="button"
+                                onClick={() => setShowPassword(!showPassword)}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-200 focus:outline-none"
+                                tabIndex={-1}
+                            >
+                                {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                            </button>
+                        </div>
                     </div>
                     
                     <button

@@ -19,7 +19,7 @@
     "rdf",
     "knowledge graph"
   ],
-  "main": "./out/extension.js",
+  "main": "./dist/extension.js",
   "extensionDependencies": [
     "SelfResearchInstitute.sci2code"
   ],
@@ -51,9 +51,14 @@
         "command": "ontocode.insertCitation",
         "title": "Insert Citation",
         "category": "OntoCode"
+      },
+      {
+        "command": "ontocode.showCollaborationStatus",
+        "title": "OntoCode: Show Collaboration Status",
+        "category": "OntoCode"
       }
     ],
-     "menus": {
+    "menus": {
       "commandPalette": [
         {
           "command": "ontocode.edit",
@@ -61,7 +66,7 @@
         },
         {
           "command": "ontocode.editLargeFile",
-           "when": "resourceLangId == owl"
+          "when": "resourceLangId == owl"
         }
       ],
       "editor/context": [
@@ -100,28 +105,62 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run bundle:extension",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js",
     "build-webview": "cd webview && npm run build",
-    "dev-webview": "cd webview && npm run start"
+    "compile-web": "webpack --config webpack.config.js --mode development --watch",
+    "test-web": "vscode-test-web --browserType=chromium --extensionDevelopmentPath=./",
+    "dev-webview": "cd webview && npm run start",
+    "bundle:extension": "webpack --config webpack.extension.js --mode production",
+    "bundle:web": "webpack --config webpack.config.js --mode production",
+    "bundle:all": "npm run bundle:extension && npm run bundle:web",
+    "analyze:extension": "cross-env ANALYZE=true webpack --config webpack.extension.js --mode production",
+    "analyze:web": "cross-env ANALYZE=true webpack --config webpack.config.js --mode production",
+    "check:size": "node check-bundle-size.js",
+    "package": "vsce package",
+    "package:check": "vsce package && node -e \"const fs=require('fs');const files=fs.readdirSync('.');const vsix=files.find(f=>f.endsWith('.vsix'));if(vsix){const stats=fs.statSync(vsix);const mb=(stats.size/(1024*1024)).toFixed(2);console.log(`\\n📦 VSIX Size: ${mb} MB (${stats.size.toLocaleString()} bytes)`);console.log(`⚠️  Default limit: 25 MB`);console.log(`🔴 Hard limit: 50 MB\\n`);if(stats.size>50*1024*1024)console.log('❌ EXCEEDS HARD LIMIT!');else if(stats.size>25*1024*1024)console.log('⚠️  EXCEEDS DEFAULT LIMIT');}else{console.log('No .vsix file found');}\""
   },
   "devDependencies": {
     "@types/form-data": "^2.2.1",
     "@types/node": "16.x",
+    "@types/sockjs-client": "^1.5.4",
     "@types/vscode": "^1.74.0",
     "@typescript-eslint/eslint-plugin": "^5.45.0",
     "@typescript-eslint/parser": "^5.45.0",
+    "@vscode/test-web": "^0.0.75",
+    "assert": "^2.1.0",
+    "buffer": "^6.0.3",
+    "cross-env": "^10.1.0",
     "eslint": "^8.28.0",
-    "typescript": "^4.9.4"
+    "https-browserify": "^1.0.0",
+    "process": "^0.11.10",
+    "stream-browserify": "^3.0.0",
+    "stream-http": "^3.2.0",
+    "ts-loader": "^9.5.4",
+    "typescript": "^4.9.4",
+    "url": "^0.11.4",
+    "util": "^0.12.5",
+    "webpack": "^5.103.0",
+    "webpack-bundle-analyzer": "^5.0.1",
+    "webpack-cli": "^6.0.1"
   },
   "dependencies": {
+    "-": "^0.0.1",
+    "@stomp/stompjs": "^7.0.0",
     "axios": "^1.10.0",
+    "crypto-browserify": "^3.12.1",
     "form-data": "^4.0.3",
     "fs-extra": "^11.1.0",
-    "lucide-react": "^0.525.0"
+    "lucide-react": "^0.525.0",
+    "path-browserify": "^1.0.1",
+    "sockjs-client": "^1.6.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/The-Self-Research-Institute/ontocode.git"
   }
 }

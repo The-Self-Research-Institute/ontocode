@@ -9,9 +9,13 @@ pom.xml.versionsBackup
 *.iml
 .vscode/
 .DS_Store
-
+bin/
 # Logs
 *.log
+*.gz
+data/
+
+.vscode-test-web
 
 # Node
 node_modules/

@@ -1,7 +1,6 @@
 package self.research.ontology.owlEditor.dto;
 
 import java.util.List;
-import java.util.Map;
 
 public class UsageInfoDto {
     private String classIri;

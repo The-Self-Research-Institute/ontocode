@@ -1,0 +1,70 @@
+# =============================================================================
+# MULTI-STAGE BUILD: Build all plugins then upload to MongoDB
+# No need for local npm install/build - everything happens in Docker
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Stage 1: Build change-assistant-plugin
+# -----------------------------------------------------------------------------
+FROM node:21-alpine AS build-change-assistant
+WORKDIR /build
+COPY plugins/change-assistant-plugin/package*.json ./
+RUN npm install
+COPY plugins/change-assistant-plugin/ ./
+RUN npm run build
+
+# -----------------------------------------------------------------------------
+# Stage 2: Build fuzzy-ontology-plugin
+# -----------------------------------------------------------------------------
+FROM node:21-alpine AS build-fuzzy-ontology
+WORKDIR /build
+COPY plugins/fuzzy-ontology-plugin/package*.json ./
+RUN npm install
+COPY plugins/fuzzy-ontology-plugin/ ./
+RUN npm run build
+
+# -----------------------------------------------------------------------------
+# Stage 3: Build graph-view-plugin
+# -----------------------------------------------------------------------------
+FROM node:21-alpine AS build-graph-view
+WORKDIR /build
+COPY plugins/graph-view-plugin/package*.json ./
+RUN npm install
+COPY plugins/graph-view-plugin/ ./
+RUN npm run build
+
+# -----------------------------------------------------------------------------
+# Stage 4: Build swrl-editor-plugin
+# -----------------------------------------------------------------------------
+FROM node:21-alpine AS build-swrl-editor
+WORKDIR /build
+COPY plugins/swrl-editor-plugin/package*.json ./
+RUN npm install
+COPY plugins/swrl-editor-plugin/ ./
+RUN npm run build
+
+# -----------------------------------------------------------------------------
+# Stage 5: Final runtime - Upload plugins to GridFS
+# -----------------------------------------------------------------------------
+FROM node:21-alpine
+WORKDIR /app
+
+# Install bash and curl for health checks
+RUN apk add --no-cache bash curl
+
+# Install MongoDB driver
+COPY scripts/package.json ./package.json
+RUN npm install mongodb
+
+# Copy initialization scripts
+COPY scripts/insert-default-plugins.js ./insert-default-plugins.js
+COPY scripts/upload-bundles-to-gridfs.js ./upload-bundles-to-gridfs.js
+
+# Copy built plugin bundles from build stages
+COPY --from=build-change-assistant /build/dist/index.js ./plugins/change-assistant-plugin/dist/index.js
+COPY --from=build-fuzzy-ontology /build/dist/index.js ./plugins/fuzzy-ontology-plugin/dist/index.js
+COPY --from=build-graph-view /build/dist/index.js ./plugins/graph-view-plugin/dist/index.js
+COPY --from=build-swrl-editor /build/dist/index.js ./plugins/swrl-editor-plugin/dist/index.js
+
+# Wait for MongoDB, upload bundles, insert plugin metadata, then exit
+CMD ["sh", "-c", "echo 'Waiting for MongoDB to be ready...' && sleep 10 && echo 'Uploading plugin bundles to GridFS...' && node upload-bundles-to-gridfs.js && echo 'Inserting plugin metadata...' && node insert-default-plugins.js && echo 'Plugin initialization complete!'"]

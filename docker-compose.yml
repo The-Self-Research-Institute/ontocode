@@ -1,41 +1,211 @@
-version: '3.8'
+# OntoCode Development Docker Compose
+# Use docker-compose.production.yml for production deployments
+# This file is for quick local development and testing
 
 services:
-  mongodb:
-    image: mongo:6.0
+  # MongoDB Database
+  mongo:
+    image: mongo:6
+    container_name: ontocode-mongo
+    restart: unless-stopped
     ports:
       - "27017:27017"
     volumes:
-      - mongodb_data:/data/db
-
-  gateway:
-    build: ./ontology-gateway
-    ports:
-      - "8082:8082"
-    depends_on:
-      - ontology-editor
-      - ontology-auth
+      - mongo-data:/data/db
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
+      MONGO_INITDB_DATABASE: ${MONGODB_DATABASE:-ontocode}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-changeme123}
+    networks:
+      - ontology-net
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
 
-  owl-editor-service:
-    build: ./ontology-editor
+  # GraphDB (RDF Triple Store)
+  graphdb:
+    image: ontotext/graphdb:11.1.1
+    container_name: ontocode-graphdb
+    restart: unless-stopped
+    ports:
+      - "7200:7200"
+    environment:
+      GDB_HEAP_SIZE: 2g
+      GDB_LICENSE_PATH: /opt/graphdb
+    volumes:
+      - graphdb-data:/opt/graphdb/data
+      - ${GDB_LICENSE_FILE:-./CORETOPIA_GRAPHDB_FREE_v11.1.license}:/opt/graphdb/license:ro
+      - ./scripts/init-graphdb.sh:/docker-entrypoint-initdb.d/init-graphdb.sh:ro
+    networks:
+      - ontology-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7200/rest/repositories"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # GraphDB Repository Initializer
+  graphdb-init:
+    image: curlimages/curl:latest
+    container_name: ontocode-graphdb-init
+    depends_on:
+      graphdb:
+        condition: service_healthy
+    volumes:
+      - ./scripts/init-graphdb.sh:/init-graphdb.sh:ro
+    networks:
+      - ontology-net
+    command: sh /init-graphdb.sh
+    restart: "no"
+
+  # Authentication Service
+  auth:
+    build:
+      context: .
+      dockerfile: Dockerfile.auth
+      args:
+        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+        - VCS_REF=$(git rev-parse --short HEAD)
+    image: ontocode-auth:latest
+    container_name: ontocode-auth
+    restart: unless-stopped
     ports:
       - "8086:8086"
-    depends_on:
-      - mongodb
     environment:
-      - SPRING_DATA_MONGODB_URI=mongodb://mongodb:27017/ontology
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-this}
+      SPRING_PROFILES_ACTIVE: dev
+      LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - ontology-net
 
-  swrl-service:
-    build: ./ontology-auth
+  # API Gateway
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+      args:
+        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+        - VCS_REF=$(git rev-parse --short HEAD)
+    image: ontocode-gateway:latest
+    container_name: ontocode-gateway
+    restart: unless-stopped
+    ports:
+      - "8082:8082"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-this}
+      AUTH_SERVICE_URL: http://auth:8086
+      LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+    depends_on:
+      auth:
+        condition: service_started
+    networks:
+      - ontology-net
+
+  # Ontology Editor Service
+  owl-editor:
+    build:
+      context: .
+      dockerfile: Dockerfile.editor
+      args:
+        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+        - VCS_REF=$(git rev-parse --short HEAD)
+    image: ontocode-editor:latest
+    container_name: ontocode-editor
+    restart: unless-stopped
     ports:
       - "8083:8083"
-    depends_on:
-      - mongodb
     environment:
-      - SPRING_DATA_MONGODB_URI=mongodb://mongodb:27017/ontology_swrl
-      - OWL_EDITOR_SERVICE_URL=http://owl-editor-service:8083
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      GRAPHDB_URL: http://graphdb:7200
+      GRAPHDB_REPOSITORY: ${GRAPHDB_REPOSITORY:-ontocode}
+      SPRING_PROFILES_ACTIVE: dev
+      LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
+    depends_on:
+      - mongo
+      - graphdb
+    networks:
+      - ontology-net
+
+  # SWRL Rules Service
+  swrl-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.swrl
+      args:
+        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+        - VCS_REF=$(git rev-parse --short HEAD)
+    image: ontocode-swrl:latest
+    container_name: ontocode-swrl
+    restart: unless-stopped
+    ports:
+      - "8084:8084"
+    environment:
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      GRAPHDB_URL: http://graphdb:7200
+      GRAPHDB_REPOSITORY: ${GRAPHDB_REPOSITORY:-ontocode}
+      SPRING_PROFILES_ACTIVE: dev
+      LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+    depends_on:
+      - mongo
+      - graphdb
+    networks:
+      - ontology-net
+
+  # Plugin Service
+  plugin-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.plugin
+      args:
+        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+        - VCS_REF=$(git rev-parse --short HEAD)
+    image: ontocode-plugin:latest
+    container_name: ontocode-plugin
+    restart: unless-stopped
+    ports:
+      - "8087:8087"
+    environment:
+      SPRING_DATA_MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      SPRING_DATA_MONGODB_DATABASE: ${MONGODB_DATABASE:-ontocode}
+      JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-this}
+      SPRING_PROFILES_ACTIVE: dev
+      LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+    depends_on:
+      - mongo
+    networks:
+      - ontology-net
+
+  # Plugin Initialization Service
+  plugin-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.plugin-init
+    container_name: ontocode-plugin-init
+    environment:
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      MONGODB_DATABASE: ${MONGODB_DATABASE:-ontocode}
+    depends_on:
+      mongo:
+        condition: service_healthy
+      plugin-service:
+        condition: service_started
+    networks:
+      - ontology-net
 
 volumes:
-  mongodb_data:
+  mongo-data:
+  graphdb-data:
+
+networks:
+  ontology-net:
+    driver: bridge

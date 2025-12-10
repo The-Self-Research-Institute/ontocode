@@ -2,8 +2,6 @@ package self.research.ontology.owlEditor.document;
 
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
-import self.research.ontology.owlEditor.service.OwlParsingService.OntologyMetadata;
-
 import java.util.Date;
 import java.util.Map;
 
@@ -12,7 +10,7 @@ public class OntologyDocument {
     @Id
     private String id;
     private String projectId;
-    private OntologyMetadata metadata;  // ADD THIS
+    private Map<String, Object> metadata;
     private Map<String, Integer> statistics;
     private Date createdAt;
     private Date updatedAt;
@@ -36,11 +34,11 @@ public class OntologyDocument {
     }
 
     // ADD THIS GETTER AND SETTER
-    public OntologyMetadata getMetadata() {
+    public Map<String, Object> getMetadata() {
         return metadata;
     }
 
-    public void setMetadata(OntologyMetadata metadata) {
+    public void setMetadata(Map<String, Object> metadata) {
         this.metadata = metadata;
     }
 
