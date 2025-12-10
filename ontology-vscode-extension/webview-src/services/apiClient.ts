@@ -2,7 +2,7 @@
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from 'axios';
 
 const BASE_URL = 'http://localhost:8082'; // Your backend gateway
-const TIMEOUT = 60_000; // 60-second timeout for requests
+const TIMEOUT = 120_000; // 120-second timeout for requests (increased from 60s for large ontologies)
 
 // VS Code API detection
 declare global {

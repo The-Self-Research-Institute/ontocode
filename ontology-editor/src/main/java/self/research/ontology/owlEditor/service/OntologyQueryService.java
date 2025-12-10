@@ -907,9 +907,7 @@ public class OntologyQueryService {
         // Check both explicit graph and default graph for triples added via SPARQL UPDATE
         String subClassQuery = PREFIXES + """
             SELECT DISTINCT ?super ?label WHERE {
-                GRAPH <http://www.ontotext.com/explicit> {
-                  <%s> rdfs:subClassOf ?super .
-              }
+              <%s> rdfs:subClassOf ?super .
               FILTER(isIRI(?super))
               FILTER(?super != owl:Thing)
               FILTER(?super != <%s>)
@@ -945,11 +943,9 @@ public class OntologyQueryService {
         // Check both explicit graph and default graph for triples added via SPARQL UPDATE
         String subClassRestrictionQuery = PREFIXES + """
             SELECT DISTINCT ?restriction ?prop ?propLabel ?restrictionType ?filler ?fillerLabel ?card ?propType WHERE {
-                GRAPH <http://www.ontotext.com/explicit> {
-                <%s> rdfs:subClassOf ?restriction .
-                ?restriction a owl:Restriction ;
-                            owl:onProperty ?prop .
-              }
+              <%s> rdfs:subClassOf ?restriction .
+              ?restriction a owl:Restriction ;
+                          owl:onProperty ?prop .
               OPTIONAL { ?prop rdfs:label ?propLabel }
               OPTIONAL { ?prop a ?propType . FILTER(?propType IN (owl:ObjectProperty, owl:DatatypeProperty)) }
               
@@ -1162,17 +1158,14 @@ public class OntologyQueryService {
         
         // Get EquivalentClass axioms (simple IRI-based)
         // Exclude self-equivalence (a class is trivially equivalent to itself)
-        // Check both explicit graph and default graph for triples added via SPARQL UPDATE
+        // Let execSelect inject the proper FROM clause for the project graph
         String equivQuery = PREFIXES + """
-            SELECT ?equiv ?label WHERE {
-                GRAPH <http://www.ontotext.com/explicit> {
-                  <%s> owl:equivalentClass ?equiv .
-                <%s> owl:equivalentClass ?equiv .
-              }
+            SELECT DISTINCT ?equiv ?label WHERE {
+              <%s> owl:equivalentClass ?equiv .
               FILTER(isIRI(?equiv) && ?equiv != <%s>)
               OPTIONAL { ?equiv rdfs:label ?label }
             }
-            """.formatted(classIri, classIri, classIri);
+            """.formatted(classIri, classIri);
         TupleQueryResult equivRs = datasetService.execSelect(projectId, equivQuery);
         List<Map<String, String>> equivAxioms = new ArrayList<>();
         while (equivRs.hasNext()) {
@@ -1191,11 +1184,9 @@ public class OntologyQueryService {
         // Check both explicit graph and default graph for triples added via SPARQL UPDATE
         String equivRestrictionQuery = PREFIXES + """
             SELECT ?restriction ?prop ?propLabel ?restrictionType ?filler ?fillerLabel ?card WHERE {
-                GRAPH <http://www.ontotext.com/explicit> {
-                <%s> owl:equivalentClass ?restriction .
-                ?restriction a owl:Restriction ;
-                            owl:onProperty ?prop .
-              }
+              <%s> owl:equivalentClass ?restriction .
+              ?restriction a owl:Restriction ;
+                          owl:onProperty ?prop .
               OPTIONAL { ?prop rdfs:label ?propLabel }
               
               # Existential restriction (some)
@@ -1433,34 +1424,28 @@ public class OntologyQueryService {
         // Get DisjointWith axioms
         // Include both direct owl:disjointWith and owl:AllDisjointClasses
         // Exclude self-disjointness (which would be contradictory)
-        // Check both explicit graph and default graph for triples added via SPARQL UPDATE
+        // Query project graph directly (execSelect injects FROM clause)
         String disjointQuery = PREFIXES + """
             SELECT DISTINCT ?disjoint ?label WHERE {
               {
-                # Direct pairwise disjoint (explicit only)
-                GRAPH <http://www.ontotext.com/explicit> {
-                  <%s> owl:disjointWith ?disjoint .
-                }
+                # Direct pairwise disjoint
+                <%s> owl:disjointWith ?disjoint .
               } UNION {
-                # Reverse direction (explicit only)
-                GRAPH <http://www.ontotext.com/explicit> {
-                  ?disjoint owl:disjointWith <%s> .
-                }
+                # Reverse direction
+                ?disjoint owl:disjointWith <%s> .
               } UNION {
-                # From AllDisjointClasses (explicit only)
-                GRAPH <http://www.ontotext.com/explicit> {
-                  ?allDisjoint a owl:AllDisjointClasses ;
-                               owl:members ?list .
-                  ?list rdf:rest*/rdf:first <%s> .
-                  ?list rdf:rest*/rdf:first ?disjoint .
-                }
+                # From AllDisjointClasses
+                ?allDisjoint a owl:AllDisjointClasses ;
+                             owl:members ?list .
+                ?list rdf:rest*/rdf:first <%s> .
+                ?list rdf:rest*/rdf:first ?disjoint .
                 FILTER(?disjoint != <%s>)
               }
               FILTER(isIRI(?disjoint) && ?disjoint != <%s>)
               OPTIONAL { ?disjoint rdfs:label ?label }
             }
             ORDER BY ?label
-            """.formatted(classIri, classIri, classIri, classIri, classIri, classIri, classIri);
+            """.formatted(classIri, classIri, classIri, classIri, classIri);
         TupleQueryResult disjointRs = datasetService.execSelect(projectId, disjointQuery);
         List<Map<String, String>> disjointAxioms = new ArrayList<>();
         while (disjointRs.hasNext()) {
@@ -1668,12 +1653,11 @@ public class OntologyQueryService {
         
         // Get General Class Axioms (GCIs) that mention this class
         // GCIs are SubClassOf axioms where the subclass is an anonymous class expression
+        // Query project graph directly (execSelect injects FROM clause)
         String gciQuery = PREFIXES + """
             SELECT DISTINCT ?subExpr ?superClass WHERE {
-              GRAPH <http://www.ontotext.com/explicit> {
-                ?subExpr rdfs:subClassOf ?superClass .
-                ?subExpr ?p ?o .
-              }
+              ?subExpr rdfs:subClassOf ?superClass .
+              ?subExpr ?p ?o .
               FILTER(isBlank(?subExpr))
               FILTER(?o = <%s> || ?superClass = <%s>)
             }
