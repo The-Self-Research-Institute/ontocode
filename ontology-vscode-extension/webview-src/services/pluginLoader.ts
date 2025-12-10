@@ -48,7 +48,7 @@ class PluginLoaderService {
     try {
       // Check if this is a built-in plugin (already registered in pluginManager)
       // Built-in plugins don't have .vsix files - they're compiled into the extension
-      const builtInPlugins = ['swrl-editor-plugin', 'graph-view-plugin', 'fuzzy-ontology-plugin', 'change-assistant-plugin'];
+      const builtInPlugins = ['swrl-editor-plugin', 'graph-view-plugin', 'fuzzy-ontology-plugin', 'change-assistant-plugin', 'sparql-query-plugin'];
       const isBuiltIn = builtInPlugins.includes(pluginId);
 
       let manifest: PluginManifest;
@@ -252,7 +252,8 @@ class PluginLoaderService {
         'fuzzy-ontology-plugin': 'FuzzyOntologyPlugin',
         'swrl-editor-plugin': 'SWRLEditorPlugin',
         'graph-view-plugin': 'GraphViewPlugin',
-        'change-assistant-plugin': 'ChangeAssistantPlugin'
+        'change-assistant-plugin': 'ChangeAssistantPlugin',
+        'sparql-query-plugin': 'SparqlQueryPlugin'
       };
 
       const libraryName = libraryNames[pluginId];

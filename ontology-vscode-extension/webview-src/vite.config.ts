@@ -18,6 +18,20 @@ export default defineConfig(({ mode }) => {
         alias: {
           '@': path.resolve(__dirname, '.'),
         }
+      },
+      build: {
+        // Ensure lucide-react is not tree-shaken since plugins need it globally
+        rollupOptions: {
+          treeshake: {
+            moduleSideEffects: (id) => {
+              // Mark setupGlobals and lucide-react as having side effects
+              if (id.includes('setupGlobals') || id.includes('lucide-react')) {
+                return true;
+              }
+              return false;
+            }
+          }
+        }
       }
     };
 });
