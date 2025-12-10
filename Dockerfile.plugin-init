@@ -44,7 +44,17 @@ COPY plugins/swrl-editor-plugin/ ./
 RUN npm run build
 
 # -----------------------------------------------------------------------------
-# Stage 5: Final runtime - Upload plugins to GridFS
+# Stage 5: Build sparql-query-plugin
+# -----------------------------------------------------------------------------
+FROM node:21-alpine AS build-sparql-query
+WORKDIR /build
+COPY plugins/sparql-query-plugin/package*.json ./
+RUN npm install
+COPY plugins/sparql-query-plugin/ ./
+RUN npm run build
+
+# -----------------------------------------------------------------------------
+# Stage 6: Final runtime - Install plugins to MongoDB
 # -----------------------------------------------------------------------------
 FROM node:21-alpine
 WORKDIR /app
@@ -56,15 +66,15 @@ RUN apk add --no-cache bash curl
 COPY scripts/package.json ./package.json
 RUN npm install mongodb
 
-# Copy initialization scripts
-COPY scripts/insert-default-plugins.js ./insert-default-plugins.js
-COPY scripts/upload-bundles-to-gridfs.js ./upload-bundles-to-gridfs.js
+# Copy unified plugin manager script
+COPY scripts/manage-plugins.js ./manage-plugins.js
 
 # Copy built plugin bundles from build stages
 COPY --from=build-change-assistant /build/dist/index.js ./plugins/change-assistant-plugin/dist/index.js
 COPY --from=build-fuzzy-ontology /build/dist/index.js ./plugins/fuzzy-ontology-plugin/dist/index.js
 COPY --from=build-graph-view /build/dist/index.js ./plugins/graph-view-plugin/dist/index.js
 COPY --from=build-swrl-editor /build/dist/index.js ./plugins/swrl-editor-plugin/dist/index.js
+COPY --from=build-sparql-query /build/dist/index.js ./plugins/sparql-query-plugin/dist/index.js
 
-# Wait for MongoDB, upload bundles, insert plugin metadata, then exit
-CMD ["sh", "-c", "echo 'Waiting for MongoDB to be ready...' && sleep 10 && echo 'Uploading plugin bundles to GridFS...' && node upload-bundles-to-gridfs.js && echo 'Inserting plugin metadata...' && node insert-default-plugins.js && echo 'Plugin initialization complete!'"]
+# Wait for MongoDB, then install plugins using unified script
+CMD ["sh", "-c", "echo 'Waiting for MongoDB to be ready...' && sleep 10 && echo 'Installing plugins...' && node manage-plugins.js install && echo 'Plugin initialization complete!'"]
