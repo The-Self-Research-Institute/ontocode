@@ -4,6 +4,7 @@ import { Panel, AnnotationsDisplay, AxiomSubsection } from './common';
 import { ClassExpressionDialog, MultiClassSelectorDialog, MultiPropertySelectorDialog, IRIEditorDialog, IndividualSelectorDialog, RestrictionData } from '../dialogs';
 import apiClient from '../../services/apiClient';
 import ontologyMutationService from '../../services/ontologyMutationService';
+import { useAuth } from '../../custom-hook/useAuth';
 import type { TreeNode, Axiom, ClassUsage, AxiomUsage, Individual } from '../../types';
 
 type AxiomType = 'EquivalentTo' | 'SubClassOf' | 'DisjointWith';
@@ -212,6 +213,9 @@ const ClassEditor: React.FC<{
   onDeleteIndividual?: (id: string) => Promise<void>;
   onRefreshIndividuals?: () => void;
 }> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes = [], onAddClass, onAddClassInline, onDeleteClass, onRefreshClasses, onAddObjectProperty, onAddDataProperty, onDeleteProperty, metadata, objectPropertyHierarchy: propObjectPropertyHierarchy, dataPropertyHierarchy: propDataPropertyHierarchy, objectProperties: propObjectProperties, dataProperties: propDataProperties, individuals: propIndividuals = [], onAddIndividual, onDeleteIndividual, onRefreshIndividuals }) => {
+  // Get current user for tracking mutations
+  const { user } = useAuth();
+  
   const [activeTab, setActiveTab] = useState<'annotations' | 'usage' | 'description'>('annotations');
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [classDetails, setClassDetails] = useState<any>(null);
@@ -280,6 +284,10 @@ const ClassEditor: React.FC<{
   const [classInstances, setClassInstances] = useState<Individual[]>([]);
   const [loadingInstances, setLoadingInstances] = useState(false);
   const [editingInstanceId, setEditingInstanceId] = useState<string | undefined>();
+
+  // General Class Axioms State (GCAs - SubClassOf with anonymous subclass)
+  const [isGCAEditorOpen, setIsGCAEditorOpen] = useState(false);
+  const [editingGCAId, setEditingGCAId] = useState<string | undefined>();
 
   // IRI Editor State
   const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
@@ -497,7 +505,13 @@ const ClassEditor: React.FC<{
       classIri: item.id 
     });
     
-    if (editorType) {
+    if (!editorType) {
+      console.error('[ClassEditor] handleEditorConfirm - editorType is null!');
+      alert('Error: Editor type not set. Please try again.');
+      return;
+    }
+    
+    try {
       // If we have an existing axiom ID, this is an edit operation
       if (editorExistingId) {
         console.log('[ClassEditor] Edit operation - deleting old axiom:', { 
@@ -557,17 +571,17 @@ const ClassEditor: React.FC<{
             switch (editorType) {
               case 'EquivalentTo':
                 console.log('[ClassEditor] Calling updateEquivalentClass with:', { projectId, classIri: item.id, oldTarget: editorExistingId, newTarget: expression });
-                await ontologyMutationService.updateEquivalentClass(projectId, item.id, editorExistingId, expression);
+                await ontologyMutationService.updateEquivalentClass(projectId, item.id, editorExistingId, expression, user?.email, user?.displayName || user?.email);
                 console.log('[ClassEditor] updateEquivalentClass completed');
                 break;
               case 'SubClassOf':
                 console.log('[ClassEditor] Calling updateSubClassOf with:', { projectId, classIri: item.id, oldTarget: editorExistingId, newTarget: expression });
-                await ontologyMutationService.updateSubClassOf(projectId, item.id, editorExistingId, expression);
+                await ontologyMutationService.updateSubClassOf(projectId, item.id, editorExistingId, expression, user?.email, user?.displayName || user?.email);
                 console.log('[ClassEditor] updateSubClassOf completed');
                 break;
               case 'DisjointWith':
                 console.log('[ClassEditor] Calling updateDisjointWith with:', { projectId, classIri: item.id, oldTarget: editorExistingId, newTarget: expression });
-                await ontologyMutationService.updateDisjointWith(projectId, item.id, editorExistingId, expression);
+                await ontologyMutationService.updateDisjointWith(projectId, item.id, editorExistingId, expression, user?.email, user?.displayName || user?.email);
                 console.log('[ClassEditor] updateDisjointWith completed');
                 break;
             }
@@ -590,13 +604,13 @@ const ClassEditor: React.FC<{
             console.log('[ClassEditor] Complex expression detected, using delete+add approach');
             switch (editorType) {
               case 'EquivalentTo':
-                await ontologyMutationService.deleteEquivalentClass(projectId, item.id, editorExistingId);
+                await ontologyMutationService.deleteEquivalentClass(projectId, item.id, editorExistingId, user?.email, user?.displayName || user?.email);
                 break;
               case 'SubClassOf':
-                await ontologyMutationService.deleteSubClassOf(projectId, item.id, editorExistingId);
+                await ontologyMutationService.deleteSubClassOf(projectId, item.id, editorExistingId, user?.email, user?.displayName || user?.email);
                 break;
               case 'DisjointWith':
-                await ontologyMutationService.deleteDisjointWith(projectId, item.id, editorExistingId);
+                await ontologyMutationService.deleteDisjointWith(projectId, item.id, editorExistingId, user?.email, user?.displayName || user?.email);
                 break;
             }
             // Wait for GraphDB to process the deletion
@@ -662,13 +676,17 @@ const ClassEditor: React.FC<{
         console.log('[ClassEditor] Add operation:', { expression, restrictionData });
         await handleAddAxiom(editorType, expression, restrictionData);
       }
+    } catch (error) {
+      console.error('[ClassEditor] handleEditorConfirm failed:', error);
+      alert(`Failed to save axiom: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsEditorOpen(false);
+      setEditorType(null);
+      setEditorExistingValue(undefined);
+      setEditorExistingId(undefined);
+      setEditorInitialTab(undefined);
+      setEditorInitialRestrictionData(undefined);
     }
-    setIsEditorOpen(false);
-    setEditorType(null);
-    setEditorExistingValue(undefined);
-    setEditorExistingId(undefined);
-    setEditorInitialTab(undefined);
-    setEditorInitialRestrictionData(undefined);
   };
 
   const handleAddAxiom = async (type: AxiomType, definition: string, restrictionData?: RestrictionData) => {
@@ -718,22 +736,27 @@ const ClassEditor: React.FC<{
       
       if (isSimpleIRI) {
         // Use specific mutation methods for simple class relationships
-        switch (type) {
-          case 'EquivalentTo':
-            console.log('[ClassEditor] Calling addEquivalentClass:', { projectId, classIri: item.id, equivalentClassIri: definition });
-            await ontologyMutationService.addEquivalentClass(projectId, item.id, definition);
-            console.log('[ClassEditor] addEquivalentClass completed successfully');
-            break;
-          case 'SubClassOf':
-            console.log('[ClassEditor] Calling addSubClassOf:', { projectId, classIri: item.id, parentIri: definition });
-            await ontologyMutationService.addSubClassOf(projectId, item.id, definition);
-            console.log('[ClassEditor] addSubClassOf completed successfully');
-            break;
-          case 'DisjointWith':
-            console.log('[ClassEditor] Calling addDisjointWith:', { projectId, classIri: item.id, disjointIri: definition });
-            await ontologyMutationService.addDisjointWith(projectId, item.id, definition);
-            console.log('[ClassEditor] addDisjointWith completed successfully');
-            break;
+        try {
+          switch (type) {
+            case 'EquivalentTo':
+              console.log('[ClassEditor] Calling addEquivalentClass:', { projectId, classIri: item.id, equivalentClassIri: definition });
+              await ontologyMutationService.addEquivalentClass(projectId, item.id, definition, user?.email, user?.displayName || user?.email);
+              console.log('[ClassEditor] addEquivalentClass completed successfully');
+              break;
+            case 'SubClassOf':
+              console.log('[ClassEditor] Calling addSubClassOf:', { projectId, classIri: item.id, parentIri: definition });
+              await ontologyMutationService.addSubClassOf(projectId, item.id, definition, user?.email, user?.displayName || user?.email);
+              console.log('[ClassEditor] addSubClassOf completed successfully');
+              break;
+            case 'DisjointWith':
+              console.log('[ClassEditor] Calling addDisjointWith:', { projectId, classIri: item.id, disjointIri: definition });
+              await ontologyMutationService.addDisjointWith(projectId, item.id, definition, user?.email, user?.displayName || user?.email);
+              console.log('[ClassEditor] addDisjointWith completed successfully');
+              break;
+          }
+        } catch (mutationError) {
+          console.error('[ClassEditor] Mutation failed:', mutationError);
+          throw mutationError;
         }
       } else {
         // For complex Manchester Syntax expressions, use addAxiom (requires backend Manchester parser)
@@ -749,8 +772,8 @@ const ClassEditor: React.FC<{
       // Also notify parent to update tree if needed (though axioms usually don't change tree structure unless it's subclassof)
       // onUpdate(item); // We might not need this if we reload details
     } catch (error) {
-      console.error('Failed to add axiom:', error);
-      // You might want to show a notification here
+      console.error('[ClassEditor] Failed to add axiom:', error);
+      alert(`Failed to add axiom: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -816,16 +839,16 @@ const ClassEditor: React.FC<{
         switch (type) {
           case 'EquivalentTo':
             console.log('[ClassEditor] Calling deleteEquivalentClass');
-            await ontologyMutationService.deleteEquivalentClass(projectId, item.id, id);
+            await ontologyMutationService.deleteEquivalentClass(projectId, item.id, id, user?.email, user?.displayName || user?.email);
             break;
           case 'SubClassOf':
             console.log('[ClassEditor] Calling deleteSubClassOf with params:', { projectId, classIri: item.id, superClassIri: id });
-            await ontologyMutationService.deleteSubClassOf(projectId, item.id, id);
+            await ontologyMutationService.deleteSubClassOf(projectId, item.id, id, user?.email, user?.displayName || user?.email);
             console.log('[ClassEditor] deleteSubClassOf completed');
             break;
           case 'DisjointWith':
             console.log('[ClassEditor] Calling deleteDisjointWith');
-            await ontologyMutationService.deleteDisjointWith(projectId, item.id, id);
+            await ontologyMutationService.deleteDisjointWith(projectId, item.id, id, user?.email, user?.displayName || user?.email);
             break;
         }
         // Small delay to allow GraphDB to process the mutation
@@ -855,13 +878,13 @@ const ClassEditor: React.FC<{
         console.log('[ClassEditor] Using atomic UPDATE operation');
         switch (type) {
           case 'EquivalentTo':
-            await ontologyMutationService.updateEquivalentClass(projectId, item.id, oldId, newDefinition);
+            await ontologyMutationService.updateEquivalentClass(projectId, item.id, oldId, newDefinition, user?.email, user?.displayName || user?.email);
             break;
           case 'SubClassOf':
-            await ontologyMutationService.updateSubClassOf(projectId, item.id, oldId, newDefinition);
+            await ontologyMutationService.updateSubClassOf(projectId, item.id, oldId, newDefinition, user?.email, user?.displayName || user?.email);
             break;
           case 'DisjointWith':
-            await ontologyMutationService.updateDisjointWith(projectId, item.id, oldId, newDefinition);
+            await ontologyMutationService.updateDisjointWith(projectId, item.id, oldId, newDefinition, user?.email, user?.displayName || user?.email);
             break;
         }
       } else {
@@ -872,13 +895,13 @@ const ClassEditor: React.FC<{
         if (isOldSimpleIRI) {
           switch (type) {
             case 'EquivalentTo':
-              await ontologyMutationService.deleteEquivalentClass(projectId, item.id, oldId);
+              await ontologyMutationService.deleteEquivalentClass(projectId, item.id, oldId, user?.email, user?.displayName || user?.email);
               break;
             case 'SubClassOf':
-              await ontologyMutationService.deleteSubClassOf(projectId, item.id, oldId);
+              await ontologyMutationService.deleteSubClassOf(projectId, item.id, oldId, user?.email, user?.displayName || user?.email);
               break;
             case 'DisjointWith':
-              await ontologyMutationService.deleteDisjointWith(projectId, item.id, oldId);
+              await ontologyMutationService.deleteDisjointWith(projectId, item.id, oldId, user?.email, user?.displayName || user?.email);
               break;
           }
         }
@@ -890,13 +913,13 @@ const ClassEditor: React.FC<{
         if (isNewSimpleIRI) {
           switch (type) {
             case 'EquivalentTo':
-              await ontologyMutationService.addEquivalentClass(projectId, item.id, newDefinition);
+              await ontologyMutationService.addEquivalentClass(projectId, item.id, newDefinition, user?.email, user?.displayName || user?.email);
               break;
             case 'SubClassOf':
-              await ontologyMutationService.addSubClassOf(projectId, item.id, newDefinition);
+              await ontologyMutationService.addSubClassOf(projectId, item.id, newDefinition, user?.email, user?.displayName || user?.email);
               break;
             case 'DisjointWith':
-              await ontologyMutationService.addDisjointWith(projectId, item.id, newDefinition);
+              await ontologyMutationService.addDisjointWith(projectId, item.id, newDefinition, user?.email, user?.displayName || user?.email);
               break;
           }
         } else {
@@ -1164,6 +1187,57 @@ const ClassEditor: React.FC<{
     setIsInstancesOpen(true);
   };
 
+  // General Class Axiom handlers
+  const handleAddGCA = () => {
+    console.log('[ClassEditor] Opening GCA editor for new axiom');
+    setEditingGCAId(undefined);
+    setIsGCAEditorOpen(true);
+  };
+
+  const handleEditGCA = (axiomId: string) => {
+    console.log('[ClassEditor] Opening GCA editor for existing axiom:', axiomId);
+    setEditingGCAId(axiomId);
+    setIsGCAEditorOpen(true);
+  };
+
+  const handleDeleteGCA = async (axiomId: string) => {
+    console.log('[ClassEditor] Deleting GCA:', axiomId);
+    try {
+      // GCAs are stored as SubClassOf axioms with blank node subjects
+      // Delete the axiom by its blank node ID
+      await ontologyMutationService.deleteAxiom(projectId, axiomId);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      await loadClassDetails();
+    } catch (error) {
+      console.error('[ClassEditor] Failed to delete GCA:', error);
+      alert(`Failed to delete general class axiom: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const handleGCAConfirm = async (expression: string) => {
+    console.log('[ClassEditor] GCA confirm:', { expression, editing: editingGCAId });
+    try {
+      if (editingGCAId) {
+        // Edit existing GCA - delete old and add new
+        await ontologyMutationService.deleteAxiom(projectId, editingGCAId);
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+      
+      // Add the new GCA - the expression should be in format "AnonymousExpression SubClassOf ClassName"
+      // For now, we'll add it as a SubClassOf axiom mentioning this class
+      await ontologyMutationService.addAxiom(projectId, item.id, 'GeneralClassAxiom', expression);
+      
+      await new Promise(resolve => setTimeout(resolve, 500));
+      await loadClassDetails();
+    } catch (error) {
+      console.error('[ClassEditor] Failed to save GCA:', error);
+      alert(`Failed to save general class axiom: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsGCAEditorOpen(false);
+      setEditingGCAId(undefined);
+    }
+  };
+
   const handleInstancesConfirm = async (selectedIndividuals: Individual[]) => {
     console.log('[ClassEditor] handleInstancesConfirm called:', { selectedCount: selectedIndividuals.length, classIri: item.id, isEditing: !!editingInstanceId });
     // This handles adding existing individuals as instances of this class
@@ -1317,114 +1391,28 @@ const ClassEditor: React.FC<{
                   themeColor="yellow"
                 />
 
+                {/* General Class Axioms Section - GCIs mentioning this class */}
                 <AxiomSubsection
                   title="General class axioms"
-                  axioms={[]} // Placeholder - requires backend support
-                  onAdd={() => {}}
-                  onDelete={() => {}}
-                  onAddClick={() => {}}
+                  axioms={classDetails?.generalClassAxioms || []}
+                  onAdd={(def) => handleGCAConfirm(def)}
+                  onEdit={(id, newDef) => handleGCAConfirm(newDef)}
+                  onDelete={(id) => handleDeleteGCA(id)}
+                  onAddClick={handleAddGCA}
+                  onEditClick={(axiom) => handleEditGCA(axiom.id)}
                   emptyMessage=""
                   themeColor="yellow"
                 />
 
+                {/* SubClass Of (Anonymous Ancestor) - Inherited restrictions */}
                 <AxiomSubsection
                   title="SubClass Of (Anonymous Ancestor)"
-                  axioms={[]} // Placeholder - derived from reasoner
+                  axioms={classDetails?.inheritedAnonymousAxioms || []}
                   onAdd={() => {}}
                   onDelete={() => {}}
-                  emptyMessage=""
                   themeColor="yellow"
                 />
 
-                <AxiomSubsection
-                  title="Instances"
-                  axioms={[]} // Placeholder - individuals are in separate tab
-                  onAdd={() => {}}
-                  onDelete={() => {}}
-                  onAddClick={() => {}}
-                  emptyMessage=""
-                  themeColor="yellow"
-                />
-
-                <AxiomSubsection
-                  title="Target for Key"
-                  axioms={classDetails?.hasKeyAxioms || item.hasKeyAxioms}
-                  onAdd={() => {}}
-                  onEdit={(id, newDef) => handleEditHasKey(id)}
-                  onDelete={(id) => handleDeleteHasKey(id)}
-                  onAddClick={() => setIsHasKeyOpen(true)}
-                  onEditClick={(axiom) => handleEditHasKey(axiom.id)}
-                  emptyMessage=""
-                  themeColor="yellow"
-                />
-                
-                {/* General Class Axioms Section (if available) */}
-                {(classDetails?.generalClassAxioms && classDetails.generalClassAxioms.length > 0) && (
-                  <div className="mb-4">
-                    <div className="flex justify-between items-center mb-1 px-2 py-1">
-                      <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">
-                        General Class Axioms
-                      </h4>
-                      <span className="text-[10px] text-gray-400 italic">View only</span>
-                    </div>
-                    <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm">
-                      {classDetails.generalClassAxioms.map((axiom: any, idx: number) => (
-                        <div key={idx} className="group p-1.5 border-b border-gray-100 last:border-0 hover:bg-blue-50 transition-colors">
-                          <div className="text-sm font-mono text-gray-800 break-all leading-relaxed">
-                            {axiom.definition}
-                          </div>
-                          <div className="text-[10px] text-gray-400 mt-1">Complex axiom mentioning this class</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                
-                {/* Disjoint With Section */}
-                <AxiomSubsection
-                  title="Disjoint With"
-                  axioms={classDetails?.disjointClassesAxioms || item.disjointClassesAxioms}
-                  inferredAxioms={classDetails?.inferredDisjointClassesAxioms}
-                  onAdd={(def) => handleAddAxiom('DisjointWith', def)}
-                  onEdit={(id, newDef) => handleEditDisjointWith(id)}
-                  onDelete={(id) => handleDeleteAxiom('DisjointWith', id)}
-                  onAddClick={() => setIsDisjointWithOpen(true)}
-                  onEditClick={(axiom) => handleEditDisjointWith(axiom.id)}
-                  emptyMessage=""
-                  properties={properties}
-                  dataProperties={dataProperties}
-                  themeColor="yellow"
-                />
-                
-                {/* Target for Key Section (Has Key) */}
-                <AxiomSubsection
-                  title="Target for Key"
-                  axioms={classDetails?.hasKeyAxioms || item.hasKeyAxioms}
-                  onAdd={() => {}}
-                  onEdit={(id, newDef) => handleEditHasKey(id)}
-                  onDelete={(id) => handleDeleteHasKey(id)}
-                  onAddClick={() => setIsHasKeyOpen(true)}
-                  onEditClick={(axiom) => handleEditHasKey(axiom.id)}
-                  emptyMessage="No keys defined"
-                  properties={properties}
-                  dataProperties={dataProperties}
-                />
-                
-                {/* Disjoint Union Of Section */}
-                <AxiomSubsection
-                  title="Disjoint Union Of"
-                  axioms={classDetails?.disjointUnionAxioms || item.disjointUnionAxioms}
-                  onAdd={() => {}}
-                  onEdit={(id, newDef) => handleEditDisjointUnion(id)}
-                  onDelete={(id) => handleDeleteDisjointUnion(id)}
-                  onAddClick={() => setIsDisjointUnionOpen(true)}
-                  onEditClick={(axiom) => handleEditDisjointUnion(axiom.id)}
-                  emptyMessage=""
-                  themeColor="yellow"
-                  properties={properties}
-                  dataProperties={dataProperties}
-                />
-                
                 {/* Instances Section */}
                 <AxiomSubsection
                   title="Instances"
@@ -1440,32 +1428,56 @@ const ClassEditor: React.FC<{
                     setEditingInstanceId(undefined);
                     setIsInstancesOpen(true);
                   }}
+                  onEditClick={(axiom) => handleEditInstance(axiom.id)}
+                  emptyMessage=""
+                  themeColor="yellow"
+                />
+
+                {/* Target for Key Section */}
+                <AxiomSubsection
+                  title="Target for Key"
+                  axioms={classDetails?.hasKeyAxioms || item.hasKeyAxioms}
+                  onAdd={() => {}}
+                  onEdit={(id, newDef) => handleEditHasKey(id)}
+                  onDelete={(id) => handleDeleteHasKey(id)}
+                  onAddClick={() => setIsHasKeyOpen(true)}
+                  onEditClick={(axiom) => handleEditHasKey(axiom.id)}
                   emptyMessage=""
                   themeColor="yellow"
                   properties={properties}
                   dataProperties={dataProperties}
                 />
-                
-                {/* SubClass Of (Anonymous Ancestor) Section */}
-                {(classDetails?.anonymousAncestorAxioms && classDetails.anonymousAncestorAxioms.length > 0) && (
-                  <div className="mb-4">
-                    <div className="flex justify-between items-center mb-1 px-2 py-1">
-                      <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">
-                        SubClass Of (Anonymous Ancestor)
-                      </h4>
-                      <span className="text-[10px] text-gray-400 italic">Inherited restrictions</span>
-                    </div>
-                    <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm">
-                      {classDetails.anonymousAncestorAxioms.map((axiom: any, idx: number) => (
-                        <div key={idx} className="group p-1.5 border-b border-gray-100 last:border-0 hover:bg-blue-50 transition-colors">
-                          <div className="text-sm font-mono text-gray-800 break-all leading-relaxed">
-                            {axiom.definition}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+
+                {/* Disjoint With Section */}
+                <AxiomSubsection
+                  title="Disjoint With"
+                  axioms={classDetails?.disjointClassesAxioms || item.disjointClassesAxioms}
+                  inferredAxioms={classDetails?.inferredDisjointClassesAxioms}
+                  onAdd={(def) => handleAddAxiom('DisjointWith', def)}
+                  onEdit={(id, newDef) => handleEditDisjointWith(id)}
+                  onDelete={(id) => handleDeleteAxiom('DisjointWith', id)}
+                  onAddClick={() => setIsDisjointWithOpen(true)}
+                  onEditClick={(axiom) => handleEditDisjointWith(axiom.id)}
+                  emptyMessage=""
+                  properties={properties}
+                  dataProperties={dataProperties}
+                  themeColor="yellow"
+                />
+
+                {/* Disjoint Union Of Section */}
+                <AxiomSubsection
+                  title="Disjoint Union Of"
+                  axioms={classDetails?.disjointUnionAxioms || item.disjointUnionAxioms}
+                  onAdd={() => {}}
+                  onEdit={(id, newDef) => handleEditDisjointUnion(id)}
+                  onDelete={(id) => handleDeleteDisjointUnion(id)}
+                  onAddClick={() => setIsDisjointUnionOpen(true)}
+                  onEditClick={(axiom) => handleEditDisjointUnion(axiom.id)}
+                  emptyMessage=""
+                  themeColor="yellow"
+                  properties={properties}
+                  dataProperties={dataProperties}
+                />
               </div>
             </div>
         )}
@@ -1586,6 +1598,31 @@ const ClassEditor: React.FC<{
         initialSelectedIds={editingInstanceId ? [editingInstanceId] : []}
         onAddIndividual={handleAddInstance}
         onDeleteIndividual={onDeleteIndividual}
+      />
+
+      {/* General Class Axiom (GCA) Editor Dialog - Simple text area like Protégé */}
+      <ClassExpressionDialog
+        isOpen={isGCAEditorOpen}
+        onClose={() => {
+          setIsGCAEditorOpen(false);
+          setEditingGCAId(undefined);
+        }}
+        onConfirm={handleGCAConfirm}
+        title={editingGCAId ? "Edit General Class Axiom" : "Add General Class Axiom"}
+        classHierarchy={classHierarchy}
+        expandedNodes={expandedNodes}
+        onToggleNode={onToggleNode}
+        objectProperties={properties || []}
+        dataProperties={dataProperties || []}
+        objectPropertiesTree={objectPropertyHierarchy}
+        dataPropertiesTree={dataPropertyHierarchy}
+        projectId={projectId}
+        onAddClass={onAddClass}
+        onDeleteClass={onDeleteClass}
+        onRefreshClasses={onRefreshClasses}
+        initialTab="classExpression"
+        allowedTabs={['classExpression']}
+        initialValue={editingGCAId ? classDetails?.generalClassAxioms?.find((a: Axiom) => a.id === editingGCAId)?.definition : undefined}
       />
 
       {/* IRI Editor Dialog */}

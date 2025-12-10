@@ -421,15 +421,18 @@ class OntoCodePanel {
             const fullUrl = `${GATEWAY_URL}${url}`;
             console.log(`[Proxy] ${type.replace('api', '').toUpperCase()}: ${fullUrl}`, isPublicEndpoint ? '(public)' : '(authenticated)');
 
+            // Set a timeout for requests (120 seconds for large ontologies)
+            const axiosConfig = { headers, timeout: 120_000 };
+
             switch (type) {
                 case 'apiGet':
-                    response = await axios.get(fullUrl, { headers, params: message.params });
+                    response = await axios.get(fullUrl, { ...axiosConfig, params: message.params });
                     break;
                 case 'apiPost':
-                    response = await axios.post(fullUrl, message.body, { headers });
+                    response = await axios.post(fullUrl, message.body, axiosConfig);
                     break;
                 case 'apiDelete':
-                    response = await axios.delete(fullUrl, { headers, params: message.params });
+                    response = await axios.delete(fullUrl, { ...axiosConfig, params: message.params });
                     break;
             }
 
@@ -604,8 +607,9 @@ class OntoCodePanel {
         }
 
         // 3. Let the webview know we're starting an upload
-        console.log(`[OntoCode] Notifying webview about pending upload for project: ${projectId}`);
-        this.postMessage({ type: 'showLoading', projectId });
+        console.log(`[OntoCode] 📢 Sending showLoading message to webview for project: ${projectId}`);
+        const showLoadingResult = this.postMessage({ type: 'showLoading', projectId });
+        console.log(`[OntoCode] 📢 showLoading message sent, result:`, showLoadingResult);
 
         try {
             // 4. Prepare the form data for multipart upload

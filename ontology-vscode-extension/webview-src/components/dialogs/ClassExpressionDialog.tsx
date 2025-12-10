@@ -395,9 +395,11 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
     console.log('[ClassExpressionDialog] handleConfirm called', {
       activeTab,
       selectedClass: selectedClass?.id,
+      selectedClassLabel: selectedClass?.label,
       selectedProperty: selectedProperty?.id,
       restrictionFiller: restrictionFiller?.id,
-      selectedDataProperty: selectedDataProperty?.id
+      selectedDataProperty: selectedDataProperty?.id,
+      manchesterExpression: manchesterExpression
     });
     
     let expression = '';
@@ -407,9 +409,11 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
       case 'hierarchy':
         if (selectedClass) {
           expression = selectedClass.id;
-          console.log('[ClassExpressionDialog] Hierarchy tab - selected class:', expression);
+          console.log('[ClassExpressionDialog] Hierarchy tab - selected class IRI:', expression, 'label:', selectedClass.label);
         } else {
           console.warn('[ClassExpressionDialog] Hierarchy tab - no class selected!');
+          alert('Please select a class from the hierarchy');
+          return; // Don't proceed if no class selected
         }
         break;
       case 'objectRestriction':

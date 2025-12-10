@@ -133,103 +133,112 @@ export const ontologyMutationService = {
   /**
    * Add SubClassOf axiom (applied immediately, not as draft)
    */
-  async addSubClassOf(projectId: string, classIri: string, superClassIri: string): Promise<void> {
+  async addSubClassOf(projectId: string, classIri: string, superClassIri: string, 
+                      userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'addSubClassOf',
       iri: classIri,
       target: superClassIri
-    }], false); // Apply immediately
+    }], false, userId, username); // Apply immediately with user info
   },
 
   /**
    * Delete SubClassOf axiom (applied immediately, not as draft)
    */
-  async deleteSubClassOf(projectId: string, classIri: string, superClassIri: string): Promise<void> {
+  async deleteSubClassOf(projectId: string, classIri: string, superClassIri: string,
+                         userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'deleteSubClassOf',
       iri: classIri,
       target: superClassIri
-    }], false); // Apply immediately
+    }], false, userId, username); // Apply immediately with user info
   },
 
   /**
    * Update SubClassOf axiom (replaces old target with new target in a single transaction)
    */
-  async updateSubClassOf(projectId: string, classIri: string, oldSuperClassIri: string, newSuperClassIri: string): Promise<void> {
+  async updateSubClassOf(projectId: string, classIri: string, oldSuperClassIri: string, newSuperClassIri: string,
+                         userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'updateSubClassOf',
       iri: classIri,
       value: oldSuperClassIri,  // old target
       target: newSuperClassIri   // new target
-    }], false); // Apply immediately
+    }], false, userId, username); // Apply immediately with user info
   },
 
   /**
    * Add EquivalentClass axiom (applied immediately, not as draft)
    */
-  async addEquivalentClass(projectId: string, classIri: string, equivalentClassIri: string): Promise<void> {
+  async addEquivalentClass(projectId: string, classIri: string, equivalentClassIri: string,
+                           userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'addEquivalentClass',
       iri: classIri,
       target: equivalentClassIri
-    }], false); // Apply immediately
+    }], false, userId, username); // Apply immediately with user info
   },
 
   /**
    * Delete EquivalentClass axiom (applied immediately, not as draft)
    */
-  async deleteEquivalentClass(projectId: string, classIri: string, equivalentClassIri: string): Promise<void> {
+  async deleteEquivalentClass(projectId: string, classIri: string, equivalentClassIri: string,
+                              userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'deleteEquivalentClass',
       iri: classIri,
       target: equivalentClassIri
-    }], false); // Apply immediately
+    }], false, userId, username); // Apply immediately with user info
   },
 
   /**
    * Update EquivalentClass axiom (replaces old target with new target in a single transaction)
    */
-  async updateEquivalentClass(projectId: string, classIri: string, oldEquivalentClassIri: string, newEquivalentClassIri: string): Promise<void> {
+  async updateEquivalentClass(projectId: string, classIri: string, oldEquivalentClassIri: string, newEquivalentClassIri: string,
+                              userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'updateEquivalentClass',
       iri: classIri,
       value: oldEquivalentClassIri,  // old target
       target: newEquivalentClassIri   // new target
-    }], false); // Apply immediately
+    }], false, userId, username); // Apply immediately with user info
   },
 
   /**
    * Add DisjointWith axiom (applied immediately, not as draft)
    */
-  async addDisjointWith(projectId: string, classIri: string, disjointClassIri: string): Promise<void> {
+  async addDisjointWith(projectId: string, classIri: string, disjointClassIri: string,
+                        userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'addDisjointWith',
       iri: classIri,
       target: disjointClassIri
-    }], false); // Apply immediately
+    }], false, userId, username); // Apply immediately with user info
   },
 
   /**
    * Delete DisjointWith axiom (applied immediately, not as draft)
    */
-  async deleteDisjointWith(projectId: string, classIri: string, disjointClassIri: string): Promise<void> {
+  async deleteDisjointWith(projectId: string, classIri: string, disjointClassIri: string,
+                           userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'deleteDisjointWith',
       iri: classIri,
       target: disjointClassIri
-    }], false); // Apply immediately
+    }], false, userId, username); // Apply immediately with user info
   },
 
   /**
    * Update DisjointWith axiom (replaces old target with new target in a single transaction)
    */
-  async updateDisjointWith(projectId: string, classIri: string, oldDisjointClassIri: string, newDisjointClassIri: string): Promise<void> {
+  async updateDisjointWith(projectId: string, classIri: string, oldDisjointClassIri: string, newDisjointClassIri: string,
+                           userId?: string, username?: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'updateDisjointWith',
       iri: classIri,
       value: oldDisjointClassIri,  // old target
       target: newDisjointClassIri   // new target
-    }], false); // Apply immediately
+    }], false, userId, username); // Apply immediately with user info
   },
 
   /**
@@ -585,12 +594,23 @@ export const ontologyMutationService = {
    * Add an axiom using Manchester Syntax (applied immediately, not as draft)
    * NOTE: Backend Manchester parser not yet implemented - complex expressions may not work
    */
-  async addAxiom(projectId: string, classIri: string, type: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith', expression: string): Promise<void> {
+  async addAxiom(projectId: string, classIri: string, type: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith' | 'GeneralClassAxiom', expression: string): Promise<void> {
     await this.applyMutations(projectId, [{
       type: 'addAxiom',
       classIri,
       target: expression, // We use 'target' for the expression
       value: type // We use 'value' for the axiom type
+    }], false); // Apply immediately
+  },
+
+  /**
+   * Delete an axiom by its ID (blank node ID for anonymous axioms)
+   * Used for deleting General Class Axioms, restrictions, etc.
+   */
+  async deleteAxiom(projectId: string, axiomId: string): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'deleteAxiom',
+      iri: axiomId
     }], false); // Apply immediately
   },
 
