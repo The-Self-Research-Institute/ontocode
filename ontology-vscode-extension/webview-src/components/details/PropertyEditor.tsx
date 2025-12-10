@@ -304,6 +304,7 @@ const PropertyEditor: React.FC<{
                                 onAddClick={onAddEquivalentClick}
                                 onDelete={prop => handleDeleteRelation('equivalent', prop)}
                                 themeColor={isObjectProperty ? 'blue' : 'green'}
+                                itemEntityType={isObjectProperty ? 'objectProperty' : 'dataProperty'}
                             />
 
                         <MultiSelectSection
@@ -312,6 +313,7 @@ const PropertyEditor: React.FC<{
                             onAddClick={onAddSubPropertyClick}
                             onDelete={prop => handleDeleteRelation('subProperty', prop)}
                             themeColor={isObjectProperty ? 'blue' : 'green'}
+                            itemEntityType={isObjectProperty ? 'objectProperty' : 'dataProperty'}
                         />
 
                         {isObjectProperty && (
@@ -321,6 +323,7 @@ const PropertyEditor: React.FC<{
                                 onAddClick={onAddInverseClick}
                                 onDelete={prop => handleDeleteRelation('inverse', prop)}
                                 themeColor="blue"
+                                itemEntityType="objectProperty"
                             />
                         )}
 
@@ -331,6 +334,7 @@ const PropertyEditor: React.FC<{
                             onAddClick={onAddDomainClick}
                             onDelete={domain => handleDeleteRelation('domain', domain)}
                             themeColor={isObjectProperty ? 'blue' : 'green'}
+                            itemEntityType="class"
                         />
                         )}
 
@@ -341,6 +345,7 @@ const PropertyEditor: React.FC<{
                             onAddClick={onAddRangeClick}
                             onDelete={range => handleDeleteRelation('range', range)}
                             themeColor={isObjectProperty ? 'blue' : 'green'}
+                            itemEntityType={isObjectProperty ? 'class' : 'datatype'}
                         />
                         )}
 
@@ -350,6 +355,7 @@ const PropertyEditor: React.FC<{
                             onAddClick={onAddDisjointClick}
                             onDelete={prop => handleDeleteRelation('disjoint', prop)}
                             themeColor={isObjectProperty ? 'blue' : 'green'}
+                            itemEntityType={isObjectProperty ? 'objectProperty' : 'dataProperty'}
                         />
 
                         {isObjectProperty && (

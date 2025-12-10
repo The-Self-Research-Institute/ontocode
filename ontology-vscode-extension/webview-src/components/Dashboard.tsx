@@ -980,6 +980,7 @@ const Dashboard = () => {
   const [hasFetchedProjects, setHasFetchedProjects] = useState(false);
   const [hasUserSelectedFile, setHasUserSelectedFile] = useState(false);
   const hasUserSelectedFileRef = useRef(false);
+  const webviewReadySentRef = useRef(false); // Track if we've sent webviewReady
   const [isExpectingFileReady, setIsExpectingFileReady] = useState(false); // Don't auto-load if expecting upload
   const pendingImportProjectIdRef = useRef<string | null>(null); // Track which project is being imported (using ref for persistence)
   const [showLoadingChoice, setShowLoadingChoice] = useState(false);
@@ -1749,11 +1750,10 @@ const Dashboard = () => {
   const isMountedRef = useRef(false);
   
   // Send 'webviewReady' to extension when mounted
+  // NOTE: This useEffect runs BEFORE the message listener is attached, 
+  // but the actual webviewReady signal is sent from the message listener useEffect
   useEffect(() => {
     isMountedRef.current = true;
-    if (window.vscode) {
-      window.vscode.postMessage({ type: 'webviewReady' });
-    }
     return () => {
       isMountedRef.current = false;
     };
@@ -1780,27 +1780,32 @@ const Dashboard = () => {
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
-      // Ignore messages until component is fully mounted
+      const message = event.data;
+      
+      // CRITICAL: Always handle showLoading even before mount - this is time-sensitive
+      // The extension sends showLoading right after file selection, before the webview may be fully ready
+      if (message.type === 'showLoading') {
+        console.log('[Dashboard] showLoading received - file upload starting for project:', message.projectId);
+        setHasUserSelectedFile(true);
+        hasUserSelectedFileRef.current = true;
+        pendingImportProjectIdRef.current = message.projectId; // Track which project is being imported
+        console.log('[Dashboard] Set pendingImportProjectIdRef.current to:', pendingImportProjectIdRef.current);
+        setIsExpectingFileReady(true);
+        // Show loading dialog immediately
+        setShowLoadingChoice(true);
+        setLoadingProjectName(message.projectId || 'Processing file upload...');
+        // Don't fetch projects yet - wait for upload to complete
+        return;
+      }
+      
+      // Ignore other messages until component is fully mounted
       if (!isMountedRef.current) {
         console.log('[Dashboard] Ignoring message before mount:', event.data.type);
         return;
       }
       
-      const message = event.data;
       console.log('[Dashboard] Received message:', message.type, message);
       switch (message.type) {
-        case "showLoading":
-          console.log('[Dashboard] showLoading received - file upload starting for project:', message.projectId);
-          setHasUserSelectedFile(true);
-          hasUserSelectedFileRef.current = true;
-          pendingImportProjectIdRef.current = message.projectId; // Track which project is being imported
-          console.log('[Dashboard] Set pendingImportProjectIdRef.current to:', pendingImportProjectIdRef.current);
-          setIsExpectingFileReady(true);
-          // Show loading dialog immediately
-          setShowLoadingChoice(true);
-          setLoadingProjectName(message.projectId || 'Processing file upload...');
-          // Don't fetch projects yet - wait for upload to complete
-          break;
         case "fileReady":
         case "fileLoaded":
           // Show loading choice dialog
@@ -1961,9 +1966,20 @@ const Dashboard = () => {
           break;
       }
     };
+    
+    console.log('[Dashboard] 📢 Attaching message listener');
     window.addEventListener("message", handleMessage);
+    
+    // CRITICAL: Send webviewReady AFTER listener is attached, but ONLY ONCE
+    // This ensures we receive any immediate messages (like showLoading) from the extension
+    if (window.vscode && !webviewReadySentRef.current) {
+      webviewReadySentRef.current = true;
+      console.log('[Dashboard] 📢 Sending webviewReady to extension (first time only)');
+      window.vscode.postMessage({ type: 'webviewReady' });
+    }
 
     return () => {
+      console.log('[Dashboard] 📢 Removing message listener');
       window.removeEventListener("message", handleMessage);
     };
   }, [visibleMainTabs, fetchData]);
@@ -2305,6 +2321,57 @@ const Dashboard = () => {
           refreshClassHierarchy();
           break;
           
+        // Handle equivalent class axiom changes
+        case 'EQUIVALENT_ADDED':
+        case 'EQUIVALENT_REMOVED':
+          console.log('[Dashboard] ⚖️ Equivalent class axiom changed, refreshing selected item:', edit);
+          // If the edit is for the currently selected class, refresh its details
+          if (selectedItem && selectedItem.id === (edit as any).nodeId) {
+            console.log('[Dashboard] Refreshing selected class details for equivalent axiom change');
+            // Use 1000ms delay to allow ClassEditor's 800ms refresh to complete first
+            setTimeout(() => {
+              apiClient.get(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(selectedItem.id)}`)
+                .then(response => {
+                  const details = response?.data?.data || response?.data || response;
+                  console.log('[Dashboard] ✅ Class details refreshed with equivalent axioms:', details);
+                  updateItemInState({
+                    ...selectedItem,
+                    equivalentClassesAxioms: details.equivalentClassesAxioms || []
+                  });
+                })
+                .catch(error => console.error('[Dashboard] Failed to refresh class details:', error));
+            }, 1000);
+          }
+          break;
+          
+        // Handle subclass axiom changes
+        case 'SUBCLASS_ADDED':
+        case 'SUBCLASS_REMOVED':
+          console.log('[Dashboard] ⬆️ Subclass axiom changed, refreshing selected item:', edit);
+          // If the edit is for the currently selected class, refresh its details
+          if (selectedItem && selectedItem.id === (edit as any).nodeId) {
+            console.log('[Dashboard] Refreshing selected class details for subclass axiom change');
+            // Use 1000ms delay to allow ClassEditor's 800ms refresh to complete first
+            setTimeout(() => {
+              apiClient.get(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(selectedItem.id)}`)
+                .then(response => {
+                  const details = response?.data?.data || response?.data || response;
+                  console.log('[Dashboard] ✅ Class details refreshed with subclass axioms:', details);
+                  updateItemInState({
+                    ...selectedItem,
+                    subClassOfAxioms: details.subClassOfAxioms || []
+                  });
+                  // Also refresh class hierarchy since parent relationships changed
+                  refreshClassHierarchy();
+                })
+                .catch(error => console.error('[Dashboard] Failed to refresh class details:', error));
+            }, 1000);
+          } else {
+            // Still refresh hierarchy for subclass changes
+            refreshClassHierarchy();
+          }
+          break;
+          
         default:
           console.log('[Dashboard] 🔄 Generic remote edit, refreshing metadata');
           // Generic refresh for other edit types
@@ -2629,8 +2696,8 @@ const Dashboard = () => {
           });
         }
         
-        // Auto-load installed plugins with loading state tracking
-        for (const plugin of installed) {
+        // Auto-load installed plugins in PARALLEL for better performance
+        const loadPluginPromises = installed.map(async (plugin) => {
           try {
             // Set loading state
             setPluginLoadingStates(prev => ({ ...prev, [plugin.id]: { loading: true, error: null } }));
@@ -2650,7 +2717,11 @@ const Dashboard = () => {
               [plugin.id]: { loading: false, error: error instanceof Error ? error.message : 'Failed to load plugin' } 
             }));
           }
-        }
+        });
+        
+        // Wait for all plugins to load in parallel
+        await Promise.all(loadPluginPromises);
+        console.log(`[Dashboard] All plugins loaded in parallel`);
       } catch (error) {
         console.error('[Dashboard] Failed to load installed plugins:', error);
       }

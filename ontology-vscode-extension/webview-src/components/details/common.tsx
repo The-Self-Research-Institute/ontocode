@@ -3,6 +3,178 @@ import { ChevronRight, ChevronDown, Plus, Trash2, Edit2, MessageCircle, HelpCirc
 import ManchesterSyntaxEditor from './ManchesterSyntaxEditor';
 import type { Axiom } from '../../types';
 
+// Protégé-style: Text is BLACK, only keywords are colored (magenta/pink)
+// Links are shown as underlined text for clickable entities
+const MANCHESTER_KEYWORDS = ['some', 'only', 'value', 'Self', 'min', 'max', 'exactly', 'and', 'or', 'not', 'that', 'inverse'];
+
+// Entity type icons - Protégé style bullets/shapes
+// Classes: yellow/orange filled circle, Object Properties: blue filled square, Data Properties: green filled square
+export const EntityIcon: React.FC<{ 
+  type: 'class' | 'objectProperty' | 'dataProperty' | 'individual' | 'datatype' | 'annotationProperty' | 'mixed';
+  size?: 'sm' | 'md';
+}> = ({ type, size = 'sm' }) => {
+  const sizeClass = size === 'sm' ? 'w-2.5 h-2.5' : 'w-3 h-3';
+  
+  switch (type) {
+    case 'class':
+      // Yellow/Orange filled circle for classes
+      return <span className={`inline-block ${sizeClass} rounded-full bg-amber-400 mr-1.5 flex-shrink-0`} />;
+    case 'objectProperty':
+      // Blue filled square for object properties
+      return <span className={`inline-block ${sizeClass} bg-blue-500 mr-1.5 flex-shrink-0`} />;
+    case 'dataProperty':
+      // Green filled square for data properties
+      return <span className={`inline-block ${sizeClass} bg-green-500 mr-1.5 flex-shrink-0`} />;
+    case 'individual':
+      // Purple diamond for individuals
+      return <span className={`inline-block ${sizeClass} bg-purple-500 mr-1.5 flex-shrink-0 rotate-45`} />;
+    case 'datatype':
+      // Red filled circle for datatypes
+      return <span className={`inline-block ${sizeClass} rounded-full bg-red-500 mr-1.5 flex-shrink-0`} />;
+    case 'annotationProperty':
+      // Light blue square for annotation properties
+      return <span className={`inline-block ${sizeClass} bg-sky-400 mr-1.5 flex-shrink-0`} />;
+    case 'mixed':
+      // Mixed: half blue, half green (for mixed property lists)
+      return (
+        <span className={`inline-flex mr-1.5 flex-shrink-0`}>
+          <span className={`inline-block w-1.5 h-2.5 bg-blue-500`} />
+          <span className={`inline-block w-1.5 h-2.5 bg-green-500`} />
+        </span>
+      );
+    default:
+      return <span className={`inline-block ${sizeClass} rounded-full bg-gray-400 mr-1.5 flex-shrink-0`} />;
+  }
+};
+
+// Determine entity type from axiom properties
+const getEntityTypeFromAxiom = (axiom: Axiom, dataProperties: any[] = [], properties: any[] = []): 'class' | 'objectProperty' | 'dataProperty' | 'individual' | 'datatype' | 'mixed' => {
+  // Check if this is an instance/individual
+  if (axiom.type === 'Instance') {
+    return 'individual';
+  }
+  
+  const isRestriction = axiom.isRestriction === true || axiom.isRestriction === 'true';
+  
+  // Check if this is a HasKey axiom with properties array
+  if (axiom.type === 'HasKey' && (axiom as any).properties && Array.isArray((axiom as any).properties)) {
+    const propsArray = (axiom as any).properties as string[];
+    // Check if all properties are data properties or object properties
+    const hasDataProp = propsArray.some(p => dataProperties.some(dp => dp.id === p));
+    const hasObjProp = propsArray.some(p => properties.some(op => op.id === p) || !dataProperties.some(dp => dp.id === p));
+    
+    if (hasDataProp && hasObjProp) return 'mixed';
+    if (hasDataProp) return 'dataProperty';
+    return 'objectProperty';
+  }
+  
+  if (isRestriction && axiom.propertyIri) {
+    // Check if it's a data property restriction
+    const isDataProp = axiom.propertyIri === 'http://www.w3.org/2002/07/owl#topDataProperty' 
+      || dataProperties.some(p => p.id === axiom.propertyIri);
+    return isDataProp ? 'dataProperty' : 'objectProperty';
+  }
+  
+  // Check if the axiom references a datatype (xsd: prefix or similar)
+  if (axiom.definition && (axiom.definition.includes('xsd:') || axiom.definition.includes('XMLSchema'))) {
+    return 'datatype';
+  }
+  
+  // Default to class
+  return 'class';
+};
+
+// Parse and colorize axiom definition - Protégé style
+// Text is BLACK, only keywords (some, and, or, etc.) are MAGENTA/PINK
+// Property names in restrictions can be shown as links (underlined)
+const ColorizedAxiomDefinition: React.FC<{
+  definition: string;
+  axiom: Axiom;
+  properties?: any[];
+  dataProperties?: any[];
+  onNavigate?: (iri: string, type: string) => void; // For clickable links
+}> = ({ definition, axiom, properties = [], dataProperties = [], onNavigate }) => {
+  // Tokenize and colorize: only keywords get color, everything else is black
+  // This matches Protégé's style exactly
+  
+  const isRestriction = axiom.isRestriction === true || axiom.isRestriction === 'true';
+  
+  // For restrictions, we can make the property name a link
+  if (isRestriction && axiom.propertyIri) {
+    const parts = definition.split(' ');
+    
+    if (parts.length >= 3) {
+      const keywordIndex = parts.findIndex(p => MANCHESTER_KEYWORDS.includes(p.toLowerCase()));
+      
+      if (keywordIndex > 0) {
+        const propertyParts = parts.slice(0, keywordIndex);
+        const keyword = parts[keywordIndex];
+        const fillerParts = parts.slice(keywordIndex + 1);
+        
+        return (
+          <span className="font-bold text-gray-900">
+            {/* Property name - can be a link */}
+            <span 
+              className={onNavigate ? "text-fuchsia-600 underline cursor-pointer hover:text-fuchsia-800" : "text-gray-900"}
+              onClick={onNavigate ? () => onNavigate(axiom.propertyIri!, 'property') : undefined}
+              title={axiom.propertyIri}
+            >
+              '{propertyParts.join(' ')}'
+            </span>
+            {' '}
+            {/* Keyword in magenta/pink - bold */}
+            <span className="text-fuchsia-600 font-bold">{keyword}</span>
+            {' '}
+            {/* Filler class/datatype - black text */}
+            <span className="text-gray-900">'{fillerParts.join(' ')}'</span>
+          </span>
+        );
+      }
+    }
+  }
+  
+  // For all other definitions, parse and colorize keywords only
+  // Split by word boundaries while preserving structure
+  const result: React.ReactNode[] = [];
+  let keyIndex = 0;
+  
+  // Use regex to find keywords and split around them
+  const keywordRegex = new RegExp(`\\b(${MANCHESTER_KEYWORDS.join('|')})\\b`, 'gi');
+  let lastIndex = 0;
+  let match;
+  
+  while ((match = keywordRegex.exec(definition)) !== null) {
+    // Add text before the keyword (black)
+    if (match.index > lastIndex) {
+      const beforeText = definition.slice(lastIndex, match.index);
+      result.push(
+        <span key={`text-${keyIndex++}`} className="text-gray-900 font-bold">{beforeText}</span>
+      );
+    }
+    
+    // Add the keyword (magenta/pink, bold)
+    result.push(
+      <span key={`kw-${keyIndex++}`} className="text-fuchsia-600 font-bold">{match[0]}</span>
+    );
+    
+    lastIndex = keywordRegex.lastIndex;
+  }
+  
+  // Add remaining text after last keyword (black)
+  if (lastIndex < definition.length) {
+    result.push(
+      <span key={`text-${keyIndex++}`} className="text-gray-900 font-bold">{definition.slice(lastIndex)}</span>
+    );
+  }
+  
+  // If no keywords found, just return the definition in black
+  if (result.length === 0) {
+    return <span className="text-gray-900 font-bold">{definition}</span>;
+  }
+  
+  return <span>{result}</span>;
+};
+
 export const AxiomRow: React.FC<{
   axiom: Axiom;
   onDelete: (id: string) => void;
@@ -92,11 +264,19 @@ export const AxiomRow: React.FC<{
         </div>
       ) : (
         <>
-          <div className={`text-sm font-mono text-gray-800 break-all leading-relaxed ${isInActiveOntology ? 'font-bold' : ''}`}>
-            {axiom.definition}
-            {isInferred && (
-              <span className="ml-2 text-[10px] bg-yellow-200 text-yellow-800 px-1.5 py-0.5 rounded">Inferred</span>
-            )}
+          <div className={`flex items-start text-sm break-all leading-relaxed ${isInActiveOntology ? 'font-bold' : ''}`}>
+            <EntityIcon type={getEntityTypeFromAxiom(axiom, dataProperties, properties)} />
+            <div className="flex-1">
+              <ColorizedAxiomDefinition 
+                definition={axiom.definition}
+                axiom={axiom}
+                properties={properties}
+                dataProperties={dataProperties}
+              />
+              {isInferred && (
+                <span className="ml-2 text-[10px] bg-yellow-200 text-yellow-800 px-1.5 py-0.5 rounded">Inferred</span>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-1 ml-2">
             {/* Explain Inference button */}
@@ -530,8 +710,8 @@ export const Panel = ({
 export const MultiSelectItem: React.FC<{
   item: string;
   onDelete: (item: string) => void;
-  entityType?: 'class' | 'property' | 'datatype' | 'annotationProperty';
-  themeColor?: 'blue' | 'green' | 'orange' | 'yellow';
+  entityType?: 'class' | 'objectProperty' | 'dataProperty' | 'datatype' | 'annotationProperty' | 'individual';
+  themeColor?: 'blue' | 'green' | 'orange' | 'yellow' | 'purple';
 }> = ({ item, onDelete, entityType, themeColor = 'blue' }) => {
     // Check if this is an inverse property expression
     const inverseMatch = item.match(/^inverse\((.+)\)$/i);
@@ -562,86 +742,93 @@ export const MultiSelectItem: React.FC<{
     
     const displayName = getDisplayName(propertyIri);
     
-    // Detect entity type from IRI/content if not provided
+    // Detect entity type from themeColor if not provided
+    // blue = objectProperty, green = dataProperty, yellow/orange = class, purple = individual
     let detectedType = entityType;
     if (!detectedType) {
         if (item.includes('XMLSchema#') || item.includes('rdf-syntax-ns#') || item.includes('rdf-schema#') || 
             item.startsWith('xsd:') || item.startsWith('rdf:') || item.startsWith('rdfs:') ||
             item.includes('Literal') || item.includes('PlainLiteral') || item.includes('XMLLiteral')) {
             detectedType = 'datatype';
-        } else if (item.includes('owl#') && (item.includes('AnnotationProperty') || item.includes('deprecated') || item.includes('versionInfo'))) {
-            detectedType = 'annotationProperty';
-        } else if (item.includes('ObjectProperty') || item.includes('DataProperty') || item.includes('topObjectProperty') || item.includes('topDataProperty')) {
-            detectedType = 'property';
+        } else if (themeColor === 'blue') {
+            detectedType = 'objectProperty';
+        } else if (themeColor === 'green') {
+            detectedType = 'dataProperty';
+        } else if (themeColor === 'purple') {
+            detectedType = 'individual';
         } else {
             detectedType = 'class';
         }
     }
     
-    // Property icon color based on theme
-    const propertyIconColor = themeColor === 'green' ? 'bg-green-500' : themeColor === 'orange' ? 'bg-orange-500' : 'bg-blue-500';
-    
-    // Icon based on entity type
+    // Icon based on entity type - matches Protégé style
+    // Classes: yellow/orange circle, ObjectProperties: blue square, DataProperties: green square
+    // Individuals: purple diamond, Datatypes: red circle
     const getIcon = () => {
         switch (detectedType) {
+            case 'objectProperty':
+                return <span className="w-2.5 h-2.5 bg-blue-500 mr-1 flex-shrink-0" title="Object Property" />;
+            case 'dataProperty':
+                return <span className="w-2.5 h-2.5 bg-green-500 mr-1 flex-shrink-0" title="Data Property" />;
             case 'datatype':
-                return <span className="w-3 h-3 bg-red-600 rounded-full flex-shrink-0" />;
+                return <span className="w-2.5 h-2.5 bg-red-500 rounded-full mr-1 flex-shrink-0" title="Datatype" />;
+            case 'individual':
+                return <span className="w-2.5 h-2.5 bg-purple-500 rotate-45 mr-1 flex-shrink-0" title="Individual" />;
             case 'annotationProperty':
-                return <Tag size={12} className="text-orange-500 flex-shrink-0" />;
-            case 'property':
-                return <span className={`w-3 h-3 ${propertyIconColor} rounded-sm flex-shrink-0`} />;
+                return <span className="w-2.5 h-2.5 bg-sky-400 mr-1 flex-shrink-0" title="Annotation Property" />;
             case 'class':
             default:
-                return <span className="w-3 h-3 bg-amber-400 rounded-full flex-shrink-0" />;
+                return <span className="w-2.5 h-2.5 bg-amber-400 rounded-full mr-1 flex-shrink-0" title="Class" />;
         }
     };
     
-    // Format restriction expression with colored keywords
+    // Format restriction expression with colored keywords (text is black, keywords are magenta)
     const formatRestrictionExpression = (expr: string): React.ReactNode => {
         // Split by restriction keywords and color them
         const parts: React.ReactNode[] = [];
-        let remaining = expr;
         let keyIndex = 0;
         
         // Find and replace keywords with colored versions
-        const regex = /\b(some|only|min|max|exactly|value|and|or|not)\b/gi;
+        const regex = /\b(some|only|min|max|exactly|value|and|or|not|inverse)\b/gi;
         let lastIndex = 0;
         let match;
         
         while ((match = regex.exec(expr)) !== null) {
-            // Add text before the keyword
+            // Add text before the keyword (BLACK)
             if (match.index > lastIndex) {
-                parts.push(<span key={`text-${keyIndex++}`} className="text-gray-800">{expr.slice(lastIndex, match.index)}</span>);
+                parts.push(<span key={`text-${keyIndex++}`} className="text-gray-900">{expr.slice(lastIndex, match.index)}</span>);
             }
-            // Add the colored keyword
-            parts.push(<span key={`kw-${keyIndex++}`} className="text-fuchsia-600 font-medium">{match[0]}</span>);
+            // Add the colored keyword (MAGENTA/PINK)
+            parts.push(<span key={`kw-${keyIndex++}`} className="text-fuchsia-600 font-bold">{match[0]}</span>);
             lastIndex = regex.lastIndex;
         }
-        // Add remaining text
+        // Add remaining text (BLACK)
         if (lastIndex < expr.length) {
-            parts.push(<span key={`text-${keyIndex++}`} className="text-gray-800">{expr.slice(lastIndex)}</span>);
+            parts.push(<span key={`text-${keyIndex++}`} className="text-gray-900">{expr.slice(lastIndex)}</span>);
         }
         
         return parts.length > 0 ? parts : expr;
     };
     
     // Hover background color based on theme
-    const hoverBgColor = themeColor === 'green' ? 'hover:bg-green-50' : themeColor === 'orange' ? 'hover:bg-orange-50' : 'hover:bg-blue-50';
+    const hoverBgColor = themeColor === 'green' ? 'hover:bg-green-50' : themeColor === 'orange' ? 'hover:bg-orange-50' : themeColor === 'purple' ? 'hover:bg-purple-50' : 'hover:bg-blue-50';
     
     return (
         <div className={`group flex justify-between items-center bg-white p-1.5 border-b border-gray-100 last:border-0 ${hoverBgColor} transition-colors`}>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center">
                 {/* Entity type icon */}
                 {getIcon()}
                 {isInverse ? (
-                    <span className="text-sm">
-                        <span className={themeColor === 'green' ? 'text-green-600' : themeColor === 'orange' ? 'text-orange-600' : 'text-blue-600'}>inverse</span>
-                        <span className="text-gray-600"> ('{displayName}')</span>
+                    <span className="text-sm font-bold text-gray-900">
+                        <span className="text-fuchsia-600 font-bold">inverse</span>
+                        <span className="text-gray-900">(</span>
+                        <span className="text-gray-900">'{displayName}'</span>
+                        <span className="text-gray-900">)</span>
                     </span>
                 ) : isRestrictionExpression ? (
-                    <span className="text-sm">{formatRestrictionExpression(item)}</span>
+                    <span className="text-sm font-bold">{formatRestrictionExpression(item)}</span>
                 ) : (
-                    <span className="text-sm text-gray-800">'{displayName}'</span>
+                    <span className="text-sm font-bold text-gray-900">'{displayName}'</span>
                 )}
             </div>
             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
@@ -684,21 +871,22 @@ export const MultiSelectSection: React.FC<{
     items: string[] | undefined;
     onAddClick?: () => void;
     onDelete: (item: string) => void;
-    themeColor?: 'blue' | 'green' | 'orange' | 'yellow'; // For different property types
-}> = ({ title, items, onAddClick, onDelete, themeColor = 'blue' }) => {
+    themeColor?: 'blue' | 'green' | 'orange' | 'yellow' | 'purple'; // For header styling
+    itemEntityType?: 'class' | 'objectProperty' | 'dataProperty' | 'datatype' | 'individual'; // For item icons
+}> = ({ title, items, onAddClick, onDelete, themeColor = 'blue', itemEntityType }) => {
     const [isSelected, setIsSelected] = useState(false);
     
-    // Clean minimal theme colors
+    // Clean minimal theme colors - Protégé-style
     const themes = {
         blue: {
-            headerBg: 'bg-blue-50 border-l-2 border-l-blue-400',
+            headerBg: 'bg-blue-50 border-l-2 border-l-blue-500',
             headerText: 'text-stone-700',
             hoverBg: 'hover:bg-blue-100',
             selectedBg: 'bg-blue-100',
             plusColor: 'text-stone-400 hover:text-blue-600'
         },
         green: {
-            headerBg: 'bg-emerald-50 border-l-2 border-l-emerald-400',
+            headerBg: 'bg-emerald-50 border-l-2 border-l-emerald-500',
             headerText: 'text-stone-700',
             hoverBg: 'hover:bg-emerald-100',
             selectedBg: 'bg-emerald-100',
@@ -717,6 +905,13 @@ export const MultiSelectSection: React.FC<{
             hoverBg: 'hover:bg-amber-100',
             selectedBg: 'bg-amber-100',
             plusColor: 'text-stone-400 hover:text-amber-600'
+        },
+        purple: {
+            headerBg: 'bg-purple-50 border-l-2 border-l-purple-400',
+            headerText: 'text-stone-700',
+            hoverBg: 'hover:bg-purple-100',
+            selectedBg: 'bg-purple-100',
+            plusColor: 'text-stone-400 hover:text-purple-600'
         }
     };
     
@@ -752,7 +947,7 @@ export const MultiSelectSection: React.FC<{
              {/* Content area */}
              <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm overflow-hidden">
                  {items && items.length > 0 ? (
-                    items.map(item => <MultiSelectItem key={item} item={item} onDelete={onDelete} themeColor={themeColor} />)
+                    items.map(item => <MultiSelectItem key={item} item={item} onDelete={onDelete} themeColor={themeColor} entityType={itemEntityType} />)
                  ) : (
                     <div className="p-2 text-xs text-gray-400 italic">
                         {/* Empty - matches Protégé's minimal empty state */}
