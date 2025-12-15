@@ -18,7 +18,7 @@ import IndividualEditor from './details/IndividualEditor';
 import DatatypeEditor from './details/DatatypeEditor';
 import AnnotationPropertyEditor from './details/AnnotationPropertyEditor';
 import { Panel, AnnotationsDisplay } from './details/common';
-import SparqlQueryEditor from './SparqlQueryEditor';
+// SparqlQueryEditor moved to plugin: sparql-query-plugin
 import { ProjectSelector } from './ProjectSelector';
 import CollaborationPanel, { CollaborationPanelRef } from './CollaborationPanel';
 import HistoryPanel from './HistoryPanel';
@@ -49,6 +49,7 @@ import { useEntityPreferences } from '../contexts/EntityPreferencesContext';
 import { CodeHighlighter } from './CodeHighlighter';
 import { PluginMarketplace } from './PluginMarketplace';
 import { pluginLoader } from '../services/pluginLoader';
+import DLQueryPanel from './DLQueryPanel';
 
 type TopLevelClass = TreeNode & { hasChildren: boolean };
 
@@ -1077,7 +1078,8 @@ const Dashboard = () => {
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
   const [showCollaborationPanel, setShowCollaborationPanel] = useState(false);
 
-  const [visibleMainTabs, setVisibleMainTabs] = useState(['ActiveOntology', 'Entities', 'IndividualsByClass', 'DLQuery', 'CodeView', 'SPARQL']);
+  // Plugin tabs (SPARQL, SWRL, Fuzzy, Changes, Graph) are added dynamically when plugins are installed
+  const [visibleMainTabs, setVisibleMainTabs] = useState(['ActiveOntology', 'Entities', 'IndividualsByClass', 'DLQuery', 'CodeView']);
   const [showPluginMarketplace, setShowPluginMarketplace] = useState(false);
   const [installedPlugins, setInstalledPlugins] = useState<Set<string>>(new Set());
   const [pluginLoadingStates, setPluginLoadingStates] = useState<Record<string, { loading: boolean; error: string | null }>>({});
@@ -1113,7 +1115,8 @@ const Dashboard = () => {
         'swrl-editor-plugin': 'SWRL',
         'graph-view-plugin': 'Graph',
         'fuzzy-ontology-plugin': 'Fuzzy',
-        'change-assistant-plugin': 'Changes'
+        'change-assistant-plugin': 'Changes',
+        'sparql-query-plugin': 'SPARQL'
       };
       
       const tabId = pluginToTabMap[pluginId];
@@ -1188,7 +1191,8 @@ const Dashboard = () => {
         'swrl-editor-plugin': 'SWRL',
         'graph-view-plugin': 'Graph',
         'fuzzy-ontology-plugin': 'Fuzzy',
-        'change-assistant-plugin': 'Changes'
+        'change-assistant-plugin': 'Changes',
+        'sparql-query-plugin': 'SPARQL'
       };
       
       const tabId = pluginToTabMap[pluginId];
@@ -2678,7 +2682,8 @@ const Dashboard = () => {
           'swrl-editor-plugin': 'SWRL',
           'graph-view-plugin': 'Graph',
           'fuzzy-ontology-plugin': 'Fuzzy',
-          'change-assistant-plugin': 'Changes'
+          'change-assistant-plugin': 'Changes',
+          'sparql-query-plugin': 'SPARQL'
         };
         
         const tabsToShow = pluginIds
@@ -4283,8 +4288,50 @@ const Dashboard = () => {
             </div>
           </div>
         );
-      case 'SPARQL':
-        return <SparqlQueryEditor projectId={projectId!} prefixes={(metadata as any)?.prefixes || []} />;
+      case 'SPARQL': {
+        // Use dynamically loaded SPARQL Query Plugin
+        const sparqlPlugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === 'sparql-query-plugin');
+        const sparqlLoadingState = pluginLoadingStates['sparql-query-plugin'];
+        
+        if (sparqlPlugin?.component && projectId) {
+          const SparqlPluginComponent = sparqlPlugin.component;
+          return (
+            <SparqlPluginComponent 
+              projectId={projectId} 
+              prefixes={(metadata as any)?.prefixes || []}
+              context={{
+                apiClient,
+                showNotification: (msg: string, type: 'info' | 'success' | 'warning' | 'error') => {
+                  console.log(`[${type}] ${msg}`);
+                }
+              }}
+            />
+          );
+        }
+        
+        return (
+          <PluginPlaceholder
+            pluginId="sparql-query-plugin"
+            pluginName="SPARQL Query Editor"
+            description="Full-featured SPARQL query editor with syntax highlighting, query management, CSV export, and live results."
+            icon={<DatabaseZap size={32} className="text-white" />}
+            features={[
+              "Query management (save/load)",
+              "Sample queries library",
+              "Live query execution",
+              "Results in table or JSON",
+              "CSV/JSON export",
+              "Prefix management"
+            ]}
+            accentColor="from-purple-500 via-indigo-500 to-blue-600"
+            onInstall={() => handleInstallPlugin('sparql-query-plugin')}
+            onRetryLoad={() => handleRetryLoadPlugin('sparql-query-plugin')}
+            isInstalled={installedPlugins.has('sparql-query-plugin')}
+            isLoading={sparqlLoadingState?.loading || false}
+            error={sparqlLoadingState?.error}
+          />
+        );
+      }
       case 'Graph': {
         // Use dynamically loaded Graph View Plugin
         const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === 'graph-view-plugin');
@@ -4600,57 +4647,76 @@ const Dashboard = () => {
         );
       }
       case 'DLQuery':
+        // Built-in OWL IRIs to exclude from counts
+        const builtInIris = new Set([
+          'http://www.w3.org/2002/07/owl#Thing',
+          'http://www.w3.org/2002/07/owl#topObjectProperty',
+          'http://www.w3.org/2002/07/owl#topDataProperty'
+        ]);
+        
+        // Flatten the class hierarchy tree to get all classes (excluding owl:Thing)
+        const flattenClassHierarchy = (nodes: TreeNode[]): { id: string; label: string }[] => {
+          const result: { id: string; label: string }[] = [];
+          const traverse = (nodeList: TreeNode[]) => {
+            for (const node of nodeList) {
+              if (!builtInIris.has(node.id)) {
+                result.push({ id: node.id, label: node.label });
+              }
+              if (node.children && node.children.length > 0) {
+                traverse(node.children);
+              }
+            }
+          };
+          traverse(nodes);
+          return result;
+        };
+        
+        // Flatten the property hierarchy tree (excluding owl:topObjectProperty/topDataProperty)
+        const flattenPropertyHierarchy = (nodes: Property[]): { id: string; label: string }[] => {
+          const result: { id: string; label: string }[] = [];
+          const traverse = (nodeList: any[]) => {
+            for (const node of nodeList) {
+              if (!builtInIris.has(node.id)) {
+                result.push({ id: node.id, label: node.label });
+              }
+              if (node.children && node.children.length > 0) {
+                traverse(node.children);
+              }
+            }
+          };
+          traverse(nodes);
+          return result;
+        };
+        
         return (
-          <div className="flex h-full">
-            <main className="flex-1 flex flex-col p-2 bg-gray-50">
-              <div className="border bg-white p-2">
-                <h3 className="text-xs font-semibold mb-2">Query (class expression)</h3>
-                <textarea value={dlQuery} onChange={e => setDlQuery(e.target.value)} className="w-full h-24 border p-1 font-mono text-sm focus:ring-1 focus:ring-purple-500 text-black"></textarea>
-                <div className="flex gap-2 mt-2">
-                  <button onClick={handleExecuteDlQuery} disabled={isDlQueryLoading} className="px-3 py-1 bg-purple-600 text-white text-xs rounded hover:bg-purple-700 disabled:bg-purple-300 flex items-center gap-2">
-                    {isDlQueryLoading ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-                    Execute
-                  </button>
-                  <button onClick={handleAddDlToOntology} className="px-3 py-1 bg-gray-200 text-xs rounded hover:bg-gray-300">Add to ontology</button>
-                </div>
-              </div>
-              <div className="border bg-white p-2 mt-2 flex-1">
-                <h3 className="text-xs font-semibold mb-2">Query results</h3>
-                {isDlQueryLoading ? (
-                  <div className="flex items-center justify-center h-full text-gray-500 text-sm">
-                    <Loader2 size={20} className="animate-spin mr-2" />
-                    Executing query...
-                  </div>
-                ) : dlQueryResults ? (
-                  dlQueryResults.length > 0 ? (
-                    <div className="overflow-y-auto h-full">
-                      {dlQueryResults.map(res => <div key={res} className="p-1 text-sm">{res}</div>)}
-                    </div>
-                  ) : (
-                    <div className="p-2 text-sm text-gray-400 italic h-full">No results found.</div>
-                  )
-                ) : (
-                  <div className="p-2 text-sm text-gray-400 italic h-full">Query results will appear here.</div>
-                )}
-              </div>
-            </main>
-            <aside className="w-64 bg-white border-l p-2 space-y-4">
-              <div>
-                <h3 className="text-xs font-semibold mb-1">Query for</h3>
-                <div className="space-y-1 text-xs">
-                  {['Direct superclasses', 'Superclasses', 'Equivalent classes', 'Direct subclasses', 'Subclasses', 'Instances'].map(item => (
-                    <label key={item} className="flex items-center gap-2">
-                      <input type="checkbox" defaultChecked={item === 'Subclasses'} /> {item}
-                    </label>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <h3 className="text-xs font-semibold mb-1">Result filters</h3>
-                <input type="text" placeholder="Name contains" className="w-full border px-2 py-1 text-xs" />
-              </div>
-            </aside>
-          </div>
+          <DLQueryPanel
+            projectId={projectId || ''}
+            classes={flattenClassHierarchy(classHierarchy)}
+            objectProperties={flattenPropertyHierarchy(objectPropertyHierarchy)}
+            dataProperties={flattenPropertyHierarchy(dataPropertyHierarchy)}
+            individuals={individuals.map(i => ({ id: i.id, label: i.label }))}
+            metrics={{
+              classCount: (metadata as any)?.classCount,
+              objectPropertyCount: (metadata as any)?.objectPropertyCount,
+              dataPropertyCount: (metadata as any)?.dataPropertyCount,
+              individualCount: (metadata as any)?.individualCount
+            }}
+            apiClient={apiClient}
+            onAddToOntology={async (expression, className) => {
+              try {
+                await apiClient.post(`/api/ontology/${projectId}/dl/add`, { 
+                  expression, 
+                  className,
+                  userEmail: user?.email || 'anonymous'
+                });
+                showToast(`Created class "${className}"`, 'success');
+              } catch (e) {
+                console.warn("DL add endpoint not available");
+                showToast(`Class creation simulated: ${className}`, 'info');
+              }
+            }}
+            showNotification={(message, type) => showToast(message, type)}
+          />
         );
       default:
         return <div className="p-6 text-gray-400">Select a tab</div>;

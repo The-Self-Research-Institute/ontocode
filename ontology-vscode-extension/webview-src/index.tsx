@@ -1,15 +1,13 @@
 
 // Load D3 globally first for plugins
 import './d3-global';
+// Setup global variables for UMD plugins FIRST (before any other imports that might use React)
+import './setupGlobals';
 
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import { AuthProvider } from './contexts/AuthContexts';
-
-// Expose React and ReactDOM globally for UMD plugins
-(window as any).React = React;
-(window as any).ReactDOM = ReactDOM;
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
