@@ -53,6 +53,7 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .csrf(AbstractHttpConfigurer::disable) // Disable CSRF for stateless API
+                .cors(cors -> cors.configurationSource(corsConfigurationSource())) // Enable CORS
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/api/auth/**").permitAll() // Allow public access to auth endpoints
                         .anyRequest().authenticated() // All other requests require authentication (will be handled by gateway)
@@ -62,5 +63,39 @@ public class SecurityConfig {
         return http.build();
     }
 
+    /**
+     * CORS Configuration
+     * Allows cross-origin requests from frontend applications
+     */
+    @Bean
+    public UrlBasedCorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration configuration = new CorsConfiguration();
+        
+        // Allow requests from common development origins and production
+        configuration.setAllowedOrigins(Arrays.asList(
+            "http://localhost:3000",           // React dev server
+            "http://localhost:5173",           // Vite dev server
+            "http://localhost:8082",           // Gateway
+            "vscode-webview://*",              // VS Code webview
+            "*"                                // Allow all for development (remove in production)
+        ));
+        
+        // Allow all HTTP methods
+        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
+        
+        // Allow all headers
+        configuration.setAllowedHeaders(Arrays.asList("*"));
+        
+        // Allow credentials (cookies, authorization headers)
+        configuration.setAllowCredentials(true);
+        
+        // Cache preflight response for 1 hour
+        configuration.setMaxAge(3600L);
+        
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", configuration);
+        
+        return source;
+    }
 
 }
