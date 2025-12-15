@@ -110,6 +110,41 @@ const DEFAULT_PLUGINS = [
     totalRatings: 0,
     createdAt: new Date(),
     updatedAt: new Date()
+  },
+  {
+    pluginId: 'sparql-query-plugin',
+    name: 'SPARQL Query Editor',
+    shortDescription: 'Full-featured SPARQL query editor with syntax highlighting and query execution',
+    description: `The SPARQL Query Editor plugin provides a powerful interface for querying ontologies using the SPARQL query language.
+
+Features:
+- **Syntax Highlighting**: Full SPARQL syntax highlighting for better readability
+- **Query Execution**: Execute queries directly against GraphDB
+- **Results Display**: View query results in a formatted table
+- **Query History**: Access previously executed queries
+- **Auto-completion**: Smart auto-completion for SPARQL keywords and prefixes
+
+Perfect for users who need to:
+- Query ontologies using SPARQL
+- Analyze ontology data with complex queries
+- Debug and test SPARQL queries
+- Export query results`,
+    latestVersion: '1.0.0',
+    category: 'Query',
+    author: 'OntoCode Team',
+    authorEmail: 'admin@ontocode.com',
+    keywords: ['sparql', 'query', 'ontology', 'graphdb', 'rdf', 'owl', 'semantic-web', 'triplestore', 'database'],
+    icon: null,
+    screenshots: [],
+    verified: true,
+    active: true,
+    featured: true,
+    totalDownloads: 0,
+    totalInstalls: 0,
+    averageRating: 0.0,
+    totalRatings: 0,
+    createdAt: new Date(),
+    updatedAt: new Date()
   }
 ];
 

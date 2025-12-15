@@ -76,11 +76,11 @@
             <artifactId>owlapi-distribution</artifactId>
         </dependency>
         
-        <!-- HermiT Reasoner -->
+        <!-- Openllet Reasoner (OWLAPI 5.x compatible replacement for HermiT) -->
         <dependency>
-            <groupId>net.sourceforge.owlapi</groupId>
-            <artifactId>org.semanticweb.hermit</artifactId>
-            <version>1.4.5.456</version>
+            <groupId>com.github.galigator.openllet</groupId>
+            <artifactId>openllet-owlapi</artifactId>
+            <version>2.6.5</version>
         </dependency>
         
         <!-- ========== ECLIPSE RDF4J (GraphDB) ========== -->
@@ -151,11 +151,6 @@
             <groupId>com.fasterxml.jackson.datatype</groupId>
             <artifactId>jackson-datatype-jsr310</artifactId>
             <version>2.17.0</version>
-        </dependency>
-        <dependency>
-            <groupId>com.github.galigator.openllet</groupId>
-            <artifactId>openllet-owlapi</artifactId>
-            <version>2.6.5</version>
         </dependency>
         
         <!-- ========== UTILITIES ========== -->
