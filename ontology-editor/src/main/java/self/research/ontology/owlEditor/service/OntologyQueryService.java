@@ -107,13 +107,13 @@ public class OntologyQueryService {
         // Simplified query that reliably finds all explicitly typed properties
         String query = PREFIXES + """
             SELECT ?prop (SAMPLE(?lbl) AS ?label) (SAMPLE(?cmt) AS ?description) ?kind
-                   (GROUP_CONCAT(DISTINCT ?domain; SEPARATOR="|") AS ?domains)
-                   (GROUP_CONCAT(DISTINCT ?range; SEPARATOR="|") AS ?ranges)
-                   (GROUP_CONCAT(DISTINCT ?super; SEPARATOR="|") AS ?superProperties)
-                   (GROUP_CONCAT(DISTINCT ?inverse; SEPARATOR="|") AS ?inverseProperties)
-                   (GROUP_CONCAT(DISTINCT ?disjoint; SEPARATOR="|") AS ?disjointProperties)
-                   (GROUP_CONCAT(DISTINCT ?equiv; SEPARATOR="|") AS ?equivalentProperties)
-                   (GROUP_CONCAT(DISTINCT ?char; SEPARATOR="|") AS ?characteristics)
+                   (GROUP_CONCAT(DISTINCT STR(?domain); SEPARATOR="|") AS ?domains)
+                   (GROUP_CONCAT(DISTINCT STR(?range); SEPARATOR="|") AS ?ranges)
+                   (GROUP_CONCAT(DISTINCT STR(?super); SEPARATOR="|") AS ?superProperties)
+                   (GROUP_CONCAT(DISTINCT STR(?inverse); SEPARATOR="|") AS ?inverseProperties)
+                   (GROUP_CONCAT(DISTINCT STR(?disjoint); SEPARATOR="|") AS ?disjointProperties)
+                   (GROUP_CONCAT(DISTINCT STR(?equiv); SEPARATOR="|") AS ?equivalentProperties)
+                   (GROUP_CONCAT(DISTINCT STR(?char); SEPARATOR="|") AS ?characteristics)
             WHERE {
               # Find all properties that are explicitly typed as ObjectProperty or DatatypeProperty
               ?prop a ?kind .
@@ -172,8 +172,17 @@ public class OntologyQueryService {
             // Debug logging for each property
             System.out.println("[PROPERTY] IRI: " + iri + ", Label: " + dto.getLabel() + ", Kind: " + kind + ", Type: " + dto.getType());
             
-            dto.setDomains(splitPipe(literal(sol, "domains")));
-            dto.setRanges(splitPipe(literal(sol, "ranges")));
+            String domainsStr = literal(sol, "domains");
+            String rangesStr = literal(sol, "ranges");
+            dto.setDomains(splitPipe(domainsStr));
+            dto.setRanges(splitPipe(rangesStr));
+            
+            // Debug: Log raw binding values
+            System.out.println("  [DEBUG] domains raw: " + (sol.hasBinding("domains") ? sol.getValue("domains") : "NOT_BOUND"));
+            System.out.println("  [DEBUG] ranges raw: " + (sol.hasBinding("ranges") ? sol.getValue("ranges") : "NOT_BOUND"));
+            System.out.println("  [DEBUG] domains parsed: " + domainsStr + " -> count: " + dto.getDomains().size());
+            System.out.println("  [DEBUG] ranges parsed: " + rangesStr + " -> count: " + dto.getRanges().size());
+            
             dto.setSuperProperties(splitPipe(literal(sol, "superProperties")));
             dto.setInverseProperties(splitPipe(literal(sol, "inverseProperties")));
             dto.setDisjointProperties(splitPipe(literal(sol, "disjointProperties")));

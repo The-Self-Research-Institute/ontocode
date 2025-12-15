@@ -1,6 +1,6 @@
 import { Code, Sparkles, Network } from "lucide-react";
 import { OntologyPlugin, PluginContext } from "../types";
-
+import SWRLEditor from "../components/SWRLEditor";
 import FuzzyOntologyEditor from "../components/FuzzyOntologyEditor";
 
 // Import the advanced graph view from plugins folder
@@ -16,7 +16,24 @@ try {
   AdvancedGraphViewComponent = () => null;
 }
 
-
+export const SWRLPlugin: OntologyPlugin = {
+  id: "swrl-tab",
+  name: "SWRL Rule Editor",
+  version: "1.0.0",
+  description:
+    "An editor for creating, managing, and executing SWRL rules and SQWRL queries.",
+  author: "OntoCode Team",
+  icon: Code,
+  component: SWRLEditor,
+  async activate(context: PluginContext): Promise<boolean> {
+    console.log("Activated with project:", context.projectId);
+    return true;
+  },
+  async deactivate(context: PluginContext): Promise<boolean> {
+    console.log("Deactivated");
+    return true;
+  },
+};
 
 // Advanced Graph View Plugin v2.0
 export const AdvancedGraphViewPlugin: OntologyPlugin = {
