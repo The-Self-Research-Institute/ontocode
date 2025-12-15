@@ -157,7 +157,8 @@
     "fs-extra": "^11.1.0",
     "lucide-react": "^0.525.0",
     "path-browserify": "^1.0.1",
-    "sockjs-client": "^1.6.1"
+    "sockjs-client": "^1.6.1",
+    "vsce": "^2.15.0"
   },
   "repository": {
     "type": "git",

@@ -967,6 +967,7 @@ const Dashboard = () => {
   // #region State
   const { user, logout } = useAuth();
   const collaboration = useCollaboration();
+  const readonlyMode = false; // Allow editing by default
   const [projectId, setProjectId] = useState<string | null>(null);
   const [availableProjects, setAvailableProjects] = useState<any[]>([]);
   const [showProjectSelector, setShowProjectSelector] = useState(false);
@@ -4291,7 +4292,20 @@ const Dashboard = () => {
         
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
-          return <PluginComponent projectId={projectId} onNodeClick={handleGraphNodeClick} />;
+          return <PluginComponent 
+            projectId={projectId} 
+            context={{ 
+              projectId,
+              apiBaseUrl: (window as any).API_BASE_URL || 'http://localhost:8082',
+              permissions: {
+                canEdit: !readonlyMode,
+                canDelete: !readonlyMode,
+                canShare: true,
+                canExport: true
+              }
+            }}
+            onNodeClick={handleGraphNodeClick} 
+          />;
         }
         
         return (
@@ -4885,6 +4899,7 @@ const Dashboard = () => {
     DLQuery: { label: "DL Query", icon: Code },
     CodeView: { label: "Code View", icon: Code },
     SPARQL: { label: "SPARQL Query", icon: DatabaseZap },
+    WebVOWL: { label: "WebVOWL", icon: Network },
     SWRL: { label: "SWRL Rules", icon: Code },
     Fuzzy: { label: "Fuzzy Ontology", icon: Sparkles },
     Changes: { label: "Change Assistant", icon: GitBranch },

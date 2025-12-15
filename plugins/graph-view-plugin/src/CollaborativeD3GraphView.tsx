@@ -59,7 +59,7 @@ import SockJS from 'sockjs-client';
 import {
   RefreshCw, ZoomIn, ZoomOut, Maximize2, Search, Filter, Settings,
   FileText, Download, AlertTriangle, Edit3, Zap, Grid, Users,
-  Copy, Trash2, Undo, Redo, Map, Menu, Eye, Layout, Share2,
+  Copy, Trash2, Undo, Redo, Map as MapIcon, Menu, Eye, Layout, Share2,
   Layers, GitBranch, Target, Clock, Lock, Unlock
 } from 'lucide-react';
 
@@ -125,7 +125,8 @@ const TYPE_COLORS: Record<NodeType, string> = {
   property: '#f59e0b',
   dataProperty: '#ec4899',
   objectProperty: '#06b6d4',
-  annotation: '#8b5cf6'
+  annotation: '#8b5cf6',
+  datatype: '#FFA500'
 };
 
 const EDGE_TYPE_COLORS: Record<EdgeType, string> = {
@@ -140,7 +141,8 @@ const EDGE_TYPE_COLORS: Record<EdgeType, string> = {
   custom: '#6b7280',
   temporal: '#34d399',
   spatial: '#3b82f6',
-  probabilistic: '#fb923c'
+  probabilistic: '#fb923c',
+  subPropertyOf: '#2563eb'
 };
 
 const USER_COLORS = [
@@ -178,7 +180,7 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
   const [editMode, setEditMode] = useState(false);
   const [showPropertyPanel, setShowPropertyPanel] = useState(false);
   const [selectedNodeInfo, setSelectedNodeInfo] = useState<OntologyNode | null>(null);
-  const [layout Layout, setLayout] = useState<LayoutType>('force');
+  const [layout, setLayout] = useState<LayoutType>('force');
   const [zoomLevel, setZoomLevel] = useState(1);
 
   // ========== STATE - Panels ==========
@@ -353,7 +355,7 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
         if (update.userId !== currentUser.userId && update.selectedNodeId) {
           setCollaborators(prev => {
             const updated = new Map(prev);
-            const user = updated.get(update.userId) || {
+            const user: CollaborativeUser = updated.get(update.userId) || {
               userId: update.userId,
               username: update.username,
               color: update.userColor,
@@ -371,7 +373,7 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
         if (update.userId !== currentUser.userId && update.cursor) {
           setCollaborators(prev => {
             const updated = new Map(prev);
-            const user = updated.get(update.userId) || {
+            const user: CollaborativeUser = updated.get(update.userId) || {
               userId: update.userId,
               username: update.username,
               color: update.userColor,

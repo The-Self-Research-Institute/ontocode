@@ -13,17 +13,60 @@ export class GraphDataService {
   constructor(private baseUrl: string = `${(window as any).API_BASE_URL || 'http://localhost:8082'}/api/ontology`) {}
 
   /**
+   * Clear all caches
+   */
+
+  /**
+   * Clear cache for specific project and force backend cache clear
+   */
+  async clearProjectCache(projectId: string): Promise<void> {
+    // Clear local cache
+    for (const key of Array.from(this.cache.keys())) {
+      if (key.includes(projectId)) {
+        this.cache.delete(key);
+      }
+    }
+
+    // Clear backend cache
+    try {
+      const response = await fetch(`${(window as any).API_BASE_URL || 'http://localhost:8082'}/api/collab-graph/${projectId}/clear-cache`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        }
+      });
+
+      if (!response.ok) {
+        console.error('[GraphDataService] Failed to clear backend cache:', response.statusText);
+      } else {
+        console.log('[GraphDataService] Backend cache cleared successfully');
+      }
+    } catch (error) {
+      console.error('[GraphDataService] Error clearing backend cache:', error);
+    }
+  }
+
+  /**
    * Fetch graph data with caching and performance optimization
    */
-  async fetchGraphData(projectId: string, filters?: GraphFilters): Promise<{
+  async fetchGraphData(projectId: string, filters?: GraphFilters, forceReload: boolean = false): Promise<{
     nodes: OntologyNode[];
     edges: OntologyEdge[];
   }> {
     const cacheKey = `graph-${projectId}-${JSON.stringify(filters || {})}`;
-    const cached = this.getFromCache(cacheKey);
-    if (cached) {
-      console.log('[GraphDataService] Using cached data');
-      return cached;
+    
+    // Skip cache if forceReload
+    if (!forceReload) {
+      const cached = this.getFromCache(cacheKey);
+      if (cached) {
+        console.log('[GraphDataService] Using cached data');
+        return cached;
+      }
+    } else {
+      console.log('[GraphDataService] Force reload - bypassing cache');
+      // Clear cache for this project
+      await this.clearProjectCache(projectId);
     }
 
     // Cancel previous request if still pending

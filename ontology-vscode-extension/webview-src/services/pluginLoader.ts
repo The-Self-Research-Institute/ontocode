@@ -261,7 +261,14 @@ class PluginLoaderService {
       }
 
       // Get the component from the global scope - UMD export should be directly on window
-      const component = (window as any)[libraryName];
+      const pluginModule = (window as any)[libraryName];
+      
+      if (!pluginModule) {
+        throw new Error(`Plugin ${pluginId} library not found on window`);
+      }
+
+      // Get the default export (the React component)
+      const component = pluginModule.default || pluginModule.WebVOWL || pluginModule;
       
       if (!component) {
         throw new Error(`Plugin ${pluginId} did not export a default component`);
