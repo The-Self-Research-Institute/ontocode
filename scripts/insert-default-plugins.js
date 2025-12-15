@@ -10,6 +10,8 @@
  * 1. Fuzzy Ontology Plugin
  * 2. Graph View Plugin
  * 3. SWRL Editor Plugin
+ * 4. Change Assistant Plugin
+ * 5. WebVOWL Plugin
  */
 
 const { MongoClient } = require('mongodb');

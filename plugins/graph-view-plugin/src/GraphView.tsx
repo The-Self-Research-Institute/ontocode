@@ -110,10 +110,13 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
   });
 
   // Fetch graph data from backend
-  const fetchGraphData = useCallback(async () => {
+  const fetchGraphData = useCallback(async (forceReload: boolean = false) => {
     setLoading(true);
     try {
-      const response = await fetch(`${(window as any).API_BASE_URL}/api/ontology/${projectId}/graph`, {
+      const url = `${(window as any).API_BASE_URL}/api/ontology/${projectId}/graph${forceReload ? '?forceReload=true' : ''}`;
+      console.log(`[GraphView] Fetching graph from: ${url} (forceReload=${forceReload})`);
+      
+      const response = await fetch(url, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -125,6 +128,7 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
         const data = await response.json();
         setNodes(data.nodes || []);
         setEdges(data.edges || []);
+        console.log(`[GraphView] Loaded ${data.nodes?.length || 0} nodes and ${data.edges?.length || 0} edges`);
       } else {
         console.error('Failed to fetch graph data');
       }
@@ -319,7 +323,7 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
         alignItems: 'center'
       }}>
         <button
-          onClick={fetchGraphData}
+          onClick={() => fetchGraphData(true)}
           disabled={loading}
           style={{
             padding: '6px 12px',

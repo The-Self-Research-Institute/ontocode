@@ -152,7 +152,7 @@ async function main() {
     console.log('✅ Connected to MongoDB');
 
     const db = client.db(DB_NAME);
-    const bucket = new GridFSBucket(db, { bucketName: 'plugins' }); // Match Spring GridFsTemplate config
+    const bucket = new GridFSBucket(db, { bucketName: 'plugins' }); // Match Spring GridFsTemplate default config
 
     let successCount = 0;
     let failCount = 0;

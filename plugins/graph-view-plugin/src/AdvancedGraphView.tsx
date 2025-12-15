@@ -33,9 +33,17 @@ import type {
   GraphFilters,
   NodeType,
   EdgeType,
-  ExportFormat
+  ExportFormat,
+  VisualizationType
 } from './types';
 import PluginUpdateService from './PluginUpdateService';
+import { vowlNotationService } from './services/VOWLNotationService';
+import { UnifiedSidebar } from './components/UnifiedSidebar';
+import { GraphViewSidebar } from './components/GraphViewSidebar';
+import { createGraphDataFetchService } from './services/GraphDataFetchService';
+import { MatrixView } from './components/MatrixView';
+import { StatsDashboard } from './components/StatsDashboard';
+import * as layouts from './layouts';
 import {
   getRootNodes,
   getChildren,
@@ -81,6 +89,7 @@ const normalizeNodeType = (type: string): NodeType => {
         type === 'DATA_PROPERTY' ? 'dataProperty' :
         type === 'OBJECT_PROPERTY' ? 'objectProperty' :
         type === 'ANNOTATION' ? 'annotation' :
+        type === 'DATATYPE' ? 'datatype' :
         type.toLowerCase();
   return normalized as NodeType;
 };
@@ -107,7 +116,8 @@ const TYPE_COLORS: Record<NodeType, string> = {
   property: '#f59e0b',
   dataProperty: '#ec4899',
   objectProperty: '#06b6d4',
-  annotation: '#8b5cf6'
+  annotation: '#8b5cf6',
+  datatype: '#FFA500'
 };
 
 const EDGE_TYPE_COLORS: Record<EdgeType, string> = {
@@ -122,7 +132,8 @@ const EDGE_TYPE_COLORS: Record<EdgeType, string> = {
   custom: '#6b7280',
   temporal: '#34d399',
   spatial: '#3b82f6',
-  probabilistic: '#fb923c'
+  probabilistic: '#fb923c',
+  subPropertyOf: '#2563eb'
 };
 
 // Default settings
@@ -132,7 +143,7 @@ const DEFAULT_SETTINGS: GraphSettings = {
   showArrows: true,
   physics: true,
   nodeSize: 16,  // Increased for better visibility and expand icons
-  edgeWidth: 1.5,
+  edgeWidth: 1,
   showConfidence: false,
   showTemporal: false,
   showProvenance: false,
@@ -147,8 +158,8 @@ const DEFAULT_SETTINGS: GraphSettings = {
 };
 
 const DEFAULT_FILTERS: GraphFilters = {
-  nodeTypes: new Set(['class', 'individual', 'property', 'dataProperty', 'objectProperty', 'annotation']),
-  edgeTypes: new Set(['subClassOf', 'instanceOf', 'propertyRelation', 'equivalentClass', 'domain', 'range'])
+  nodeTypes: new Set(['class', 'individual', 'datatype', 'objectProperty', 'dataProperty', 'annotation']), // All node types enabled by default
+  edgeTypes: new Set(['subClassOf', 'instanceOf', 'propertyRelation', 'equivalentClass', 'domain', 'range', 'disjointWith', 'inverseOf', 'custom', 'subPropertyOf'])
 };
 
 type HierarchyState = {
@@ -198,7 +209,17 @@ const resolveNamespaceFromNode = (node?: OntologyNode | null): string | null => 
 
   for (const candidate of candidateIris) {
     if (!candidate) continue;
-    const namespace = extractNamespace(candidate);
+    
+    // Decode URL-encoded IRIs first
+    let iriToUse = candidate;
+    if (candidate.startsWith('http_') || candidate.startsWith('https_')) {
+      iriToUse = candidate
+        .replace(/^http___/, 'http://')
+        .replace(/^https___/, 'https://')
+        .replace(/_/g, '/');
+    }
+    
+    const namespace = extractNamespace(iriToUse);
     if (isLikelyAbsoluteIri(namespace)) {
       return namespace;
     }
@@ -221,6 +242,20 @@ const resolveNodeIri = (node?: OntologyNode | null): string | null => {
     if (!candidate) continue;
     if (isLikelyAbsoluteIri(candidate)) {
       return candidate;
+    }
+    
+    // Handle URL-encoded IRIs (e.g., http___example_org_Class -> http://example.org/Class)
+    if (candidate.startsWith('http_') || candidate.startsWith('https_')) {
+      // Convert underscores back to proper IRI format
+      const decoded = candidate
+        .replace(/^http___/, 'http://')
+        .replace(/^https___/, 'https://')
+        .replace(/_/g, '/');
+      
+      if (isLikelyAbsoluteIri(decoded)) {
+        console.log(`[resolveNodeIri] Decoded URL-encoded IRI: ${candidate} -> ${decoded}`);
+        return decoded;
+      }
     }
   }
 
@@ -251,6 +286,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const svgRef = useRef<SVGSVGElement>(null);
   const gRef = useRef<SVGGElement>(null);
   const simulationRef = useRef<d3.Simulation<D3Node, D3Edge> | null>(null);
+  const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
 
   // State - Hierarchical Lazy Loading
   const [allNodes, setAllNodes] = useState<OntologyNode[]>([]);  // All data from API
@@ -338,8 +374,25 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const [selectedNodes, setSelectedNodes] = useState<Set<string>>(new Set());
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
-  const [showPropertyPanel, setShowPropertyPanel] = useState(false);
+  const [showPropertyPanel, setShowPropertyPanel] = useState(true);
   const [selectedNodeInfo, setSelectedNodeInfo] = useState<OntologyNode | null>(null);
+  
+  // Visualization Type (combines both view mode and visualization type)
+  const [visualizationType, setVisualizationType] = useState<VisualizationType>('vowl');
+  const [showLegend, setShowLegend] = useState(true);
+  
+  // WebVOWL Filters State (integrated into main sidebar)
+  const [vowlFilters, setVowlFilters] = useState({
+    showExternalClasses: true,
+    showInternalClasses: true,
+    showDatatypes: true,
+    showObjectProperties: true,
+    showDataProperties: true,
+    showSubClassOf: true,
+    showFunctionalProperties: true
+  });
+  const [showClassHierarchy, setShowClassHierarchy] = useState(false);
+  const [hierarchySelectedClass, setHierarchySelectedClass] = useState<OntologyNode | null>(null);
   
   // Hierarchy Dialog State
   const [showHierarchyDialog, setShowHierarchyDialog] = useState(false);
@@ -355,10 +408,20 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     nodeId: string | null;
   }>({ visible: false, x: 0, y: 0, nodeId: null });
 
+  // Viewport state for large graph optimization (100k+ nodes)
+  const [viewportBounds, setViewportBounds] = useState({ x: 0, y: 0, width: 0, height: 0, scale: 1 });
+  const [isLargeGraph, setIsLargeGraph] = useState(false);
+
   // Settings & Filters
   const [settings, setSettings] = useState<GraphSettings>(DEFAULT_SETTINGS);
   const [filters, setFilters] = useState<GraphFilters>(DEFAULT_FILTERS);
   const [searchQuery, setSearchQuery] = useState('');
+  const [sidebarSearchTerm, setSidebarSearchTerm] = useState('');
+
+  // VOWL Controls
+  const [classDistance, setClassDistance] = useState(50);
+  const [datatypeDistance, setDatatypeDistance] = useState(20);
+  const [isLayoutPaused, setIsLayoutPaused] = useState(false);
 
   // Panels
   const [showSearch, setShowSearch] = useState(false);
@@ -370,14 +433,52 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const [zoomLevel, setZoomLevel] = useState(1);
 
   // Compute visible nodes and edges based on hierarchy
-  const visibleNodes = useMemo(() =>
-    allNodes.filter(n => visibleNodeIds.has(n.id)),
-    [allNodes, visibleNodeIds]
-  );
+  const visibleNodes = useMemo(() => {
+    const filtered = allNodes.filter(n => visibleNodeIds.has(n.id));
+    console.log('[AdvancedGraphView] 🔍 visibleNodes memo - allNodes:', allNodes.length, 'visibleNodeIds:', visibleNodeIds.size, 'filtered:', filtered.length);
+    console.log('[AdvancedGraphView] 🔍 Visible node types:', filtered.reduce((acc, n) => {
+      acc[n.type] = (acc[n.type] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>));
+    return filtered;
+  }, [allNodes, visibleNodeIds]);
 
   const visibleEdges = useMemo(() => {
     if (visibleNodeIds.size === 0) return [];
     if (visibleNodeIds.size === allNodes.length) return allEdges; // All visible
+    
+    // Debug: Check Thing in allEdges FIRST
+    const thingNode = allNodes.find(n => 
+      n.label === 'Thing' || 
+      n.id.includes('Thing') || 
+      n.id === 'owl:Thing' ||
+      n.id.includes('owl#Thing')
+    );
+    
+    if (thingNode) {
+      const allThingEdges = allEdges.filter(e => e.from === thingNode.id || e.to === thingNode.id);
+      console.log('[DEBUG Thing] Found Thing node:', thingNode.id, 'label:', thingNode.label);
+      console.log('[DEBUG Thing] Total edges in allEdges involving Thing:', allThingEdges.length);
+      console.log('[DEBUG Thing] Thing edges in allEdges:', allThingEdges.map(e => ({
+        type: e.type,
+        from: allNodes.find(n => n.id === e.from)?.label || e.from,
+        to: allNodes.find(n => n.id === e.to)?.label || e.to,
+        fromVisible: visibleNodeIds.has(e.from),
+        toVisible: visibleNodeIds.has(e.to)
+      })));
+      
+      // Check if Thing's children are visible
+      const thingChildren = allEdges
+        .filter(e => e.type === 'subClassOf' && e.to === thingNode.id)
+        .map(e => e.from);
+      console.log('[DEBUG Thing] Thing has', thingChildren.length, 'children in allEdges');
+      console.log('[DEBUG Thing] Children visibility:', thingChildren.map(childId => ({
+        id: childId,
+        label: allNodes.find(n => n.id === childId)?.label,
+        visible: visibleNodeIds.has(childId)
+      })));
+      console.log('[DEBUG Thing] Thing itself visible:', visibleNodeIds.has(thingNode.id));
+    }
     
     // Fast path: filter using Set lookups (O(1) per lookup)
     const edges = allEdges.filter(e => 
@@ -386,117 +487,23 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     
     console.log('[AdvancedGraphView] Visible edges:', edges.length, 'from total:', allEdges.length);
     
-    return edges;
-  }, [allEdges, visibleNodeIds, allNodes.length]);
-
-  // Performance tracking (disabled for production performance)
-  const renderTime = useRef(0);
-
-  /**
-   * ========================================================================
-   * DATA FETCHING
-   * ========================================================================
-   */
-  const fetchGraphData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-
-    console.log('[AdvancedGraphView D3] 📡 Fetching graph data for project:', projectId);
-
-    try {
-      const cacheKey = `graph-${projectId}`;
-      const cached = localStorage.getItem(cacheKey);
-      const cacheTime = localStorage.getItem(`${cacheKey}-time`);
-
-      // Use cache if less than 5 minutes old
-      if (cached && cacheTime && Date.now() - parseInt(cacheTime) < 5 * 60 * 1000) {
-        console.log('[AdvancedGraphView D3] ⚡ Using cached data');
-        const cachedData = JSON.parse(cached);
-
-        const normalizedNodes = (cachedData.nodes || []).map((node: any) => ({
-          ...node,
-          type: normalizeNodeType(node.type)
-        }));
-
-        const normalizedEdges = (cachedData.edges || []).map((edge: any) => ({
-          ...edge,
-          from: edge.source || edge.from,
-          to: edge.target || edge.to,
-          type: normalizeEdgeType(edge.type)
-        }));
-
-        setAllNodes(normalizedNodes);
-        setAllEdges(normalizedEdges);
-
-        // Initialize with root nodes only
-        const rootIds = getRootNodes(normalizedNodes, normalizedEdges);
-        updateHierarchyState(() => ({
-          visible: new Set(rootIds),
-          expanded: new Set()
-        }));
-
-        console.log(`[Hierarchy] Showing ${rootIds.length} root nodes out of ${normalizedNodes.length} total`);
-        setLoading(false);
-        return;
+    // Debug: Check Thing edges specifically in filtered result
+    if (thingNode) {
+      const thingEdges = edges.filter(e => e.from === thingNode.id || e.to === thingNode.id);
+      console.log('[AdvancedGraphView] Thing node - Visible edges AFTER filtering:', thingEdges.length);
+      if (thingEdges.length > 0) {
+        console.log('[AdvancedGraphView] Thing visible edges:', thingEdges.map(e => ({
+          type: e.type,
+          from: allNodes.find(n => n.id === e.from)?.label || e.from,
+          to: allNodes.find(n => n.id === e.to)?.label || e.to
+        })));
+      } else {
+        console.warn('[WARNING] Thing has NO visible edges! This is the problem.');
       }
-
-      const url = `${(window as any).API_BASE_URL}/api/ontology/${projectId}/graph`;
-      console.log('[AdvancedGraphView D3] 🌐 Fetching from:', url);
-
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch graph data: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      console.log('[AdvancedGraphView D3] ✅ Received', data.nodes?.length || 0, 'nodes and', data.edges?.length || 0, 'edges');
-
-      const normalizedNodes = (data.nodes || []).map((node: any) => ({
-        ...node,
-        // Backend now returns normalized types
-        type: node.type
-      }));
-
-      const transformedEdges = (data.edges || []).map((edge: any) => ({
-        ...edge,
-        // Backend now returns from/to and normalized types
-        from: edge.from,
-        to: edge.to,
-        type: edge.type
-      }));
-
-      // Cache the result
-      localStorage.setItem(cacheKey, JSON.stringify(data));
-      localStorage.setItem(`${cacheKey}-time`, Date.now().toString());
-
-      setAllNodes(normalizedNodes);
-      setAllEdges(transformedEdges);
-
-      console.log('[AdvancedGraphView D3] 📊 Using edges from API:', transformedEdges.length);
-
-      // Initialize with root nodes only
-      const rootIds = getRootNodes(normalizedNodes, transformedEdges);
-      updateHierarchyState(() => ({
-        visible: new Set(rootIds),
-        expanded: new Set()
-      }));
-
-      console.log(`[Hierarchy] Showing ${rootIds.length} root nodes out of ${normalizedNodes.length} total`);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      setError(errorMessage);
-      console.error('[AdvancedGraphView D3] ❌ Error:', errorMessage);
-    } finally {
-      setLoading(false);
     }
-  }, [projectId]);
+    
+    return edges;
+  }, [allEdges, visibleNodeIds, allNodes.length, allNodes]);
 
   /**
    * ========================================================================
@@ -504,10 +511,51 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
    * ========================================================================
    */
   const filteredNodes = useMemo(() => {
+
     let filtered = visibleNodes.filter(node => filters.nodeTypes.has(node.type));
 
+    // **WebVOWL Mode: Hide property nodes, only show classes, individuals, and datatypes**
+    if (visualizationType === 'vowl') {
+      filtered = filtered.filter(node => 
+        node.type === 'class' || 
+        node.type === 'individual' || 
+        node.type === 'datatype'
+      );
+      
+      // Apply WebVOWL Sidebar Filters
+      filtered = filtered.filter(node => {
+        // Check external vs internal classes
+        const isExternal = ['Item', 'UserAccount', 'Concept'].includes(node.label);
+        const isThing = node.label === 'Thing' || node.id === 'owl:Thing';
+        
+        if (node.type === 'class') {
+          if (isThing) return vowlFilters.showInternalClasses; // Thing is internal
+          if (isExternal) return vowlFilters.showExternalClasses;
+          return vowlFilters.showInternalClasses;
+        }
+        
+        if (node.type === 'datatype') {
+          return vowlFilters.showDatatypes;
+        }
+        
+        return true; // individuals always shown
+      });
+      
+      console.log(`[Filtering] WebVOWL mode: After vowlFilters, showing ${filtered.length} nodes`);
+    }
+    
+    // **Force Mode: Hide property nodes (objectProperty, dataProperty, annotation)**
+    // Properties should only appear as edges, not as nodes in force mode
+    if (visualizationType === 'force') {
+      filtered = filtered.filter(node => 
+        node.type === 'class' || 
+        node.type === 'individual' || 
+        node.type === 'datatype'
+      );
+      console.log(`[Filtering] Force mode: Filtered to classes, individuals, datatypes - ${filtered.length} nodes`);
+    }
+
     console.log(`[Filtering] visibleNodes: ${visibleNodes.length}, after type filter: ${filtered.length}`);
-    console.log(`[Filtering] Visible node labels: ${visibleNodes.map(n => n.label).join(', ')}`);
 
     // Search filter (Note: Search now handled by handleSearch with path expansion)
     if (searchQuery) {
@@ -519,29 +567,354 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       );
     }
 
-    console.log(`[Filtering] Final filtered nodes: ${filtered.length} - ${filtered.map(n => n.label).join(', ')}`);
+    // Sidebar search filter - filters the visible graph
+    if (sidebarSearchTerm) {
+      const query = sidebarSearchTerm.toLowerCase();
+      filtered = filtered.filter(node =>
+        node.label.toLowerCase().includes(query) ||
+        node.id.toLowerCase().includes(query) ||
+        node.description?.toLowerCase().includes(query)
+      );
+      console.log(`[Filtering] After sidebar search "${sidebarSearchTerm}": ${filtered.length} nodes`);
+    }
+
+    console.log(`[Filtering] Final filtered nodes: ${filtered.length}`);
 
     return filtered;
-  }, [visibleNodes, filters, searchQuery]);
+  }, [visibleNodes, filters, searchQuery, sidebarSearchTerm, visualizationType, vowlFilters]);
 
   const filteredEdges = useMemo(() => {
     const nodeIds = new Set(filteredNodes.map(n => n.id));
-    const filtered = visibleEdges.filter(edge =>
+    let filtered = visibleEdges.filter(edge =>
       filters.edgeTypes.has(edge.type) &&
       nodeIds.has(edge.from) &&
       nodeIds.has(edge.to)
     );
     
+    // **WebVOWL Mode: Hide domain/range edges (property metadata), show only direct property relations**
+    if (visualizationType === 'vowl') {
+      const beforeFilter = filtered.length;
+      filtered = filtered.filter(edge => 
+        edge.type !== 'domain' && edge.type !== 'range'
+      );
+      
+      // Apply WebVOWL Sidebar Edge Filters
+      filtered = filtered.filter(edge => {
+        if (edge.type === 'subClassOf') {
+          return vowlFilters.showSubClassOf;
+        }
+        if (edge.type === 'propertyRelation') {
+          // Check if functional property
+          const isFunctional = edge.metadata?.functional === true || 
+                              edge.metadata?.characteristics?.includes('functional') ||
+                              edge.label?.toLowerCase().includes('functional');
+          
+          if (isFunctional && !vowlFilters.showFunctionalProperties) {
+            return false;
+          }
+          
+          // Determine property type (check source node type and target node type)
+          const sourceNode = allNodes.find(n => n.id === edge.from);
+          const targetNode = allNodes.find(n => n.id === edge.to);
+          
+          // Annotation property edges
+          if (sourceNode?.type === 'annotation') {
+            return true; // Always show annotation properties when enabled
+          }
+          
+          // Data property edges (data properties or edges to datatypes)
+          if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
+            return vowlFilters.showDataProperties;
+          }
+          
+          // Object property edges - check filter
+          if (sourceNode?.type === 'objectProperty') {
+            return vowlFilters.showObjectProperties;
+          }
+          
+          // Default: check object properties filter for unidentified property edges
+          return vowlFilters.showObjectProperties;
+        }
+        
+        // Domain and Range edges - filter based on property type
+        if (edge.type === 'domain' || edge.type === 'range') {
+          const sourceNode = allNodes.find(n => n.id === edge.from);
+          
+          // If source is object property, check object properties filter
+          if (sourceNode?.type === 'objectProperty') {
+            return vowlFilters.showObjectProperties;
+          }
+          
+          // If source is data property, check data properties filter
+          if (sourceNode?.type === 'dataProperty') {
+            return vowlFilters.showDataProperties;
+          }
+          
+          // If source is annotation, always show
+          if (sourceNode?.type === 'annotation') {
+            return true;
+          }
+        }
+        
+        return true;
+      });
+      
+      console.log(`[Filtering] WebVOWL mode: Filtered ${beforeFilter} -> ${filtered.length} edges`);
+      console.log(`[Filtering] Edge types in filtered set:`, [...new Set(filtered.map(e => e.type))]);
+    }
+    
+    // **Force/OntoGraph Mode: Show property relation edges if filters allow them**
+    if (visualizationType === 'force' || visualizationType === 'ontograph') {
+      const beforeFilter = filtered.length;
+      filtered = filtered.filter(edge => {
+        if (edge.type === 'propertyRelation') {
+          // Check the source node type - determine property type
+          const sourceNode = allNodes.find(n => n.id === edge.from);
+          const targetNode = allNodes.find(n => n.id === edge.to);
+          
+          // Annotation properties - always show if annotation filter is enabled
+          if (sourceNode?.type === 'annotation') {
+            return filters.nodeTypes.has('annotation');
+          }
+          
+          // Data properties - show if dataProperty filter is enabled
+          if (sourceNode?.type === 'dataProperty' || targetNode?.type === 'datatype') {
+            return filters.nodeTypes.has('dataProperty');
+          }
+          
+          // Object properties - show if objectProperty filter is enabled
+          if (sourceNode?.type === 'objectProperty') {
+            return filters.nodeTypes.has('objectProperty');
+          }
+          
+          // Default: show the edge if we can't determine type
+          return true;
+        }
+        return true;
+      });
+      
+      console.log(`[Filtering] ${visualizationType} mode: Filtered property edges ${beforeFilter} -> ${filtered.length}`);
+    }
+    
     console.log('[AdvancedGraphView] Filtered edges:', filtered.length);
-    console.log('[AdvancedGraphView] Edge types in filters:', Array.from(filters.edgeTypes));
-    console.log('[AdvancedGraphView] Sample edges:', visibleEdges.slice(0, 3));
     if (filtered.length === 0 && visibleEdges.length > 0) {
       console.warn('[AdvancedGraphView] ⚠️ No edges after filtering! Check edge types.');
       console.warn('[AdvancedGraphView] Edge types in data:', [...new Set(visibleEdges.map(e => e.type))]);
     }
     
     return filtered;
-  }, [visibleEdges, filteredNodes, filters]);
+  }, [visibleEdges, filteredNodes, filters, visualizationType, vowlFilters, allNodes]);
+
+  // Generate dynamic legend based on current graph
+  const dynamicLegend = useMemo(() => {
+    if (visualizationType === 'vowl') {
+      // VOWL Mode - dynamic legend based on actual nodes/edges
+      const legend: Array<{ name: string; type: string; nodeType?: string; color?: string; stroke?: string; strokeDasharray?: string }> = [];
+      
+      // Check for external vs internal classes
+      const hasExternalClass = filteredNodes.some(n => 
+        n.type === 'class' && (['Item', 'UserAccount', 'Concept'].includes(n.label) || n.label?.includes('external'))
+      );
+      const hasInternalClass = filteredNodes.some(n => 
+        n.type === 'class' && !(['Item', 'UserAccount', 'Concept'].includes(n.label) || n.label?.includes('external'))
+      );
+      const hasThing = filteredNodes.some(n => n.label === 'Thing' || n.id === 'owl:Thing');
+      const hasDatatype = filteredNodes.some(n => n.type === 'datatype');
+      const hasIndividual = filteredNodes.some(n => n.type === 'individual');
+      
+      if (hasExternalClass) legend.push({ name: 'External Class (Dark Blue)', type: 'node', nodeType: 'class', color: '#4682b4' });
+      if (hasInternalClass) legend.push({ name: 'Internal Class (Light Blue)', type: 'node', nodeType: 'class', color: '#acd5f2' });
+      if (hasThing) legend.push({ name: 'Thing (Dashed Border)', type: 'node', nodeType: 'class', color: '#ffffff' });
+      if (hasDatatype) legend.push({ name: 'Datatype / Literal (Light Orange)', type: 'node', nodeType: 'datatype', color: '#FFD9B3' });
+      if (hasIndividual) legend.push({ name: 'Individual (Rectangle)', type: 'node', nodeType: 'individual', color: '#E74C3C' });
+      
+      // Edge types
+      const edgeTypes = new Set(filteredEdges.map(e => e.type));
+      if (edgeTypes.has('propertyRelation')) {
+        legend.push({ name: 'Object Property', type: 'edge', stroke: '#000000', strokeDasharray: '0' });
+        legend.push({ name: 'Data Property', type: 'edge', stroke: '#000000', strokeDasharray: '0' });
+      }
+      if (edgeTypes.has('subClassOf')) legend.push({ name: 'SubClass Of (Dashed)', type: 'edge', stroke: '#000000', strokeDasharray: '5,5' });
+      if (edgeTypes.has('domain')) legend.push({ name: 'Domain', type: 'edge', stroke: '#10b981', strokeDasharray: '0' });
+      if (edgeTypes.has('range')) legend.push({ name: 'Range', type: 'edge', stroke: '#f59e0b', strokeDasharray: '0' });
+      
+      // Property label colors (if we have propertyRelation edges)
+      if (edgeTypes.has('propertyRelation')) {
+        legend.push({ name: 'Functional Property (Green)', type: 'label', color: '#C8E6C9' });
+        legend.push({ name: 'Regular Property (Blue)', type: 'label', color: '#BBDEFB' });
+      }
+      
+      return legend;
+    } else {
+      // Standard Mode - dynamic legend based on actual nodes/edges
+      const legend: Array<{ name: string; type: string; nodeType?: string; color?: string; stroke?: string; strokeDasharray?: string }> = [];
+      
+      // Node types from actual graph
+      const nodeTypes = new Set(filteredNodes.map(n => n.type));
+      if (nodeTypes.has('class')) legend.push({ name: 'Class', type: 'node', nodeType: 'class', color: '#4A90E2' });
+      if (nodeTypes.has('objectProperty')) legend.push({ name: 'Object Property', type: 'node', nodeType: 'objectProperty', color: '#50C878' });
+      if (nodeTypes.has('dataProperty')) legend.push({ name: 'Datatype Property', type: 'node', nodeType: 'dataProperty', color: '#ec4899' });
+      if (nodeTypes.has('individual')) legend.push({ name: 'Individual', type: 'node', nodeType: 'individual', color: '#E74C3C' });
+      if (nodeTypes.has('annotation')) legend.push({ name: 'Annotation Property', type: 'node', nodeType: 'annotation', color: '#9B59B6' });
+      if (nodeTypes.has('datatype')) legend.push({ name: 'Datatype', type: 'node', nodeType: 'datatype', color: '#FFA500' });
+      
+      // Edge types from actual graph
+      const edgeTypes = new Set(filteredEdges.map(e => e.type));
+      if (edgeTypes.has('subClassOf')) legend.push({ name: 'SubClass Of', type: 'edge', stroke: '#2563eb', strokeDasharray: '0' });
+      if (edgeTypes.has('domain')) legend.push({ name: 'Domain', type: 'edge', stroke: '#10b981', strokeDasharray: '0' });
+      if (edgeTypes.has('range')) legend.push({ name: 'Range', type: 'edge', stroke: '#f59e0b', strokeDasharray: '0' });
+      if (edgeTypes.has('instanceOf')) legend.push({ name: 'Instance Of', type: 'edge', stroke: '#8b5cf6', strokeDasharray: '5,5' });
+      if (edgeTypes.has('equivalentClass')) legend.push({ name: 'Equivalent', type: 'edge', stroke: '#ec4899', strokeDasharray: '0' });
+      if (edgeTypes.has('disjointWith')) legend.push({ name: 'Disjoint', type: 'edge', stroke: '#ef4444', strokeDasharray: '3,3' });
+      if (edgeTypes.has('propertyRelation')) legend.push({ name: 'Property Relation', type: 'edge', stroke: '#6b7280', strokeDasharray: '0' });
+      
+      return legend;
+    }
+  }, [visualizationType, filteredNodes, filteredEdges]);
+
+  // Performance tracking (disabled for production performance)
+  const renderTime = useRef(0);
+
+  /**
+   * ========================================================================
+   * DATA FETCHING - Optimized GraphDB Direct Approach
+   * ========================================================================
+   */
+  const fetchGraphData = useCallback(async () => {
+    // Guard: Don't fetch if projectId is not set
+    if (!projectId) {
+      console.warn('[AdvancedGraphView D3] ⚠️ No projectId provided, skipping data fetch');
+      setError('No project selected. Please select a project to view its ontology graph.');
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    console.log('[AdvancedGraphView D3] 📡 Fetching graph data for project:', projectId);
+
+    try {
+      const cacheKey = `graph-${projectId}`;
+      
+      // ALWAYS fetch fresh data from GraphDB, skip cache for now to ensure real data loads
+      console.log('[AdvancedGraphView D3] 🔄 Fetching fresh data (cache disabled for real-time GraphDB data)');
+
+      const apiBaseUrl = (window as any).API_BASE_URL;
+      const authToken = localStorage.getItem('authToken');
+      
+      // ALWAYS use GraphDB direct fetch for WebVOWL compatibility
+      // (collaborative endpoint doesn't have property relation edges)
+      console.log('[AdvancedGraphView D3] 🔵 Using GraphDB direct fetch for complete data...');
+        
+        // Fetch data from GraphDB using optimized service (same approach as webVOWL)
+        const fetchService = createGraphDataFetchService(apiBaseUrl, projectId, authToken);
+        const graphData = await fetchService.fetchGraphData();
+        
+        console.log('[GraphDB Fetch] ✅ Fetched from GraphDB:', {
+          nodes: graphData.nodes.length,
+          edges: graphData.edges.length,
+          byType: {
+            classes: graphData.nodes.filter(n => n.type === 'class').length,
+            individuals: graphData.nodes.filter(n => n.type === 'individual').length,
+            objectProperties: graphData.nodes.filter(n => n.type === 'objectProperty').length,
+            dataProperties: graphData.nodes.filter(n => n.type === 'dataProperty').length,
+            datatypes: graphData.nodes.filter(n => n.type === 'datatype').length,
+            annotations: graphData.nodes.filter(n => n.type === 'annotation').length
+          }
+        });
+        
+        if (!graphData.nodes || graphData.nodes.length === 0) {
+          console.warn('[AdvancedGraphView D3] ⚠️ WARNING: GraphDB returned zero nodes! The ontology may be empty.');
+          setError('No ontology data found in GraphDB. Please ensure the ontology is loaded.');
+        }
+
+        // Debug: Show edge type distribution
+        const edgeTypeCount: Record<string, number> = {};
+        graphData.edges.forEach((e: OntologyEdge) => {
+          edgeTypeCount[e.type] = (edgeTypeCount[e.type] || 0) + 1;
+        });
+        console.log('[AdvancedGraphView] 📊 Edge Types:', edgeTypeCount);
+        console.log('[AdvancedGraphView] 📝 Sample propertyRelation edges:', 
+          graphData.edges.filter((e: OntologyEdge) => e.type === 'propertyRelation').slice(0, 5)
+        );
+
+        // Initialize with all classes and top-level properties
+        const classNodes = graphData.nodes.filter((n: OntologyNode) => n.type === 'class');
+        
+        console.log('[AdvancedGraphView] 🔍 Class nodes found:', classNodes.length);
+        console.log('[AdvancedGraphView] 📋 All classes:', classNodes.map((n, i) => `${i+1}. ${n.label} (${n.id})`).join('\n'));
+        
+        // Check for subClassOf edges
+        const subClassEdges = graphData.edges.filter((e: OntologyEdge) => e.type === 'subClassOf');
+        console.log('[AdvancedGraphView] 🔗 SubClass edges found:', subClassEdges.length);
+        console.log('[AdvancedGraphView] 📋 All SubClass relationships:', 
+          subClassEdges.map((e, i) => {
+            const from = graphData.nodes.find(n => n.id === e.from);
+            const to = graphData.nodes.find(n => n.id === e.to);
+            return `${i+1}. ${from?.label || e.from} -> ${to?.label || e.to}`;
+          }).join('\n')
+        );
+        
+        // Always show ALL classes (including subclasses) regardless of visualization type
+        const classIdsToShow = classNodes.map(n => n.id);
+        
+        console.log('[AdvancedGraphView] 🎯 Classes to show:', classIdsToShow.length);
+        console.log('[AdvancedGraphView] 🎯 Class IDs:', classIdsToShow);
+        
+        // Get only top-level properties (properties without domain or range relationships)
+        const topLevelPropertyIds = graphData.nodes
+          .filter((n: OntologyNode) => n.type === 'objectProperty' || n.type === 'dataProperty' || n.type === 'annotation')
+          .filter((prop: OntologyNode) => {
+            const hasDomain = graphData.edges.some((e: OntologyEdge) => e.type === 'domain' && e.to === prop.id);
+            const hasRange = graphData.edges.some((e: OntologyEdge) => e.type === 'range' && e.from === prop.id);
+            return !hasDomain && !hasRange;
+          })
+          .map((n: OntologyNode) => n.id);
+        
+        // Get all individuals and datatypes
+        const individualsAndDatatypesIds = graphData.nodes
+          .filter((n: OntologyNode) => n.type === 'individual' || n.type === 'datatype')
+          .map((n: OntologyNode) => n.id);
+        
+        const initialVisibleIds = [...classIdsToShow, ...topLevelPropertyIds, ...individualsAndDatatypesIds];
+        
+        // CRITICAL FIX: Mark Thing as expanded so its child edges are shown
+        const thingNode = graphData.nodes.find((n: OntologyNode) => 
+          n.label === 'Thing' || n.id.includes('Thing') || n.id === 'owl:Thing'
+        );
+        const initialExpandedIds: string[] = [];
+        if (thingNode) {
+          initialExpandedIds.push(thingNode.id);
+          console.log('[AdvancedGraphView] 🎯 Thing node found:', thingNode.id, '- Marking as expanded to show connections');
+        }
+        
+        console.log('[AdvancedGraphView] 🎯 Initial visible IDs count:', initialVisibleIds.length);
+        console.log('[AdvancedGraphView] 🎯 Breakdown - Classes:', classIdsToShow.length, 'Properties:', topLevelPropertyIds.length, 'Individuals/Datatypes:', individualsAndDatatypesIds.length);
+        console.log('[AdvancedGraphView] 🎯 Expanded IDs:', initialExpandedIds);
+        
+        // Update state in single batch
+        setAllNodes(graphData.nodes);
+        setAllEdges(graphData.edges);
+        
+        console.log('[AdvancedGraphView] ✅ Set allNodes:', graphData.nodes.length, 'allEdges:', graphData.edges.length);
+        
+        updateHierarchyState(() => ({
+          visible: new Set(initialVisibleIds),
+          expanded: new Set(initialExpandedIds)
+        }));
+        
+        console.log('[AdvancedGraphView] ✅ Updated hierarchy state with', initialVisibleIds.length, 'visible IDs');
+
+        console.log(`[Hierarchy] Initial view: ${initialVisibleIds.length} entities (${classIdsToShow.length} all classes + ${topLevelPropertyIds.length} top-level properties + ${individualsAndDatatypesIds.length} individuals/datatypes) out of ${graphData.nodes.length} total`);
+        setLoading(false);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setError(errorMessage);
+      console.error('[AdvancedGraphView D3] ❌ Error fetching graph data:', errorMessage, error);
+      setLoading(false);
+    }
+  }, [projectId, updateHierarchyState]);
 
   /**
    * ========================================================================
@@ -554,6 +927,26 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     const startTime = performance.now();
     console.log('[AdvancedGraphView D3] 🎨 Initializing D3 visualization');
     console.log('[AdvancedGraphView D3] 📊 Nodes:', filteredNodes.length, 'Edges:', filteredEdges.length);
+    
+    // Log edge types distribution
+    const edgesByType: Record<string, number> = {};
+    filteredEdges.forEach(e => {
+      edgesByType[e.type] = (edgesByType[e.type] || 0) + 1;
+    });
+    console.log('[AdvancedGraphView D3] 🔗 Edges by type:', edgesByType);
+    
+    // Log propertyRelation edges
+    const propEdges = filteredEdges.filter(e => e.type === 'propertyRelation');
+    if (propEdges.length > 0) {
+      console.log('[AdvancedGraphView D3] 🔥 PropertyRelation edges found:', propEdges.length);
+      console.log('[AdvancedGraphView D3] Sample edges:', propEdges.slice(0, 3).map(e => ({
+        from: filteredNodes.find(n => n.id === e.from)?.label,
+        to: filteredNodes.find(n => n.id === e.to)?.label,
+        label: e.label
+      })));
+    } else {
+      console.warn('[AdvancedGraphView D3] ⚠️ NO propertyRelation edges found!');
+    }
 
     const svg = d3.select(svgRef.current);
     const g = d3.select(gRef.current);
@@ -564,32 +957,130 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     // Clear existing content
     g.selectAll('*').remove();
 
-    // Create arrow markers for each edge type (only once)
-    const defs = svg.select('defs');
+    // Create or update arrow markers for each edge type
+    let defs = svg.select<SVGDefsElement>('defs');
     if (defs.empty()) {
-      const newDefs = svg.append('defs');
-      Object.entries(EDGE_TYPE_COLORS).forEach(([type, color]) => {
-        newDefs
-          .append('marker')
-          .attr('id', `arrow-${type}`)
-          .attr('viewBox', '0 -5 10 10')
-          .attr('refX', 10) // Tip of the arrow is at (10,0), so this aligns tip with the end of the line
-          .attr('refY', 0)
-          .attr('markerWidth', 6)
-          .attr('markerHeight', 6)
-          .attr('orient', 'auto')
-          .append('path')
-          .attr('d', 'M0,-5L10,0L0,5')
-          .attr('fill', color);
-      });
+      defs = svg.append('defs');
     }
+    
+    // Remove existing markers to ensure clean state
+    defs.selectAll('marker').remove();
+    
+    // VOWL-specific arrow markers - SMALL and clean, pointing left
+    Object.entries(EDGE_TYPE_COLORS).forEach(([type, color]) => {
+      // Determine VOWL color for this edge type
+      let vowlColor = color;
+      if (type === 'propertyRelation') vowlColor = '#000000';
+      else if (type === 'subClassOf') vowlColor = '#000000';
+      else if (type === 'equivalentClass') vowlColor = '#10b981';
+      else if (type === 'disjointWith') vowlColor = '#ef4444';
+      else if (type === 'domain') vowlColor = '#666666';
+      else if (type === 'range') vowlColor = '#666666';
+      
+      defs
+        .append('marker')
+        .attr('id', `arrow-vowl-${type}`)
+        .attr('viewBox', '0 0 10 10')
+        .attr('refX', 9)
+        .attr('refY', 5)
+        .attr('markerWidth', 6)
+        .attr('markerHeight', 6)
+        .attr('orient', 'auto')
+        .append('rect')
+        .attr('x', 5)
+        .attr('y', 3)
+        .attr('width', 4)
+        .attr('height', 4)
+        .attr('fill', vowlColor)
+        .attr('stroke', 'none');
+    });
+    
+    // Standard arrow markers using RECTANGLES for force and ontograph modes
+    Object.entries(EDGE_TYPE_COLORS).forEach(([type, color]) => {
+      // Determine color for each edge type in force mode
+      let forceColor = color;
+      if (type === 'subClassOf') forceColor = '#FFA500'; // Orange
+      else if (type === 'instanceOf') forceColor = '#000000'; // Black
+      else if (type === 'propertyRelation') forceColor = '#000000'; // Black (will vary by target)
+      else if (type === 'domain') forceColor = '#666666'; // Gray
+      else if (type === 'range') forceColor = '#666666'; // Gray
+      
+      defs
+        .append('marker')
+        .attr('id', `arrow-${type}`)
+        .attr('viewBox', '0 0 10 10')
+        .attr('refX', 9)
+        .attr('refY', 5)
+        .attr('markerWidth', 6)
+        .attr('markerHeight', 6)
+        .attr('orient', 'auto')
+        .append('rect')
+        .attr('x', 5)
+        .attr('y', 3)
+        .attr('width', 4)
+        .attr('height', 4)
+        .attr('fill', forceColor)
+        .attr('stroke', 'none');
+    });
+    
+    console.log('[AdvancedGraphView] ✅ Arrow markers created - VOWL rectangles, Force/OntoGraph rectangles');
 
-    // Prepare D3 data
-    const d3Nodes: D3Node[] = filteredNodes.map(node => ({
-      ...node,
-      x: width / 2 + (Math.random() - 0.5) * 100,
-      y: height / 2 + (Math.random() - 0.5) * 100
-    }));
+    // Prepare D3 data with better initial positioning
+    const d3Nodes: D3Node[] = filteredNodes.map((node, index) => {
+      let x: number, y: number;
+      
+      if (visualizationType === 'vowl') {
+        // Better initial spread for VOWL mode to reduce initial overlapping
+        const cols = Math.ceil(Math.sqrt(filteredNodes.length));
+        const col = index % cols;
+        const row = Math.floor(index / cols);
+        const cellWidth = Math.max(150, (width - 300) / cols); // Increased minimum cell width
+        const cellHeight = Math.max(150, (height - 300) / cols); // Increased minimum cell height
+        
+        // More randomization within each cell to prevent grid-like clustering
+        x = 150 + col * cellWidth + (Math.random() - 0.5) * 120; // Increased from 50
+        y = 150 + row * cellHeight + (Math.random() - 0.5) * 120; // Increased from 50
+      } else {
+        // Standard random positioning
+        x = width / 2 + (Math.random() - 0.5) * 100;
+        y = height / 2 + (Math.random() - 0.5) * 100;
+      }
+      
+      return { ...node, x, y };
+    });
+
+    // Apply OntoGraph hierarchical layout if selected
+    if (visualizationType === 'ontograph') {
+      const nodeCount = filteredNodes.length;
+      const isLarge = nodeCount > 1000;
+      setIsLargeGraph(isLarge);
+      
+      console.log(`[OntoGraph] Applying Protégé-style layout for ${nodeCount} nodes (large: ${isLarge})`);
+      const positionMap = layouts.applyOntoGraphLayout(filteredNodes, filteredEdges, {
+        width,
+        height,
+        horizontalSpacing: isLarge ? 150 : 200, // Reduce spacing for large graphs
+        verticalSpacing: isLarge ? 60 : 80,
+        centerX: width / 2,
+        centerY: height / 2
+      });
+      
+      // Skip refinement for very large graphs (too expensive O(n²))
+      const refinedMap = isLarge ? positionMap : layouts.refineOntoGraphLayout(positionMap, filteredNodes, filteredEdges, 30);
+      
+      // Apply positions from layout and fix them
+      d3Nodes.forEach(node => {
+        const pos = refinedMap.get(node.id);
+        if (pos) {
+          node.x = pos.x;
+          node.y = pos.y;
+          node.fx = pos.x; // Fix position for hierarchical layout
+          node.fy = pos.y;
+        }
+      });
+      
+      console.log('[OntoGraph] Layout applied to', d3Nodes.length, 'nodes');
+    }
 
     const nodeMap = new Map(d3Nodes.map(n => [n.id, n]));
 
@@ -598,69 +1089,552 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       source: nodeMap.get(edge.from)!,
       target: nodeMap.get(edge.to)!
     })).filter(e => e.source && e.target);
+    
+    // Calculate curvature for edges with multiple connections between same nodes
+    // Apply curves in all modes to prevent overlapping edges
+    const edgeCurvature = new Map<string, number>();
+    
+    if (visualizationType === 'force' || visualizationType === 'ontograph' || visualizationType === 'vowl') {
+      const nodePairEdges = new Map<string, D3Edge[]>();
+      
+      d3Edges.forEach(edge => {
+        const sourceId = (edge.source as D3Node).id;
+        const targetId = (edge.target as D3Node).id;
+        // Create a key that's the same for both directions
+        const pairKey = [sourceId, targetId].sort().join('|');
+        
+        if (!nodePairEdges.has(pairKey)) {
+          nodePairEdges.set(pairKey, []);
+        }
+        nodePairEdges.get(pairKey)!.push(edge);
+      });
+      
+      // Assign curvature values for multiple edges between same nodes
+      nodePairEdges.forEach((edges, pairKey) => {
+        if (edges.length > 1) {
+          // Multiple edges between same nodes - apply stronger curvature
+          const curveStrength = visualizationType === 'vowl' ? 60 : 40; // Stronger curve for VOWL
+          edges.forEach((edge, index) => {
+            // Alternate curvature with stronger offset
+            let curve = 0;
+            if (index > 0) {
+              const offset = Math.ceil(index / 2);
+              curve = (index % 2 === 1) ? offset * curveStrength : -offset * curveStrength;
+            }
+            edgeCurvature.set(edge.id, curve);
+          });
+          console.log(`[Curved Edges] Node pair ${pairKey} has ${edges.length} edges with curves:`, 
+            edges.map(e => ({ label: e.label, curve: edgeCurvature.get(e.id) })));
+        } else {
+          // Single edge - apply slight curve in force mode, straight in VOWL by default
+          const defaultCurve = visualizationType === 'force' ? 15 : 0;
+          edgeCurvature.set(edges[0].id, defaultCurve);
+        }
+      });
+    } else {
+      // Fallback: all edges straight
+      d3Edges.forEach(edge => {
+        edgeCurvature.set(edge.id, 0);
+      });
+    }
 
     console.log('[AdvancedGraphView D3] ✅ Prepared D3 data - Nodes:', d3Nodes.length, 'Edges:', d3Edges.length);
 
-    // Create force simulation with highly optimized parameters
+    // Create force simulation with enhanced layout for better structure
     const nodeCount = d3Nodes.length;
+    
+    // Calculate link distance based on node types and VOWL distance controls
+    const linkDistance = (edge: D3Edge) => {
+      const source = edge.source as D3Node;
+      const target = edge.target as D3Node;
+      
+      // Balanced distances in WebVOWL mode
+      const distanceMultiplier = visualizationType === 'vowl' ? 0.6 : 1.0; // Further reduced for much shorter properties
+      
+      // Hierarchy edges (subClassOf) should be shorter for better tree structure
+      if (edge.type === 'subClassOf') {
+        return classDistance * 0.4 * distanceMultiplier;
+      }
+      
+      // Property relation edges should be much shorter for compact layout
+      if (edge.type === 'propertyRelation') {
+        return classDistance * 0.7 * distanceMultiplier; // Further reduced for shorter edges
+      }
+      
+      // Reduced distance for datatypes to classes - bring them closer
+      if (source.type === 'dataProperty' || target.type === 'dataProperty' ||
+          source.type === 'datatype' || target.type === 'datatype') {
+        return datatypeDistance * 0.6 * distanceMultiplier;
+      }
+      
+      // Domain/Range edges should be shorter
+      if (edge.type === 'domain' || edge.type === 'range') {
+        return classDistance * 0.6 * distanceMultiplier; // Further reduced
+      }
+      
+      // Otherwise use class distance
+      return classDistance * distanceMultiplier;
+    };
+    
+    // Calculate link strength - hierarchy edges are stronger
+    const linkStrength = (edge: D3Edge) => {
+      if (edge.type === 'subClassOf') {
+        return 1.0; // Very strong connection for hierarchy
+      }
+      if (edge.type === 'propertyRelation') {
+        return nodeCount > 100 ? 0.4 : 0.6; // Moderate strength for properties
+      }
+      return nodeCount > 100 ? 0.3 : 0.5;
+    };
+    
+    // Calculate average node size for collision detection
+    const avgNodeSize = settings.nodeSize || 20;
+    
+    // Force simulation configuration
+    // Use physics for force and vowl, fixed positions for ontograph
+    const usePhysics = visualizationType !== 'ontograph';
+    
     const simulation = d3.forceSimulation<D3Node>(d3Nodes)
-      .force('link', d3.forceLink<D3Node, D3Edge>(d3Edges)
+      .force('link', usePhysics ? d3.forceLink<D3Node, D3Edge>(d3Edges)
         .id(d => d.id)
-        .distance(nodeCount > 100 ? 60 : 80) // Tighter layout for large graphs
-        .strength(nodeCount > 100 ? 0.3 : 0.5)
-        .iterations(1)) // Single iteration for speed
-      .force('charge', d3.forceManyBody()
-        .strength(nodeCount > 100 ? -200 : -300)
-        .distanceMax(nodeCount > 100 ? 300 : 400)
-        .theta(0.95)) // More aggressive Barnes-Hut (was 0.9)
-      .force('center', d3.forceCenter(width / 2, height / 2)
-        .strength(0.05)) // Weaker center force
-      .force('collision', d3.forceCollide()
-        .radius(d => ((d as D3Node).size || settings.nodeSize) + 5)
-        .strength(0.7)
-        .iterations(1)) // Single iteration for speed
-      .alphaDecay(nodeCount > 100 ? 0.08 : 0.05) // Faster for large graphs
-      .velocityDecay(0.4) // More damping (was 0.3)
-      .alpha(0.3) // Lower initial energy for faster settle
-      .alphaMin(0.001) // Stop earlier
-      .alphaTarget(0); // Stop simulation faster
+        .distance(linkDistance)
+        .strength(linkStrength)
+        .iterations(4) : null)
+      .force('charge', usePhysics ? d3.forceManyBody()
+        .strength(d => {
+          const node = d as D3Node;
+          // Much stronger repulsion in WebVOWL mode for organized layout
+          if (visualizationType === 'vowl') {
+            if (node.type === 'class') {
+              return nodeCount > 100 ? -3500 : -5000; // Increased from -3000
+            }
+            return nodeCount > 100 ? -2500 : -3500; // Increased from -2000
+          }
+          // Force mode - adaptive strength for large graphs (100k nodes)
+          if (visualizationType === 'force') {
+            // Reduce charge strength for very large graphs to improve performance
+            if (nodeCount > 50000) {
+              return node.type === 'class' ? -300 : -200;
+            } else if (nodeCount > 10000) {
+              return node.type === 'class' ? -600 : -400;
+            } else if (nodeCount > 1000) {
+              return node.type === 'class' ? -1000 : -600;
+            }
+            return node.type === 'class' ? -1500 : -800;
+          }
+          // Standard mode repulsion
+          if (node.type === 'class') {
+            return nodeCount > 100 ? -1000 : -1500;
+          }
+          return nodeCount > 100 ? -500 : -800;
+        })
+        .distanceMax(visualizationType === 'vowl' ? 2000 : (nodeCount > 10000 ? 800 : 1200))
+        .theta(nodeCount > 50000 ? 0.9 : 0.7) : null)
+      .force('center', usePhysics ? d3.forceCenter(width / 2, height / 2)
+        .strength(visualizationType === 'vowl' ? 0.02 : 0.03) : null)
+      .force('collision', usePhysics ? d3.forceCollide()
+        .radius(d => {
+          const node = d as D3Node;
+          const size = node.size || avgNodeSize;
+          const isLargeGraph = nodeCount > 10000;
+          
+          // Much larger collision radius in WebVOWL mode for better spacing
+          if (visualizationType === 'vowl') {
+            // Different collision radii based on node type - increased to prevent overlap
+            if (node.type === 'class') {
+              return size * 10.0; // Further increased for classes
+            } else if (node.type === 'datatype') {
+              return size * 9.0; // Further increased for datatypes
+            }
+            return size * 8.0; // Further increased for individuals
+          }
+          // Force mode - adaptive collision radius for scalability
+          if (visualizationType === 'force') {
+            // Reduce collision radius for very large graphs to fit more nodes
+            const scaleFactor = isLargeGraph ? 0.7 : 1.0;
+            if (node.type === 'class') {
+              return size * 4.5 * scaleFactor; // Larger for class ellipses
+            } else if (node.type === 'individual') {
+              return size * 4.0 * scaleFactor; // Larger for individual rectangles
+            }
+            return size * 3.5 * scaleFactor;
+          }
+          // OntoGraph mode - larger collision to prevent overlap
+          if (visualizationType === 'ontograph') {
+            if (node.type === 'class') {
+              return size * 7.0; // Much larger for OntoGraph classes
+            } else if (node.type === 'datatype') {
+              return size * 6.5;
+            }
+            return size * 6.0;
+          }
+          return size * 3.5; // Standard mode
+        })
+        .strength(1.0)
+        .iterations(visualizationType === 'vowl' ? 15 : 6) : null) // Increased from 10
+      .force('y', usePhysics ? d3.forceY(d => {
+        const node = d as D3Node;
+        // Stronger vertical positioning in VOWL mode
+        if (visualizationType === 'vowl') {
+          if (node.type === 'class') {
+            return height * 0.35;
+          } else if (node.type === 'individual') {
+            return height * 0.75;
+          } else if (node.type === 'datatype') {
+            return height * 0.65;
+          }
+          return height / 2;
+        }
+        // Standard mode positioning
+        if (node.type === 'class') {
+          return height * 0.4;
+        } else if (node.type === 'individual') {
+          return height * 0.7;
+        } else if (node.type === 'datatype') {
+          return height * 0.6;
+        }
+        return height / 2;
+      }).strength(visualizationType === 'vowl' ? 0.25 : 0.15) : null)
+      .force('x', usePhysics ? d3.forceX(width / 2).strength(visualizationType === 'vowl' ? 0.01 : 0.02) : null)
+      .alphaDecay(usePhysics ? (visualizationType === 'vowl' ? 0.02 : 0.03) : 1) // Increased for faster settling
+      .velocityDecay(usePhysics ? (visualizationType === 'vowl' ? 0.6 : 0.5) : 0.8) // Increased for more damping
+      .alpha(isLayoutPaused || !usePhysics ? 0 : 1.0)
+      .alphaMin(0.001)
+      .alphaTarget(0);
 
     simulationRef.current = simulation;
 
-    // Draw edges
+    // Pre-calculate stable positions before rendering (run simulation silently)
+    if (usePhysics && !isLayoutPaused) {
+      // Run simulation for several ticks to get stable positions
+      const preTicks = visualizationType === 'vowl' ? 100 : 50; // More ticks for VOWL due to stronger forces
+      for (let i = 0; i < preTicks; i++) {
+        simulation.tick();
+      }
+      // Reduce alpha so nodes are nearly stable when rendered
+      simulation.alpha(0.3);
+      console.log(`[AdvancedGraphView] Pre-calculated ${preTicks} ticks for stable initial positions`);
+    }
+
+    // Add bounding box force to keep nodes within viewport (especially important for VOWL)
+    if (usePhysics && visualizationType === 'vowl') {
+      const padding = 80;
+      simulation.force('bound', () => {
+        d3Nodes.forEach(node => {
+          if (node.x && node.y) {
+            node.x = Math.max(padding, Math.min(width - padding, node.x));
+            node.y = Math.max(padding, Math.min(height - padding, node.y));
+          }
+        });
+      });
+    }
+
+    // Draw edges (with VOWL styling support and curved paths for multiple edges)
     const link = g.append('g')
       .attr('class', 'links')
-      .selectAll('line')
+      .selectAll('path')
       .data(d3Edges)
-      .join('line')
-      .attr('stroke', d => EDGE_TYPE_COLORS[d.type] || '#999')
-      .attr('stroke-width', d => d.weight || settings.edgeWidth)
-      .attr('stroke-opacity', 0.6)
-      .attr('marker-end', d => settings.showArrows ? `url(#arrow-${d.type})` : null)
+      .join('path')
+      .attr('fill', 'none')
+      .attr('stroke', d => {
+        if (visualizationType === 'vowl') {
+          // Determine property type for proper coloring
+          const sourceNode = allNodes.find(n => n.id === d.from);
+          const targetNode = allNodes.find(n => n.id === d.to);
+          
+          if (d.type === 'subClassOf') {
+            return '#374151'; // Dark gray for subClassOf
+          }
+          if (d.type === 'propertyRelation') {
+            // Annotation properties - purple
+            if (sourceNode?.type === 'annotation') {
+              return '#7c3aed';
+            }
+            // Data properties - pink
+            if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
+              return '#db2777';
+            }
+            // Object properties - cyan
+            return '#0891b2';
+          }
+          
+          const vowlEdge = vowlNotationService.edgeToVOWLEdge(d);
+          return vowlEdge.stroke || '#000000';
+        }
+        if (visualizationType === 'ontograph') {
+          // Protégé-style colors
+          if (d.type === 'subClassOf') return '#9C27B0'; // Purple for subClassOf
+          if (d.type === 'instanceOf') return '#FFA726'; // Orange for instances
+          if (d.type === 'propertyRelation') {
+            // Different colors for different property types
+            const sourceNode = allNodes.find(n => n.id === d.from);
+            const targetNode = allNodes.find(n => n.id === d.to);
+            if (sourceNode?.type === 'annotation') return '#8b5cf6'; // Purple for annotation properties
+            if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return '#ec4899'; // Pink for data properties
+            return '#06b6d4'; // Cyan for object properties
+          }
+          return '#9C27B0'; // Default purple
+        }
+        // Force mode - match reference image styling
+        if (d.type === 'subClassOf') return '#FFA500'; // Orange for subClassOf
+        if (d.type === 'instanceOf') return '#000000'; // Black for instanceOf
+        if (d.type === 'propertyRelation') {
+          const targetNode = allNodes.find(n => n.id === d.to);
+          // Gray for data properties pointing to datatypes or literal values
+          if (targetNode?.type === 'datatype' || targetNode?.label?.startsWith('"')) return '#999999';
+          return '#000000'; // Black for object properties
+        }
+        return '#000000'; // Default black
+      })
+      .attr('stroke-width', d => {
+        if (visualizationType === 'vowl') {
+          // Thinner lines in VOWL mode for cleaner appearance
+          return 1;
+        }
+        if (visualizationType === 'ontograph') {
+          // Medium width for OntoGraph Protégé style
+          return 2;
+        }
+        if (visualizationType === 'force') {
+          // Clean, visible lines for force mode
+          return 2;
+        }
+        return d.weight || settings.edgeWidth;
+      })
+      .attr('stroke-opacity', d => {
+        if (visualizationType === 'force') return 1; // Full opacity for force mode
+        if (d.type === 'propertyRelation') return 1;
+        return visualizationType === 'vowl' ? 1 : 0.6;
+      })
+      .attr('stroke-dasharray', d => {
+        if (visualizationType === 'vowl') {
+          const vowlEdge = vowlNotationService.edgeToVOWLEdge(d);
+          return vowlEdge.strokeDasharray || null;
+        }
+        if (visualizationType === 'ontograph') {
+          // Dashed lines for non-hierarchy edges in Protégé style
+          if (d.type === 'instanceOf') return '5 3'; // Dashed for instances
+          if (d.type === 'propertyRelation') return '8 4'; // Longer dash for properties
+          return null; // Solid for subClassOf
+        }
+        // Force mode - match reference image
+        if (d.type === 'subClassOf') return '5 3'; // Dashed for subClassOf
+        if (d.type === 'propertyRelation') {
+          const targetNode = allNodes.find(n => n.id === d.to);
+          if (targetNode?.type === 'datatype' || targetNode?.label?.startsWith('"')) return '4 2'; // Dashed for data properties
+        }
+        return null; // Solid for instanceOf and object properties
+      })
+      .attr('marker-end', d => {
+        // In VOWL mode, always show arrows
+        if (visualizationType === 'vowl') {
+          const arrowId = `url(#arrow-vowl-${d.type})`;
+          console.log(`[AdvancedGraphView] Edge ${d.id} (${d.type}): marker-end = ${arrowId}`);
+          return arrowId;
+        }
+        // For other visualization types, show based on settings
+        if (settings.showArrows || d.type === 'propertyRelation') {
+          return `url(#arrow-${d.type})`;
+        }
+        return null;
+      })
       .style('cursor', 'pointer')
       .on('click', (event, d) => {
         event.stopPropagation();
         onEdgeClick?.(d.id);
       });
 
-    // Draw edge labels
+    // Draw edge label backgrounds (colored boxes for WebVOWL - varied colors based on property)
+    const linkLabelBg = g.append('g')
+      .attr('class', 'link-label-backgrounds')
+      .selectAll('rect')
+      .data(d3Edges)
+      .join('rect')
+      .attr('fill', d => {
+        if (visualizationType === 'vowl') {
+          // Determine property type for proper background coloring
+          const sourceNode = allNodes.find(n => n.id === d.from);
+          const targetNode = allNodes.find(n => n.id === d.to);
+          const isFunctional = d.metadata?.functional;
+          
+          if (d.type === 'subClassOf') {
+            return '#E5E7EB'; // Light gray for subClassOf
+          }
+          
+          if (d.type === 'propertyRelation') {
+            // Annotation properties - light purple
+            if (sourceNode?.type === 'annotation') {
+              return isFunctional ? '#E9D5FF' : '#F3E8FF'; // Lighter purple
+            }
+            // Data properties - light pink
+            if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
+              return isFunctional ? '#FCE7F3' : '#FDF2F8'; // Light pink
+            }
+            // Object properties - light cyan
+            return isFunctional ? '#A7F3D0' : '#CFFAFE'; // Light cyan/green for functional
+          }
+          
+          return '#BBDEFB'; // Default light blue
+        }
+        
+        // Add background colors for other modes too
+        if (d.type === 'propertyRelation') {
+          const sourceNode = allNodes.find(n => n.id === d.from);
+          const targetNode = allNodes.find(n => n.id === d.to);
+          const isFunctional = d.metadata?.functional;
+          
+          // Annotation properties - light purple
+          if (sourceNode?.type === 'annotation') {
+            return isFunctional ? '#E9D5FF' : '#F3E8FF';
+          }
+          // Data properties - light pink
+          if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
+            return isFunctional ? '#FCE7F3' : '#FDF2F8';
+          }
+          // Object properties - light cyan
+          return isFunctional ? '#A7F3D0' : '#CFFAFE';
+        }
+        
+        return '#ffffff';
+      })
+      .attr('opacity', visualizationType === 'vowl' ? 1 : 0.85)
+      .attr('stroke', d => {
+        if (visualizationType === 'vowl') {
+          const isFunctional = d.metadata?.functional;
+          const label = (d.label || '').toLowerCase();
+          
+          // Matching border colors
+          if (isFunctional) {
+            return '#4CAF50'; // Green border for functional
+          } else if (label.includes('has') || label.includes('tag')) {
+            return '#2196F3'; // Blue border
+          } else if (label.includes('creator') || label.includes('access')) {
+            return '#2196F3'; // Blue border
+          } else if (label.includes('meaning') || label.includes('previous') || label.includes('next')) {
+            return '#9C27B0'; // Purple border
+          } else {
+            return '#2196F3'; // Default blue border
+          }
+        }
+        return 'none';
+      })
+      .attr('stroke-width', visualizationType === 'vowl' ? 1 : 0)
+      .attr('rx', 3)
+      .attr('ry', 3)
+      .style('pointer-events', 'none');
+
+    // Draw edge labels (more prominent in WebVOWL mode)
     const linkLabel = g.append('g')
       .attr('class', 'link-labels')
       .selectAll('text')
       .data(d3Edges)
       .join('text')
-      .attr('font-size', 10)
-      .attr('fill', '#666')
+      .attr('font-size', visualizationType === 'vowl' ? 9 : 10)
+      .attr('font-weight', visualizationType === 'vowl' ? '500' : '400')
+      .attr('font-family', visualizationType === 'vowl' ? 'Arial, sans-serif' : 'inherit')
+      .attr('fill', d => {
+        if (visualizationType === 'vowl') {
+          // Determine property type for proper label coloring
+          const sourceNode = allNodes.find(n => n.id === d.from);
+          const targetNode = allNodes.find(n => n.id === d.to);
+          
+          if (d.type === 'subClassOf') {
+            return '#1f2937'; // Dark for subClassOf
+          }
+          
+          if (d.type === 'propertyRelation') {
+            // Annotation properties - dark purple
+            if (sourceNode?.type === 'annotation') {
+              return '#6b21a8';
+            }
+            // Data properties - dark pink
+            if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
+              return '#be185d';
+            }
+            // Object properties - dark cyan
+            const isFunctional = d.metadata?.functional;
+            return isFunctional ? '#2E7D32' : '#065f46'; // Green for functional, dark cyan for regular
+          }
+          
+          return '#1565C0'; // Default dark blue
+        }
+        // Color labels by property type
+        if (d.type === 'propertyRelation') {
+          const sourceNode = allNodes.find(n => n.id === d.from);
+          const targetNode = allNodes.find(n => n.id === d.to);
+          if (sourceNode?.type === 'annotation') return '#7c3aed'; // Dark purple for annotation properties
+          if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return '#db2777'; // Dark pink for data properties
+          return '#0891b2'; // Dark cyan for object properties
+        }
+        if (d.type === 'subClassOf') return '#7c3aed'; // Purple
+        if (d.type === 'instanceOf') return '#ea580c'; // Orange
+        return '#666';
+      })
       .attr('text-anchor', 'middle')
-      .text(d => d.label || '')
+      .attr('dominant-baseline', 'middle')
+      .text(d => {
+        // Show full label in WebVOWL mode with functional indicator
+        if (visualizationType === 'vowl') {
+          const baseLabel = d.label || d.type || '';
+          const isFunctional = d.metadata?.functional;
+          const isInverseFunctional = d.metadata?.inverseFunctional;
+          
+          // Format like reference image: "tag of (functional)"
+          if (isFunctional && isInverseFunctional) {
+            return `${baseLabel} (F, IF)`;
+          } else if (isFunctional) {
+            return `${baseLabel} (F)`;
+          } else if (isInverseFunctional) {
+            return `${baseLabel} (IF)`;
+          }
+          return baseLabel;
+        }
+        
+        // Add property type prefix and functional indicator for clarity
+        if (settings.showLabels && d.type === 'propertyRelation') {
+          const sourceNode = allNodes.find(n => n.id === d.from);
+          const targetNode = allNodes.find(n => n.id === d.to);
+          const label = d.label || '';
+          const isFunctional = d.metadata?.functional;
+          const isInverseFunctional = d.metadata?.inverseFunctional;
+          
+          let prefix = '';
+          if (sourceNode?.type === 'annotation') prefix = '📝'; // Annotation property
+          else if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') prefix = '📊'; // Data property
+          else prefix = '🔗'; // Object property
+          
+          let suffix = '';
+          if (isFunctional && isInverseFunctional) suffix = ' (F, IF)';
+          else if (isFunctional) suffix = ' (F)';
+          else if (isInverseFunctional) suffix = ' (IF)';
+          
+          return `${prefix} ${label}${suffix}`;
+        }
+        
+        return settings.showLabels ? (d.label || '') : '';
+      })
       .style('pointer-events', 'none')
-      .style('opacity', settings.showLabels ? 1 : 0);
+      .style('opacity', (visualizationType === 'vowl' || settings.showLabels) ? 1 : 0); // Always show labels in WebVOWL mode
 
+    // Filter nodes by viewport for large OntoGraph (virtualization)
+    let visibleD3Nodes = d3Nodes;
+    if (isLargeGraph && visualizationType === 'ontograph' && d3Nodes.length > 5000) {
+      const buffer = 500; // Buffer zone around viewport
+      visibleD3Nodes = d3Nodes.filter(node => {
+        if (!node.x || !node.y) return true; // Include if no position yet
+        return node.x >= viewportBounds.x - buffer &&
+               node.x <= viewportBounds.x + viewportBounds.width + buffer &&
+               node.y >= viewportBounds.y - buffer &&
+               node.y <= viewportBounds.y + viewportBounds.height + buffer;
+      });
+      console.log(`[OntoGraph Virtualization] Rendering ${visibleD3Nodes.length} of ${d3Nodes.length} nodes`);
+    }
+    
     // Draw nodes
     const node = g.append('g')
       .attr('class', 'nodes')
       .selectAll('g')
-      .data(d3Nodes)
+      .data(visibleD3Nodes)
       .join('g')
       .attr('class', 'node')
       .style('cursor', editMode ? 'move' : 'pointer')
@@ -669,26 +1643,315 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         .on('drag', dragged)
         .on('end', dragEnded) as any);
 
-    // Node circles
-    node.append('circle')
-      .attr('r', d => d.size || settings.nodeSize)
-      .attr('fill', d => d.color || TYPE_COLORS[d.type])
-      .attr('stroke', '#fff')
-      .attr('stroke-width', d => hasChildren(d.id, allEdges, allNodes) ? 3 : 2)
-      .style('filter', visibleNodes.length > 100 ? 'none' : 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))')
-      .on('click', handleNodeClick)
-      .on('contextmenu', handleNodeRightClick)
-      .on('mouseover', handleNodeMouseOver)
-      .on('mouseout', handleNodeMouseOut);
+    // Node shapes (WebVOWL-style: circles for classes/properties, rectangles for datatypes/individuals)
+    node.each(function(d) {
+      const nodeGroup = d3.select(this);
+      const size = d.size || settings.nodeSize;
+      const nodeType = d.type;
+      
+      // Check if this is owl:Thing or external/internal node
+      const isThing = d.label === 'Thing' || d.id.includes('owl#Thing');
+      const isExternal = d.label?.includes('external') || ['Item', 'UserAccount', 'Concept'].includes(d.label || '');
+      
+      // WebVOWL color scheme matching reference image
+      let fill = '#acd5f2'; // Default light blue for internal classes
+      
+      if (visualizationType === 'vowl' && nodeType === 'class') {
+        if (isThing) {
+          fill = '#ffffff'; // White fill for Thing nodes
+        } else if (isExternal) {
+          fill = '#4682b4'; // Dark blue for external classes (steel blue)
+        } else {
+          fill = '#acd5f2'; // Light blue for internal classes
+        }
+      } else if (visualizationType === 'vowl') {
+        fill = vowlNotationService.getVOWLNodeColor(d.type);
+      } else {
+        fill = d.color || TYPE_COLORS[d.type];
+      }
+      
+      const stroke = visualizationType === 'vowl'
+        ? '#000000'
+        : '#fff';
+      
+      const strokeWidth = visualizationType === 'vowl'
+        ? 2
+        : (hasChildren(d.id, allEdges, allNodes) ? 3 : 2);
+      
+      // Thing nodes get dashed borders in WebVOWL
+      const strokeDasharray = visualizationType === 'vowl'
+        ? (isThing ? '5 3' : null)
+        : null;
 
-    // Node labels
+      // Render different shapes based on node type (WebVOWL style)
+      if (nodeType === 'dataProperty' || nodeType === 'property') {
+        // Pink Rectangle for data properties
+        nodeGroup.append('rect')
+          .attr('x', -size)
+          .attr('y', -size)
+          .attr('width', size * 2)
+          .attr('height', size * 2)
+          .attr('rx', 3)
+          .attr('fill', fill)
+          .attr('stroke', stroke)
+          .attr('stroke-width', strokeWidth)
+          .attr('stroke-dasharray', strokeDasharray || null)
+          .style('filter', visibleNodes.length > 100 ? 'none' : 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))')
+          .on('click', (event: any, d: any) => handleNodeClick(event, d as D3Node))
+          .on('contextmenu', (event: any, d: any) => handleNodeRightClick(event, d as D3Node))
+          .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
+          .on('mouseout', handleNodeMouseOut);
+      } else if (nodeType === 'datatype') {
+        // Force mode: White rectangle for datatypes/literals
+        if (visualizationType === 'force') {
+          const rectWidth = size * 2.2;
+          const rectHeight = size * 1.1;
+          nodeGroup.append('rect')
+            .attr('x', -rectWidth / 2)
+            .attr('y', -rectHeight / 2)
+            .attr('width', rectWidth)
+            .attr('height', rectHeight)
+            .attr('rx', 3)
+            .attr('ry', 3)
+            .attr('fill', '#FFFFFF')
+            .attr('stroke', '#999999')
+            .attr('stroke-width', 1)
+            .on('click', (event: any, d: any) => handleNodeClick(event, d as D3Node))
+            .on('contextmenu', (event: any, d: any) => handleNodeRightClick(event, d as D3Node))
+            .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
+            .on('mouseout', handleNodeMouseOut);
+        } else {
+          // VOWL/OntoGraph: Yellow Rounded Rectangle for datatypes - larger for both modes
+          const rectWidth = visualizationType === 'vowl' ? size * 4.2 : (visualizationType === 'ontograph' ? size * 3.5 : size * 3);
+          const rectHeight = visualizationType === 'vowl' ? size * 2.0 : (visualizationType === 'ontograph' ? size * 1.8 : size * 1.6);
+          nodeGroup.append('rect')
+            .attr('x', -rectWidth / 2)
+            .attr('y', -rectHeight / 2)
+            .attr('width', rectWidth)
+            .attr('height', rectHeight)
+            .attr('rx', size * 0.4)
+            .attr('fill', visualizationType === 'vowl' ? '#FFD9B3' : fill)
+            .attr('stroke', visualizationType === 'vowl' ? '#000000' : stroke)
+            .attr('stroke-width', visualizationType === 'vowl' ? 2 : strokeWidth)
+            .attr('stroke-dasharray', visualizationType === 'vowl' ? '5 3' : (strokeDasharray || null))
+            .style('filter', visibleNodes.length > 100 ? 'none' : 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))')
+            .on('click', (event: any, d: any) => handleNodeClick(event, d as D3Node))
+            .on('contextmenu', (event: any, d: any) => handleNodeRightClick(event, d as D3Node))
+            .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
+            .on('mouseout', handleNodeMouseOut);
+        }
+      } else if (nodeType === 'individual') {
+        // Force mode: Blue rounded rectangle for individuals
+        if (visualizationType === 'force') {
+          const rectWidth = size * 3.2;
+          const rectHeight = size * 1.6;
+          nodeGroup.append('rect')
+            .attr('x', -rectWidth / 2)
+            .attr('y', -rectHeight / 2)
+            .attr('width', rectWidth)
+            .attr('height', rectHeight)
+            .attr('rx', 5)
+            .attr('ry', 5)
+            .attr('fill', '#B0C4DE')
+            .attr('stroke', '#000000')
+            .attr('stroke-width', 1.5)
+            .style('filter', visibleNodes.length > 100 ? 'none' : 'drop-shadow(0 2px 4px rgba(0,0,0,0.15))')
+            .on('click', (event: any, d: any) => handleNodeClick(event, d as D3Node))
+            .on('contextmenu', (event: any, d: any) => handleNodeRightClick(event, d as D3Node))
+            .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
+            .on('mouseout', handleNodeMouseOut);
+        } else {
+          // VOWL/OntoGraph: Rectangle for individuals (purple/pink) - larger for OntoGraph
+          const rectWidth = visualizationType === 'vowl' ? size * 2.8 : (visualizationType === 'ontograph' ? size * 2.8 : size * 2.4);
+          const rectHeight = visualizationType === 'vowl' ? size * 1.8 : (visualizationType === 'ontograph' ? size * 1.8 : size * 1.6);
+          nodeGroup.append('rect')
+            .attr('x', -rectWidth / 2)
+            .attr('y', -rectHeight / 2)
+            .attr('width', rectWidth)
+            .attr('height', rectHeight)
+            .attr('rx', 4)
+            .attr('ry', 4)
+            .attr('fill', fill)
+            .attr('stroke', stroke)
+            .attr('stroke-width', strokeWidth)
+            .attr('stroke-dasharray', strokeDasharray || null)
+            .style('filter', visibleNodes.length > 100 ? 'none' : 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))')
+            .on('click', (event: any, d: any) => handleNodeClick(event, d as D3Node))
+            .on('contextmenu', (event: any, d: any) => handleNodeRightClick(event, d as D3Node))
+            .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
+            .on('mouseout', handleNodeMouseOut);
+        }
+      } else if (nodeType === 'annotation' && visualizationType !== 'force') {
+        // Hexagon for annotation properties (distinctive shape) - but not in force mode
+        // In force mode, annotations are shown only as edges, not nodes
+        const hexSize = visualizationType === 'vowl' ? size * 1.5 : size * 1.2;
+        const angle = Math.PI / 3; // 60 degrees
+        const hexPoints = Array.from({ length: 6 }, (_, i) => {
+          const x = hexSize * Math.cos(angle * i - Math.PI / 2);
+          const y = hexSize * Math.sin(angle * i - Math.PI / 2);
+          return `${x},${y}`;
+        }).join(' ');
+        
+        nodeGroup.append('polygon')
+          .attr('points', hexPoints)
+          .attr('fill', visualizationType === 'vowl' ? '#e8d5f2' : fill) // Light purple for annotations
+          .attr('stroke', stroke)
+          .attr('stroke-width', strokeWidth)
+          .attr('stroke-dasharray', strokeDasharray || null)
+          .style('filter', visibleNodes.length > 100 ? 'none' : 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))')
+          .on('click', (event: any, d: any) => handleNodeClick(event, d as D3Node))
+          .on('contextmenu', (event: any, d: any) => handleNodeRightClick(event, d as D3Node))
+          .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
+          .on('mouseout', handleNodeMouseOut);
+      } else if (visualizationType === 'ontograph') {
+        // Protégé-style: Rounded rectangle for all nodes
+        const simplifiedLOD = isLargeGraph && viewportBounds.scale < 0.5;
+        const rectWidth = simplifiedLOD ? size * 4 : size * 6.5;
+        const rectHeight = simplifiedLOD ? size * 1.5 : size * 1.8;
+        
+        nodeGroup.append('rect')
+          .attr('x', -rectWidth / 2)
+          .attr('y', -rectHeight / 2)
+          .attr('width', rectWidth)
+          .attr('height', rectHeight)
+          .attr('rx', 4)
+          .attr('fill', '#E8EAF6') // Light purple-grey background
+          .attr('stroke', '#5E35B1') // Purple border
+          .attr('stroke-width', simplifiedLOD ? 1 : 1.5)
+          .style('filter', simplifiedLOD ? 'none' : 'drop-shadow(0 1px 3px rgba(0,0,0,0.2))')
+          .on('click', (event: any, d: any) => handleNodeClick(event, d as D3Node))
+          .on('contextmenu', (event: any, d: any) => handleNodeRightClick(event, d as D3Node))
+          .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
+          .on('mouseout', handleNodeMouseOut);
+        
+        // Add icon circle for OntoGraph nodes (skip in simplified LOD)
+        if (!simplifiedLOD) {
+          nodeGroup.append('circle')
+            .attr('cx', -rectWidth / 2 + 12)
+            .attr('cy', 0)
+            .attr('r', 6)
+            .attr('fill', '#FFA726') // Orange icon
+            .attr('stroke', 'none');
+        }
+      } else {
+        // Force mode classes OR default circle rendering
+        if (visualizationType === 'force' && nodeType === 'class') {
+          // Classes as light orange/peach ovals (ellipse) - larger size for better label fit
+          const ellipseWidth = size * 3.5;  // Wider for text
+          const ellipseHeight = size * 2.0; // Taller oval
+          nodeGroup.append('ellipse')
+            .attr('cx', 0)
+            .attr('cy', 0)
+            .attr('rx', ellipseWidth)
+            .attr('ry', ellipseHeight)
+            .attr('fill', '#FFE4B5')  // Light peach/moccasin color
+            .attr('stroke', '#000000')
+            .attr('stroke-width', 2)
+            .style('filter', visibleNodes.length > 100 ? 'none' : 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))')
+            .on('click', (event: any, d: any) => handleNodeClick(event, d as D3Node))
+            .on('contextmenu', (event: any, d: any) => handleNodeRightClick(event, d as D3Node))
+            .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
+            .on('mouseout', handleNodeMouseOut);
+        } else {
+          // Circle for classes, object properties, and other types - larger for OntoGraph
+          const circleRadius = visualizationType === 'vowl' 
+            ? size * 1.8 
+            // @ts-ignore - Type narrowing limitation: visualizationType can be 'ontograph' in other code paths
+            : (visualizationType === 'ontograph' ? size * 1.6 : size * 1.2);
+          nodeGroup.append('circle')
+            .attr('r', circleRadius)
+            .attr('fill', fill)
+            .attr('stroke', stroke)
+            .attr('stroke-width', strokeWidth)
+            .attr('stroke-dasharray', strokeDasharray || null)
+            .style('filter', visibleNodes.length > 100 ? 'none' : 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))')
+            .on('click', (event: any, d: any) => handleNodeClick(event, d as D3Node))
+            .on('contextmenu', (event: any, d: any) => handleNodeRightClick(event, d as D3Node))
+            .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
+            .on('mouseout', handleNodeMouseOut);
+        }
+      }
+    });
+
+    // Node labels - INSIDE for WebVOWL and OntoGraph, outside for force mode
+    // Hide labels when zoomed out on large graphs (LOD)
+    const showLabels = !isLargeGraph || viewportBounds.scale >= 0.5;
+    
     node.append('text')
-      .attr('dx', d => (d.size || settings.nodeSize) + 8)
-      .attr('dy', 4)
-      .attr('font-size', 13)
-      .attr('font-weight', '500')
-      .attr('fill', '#333')
-      .text(d => settings.showLabels ? d.label : '')
+      .attr('dx', d => {
+        if (visualizationType === 'vowl') return 0;
+        if (visualizationType === 'ontograph') return showLabels ? 8 : 0; // Center when no icon
+        if (visualizationType === 'force') return 0; // Centered labels for force mode
+        return (d.size || settings.nodeSize) + 8;
+      })
+      .attr('dy', d => {
+        if (visualizationType === 'vowl') return 5;
+        if (visualizationType === 'ontograph') return 4;
+        if (visualizationType === 'force') return 4; // Vertically centered for force mode
+        return 4;
+      })
+      .attr('text-anchor', d => {
+        if (visualizationType === 'vowl' || visualizationType === 'ontograph') return 'middle';
+        if (visualizationType === 'force') return 'middle'; // Center text for force mode
+        return 'start';
+      })
+      .attr('font-size', d => {
+        if (visualizationType === 'vowl') return 11;
+        if (visualizationType === 'ontograph') return 13; // Increased for better readability
+        if (visualizationType === 'force') return 11; // Smaller font for better fit in ovals
+        return 13;
+      })
+      .attr('font-weight', d => {
+        if (visualizationType === 'vowl' || visualizationType === 'ontograph') return '600';
+        if (visualizationType === 'force') return '600'; // Bold for better contrast
+        return '500';
+      })
+      .attr('font-family', d => {
+        if (visualizationType === 'vowl' || visualizationType === 'ontograph' || visualizationType === 'force') return 'Arial, sans-serif';
+        return 'inherit';
+      })
+      .attr('fill', d => {
+        if (visualizationType === 'vowl') {
+          // White text for dark blue external classes, black for others
+          const isExternal = ['Item', 'UserAccount', 'Concept'].includes(d.label || '');
+          return isExternal ? '#ffffff' : '#000000';
+        }
+        if (visualizationType === 'ontograph') {
+          return '#1A237E'; // Dark blue text for OntoGraph
+        }
+        if (visualizationType === 'force') {
+          // Black text for good contrast on orange/blue backgrounds
+          return '#000000';
+        }
+        return '#333';
+      })
+      .text(d => {
+        if (visualizationType === 'vowl') {
+          // Truncate labels in WebVOWL mode to fit within rectangles
+          const label = d.label || '';
+          let maxChars = 18; // Increased default for classes
+          
+          // Adjust max length based on node type and size
+          if (d.type === 'datatype') {
+            maxChars = 16; // Increased for datatypes
+          } else if (d.type === 'individual') {
+            maxChars = 12; // Increased for individuals
+          } else if (d.type === 'class') {
+            maxChars = 18; // Classes can be longer
+          }
+          
+          return label.length > maxChars ? label.substring(0, maxChars - 2) + '..' : label;
+        }
+        if (visualizationType === 'ontograph' && !showLabels) {
+          return ''; // Hide labels when zoomed out on large graphs
+        }
+        if (visualizationType === 'force') {
+          // Truncate long labels to fit within ovals (max 20 characters)
+          const label = d.label || '';
+          return label.length > 20 ? label.substring(0, 17) + '...' : label;
+        }
+        return settings.showLabels ? d.label : '';
+      })
       .style('pointer-events', 'none')
       .style('user-select', 'none');
 
@@ -709,6 +1972,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     let tickCount = 0;
     const updateInterval = nodeCount > 100 ? 3 : 2; // Skip more frames for large graphs
     
+    // Force initial render to show nodes immediately
+    if (visualizationType === 'ontograph') {
+      simulation.alpha(1).restart();
+    }
+    
     simulation.on('tick', () => {
       tickCount++;
       // Skip frames for better performance
@@ -717,43 +1985,119 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       if (!ticking) {
         ticking = true;
         rafId = requestAnimationFrame(() => {
-          link
-            .attr('x1', d => (d.source as D3Node).x!)
-            .attr('y1', d => (d.source as D3Node).y!)
-            .attr('x2', d => {
-              const source = d.source as D3Node;
-              const target = d.target as D3Node;
-              if (!source.x || !source.y || !target.x || !target.y) return 0;
+          // Update edge paths with curvature for multiple edges between same nodes
+          link.attr('d', d => {
+            const source = d.source as D3Node;
+            const target = d.target as D3Node;
+            
+            if (!source.x || !source.y || !target.x || !target.y) {
+              return '';
+            }
+            
+            const curve = edgeCurvature.get(d.id) || 0;
+            
+            // Calculate edge endpoints
+            const dx = target.x - source.x;
+            const dy = target.y - source.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            
+            if (dist === 0) {
+              return `M${source.x},${source.y}L${target.x},${target.y}`;
+            }
+            
+            // Shorten edge to stop at node boundary
+            const r = (target.size || settings.nodeSize) + 3;
+            const targetX = target.x - (dx / dist) * r;
+            const targetY = target.y - (dy / dist) * r;
+            
+            if (curve === 0) {
+              // Straight line
+              return `M${source.x},${source.y}L${targetX},${targetY}`;
+            } else {
+              // Curved path - quadratic bezier curve
+              // Calculate control point perpendicular to the line
+              const midX = (source.x + targetX) / 2;
+              const midY = (source.y + targetY) / 2;
               
-              const dx = target.x - source.x;
-              const dy = target.y - source.y;
-              const dist = Math.sqrt(dx * dx + dy * dy);
+              // Perpendicular offset
+              const perpX = -dy / dist;
+              const perpY = dx / dist;
               
-              if (dist === 0) return target.x;
+              const controlX = midX + perpX * curve;
+              const controlY = midY + perpY * curve;
               
-              // Shorten the edge to stop at the node boundary + padding
-              // This ensures the arrow marker is visible and points to the node edge
-              const r = (target.size || settings.nodeSize) + 3; 
-              return target.x - (dx / dist) * r;
-            })
-            .attr('y2', d => {
-              const source = d.source as D3Node;
-              const target = d.target as D3Node;
-              if (!source.x || !source.y || !target.x || !target.y) return 0;
-              
-              const dx = target.x - source.x;
-              const dy = target.y - source.y;
-              const dist = Math.sqrt(dx * dx + dy * dy);
-              
-              if (dist === 0) return target.y;
-              
-              const r = (target.size || settings.nodeSize) + 3;
-              return target.y - (dy / dist) * r;
-            });
+              return `M${source.x},${source.y}Q${controlX},${controlY},${targetX},${targetY}`;
+            }
+          });
 
-          linkLabel
-            .attr('x', d => ((d.source as D3Node).x! + (d.target as D3Node).x!) / 2)
-            .attr('y', d => ((d.source as D3Node).y! + (d.target as D3Node).y!) / 2);
+          linkLabel.each(function(d, i) {
+            const sourceX = (d.source as D3Node).x!;
+            const sourceY = (d.source as D3Node).y!;
+            const targetX = (d.target as D3Node).x!;
+            const targetY = (d.target as D3Node).y!;
+            const dx = targetX - sourceX;
+            const dy = targetY - sourceY;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            
+            const curve = edgeCurvature.get(d.id) || 0;
+            
+            // Position label at the MIDDLE of the edge
+            let labelX: number;
+            let labelY: number;
+            
+            if (curve === 0) {
+              // Straight line
+              const t = 0.5;
+              labelX = sourceX + dx * t;
+              labelY = sourceY + dy * t;
+              
+              // Small perpendicular offset for readability
+              if (dist > 0) {
+                const perpX = -dy / dist;
+                const perpY = dx / dist;
+                const perpOffset = visualizationType === 'vowl' ? 15 : 10;
+                labelX += perpX * perpOffset;
+                labelY += perpY * perpOffset;
+              }
+            } else {
+              // Curved path - position label on the curve at t=0.5
+              const midX = (sourceX + targetX) / 2;
+              const midY = (sourceY + targetY) / 2;
+              
+              // Perpendicular offset for curve control point
+              const perpX = -dy / dist;
+              const perpY = dx / dist;
+              
+              const controlX = midX + perpX * curve;
+              const controlY = midY + perpY * curve;
+              
+              // Quadratic bezier point at t=0.5
+              const t = 0.5;
+              labelX = (1-t)*(1-t)*sourceX + 2*(1-t)*t*controlX + t*t*targetX;
+              labelY = (1-t)*(1-t)*sourceY + 2*(1-t)*t*controlY + t*t*targetY;
+              
+              // Additional small offset for label readability
+              const labelOffset = 10;
+              labelX += perpX * labelOffset;
+              labelY += perpY * labelOffset;
+            }
+            
+            d3.select(this)
+              .attr('x', labelX)
+              .attr('y', labelY);
+          });
+          linkLabelBg.each(function(d, i) {
+            const label = linkLabel.nodes()[i];
+            if (label) {
+              const bbox = (label as SVGTextElement).getBBox();
+              const padding = visualizationType === 'vowl' ? 3 : 3;
+              d3.select(this)
+                .attr('x', bbox.x - padding)
+                .attr('y', bbox.y - padding)
+                .attr('width', bbox.width + padding * 2)
+                .attr('height', bbox.height + padding * 2);
+            }
+          });
 
           node.attr('transform', d => `translate(${d.x},${d.y})`);
           
@@ -796,7 +2140,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         }
         setSelectedNodes(newSelected);
       } else {
-        // Single click - open hierarchy dialog
+        // Single click - select node and show hierarchical navigator for ALL nodes
         setSelectedNodes(new Set([d.id]));
         setSelectedNodeInfo(d as OntologyNode);
         setHierarchyRootNode(d as OntologyNode);
@@ -845,10 +2189,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         onNodeClick?.(d.id);
       }
 
-      // Update visual selection
-      node.selectAll('circle')
-        .attr('stroke', (n: any) => selectedNodes.has(n.id) || n.id === d.id ? '#667eea' : '#fff')
-        .attr('stroke-width', (n: any) => selectedNodes.has(n.id) || n.id === d.id ? 3 : 2);
+      // Update visual selection for all shapes (circle, rect, polygon)
+      node.selectAll('circle, rect, polygon')
+        .attr('stroke', (n: any) => selectedNodes.has(n.id) || n.id === d.id ? '#667eea' : (visualizationType === 'vowl' ? '#1f2937' : '#fff'))
+        .attr('stroke-width', (n: any) => selectedNodes.has(n.id) || n.id === d.id ? 4 : 2);
     }
 
     function handleNodeRightClick(event: any, d: D3Node) {
@@ -930,9 +2274,30 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .on('zoom', (event) => {
         g.attr('transform', event.transform);
         setZoomLevel(event.transform.k);
+        
+        // Update viewport bounds for large graph optimization
+        if (isLargeGraph) {
+          const transform = event.transform;
+          setViewportBounds({
+            x: -transform.x / transform.k,
+            y: -transform.y / transform.k,
+            width: width / transform.k,
+            height: height / transform.k,
+            scale: transform.k
+          });
+        }
       });
 
+    zoomRef.current = zoom;
     svg.call(zoom as any);
+
+    // Apply initial transform for small graphs (zoom in closer)
+    if (nodeCount < 30) {
+      const initialTransform = d3.zoomIdentity
+        .translate(-5.47574, -56.0665)
+        .scale(1.16629);
+      svg.call(zoom.transform as any, initialTransform);
+    }
 
     // Log performance metrics
     const endTime = performance.now();
@@ -940,12 +2305,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     renderTime.current = renderTimeMs;
     console.log(`[AdvancedGraphView D3] ⚡ Render completed in ${renderTimeMs.toFixed(2)}ms`);
     console.log(`[AdvancedGraphView D3] 📊 Performance: ${(filteredNodes.length / renderTimeMs * 1000).toFixed(0)} nodes/sec`);
-
     // Cleanup
     return () => {
       simulation.stop();
     };
-  }, [filteredNodes, filteredEdges, settings, editMode, selectedNodes, onNodeClick, onEdgeClick, allEdges, allNodes, expandedNodeIds]);
+  }, [filteredNodes, filteredEdges, settings, editMode, selectedNodes, onNodeClick, onEdgeClick, allEdges, allNodes, expandedNodeIds, classDistance, datatypeDistance, isLayoutPaused, visualizationType]);
 
   /**
    * ========================================================================
@@ -1154,16 +2518,31 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   }, [allNodes, allEdges, canEdit, classActionLoading, projectId, readonly]);
 
   const executeCreateClass = useCallback(async (action: Extract<PendingClassAction, { kind: 'create' }>) => {
-    if (!projectId) return;
+    if (!projectId) {
+      console.error('[Graph Dialog] No projectId available');
+      return;
+    }
+    
     const parentId = action.parentNode.id;
     const parentIriForMutation = resolveNodeIri(action.parentNode);
     const newLabel = action.label.trim();
+    
+    console.log('[Graph Dialog] executeCreateClass called:', {
+      relation: action.relation,
+      targetNode: action.targetNode.label,
+      parentNode: action.parentNode.label,
+      newLabel,
+      parentId,
+      parentIriForMutation
+    });
+    
     if (!newLabel) {
       setClassActionFeedback({ type: 'error', message: 'Class name cannot be empty.' });
       return;
     }
 
     if (!parentIriForMutation) {
+      console.warn('[Graph Dialog] Parent IRI could not be resolved, opening main editor dialog');
       requestHostClassDialog(action.relation, action.targetNode, action.parentNode);
       setPendingClassAction(null);
       return;
@@ -1173,13 +2552,44 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       setClassActionLoading(true);
       setClassActionFeedback(null);
       const newIri = buildClassIri(newLabel, action.parentNode || action.targetNode);
-
-      await applyOntologyMutations([{
+      
+      console.log('[Graph Dialog] Sending createClass mutation to backend:', {
         type: 'createClass',
         iri: newIri,
         label: newLabel,
         parent: parentIriForMutation
-      }]);
+      });
+
+      const apiBaseUrl = (window as any).API_BASE_URL;
+      const authToken = localStorage.getItem('authToken');
+      const draftMode = context?.draftMode ?? false;
+      
+      const response = await fetch(`${apiBaseUrl}/api/ontology/mutations/${projectId}?draft=${draftMode}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          ops: [{
+            type: 'createClass',
+            iri: newIri,
+            label: newLabel,
+            parent: parentIriForMutation
+          }],
+          userId: context?.userId || 'graph-view-plugin',
+          username: context?.username || 'Graph View Plugin',
+          sessionId: context?.sessionId || `graph-view-${Date.now()}`
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.message || `Failed to create class (${response.status})`);
+      }
+
+      const result = await response.json();
+      console.log('[Graph Dialog] Backend response:', result);
 
       const newNode: OntologyNode = {
         id: newIri,
@@ -1189,38 +2599,67 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         metadata: { createdBy: 'graph-view-plugin' }
       };
 
-      setAllNodes(prev => [...prev, newNode]);
-      setAllEdges(prev => ([
-        ...prev,
-        {
-          id: `edge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          from: newIri,
-          to: parentId,
-          label: 'subClassOf',
-          type: 'subClassOf'
-        }
-      ]));
+      const newEdge = {
+        id: `edge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        from: newIri,
+        to: parentId,
+        label: 'subClassOf',
+        type: 'subClassOf' as const
+      };
 
+      console.log('[Graph Dialog] Adding new node and edge to local state:', {
+        node: newNode,
+        edge: newEdge
+      });
+
+      // Update nodes and edges
+      setAllNodes(prev => {
+        const updated = [...prev, newNode];
+        console.log('[Graph Dialog] Updated allNodes count:', updated.length);
+        return updated;
+      });
+      
+      setAllEdges(prev => {
+        const updated = [...prev, newEdge];
+        console.log('[Graph Dialog] Updated allEdges count:', updated.length);
+        return updated;
+      });
+
+      // Update hierarchy state - make parent expanded and new node visible
       updateHierarchyState(prev => {
         const visible = new Set(prev.visible);
         const expanded = new Set(prev.expanded);
         visible.add(newIri);
-        expanded.add(parentId);
+        visible.add(parentId); // Ensure parent is also visible
+        expanded.add(parentId); // Expand parent to show new child
+        
+        console.log('[Graph Dialog] Updated hierarchy state:', {
+          visibleCount: visible.size,
+          expandedCount: expanded.size,
+          newNodeVisible: visible.has(newIri),
+          parentExpanded: expanded.has(parentId)
+        });
+        
         return { visible, expanded };
       });
 
+      // Select the new node
       setSelectedNodes(new Set([newIri]));
       setSelectedNodeInfo(newNode);
-      setClassActionFeedback({ type: 'success', message: `Created class "${newLabel}"` });
+      
+      // Show success feedback
+      setClassActionFeedback({ type: 'success', message: `✓ Created class "${newLabel}"` });
       setPendingClassAction(null);
+      
+      console.log('[Graph Dialog] Class creation completed successfully');
     } catch (actionError) {
       const message = actionError instanceof Error ? actionError.message : 'Failed to create class';
       setClassActionFeedback({ type: 'error', message });
-      console.error('[Graph Dialog] Create class failed', actionError);
+      console.error('[Graph Dialog] Create class failed:', actionError);
     } finally {
       setClassActionLoading(false);
     }
-  }, [applyOntologyMutations, buildClassIri, projectId, requestHostClassDialog, updateHierarchyState]);
+  }, [buildClassIri, context, projectId, requestHostClassDialog, updateHierarchyState]);
 
   const startDeleteClassAction = useCallback((nodeId: string) => {
     if (readonly || !projectId || !canEdit || classActionLoading) {
@@ -1309,25 +2748,25 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
    * ========================================================================
    */
   const handleZoomIn = () => {
-    if (svgRef.current) {
+    if (svgRef.current && zoomRef.current) {
       const svg = d3.select(svgRef.current);
       svg.transition().duration(300).call(
-        (d3.zoom() as any).scaleBy as any, 1.3
+        zoomRef.current.scaleBy as any, 1.3
       );
     }
   };
 
   const handleZoomOut = () => {
-    if (svgRef.current) {
+    if (svgRef.current && zoomRef.current) {
       const svg = d3.select(svgRef.current);
       svg.transition().duration(300).call(
-        (d3.zoom() as any).scaleBy as any, 0.7
+        zoomRef.current.scaleBy as any, 0.7
       );
     }
   };
 
   const handleFit = () => {
-    if (svgRef.current && gRef.current) {
+    if (svgRef.current && gRef.current && zoomRef.current) {
       const svg = d3.select(svgRef.current);
       const bounds = (gRef.current as any).getBBox();
       const width = svgRef.current.clientWidth;
@@ -1340,7 +2779,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       ];
 
       svg.transition().duration(500).call(
-        (d3.zoom() as any).transform as any,
+        zoomRef.current.transform as any,
         d3.zoomIdentity.translate(translate[0], translate[1]).scale(scale)
       );
     }
@@ -1393,10 +2832,26 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
   };
 
-  // Load data on mount
+  // Load data on mount and when projectId changes
   useEffect(() => {
+    // Guard: Don't fetch if no projectId
+    if (!projectId) {
+      console.warn('[AdvancedGraphView] No projectId, skipping initial fetch');
+      return;
+    }
+    
+    // Clear existing data when projectId changes to prevent showing stale data
+    setAllNodes([]);
+    setAllEdges([]);
+    updateHierarchyState(() => ({
+      visible: new Set<string>(),
+      expanded: new Set<string>()
+    }));
+    
+    // Fetch new data for the current project
+    console.log('[AdvancedGraphView] 🚀 Initial mount or projectId changed, fetching graph data for:', projectId);
     fetchGraphData();
-  }, [fetchGraphData]);
+  }, [projectId]); // Remove fetchGraphData from dependencies to avoid stale closure issues
 
   useEffect(() => {
     if (!projectId) return;
@@ -1554,108 +3009,179 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     const canDeleteNode = canEdit && !classActionLoading;
 
     return (
-      <div key={node.id} style={{ marginLeft: level > 0 ? '20px' : '0' }}>
+      <div 
+        key={node.id} 
+        style={{ 
+          marginLeft: level > 0 ? '16px' : '0',
+          borderLeft: level > 0 ? '2px solid #e5e7eb' : 'none',
+          paddingLeft: level > 0 ? '8px' : '0',
+          marginTop: '2px'
+        }}
+      >
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
-            padding: '6px 8px',
+            padding: '8px 10px',
             cursor: 'pointer',
-            borderRadius: '4px',
-            backgroundColor: selectedNodes.has(node.id) ? '#e0e7ff' : 'transparent',
-            transition: 'background-color 0.15s'
+            borderRadius: '6px',
+            backgroundColor: selectedNodes.has(node.id) ? '#e0e7ff' : '#ffffff',
+            border: selectedNodes.has(node.id) ? '1px solid #c7d2fe' : '1px solid transparent',
+            transition: 'all 0.2s ease',
+            marginBottom: '2px',
+            boxShadow: selectedNodes.has(node.id) ? '0 1px 3px rgba(99, 102, 241, 0.1)' : 'none'
           }}
-          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = selectedNodes.has(node.id) ? '#e0e7ff' : '#f3f4f6'}
-          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = selectedNodes.has(node.id) ? '#e0e7ff' : 'transparent'}
+          onMouseEnter={(e) => {
+            if (!selectedNodes.has(node.id)) {
+              e.currentTarget.style.backgroundColor = '#f9fafb';
+              e.currentTarget.style.borderColor = '#e5e7eb';
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (!selectedNodes.has(node.id)) {
+              e.currentTarget.style.backgroundColor = '#ffffff';
+              e.currentTarget.style.borderColor = 'transparent';
+            }
+          }}
         >
-          {/* Expand Up (Parents) Icon */}
-          {hasParents && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleExpandParents(node.id);
-              }}
-              style={{
-                marginRight: '4px',
-                cursor: 'pointer',
-                fontSize: '12px',
-                fontWeight: 'bold',
-                color: '#fff',
-                backgroundColor: '#667eea',
-                border: 'none',
-                borderRadius: '50%',
-                width: '18px',
-                height: '18px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: 0
-              }}
-              title="Expand parents in graph"
-            >
-              <ChevronUp size={12} />
-            </button>
-          )}
+          {/* Expand/Collapse Icon */}
+          <div style={{ width: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {hasChildNodes ? (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDialogExpand(node.id);
+                }}
+                style={{
+                  cursor: 'pointer',
+                  color: '#667eea',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  borderRadius: '4px',
+                  width: '20px',
+                  height: '20px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: 0,
+                  transition: 'all 0.2s ease'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#eef2ff';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                }}
+                title={isExpanded ? 'Collapse children' : 'Expand children'}
+              >
+                {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+              </button>
+            ) : (
+              <span style={{ width: '20px' }} />
+            )}
+          </div>
           
-          {/* Expand Down (Children) Icon */}
-          {hasChildNodes && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleDialogExpand(node.id);
-              }}
-              style={{
-                marginRight: '6px',
-                cursor: 'pointer',
-                fontSize: '12px',
-                fontWeight: 'bold',
-                color: '#fff',
-                backgroundColor: '#10b981',
-                border: 'none',
-                borderRadius: '50%',
-                width: '18px',
-                height: '18px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: 0
-              }}
-              title="Expand/collapse children"
-            >
-              {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            </button>
-          )}
-          
-          {/* Spacer if no icons */}
-          {!hasChildNodes && !hasParents && <span style={{ width: '22px', display: 'inline-block' }} />}
-          
-          <span
+          {/* Node Type Icon & Label */}
+          <div
             style={{
-              fontSize: '13px',
-              color: '#374151',
-              flex: 1
+              flex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              overflow: 'hidden'
             }}
             onClick={() => {
               setSelectedNodes(new Set([node.id]));
               setSelectedNodeInfo(node);
             }}
           >
-            {node.label}
-          </span>
+            {/* Type Indicator Circle */}
+            <div
+              style={{
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                backgroundColor: TYPE_COLORS[node.type],
+                flexShrink: 0
+              }}
+              title={node.type}
+            />
+            
+            <span
+              style={{
+                fontSize: '13px',
+                fontWeight: selectedNodes.has(node.id) ? '600' : '400',
+                color: '#1f2937',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              {node.label}
+            </span>
+          </div>
+          
+          {/* Type Badge */}
           <span
             style={{
               fontSize: '10px',
-              color: '#9ca3af',
-              marginLeft: '8px',
-              padding: '2px 6px',
-              backgroundColor: TYPE_COLORS[node.type] + '20',
-              borderRadius: '4px'
+              fontWeight: '600',
+              color: TYPE_COLORS[node.type],
+              padding: '3px 8px',
+              backgroundColor: TYPE_COLORS[node.type] + '15',
+              border: `1px solid ${TYPE_COLORS[node.type]}40`,
+              borderRadius: '12px',
+              textTransform: 'uppercase',
+              letterSpacing: '0.5px',
+              flexShrink: 0
             }}
           >
-            {node.type}
+            {node.type === 'objectProperty' ? 'Obj' : 
+             node.type === 'dataProperty' ? 'Data' :
+             node.type === 'class' ? 'Class' :
+             node.type === 'individual' ? 'Ind' :
+             node.type.substring(0, 4)}
           </span>
+          
+          {/* Action Buttons */}
           {canEdit && (
-            <div style={{ display: 'flex', gap: '4px', marginLeft: '8px' }}>
+            <div style={{ display: 'flex', gap: '4px', marginLeft: '6px', opacity: 0.7 }}
+              onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
+              onMouseLeave={(e) => e.currentTarget.style.opacity = '0.7'}
+            >
+              {hasParents && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleExpandParents(node.id);
+                  }}
+                  style={{
+                    border: '1px solid #c7d2fe',
+                    backgroundColor: '#eef2ff',
+                    color: '#667eea',
+                    borderRadius: '4px',
+                    padding: '3px',
+                    width: '24px',
+                    height: '24px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = '#e0e7ff';
+                    e.currentTarget.style.borderColor = '#a5b4fc';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = '#eef2ff';
+                    e.currentTarget.style.borderColor = '#c7d2fe';
+                  }}
+                  title="Show parents in graph"
+                >
+                  <ChevronUp size={14} />
+                </button>
+              )}
               <button
                 onClick={(e) => {
                   e.stopPropagation();
@@ -1663,19 +3189,32 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 }}
                 disabled={!canAddChild}
                 style={{
-                  border: '1px solid #cbd5f5',
-                  backgroundColor: canAddChild ? '#eef2ff' : '#f3f4f6',
-                  color: canAddChild ? '#4c1d95' : '#9ca3af',
+                  border: `1px solid ${canAddChild ? '#c7d2fe' : '#e5e7eb'}`,
+                  backgroundColor: canAddChild ? '#eef2ff' : '#f9fafb',
+                  color: canAddChild ? '#667eea' : '#9ca3af',
                   borderRadius: '4px',
-                  padding: '2px',
-                  width: '22px',
-                  height: '22px',
+                  padding: '3px',
+                  width: '24px',
+                  height: '24px',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  cursor: canAddChild ? 'pointer' : 'not-allowed'
+                  cursor: canAddChild ? 'pointer' : 'not-allowed',
+                  transition: 'all 0.2s ease'
                 }}
-                title={canAddChild ? 'Add child class' : 'Action disabled while another request is running'}
+                onMouseEnter={(e) => {
+                  if (canAddChild) {
+                    e.currentTarget.style.backgroundColor = '#e0e7ff';
+                    e.currentTarget.style.borderColor = '#a5b4fc';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (canAddChild) {
+                    e.currentTarget.style.backgroundColor = '#eef2ff';
+                    e.currentTarget.style.borderColor = '#c7d2fe';
+                  }
+                }}
+                title={canAddChild ? 'Add child class' : 'Action disabled'}
               >
                 <Plus size={14} />
               </button>
@@ -1686,17 +3225,30 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 }}
                 disabled={!canAddSibling}
                 style={{
-                  border: '1px solid #cbd5f5',
-                  backgroundColor: canAddSibling ? '#ecfeff' : '#f3f4f6',
-                  color: canAddSibling ? '#155e75' : '#9ca3af',
+                  border: `1px solid ${canAddSibling ? '#a7f3d0' : '#e5e7eb'}`,
+                  backgroundColor: canAddSibling ? '#ecfdf5' : '#f9fafb',
+                  color: canAddSibling ? '#10b981' : '#9ca3af',
                   borderRadius: '4px',
-                  padding: '2px',
-                  width: '22px',
-                  height: '22px',
+                  padding: '3px',
+                  width: '24px',
+                  height: '24px',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  cursor: canAddSibling ? 'pointer' : 'not-allowed'
+                  cursor: canAddSibling ? 'pointer' : 'not-allowed',
+                  transition: 'all 0.2s ease'
+                }}
+                onMouseEnter={(e) => {
+                  if (canAddSibling) {
+                    e.currentTarget.style.backgroundColor = '#d1fae5';
+                    e.currentTarget.style.borderColor = '#6ee7b7';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (canAddSibling) {
+                    e.currentTarget.style.backgroundColor = '#ecfdf5';
+                    e.currentTarget.style.borderColor = '#a7f3d0';
+                  }
                 }}
                 title={canAddSibling ? 'Add sibling class' : 'Sibling requires a parent'}
               >
@@ -1709,27 +3261,48 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 }}
                 disabled={!canDeleteNode}
                 style={{
-                  border: '1px solid #fecaca',
-                  backgroundColor: canDeleteNode ? '#fef2f2' : '#f3f4f6',
-                  color: canDeleteNode ? '#b91c1c' : '#9ca3af',
+                  border: `1px solid ${canDeleteNode ? '#fecaca' : '#e5e7eb'}`,
+                  backgroundColor: canDeleteNode ? '#fef2f2' : '#f9fafb',
+                  color: canDeleteNode ? '#ef4444' : '#9ca3af',
                   borderRadius: '4px',
-                  padding: '2px',
-                  width: '22px',
-                  height: '22px',
+                  padding: '3px',
+                  width: '24px',
+                  height: '24px',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  cursor: canDeleteNode ? 'pointer' : 'not-allowed'
+                  cursor: canDeleteNode ? 'pointer' : 'not-allowed',
+                  transition: 'all 0.2s ease'
                 }}
-                title={canDeleteNode ? 'Delete class' : 'Action disabled while another request is running'}
+                onMouseEnter={(e) => {
+                  if (canDeleteNode) {
+                    e.currentTarget.style.backgroundColor = '#fee2e2';
+                    e.currentTarget.style.borderColor = '#fca5a5';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (canDeleteNode) {
+                    e.currentTarget.style.backgroundColor = '#fef2f2';
+                    e.currentTarget.style.borderColor = '#fecaca';
+                  }
+                }}
+                title={canDeleteNode ? 'Delete class' : 'Action disabled'}
               >
                 <Trash2 size={14} />
               </button>
             </div>
           )}
         </div>
+        
+        {/* Expanded Children with Smooth Animation */}
         {isExpanded && hasChildNodes && (
-          <div>
+          <div
+            style={{
+              overflow: 'hidden',
+              animation: 'slideDown 0.3s ease-out',
+              marginTop: '4px'
+            }}
+          >
             {children.map(child => renderHierarchyTree(child, level + 1))}
           </div>
         )}
@@ -1751,13 +3324,38 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         checkInterval={60 * 60 * 1000}
       />
 
-      {/* Toolbar */}
-      <div style={styles.toolbar}>
+      {/* Main Row with Two Columns */}
+      <div style={styles.mainRow}>
+        {/* First Column: Toolbar + Graph Area */}
+        <div style={styles.firstColumn}>
+          {/* Toolbar */}
+          <div style={styles.toolbar}>
         {/* Primary actions */}
         <button onClick={() => fetchGraphData()} disabled={loading} style={styles.btnPrimary} title="Refresh graph">
           <RefreshCw size={16} className={loading ? 'spinning' : ''} />
           Refresh
         </button>
+
+        {/* Visualization Type Selector */}
+        <select
+          value={visualizationType}
+          onChange={(e) => setVisualizationType(e.target.value as VisualizationType)}
+          style={{
+            padding: '6px 12px',
+            border: '1px solid #e5e7eb',
+            borderRadius: '6px',
+            fontSize: '13px',
+            backgroundColor: '#fff',
+            cursor: 'pointer',
+            minWidth: '180px',
+            fontWeight: '500'
+          }}
+          title="Select visualization type"
+        >
+          <option value="force">Force-Directed Graph</option>
+          <option value="vowl">WebVOWL Notation</option>
+          <option value="ontograph">OntoGraph (Protégé-style)</option>
+        </select>
 
         <div style={styles.divider} />
 
@@ -1776,76 +3374,83 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
         {/* Hierarchical navigation */}
         <button
-          onClick={async () => {
-            // Fetch full graph from API for expand all
-            setLoading(true);
-            try {
-              const url = `${(window as any).API_BASE_URL}/api/ontology/${projectId}/graph`;
-              const response = await fetch(url, {
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-                }
-              });
-              
-              if (response.ok) {
-                const data = await response.json();
-                console.log('[Expand All] Loaded', data.nodes?.length, 'nodes and', data.edges?.length, 'edges');
-                
-                const normalizedNodes = (data.nodes || []).map((node: any) => ({
-                  ...node,
-                  type: normalizeNodeType(node.type)
-                }));
-                
-                const normalizedEdges = (data.edges || []).map((edge: any) => ({
-                  ...edge,
-                  from: edge.source || edge.from,
-                  to: edge.target || edge.to,
-                  type: normalizeEdgeType(edge.type)
-                }));
-                
-                setAllNodes(normalizedNodes);
-                setAllEdges(normalizedEdges);
-                
-                // Show all nodes
-                const allNodeIds = normalizedNodes.map((n: any) => n.id);
-                updateHierarchyState(() => ({
-                  visible: new Set(allNodeIds),
-                  expanded: new Set(allNodeIds)
-                }));
-                
-                console.log('[Expand All] Showing all', allNodeIds.length, 'nodes');
-              }
-            } catch (err) {
-              console.error('[Expand All] Error:', err);
-            } finally {
-              setLoading(false);
-            }
+          onClick={() => {
+            // Show ALL nodes of ALL types with full expansion
+            console.log('[Expand All] Expanding all nodes with full hierarchy');
+            
+            const allNodeIds = allNodes.map(n => n.id);
+            
+            // Mark all class nodes as expanded to show their children
+            const classNodeIds = allNodes
+              .filter(n => n.type === 'class')
+              .map(n => n.id);
+            
+            updateHierarchyState(() => ({
+              visible: new Set(allNodeIds),
+              expanded: new Set(classNodeIds) // Mark all classes as expanded
+            }));
+            
+            console.log('[Expand All] ✅ Expanded all', allNodeIds.length, 'nodes:', {
+              classes: allNodes.filter(n => n.type === 'class').length,
+              individuals: allNodes.filter(n => n.type === 'individual').length,
+              objectProperties: allNodes.filter(n => n.type === 'objectProperty').length,
+              dataProperties: allNodes.filter(n => n.type === 'dataProperty').length,
+              datatypes: allNodes.filter(n => n.type === 'datatype').length,
+              annotations: allNodes.filter(n => n.type === 'annotation').length
+            });
           }}
           style={styles.btn}
-          title="Expand All Nodes (loads full graph)"
-          disabled={loading}
+          title="Expand All - Show full hierarchy of all entity types"
+          disabled={loading || allNodes.length === 0}
         >
           Expand All
         </button>
         <button
           onClick={() => {
-            // Collapse to root nodes using existing data
-            console.log('[Collapse All] Collapsing to root nodes');
+            // Show root classes (including Thing) with their immediate children
+            // Plus all non-hierarchical entities
+            console.log('[Collapse All] Collapsing to root classes with first-level children');
             
-            // Find root nodes from existing data
-            const rootIds = getRootNodes(allNodes, allEdges);
+            const classNodes = allNodes.filter(n => n.type === 'class');
+            
+            // Get root classes (including Thing/owl:Thing)
+            const rootClassIds = getRootNodes(classNodes, allEdges);
+            
+            // Get immediate children of root classes to show Thing's connections
+            const firstLevelChildrenIds: string[] = [];
+            rootClassIds.forEach(rootId => {
+              const children = allEdges
+                .filter(e => e.type === 'subClassOf' && e.to === rootId)
+                .map(e => e.from);
+              firstLevelChildrenIds.push(...children);
+            });
+            
+            // Get all non-class entities (properties, individuals, datatypes, annotations)
+            const nonClassEntityIds = allNodes
+              .filter(n => n.type !== 'class')
+              .map(n => n.id);
+            
+            // Combine: root classes + their children + non-class entities
+            const visibleIds = [...rootClassIds, ...firstLevelChildrenIds, ...nonClassEntityIds];
 
             updateHierarchyState(() => ({
-              visible: new Set(rootIds),
-              expanded: new Set()
+              visible: new Set(visibleIds),
+              expanded: new Set(rootClassIds) // Mark root classes as expanded
             }));
             
-            console.log('[Collapse All] Showing', rootIds.length, 'root nodes');
+            console.log('[Collapse All] ✅ Showing', visibleIds.length, 'entities:', {
+              rootClasses: rootClassIds.length,
+              firstLevelChildren: firstLevelChildrenIds.length,
+              individuals: allNodes.filter(n => n.type === 'individual').length,
+              objectProperties: allNodes.filter(n => n.type === 'objectProperty').length,
+              dataProperties: allNodes.filter(n => n.type === 'dataProperty').length,
+              datatypes: allNodes.filter(n => n.type === 'datatype').length,
+              annotations: allNodes.filter(n => n.type === 'annotation').length
+            });
           }}
           style={styles.btn}
-          title="Collapse to Root Nodes"
-          disabled={loading}
+          title="Collapse All - Show root classes with their immediate children"
+          disabled={loading || allNodes.length === 0}
         >
           Collapse All
         </button>
@@ -1874,14 +3479,24 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         <button onClick={() => setShowFilters(!showFilters)} style={showFilters ? styles.btnActive : styles.btn} title="Filters">
           <Filter size={16} />
         </button>
-        <button onClick={() => setShowSettings(!showSettings)} style={showSettings ? styles.btnActive : styles.btn} title="Settings">
+        <button onClick={() => {
+          setShowSettings(!showSettings);
+          setShowPropertyPanel(true); // Always show sidebar when settings clicked
+        }} style={showSettings ? styles.btnActive : styles.btn} title="Settings">
           <Settings size={16} />
+        </button>
+        <button onClick={() => setShowPropertyPanel(!showPropertyPanel)} style={showPropertyPanel ? styles.btnActive : styles.btn} title="Graph Explorer Sidebar">
+          <FileText size={16} />
+          <span style={{ marginLeft: 6 }}>Explorer</span>
         </button>
         <button onClick={() => setShowGrid(!showGrid)} style={showGrid ? styles.btnActive : styles.btn} title="Grid">
           <Grid size={16} />
         </button>
         <button onClick={togglePhysics} style={settings.physics ? styles.btnActive : styles.btn} title="Physics">
           <Zap size={16} />
+        </button>
+        <button onClick={() => setShowLegend(!showLegend)} style={showLegend ? styles.btnActive : styles.btn} title="Toggle Legend">
+          <FileText size={16} />
         </button>
 
         <div style={styles.divider} />
@@ -1914,24 +3529,24 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         </button>
       </div>
 
-      {/* Main content */}
-      <div style={styles.content}>
-        {/* SVG Canvas */}
-        <svg ref={svgRef} style={styles.svg}>
-          <defs>
-            {/* Grid pattern */}
-            {showGrid && (
-              <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
-                <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#e5e5e5" strokeWidth="0.5" />
-              </pattern>
-            )}
-          </defs>
-          {showGrid && <rect width="100%" height="100%" fill="url(#grid)" />}
-          <g ref={gRef} />
-        </svg>
+          {/* Graph Content Area */}
+          <div style={styles.graphContentArea}>
+            {/* SVG Canvas for Force, WebVOWL, and OntoGraph */}
+            <svg ref={svgRef} style={styles.svg}>
+                <defs>
+                  {/* Grid pattern */}
+                  {showGrid && (
+                    <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
+                      <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#e5e5e5" strokeWidth="0.5" />
+                    </pattern>
+                  )}
+                </defs>
+                {showGrid && <rect width="100%" height="100%" fill="url(#grid)" />}
+                <g ref={gRef} />
+            </svg>
 
-        {/* Search Panel */}
-        {showSearch && (
+            {/* Search Panel */}
+            {showSearch && (
           <div style={styles.searchPanel}>
             <div style={styles.panelHeader}>
               <Search size={18} />
@@ -1978,133 +3593,100 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           </div>
         )}
 
-        {/* Property Panel */}
-        {showPropertyPanel && selectedNodeInfo && (
-          <div style={styles.propertyPanel}>
-            <div style={styles.panelHeader}>
-              <FileText size={18} />
-              <h3 style={styles.panelTitle}>{selectedNodeInfo.label}</h3>
-              <button onClick={() => setShowPropertyPanel(false)} style={styles.closeBtn}>×</button>
-            </div>
-            <div style={styles.propertyContent}>
-              <div style={styles.propertyItem}>
-                <div style={styles.propertyLabel}>Type</div>
-                <div style={styles.propertyValue}>{selectedNodeInfo.type}</div>
-              </div>
-              <div style={styles.propertyItem}>
-                <div style={styles.propertyLabel}>IRI</div>
-                <div style={{ ...styles.propertyValue, fontFamily: 'monospace', fontSize: '11px', wordBreak: 'break-all' }}>
-                  {selectedNodeInfo.id}
-                </div>
-              </div>
-              {selectedNodeInfo.uri && selectedNodeInfo.uri !== selectedNodeInfo.id && (
-                <div style={styles.propertyItem}>
-                  <div style={styles.propertyLabel}>URI</div>
-                  <div style={{ ...styles.propertyValue, fontFamily: 'monospace', fontSize: '11px', wordBreak: 'break-all' }}>
-                    {selectedNodeInfo.uri}
-                  </div>
-                </div>
-              )}
-              {selectedNodeInfo.description && (
-                <div style={styles.propertyItem}>
-                  <div style={styles.propertyLabel}>Definition</div>
-                  <div style={styles.propertyValue}>{selectedNodeInfo.description}</div>
-                </div>
-              )}
-              {selectedNodeInfo.superClasses && selectedNodeInfo.superClasses.length > 0 && (
-                <div style={styles.propertyItem}>
-                  <div style={styles.propertyLabel}>Superclasses ({selectedNodeInfo.superClasses.length})</div>
-                  <div style={styles.propertyValue}>
-                    {selectedNodeInfo.superClasses.slice(0, 5).map((sc, idx) => (
-                      <div key={idx} style={{ marginBottom: '4px', fontSize: '11px', padding: '4px', background: '#f3f4f6', borderRadius: '4px' }}>
-                        {sc.split('#').pop() || sc.split('/').pop() || sc}
-                      </div>
-                    ))}
-                    {selectedNodeInfo.superClasses.length > 5 && (
-                      <div style={{ fontSize: '11px', color: '#666', fontStyle: 'italic' }}>+ {selectedNodeInfo.superClasses.length - 5} more</div>
-                    )}
-                  </div>
-                </div>
-              )}
-              {selectedNodeInfo.equivalentClasses && selectedNodeInfo.equivalentClasses.length > 0 && (
-                <div style={styles.propertyItem}>
-                  <div style={styles.propertyLabel}>Equivalent Classes</div>
-                  <div style={styles.propertyValue}>
-                    {selectedNodeInfo.equivalentClasses.slice(0, 3).map((ec, idx) => (
-                      <div key={idx} style={{ marginBottom: '4px', fontSize: '11px', padding: '4px', background: '#f3f4f6', borderRadius: '4px' }}>
-                        {ec.split('#').pop() || ec.split('/').pop() || ec}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {selectedNodeInfo.disjointClasses && selectedNodeInfo.disjointClasses.length > 0 && (
-                <div style={styles.propertyItem}>
-                  <div style={styles.propertyLabel}>Disjoint With</div>
-                  <div style={styles.propertyValue}>
-                    {selectedNodeInfo.disjointClasses.slice(0, 3).map((dc, idx) => (
-                      <div key={idx} style={{ marginBottom: '4px', fontSize: '11px', padding: '4px', background: '#fef2f2', borderRadius: '4px' }}>
-                        {dc.split('#').pop() || dc.split('/').pop() || dc}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {selectedNodeInfo.annotations && Object.keys(selectedNodeInfo.annotations).length > 0 && (
-                <div style={styles.propertyItem}>
-                  <div style={styles.propertyLabel}>Annotations ({Object.keys(selectedNodeInfo.annotations).length})</div>
-                  <div style={styles.propertyValue}>
-                    {Object.entries(selectedNodeInfo.annotations).slice(0, 5).map(([key, value], idx) => (
-                      <div key={idx} style={{ marginBottom: '6px', fontSize: '11px' }}>
-                        <div style={{ fontWeight: '600', color: '#4b5563', marginBottom: '2px' }}>{key}:</div>
-                        <div style={{ padding: '4px', background: '#f9fafb', borderRadius: '4px', wordBreak: 'break-word' }}>
-                          {typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value)}
-                        </div>
-                      </div>
-                    ))}
-                    {Object.keys(selectedNodeInfo.annotations).length > 5 && (
-                      <div style={{ fontSize: '11px', color: '#666', fontStyle: 'italic' }}>+ {Object.keys(selectedNodeInfo.annotations).length - 5} more</div>
-                    )}
-                  </div>
-                </div>
-              )}
-              {selectedNodeInfo.confidence !== undefined && (
-                <div style={styles.propertyItem}>
-                  <div style={styles.propertyLabel}>Confidence</div>
-                  <div style={styles.propertyValue}>{(selectedNodeInfo.confidence * 100).toFixed(0)}%</div>
-                </div>
-              )}
-              {selectedNodeInfo.namespace && (
-                <div style={styles.propertyItem}>
-                  <div style={styles.propertyLabel}>Namespace</div>
-                  <div style={{ ...styles.propertyValue, fontSize: '11px', fontFamily: 'monospace' }}>{selectedNodeInfo.namespace}</div>
-                </div>
-              )}
-              {selectedNodeInfo.version && (
-                <div style={styles.propertyItem}>
-                  <div style={styles.propertyLabel}>Version</div>
-                  <div style={styles.propertyValue}>{selectedNodeInfo.version}</div>
-                </div>
-              )}
-              {selectedNodeInfo.metadata && Object.keys(selectedNodeInfo.metadata).length > 0 && (
-                <div style={styles.propertyItem}>
-                  <div style={styles.propertyLabel}>Metadata</div>
-                  <div style={{ ...styles.propertyValue, fontSize: '10px', fontFamily: 'monospace', maxHeight: '100px', overflow: 'auto' }}>
-                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                      {JSON.stringify(selectedNodeInfo.metadata, null, 2)}
-                    </pre>
-                  </div>
-                </div>
-              )}
-              <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #e5e7eb', fontSize: '11px', color: '#6b7280' }}>
-                <div style={{ marginBottom: '4px' }}>
-                  <strong>Tip:</strong> Click node to open hierarchy navigator
-                </div>
-                <div>Right-click for more options</div>
-              </div>
-            </div>
-          </div>
+        </div>
+      </div>
+
+        {/* Graph View Sidebar - Second Column */}
+        {showPropertyPanel && (
+          <GraphViewSidebar
+            nodes={allNodes}
+            edges={allEdges}
+            selectedNode={selectedNodeInfo}
+            onNodeSelect={(node) => {
+              if (node) {
+                setSelectedNodes(new Set([node.id]));
+                setSelectedNodeInfo(node);
+                
+                // Open hierarchy navigator for class nodes
+                if (node.type === 'class') {
+                  setHierarchyRootNode(node);
+                  setIsDialogMinimized(false);
+                  setHierarchyDialogPosition({ x: 20, y: 100 });
+                  setShowHierarchyDialog(true);
+                }
+                
+                // Highlight node in graph
+                d3.selectAll('.node')
+                  .classed('highlighted', false)
+                  .filter((d: any) => d.id === node.id)
+                  .classed('highlighted', true);
+              } else {
+                setSelectedNodes(new Set());
+                setSelectedNodeInfo(null);
+                d3.selectAll('.node').classed('highlighted', false);
+              }
+            }}
+            onNodeHighlight={(nodeId) => {
+              d3.selectAll('.node')
+                .classed('hover-highlight', false)
+                .filter((d: any) => d.id === nodeId)
+                .classed('hover-highlight', true);
+            }}
+            filters={filters}
+            onFilterChange={(newFilters) => setFilters(newFilters)}
+            projectId={projectId}
+            viewMode={visualizationType}
+            showFilterSidebar={showFilters}
+            showSettings={showSettings}
+            onSearchChange={(term) => setSidebarSearchTerm(term)}
+            classDistance={classDistance}
+            datatypeDistance={datatypeDistance}
+            onClassDistanceChange={(distance) => {
+              setClassDistance(distance);
+              // Restart simulation with new distance
+              if (simulationRef.current) {
+                simulationRef.current.alpha(0.3).restart();
+              }
+            }}
+            onDatatypeDistanceChange={(distance) => {
+              setDatatypeDistance(distance);
+              // Restart simulation with new distance
+              if (simulationRef.current) {
+                simulationRef.current.alpha(0.3).restart();
+              }
+            }}
+            onPauseLayout={() => {
+              setIsLayoutPaused(!isLayoutPaused);
+              if (simulationRef.current) {
+                if (!isLayoutPaused) {
+                  simulationRef.current.stop();
+                } else {
+                  simulationRef.current.alpha(0.3).restart();
+                }
+              }
+            }}
+            onResetLayout={() => {
+              setClassDistance(100);
+              setDatatypeDistance(100);
+              if (simulationRef.current) {
+                simulationRef.current.alpha(1).restart();
+              }
+            }}
+            isLayoutPaused={isLayoutPaused}
+            vowlFilters={vowlFilters}
+            onVowlFilterChange={(newFilters) => setVowlFilters(newFilters)}
+            hierarchySelectedClass={hierarchySelectedClass}
+            onHierarchyClassSelect={(node) => {
+              setHierarchySelectedClass(node);
+              if (node) {
+                setShowClassHierarchy(true);
+              }
+            }}
+            showClassHierarchy={showClassHierarchy}
+            vowlLegend={dynamicLegend}
+          />
         )}
+      </div>
 
         {/* Hierarchy Dialog */}
         {showHierarchyDialog && hierarchyRootNode && (
@@ -2131,8 +3713,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             {/* Dialog Header - Draggable */}
             <div
               style={{
-                padding: '10px 16px',
-                backgroundColor: '#667eea',
+                padding: '12px 18px',
+                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                 color: '#fff',
                 fontWeight: '600',
                 fontSize: '14px',
@@ -2141,7 +3723,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 justifyContent: 'space-between',
                 cursor: 'move',
                 userSelect: 'none',
-                boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                boxShadow: '0 4px 12px rgba(102, 126, 234, 0.3)',
+                borderTopLeftRadius: '8px',
+                borderTopRightRadius: '8px'
               }}
               onMouseDown={(e) => {
                 // Don't start drag if clicking on buttons
@@ -2252,13 +3836,29 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               style={{
                 flex: 1,
                 overflow: 'auto',
-                padding: '12px 16px'
+                padding: '16px',
+                backgroundColor: '#fafafa'
               }}
             >
-              <div style={{ marginBottom: '12px', fontSize: '12px', fontWeight: '600', color: '#6b7280' }}>
-                HIERARCHY
+              <div style={{ 
+                marginBottom: '14px', 
+                fontSize: '11px', 
+                fontWeight: '700', 
+                color: '#6b7280',
+                letterSpacing: '0.8px',
+                textTransform: 'uppercase',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                paddingBottom: '8px',
+                borderBottom: '2px solid #e5e7eb'
+              }}>
+                <Box size={14} style={{ color: '#667eea' }} />
+                Class Hierarchy
               </div>
-              {renderHierarchyTree(hierarchyRootNode)}
+              <div style={{ backgroundColor: '#ffffff', borderRadius: '6px', padding: '8px' }}>
+                {renderHierarchyTree(hierarchyRootNode)}
+              </div>
             </div>
 
             {classActionFeedback && (
@@ -2289,9 +3889,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               }}
             >
               <div style={{ marginBottom: '4px' }}>
-                ▶ Click arrow to expand/collapse in both dialog and graph
+                <strong>Navigation:</strong> Click arrow to expand/collapse
               </div>
-              <div>Click class name to select it</div>
+              <div style={{ marginBottom: '4px' }}>
+                <strong>Actions:</strong> Use <Plus size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> to add child, <GitBranch size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> for sibling, <Trash2 size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> to delete
+              </div>
+              <div>Click class name to select and view properties</div>
             </div>
               </>
             )}
@@ -2478,7 +4081,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             </button>
           </div>
         )}
-      </div>
 
       {/* Styles */}
       <style>{`
@@ -2492,11 +4094,37 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
         }
+        @keyframes slideDown {
+          from {
+            opacity: 0;
+            max-height: 0;
+            transform: translateY(-10px);
+          }
+          to {
+            opacity: 1;
+            max-height: 2000px;
+            transform: translateY(0);
+          }
+        }
         .graph-tooltip {
           box-shadow: 0 4px 12px rgba(0,0,0,0.3);
         }
         button[style*="contextMenuItem"]:hover {
           background: #f3f4f6 !important;
+        }
+        .node.highlighted circle,
+        .node.highlighted rect,
+        .node.highlighted polygon {
+          stroke: #667eea !important;
+          stroke-width: 4 !important;
+          filter: drop-shadow(0 0 8px rgba(102, 126, 234, 0.6)) !important;
+        }
+        .node.hover-highlight circle,
+        .node.hover-highlight rect,
+        .node.hover-highlight polygon {
+          stroke: #10b981 !important;
+          stroke-width: 3 !important;
+          filter: drop-shadow(0 0 6px rgba(16, 185, 129, 0.4)) !important;
         }
       `}</style>
     </div>
@@ -2506,60 +4134,77 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 // Styles
 const styles: Record<string, React.CSSProperties> = {
   container: {
+    position: 'relative',
     width: '100%',
     height: '100%',
     display: 'flex',
     flexDirection: 'column',
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#ffffff',
+    overflow: 'hidden'
+  },
+  mainRow: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'row',
+    overflow: 'hidden',
+    backgroundColor: '#fafbfc'
+  },
+  firstColumn: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
     overflow: 'hidden'
   },
   toolbar: {
-    padding: '12px',
-    backgroundColor: '#fff',
+    padding: '10px 12px',
+    backgroundColor: '#ffffff',
     borderBottom: '1px solid #e5e7eb',
     display: 'flex',
-    gap: '8px',
+    gap: '6px',
     alignItems: 'center',
     flexWrap: 'wrap',
-    boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+    boxShadow: 'none'
   },
   btn: {
     display: 'flex',
     alignItems: 'center',
     gap: '6px',
-    padding: '8px 12px',
-    background: 'white',
-    border: '1px solid #e5e7eb',
+    padding: '7px 11px',
+    background: '#ffffff',
+    border: '1px solid #d1d5db',
     borderRadius: '6px',
     cursor: 'pointer',
-    fontSize: '14px',
+    fontSize: '13px',
     color: '#374151',
+    fontWeight: '500',
     transition: 'all 0.2s'
   },
   btnPrimary: {
     display: 'flex',
     alignItems: 'center',
     gap: '6px',
-    padding: '8px 12px',
+    padding: '7px 11px',
     background: '#667eea',
     border: '1px solid #667eea',
     borderRadius: '6px',
     cursor: 'pointer',
-    fontSize: '14px',
-    color: 'white',
+    fontSize: '13px',
+    color: '#ffffff',
+    fontWeight: '500',
     transition: 'all 0.2s'
   },
   btnActive: {
     display: 'flex',
     alignItems: 'center',
     gap: '6px',
-    padding: '8px 12px',
-    background: '#667eea',
+    padding: '7px 11px',
+    background: '#eef2ff',
     border: '1px solid #667eea',
     borderRadius: '6px',
     cursor: 'pointer',
-    fontSize: '14px',
-    color: 'white',
+    fontSize: '13px',
+    color: '#667eea',
+    fontWeight: '500',
     transition: 'all 0.2s'
   },
   divider: {
@@ -2572,11 +4217,27 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#6b7280',
     padding: '0 12px'
   },
-  content: {
+  graphContentArea: {
     flex: 1,
     position: 'relative',
     overflow: 'hidden',
-    backgroundColor: '#fff'
+    backgroundColor: '#ffffff'
+  },
+  content: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'row',
+    position: 'relative',
+    overflow: 'hidden',
+    backgroundColor: '#f5f5f5',
+    gap: '0'
+  },
+  graphArea: {
+    flex: 1,
+    position: 'relative',
+    overflow: 'hidden',
+    backgroundColor: '#ffffff',
+    borderRight: '2px solid #e0e0e0'
   },
   svg: {
     width: '100%',
@@ -2591,7 +4252,20 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'white',
     borderRadius: '12px',
     boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
-    overflow: 'hidden'
+    overflow: 'hidden',
+    zIndex: 10
+  },
+  vowlLegendPanel: {
+    position: 'absolute',
+    bottom: '20px',
+    left: '20px',
+    width: '280px',
+    maxHeight: '80vh',
+    background: 'white',
+    borderRadius: '12px',
+    boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
+    overflow: 'hidden',
+    zIndex: 10
   },
   propertyPanel: {
     position: 'absolute',
