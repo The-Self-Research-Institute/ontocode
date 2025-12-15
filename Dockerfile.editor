@@ -12,6 +12,7 @@ COPY ontology-auth/ ./ontology-auth/
 COPY ontology-gateway/ ./ontology-gateway/
 COPY ontology-editor/ ./ontology-editor/
 COPY ontology-swrl/ ./ontology-swrl/
+COPY ontology-plugin-service/ ./ontology-plugin-service/
 
 # Build shared modules first (these are dependencies for all services)
 RUN mvn clean install -pl shared/common-models,shared/common-utils -DskipTests -B -ntp
