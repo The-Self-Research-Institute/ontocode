@@ -1,4 +1,6 @@
 
+// Load D3 globally first for plugins
+import './d3-global';
 // Setup global variables for UMD plugins FIRST (before any other imports that might use React)
 import './setupGlobals';
 
