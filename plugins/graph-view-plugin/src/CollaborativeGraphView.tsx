@@ -159,12 +159,14 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
 
   // ===================== Graph Data Loading =====================
 
-  const fetchInitialGraph = useCallback(async () => {
+  const fetchInitialGraph = useCallback(async (forceReload: boolean = false) => {
     setLoading(true);
     try {
       const endpoint = settings.lazyLoading
-        ? `/api/graph/${projectId}/initial?maxNodes=100`
-        : `/api/ontology/${projectId}/graph`;
+        ? `/api/collab-graph/${projectId}/initial?maxNodes=100${forceReload ? '&forceReload=true' : ''}`
+        : `/api/ontology/${projectId}/graph${forceReload ? '?forceReload=true' : ''}`;
+
+      console.log(`[CollaborativeGraphView] Fetching graph from: ${endpoint} (forceReload=${forceReload})`);
 
       const response = await fetch(endpoint, {
         headers: {
@@ -183,7 +185,7 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
         nodesDataSetRef.current.add(nodes.map(convertToVisNode));
         edgesDataSetRef.current.add(edges.map(convertToVisEdge));
 
-        console.log(`Loaded ${nodes.length} nodes and ${edges.length} edges`);
+        console.log(`[CollaborativeGraphView] Loaded ${nodes.length} nodes and ${edges.length} edges`);
       }
     } catch (error) {
       console.error('Error fetching initial graph:', error);
@@ -535,7 +537,7 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', position: 'relative', backgroundColor: '#f5f5f5' }}>
       {/* Toolbar */}
       <div style={{ padding: '10px', backgroundColor: '#fff', borderBottom: '1px solid #ddd', display: 'flex', gap: '10px', alignItems: 'center' }}>
-        <button onClick={fetchInitialGraph} disabled={loading} style={{ padding: '6px 12px', backgroundColor: '#4A90E2', color: 'white', border: 'none', borderRadius: '4px', cursor: loading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <button onClick={() => fetchInitialGraph(true)} disabled={loading} style={{ padding: '6px 12px', backgroundColor: '#4A90E2', color: 'white', border: 'none', borderRadius: '4px', cursor: loading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
           <RefreshCw size={16} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
           Refresh
         </button>

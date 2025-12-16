@@ -1,6 +1,6 @@
 // Advanced Graph Ontology Types
 
-export type NodeType = 'class' | 'individual' | 'property' | 'dataProperty' | 'objectProperty' | 'annotation';
+export type NodeType = 'class' | 'individual' | 'property' | 'dataProperty' | 'objectProperty' | 'annotation' | 'datatype';
 
 export type EdgeType = 
   | 'subClassOf' 
@@ -14,7 +14,8 @@ export type EdgeType =
   | 'custom'
   | 'temporal'
   | 'spatial'
-  | 'probabilistic';
+  | 'probabilistic'
+  | 'subPropertyOf';
 
 export type LayoutAlgorithm = 
   | 'force' 
@@ -24,6 +25,11 @@ export type LayoutAlgorithm =
   | 'layered'
   | 'organic'
   | 'tree';
+
+export type VisualizationType =
+  | 'force'           // Force-directed graph (default)
+  | 'vowl'            // WebVOWL notation
+  | 'ontograph';      // OntoGraph hierarchical view
 
 // Higher-order relationships (reification)
 export interface ReifiedRelation {

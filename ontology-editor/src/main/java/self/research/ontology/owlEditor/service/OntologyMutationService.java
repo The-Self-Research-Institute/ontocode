@@ -26,15 +26,18 @@ public class OntologyMutationService {
     private final GraphDBDatasetService datasetService;
     private final OntologyIndexService indexService;
     private final ProjectMetadataService metadataService;
+    private final GraphGeneratingService graphGeneratingService;
     private final Executor metadataExecutor;
 
     public OntologyMutationService(GraphDBDatasetService datasetService,
                                    OntologyIndexService indexService,
                                    ProjectMetadataService metadataService,
+                                   GraphGeneratingService graphGeneratingService,
                                    @Qualifier("metadataExecutor") Executor metadataExecutor) {
         this.datasetService = datasetService;
         this.indexService = indexService;
         this.metadataService = metadataService;
+        this.graphGeneratingService = graphGeneratingService;
         this.metadataExecutor = metadataExecutor;
     }
 
@@ -64,6 +67,10 @@ public class OntologyMutationService {
         try {
             datasetService.execUpdate(projectId, sparql);
             log.info("[MUTATION] ✅ Mutations applied successfully!");
+            
+            // Clear graph cache after mutations
+            graphGeneratingService.clearGraphCache();
+            log.info("[MUTATION] Graph cache cleared after mutations");
             
             // For disjoint union mutations, verify the data was inserted
             if (ops.stream().anyMatch(op -> "addDisjointUnion".equals(op.type()))) {
@@ -125,6 +132,9 @@ public class OntologyMutationService {
         sparqlBuilder.append("}");
         
         datasetService.execUpdate(projectId, sparqlBuilder.toString());
+
+        // Clear graph cache
+        graphGeneratingService.clearGraphCache();
 
         CompletableFuture.runAsync(() -> {
             Map<String, Object> meta = indexService.computeMetadata(projectId);
