@@ -77,8 +77,12 @@ desktop.ini
 # Maven wrapper (keep only what's needed)
 **/.mvn/
 
-# Plugin artifacts
-plugins/
+# Plugin build artifacts (keep source code, exclude build outputs)
+# The plugin-init Dockerfile needs plugin source code to build them
+plugins/**/node_modules/
+plugins/**/dist/
+plugins/**/build/
+plugins/**/*.log
 
 # YJS server (separate service, not in Java containers)
 yjs-websocket-server/
