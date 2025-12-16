@@ -951,74 +951,27 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           graphData.edges.filter((e: OntologyEdge) => e.type === 'propertyRelation').slice(0, 5)
         );
 
-        // Initialize with all classes and top-level properties
-        const classNodes = graphData.nodes.filter((n: OntologyNode) => n.type === 'class');
-        
-        console.log('[AdvancedGraphView] 🔍 Class nodes found:', classNodes.length);
-        console.log('[AdvancedGraphView] 📋 All classes:', classNodes.map((n, i) => `${i+1}. ${n.label} (${n.id})`).join('\n'));
-        
-        // Check for subClassOf edges
-        const subClassEdges = graphData.edges.filter((e: OntologyEdge) => e.type === 'subClassOf');
-        console.log('[AdvancedGraphView] 🔗 SubClass edges found:', subClassEdges.length);
-        console.log('[AdvancedGraphView] 📋 All SubClass relationships:', 
-          subClassEdges.map((e, i) => {
-            const from = graphData.nodes.find(n => n.id === e.from);
-            const to = graphData.nodes.find(n => n.id === e.to);
-            return `${i+1}. ${from?.label || e.from} -> ${to?.label || e.to}`;
-          }).join('\n')
-        );
-        
-        // Always show ALL classes (including subclasses) regardless of visualization type
-        const classIdsToShow = classNodes.map(n => n.id);
-        
-        console.log('[AdvancedGraphView] 🎯 Classes to show:', classIdsToShow.length);
-        console.log('[AdvancedGraphView] 🎯 Class IDs:', classIdsToShow);
-        
-        // Get only top-level properties (properties without domain or range relationships)
-        const topLevelPropertyIds = graphData.nodes
-          .filter((n: OntologyNode) => n.type === 'objectProperty' || n.type === 'dataProperty' || n.type === 'annotation')
-          .filter((prop: OntologyNode) => {
-            const hasDomain = graphData.edges.some((e: OntologyEdge) => e.type === 'domain' && e.to === prop.id);
-            const hasRange = graphData.edges.some((e: OntologyEdge) => e.type === 'range' && e.from === prop.id);
-            return !hasDomain && !hasRange;
-          })
-          .map((n: OntologyNode) => n.id);
-        
-        // Get all individuals and datatypes
-        const individualsAndDatatypesIds = graphData.nodes
-          .filter((n: OntologyNode) => n.type === 'individual' || n.type === 'datatype')
-          .map((n: OntologyNode) => n.id);
-        
-        const initialVisibleIds = [...classIdsToShow, ...topLevelPropertyIds, ...individualsAndDatatypesIds];
-        
-        // CRITICAL FIX: Mark Thing as expanded so its child edges are shown
-        const thingNode = graphData.nodes.find((n: OntologyNode) => 
-          n.label === 'Thing' || n.id.includes('Thing') || n.id === 'owl:Thing'
-        );
-        const initialExpandedIds: string[] = [];
-        if (thingNode) {
-          initialExpandedIds.push(thingNode.id);
-          console.log('[AdvancedGraphView] 🎯 Thing node found:', thingNode.id, '- Marking as expanded to show connections');
-        }
-        
-        console.log('[AdvancedGraphView] 🎯 Initial visible IDs count:', initialVisibleIds.length);
-        console.log('[AdvancedGraphView] 🎯 Breakdown - Classes:', classIdsToShow.length, 'Properties:', topLevelPropertyIds.length, 'Individuals/Datatypes:', individualsAndDatatypesIds.length);
-        console.log('[AdvancedGraphView] 🎯 Expanded IDs:', initialExpandedIds);
-        
-        // Update state in single batch
+        // Update state with fetched data
         setAllNodes(graphData.nodes);
         setAllEdges(graphData.edges);
         
         console.log('[AdvancedGraphView] ✅ Set allNodes:', graphData.nodes.length, 'allEdges:', graphData.edges.length);
         
+        // Use collapseAllNodes function for consistent initial state
+        // This shows root entities + first-level children for ALL entity types
+        const { newExpandedIds, newVisibleIds } = collapseAllNodes(graphData.nodes, graphData.edges);
+        
         updateHierarchyState(() => ({
-          visible: new Set(initialVisibleIds),
-          expanded: new Set(initialExpandedIds)
+          visible: newVisibleIds,
+          expanded: newExpandedIds
         }));
         
-        console.log('[AdvancedGraphView] ✅ Updated hierarchy state with', initialVisibleIds.length, 'visible IDs');
+        console.log('[AdvancedGraphView] ✅ Initial hierarchy state:', {
+          visible: newVisibleIds.size,
+          expanded: newExpandedIds.size,
+          total: graphData.nodes.length
+        });
 
-        console.log(`[Hierarchy] Initial view: ${initialVisibleIds.length} entities (${classIdsToShow.length} all classes + ${topLevelPropertyIds.length} top-level properties + ${individualsAndDatatypesIds.length} individuals/datatypes) out of ${graphData.nodes.length} total`);
         setLoading(false);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -2541,11 +2494,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
   const handleSearch = useCallback((query: string) => {
     if (!query) {
-      // Clear search - show only root nodes
-      const rootIds = getRootNodes(allNodes, allEdges);
+      // Clear search - use collapseAll for consistent behavior (shows roots + first level)
+      const { newExpandedIds, newVisibleIds } = collapseAllNodes(allNodes, allEdges);
       updateHierarchyState(() => ({
-        visible: new Set(rootIds),
-        expanded: new Set()
+        visible: newVisibleIds,
+        expanded: newExpandedIds
       }));
       setSearchQuery('');
       return;
@@ -2945,28 +2898,93 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       link.click();
       URL.revokeObjectURL(url);
     } else if (format === 'png' && svgRef.current) {
-      const svgData = new XMLSerializer().serializeToString(svgRef.current);
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      const img = new Image();
-
-      img.onload = () => {
-        canvas.width = img.width;
-        canvas.height = img.height;
-        ctx?.drawImage(img, 0, 0);
-        canvas.toBlob(blob => {
-          if (blob) {
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = `ontology-graph-${projectId}.png`;
-            link.click();
-            URL.revokeObjectURL(url);
-          }
-        });
-      };
-
-      img.src = 'data:image/svg+xml;base64,' + btoa(svgData);
+      try {
+        const svgElement = svgRef.current;
+        
+        // Get SVG dimensions
+        const bbox = svgElement.getBBox();
+        const width = Math.max(bbox.width + 40, 800);
+        const height = Math.max(bbox.height + 40, 600);
+        
+        // Clone SVG and set explicit dimensions
+        const clonedSvg = svgElement.cloneNode(true) as SVGSVGElement;
+        clonedSvg.setAttribute('width', width.toString());
+        clonedSvg.setAttribute('height', height.toString());
+        clonedSvg.setAttribute('viewBox', `${bbox.x - 20} ${bbox.y - 20} ${width} ${height}`);
+        
+        // Serialize SVG
+        const svgData = new XMLSerializer().serializeToString(clonedSvg);
+        
+        // Create canvas
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        
+        if (!ctx) {
+          console.error('Failed to get canvas context');
+          return;
+        }
+        
+        // Create image
+        const img = new Image();
+        
+        img.onload = () => {
+          // Fill white background
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, width, height);
+          
+          // Draw SVG
+          ctx.drawImage(img, 0, 0);
+          
+          // Convert to PNG and download
+          canvas.toBlob(blob => {
+            if (blob) {
+              const url = URL.createObjectURL(blob);
+              const link = document.createElement('a');
+              link.href = url;
+              link.download = `ontology-graph-${projectId}.png`;
+              link.click();
+              URL.revokeObjectURL(url);
+            }
+          }, 'image/png');
+        };
+        
+        img.onerror = (e) => {
+          console.error('Failed to load SVG image for PNG export:', e);
+        };
+        
+        // Encode SVG data properly (handle Unicode)
+        const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(svgBlob);
+        img.src = url;
+        
+        // Clean up after image loads
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          
+          // Fill white background
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, width, height);
+          
+          // Draw SVG
+          ctx.drawImage(img, 0, 0);
+          
+          // Convert to PNG and download
+          canvas.toBlob(blob => {
+            if (blob) {
+              const pngUrl = URL.createObjectURL(blob);
+              const link = document.createElement('a');
+              link.href = pngUrl;
+              link.download = `ontology-graph-${projectId}.png`;
+              link.click();
+              URL.revokeObjectURL(pngUrl);
+            }
+          }, 'image/png');
+        };
+      } catch (error) {
+        console.error('PNG export failed:', error);
+      }
     }
   };
 
@@ -3524,29 +3542,16 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         {/* Hierarchical navigation */}
         <button
           onClick={() => {
-            // Show ALL nodes of ALL types with full expansion
-            console.log('[Expand All] Expanding all nodes with full hierarchy');
-            
-            const allNodeIds = allNodes.map(n => n.id);
-            
-            // Mark all class nodes as expanded to show their children
-            const classNodeIds = allNodes
-              .filter(n => n.type === 'class')
-              .map(n => n.id);
+            // Use the expandAllNodes function for consistent behavior
+            console.log('[Expand All] Using expandAllNodes function');
+            const { newExpandedIds, newVisibleIds } = expandAllNodes(allNodes);
             
             updateHierarchyState(() => ({
-              visible: new Set(allNodeIds),
-              expanded: new Set(classNodeIds) // Mark all classes as expanded
+              visible: newVisibleIds,
+              expanded: newExpandedIds
             }));
             
-            console.log('[Expand All] ✅ Expanded all', allNodeIds.length, 'nodes:', {
-              classes: allNodes.filter(n => n.type === 'class').length,
-              individuals: allNodes.filter(n => n.type === 'individual').length,
-              objectProperties: allNodes.filter(n => n.type === 'objectProperty').length,
-              dataProperties: allNodes.filter(n => n.type === 'dataProperty').length,
-              datatypes: allNodes.filter(n => n.type === 'datatype').length,
-              annotations: allNodes.filter(n => n.type === 'annotation').length
-            });
+            console.log('[Expand All] ✅ Expanded all', allNodes.length, 'nodes');
           }}
           style={styles.btn}
           title="Expand All - Show full hierarchy of all entity types"
@@ -3556,46 +3561,16 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         </button>
         <button
           onClick={() => {
-            // Show root classes (including Thing) with their immediate children
-            // Plus all non-hierarchical entities
-            console.log('[Collapse All] Collapsing to root classes with first-level children');
+            // Use the collapseAllNodes function for consistent behavior
+            console.log('[Collapse All] Using collapseAllNodes function');
+            const { newExpandedIds, newVisibleIds } = collapseAllNodes(allNodes, allEdges);
             
-            const classNodes = allNodes.filter(n => n.type === 'class');
-            
-            // Get root classes (including Thing/owl:Thing)
-            const rootClassIds = getRootNodes(classNodes, allEdges);
-            
-            // Get immediate children of root classes to show Thing's connections
-            const firstLevelChildrenIds: string[] = [];
-            rootClassIds.forEach(rootId => {
-              const children = allEdges
-                .filter(e => e.type === 'subClassOf' && e.to === rootId)
-                .map(e => e.from);
-              firstLevelChildrenIds.push(...children);
-            });
-            
-            // Get all non-class entities (properties, individuals, datatypes, annotations)
-            const nonClassEntityIds = allNodes
-              .filter(n => n.type !== 'class')
-              .map(n => n.id);
-            
-            // Combine: root classes + their children + non-class entities
-            const visibleIds = [...rootClassIds, ...firstLevelChildrenIds, ...nonClassEntityIds];
-
             updateHierarchyState(() => ({
-              visible: new Set(visibleIds),
-              expanded: new Set(rootClassIds) // Mark root classes as expanded
+              visible: newVisibleIds,
+              expanded: newExpandedIds
             }));
             
-            console.log('[Collapse All] ✅ Showing', visibleIds.length, 'entities:', {
-              rootClasses: rootClassIds.length,
-              firstLevelChildren: firstLevelChildrenIds.length,
-              individuals: allNodes.filter(n => n.type === 'individual').length,
-              objectProperties: allNodes.filter(n => n.type === 'objectProperty').length,
-              dataProperties: allNodes.filter(n => n.type === 'dataProperty').length,
-              datatypes: allNodes.filter(n => n.type === 'datatype').length,
-              annotations: allNodes.filter(n => n.type === 'annotation').length
-            });
+            console.log('[Collapse All] ✅ Done');
           }}
           style={styles.btn}
           title="Collapse All - Show root classes with their immediate children"
