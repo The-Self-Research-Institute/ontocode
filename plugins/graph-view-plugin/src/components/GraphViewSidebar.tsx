@@ -74,8 +74,8 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
   viewMode = 'graph',
   vowlLegend = [],
   onSearchChange,
-  classDistance = 100,
-  datatypeDistance = 100,
+  classDistance = 50,
+  datatypeDistance = 20,
   onClassDistanceChange,
   onDatatypeDistanceChange,
   onPauseLayout,
@@ -414,11 +414,14 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
     );
   };
 
-  // Get available node types from current graph
+  // Get available node types from current graph (excluding properties)
   const availableNodeTypes = useMemo(() => {
     const types = new Set<string>();
     nodes.forEach(node => {
-      if (node.type) types.add(node.type);
+      // Exclude objectProperty and dataProperty from Node Types
+      if (node.type && node.type !== 'objectProperty' && node.type !== 'dataProperty') {
+        types.add(node.type);
+      }
     });
     return Array.from(types).sort();
   }, [nodes]);
@@ -580,6 +583,9 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                     style={styles.topFilterCheckbox}
                   />
                   <span>Object Properties</span>
+                  <span style={{ marginLeft: 'auto', color: '#9ca3af', fontSize: '11px' }}>
+                    ({nodes.filter(n => n.type === 'objectProperty').length})
+                  </span>
                 </label>
                 <label style={styles.topFilterLabel}>
                   <input
@@ -589,6 +595,9 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                     style={styles.topFilterCheckbox}
                   />
                   <span>Data Properties</span>
+                  <span style={{ marginLeft: 'auto', color: '#9ca3af', fontSize: '11px' }}>
+                    ({nodes.filter(n => n.type === 'dataProperty').length})
+                  </span>
                 </label>
                 <label style={styles.topFilterLabel}>
                   <input
@@ -598,6 +607,9 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                     style={styles.topFilterCheckbox}
                   />
                   <span>SubClass Relationships</span>
+                  <span style={{ marginLeft: 'auto', color: '#9ca3af', fontSize: '11px' }}>
+                    ({edges.filter(e => e.type === 'subClassOf').length})
+                  </span>
                 </label>
               </div>
             )}
@@ -964,8 +976,11 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
             <div style={styles.vowlLegendSection}>
               {/* Node Types */}
               <div style={styles.legendCategory}>Node Types</div>
-              {vowlLegend.filter(item => item.type === 'node').map((item, index) => (
-                <div key={`node-${index}`} style={styles.vowlLegendItem}>
+              {(() => {
+                const nodeItems = vowlLegend.filter(item => item.type === 'node');
+                console.log('[Sidebar Legend] Rendering node items:', nodeItems.length, nodeItems.map(i => ({name: i.name, nodeType: i.nodeType, color: i.color})));
+                return nodeItems.map((item) => (
+                  <div key={`node-${item.nodeType}-${item.name}`} style={styles.vowlLegendItem}>
                   {/* Render shape based on node type and name */}
                   {item.nodeType === 'class' ? (
                     <div style={{
@@ -1024,14 +1039,15 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                   )}
                   <span style={styles.vowlLegendLabel}>{item.name}</span>
                 </div>
-              ))}
+              ));
+              })()}
               
               {/* Edge Types */}
               {vowlLegend.filter(item => item.type === 'edge').length > 0 && (
                 <>
                   <div style={styles.legendCategory}>Relationship Types</div>
-                  {vowlLegend.filter(item => item.type === 'edge').map((item, index) => (
-                    <div key={`edge-${index}`} style={styles.vowlLegendItem}>
+                  {vowlLegend.filter(item => item.type === 'edge').map((item) => (
+                    <div key={`edge-${item.name}`} style={styles.vowlLegendItem}>
                       <svg width="28" height="4" style={{ flexShrink: 0 }}>
                         <line 
                           x1="0" 
@@ -1053,8 +1069,8 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
               {vowlLegend.filter(item => item.type === 'label').length > 0 && (
                 <>
                   <div style={styles.legendCategory}>Property Label Colors</div>
-                  {vowlLegend.filter(item => item.type === 'label').map((item, index) => (
-                    <div key={`label-${index}`} style={styles.vowlLegendItem}>
+                  {vowlLegend.filter(item => item.type === 'label').map((item) => (
+                    <div key={`label-${item.name}`} style={styles.vowlLegendItem}>
                       <div style={{
                         width: '20px',
                         height: '12px',
@@ -1123,8 +1139,8 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
         )}
       </div>
 
-      {/* VOWL Controls Section - Show in VOWL mode or when Settings button clicked */}
-      {(viewMode === 'vowl' || showSettings) && (
+      {/* VOWL Controls Section - Show only when Settings button clicked */}
+      {showSettings && (
         <div style={styles.accordionSection}>
           <div 
             className="accordion-header"
@@ -1141,7 +1157,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                 <label style={styles.controlLabel}>Class Distance:</label>
                 <input
                   type="range"
-                  min="20"
+                  min="10"
                   max="200"
                   value={classDistance}
                   onChange={(e) => onClassDistanceChange?.(parseInt(e.target.value))}
@@ -1155,8 +1171,8 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                 <label style={styles.controlLabel}>Datatype Distance:</label>
                 <input
                   type="range"
-                  min="20"
-                  max="200"
+                  min="5"
+                  max="150"
                   value={datatypeDistance}
                   onChange={(e) => onDatatypeDistanceChange?.(parseInt(e.target.value))}
                   style={styles.slider}

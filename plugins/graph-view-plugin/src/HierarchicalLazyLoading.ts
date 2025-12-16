@@ -11,6 +11,7 @@ import type { OntologyNode, OntologyEdge } from './types';
 /**
  * Find root nodes (nodes with no parent)
  * First tries to use node.parent field, falls back to edge analysis
+ * Now supports all entity types: classes, objectProperty, dataProperty, individual
  */
 export const getRootNodes = (
   nodes: OntologyNode[],
@@ -42,10 +43,12 @@ export const getRootNodes = (
 
   // Fallback: Use edge analysis
   // For SUBCLASS_OF: child (from) → parent (to)
+  // For subPropertyOf: child (from) → parent (to)
+  // For instanceOf: individual (from) → class (to)
   // Root nodes are those that never appear as 'from' (i.e., they have no parents)
   const childIds = new Set(
     edges
-      .filter(e => e.type === 'subClassOf' || e.type === 'instanceOf')
+      .filter(e => e.type === 'subClassOf' || e.type === 'subPropertyOf' || e.type === 'instanceOf')
       .map(e => e.from)  // Nodes that ARE children
   );
 
@@ -62,6 +65,8 @@ export const getRootNodes = (
  * Get immediate parents of a node
  * Uses edges to find parents (nodes that are the parent of this node)
  * For SUBCLASS_OF: child (from/source) → parent (to/target)
+ * For subPropertyOf: child property (from/source) → parent property (to/target)
+ * For instanceOf: individual (from/source) → class (to/target)
  */
 export const getParents = (
   nodeId: string,
@@ -69,16 +74,17 @@ export const getParents = (
   nodes?: OntologyNode[]
 ): string[] => {
   // Use edges to find parents
-  // For SUBCLASS_OF: if nodeId is 'from', then 'to' is the parent
+  // For SUBCLASS_OF/subPropertyOf: if nodeId is 'from', then 'to' is the parent
   return edges
-    .filter(edge => edge.from === nodeId && edge.type === 'subClassOf')
+    .filter(edge => edge.from === nodeId && (edge.type === 'subClassOf' || edge.type === 'subPropertyOf'))
     .map(edge => edge.to);
 };
-
 /**
  * Get immediate children of a node
  * Uses edges to find children (nodes where this node is the parent)
  * For SUBCLASS_OF: child (from/source) → parent (to/target)
+ * For subPropertyOf: child property (from/source) → parent property (to/target)
+ * For instanceOf: individual (from/source) → class (to/target)
  */
 export const getChildren = (
   nodeId: string,
@@ -93,18 +99,19 @@ export const getChildren = (
   }
 
   // Use edges to find children
-  // For SUBCLASS_OF: if nodeId is 'to', then 'from' is the child
+  // For SUBCLASS_OF/subPropertyOf: if nodeId is 'to', then 'from' is the child
+  // For instanceOf: if nodeId is a class (to), then 'from' are its individuals
   const children = edges
-    .filter(edge => edge.to === nodeId && edge.type === 'subClassOf')
+    .filter(edge => edge.to === nodeId && (edge.type === 'subClassOf' || edge.type === 'subPropertyOf' || edge.type === 'instanceOf'))
     .map(edge => edge.from);
     
   console.log(`[Hierarchy] getChildren for ${nodeId}: Found ${children.length} children`);
   return children;
 };
-
 /**
  * Check if node has children
  * Uses hasChildren field from node if available, otherwise checks edges
+ * Now supports all entity types with hierarchy
  */
 export const hasChildren = (
   nodeId: string,
@@ -126,8 +133,10 @@ export const hasChildren = (
 
   // Final fallback: use edges
   // For SUBCLASS_OF: child (from) -> parent (to)
-  // So a node has children if it appears as 'to' in a subClassOf edge
-  return edges.some(edge => edge.to === nodeId && edge.type === 'subClassOf');
+  // For subPropertyOf: child property (from) -> parent property (to)
+  // For instanceOf: individual (from) -> class (to)
+  // So a node has children if it appears as 'to' in these edge types
+  return edges.some(edge => edge.to === nodeId && (edge.type === 'subClassOf' || edge.type === 'subPropertyOf' || edge.type === 'instanceOf'));
 };
 
 /**
@@ -326,9 +335,9 @@ export const expandAll = (
     newVisibleIds: new Set(allNodeIds)
   };
 };
-
 /**
- * Collapse all nodes to show only roots
+ * Collapse all nodes to show only roots with first-level children
+ * Now supports all entity types: classes, object properties, data properties, individuals
  */
 export const collapseAll = (
   nodes: OntologyNode[],
@@ -337,10 +346,59 @@ export const collapseAll = (
   newExpandedIds: Set<string>;
   newVisibleIds: Set<string>;
 } => {
-  const rootIds = getRootNodes(nodes, edges);
+  console.log('[collapseAll] Collapsing to show roots with first-level children for all entity types');
+  
+  // Separate nodes by type
+  const classNodes = nodes.filter(n => n.type === 'class');
+  const objectPropertyNodes = nodes.filter(n => n.type === 'objectProperty');
+  const dataPropertyNodes = nodes.filter(n => n.type === 'dataProperty');
+  const individualNodes = nodes.filter(n => n.type === 'individual');
+  const otherNodes = nodes.filter(n => !['class', 'objectProperty', 'dataProperty', 'datatypeProperty', 'individual'].includes(n.type));
+  
+  // Get root entities for each type
+  const classRootIds = getRootNodes(classNodes, edges);
+  const objectPropertyRootIds = getRootNodes(objectPropertyNodes, edges);
+  const dataPropertyRootIds = getRootNodes(dataPropertyNodes, edges);
+  const individualRootIds = getRootNodes(individualNodes, edges);
+  
+  // Combine all root IDs
+  const allRootIds = [...classRootIds, ...objectPropertyRootIds, ...dataPropertyRootIds, ...individualRootIds];
+  
+  // Get immediate children of all roots to show first level
+  const firstLevelChildrenIds: string[] = [];
+  allRootIds.forEach(rootId => {
+    const children = edges
+      .filter(e => (e.type === 'subClassOf' || e.type === 'subPropertyOf' || e.type === 'instanceOf') && e.to === rootId)
+      .map(e => e.from);
+    firstLevelChildrenIds.push(...children);
+  });
+  
+  // Get all other entity types (datatypes, annotations, etc.)
+  const otherEntityIds = otherNodes.map(n => n.id);
+  
+  // Combine: root entities + their first-level children + other entities
+  const visibleIds = [...allRootIds, ...firstLevelChildrenIds, ...otherEntityIds];
+  
+  console.log('[collapseAll] ✅ Showing', visibleIds.length, 'entities:', {
+    classRoots: classRootIds.length,
+    objectPropertyRoots: objectPropertyRootIds.length,
+    dataPropertyRoots: dataPropertyRootIds.length,
+    individualRoots: individualRootIds.length,
+    firstLevelChildren: firstLevelChildrenIds.length,
+    otherEntities: otherEntityIds.length,
+    total: {
+      classes: classNodes.length,
+      objectProperties: objectPropertyNodes.length,
+      dataProperties: dataPropertyNodes.length,
+      individuals: individualNodes.length,
+      datatypes: nodes.filter(n => n.type === 'datatype').length,
+      annotations: nodes.filter(n => n.type === 'annotation').length
+    }
+  });
+
   return {
-    newExpandedIds: new Set(),
-    newVisibleIds: new Set(rootIds)
+    newExpandedIds: new Set(allRootIds), // Mark all root entities as expanded
+    newVisibleIds: new Set(visibleIds)
   };
 };
 

@@ -275,6 +275,96 @@ const dispatchHostEvent = (name: string, detail: Record<string, any>): boolean =
   }
 };
 
+type VowlLayoutRadii = {
+  class: number;
+  individual: number;
+  datatype: number;
+};
+
+type VowlLayoutResult = {
+  positions: Map<string, { x: number; y: number }>;
+  radii: VowlLayoutRadii;
+};
+
+const computeVowlLayout = (
+  nodes: D3Node[], 
+  width: number, 
+  height: number,
+  classDistanceParam: number = 100,
+  datatypeDistanceParam: number = 100
+): VowlLayoutResult => {
+  const safeWidth = Math.max(width, 1);
+  const safeHeight = Math.max(height, 1);
+  const centerX = safeWidth / 2;
+  const centerY = safeHeight / 2;
+  
+  // Scale the radii based on the distance parameters
+  // Range: 20-200 maps to 0.2-2.0 scale (100 is default)
+  const classScale = Math.max(0.2, Math.min(2.0, classDistanceParam / 100));
+  const datatypeScale = Math.max(0.2, Math.min(2.0, datatypeDistanceParam / 100));
+  
+  const baseMaxRadius = Math.max(120, Math.min(centerX, centerY) - 60);
+  const maxRadius = baseMaxRadius * classScale;
+  const classRadius = maxRadius * 0.85;
+  const individualRadius = Math.max(80 * classScale, classRadius * 0.55);
+  const datatypeRadius = Math.min(maxRadius * datatypeScale, classRadius * 1.25 * datatypeScale);
+
+  const positions = new Map<string, { x: number; y: number }>();
+  const classes = nodes.filter(node => node.type === 'class');
+  const individuals = nodes.filter(node => node.type === 'individual');
+  const datatypes = nodes.filter(node => node.type === 'datatype');
+
+  const assignRing = (
+    ringNodes: D3Node[],
+    radius: number,
+    span: number,
+    offset: number
+  ) => {
+    if (ringNodes.length === 0) {
+      return;
+    }
+    const step = ringNodes.length === 1 ? 0 : span / ringNodes.length;
+    ringNodes.forEach((node, index) => {
+      const angle = offset + (ringNodes.length === 1 ? 0 : index * step);
+      const x = centerX + Math.cos(angle) * radius;
+      const y = centerY + Math.sin(angle) * radius;
+      positions.set(node.id, { x, y });
+    });
+  };
+
+  assignRing(classes, classRadius, Math.PI * 2, -Math.PI / 2);
+  assignRing(individuals, individualRadius, Math.PI * 1.8, -Math.PI / 2);
+  assignRing(datatypes, datatypeRadius, Math.PI * 1.2, -Math.PI / 2 + Math.PI / 6);
+
+  const thingNode = classes.find(
+    node => node.label === 'Thing' || node.id === 'owl:Thing' || node.id.includes('owl#Thing')
+  );
+  if (thingNode) {
+    positions.set(thingNode.id, {
+      x: centerX,
+      y: Math.max(80, centerY - classRadius - 40)
+    });
+  }
+
+  nodes.forEach((node, index) => {
+    if (!positions.has(node.id)) {
+      positions.set(node.id, {
+        x: centerX + (index % 5) * 14 - 28,
+        y: centerY + ((index % 7) - 3) * 12
+      });
+    }
+  });
+
+  return {
+    positions,
+    radii: {
+      class: classRadius,
+      individual: individualRadius,
+      datatype: datatypes.length ? datatypeRadius : classRadius * 1.15
+    }
+  };
+};
+
 export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   projectId,
   context,
@@ -419,8 +509,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const [sidebarSearchTerm, setSidebarSearchTerm] = useState('');
 
   // VOWL Controls
-  const [classDistance, setClassDistance] = useState(50);
-  const [datatypeDistance, setDatatypeDistance] = useState(20);
+  const [classDistance, setClassDistance] = useState(100);
+  const [datatypeDistance, setDatatypeDistance] = useState(100);
   const [isLayoutPaused, setIsLayoutPaused] = useState(false);
 
   // Panels
@@ -555,6 +645,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       console.log(`[Filtering] Force mode: Filtered to classes, individuals, datatypes - ${filtered.length} nodes`);
     }
 
+    // OntoGraph Mode: focus on class hierarchy for clean Protégé-style layout
+    if (visualizationType === 'ontograph') {
+      const beforeFilter = filtered.length;
+      filtered = filtered.filter(node => node.type === 'class');
+      console.log(`[Filtering] OntoGraph mode: Focused on classes ${beforeFilter} -> ${filtered.length}`);
+    }
+
     console.log(`[Filtering] visibleNodes: ${visibleNodes.length}, after type filter: ${filtered.length}`);
 
     // Search filter (Note: Search now handled by handleSearch with path expansion)
@@ -664,7 +761,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
     
     // **Force/OntoGraph Mode: Show property relation edges if filters allow them**
-    if (visualizationType === 'force' || visualizationType === 'ontograph') {
+    if (visualizationType === 'force') {
       const beforeFilter = filtered.length;
       filtered = filtered.filter(edge => {
         if (edge.type === 'propertyRelation') {
@@ -695,6 +792,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       
       console.log(`[Filtering] ${visualizationType} mode: Filtered property edges ${beforeFilter} -> ${filtered.length}`);
     }
+
+    if (visualizationType === 'ontograph') {
+      const beforeFilter = filtered.length;
+      filtered = filtered.filter(edge => edge.type === 'subClassOf');
+      console.log(`[Filtering] OntoGraph mode: Keeping subclass hierarchy edges ${beforeFilter} -> ${filtered.length}`);
+    }
     
     console.log('[AdvancedGraphView] Filtered edges:', filtered.length);
     if (filtered.length === 0 && visibleEdges.length > 0) {
@@ -707,29 +810,40 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
   // Generate dynamic legend based on current graph
   const dynamicLegend = useMemo(() => {
+    console.log('[Legend] Computing dynamic legend - Mode:', visualizationType, 'Visible nodes:', visibleNodes.length, 'Visible edges:', visibleEdges.length);
+    
     if (visualizationType === 'vowl') {
-      // VOWL Mode - dynamic legend based on actual nodes/edges
+      // VOWL Mode - dynamic legend based on visible nodes in the current graph
       const legend: Array<{ name: string; type: string; nodeType?: string; color?: string; stroke?: string; strokeDasharray?: string }> = [];
       
-      // Check for external vs internal classes
-      const hasExternalClass = filteredNodes.some(n => 
+      // Use visibleNodes (after hierarchy filters) for accurate legend
+      const nodeTypes = new Set(visibleNodes.map(n => n.type));
+      const edgeTypes = new Set(visibleEdges.map(e => e.type));
+      
+      console.log('[Legend] VOWL - Node types:', Array.from(nodeTypes), 'Edge types:', Array.from(edgeTypes));
+      
+      // Check for specific node types in visible nodes
+      const hasThing = visibleNodes.some(n => n.label === 'Thing' || n.id === 'owl:Thing');
+      const hasClass = nodeTypes.has('class') && visibleNodes.some(n => n.type === 'class' && n.label !== 'Thing');
+      const hasDatatype = nodeTypes.has('datatype');
+      const hasIndividual = nodeTypes.has('individual');
+      
+      // Distinguish internal vs external classes if present
+      const hasExternalClass = visibleNodes.some(n => 
         n.type === 'class' && (['Item', 'UserAccount', 'Concept'].includes(n.label) || n.label?.includes('external'))
       );
-      const hasInternalClass = filteredNodes.some(n => 
-        n.type === 'class' && !(['Item', 'UserAccount', 'Concept'].includes(n.label) || n.label?.includes('external'))
+      const hasInternalClass = visibleNodes.some(n => 
+        n.type === 'class' && !(['Item', 'UserAccount', 'Concept'].includes(n.label) || n.label?.includes('external')) && n.label !== 'Thing'
       );
-      const hasThing = filteredNodes.some(n => n.label === 'Thing' || n.id === 'owl:Thing');
-      const hasDatatype = filteredNodes.some(n => n.type === 'datatype');
-      const hasIndividual = filteredNodes.some(n => n.type === 'individual');
       
+      // Add node type legends
+      if (hasThing) legend.push({ name: 'Thing (Dashed Border)', type: 'node', nodeType: 'class', color: '#ffffff' });
       if (hasExternalClass) legend.push({ name: 'External Class (Dark Blue)', type: 'node', nodeType: 'class', color: '#4682b4' });
       if (hasInternalClass) legend.push({ name: 'Internal Class (Light Blue)', type: 'node', nodeType: 'class', color: '#acd5f2' });
-      if (hasThing) legend.push({ name: 'Thing (Dashed Border)', type: 'node', nodeType: 'class', color: '#ffffff' });
       if (hasDatatype) legend.push({ name: 'Datatype / Literal (Light Orange)', type: 'node', nodeType: 'datatype', color: '#FFD9B3' });
       if (hasIndividual) legend.push({ name: 'Individual (Rectangle)', type: 'node', nodeType: 'individual', color: '#E74C3C' });
       
-      // Edge types
-      const edgeTypes = new Set(filteredEdges.map(e => e.type));
+      // Add edge type legends based on visible edges
       if (edgeTypes.has('propertyRelation')) {
         legend.push({ name: 'Object Property', type: 'edge', stroke: '#000000', strokeDasharray: '0' });
         legend.push({ name: 'Data Property', type: 'edge', stroke: '#000000', strokeDasharray: '0' });
@@ -744,22 +858,19 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         legend.push({ name: 'Regular Property (Blue)', type: 'label', color: '#BBDEFB' });
       }
       
+      console.log('[Legend] VOWL legend items:', legend.length, 'Details:', legend.map(l => ({name: l.name, type: l.type, nodeType: l.nodeType, color: l.color})));
       return legend;
     } else {
-      // Standard Mode - dynamic legend based on actual nodes/edges
+      // Standard Mode (Force-directed & OntoGraph) - dynamic legend based on visible nodes/edges
       const legend: Array<{ name: string; type: string; nodeType?: string; color?: string; stroke?: string; strokeDasharray?: string }> = [];
       
-      // Node types from actual graph
-      const nodeTypes = new Set(filteredNodes.map(n => n.type));
-      if (nodeTypes.has('class')) legend.push({ name: 'Class', type: 'node', nodeType: 'class', color: '#4A90E2' });
-      if (nodeTypes.has('objectProperty')) legend.push({ name: 'Object Property', type: 'node', nodeType: 'objectProperty', color: '#50C878' });
-      if (nodeTypes.has('dataProperty')) legend.push({ name: 'Datatype Property', type: 'node', nodeType: 'dataProperty', color: '#ec4899' });
-      if (nodeTypes.has('individual')) legend.push({ name: 'Individual', type: 'node', nodeType: 'individual', color: '#E74C3C' });
-      if (nodeTypes.has('annotation')) legend.push({ name: 'Annotation Property', type: 'node', nodeType: 'annotation', color: '#9B59B6' });
-      if (nodeTypes.has('datatype')) legend.push({ name: 'Datatype', type: 'node', nodeType: 'datatype', color: '#FFA500' });
+      // Node types from visible nodes in current graph
+      const nodeTypes = new Set(visibleNodes.map(n => n.type));
       
-      // Edge types from actual graph
-      const edgeTypes = new Set(filteredEdges.map(e => e.type));
+      if (nodeTypes.has('class')) legend.push({ name: 'Class', type: 'node', nodeType: 'class', color: '#4A90E2' });
+      
+      // Edge types from visible edges in current graph
+      const edgeTypes = new Set(visibleEdges.map(e => e.type));
       if (edgeTypes.has('subClassOf')) legend.push({ name: 'SubClass Of', type: 'edge', stroke: '#2563eb', strokeDasharray: '0' });
       if (edgeTypes.has('domain')) legend.push({ name: 'Domain', type: 'edge', stroke: '#10b981', strokeDasharray: '0' });
       if (edgeTypes.has('range')) legend.push({ name: 'Range', type: 'edge', stroke: '#f59e0b', strokeDasharray: '0' });
@@ -768,9 +879,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       if (edgeTypes.has('disjointWith')) legend.push({ name: 'Disjoint', type: 'edge', stroke: '#ef4444', strokeDasharray: '3,3' });
       if (edgeTypes.has('propertyRelation')) legend.push({ name: 'Property Relation', type: 'edge', stroke: '#6b7280', strokeDasharray: '0' });
       
+      console.log('[Legend] Standard legend items:', legend.length);
       return legend;
     }
-  }, [visualizationType, filteredNodes, filteredEdges]);
+  }, [visualizationType, visibleNodes, visibleEdges]);
 
   // Performance tracking (disabled for production performance)
   const renderTime = useRef(0);
@@ -1049,6 +1161,18 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       return { ...node, x, y };
     });
 
+    let vowlLayout: VowlLayoutResult | null = null;
+    if (visualizationType === 'vowl') {
+      vowlLayout = computeVowlLayout(d3Nodes, width, height, classDistance, datatypeDistance);
+      d3Nodes.forEach(node => {
+        const position = vowlLayout?.positions.get(node.id);
+        if (position) {
+          node.x = position.x;
+          node.y = position.y;
+        }
+      });
+    }
+
     // Apply OntoGraph hierarchical layout if selected
     if (visualizationType === 'ontograph') {
       const nodeCount = filteredNodes.length;
@@ -1206,9 +1330,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           // Much stronger repulsion in WebVOWL mode for organized layout
           if (visualizationType === 'vowl') {
             if (node.type === 'class') {
-              return nodeCount > 100 ? -3500 : -5000; // Increased from -3000
+              return nodeCount > 200 ? -1400 : -1200;
             }
-            return nodeCount > 100 ? -2500 : -3500; // Increased from -2000
+            if (node.type === 'datatype') {
+              return nodeCount > 200 ? -1100 : -950;
+            }
+            return nodeCount > 200 ? -900 : -800;
           }
           // Force mode - adaptive strength for large graphs (100k nodes)
           if (visualizationType === 'force') {
@@ -1228,7 +1355,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           }
           return nodeCount > 100 ? -500 : -800;
         })
-        .distanceMax(visualizationType === 'vowl' ? 2000 : (nodeCount > 10000 ? 800 : 1200))
+        .distanceMax(visualizationType === 'vowl' ? Math.min(width, height) * 1.2 : (nodeCount > 10000 ? 800 : 1200))
         .theta(nodeCount > 50000 ? 0.9 : 0.7) : null)
       .force('center', usePhysics ? d3.forceCenter(width / 2, height / 2)
         .strength(visualizationType === 'vowl' ? 0.02 : 0.03) : null)
@@ -1242,11 +1369,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           if (visualizationType === 'vowl') {
             // Different collision radii based on node type - increased to prevent overlap
             if (node.type === 'class') {
-              return size * 10.0; // Further increased for classes
+              return size * 4.5;
             } else if (node.type === 'datatype') {
-              return size * 9.0; // Further increased for datatypes
+              return size * 3.6;
             }
-            return size * 8.0; // Further increased for individuals
+            return size * 3.2;
           }
           // Force mode - adaptive collision radius for scalability
           if (visualizationType === 'force') {
@@ -1276,13 +1403,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         const node = d as D3Node;
         // Stronger vertical positioning in VOWL mode
         if (visualizationType === 'vowl') {
-          if (node.type === 'class') {
-            return height * 0.35;
-          } else if (node.type === 'individual') {
-            return height * 0.75;
-          } else if (node.type === 'datatype') {
-            return height * 0.65;
-          }
           return height / 2;
         }
         // Standard mode positioning
@@ -1294,20 +1414,49 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           return height * 0.6;
         }
         return height / 2;
-      }).strength(visualizationType === 'vowl' ? 0.25 : 0.15) : null)
-      .force('x', usePhysics ? d3.forceX(width / 2).strength(visualizationType === 'vowl' ? 0.01 : 0.02) : null)
+      }).strength(visualizationType === 'vowl' ? 0.18 : 0.15) : null)
+      .force('x', usePhysics ? d3.forceX(d => {
+        const node = d as D3Node;
+        if (visualizationType === 'force') {
+          if (node.type === 'class') {
+            return width * 0.35;
+          }
+          if (node.type === 'individual') {
+            return width * 0.62;
+          }
+          if (node.type === 'datatype') {
+            return width * 0.78;
+          }
+        }
+        if (visualizationType === 'vowl') {
+          return width / 2;
+        }
+        return width / 2;
+      }).strength(visualizationType === 'force' ? 0.14 : visualizationType === 'vowl' ? 0.05 : 0.02) : null)
       .alphaDecay(usePhysics ? (visualizationType === 'vowl' ? 0.02 : 0.03) : 1) // Increased for faster settling
       .velocityDecay(usePhysics ? (visualizationType === 'vowl' ? 0.6 : 0.5) : 0.8) // Increased for more damping
       .alpha(isLayoutPaused || !usePhysics ? 0 : 1.0)
       .alphaMin(0.001)
       .alphaTarget(0);
 
+    if (visualizationType === 'vowl' && usePhysics && vowlLayout) {
+      simulation.force('radial', d3.forceRadial<D3Node>(node => {
+        if (node.type === 'datatype') {
+          return vowlLayout!.radii.datatype;
+        }
+        if (node.type === 'individual') {
+          return vowlLayout!.radii.individual;
+        }
+        return vowlLayout!.radii.class;
+      }, width / 2, height / 2).strength(0.75));
+    }
+
     simulationRef.current = simulation;
 
     // Pre-calculate stable positions before rendering (run simulation silently)
     if (usePhysics && !isLayoutPaused) {
       // Run simulation for several ticks to get stable positions
-      const preTicks = visualizationType === 'vowl' ? 100 : 50; // More ticks for VOWL due to stronger forces
+      const preTicks = visualizationType === 'vowl' ? 60 : 50;
       for (let i = 0; i < preTicks; i++) {
         simulation.tick();
       }
