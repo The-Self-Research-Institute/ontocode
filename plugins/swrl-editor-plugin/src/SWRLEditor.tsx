@@ -3,7 +3,7 @@ import {
   Plus, Trash2, Play, Save, Check, X, AlertCircle, Loader2, 
   ChevronDown, ChevronRight, ChevronUp, Copy, Download, Upload, BarChart2, 
   BookOpen, Search, ToggleLeft, ToggleRight, Zap, FileText,
-  Info, Code, List, Grid3X3, Filter, RefreshCw, Settings, LayoutTemplate,
+  Info, Code, List, Filter, RefreshCw, Settings, LayoutTemplate,
   HelpCircle, Maximize2, Minimize2, Eye, EyeOff
 } from 'lucide-react';
 import apiClient from './apiClient';

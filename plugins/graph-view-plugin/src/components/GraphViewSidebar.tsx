@@ -697,81 +697,127 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
 
             {/* Entity List */}
             <div style={styles.entityList}>
-              {filteredNodes.map(node => (
-                <div
-                  key={node.id}
-                  className="entity-item"
-                  style={{
-                    ...styles.entityItem,
-                    ...(selectedNode?.id === node.id ? styles.selectedEntity : {})
-                  }}
-                  onClick={() => onNodeSelect(node)}
-                  onMouseEnter={() => onNodeHighlight(node.id)}
-                  onMouseLeave={() => onNodeHighlight(null)}
-                >
-                  {/* Type-specific icon/shape */}
-                  {node.type === 'class' ? (
-                    <div style={{
-                      width: '14px',
-                      height: '14px',
-                      borderRadius: '50%',
-                      backgroundColor: '#4A90E2',
-                      border: '2px solid #2c3e50',
-                      flexShrink: 0
-                    }} />
-                  ) : node.type === 'objectProperty' ? (
-                    <div style={{
-                      width: '14px',
-                      height: '14px',
-                      borderRadius: '50%',
-                      backgroundColor: '#50C878',
-                      border: '2px solid #2c3e50',
-                      flexShrink: 0
-                    }} />
-                  ) : node.type === 'dataProperty' ? (
-                    <div style={{
-                      width: '12px',
-                      height: '12px',
-                      backgroundColor: '#ec4899',
-                      border: '2px solid #2c3e50',
-                      flexShrink: 0,
-                      borderRadius: '2px'
-                    }} />
-                  ) : node.type === 'datatype' ? (
-                    <div style={{
-                      width: '12px',
-                      height: '12px',
-                      backgroundColor: '#FFA500',
-                      border: '2px solid #2c3e50',
-                      flexShrink: 0,
-                      borderRadius: '2px'
-                    }} />
-                  ) : node.type === 'individual' ? (
-                    <div style={{
-                      width: '0',
-                      height: '0',
-                      borderLeft: '7px solid transparent',
-                      borderRight: '7px solid transparent',
-                      borderBottom: '12px solid #E74C3C',
-                      flexShrink: 0,
-                      position: 'relative',
-                      top: '-2px'
-                    }} />
-                  ) : node.type === 'annotation' ? (
-                    <div style={{
-                      width: '14px',
-                      height: '14px',
-                      borderRadius: '50%',
-                      backgroundColor: '#9B59B6',
-                      border: '2px solid #2c3e50',
-                      flexShrink: 0
-                    }} />
-                  ) : (
-                    <span style={styles.entityBullet}>●</span>
-                  )}
-                  <span style={styles.entityLabel}>{node.label || node.id}</span>
-                </div>
-              ))}
+              {filteredNodes.map(node => {
+                // Determine if class is Thing or external
+                const isThing = node.label === 'Thing' || node.id.includes('owl#Thing');
+                const isExternal = node.label?.includes('external') || ['Item', 'UserAccount', 'Concept'].includes(node.label || '');
+                
+                // Get color based on node type (matching graph visualization)
+                let nodeColor = '#667eea'; // default class color
+                if (node.type === 'class') {
+                  if (viewMode === 'vowl') {
+                    if (isThing) nodeColor = '#ffffff';
+                    else if (isExternal) nodeColor = '#4682b4';
+                    else nodeColor = '#acd5f2';
+                  } else {
+                    nodeColor = '#667eea';
+                  }
+                } else if (node.type === 'objectProperty') {
+                  nodeColor = '#06b6d4';
+                } else if (node.type === 'dataProperty') {
+                  nodeColor = '#ec4899';
+                } else if (node.type === 'individual') {
+                  nodeColor = '#10b981';
+                } else if (node.type === 'datatype') {
+                  nodeColor = viewMode === 'vowl' ? '#FFD9B3' : '#FFA500';
+                } else if (node.type === 'annotation') {
+                  nodeColor = viewMode === 'vowl' ? '#e8d5f2' : '#8b5cf6';
+                }
+                
+                return (
+                  <div
+                    key={node.id}
+                    className="entity-item"
+                    style={{
+                      ...styles.entityItem,
+                      ...(selectedNode?.id === node.id ? styles.selectedEntity : {})
+                    }}
+                    onClick={() => onNodeSelect(node)}
+                    onMouseEnter={() => onNodeHighlight(node.id)}
+                    onMouseLeave={() => onNodeHighlight(null)}
+                  >
+                    {/* Type-specific shape matching graph visualization */}
+                    {node.type === 'class' ? (
+                      // Classes: Circle (solid border for normal, dashed for Thing)
+                      <div style={{
+                        width: '16px',
+                        height: '16px',
+                        borderRadius: '50%',
+                        backgroundColor: nodeColor,
+                        border: isThing ? '2px dashed #1f2937' : '2px solid #1f2937',
+                        flexShrink: 0,
+                        marginRight: '8px'
+                      }} />
+                    ) : node.type === 'objectProperty' ? (
+                      // Object Properties: Circle (cyan)
+                      <div style={{
+                        width: '16px',
+                        height: '16px',
+                        borderRadius: '50%',
+                        backgroundColor: nodeColor,
+                        border: '2px solid #1f2937',
+                        flexShrink: 0,
+                        marginRight: '8px'
+                      }} />
+                    ) : node.type === 'dataProperty' ? (
+                      // Data Properties: Square (pink)
+                      <div style={{
+                        width: '14px',
+                        height: '14px',
+                        backgroundColor: nodeColor,
+                        border: '2px solid #1f2937',
+                        flexShrink: 0,
+                        borderRadius: '3px',
+                        marginRight: '8px'
+                      }} />
+                    ) : node.type === 'datatype' ? (
+                      // Datatypes: Rounded Rectangle with dashed border (yellow/orange)
+                      <div style={{
+                        width: '24px',
+                        height: '12px',
+                        backgroundColor: nodeColor,
+                        border: '2px dashed #1f2937',
+                        flexShrink: 0,
+                        borderRadius: '6px',
+                        marginRight: '8px'
+                      }} />
+                    ) : node.type === 'individual' ? (
+                      // Individuals: Rectangle (green)
+                      <div style={{
+                        width: '20px',
+                        height: '12px',
+                        backgroundColor: nodeColor,
+                        border: '2px solid #1f2937',
+                        flexShrink: 0,
+                        borderRadius: '3px',
+                        marginRight: '8px'
+                      }} />
+                    ) : node.type === 'annotation' ? (
+                      // Annotation Properties: Hexagon (light purple)
+                      <svg width="18" height="18" viewBox="-9 -9 18 18" style={{ flexShrink: 0, marginRight: '8px' }}>
+                        <polygon
+                          points="0,-7 6,-3.5 6,3.5 0,7 -6,3.5 -6,-3.5"
+                          fill={nodeColor}
+                          stroke="#1f2937"
+                          strokeWidth="2"
+                        />
+                      </svg>
+                    ) : (
+                      // Default: Circle
+                      <div style={{
+                        width: '16px',
+                        height: '16px',
+                        borderRadius: '50%',
+                        backgroundColor: nodeColor,
+                        border: '2px solid #1f2937',
+                        flexShrink: 0,
+                        marginRight: '8px'
+                      }} />
+                    )}
+                    <span style={styles.entityLabel}>{node.label || node.id}</span>
+                  </div>
+                );
+              })}
               {filteredNodes.length === 0 && (
                 <div style={styles.emptyState}>
                   {searchTerm ? 'No entities found' : 'Select a class or property to view details'}
@@ -981,8 +1027,9 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                 console.log('[Sidebar Legend] Rendering node items:', nodeItems.length, nodeItems.map(i => ({name: i.name, nodeType: i.nodeType, color: i.color})));
                 return nodeItems.map((item) => (
                   <div key={`node-${item.nodeType}-${item.name}`} style={styles.vowlLegendItem}>
-                  {/* Render shape based on node type and name */}
+                  {/* Render shape based on node type and name - matching graph visualization */}
                   {item.nodeType === 'class' ? (
+                    // Classes: Circle (solid border for normal classes, dashed for Thing)
                     <div style={{
                       width: '20px',
                       height: '20px',
@@ -992,6 +1039,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                       flexShrink: 0
                     }} />
                   ) : item.nodeType === 'objectProperty' ? (
+                    // Object Properties: Circle (green)
                     <div style={{
                       width: '20px',
                       height: '20px',
@@ -1001,6 +1049,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                       flexShrink: 0
                     }} />
                   ) : item.nodeType === 'dataProperty' || item.nodeType === 'datatypeProperty' ? (
+                    // Data Properties: Square (pink)
                     <div style={{
                       width: '18px',
                       height: '18px',
@@ -1010,24 +1059,37 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                       borderRadius: '3px'
                     }} />
                   ) : item.nodeType === 'individual' ? (
+                    // Individuals: Rectangle (purple/pink)
                     <div style={{
-                      width: '22px',
-                      height: '14px',
+                      width: '28px',
+                      height: '16px',
                       backgroundColor: item.color || '#E74C3C',
                       border: '2px solid #1f2937',
                       flexShrink: 0,
-                      borderRadius: '3px'
+                      borderRadius: '4px'
                     }} />
                   ) : item.nodeType === 'datatype' ? (
+                    // Datatypes: Rounded Rectangle with dashed border (yellow/orange)
                     <div style={{
-                      width: '28px',
-                      height: '14px',
+                      width: '32px',
+                      height: '16px',
                       backgroundColor: item.color || '#FFD9B3',
                       border: '2px dashed #1f2937',
                       flexShrink: 0,
-                      borderRadius: '7px'
+                      borderRadius: '8px'
                     }} />
+                  ) : item.nodeType === 'annotation' ? (
+                    // Annotation Properties: Hexagon (light purple)
+                    <svg width="24" height="24" viewBox="-12 -12 24 24" style={{ flexShrink: 0 }}>
+                      <polygon
+                        points="0,-10 8.66,-5 8.66,5 0,10 -8.66,5 -8.66,-5"
+                        fill={item.color || '#e8d5f2'}
+                        stroke="#1f2937"
+                        strokeWidth="2"
+                      />
+                    </svg>
                   ) : (
+                    // Default: Circle
                     <div style={{
                       width: '20px',
                       height: '20px',

@@ -95,6 +95,9 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [activeResultTab, setActiveResultTab] = useState<'table' | 'json'>('table');
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [resultsHeight, setResultsHeight] = useState(400);
+  const [isResizing, setIsResizing] = useState(false);
 
   // Fetch saved queries from backend
   const fetchQueries = useCallback(async () => {
@@ -178,10 +181,12 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
 
   const handleDeleteQuery = async () => {
     if (!selectedQuery) return;
-    
-    if (!window.confirm(`Are you sure you want to delete "${selectedQuery.name}"?`)) {
-      return;
-    }
+    setShowDeleteModal(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!selectedQuery) return;
+    setShowDeleteModal(false);
     
     try {
       await apiClient.delete(`/api/sparql/${projectId}/queries/${selectedQuery.id}`);
@@ -241,47 +246,96 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
   const downloadCsv = () => {
     if (!results) return;
     
-    const cols = results.head.vars;
-    const escapeCsv = (val: string) => {
-      if (val == null) return '""';
-      const str = String(val);
-      if (str.includes('"') || str.includes(',') || str.includes('\n')) {
-        return `"${str.replace(/"/g, '""')}"`;
-      }
-      return str;
-    };
-    
-    const header = cols.map(escapeCsv).join(',');
-    const rows = results.results.bindings.map(b =>
-      cols.map(c => escapeCsv(b[c]?.value ?? '')).join(',')
-    );
-    
-    const csv = [header, ...rows].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${queryName.replace(/\s+/g, '_') || 'query-results'}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    try {
+      const cols = results.head.vars;
+      const escapeCsv = (val: string) => {
+        if (val == null) return '""';
+        const str = String(val);
+        if (str.includes('"') || str.includes(',') || str.includes('\n')) {
+          return `"${str.replace(/"/g, '""')}"`;
+        }
+        return str;
+      };
+      
+      const header = cols.map(escapeCsv).join(',');
+      const rows = results.results.bindings.map(b =>
+        cols.map(c => escapeCsv(b[c]?.value ?? '')).join(',')
+      );
+      
+      const csv = [header, ...rows].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${queryName.replace(/\s+/g, '_') || 'query-results'}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+      
+      context.showNotification?.('CSV downloaded successfully', 'success');
+    } catch (error) {
+      console.error('CSV download failed:', error);
+      context.showNotification?.('Failed to download CSV', 'error');
+    }
   };
 
   const downloadJson = () => {
     if (!results) return;
     
-    const json = JSON.stringify(results, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${queryName.replace(/\s+/g, '_') || 'query-results'}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    try {
+      const json = JSON.stringify(results, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${queryName.replace(/\s+/g, '_') || 'query-results'}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      
+      context.showNotification?.('JSON downloaded successfully', 'success');
+    } catch (error) {
+      console.error('JSON download failed:', error);
+      context.showNotification?.('Failed to download JSON', 'error');
+    }
   };
+
+  // Resize handlers
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsResizing(true);
+  };
+
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      e.preventDefault();
+      const newHeight = window.innerHeight - e.clientY;
+      // Allow resize between 200px and 80% of viewport
+      if (newHeight >= 200 && newHeight <= window.innerHeight * 0.8) {
+        setResultsHeight(newHeight);
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+    
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isResizing]);
 
   // Generate prefix block for display
   const prefixBlock = prefixes.length > 0 
@@ -455,8 +509,18 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
             </div>
           </div>
 
-          {/* Results Panel */}
-          <div className="flex-1 bg-white border border-gray-200 rounded-lg overflow-hidden flex flex-col min-h-0">
+          {/* Results Panel - Flexible with resize */}
+          <div 
+            className="flex-1 bg-white border border-gray-200 rounded-lg overflow-hidden flex flex-col"
+          >
+            {/* Resize Handle */}
+            <div
+              onMouseDown={handleMouseDown}
+              className="h-2 bg-gray-300 hover:bg-purple-500 cursor-row-resize transition-colors flex items-center justify-center group flex-shrink-0"
+              title="Drag to resize results panel"
+            >
+              <div className="w-12 h-0.5 bg-gray-400 group-hover:bg-white rounded-full" />
+            </div>
             {/* Results Header */}
             <div className="flex items-center justify-between p-3 border-b bg-gray-50">
               <div className="flex items-center gap-4">
@@ -565,6 +629,32 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
           </div>
         </main>
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Delete Query</h3>
+            <p className="text-gray-600 mb-6">
+              Are you sure you want to delete "{selectedQuery?.name}"? This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowDeleteModal(false)}
+                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                className="px-4 py-2 text-sm text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
