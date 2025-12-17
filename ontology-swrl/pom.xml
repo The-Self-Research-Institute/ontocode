@@ -52,6 +52,7 @@
                 <exclusion>
                     <groupId>net.sourceforge.owlapi</groupId>
                     <artifactId>owlapi-distribution</artifactId>
+                    <version>${owlapi.version}</version>
                 </exclusion>
             </exclusions>
         </dependency>
