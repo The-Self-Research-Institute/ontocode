@@ -709,6 +709,10 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                     if (isThing) nodeColor = '#ffffff';
                     else if (isExternal) nodeColor = '#4682b4';
                     else nodeColor = '#acd5f2';
+                  } else if (viewMode === 'force') {
+                    nodeColor = '#FFE4B5'; // Light peach for force mode classes
+                  } else if (viewMode === 'ontograph') {
+                    nodeColor = '#E8EAF6'; // Light purple-grey for OntoGraph
                   } else {
                     nodeColor = '#667eea';
                   }
@@ -717,9 +721,9 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                 } else if (node.type === 'dataProperty') {
                   nodeColor = '#ec4899';
                 } else if (node.type === 'individual') {
-                  nodeColor = '#10b981';
+                  nodeColor = viewMode === 'force' ? '#a78bfa' : '#10b981';
                 } else if (node.type === 'datatype') {
-                  nodeColor = viewMode === 'vowl' ? '#FFD9B3' : '#FFA500';
+                  nodeColor = viewMode === 'vowl' ? '#FFD9B3' : (viewMode === 'force' ? '#FFFFFF' : '#FFA500');
                 } else if (node.type === 'annotation') {
                   nodeColor = viewMode === 'vowl' ? '#e8d5f2' : '#8b5cf6';
                 }
@@ -738,16 +742,39 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                   >
                     {/* Type-specific shape matching graph visualization */}
                     {node.type === 'class' ? (
-                      // Classes: Circle (solid border for normal, dashed for Thing)
-                      <div style={{
-                        width: '16px',
-                        height: '16px',
-                        borderRadius: '50%',
-                        backgroundColor: nodeColor,
-                        border: isThing ? '2px dashed #1f2937' : '2px solid #1f2937',
-                        flexShrink: 0,
-                        marginRight: '8px'
-                      }} />
+                      // Classes: Circle for VOWL/OntoGraph, Ellipse for Force mode, Rectangle for OntoGraph
+                      viewMode === 'force' ? (
+                        <div style={{
+                          width: '24px',
+                          height: '14px',
+                          borderRadius: '50%',
+                          backgroundColor: nodeColor,
+                          border: '2px solid #000000',
+                          flexShrink: 0,
+                          marginRight: '8px'
+                        }} />
+                      ) : viewMode === 'ontograph' ? (
+                        <div style={{
+                          width: '22px',
+                          height: '12px',
+                          borderRadius: '3px',
+                          backgroundColor: nodeColor,
+                          border: '2px solid #5E35B1',
+                          flexShrink: 0,
+                          marginRight: '8px'
+                        }} />
+                      ) : (
+                        // VOWL: Circle (solid border for normal, dashed for Thing)
+                        <div style={{
+                          width: '16px',
+                          height: '16px',
+                          borderRadius: '50%',
+                          backgroundColor: nodeColor,
+                          border: isThing ? '2px dashed #1f2937' : '2px solid #1f2937',
+                          flexShrink: 0,
+                          marginRight: '8px'
+                        }} />
+                      )
                     ) : node.type === 'objectProperty' ? (
                       // Object Properties: Circle (cyan)
                       <div style={{
@@ -771,23 +798,23 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                         marginRight: '8px'
                       }} />
                     ) : node.type === 'datatype' ? (
-                      // Datatypes: Rounded Rectangle with dashed border (yellow/orange)
+                      // Datatypes: Rounded Rectangle - white rectangle for force, dashed for VOWL
                       <div style={{
                         width: '24px',
                         height: '12px',
                         backgroundColor: nodeColor,
-                        border: '2px dashed #1f2937',
+                        border: viewMode === 'vowl' ? '2px dashed #1f2937' : (viewMode === 'force' ? '1px solid #999999' : '2px solid #1f2937'),
                         flexShrink: 0,
-                        borderRadius: '6px',
+                        borderRadius: viewMode === 'force' ? '3px' : '6px',
                         marginRight: '8px'
                       }} />
                     ) : node.type === 'individual' ? (
-                      // Individuals: Rectangle (green)
+                      // Individuals: Rectangle - purple for force mode, green otherwise
                       <div style={{
-                        width: '20px',
+                        width: viewMode === 'force' ? '28px' : '20px',
                         height: '12px',
                         backgroundColor: nodeColor,
-                        border: '2px solid #1f2937',
+                        border: viewMode === 'force' ? '2px solid #000000' : '2px solid #1f2937',
                         flexShrink: 0,
                         borderRadius: '3px',
                         marginRight: '8px'
@@ -1029,15 +1056,38 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                   <div key={`node-${item.nodeType}-${item.name}`} style={styles.vowlLegendItem}>
                   {/* Render shape based on node type and name - matching graph visualization */}
                   {item.nodeType === 'class' ? (
-                    // Classes: Circle (solid border for normal classes, dashed for Thing)
-                    <div style={{
-                      width: '20px',
-                      height: '20px',
-                      borderRadius: '50%',
-                      backgroundColor: item.color || '#4A90E2',
-                      border: item.name.includes('Thing') ? '2px dashed #1f2937' : '2px solid #1f2937',
-                      flexShrink: 0
-                    }} />
+                    // Classes: Circle for VOWL/OntoGraph, Ellipse indicator for Force mode
+                    viewMode === 'force' && item.name.includes('Ellipse') ? (
+                      // Force mode: Ellipse shape indicator
+                      <div style={{
+                        width: '28px',
+                        height: '16px',
+                        borderRadius: '50%',
+                        backgroundColor: item.color || '#FFE4B5',
+                        border: '2px solid #000000',
+                        flexShrink: 0
+                      }} />
+                    ) : viewMode === 'ontograph' ? (
+                      // OntoGraph mode: Rectangle with rounded corners
+                      <div style={{
+                        width: '26px',
+                        height: '14px',
+                        borderRadius: '3px',
+                        backgroundColor: item.color || '#E8EAF6',
+                        border: '2px solid #5E35B1',
+                        flexShrink: 0
+                      }} />
+                    ) : (
+                      // VOWL mode: Circle (solid border for normal classes, dashed for Thing)
+                      <div style={{
+                        width: '20px',
+                        height: '20px',
+                        borderRadius: '50%',
+                        backgroundColor: item.color || '#acd5f2',
+                        border: item.name.includes('Thing') ? '2px dashed #1f2937' : '2px solid #1f2937',
+                        flexShrink: 0
+                      }} />
+                    )
                   ) : item.nodeType === 'objectProperty' ? (
                     // Object Properties: Circle (green)
                     <div style={{
@@ -1059,24 +1109,24 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                       borderRadius: '3px'
                     }} />
                   ) : item.nodeType === 'individual' ? (
-                    // Individuals: Rectangle (purple/pink)
+                    // Individuals: Rectangle (all modes)
                     <div style={{
-                      width: '28px',
+                      width: viewMode === 'force' ? '32px' : '28px',
                       height: '16px',
-                      backgroundColor: item.color || '#E74C3C',
-                      border: '2px solid #1f2937',
+                      backgroundColor: item.color || (viewMode === 'force' ? '#a78bfa' : '#E74C3C'),
+                      border: viewMode === 'force' ? '2px solid #000000' : '2px solid #1f2937',
                       flexShrink: 0,
                       borderRadius: '4px'
                     }} />
                   ) : item.nodeType === 'datatype' ? (
-                    // Datatypes: Rounded Rectangle with dashed border (yellow/orange)
+                    // Datatypes: Rounded Rectangle - white for force mode, dashed for VOWL
                     <div style={{
                       width: '32px',
                       height: '16px',
-                      backgroundColor: item.color || '#FFD9B3',
-                      border: '2px dashed #1f2937',
+                      backgroundColor: item.color || (viewMode === 'force' ? '#FFFFFF' : '#FFD9B3'),
+                      border: viewMode === 'vowl' ? '2px dashed #1f2937' : (viewMode === 'force' ? '1px solid #999999' : '2px solid #1f2937'),
                       flexShrink: 0,
-                      borderRadius: '8px'
+                      borderRadius: viewMode === 'force' ? '3px' : '8px'
                     }} />
                   ) : item.nodeType === 'annotation' ? (
                     // Annotation Properties: Hexagon (light purple)
