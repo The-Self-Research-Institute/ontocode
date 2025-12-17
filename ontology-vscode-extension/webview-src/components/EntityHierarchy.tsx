@@ -204,7 +204,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
           onDrop={(e) => handleDrop(e, item)}
           onDragEnd={handleDragEnd}
           className={`flex items-center px-2 py-0.5 rounded cursor-pointer transition-all ${
-            isSelected ? "bg-blue-200" : "hover:bg-gray-100 dark:hover:bg-gray-700"
+            isSelected ? "selected" : "hover-overlay"
           } ${isDragging ? "opacity-50" : ""}`}
           style={{ paddingLeft: `${level * 16 + 4}px` }}
           onClick={() => {

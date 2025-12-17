@@ -200,10 +200,10 @@ const PluginPlaceholder: React.FC<PluginPlaceholderProps> = ({
   error
 }) => {
   return (
-    <div className="h-full flex items-center justify-center bg-gradient-to-br from-gray-50 via-white to-gray-100 p-8">
+    <div className="h-full flex items-center justify-center p-8" style={{ backgroundColor: 'var(--bg)', color: 'var(--text-primary)' }}>
       <div className="max-w-2xl w-full">
         {/* Main Card */}
-        <div className="bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
+        <div className="rounded-2xl shadow-xl overflow-hidden" style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border)' }}>
           {/* Header with gradient */}
           <div className={`bg-gradient-to-r ${accentColor} p-8 text-white relative overflow-hidden`}>
             {/* Background pattern */}
@@ -228,51 +228,51 @@ const PluginPlaceholder: React.FC<PluginPlaceholderProps> = ({
           <div className="p-8">
             {/* Features Grid */}
             <div className="mb-8">
-              <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-4 flex items-center gap-2">
-                <Sparkles size={16} className="text-purple-500" />
+              <h3 className="text-sm font-semibold uppercase tracking-wider mb-4 flex items-center gap-2 text-secondary">
+                <Sparkles size={16} className="text-accent" />
                 Key Features
               </h3>
               <div className="grid grid-cols-2 gap-3">
                 {features.map((feature, index) => (
-                  <div key={index} className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-100 dark:border-gray-600 hover:border-purple-200 dark:hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-all">
-                    <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center flex-shrink-0">
+                  <div key={index} className="flex items-center gap-3 p-3 rounded-lg transition-all hover-overlay" style={{ backgroundColor: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+                    <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center flex-shrink-0">
                       <Check size={12} className="text-white" />
                     </div>
-                    <span className="text-sm text-gray-700 font-medium">{feature}</span>
+                    <span className="text-sm font-medium text-primary">{feature}</span>
                   </div>
                 ))}
               </div>
             </div>
 
             {/* Status & Action */}
-            <div className="border-t border-gray-100 pt-6">
+            <div className="pt-6" style={{ borderTop: '1px solid var(--divider)' }}>
               {error ? (
-                <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3">
-                  <AlertCircle size={20} className="text-red-500 flex-shrink-0 mt-0.5" />
+                <div className="mb-4 p-4 rounded-xl flex items-start gap-3" style={{ backgroundColor: 'var(--error-tint)', border: '1px solid var(--error)' }}>
+                  <AlertCircle size={20} className="flex-shrink-0 mt-0.5" style={{ color: 'var(--error)' }} />
                   <div className="flex-1">
                     <p className="text-sm font-medium text-red-800">Failed to load plugin</p>
                     <p className="text-xs text-red-600 mt-1">{error}</p>
                   </div>
                 </div>
               ) : isLoading ? (
-                <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-xl flex items-center gap-3">
-                  <Loader2 size={20} className="text-blue-500 animate-spin" />
+                <div className="mb-4 p-4 rounded-xl flex items-center gap-3" style={{ backgroundColor: 'var(--info-tint)', border: '1px solid var(--info)' }}>
+                  <Loader2 size={20} className="animate-spin" style={{ color: 'var(--info)' }} />
                   <div>
                     <p className="text-sm font-medium text-blue-800">Loading plugin...</p>
                     <p className="text-xs text-blue-600 mt-0.5">Downloading and initializing components</p>
                   </div>
                 </div>
               ) : isInstalled ? (
-                <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3">
-                  <AlertCircle size={20} className="text-amber-500 flex-shrink-0 mt-0.5" />
+                <div className="mb-4 p-4 rounded-xl flex items-start gap-3" style={{ backgroundColor: 'var(--warning-tint)', border: '1px solid var(--warning)' }}>
+                  <AlertCircle size={20} className="flex-shrink-0 mt-0.5" style={{ color: 'var(--warning)' }} />
                   <div>
                     <p className="text-sm font-medium text-amber-800">Plugin installed but not loaded</p>
                     <p className="text-xs text-amber-600 mt-1">Click the button below to load the plugin</p>
                   </div>
                 </div>
               ) : (
-                <div className="mb-4 p-4 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl flex items-start gap-3">
-                  <Package size={20} className="text-gray-400 flex-shrink-0 mt-0.5" />
+                <div className="mb-4 p-4 rounded-xl flex items-start gap-3" style={{ backgroundColor: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+                  <Package size={20} className="flex-shrink-0 mt-0.5 text-tertiary" />
                   <div>
                     <p className="text-sm font-medium text-gray-700">Plugin not installed</p>
                     <p className="text-xs text-gray-500 mt-1">Install from the marketplace to unlock these features</p>
@@ -630,11 +630,11 @@ const OpenFileDialog = ({
                       }}
                       className={`flex items-center gap-3 p-2 px-3 rounded-md cursor-pointer transition-all ${
                         isActive
-                          ? 'bg-purple-50 border border-purple-300'
-                          : 'hover:bg-gray-50 border border-transparent'
+                          ? 'selected'
+                          : 'hover-overlay border border-transparent'
                       }`}
                     >
-                      <FileText size={18} className="text-purple-500" />
+                      <FileText size={18} className="text-accent" />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="text-xs font-medium text-gray-900 truncate">{file.filename}</span>

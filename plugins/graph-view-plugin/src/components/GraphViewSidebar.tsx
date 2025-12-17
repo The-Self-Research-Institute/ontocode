@@ -1355,8 +1355,8 @@ const styles: Record<string, React.CSSProperties> = {
     width: '340px',
     minWidth: '280px',
     maxWidth: '600px',
-    background: '#ffffff',
-    borderLeft: '1px solid #e5e7eb',
+    background: 'var(--surface-1)',
+    borderLeft: '1px solid var(--border)',
     boxShadow: '-2px 0 8px rgba(0, 0, 0, 0.04)',
     display: 'flex',
     flexDirection: 'column',
@@ -1369,7 +1369,7 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1,
     overflowY: 'auto',
     overflowX: 'hidden',
-    backgroundColor: '#fafbfc'
+    backgroundColor: 'var(--bg)'
   },
   resizeHandle: {
     position: 'absolute',
@@ -1385,7 +1385,7 @@ const styles: Record<string, React.CSSProperties> = {
   accordionSection: {
     marginBottom: '1px',
     flexShrink: 0,
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
     borderRadius: '0'
   },
   accordionHeader: {
@@ -1393,16 +1393,16 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: '12px 16px',
-    background: '#f8f9fa',
+    background: 'var(--surface-2)',
     cursor: 'pointer',
     userSelect: 'none',
     transition: 'all 0.2s ease',
-    borderBottom: '1px solid #e5e7eb'
+    borderBottom: '1px solid var(--border)'
   },
   accordionTitle: {
     fontSize: '11px',
     fontWeight: '600',
-    color: '#374151',
+    color: 'var(--text-primary)',
     letterSpacing: '0.5px',
     textTransform: 'uppercase'
   },
@@ -1411,7 +1411,7 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     gap: '8px',
     padding: '14px 16px',
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
     fontSize: '13px',
     flexShrink: 0
   },
@@ -1421,19 +1421,19 @@ const styles: Record<string, React.CSSProperties> = {
   filterCategoryTitle: {
     fontSize: '11px',
     fontWeight: '700',
-    color: '#5f6368',
+    color: 'var(--text-secondary)',
     textTransform: 'uppercase',
     letterSpacing: '0.5px',
     marginBottom: '8px',
     paddingBottom: '4px',
-    borderBottom: '1px solid #e8eaed'
+    borderBottom: '1px solid var(--divider)'
   },
   topFilterLabel: {
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
     cursor: 'pointer',
-    color: '#5f6368',
+    color: 'var(--text-secondary)',
     userSelect: 'none',
     fontSize: '13px',
     fontWeight: '500',
@@ -1444,17 +1444,17 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     width: '16px',
     height: '16px',
-    accentColor: '#1a73e8',
+    accentColor: 'var(--accent)',
     borderRadius: '3px'
   },
   combinedSection: {
     display: 'flex',
     flexDirection: 'column',
-    backgroundColor: '#ffffff'
+    backgroundColor: 'var(--surface-1)'
   },
   searchSection: {
     padding: '14px 16px',
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
     flexShrink: 0
   },
   searchInputContainer: {
@@ -1468,24 +1468,25 @@ const styles: Record<string, React.CSSProperties> = {
     left: '12px',
     top: '50%',
     transform: 'translateY(-50%)',
-    color: '#9aa0a6',
+    color: 'var(--text-tertiary)',
     pointerEvents: 'none'
   },
   searchInput: {
     width: '100%',
     padding: '12px 14px 12px 42px',
-    border: '2px solid #e8eaed',
+    border: '2px solid var(--border)',
     borderRadius: '24px',
     fontSize: '13px',
     outline: 'none',
     boxSizing: 'border-box',
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
+    color: 'var(--text-primary)',
     transition: 'all 0.3s ease',
     fontFamily: 'inherit',
     boxShadow: '0 2px 8px rgba(0,0,0,0.05)'
   },
   entitySelector: {
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
     padding: '12px 16px',
     flexShrink: 0
   },
@@ -1498,9 +1499,9 @@ const styles: Record<string, React.CSSProperties> = {
   },
   entityTab: {
     padding: '8px 6px',
-    border: '1px solid #dadce0',
-    backgroundColor: '#ffffff',
-    color: '#5f6368',
+    border: '1px solid var(--border)',
+    backgroundColor: 'var(--surface-1)',
+    color: 'var(--text-secondary)',
     fontSize: '11px',
     fontWeight: '500',
     cursor: 'pointer',
@@ -1513,31 +1514,31 @@ const styles: Record<string, React.CSSProperties> = {
     boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
   },
   activeEntityTab: {
-    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-    color: '#ffffff',
+    background: 'var(--accent)',
+    color: 'var(--on-accent)',
     fontWeight: '600',
-    borderColor: '#667eea',
-    boxShadow: '0 4px 12px rgba(102, 126, 234, 0.4)',
+    borderColor: 'var(--accent)',
+    boxShadow: '0 4px 12px var(--accent-tint)',
     transform: 'translateY(-2px) scale(1.05)'
   },
   filterSection: {
     display: 'flex',
     flexDirection: 'column',
-    backgroundColor: '#ffffff'
+    backgroundColor: 'var(--surface-1)'
   },
   filterTitle: {
     padding: '12px 16px',
     fontSize: '12px',
-    color: '#9aa0a6',
-    borderBottom: '1px solid #e8eaed',
+    color: 'var(--text-tertiary)',
+    borderBottom: '1px solid var(--divider)',
     fontStyle: 'italic',
     flexShrink: 0,
     fontWeight: '400'
   },
   entityList: {
     padding: '0',
-    backgroundColor: '#ffffff',
-    borderTop: '1px solid #e8eaed'
+    backgroundColor: 'var(--surface-1)',
+    borderTop: '1px solid var(--divider)'
   },
   entityItem: {
     display: 'flex',
@@ -1546,22 +1547,22 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '10px 16px',
     cursor: 'pointer',
     fontSize: '13px',
-    color: '#202124',
+    color: 'var(--text-primary)',
     transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
     borderLeft: '3px solid transparent'
   },
   selectedEntity: {
-    backgroundColor: '#f0f2ff',
-    borderLeftColor: '#667eea',
+    backgroundColor: 'var(--accent-tint)',
+    borderLeftColor: 'var(--accent)',
     fontWeight: '600',
-    boxShadow: 'inset 0 0 12px rgba(102, 126, 234, 0.1)'
+    boxShadow: 'inset 0 0 12px var(--accent-tint)'
   },
   entityBullet: {
     fontSize: '12px',
-    color: '#667eea',
+    color: 'var(--accent)',
     flexShrink: 0,
     lineHeight: 1,
-    textShadow: '0 1px 2px rgba(102, 126, 234, 0.3)'
+    textShadow: '0 1px 2px var(--accent-tint)'
   },
   entityLabel: {
     flex: 1,
@@ -1572,26 +1573,26 @@ const styles: Record<string, React.CSSProperties> = {
   emptyState: {
     padding: '48px 24px',
     textAlign: 'center',
-    color: '#9aa0a6',
+    color: 'var(--text-tertiary)',
     fontSize: '14px',
     fontStyle: 'italic',
     lineHeight: '1.5'
   },
   vowlLegendSection: {
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
     padding: '14px 16px',
     flexShrink: 0
   },
   legendCategory: {
     fontSize: '11px',
     fontWeight: '700',
-    color: '#667eea',
+    color: 'var(--accent)',
     textTransform: 'uppercase',
     letterSpacing: '0.8px',
     marginTop: '8px',
     marginBottom: '8px',
     paddingBottom: '6px',
-    borderBottom: '2px solid #e8eaed'
+    borderBottom: '2px solid var(--divider)'
   },
   vowlLegendItem: {
     display: 'flex',
@@ -1599,20 +1600,20 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '12px',
     padding: '10px 12px',
     marginBottom: '6px',
-    backgroundColor: '#f8f9fa',
+    backgroundColor: 'var(--surface-2)',
     borderRadius: '6px',
-    border: '1px solid #e8eaed',
+    border: '1px solid var(--border)',
     transition: 'all 0.2s ease',
     cursor: 'default'
   },
   vowlLegendLabel: {
     fontSize: '12px',
-    color: '#374151',
+    color: 'var(--text-primary)',
     fontWeight: '500',
     flex: 1
   },
   statsSection: {
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
     padding: '14px 16px',
     flexShrink: 0
   },
@@ -1629,17 +1630,17 @@ const styles: Record<string, React.CSSProperties> = {
     transition: 'all 0.2s ease'
   },
   statLabel: {
-    color: '#5f6368',
+    color: 'var(--text-secondary)',
     fontWeight: '500'
   },
   statValue: {
-    color: '#667eea',
+    color: 'var(--accent)',
     fontWeight: '700',
     fontSize: '15px',
-    textShadow: '0 1px 2px rgba(102, 126, 234, 0.2)'
+    textShadow: '0 1px 2px var(--accent-tint)'
   },
   detailsSection: {
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
     padding: '16px',
     maxHeight: '400px',
     overflowY: 'auto',
@@ -1648,12 +1649,12 @@ const styles: Record<string, React.CSSProperties> = {
   detailRow: {
     marginBottom: '16px',
     paddingBottom: '12px',
-    borderBottom: '1px solid #f1f3f4'
+    borderBottom: '1px solid var(--divider)'
   },
   detailLabel: {
     fontSize: '11px',
     fontWeight: '600',
-    color: '#5f6368',
+    color: 'var(--text-secondary)',
     textTransform: 'uppercase',
     letterSpacing: '0.5px',
     marginBottom: '6px',
@@ -1661,18 +1662,18 @@ const styles: Record<string, React.CSSProperties> = {
   },
   detailValue: {
     fontSize: '13px',
-    color: '#202124',
+    color: 'var(--text-primary)',
     lineHeight: '1.5'
   },
   detailLink: {
-    color: '#1a73e8',
+    color: 'var(--accent)',
     textDecoration: 'none',
     fontWeight: '500',
     transition: 'color 0.2s ease'
   },
   // New Entity Details Card Styles (Blood Pressure style)
   entityTitleHeader: {
-    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+    background: 'var(--accent)',
     padding: '20px 20px',
     borderTopLeftRadius: '0',
     borderTopRightRadius: '0'
@@ -1680,19 +1681,19 @@ const styles: Record<string, React.CSSProperties> = {
   entityTitle: {
     fontSize: '18px',
     fontWeight: '700',
-    color: '#ffffff',
+    color: 'var(--on-accent)',
     margin: 0,
     textShadow: '0 1px 3px rgba(0,0,0,0.2)',
     letterSpacing: '0.3px'
   },
   entityDetailsTable: {
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
     padding: '0'
   },
   entityDetailRow: {
     display: 'flex',
     padding: '14px 20px',
-    borderBottom: '1px solid #e8eaed',
+    borderBottom: '1px solid var(--divider)',
     transition: 'background-color 0.2s ease',
     alignItems: 'flex-start',
     minHeight: '50px'
@@ -1700,7 +1701,7 @@ const styles: Record<string, React.CSSProperties> = {
   entityDetailLabel: {
     fontSize: '14px',
     fontWeight: '600',
-    color: '#202124',
+    color: 'var(--text-primary)',
     minWidth: '130px',
     flexShrink: 0,
     paddingRight: '16px',
@@ -1708,7 +1709,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   entityDetailValue: {
     fontSize: '14px',
-    color: '#5f6368',
+    color: 'var(--text-secondary)',
     flex: 1,
     lineHeight: '1.6',
     wordBreak: 'break-word'
@@ -1716,15 +1717,15 @@ const styles: Record<string, React.CSSProperties> = {
   typeBadge: {
     display: 'inline-block',
     padding: '4px 12px',
-    backgroundColor: '#667eea',
-    color: '#ffffff',
+    backgroundColor: 'var(--accent)',
+    color: 'var(--on-accent)',
     borderRadius: '4px',
     fontSize: '12px',
     fontWeight: '600',
     textTransform: 'capitalize'
   },
   iriLink: {
-    color: '#1a73e8',
+    color: 'var(--accent)',
     textDecoration: 'none',
     fontSize: '12px',
     wordBreak: 'break-all',
@@ -1739,14 +1740,14 @@ const styles: Record<string, React.CSSProperties> = {
   relatedEntityBadge: {
     display: 'inline-block',
     padding: '5px 10px',
-    backgroundColor: '#f1f3f4',
-    color: '#5f6368',
+    backgroundColor: 'var(--surface-2)',
+    color: 'var(--text-secondary)',
     borderRadius: '4px',
     fontSize: '12px',
     fontWeight: '500',
     cursor: 'pointer',
     transition: 'all 0.2s ease',
-    border: '1px solid #dadce0'
+    border: '1px solid var(--border)'
   },
   relatedList: {
     display: 'flex',
@@ -1759,11 +1760,11 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: '8px',
     padding: '6px 10px',
-    backgroundColor: '#f8f9fa',
+    backgroundColor: 'var(--surface-2)',
     borderRadius: '4px',
     cursor: 'pointer',
     fontSize: '12px',
-    color: '#5f6368',
+    color: 'var(--text-secondary)',
     transition: 'all 0.2s ease',
     border: '1px solid transparent'
   },
@@ -1772,12 +1773,12 @@ const styles: Record<string, React.CSSProperties> = {
     right: '26px',
     top: '50%',
     transform: 'translateY(-50%)',
-    color: '#9aa0a6',
+    color: 'var(--text-tertiary)',
     cursor: 'pointer',
     transition: 'color 0.2s ease'
   },
   vowlControlsSection: {
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
     padding: '16px',
     flexShrink: 0
   },
@@ -1787,7 +1788,7 @@ const styles: Record<string, React.CSSProperties> = {
   controlLabel: {
     fontSize: '12px',
     fontWeight: '600',
-    color: '#5f6368',
+    color: 'var(--text-secondary)',
     marginBottom: '8px',
     display: 'block'
   },
@@ -1796,7 +1797,7 @@ const styles: Record<string, React.CSSProperties> = {
     height: '6px',
     borderRadius: '3px',
     outline: 'none',
-    background: 'linear-gradient(to right, #e8eaed 0%, #667eea 100%)',
+    background: 'linear-gradient(to right, var(--border) 0%, var(--accent) 100%)',
     WebkitAppearance: 'none',
     appearance: 'none',
     cursor: 'pointer'
@@ -1806,7 +1807,7 @@ const styles: Record<string, React.CSSProperties> = {
     marginLeft: '12px',
     fontSize: '13px',
     fontWeight: '600',
-    color: '#667eea',
+    color: 'var(--accent)',
     minWidth: '35px',
     textAlign: 'right'
   },
@@ -1818,10 +1819,10 @@ const styles: Record<string, React.CSSProperties> = {
   controlButton: {
     flex: 1,
     padding: '10px 16px',
-    background: '#ffffff',
-    border: '2px solid #667eea',
+    background: 'var(--surface-1)',
+    border: '2px solid var(--accent)',
     borderRadius: '8px',
-    color: '#667eea',
+    color: 'var(--accent)',
     fontSize: '13px',
     fontWeight: '600',
     cursor: 'pointer',
@@ -1829,38 +1830,38 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'center'
   },
   controlButtonActive: {
-    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-    color: '#ffffff',
-    borderColor: '#667eea'
+    background: 'var(--accent)',
+    color: 'var(--on-accent)',
+    borderColor: 'var(--accent)'
   },
   // VOWL Sidebar Header Styles
   vowlSidebarHeader: {
-    background: '#f8f9fa',
+    background: 'var(--surface-2)',
     padding: '16px',
     boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)',
-    borderBottom: '1px solid #e5e7eb'
+    borderBottom: '1px solid var(--border)'
   },
   vowlSidebarTitle: {
     fontSize: '14px',
     fontWeight: '600',
-    color: '#1f2937',
+    color: 'var(--text-primary)',
     marginBottom: '4px'
   },
   vowlSidebarSubtitle: {
     fontSize: '12px',
-    color: '#6b7280',
+    color: 'var(--text-secondary)',
     fontWeight: '400'
   },
   // VOWL Controls Card Styles
   vowlControlsCard: {
     marginBottom: '1px',
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
     borderRadius: '0'
   },
   vowlControlsHeader: {
     padding: '12px 16px',
-    background: '#f8f9fa',
-    color: '#374151',
+    background: 'var(--surface-2)',
+    color: 'var(--text-primary)',
     fontWeight: '600',
     fontSize: '11px',
     letterSpacing: '0.5px',
@@ -1870,7 +1871,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     userSelect: 'none',
     transition: 'all 0.2s ease',
-    borderBottom: '1px solid #e5e7eb'
+    borderBottom: '1px solid var(--border)'
   },
   vowlControlsTitle: {
     fontSize: '11px',
@@ -1880,14 +1881,14 @@ const styles: Record<string, React.CSSProperties> = {
   },
   vowlControlsContent: {
     padding: '16px',
-    backgroundColor: '#ffffff'
+    backgroundColor: 'var(--surface-1)'
   },
   vowlControlGroup: {
     marginBottom: '20px',
     padding: '12px',
-    backgroundColor: '#f9fafb',
+    backgroundColor: 'var(--surface-2)',
     borderRadius: '6px',
-    border: '1px solid #e5e7eb'
+    border: '1px solid var(--border)'
   },
   vowlControlHeader: {
     display: 'flex',
@@ -1898,13 +1899,13 @@ const styles: Record<string, React.CSSProperties> = {
   vowlControlLabel: {
     fontSize: '12px',
     fontWeight: '600',
-    color: '#374151'
+    color: 'var(--text-primary)'
   },
   vowlControlValue: {
     fontSize: '13px',
     fontWeight: '600',
-    color: '#667eea',
-    backgroundColor: '#eef2ff',
+    color: 'var(--accent)',
+    backgroundColor: 'var(--accent-tint)',
     padding: '4px 10px',
     borderRadius: '4px',
     minWidth: '45px',
@@ -1932,7 +1933,7 @@ const styles: Record<string, React.CSSProperties> = {
     left: 0,
     right: 0,
     height: '6px',
-    backgroundColor: '#e5e7eb',
+    backgroundColor: 'var(--border)',
     borderRadius: '3px',
     transform: 'translateY(-50%)',
     overflow: 'hidden',
@@ -1940,7 +1941,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   sliderFill: {
     height: '100%',
-    backgroundColor: '#667eea',
+    backgroundColor: 'var(--accent)',
     transition: 'width 0.1s ease',
     borderRadius: '3px'
   },
@@ -1951,12 +1952,12 @@ const styles: Record<string, React.CSSProperties> = {
   },
   sliderLabelMin: {
     fontSize: '10px',
-    color: '#9ca3af',
+    color: 'var(--text-tertiary)',
     fontWeight: '500'
   },
   sliderLabelMax: {
     fontSize: '10px',
-    color: '#9ca3af',
+    color: 'var(--text-tertiary)',
     fontWeight: '500'
   },
   vowlLayoutControls: {
@@ -1967,10 +1968,10 @@ const styles: Record<string, React.CSSProperties> = {
   vowlControlButton: {
     flex: 1,
     padding: '10px 14px',
-    background: '#ffffff',
-    border: '1px solid #d1d5db',
+    background: 'var(--surface-1)',
+    border: '1px solid var(--border)',
     borderRadius: '6px',
-    color: '#374151',
+    color: 'var(--text-primary)',
     fontSize: '12px',
     fontWeight: '600',
     cursor: 'pointer',
@@ -1978,17 +1979,17 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'center'
   },
   vowlControlButtonActive: {
-    background: '#667eea',
-    color: '#ffffff',
-    borderColor: '#667eea'
+    background: 'var(--accent)',
+    color: 'var(--on-accent)',
+    borderColor: 'var(--accent)'
   },
   vowlResetButton: {
     flex: 1,
     padding: '10px 14px',
-    background: '#ffffff',
-    border: '1px solid #d1d5db',
+    background: 'var(--surface-1)',
+    border: '1px solid var(--border)',
     borderRadius: '6px',
-    color: '#374151',
+    color: 'var(--text-primary)',
     fontSize: '12px',
     fontWeight: '600',
     cursor: 'pointer',
@@ -1998,13 +1999,13 @@ const styles: Record<string, React.CSSProperties> = {
   // VOWL Entity Card Styles
   vowlEntityCard: {
     marginBottom: '1px',
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
     borderRadius: '0'
   },
   vowlEntityHeader: {
     padding: '12px 16px',
-    background: '#f8f9fa',
-    color: '#374151',
+    background: 'var(--surface-2)',
+    color: 'var(--text-primary)',
     fontWeight: '600',
     fontSize: '11px',
     letterSpacing: '0.5px',
@@ -2014,7 +2015,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     userSelect: 'none',
     transition: 'all 0.2s ease',
-    borderBottom: '1px solid #e5e7eb'
+    borderBottom: '1px solid var(--border)'
   },
   vowlEntityTitle: {
     fontSize: '11px',
@@ -2024,27 +2025,27 @@ const styles: Record<string, React.CSSProperties> = {
   },
   vowlEntityInfo: {
     padding: '16px',
-    backgroundColor: '#ffffff'
+    backgroundColor: 'var(--surface-1)'
   },
   vowlEntityRow: {
     display: 'flex',
     alignItems: 'center',
     marginBottom: '12px',
     padding: '10px',
-    backgroundColor: '#f9fafb',
+    backgroundColor: 'var(--surface-2)',
     borderRadius: '6px',
-    border: '1px solid #e5e7eb'
+    border: '1px solid var(--border)'
   },
   vowlEntityLabel: {
     fontSize: '12px',
     fontWeight: '600',
-    color: '#6b7280',
+    color: 'var(--text-secondary)',
     minWidth: '70px'
   },
   vowlEntityBadge: {
     fontSize: '12px',
     fontWeight: '600',
-    color: '#ffffff',
+    color: 'var(--on-accent)',
     padding: '4px 12px',
     borderRadius: '4px',
     textTransform: 'capitalize'
@@ -2052,7 +2053,7 @@ const styles: Record<string, React.CSSProperties> = {
   vowlEntityLink: {
     fontSize: '12px',
     fontWeight: '500',
-    color: '#667eea',
+    color: 'var(--accent)',
     textDecoration: 'none',
     transition: 'color 0.2s ease',
     wordBreak: 'break-all'

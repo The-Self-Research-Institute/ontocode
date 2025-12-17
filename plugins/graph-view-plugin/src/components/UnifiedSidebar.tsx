@@ -69,8 +69,8 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
       top: '60px',
       width: '380px',
       height: 'calc(100vh - 60px)',
-      backgroundColor: '#fff',
-      borderLeft: '1px solid #d1d5db',
+      backgroundColor: 'var(--surface-1)',
+      borderLeft: '1px solid var(--border)',
       boxShadow: '-2px 0 8px rgba(0,0,0,0.1)',
       zIndex: 800,
       display: 'flex',
@@ -80,20 +80,20 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
     },
     header: {
       padding: '12px 16px',
-      backgroundColor: '#667eea',
-      color: '#fff',
+      backgroundColor: 'var(--accent)',
+      color: 'var(--on-accent)',
       fontWeight: '700',
       fontSize: '14px',
       display: 'flex',
       justifyContent: 'space-between',
       alignItems: 'center',
-      borderBottom: '1px solid #4f46e5',
+      borderBottom: '1px solid var(--accent-hover)',
       flexShrink: 0
     },
     tabBar: {
       display: 'flex',
-      borderBottom: '1px solid #e5e7eb',
-      backgroundColor: '#f9fafb',
+      borderBottom: '1px solid var(--border)',
+      backgroundColor: 'var(--surface-2)',
       flexShrink: 0,
       overflowX: 'auto' as const
     },
@@ -105,21 +105,21 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
       borderBottom: '2px solid transparent',
       backgroundColor: 'transparent',
       border: 'none',
-      color: '#6b7280',
+      color: 'var(--text-secondary)',
       whiteSpace: 'nowrap' as const,
       transition: 'all 0.15s'
     },
     tabActive: {
-      color: '#667eea',
-      borderBottomColor: '#667eea',
-      backgroundColor: '#fff'
+      color: 'var(--accent)',
+      borderBottomColor: 'var(--accent)',
+      backgroundColor: 'var(--surface-1)'
     },
     content: {
       flex: 1,
       overflowY: 'auto' as const,
       padding: '12px',
       fontSize: '13px',
-      color: '#374151'
+      color: 'var(--text-primary)'
     },
     itemList: {
       display: 'flex',
@@ -128,7 +128,7 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
     },
     listItem: {
       padding: '8px 12px',
-      backgroundColor: '#f3f4f6',
+      backgroundColor: 'var(--surface-2)',
       borderRadius: '6px',
       cursor: 'pointer',
       transition: 'all 0.15s',
@@ -138,18 +138,18 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
     propertyItem: {
       marginBottom: '12px',
       paddingBottom: '12px',
-      borderBottom: '1px solid #e5e7eb'
+      borderBottom: '1px solid var(--divider)'
     },
     propertyLabel: {
       fontWeight: '600',
-      color: '#4b5563',
+      color: 'var(--text-secondary)',
       fontSize: '11px',
       marginBottom: '4px',
       textTransform: 'uppercase' as const,
       letterSpacing: '0.5px'
     },
     propertyValue: {
-      color: '#374151',
+      color: 'var(--text-primary)',
       fontSize: '12px',
       lineHeight: '1.5'
     },
@@ -157,15 +157,15 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
       display: 'flex',
       justifyContent: 'space-between',
       padding: '8px 0',
-      borderBottom: '1px solid #f3f4f6'
+      borderBottom: '1px solid var(--divider)'
     },
     statLabel: {
-      color: '#6b7280',
+      color: 'var(--text-secondary)',
       fontSize: '12px'
     },
     statValue: {
       fontWeight: '600',
-      color: '#667eea',
+      color: 'var(--accent)',
       fontSize: '12px'
     },
     legendSection: {
@@ -173,7 +173,7 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
     },
     legendTitle: {
       fontWeight: '600',
-      color: '#4b5563',
+      color: 'var(--text-secondary)',
       fontSize: '12px',
       marginBottom: '6px'
     },
@@ -190,7 +190,7 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
     emptyState: {
       textAlign: 'center' as const,
       padding: '24px 16px',
-      color: '#9ca3af'
+      color: 'var(--text-tertiary)'
     }
   };
 
