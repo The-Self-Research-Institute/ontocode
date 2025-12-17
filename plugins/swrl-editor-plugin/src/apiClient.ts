@@ -33,7 +33,7 @@ class ApiClient {
 
   private async request<T>(method: string, url: string, data?: any): Promise<T> {
     if (this.isVSCode) {
-      return this.proxyRequest<T>(method, url, data);
+      return this.fetchRequest(method, url, data);
     } else {
       return this.fetchRequest<T>(method, url, data);
     }

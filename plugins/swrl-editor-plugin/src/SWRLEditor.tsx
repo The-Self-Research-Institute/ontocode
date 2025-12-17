@@ -1297,6 +1297,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
   // Load rules
   const loadRules = useCallback(async () => {
     setIsLoading(true);
+      console.log('Loaded rules:');
     try {
       const res = await apiClient.get<{ content: SwrlRule[] }>(`/api/swrl/${projectId}/rules`);
       setRules(res.content || []);
@@ -1319,7 +1320,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
     const validate = async () => {
       try {
         const res = await apiClient.post<SwrlValidationResult>(
-          `/api/swrl/${projectId}/rules/validate`,
+          `/api/swrl/${projectId}/validate`,
           { ruleText: debouncedRuleText }
         );
         setValidationResult(res);
