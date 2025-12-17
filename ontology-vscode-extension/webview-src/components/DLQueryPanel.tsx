@@ -400,13 +400,13 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
         <div className="bg-white rounded-lg border border-gray-200 shadow-sm mb-3">
           <div className="p-3 border-b border-gray-100 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Layers size={18} className="text-purple-600" />
+              <Layers size={18} className="text-accent" />
               <h3 className="font-semibold text-gray-800">DL Query</h3>
               <span className="text-xs text-gray-500">(Manchester OWL Syntax)</span>
             </div>
             <button
               onClick={() => setShowSyntaxHelp(!showSyntaxHelp)}
-              className="text-xs text-purple-600 hover:text-purple-800 flex items-center gap-1"
+              className="text-xs text-accent hover-text-accent flex items-center gap-1"
             >
               <HelpCircle size={14} />
               Syntax Help
@@ -487,7 +487,7 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
                         words[words.length - 1] = suggestion.value;
                         setQuery(words.join(' ') + ' ');
                       }}
-                      className="w-full px-3 py-2 text-left text-sm hover:bg-purple-50 flex items-center justify-between transition-colors"
+                      className="w-full px-3 py-2 text-left text-sm hover-overlay flex items-center justify-between transition-colors"
                     >
                       <span className="font-mono text-gray-800">{suggestion.value}</span>
                       <span className={`text-xs px-2 py-0.5 rounded-full ${
@@ -510,7 +510,7 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
               <button
                 onClick={handleExecuteQuery}
                 disabled={isLoading || !query.trim()}
-                className="px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded-lg hover:bg-purple-700 disabled:bg-purple-300 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
+                className="px-4 py-2 btn-primary text-sm font-medium rounded-lg hover-brightness disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
               >
                 {isLoading ? (
                   <Loader2 size={16} className="animate-spin" />
@@ -669,12 +669,12 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
         {/* Example Queries */}
         <div className="flex-1 overflow-y-auto">
           <div 
-            className="p-3 border-b border-gray-100 flex items-center justify-between cursor-pointer hover:bg-gray-50"
+            className="p-3 border-b border-gray-100 flex items-center justify-between cursor-pointer hover-overlay"
             onClick={() => setShowExamples(!showExamples)}
           >
             <div className="flex items-center gap-2">
-              <BookOpen size={14} className="text-purple-600" />
-              <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Example Queries</h3>
+              <BookOpen size={14} className="text-accent" />
+              <h3 className="text-xs font-semibold text-secondary uppercase tracking-wide">Example Queries</h3>
             </div>
             {showExamples ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </div>
@@ -688,11 +688,11 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
                     <button
                       key={ex.name}
                       onClick={() => loadExample(ex.expression)}
-                      className="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-purple-50 group"
+                      className="w-full text-left px-2 py-1.5 text-xs rounded hover-overlay group"
                       title={ex.description}
                     >
-                      <div className="font-medium text-gray-700 group-hover:text-purple-700">{ex.name}</div>
-                      <div className="text-gray-400 font-mono text-[10px] truncate">{ex.expression}</div>
+                      <div className="font-medium text-secondary group-hover:text-accent">{ex.name}</div>
+                      <div className="text-tertiary font-mono text-[10px] truncate">{ex.expression}</div>
                     </button>
                   ))}
                 </div>

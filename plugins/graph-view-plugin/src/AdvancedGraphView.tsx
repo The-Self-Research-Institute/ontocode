@@ -3509,10 +3509,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           onChange={(e) => setVisualizationType(e.target.value as VisualizationType)}
           style={{
             padding: '6px 12px',
-            border: '1px solid #e5e7eb',
+            border: '1px solid var(--border)',
             borderRadius: '6px',
             fontSize: '13px',
-            backgroundColor: '#fff',
+            backgroundColor: 'var(--surface-1)',
+            color: 'var(--text-primary)',
             cursor: 'pointer',
             minWidth: '180px',
             fontWeight: '500'
@@ -4263,7 +4264,7 @@ const styles: Record<string, React.CSSProperties> = {
     height: '100%',
     display: 'flex',
     flexDirection: 'column',
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--bg)',
     overflow: 'hidden'
   },
   mainRow: {
@@ -4271,7 +4272,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'row',
     overflow: 'hidden',
-    backgroundColor: '#fafbfc'
+    backgroundColor: 'var(--surface-1)'
   },
   firstColumn: {
     flex: 1,
@@ -4281,8 +4282,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   toolbar: {
     padding: '10px 12px',
-    backgroundColor: '#ffffff',
-    borderBottom: '1px solid #e5e7eb',
+    backgroundColor: 'var(--surface-1)',
+    borderBottom: '1px solid var(--border)',
     display: 'flex',
     gap: '6px',
     alignItems: 'center',
@@ -4294,12 +4295,12 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: '6px',
     padding: '7px 11px',
-    background: '#ffffff',
-    border: '1px solid #d1d5db',
+    background: 'var(--surface-1)',
+    border: '1px solid var(--border)',
     borderRadius: '6px',
     cursor: 'pointer',
     fontSize: '13px',
-    color: '#374151',
+    color: 'var(--text-primary)',
     fontWeight: '500',
     transition: 'all 0.2s'
   },
@@ -4308,12 +4309,12 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: '6px',
     padding: '7px 11px',
-    background: '#667eea',
-    border: '1px solid #667eea',
+    background: 'var(--accent)',
+    border: '1px solid var(--accent)',
     borderRadius: '6px',
     cursor: 'pointer',
     fontSize: '13px',
-    color: '#ffffff',
+    color: 'var(--on-accent)',
     fontWeight: '500',
     transition: 'all 0.2s'
   },
@@ -4322,30 +4323,30 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: '6px',
     padding: '7px 11px',
-    background: '#eef2ff',
-    border: '1px solid #667eea',
+    background: 'var(--accent-tint)',
+    border: '1px solid var(--accent)',
     borderRadius: '6px',
     cursor: 'pointer',
     fontSize: '13px',
-    color: '#667eea',
+    color: 'var(--accent)',
     fontWeight: '500',
     transition: 'all 0.2s'
   },
   divider: {
     width: '1px',
     height: '24px',
-    backgroundColor: '#e5e7eb'
+    backgroundColor: 'var(--divider)'
   },
   stats: {
     fontSize: '13px',
-    color: '#6b7280',
+    color: 'var(--text-secondary)',
     padding: '0 12px'
   },
   graphContentArea: {
     flex: 1,
     position: 'relative',
     overflow: 'hidden',
-    backgroundColor: '#ffffff'
+    backgroundColor: 'var(--bg)'
   },
   content: {
     flex: 1,
@@ -4353,15 +4354,15 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'row',
     position: 'relative',
     overflow: 'hidden',
-    backgroundColor: '#f5f5f5',
+    backgroundColor: 'var(--surface-1)',
     gap: '0'
   },
   graphArea: {
     flex: 1,
     position: 'relative',
     overflow: 'hidden',
-    backgroundColor: '#ffffff',
-    borderRight: '2px solid #e0e0e0'
+    backgroundColor: 'var(--bg)',
+    borderRight: '2px solid var(--border)'
   },
   svg: {
     width: '100%',
@@ -4373,7 +4374,7 @@ const styles: Record<string, React.CSSProperties> = {
     top: '20px',
     left: '20px',
     width: '300px',
-    background: 'white',
+    background: 'var(--surface-1)',
     borderRadius: '12px',
     boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
     overflow: 'hidden',
@@ -4385,7 +4386,7 @@ const styles: Record<string, React.CSSProperties> = {
     left: '20px',
     width: '280px',
     maxHeight: '80vh',
-    background: 'white',
+    background: 'var(--surface-1)',
     borderRadius: '12px',
     boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
     overflow: 'hidden',
@@ -4396,7 +4397,7 @@ const styles: Record<string, React.CSSProperties> = {
     top: '20px',
     right: '20px',
     width: '320px',
-    background: 'white',
+    background: 'var(--surface-1)',
     borderRadius: '12px',
     boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
     overflow: 'hidden',
@@ -4406,8 +4407,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   panelHeader: {
     padding: '16px 20px',
-    background: '#f9fafb',
-    borderBottom: '1px solid #e5e7eb',
+    background: 'var(--surface-2)',
+    borderBottom: '1px solid var(--border)',
     display: 'flex',
     alignItems: 'center',
     gap: '8px'
@@ -4417,12 +4418,12 @@ const styles: Record<string, React.CSSProperties> = {
     margin: 0,
     fontSize: '16px',
     fontWeight: '600',
-    color: '#111827'
+    color: 'var(--text-primary)'
   },
   closeBtn: {
     background: 'transparent',
     border: 'none',
-    color: '#9ca3af',
+    color: 'var(--text-tertiary)',
     cursor: 'pointer',
     fontSize: '24px',
     lineHeight: '1',
@@ -4434,15 +4435,17 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
     padding: '12px 16px',
     border: 'none',
-    borderBottom: '1px solid #e5e7eb',
+    borderBottom: '1px solid var(--border)',
     fontSize: '14px',
     outline: 'none',
-    boxSizing: 'border-box'
+    boxSizing: 'border-box',
+    backgroundColor: 'var(--surface-1)',
+    color: 'var(--text-primary)'
   },
   searchResults: {
     padding: '12px 16px',
     fontSize: '13px',
-    color: '#6b7280'
+    color: 'var(--text-secondary)'
   },
   propertyContent: {
     padding: '16px',
@@ -4455,14 +4458,14 @@ const styles: Record<string, React.CSSProperties> = {
   propertyLabel: {
     fontSize: '11px',
     fontWeight: '600',
-    color: '#6b7280',
+    color: 'var(--text-secondary)',
     textTransform: 'uppercase',
     letterSpacing: '0.5px',
     marginBottom: '4px'
   },
   propertyValue: {
     fontSize: '14px',
-    color: '#111827',
+    color: 'var(--text-primary)',
     lineHeight: '1.5'
   },
   loadingOverlay: {
@@ -4471,7 +4474,7 @@ const styles: Record<string, React.CSSProperties> = {
     left: 0,
     right: 0,
     bottom: 0,
-    background: 'rgba(255,255,255,0.9)',
+    background: 'var(--overlay)',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
@@ -4483,8 +4486,8 @@ const styles: Record<string, React.CSSProperties> = {
     top: '50%',
     left: '50%',
     transform: 'translate(-50%, -50%)',
-    background: 'white',
-    border: '2px solid #ef4444',
+    background: 'var(--surface-1)',
+    border: '2px solid var(--error)',
     borderRadius: '8px',
     padding: '20px',
     boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
@@ -4495,20 +4498,20 @@ const styles: Record<string, React.CSSProperties> = {
   },
   contextMenu: {
     position: 'fixed',
-    background: 'white',
+    background: 'var(--surface-1)',
     borderRadius: '8px',
     boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
     padding: '8px 0',
     zIndex: 1000,
     minWidth: '200px',
-    border: '1px solid #e5e7eb'
+    border: '1px solid var(--border)'
   },
   contextMenuHeader: {
     padding: '8px 16px',
     fontSize: '13px',
     fontWeight: '600',
-    color: '#111827',
-    borderBottom: '1px solid #e5e7eb',
+    color: 'var(--text-primary)',
+    borderBottom: '1px solid var(--border)',
     marginBottom: '4px'
   },
   contextMenuItem: {
@@ -4518,7 +4521,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none',
     textAlign: 'left',
     fontSize: '14px',
-    color: '#374151',
+    color: 'var(--text-primary)',
     cursor: 'pointer',
     transition: 'background 0.2s',
     display: 'flex',
@@ -4528,7 +4531,7 @@ const styles: Record<string, React.CSSProperties> = {
   modalOverlay: {
     position: 'fixed',
     inset: 0,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    backgroundColor: 'var(--overlay)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -4538,18 +4541,18 @@ const styles: Record<string, React.CSSProperties> = {
   modal: {
     width: '100%',
     maxWidth: '420px',
-    backgroundColor: '#fff',
+    backgroundColor: 'var(--surface-1)',
     borderRadius: '10px',
     boxShadow: '0 20px 45px rgba(0,0,0,0.25)',
     overflow: 'hidden',
-    border: '1px solid #e5e7eb'
+    border: '1px solid var(--border)'
   },
   modalHeader: {
     padding: '14px 18px',
-    borderBottom: '1px solid #e5e7eb',
+    borderBottom: '1px solid var(--border)',
     fontSize: '15px',
     fontWeight: 600,
-    color: '#111827'
+    color: 'var(--text-primary)'
   },
   modalBody: {
     padding: '18px'
@@ -4559,23 +4562,24 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'flex-end',
     gap: '8px',
     padding: '12px 18px',
-    borderTop: '1px solid #e5e7eb',
-    backgroundColor: '#f9fafb'
+    borderTop: '1px solid var(--border)',
+    backgroundColor: 'var(--surface-2)'
   },
   modalButton: {
     padding: '8px 16px',
     borderRadius: '6px',
-    border: '1px solid #d1d5db',
-    backgroundColor: '#fff',
+    border: '1px solid var(--border)',
+    backgroundColor: 'var(--surface-1)',
+    color: 'var(--text-primary)',
     cursor: 'pointer',
     fontSize: '14px'
   },
   modalButtonPrimary: {
     padding: '8px 16px',
     borderRadius: '6px',
-    border: '1px solid #2563eb',
-    backgroundColor: '#2563eb',
-    color: '#fff',
+    border: '1px solid var(--accent)',
+    backgroundColor: 'var(--accent)',
+    color: 'var(--on-accent)',
     cursor: 'pointer',
     fontSize: '14px'
   },
@@ -4583,14 +4587,16 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
     padding: '8px 10px',
     borderRadius: '6px',
-    border: '1px solid #d1d5db',
+    border: '1px solid var(--border)',
+    backgroundColor: 'var(--surface-1)',
+    color: 'var(--text-primary)',
     fontSize: '14px'
   },
   modalLinkButton: {
     marginTop: '12px',
     background: 'none',
     border: 'none',
-    color: '#2563eb',
+    color: 'var(--accent)',
     fontSize: '13px',
     padding: 0,
     cursor: 'pointer',

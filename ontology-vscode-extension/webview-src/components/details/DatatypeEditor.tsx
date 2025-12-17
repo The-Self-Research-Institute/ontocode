@@ -65,7 +65,7 @@ const UsageTab: React.FC<{
               placeholder="Filter usages..."
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              className="w-full pl-7 pr-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-red-500"
+              className="w-full pl-7 pr-2 py-1 text-xs rounded focus:outline-none theme-input"
             />
           </div>
         </div>
