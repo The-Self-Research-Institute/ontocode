@@ -524,6 +524,34 @@ export const ontologyMutationService = {
   },
 
   /**
+     * Add a SameIndividual axiom between two individuals
+     */
+    async addSameIndividual(projectId: string, individualIri1: string, individualIri2: string, userId?: string, username?: string): Promise<void> {
+      await this.applyMutations(projectId, [{ type: 'addSameIndividual', iri: individualIri1, target: individualIri2 }], undefined, userId, username);
+    },
+
+    /**
+     * Delete a SameIndividual axiom between two individuals
+     */
+    async deleteSameIndividual(projectId: string, individualIri1: string, individualIri2: string, userId?: string, username?: string): Promise<void> {
+      await this.applyMutations(projectId, [{ type: 'deleteSameIndividual', iri: individualIri1, target: individualIri2 }], undefined, userId, username);
+    },
+
+    /**
+     * Add a DifferentIndividuals axiom between two individuals
+     */
+    async addDifferentIndividual(projectId: string, individualIri1: string, individualIri2: string, userId?: string, username?: string): Promise<void> {
+      await this.applyMutations(projectId, [{ type: 'addDifferentIndividual', iri: individualIri1, target: individualIri2 }], undefined, userId, username);
+    },
+
+    /**
+     * Delete a DifferentIndividuals axiom between two individuals
+     */
+    async deleteDifferentIndividual(projectId: string, individualIri1: string, individualIri2: string, userId?: string, username?: string): Promise<void> {
+      await this.applyMutations(projectId, [{ type: 'deleteDifferentIndividual', iri: individualIri1, target: individualIri2 }], undefined, userId, username);
+    },
+
+  /**
    * Make siblings disjoint - adds pairwise disjointWith axioms
    */
   async makeSiblingsDisjoint(projectId: string, classIds: string[], userId?: string, username?: string): Promise<void> {

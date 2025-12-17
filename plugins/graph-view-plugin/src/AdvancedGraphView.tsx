@@ -3192,21 +3192,21 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             padding: '8px 10px',
             cursor: 'pointer',
             borderRadius: '6px',
-            backgroundColor: selectedNodes.has(node.id) ? '#e0e7ff' : '#ffffff',
-            border: selectedNodes.has(node.id) ? '1px solid #c7d2fe' : '1px solid transparent',
+            backgroundColor: selectedNodes.has(node.id) ? 'var(--accent-tint)' : 'var(--surface-1)',
+            border: selectedNodes.has(node.id) ? '1px solid var(--accent)' : '1px solid transparent',
             transition: 'all 0.2s ease',
             marginBottom: '2px',
-            boxShadow: selectedNodes.has(node.id) ? '0 1px 3px rgba(99, 102, 241, 0.1)' : 'none'
+            boxShadow: selectedNodes.has(node.id) ? '0 1px 3px var(--accent-tint)' : 'none'
           }}
           onMouseEnter={(e) => {
             if (!selectedNodes.has(node.id)) {
-              e.currentTarget.style.backgroundColor = '#f9fafb';
-              e.currentTarget.style.borderColor = '#e5e7eb';
+              e.currentTarget.style.backgroundColor = 'var(--surface-2)';
+              e.currentTarget.style.borderColor = 'var(--border)';
             }
           }}
           onMouseLeave={(e) => {
             if (!selectedNodes.has(node.id)) {
-              e.currentTarget.style.backgroundColor = '#ffffff';
+              e.currentTarget.style.backgroundColor = 'var(--surface-1)';
               e.currentTarget.style.borderColor = 'transparent';
             }
           }}

@@ -204,7 +204,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
           onDrop={(e) => handleDrop(e, item)}
           onDragEnd={handleDragEnd}
           className={`flex items-center px-2 py-0.5 rounded cursor-pointer transition-all ${
-            isSelected ? "bg-blue-200" : "hover:bg-slate-100"
+            isSelected ? "bg-blue-200" : "hover:bg-gray-100 dark:hover:bg-gray-700"
           } ${isDragging ? "opacity-50" : ""}`}
           style={{ paddingLeft: `${level * 16 + 4}px` }}
           onClick={() => {
@@ -281,7 +281,8 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
             />
           ) : (
             <span
-              className={`text-xs select-none text-black ${isSelected ? "font-semibold" : ""}`}
+              className={`text-xs select-none ${isSelected ? "font-semibold" : ""}`}
+              style={{ color: 'var(--text-primary)' }}
               onDoubleClick={(e) => handleDoubleClick(e, item)}
             >
               {item.label}
@@ -332,11 +333,11 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
   const currentLabel = currentTabConfig?.label || entitiesTab;
 
   return (
-    <aside className={`${hideToolbarActions ? 'w-full' : sidebarWidthClass} bg-white ${hideToolbarActions ? '' : 'border-r border-gray-200'} flex flex-col h-full`}>
+    <aside className={`${hideToolbarActions ? 'w-full' : sidebarWidthClass} ${hideToolbarActions ? '' : 'border-r'} flex flex-col h-full`} style={{ backgroundColor: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
       {/* Header with CUD buttons and Asserted/Inferred toggle */}
       {!hideToolbarActions && (
-      <div className="text-xs font-semibold p-1 flex items-center justify-center gap-1 flex-wrap border-b text-center">
-        <span className="text-gray-600">{currentLabel} hierarchy</span>
+      <div className="text-xs font-semibold p-1 flex items-center justify-center gap-1 flex-wrap border-b text-center" style={{ borderColor: 'var(--color-border)' }}>
+        <span style={{ color: 'var(--color-text-secondary)' }}>{currentLabel} hierarchy</span>
         <div className="flex items-center gap-0.5">
           {/* Asserted/Inferred mode toggle for Classes, Properties, and Datatypes */}
           {(entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties' || entitiesTab === 'Datatypes') && (
@@ -481,11 +482,17 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
       )}
       
       {/* Search Bar */}
-      <div className="p-2 border-b border-gray-200 flex-shrink-0">
+      <div className="p-2 border-b flex-shrink-0" style={{ borderColor: 'var(--color-border)' }}>
           <div className="relative">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--color-text-secondary)' }} />
               <input type="text" placeholder={`Search ${currentLabel.toLowerCase()}...`} value={searchQuery} onChange={e => onSearchQueryChange(e.target.value)} //
-                  className="w-full pl-8 pr-3 py-1.5 border border-gray-300 rounded-md focus:ring-1 focus:ring-purple-500 text-sm bg-white text-black" />
+                  className="w-full pl-8 pr-3 py-1.5 border rounded-md focus:ring-1 text-sm"
+                  style={{
+                    borderColor: 'var(--color-border)',
+                    backgroundColor: 'var(--color-surface)',
+                    color: 'var(--color-text)',
+                    '--tw-ring-color': 'var(--color-primary)'
+                  } as React.CSSProperties} />
           </div>
           
           {/* Tips banner */}
@@ -500,18 +507,18 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
       <div className="flex-1 overflow-y-auto p-1">
         {filteredData && filteredData.length > 0 ? filteredData.map(node => renderItem(node)) : 
           (searchQuery ? (
-             <div className="p-4 text-center text-gray-400">No items found for "{searchQuery}".</div>
+             <div className="p-4 text-center text-gray-600">No items found for "{searchQuery}".</div>
           ) : (entitiesTab === 'Individuals' && !searchQuery) ? (
-             <div className="p-4 text-center text-gray-400">
+             <div className="p-4 text-center text-gray-600">
                <p className="mb-2">No individuals created yet.</p>
                <button onClick={() => onAddItem('individual')} className="text-sm text-purple-600 hover:underline">Create a new Individual</button>
              </div>
           ) : (entitiesTab === 'AnnotationProperties' && !searchQuery) ? (
-             <div className="p-4 text-center text-gray-400">
+             <div className="p-4 text-center text-gray-600">
                <p className="mb-2">No annotation properties created yet.</p>
                <button onClick={() => onAddItem('subclass')} className="text-sm text-purple-600 hover:underline">Create a new Annotation Property</button>
              </div>
-          ) : <div className="p-4 text-center text-gray-400">No items found.</div>)
+          ) : <div className="p-4 text-center text-gray-600">No items found.</div>)
         }
       </div>
 

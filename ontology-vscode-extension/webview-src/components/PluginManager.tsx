@@ -216,7 +216,7 @@ const PluginManager: React.FC = () => {
           <div className="text-center py-12">
             <Package size={64} className="mx-auto text-gray-300 mb-4" />
             <p className="text-gray-600 text-lg">No plugins found</p>
-            <p className="text-gray-500 text-sm mt-2">
+            <p className="text-gray-700 text-sm mt-2">
               Try adjusting your search or filter criteria
             </p>
           </div>
@@ -240,7 +240,7 @@ const PluginManager: React.FC = () => {
                     )}
                     <div>
                       <h3 className="font-semibold text-gray-900">{plugin.name}</h3>
-                      <p className="text-xs text-gray-500">v{plugin.version}</p>
+                      <p className="text-xs text-gray-700">v{plugin.version}</p>
                     </div>
                   </div>
 

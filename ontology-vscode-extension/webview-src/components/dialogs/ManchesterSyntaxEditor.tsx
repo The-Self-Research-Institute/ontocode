@@ -97,17 +97,17 @@ const ManchesterSyntaxEditor: React.FC<ManchesterSyntaxEditorProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4 flex flex-col max-h-[80vh]">
-        <div className="flex justify-between items-center p-4 border-b border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+      <div className="rounded-lg shadow-xl w-full max-w-2xl mx-4 flex flex-col max-h-[80vh]" style={{ backgroundColor: 'var(--surface-1)' }}>
+        <div className="flex justify-between items-center p-4 border-b" style={{ borderColor: 'var(--border)' }}>
+          <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>{title}</h3>
+          <button onClick={onClose} className="hover:opacity-70" style={{ color: 'var(--text-secondary)' }}>
             <X size={20} />
           </button>
         </div>
 
         <div className="p-4 flex-1 overflow-y-auto">
           <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
               Manchester OWL Syntax
             </label>
             <div className="relative">
@@ -115,8 +115,13 @@ const ManchesterSyntaxEditor: React.FC<ManchesterSyntaxEditorProps> = ({
                 value={expression}
                 onChange={handleInputChange}
                 className={`w-full h-32 p-3 border rounded-md font-mono text-sm focus:ring-2 focus:outline-none ${
-                  isValid ? 'border-gray-300 focus:ring-purple-500' : 'border-red-300 focus:ring-red-500'
+                  isValid ? 'focus:ring-purple-500' : 'border-red-300 focus:ring-red-500'
                 }`}
+                style={{ 
+                  color: 'var(--text-primary)', 
+                  backgroundColor: 'var(--surface-2)', 
+                  borderColor: isValid ? 'var(--border)' : '#fca5a5' 
+                }}
                 placeholder="e.g. Cell and hasPart some Nucleus"
                 autoFocus
               />
@@ -130,7 +135,7 @@ const ManchesterSyntaxEditor: React.FC<ManchesterSyntaxEditorProps> = ({
           </div>
 
           <div className="mb-4">
-            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+            <label className="block text-xs font-bold uppercase tracking-wider mb-2" style={{ color: 'var(--text-secondary)' }}>
               Keywords
             </label>
             <div className="flex flex-wrap gap-2">
@@ -138,7 +143,14 @@ const ManchesterSyntaxEditor: React.FC<ManchesterSyntaxEditorProps> = ({
                 <button
                   key={kw}
                   onClick={() => insertKeyword(kw)}
-                  className="px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs rounded font-mono border border-gray-300"
+                  className="px-2 py-1 text-xs rounded font-mono border"
+                  style={{ 
+                    backgroundColor: 'var(--surface-2)', 
+                    color: 'var(--text-primary)', 
+                    borderColor: 'var(--border)' 
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--hover-overlay)'}
+                  onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--surface-2)'}
                 >
                   {kw}
                 </button>
@@ -162,10 +174,17 @@ const ManchesterSyntaxEditor: React.FC<ManchesterSyntaxEditorProps> = ({
           </div>
         </div>
 
-        <div className="p-4 border-t border-gray-200 flex justify-end gap-2 bg-gray-50 rounded-b-lg">
+        <div className="p-4 border-t flex justify-end gap-2 rounded-b-lg" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--surface-2)' }}>
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+            className="px-4 py-2 text-sm font-medium border rounded-md"
+            style={{ 
+              color: 'var(--text-primary)', 
+              backgroundColor: 'var(--surface-1)', 
+              borderColor: 'var(--border)' 
+            }}
+            onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--hover-overlay)'}
+            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--surface-1)'}
           >
             Cancel
           </button>

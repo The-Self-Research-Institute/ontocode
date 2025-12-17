@@ -45,7 +45,8 @@ const { execSync } = require('child_process');
 
 const MONGO_URL = process.env.MONGODB_URI || 'mongodb://localhost:27017';
 const DB_NAME = process.env.MONGODB_DATABASE || 'ontology';
-const PLUGINS_DIR = path.join(__dirname, '..', 'plugins');
+// HARDCODED FIX: In Docker container, plugins are always at /app/plugins
+const PLUGINS_DIR = '/app/plugins';
 
 // =============================================================================
 // PLUGIN DEFINITIONS - Single source of truth
@@ -273,7 +274,17 @@ async function insertPluginMetadata(db, plugin, force = false) {
 }
 
 async function uploadBundleToGridFS(db, bucket, plugin) {
+  log.warn(`\n[BUNDLE PATH DEBUG] PLUGINS_DIR = "${PLUGINS_DIR}"`);
+  log.warn(`[BUNDLE PATH DEBUG] plugin.pluginId = "${plugin.pluginId}"`);
   const bundlePath = path.join(PLUGINS_DIR, plugin.pluginId, 'dist', 'index.js');
+  log.warn(`[BUNDLE PATH DEBUG] bundlePath = "${bundlePath}"`);
+  log.warn(`[BUNDLE PATH DEBUG] exists = ${fs.existsSync(bundlePath)}`);
+  
+  // Also check alternate paths
+  const altPath1 = path.join('/app/plugins', plugin.pluginId, 'dist', 'index.js');
+  const altPath2 = path.join('plugins', plugin.pluginId, 'dist', 'index.js');
+  log.warn(`[BUNDLE PATH DEBUG] altPath1 (/app/plugins) = "${altPath1}" exists = ${fs.existsSync(altPath1)}`);
+  log.warn(`[BUNDLE PATH DEBUG] altPath2 (plugins) = "${altPath2}" exists = ${fs.existsSync(altPath2)}\n`);
   
   if (!fs.existsSync(bundlePath)) {
     log.error(`  Bundle not found: ${bundlePath}`);
@@ -411,6 +422,20 @@ async function cleanPlugins(db) {
 
 async function main() {
   const args = parseArgs();
+  
+  // Debug logging FIRST
+  console.log('=====================================');
+  console.log('[DEBUG] __dirname =', __dirname);
+  console.log('[DEBUG] PLUGINS_DIR =', PLUGINS_DIR);
+  console.log('[DEBUG] PLUGINS_DIR exists =', fs.existsSync(PLUGINS_DIR));
+  if (fs.existsSync(PLUGINS_DIR)) {
+    console.log('[DEBUG] PLUGINS_DIR contents =', fs.readdirSync(PLUGINS_DIR).join(', '));
+    // Test specific plugin path
+    const testPath = path.join(PLUGINS_DIR, 'sparql-query-plugin', 'dist', 'index.js');
+    console.log('[DEBUG] Test path =', testPath);
+    console.log('[DEBUG] Test path exists =', fs.existsSync(testPath));
+  }
+  console.log('=====================================');
   
   console.log(`
 ${colors.bright}${colors.magenta}╔═══════════════════════════════════════════════════════════╗

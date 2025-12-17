@@ -1940,6 +1940,73 @@ public class OntologyQueryService {
         
         return details;
     }
+
+    public Map<String, Object> getOntologySchema(String projectId) {
+        Map<String, Object> schema = new LinkedHashMap<>();
+        
+        // Get all classes
+        String classesQuery = PREFIXES + """
+            SELECT DISTINCT ?class WHERE {
+              ?class a owl:Class .
+              FILTER(isIRI(?class))
+              FILTER(?class != owl:Thing && ?class != owl:Nothing)
+            }
+            ORDER BY ?class
+            LIMIT 1000
+            """;
+        TupleQueryResult classesResult = datasetService.execSelect(projectId, classesQuery);
+        List<String> classes = new ArrayList<>();
+        while (classesResult.hasNext()) {
+            BindingSet sol = classesResult.next();
+            String cls = resource(sol, "class");
+            if (cls != null) {
+                classes.add(cls);
+            }
+        }
+        schema.put("classes", classes);
+        
+        // Get all object properties
+        String objectPropsQuery = PREFIXES + """
+            SELECT DISTINCT ?prop WHERE {
+              ?prop a owl:ObjectProperty .
+              FILTER(isIRI(?prop))
+            }
+            ORDER BY ?prop
+            LIMIT 1000
+            """;
+        TupleQueryResult objResult = datasetService.execSelect(projectId, objectPropsQuery);
+        List<String> objectProperties = new ArrayList<>();
+        while (objResult.hasNext()) {
+            BindingSet sol = objResult.next();
+            String prop = resource(sol, "prop");
+            if (prop != null) {
+                objectProperties.add(prop);
+            }
+        }
+        schema.put("objectProperties", objectProperties);
+        
+        // Get all data properties
+        String dataPropsQuery = PREFIXES + """
+            SELECT DISTINCT ?prop WHERE {
+              ?prop a owl:DatatypeProperty .
+              FILTER(isIRI(?prop))
+            }
+            ORDER BY ?prop
+            LIMIT 1000
+            """;
+        TupleQueryResult dataResult = datasetService.execSelect(projectId, dataPropsQuery);
+        List<String> dataProperties = new ArrayList<>();
+        while (dataResult.hasNext()) {
+            BindingSet sol = dataResult.next();
+            String prop = resource(sol, "prop");
+            if (prop != null) {
+                dataProperties.add(prop);
+            }
+        }
+        schema.put("dataProperties", dataProperties);
+        
+        return schema;
+    }
 }
 
 

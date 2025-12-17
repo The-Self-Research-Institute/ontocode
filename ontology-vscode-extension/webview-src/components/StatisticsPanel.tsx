@@ -50,7 +50,7 @@ const StatisticsPanel: React.FC<StatisticsPanelProps> = ({ projectId, statistics
 
   if (!statistics) {
     return (
-      <div className="flex items-center justify-center h-full text-gray-400">
+      <div className="flex items-center justify-center h-full text-gray-600">
         <div className="text-center">
           <AlertCircle size={64} className="mx-auto mb-4 opacity-20" />
           <p className="text-lg font-medium">No statistics available</p>
@@ -66,18 +66,18 @@ const StatisticsPanel: React.FC<StatisticsPanelProps> = ({ projectId, statistics
     color: string;
     description?: string;
   }> = ({ title, value, icon, color, description }) => (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
+    <div className="rounded-lg shadow-sm border p-6 hover:shadow-md transition-shadow" style={{ backgroundColor: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
       <div className="flex items-start justify-between mb-4">
         <div className={`p-3 rounded-lg ${color}`}>
           {icon}
         </div>
         <div className="text-right">
-          <p className="text-sm text-gray-600 font-medium">{title}</p>
-          <p className="text-3xl font-bold text-gray-800 mt-1">{value.toLocaleString()}</p>
+          <p className="text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>{title}</p>
+          <p className="text-3xl font-bold mt-1" style={{ color: 'var(--color-text)' }}>{value.toLocaleString()}</p>
         </div>
       </div>
       {description && (
-        <p className="text-sm text-gray-500">{description}</p>
+        <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>{description}</p>
       )}
     </div>
   );
@@ -93,10 +93,10 @@ const StatisticsPanel: React.FC<StatisticsPanelProps> = ({ projectId, statistics
     return (
       <div className="mb-4">
         <div className="flex justify-between text-sm mb-2">
-          <span className="text-gray-700 font-medium">{label}</span>
-          <span className="text-gray-600">{value.toLocaleString()} ({percentage.toFixed(1)}%)</span>
+          <span className="font-medium" style={{ color: 'var(--color-text)' }}>{label}</span>
+          <span style={{ color: 'var(--color-text-secondary)' }}>{value.toLocaleString()} ({percentage.toFixed(1)}%)</span>
         </div>
-        <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+        <div className="w-full rounded-full h-3 overflow-hidden" style={{ backgroundColor: 'var(--color-border)' }}>
           <div
             className={`h-full ${color} transition-all duration-500 ease-out`}
             style={{ width: `${Math.min(percentage, 100)}%` }}
@@ -111,7 +111,7 @@ const StatisticsPanel: React.FC<StatisticsPanelProps> = ({ projectId, statistics
   const annotationAxioms = totalAxioms - logicalAxioms;
 
   return (
-    <div className="h-full overflow-y-auto bg-gray-50">
+    <div className="h-full overflow-y-auto" style={{ backgroundColor: 'var(--color-background)' }}>
       <header className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white p-6 shadow-lg">
         <div className="flex items-center gap-3 mb-2">
           <BarChart3 size={32} />
@@ -123,7 +123,7 @@ const StatisticsPanel: React.FC<StatisticsPanelProps> = ({ projectId, statistics
       <div className="p-6 space-y-6">
         {/* Main Metrics */}
         <section>
-          <h2 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2" style={{ color: 'var(--color-text)' }}>
             <Package size={20} className="text-purple-600" />
             Entity Counts
           </h2>
@@ -175,7 +175,7 @@ const StatisticsPanel: React.FC<StatisticsPanelProps> = ({ projectId, statistics
 
         {/* Axiom Breakdown */}
         <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+          <h2 className="text-lg font-semibold text-black mb-4 flex items-center gap-2">
             <TrendingUp size={20} className="text-purple-600" />
             Axiom Distribution
           </h2>
@@ -209,79 +209,79 @@ const StatisticsPanel: React.FC<StatisticsPanelProps> = ({ projectId, statistics
 
         {/* Axiom Type Details */}
         <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold text-gray-800 mb-4">Axiom Type Breakdown</h2>
+          <h2 className="text-lg font-semibold text-black mb-4">Axiom Type Breakdown</h2>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="p-4 bg-gray-50 rounded-lg">
               <div className="flex justify-between items-center mb-2">
-                <span className="text-sm font-medium text-gray-700">Declaration Axioms</span>
-                <span className="text-lg font-bold text-gray-800">
+                <span className="text-sm font-medium text-black">Declaration Axioms</span>
+                <span className="text-lg font-bold text-black">
                   {statistics.declarationAxiomCount || 0}
                 </span>
               </div>
-              <div className="text-xs text-gray-500">Entity declarations</div>
+              <div className="text-xs text-gray-700">Entity declarations</div>
             </div>
 
             <div className="p-4 bg-gray-50 rounded-lg">
               <div className="flex justify-between items-center mb-2">
-                <span className="text-sm font-medium text-gray-700">SubClass Axioms</span>
-                <span className="text-lg font-bold text-gray-800">
+                <span className="text-sm font-medium text-black">SubClass Axioms</span>
+                <span className="text-lg font-bold text-black">
                   {statistics.subClassOfAxiomCount || 0}
                 </span>
               </div>
-              <div className="text-xs text-gray-500">Class hierarchy relationships</div>
+              <div className="text-xs text-gray-700">Class hierarchy relationships</div>
             </div>
 
             <div className="p-4 bg-gray-50 rounded-lg">
               <div className="flex justify-between items-center mb-2">
-                <span className="text-sm font-medium text-gray-700">Equivalent Classes</span>
-                <span className="text-lg font-bold text-gray-800">
+                <span className="text-sm font-medium text-black">Equivalent Classes</span>
+                <span className="text-lg font-bold text-black">
                   {statistics.equivalentClassesAxiomCount || 0}
                 </span>
               </div>
-              <div className="text-xs text-gray-500">Class equivalence statements</div>
+              <div className="text-xs text-gray-700">Class equivalence statements</div>
             </div>
 
             <div className="p-4 bg-gray-50 rounded-lg">
               <div className="flex justify-between items-center mb-2">
-                <span className="text-sm font-medium text-gray-700">Disjoint Classes</span>
-                <span className="text-lg font-bold text-gray-800">
+                <span className="text-sm font-medium text-black">Disjoint Classes</span>
+                <span className="text-lg font-bold text-black">
                   {statistics.disjointClassesAxiomCount || 0}
                 </span>
               </div>
-              <div className="text-xs text-gray-500">Class disjointness axioms</div>
+              <div className="text-xs text-gray-700">Class disjointness axioms</div>
             </div>
 
             <div className="p-4 bg-gray-50 rounded-lg">
               <div className="flex justify-between items-center mb-2">
-                <span className="text-sm font-medium text-gray-700">General Class Inclusions (GCI)</span>
-                <span className="text-lg font-bold text-gray-800">
+                <span className="text-sm font-medium text-black">General Class Inclusions (GCI)</span>
+                <span className="text-lg font-bold text-black">
                   {statistics.gciCount || 0}
                 </span>
               </div>
-              <div className="text-xs text-gray-500">Complex class expressions</div>
+              <div className="text-xs text-gray-700">Complex class expressions</div>
             </div>
 
             <div className="p-4 bg-gray-50 rounded-lg">
               <div className="flex justify-between items-center mb-2">
-                <span className="text-sm font-medium text-gray-700">Hidden GCIs</span>
-                <span className="text-lg font-bold text-gray-800">
+                <span className="text-sm font-medium text-black">Hidden GCIs</span>
+                <span className="text-lg font-bold text-black">
                   {statistics.hiddenGciCount || 0}
                 </span>
               </div>
-              <div className="text-xs text-gray-500">Implicit complex axioms</div>
+              <div className="text-xs text-gray-700">Implicit complex axioms</div>
             </div>
           </div>
         </section>
 
         {/* Complexity Metrics */}
         <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold text-gray-800 mb-4">Ontology Metrics</h2>
+          <h2 className="text-lg font-semibold text-black mb-4">Ontology Metrics</h2>
           
           <div className="space-y-3">
             <div className="flex justify-between items-center p-3 bg-gray-50 rounded">
-              <span className="text-sm text-gray-700">Average Axioms per Class</span>
-              <span className="font-semibold text-gray-800">
+              <span className="text-sm text-black">Average Axioms per Class</span>
+              <span className="font-semibold text-black">
                 {statistics.classCount > 0 
                   ? (totalAxioms / statistics.classCount).toFixed(2)
                   : '0'
@@ -290,15 +290,15 @@ const StatisticsPanel: React.FC<StatisticsPanelProps> = ({ projectId, statistics
             </div>
             
             <div className="flex justify-between items-center p-3 bg-gray-50 rounded">
-              <span className="text-sm text-gray-700">Total Properties</span>
-              <span className="font-semibold text-gray-800">
+              <span className="text-sm text-black">Total Properties</span>
+              <span className="font-semibold text-black">
                 {(statistics.objectPropertyCount || 0) + (statistics.dataPropertyCount || 0)}
               </span>
             </div>
             
             <div className="flex justify-between items-center p-3 bg-gray-50 rounded">
-              <span className="text-sm text-gray-700">Individuals to Classes Ratio</span>
-              <span className="font-semibold text-gray-800">
+              <span className="text-sm text-black">Individuals to Classes Ratio</span>
+              <span className="font-semibold text-black">
                 {statistics.classCount > 0
                   ? ((statistics.individualCount || 0) / statistics.classCount).toFixed(2)
                   : '0'
