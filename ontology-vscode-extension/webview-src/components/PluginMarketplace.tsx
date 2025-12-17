@@ -426,7 +426,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
         <span className="text-xs text-gray-600 ml-1">
           {rating > 0 ? rating.toFixed(1) : '—'}
         </span>
-        <span className="text-xs text-gray-500">
+        <span className="text-xs text-gray-700">
           ({totalRatings})
         </span>
       </div>

@@ -682,12 +682,12 @@ export const Panel = ({
     }, [isOpen]);
     
     return (
-        <div className={`border bg-white rounded-sm flex flex-col ${themeColor?.split(' ')[2] || 'border-[#D6C9AD]'}`}>
-            <div className={`text-xs font-semibold p-1.5 flex items-center justify-between border-b ${themeClasses}`}>
+        <div className="border rounded-sm flex flex-col" style={{ backgroundColor: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
+            <div className="text-xs font-semibold p-1.5 flex items-center justify-between border-b" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-background)', color: 'var(--color-text)' }}>
                 <div className="flex items-center">
                     <button 
                       onClick={() => setIsOpen(!isOpen)} 
-                      className="mr-1 p-0.5 rounded hover:bg-black/10"
+                      className="mr-1 p-0.5 rounded hover:opacity-70"
                       aria-expanded={isOpen}
                       aria-controls={`panel-content-${title}`}
                     >
@@ -701,7 +701,7 @@ export const Panel = ({
               id={`panel-content-${title}`}
               className={`transition-all duration-300 ease-in-out ${isOpen ? 'block' : 'hidden'}`}
             >
-                {isOpen && <div ref={contentRef} className="bg-white overflow-y-auto max-h-[600px]">{children}</div>}
+                {isOpen && <div ref={contentRef} className="overflow-y-auto max-h-[600px]" style={{ backgroundColor: 'var(--color-surface)' }}>{children}</div>}
             </div>
         </div>
     );

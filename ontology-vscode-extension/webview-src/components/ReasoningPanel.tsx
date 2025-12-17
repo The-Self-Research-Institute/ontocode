@@ -452,7 +452,7 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
                       <p className="text-sm font-medium text-gray-800">{axiom.readable}</p>
-                      <p className="text-xs text-gray-500 mt-1">{axiom.axiomType}</p>
+                      <p className="text-xs text-gray-700 mt-1">{axiom.axiomType}</p>
                     </div>
                   </div>
                 </div>
@@ -467,14 +467,14 @@ const ReasoningPanel: React.FC<ReasoningPanelProps> = ({ projectId }) => {
             <div className="text-center">
               <Loader2 size={48} className="animate-spin text-purple-600 mx-auto mb-4" />
               <p className="text-gray-600">Running {reasonerType} reasoner...</p>
-              <p className="text-sm text-gray-500 mt-2">This may take a few moments for large ontologies</p>
+              <p className="text-sm text-gray-700 mt-2">This may take a few moments for large ontologies</p>
             </div>
           </div>
         )}
 
         {/* Empty State */}
         {!result && !isRunning && (
-          <div className="flex items-center justify-center h-64 text-gray-400">
+          <div className="flex items-center justify-center h-64 text-gray-600">
             <div className="text-center">
               <Brain size={64} className="mx-auto mb-4 opacity-20" />
               <p className="text-lg font-medium">No reasoning results yet</p>

@@ -166,6 +166,14 @@ const IndividualEditor: React.FC<{
       onUpdate({ ...item, differentIndividualFrom: item.differentIndividualFrom?.filter(i => i !== iri) });
   };
 
+  const handleAddType = async (iri: string) => {
+      try {
+          await ontologyMutationService.addAxiom(projectId, item.id, 'ClassAssertion' as any, iri);
+          // Optimistic update
+          onUpdate({ ...item, types: [...(item.types || []), iri] });
+      } catch (e) { console.error(e); }
+  };
+
   const openEditor = (title: string, action: (val: string) => void) => {
       setEditorTitle(title);
       setEditorAction(() => action);
@@ -206,7 +214,7 @@ const IndividualEditor: React.FC<{
             <div className="mb-4 last:mb-0">
               <div className="flex justify-between items-center mb-1">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Types</h4>
-                <button className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors" title="Add type">
+                <button onClick={() => openEditor('Add Type (Class IRI)', handleAddType)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors" title="Add type">
                   <Plus size={14} />
                 </button>
               </div>
@@ -306,8 +314,8 @@ const IndividualEditor: React.FC<{
                        <label className="flex items-center gap-1"><input type="radio" name="propType" checked={newAssertion.isObjectProperty} onChange={() => setNewAssertion(p => ({...p, isObjectProperty: true}))} /> Object</label>
                        <label className="flex items-center gap-1"><input type="radio" name="propType" checked={!newAssertion.isObjectProperty} onChange={() => setNewAssertion(p => ({...p, isObjectProperty: false}))}/> Data</label>
                     </div>
-                    <input value={newAssertion.propertyLabel} onChange={e => setNewAssertion(p => ({...p, propertyLabel: e.target.value}))} placeholder="Property" className="w-full p-1.5 border rounded"/>
-                    <input value={newAssertion.targetLabel} onChange={e => setNewAssertion(p => ({...p, targetLabel: e.target.value}))} placeholder={newAssertion.isObjectProperty ? "Target Individual" : "Literal Value"} className="w-full p-1.5 border rounded"/>
+                    <input value={newAssertion.propertyLabel} onChange={e => setNewAssertion(p => ({...p, propertyLabel: e.target.value}))} placeholder="Property" className="w-full p-1.5 border rounded" style={{ color: 'var(--text-primary)', backgroundColor: 'var(--surface-1)', borderColor: 'var(--border)' }}/>
+                    <input value={newAssertion.targetLabel} onChange={e => setNewAssertion(p => ({...p, targetLabel: e.target.value}))} placeholder={newAssertion.isObjectProperty ? "Target Individual" : "Literal Value"} className="w-full p-1.5 border rounded" style={{ color: 'var(--text-primary)', backgroundColor: 'var(--surface-1)', borderColor: 'var(--border)' }}/>
                     <div className="flex justify-end gap-2">
                          <button onClick={() => setIsAddingAssertion(false)} className="px-2 py-1 bg-gray-200 rounded hover:bg-gray-300">Cancel</button>
                          <button onClick={handleAddAssertion} className="px-2 py-1 bg-purple-600 text-white rounded hover:bg-purple-700">Save</button>
@@ -319,12 +327,6 @@ const IndividualEditor: React.FC<{
             <div className="mb-4 last:mb-0">
               <div className="flex justify-between items-center mb-1">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Same Individual As / Different Individual From</h4>
-                <button onClick={() => openEditor('Add Same Individual As (IRI)', handleAddSameAs)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors" title="Add Same Individual As">
-                  <Plus size={14} />
-                </button>
-                <button onClick={() => openEditor('Add Different Individual From (IRI)', handleAddDifferentFrom)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors" title="Add Different Individual From">
-                  <Plus size={14} />
-                </button>
               </div>
               <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm p-1.5">
                 {/* Same Individual As */}
@@ -355,13 +357,14 @@ const IndividualEditor: React.FC<{
       {/* Manchester Syntax Editor Dialog */}
       {isEditorOpen && (
         <ManchesterSyntaxEditor
-          open={isEditorOpen}
+          isOpen={isEditorOpen}
           onClose={() => setIsEditorOpen(false)}
           title={editorTitle}
-          onSave={val => {
+          onConfirm={val => {
               if (editorAction) editorAction(val);
               setIsEditorOpen(false);
           }}
+          projectId={projectId}
         />
       )}
     </div>

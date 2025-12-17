@@ -140,7 +140,7 @@ const HistoryPanel: React.FC<HistoryPanelProps> = ({ projectId, isOpen, onClose 
           <div className="flex items-center gap-2">
             <Clock size={24} className="text-purple-600" />
             <h2 className="text-xl font-bold text-gray-800">Edit History</h2>
-            <span className="text-sm text-gray-500">({history.length} operations)</span>
+            <span className="text-sm text-gray-700">({history.length} operations)</span>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -181,7 +181,7 @@ const HistoryPanel: React.FC<HistoryPanelProps> = ({ projectId, isOpen, onClose 
             </div>
           ) : history.length === 0 ? (
             <div className="flex items-center justify-center h-full">
-              <div className="text-center text-gray-500">
+              <div className="text-center text-gray-600">
                 <Clock size={64} className="mx-auto mb-4 text-gray-300" />
                 <p className="text-lg font-medium">No history available</p>
                 <p className="text-sm">Start making changes to see the history</p>

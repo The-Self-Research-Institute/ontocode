@@ -454,7 +454,7 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
           )}
           
           {/* Query Textarea */}
-          <div className="p-3">
+          <div className="p-3 relative">
             <textarea
               value={query}
               onChange={e => setQuery(e.target.value)}
@@ -467,6 +467,43 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
                 }
               }}
             />
+            
+            {/* Auto-completion Suggestions */}
+            {suggestions.length > 0 && (
+              <div className="absolute top-full left-3 right-3 mt-1 bg-white border border-purple-200 rounded-lg shadow-lg z-10 max-h-48 overflow-y-auto">
+                <div className="p-2 border-b border-gray-100 bg-purple-50">
+                  <p className="text-xs font-semibold text-purple-700 flex items-center gap-1">
+                    <Sparkles size={12} />
+                    Auto-completion Suggestions
+                  </p>
+                </div>
+                <div className="py-1">
+                  {suggestions.map((suggestion, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => {
+                        // Replace last word with suggestion
+                        const words = query.split(/\s+/);
+                        words[words.length - 1] = suggestion.value;
+                        setQuery(words.join(' ') + ' ');
+                      }}
+                      className="w-full px-3 py-2 text-left text-sm hover:bg-purple-50 flex items-center justify-between transition-colors"
+                    >
+                      <span className="font-mono text-gray-800">{suggestion.value}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+                        suggestion.type === 'class' ? 'bg-blue-100 text-blue-700' :
+                        suggestion.type === 'property' ? 'bg-green-100 text-green-700' :
+                        'bg-purple-100 text-purple-700'
+                      }`}>
+                        {suggestion.type === 'class' ? 'Class' :
+                         suggestion.type === 'property' ? 'Property' :
+                         'Keyword'}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             
             {/* Action Buttons */}
             <div className="flex items-center gap-2 mt-2">
@@ -543,7 +580,7 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
           
           <div className="flex-1 overflow-y-auto p-3">
             {isLoading ? (
-              <div className="flex items-center justify-center h-full text-gray-500">
+              <div className="flex items-center justify-center h-full text-gray-600">
                 <Loader2 size={24} className="animate-spin mr-2" />
                 <span>Executing query...</span>
               </div>
@@ -563,7 +600,7 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
                         <span className="font-medium text-sm text-gray-700 capitalize">
                           {typeConfig?.label || type.replace(/([A-Z])/g, ' $1').trim()}
                         </span>
-                        <span className="text-xs text-gray-500">({filteredItems.length})</span>
+                        <span className="text-xs text-gray-700">({filteredItems.length})</span>
                       </div>
                       <div className="p-2 max-h-48 overflow-y-auto">
                         {filteredItems.map((item, idx) => (
@@ -586,7 +623,7 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
                 })}
                 
                 {totalResults === 0 && (
-                  <div className="text-center py-8 text-gray-500">
+                  <div className="text-center py-8 text-gray-600">
                     <Info size={32} className="mx-auto mb-2 opacity-50" />
                     <p className="text-sm">No results found for this query.</p>
                     <p className="text-xs mt-1">Try a different class expression or query type.</p>
@@ -670,19 +707,19 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
           <div className="grid grid-cols-2 gap-2 text-xs">
             <div className="bg-white rounded p-2 border">
               <div className="font-bold text-amber-600">{metrics?.classCount ?? classes.length}</div>
-              <div className="text-gray-500">Classes</div>
+              <div className="text-gray-700">Classes</div>
             </div>
             <div className="bg-white rounded p-2 border">
               <div className="font-bold text-blue-600">{metrics?.objectPropertyCount ?? objectProperties.length}</div>
-              <div className="text-gray-500">Obj Props</div>
+              <div className="text-gray-700">Obj Props</div>
             </div>
             <div className="bg-white rounded p-2 border">
               <div className="font-bold text-green-600">{metrics?.dataPropertyCount ?? dataProperties.length}</div>
-              <div className="text-gray-500">Data Props</div>
+              <div className="text-gray-700">Data Props</div>
             </div>
             <div className="bg-white rounded p-2 border">
               <div className="font-bold text-purple-600">{metrics?.individualCount ?? individuals.length}</div>
-              <div className="text-gray-500">Individuals</div>
+              <div className="text-gray-700">Individuals</div>
             </div>
           </div>
         </div>
@@ -694,21 +731,21 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
           <div className="bg-white rounded-xl shadow-xl w-96 overflow-hidden">
             <div className="p-4 border-b border-gray-200">
               <h3 className="font-semibold text-gray-800">Add Class to Ontology</h3>
-              <p className="text-xs text-gray-500 mt-1">Create a defined class from this DL query expression</p>
+              <p className="text-xs text-gray-700 mt-1">Create a defined class from this DL query expression</p>
             </div>
             <div className="p-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Class Name</label>
+              <label className="block text-sm font-medium text-gray-800 mb-1">Class Name</label>
               <input
                 type="text"
                 value={newClassName}
                 onChange={e => setNewClassName(e.target.value)}
                 placeholder="e.g., AdultPerson"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-black focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                 autoFocus
               />
-              <div className="mt-3 p-2 bg-gray-50 rounded-lg">
-                <label className="block text-xs font-medium text-gray-500 mb-1">Definition</label>
-                <code className="text-xs text-purple-700 break-all">{query}</code>
+              <div className="mt-3">
+                <label className="block text-xs font-medium text-gray-800 mb-1">Definition</label>
+                <code className="block text-xs text-gray-800 bg-white border border-gray-200 rounded px-2 py-1.5 break-all">{query}</code>
               </div>
             </div>
             <div className="p-4 bg-gray-50 border-t border-gray-200 flex justify-end gap-2">
