@@ -4,6 +4,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
+import org.eclipse.rdf4j.repository.RepositoryConnection;
+import org.eclipse.rdf4j.query.TupleQuery;
+import org.eclipse.rdf4j.query.TupleQueryResult;
+import org.eclipse.rdf4j.query.BindingSet;
 
 import java.util.List;
 import java.util.Map;
@@ -53,7 +57,7 @@ public class OntologyMutationService {
         log.info("[MUTATION] Project: {}", projectId);
         
         String sparql = PREFIXES + "\n" + ops.stream()
-                .map(this::toUpdate)
+                .map(op -> toUpdate(projectId, op))
                 .filter(s -> s != null && !s.isBlank()) // Filter out empty statements
                 .collect(Collectors.joining("\n;\n"));
         
@@ -144,7 +148,7 @@ public class OntologyMutationService {
         }, metadataExecutor);
     }
 
-    private String toUpdate(MutationOp op) {
+    private String toUpdate(String projectId, MutationOp op) {
         // Validate IRI is not null for operations that require it
         if (op.iri() == null || op.iri().isBlank() || "null".equals(op.iri())) {
             log.error("[MUTATION] Invalid IRI for operation {}: iri={}", op.type(), op.iri());
@@ -537,8 +541,10 @@ public class OntologyMutationService {
                 + "}";
         } else if (type.equals("addClassAssertion")) {
             // Add rdf:type assertion to an existing individual
+            if (op.classIri() == null) return "";
+            String classExpr = buildClassExpressionSparql(projectId, op.classIri());
             return "INSERT DATA {\n"
-                + "<" + op.iri() + "> a <" + op.classIri() + "> .\n"
+                + "<" + op.iri() + "> a " + classExpr + " .\n"
                 + "}";
         } else if (type.equals("removeClassAssertion")) {
             // Remove rdf:type assertion from an individual
@@ -1118,6 +1124,69 @@ public class OntologyMutationService {
     /**
      * Helper method to get the axiom predicate based on axiom type
      */
+    private boolean isComplexExpression(String expression) {
+        if (expression == null) return false;
+        return expression.contains(" ") && !expression.trim().startsWith("<") && !expression.trim().startsWith("_:");
+    }
+
+    private String resolveEntity(String projectId, String name) {
+        if (name == null) return null;
+        String trimmed = name.trim();
+        
+        // If it's already an IRI or CURIE, return it
+        if (trimmed.startsWith("http") || trimmed.startsWith("urn:") || trimmed.startsWith("_:")) return trimmed;
+        if (trimmed.contains(":") && !trimmed.contains(" ")) return trimmed; // CURIE like owl:Thing
+        
+        // Try to find by label
+        // Escape quotes in name
+        String escapedName = trimmed.replace("\"", "\\\"");
+        String query = PREFIXES + """
+            SELECT ?iri WHERE {
+                ?iri rdfs:label "%s" .
+            } LIMIT 1
+            """.formatted(escapedName);
+            
+        try {
+            TupleQueryResult result = datasetService.execSelect(projectId, query);
+            if (result.hasNext()) {
+                BindingSet bs = result.next();
+                return bs.getValue("iri").stringValue();
+            }
+        } catch (Exception e) {
+            log.warn("Failed to resolve entity '{}': {}", trimmed, e.getMessage());
+        }
+        return trimmed; // Fallback
+    }
+
+    private String buildClassExpressionSparql(String projectId, String expression) {
+        if (!isComplexExpression(expression)) {
+             // Ensure it's wrapped in <> if it's a full IRI and not already wrapped
+             String trimmed = expression.trim();
+             if ((trimmed.startsWith("http") || trimmed.startsWith("urn:")) && !trimmed.startsWith("<")) {
+                 return "<" + trimmed + ">";
+             }
+             return trimmed; // CURIE or already wrapped
+        }
+
+        // Simple parser for "P some C"
+        // Regex: ^(\S+)\s+(some|only)\s+(.+)$
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile("^(\\S+)\\s+(some|only)\\s+(.+)$");
+        java.util.regex.Matcher m = p.matcher(expression);
+        
+        if (m.find()) {
+            String property = m.group(1);
+            String type = m.group(2);
+            String target = m.group(3);
+            
+            String propertyIri = resolveEntity(projectId, property);
+            String targetIri = resolveEntity(projectId, target);
+            
+            return buildRestrictionBody(propertyIri, type, targetIri, null, false);
+        }
+        
+        throw new IllegalArgumentException("Unsupported complex expression: " + expression);
+    }
+
     private String getAxiomPredicate(String axiomType) {
         if (axiomType == null) {
             return "rdfs:subClassOf";

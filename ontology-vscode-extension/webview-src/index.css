@@ -228,43 +228,43 @@ body {
   border-color: var(--border);
 }
 
-/* Fix light mode - prevent dark mode colors */
-body:not(.dark) :where(div, section, header, footer, main, aside, nav, article).bg-gray-800,
-body:not(.dark) :where(div, section, header, footer, main, aside, nav, article).bg-gray-900 {
+/* Fix light mode - prevent dark mode colors (theme class is on <html>) */
+:root:not(.dark) :where(div, section, header, footer, main, aside, nav, article).bg-gray-800,
+:root:not(.dark) :where(div, section, header, footer, main, aside, nav, article).bg-gray-900 {
   background-color: var(--surface-1) !important;
 }
 
-body:not(.dark) :where(div, section, header, footer, main, aside, nav, article).bg-gray-700,
-body:not(.dark) :where(div, section, header, footer, main, aside, nav, article).bg-gray-600 {
+:root:not(.dark) :where(div, section, header, footer, main, aside, nav, article).bg-gray-700,
+:root:not(.dark) :where(div, section, header, footer, main, aside, nav, article).bg-gray-600 {
   background-color: var(--surface-2) !important;
 }
 
 /* Force white backgrounds in light mode where dark backgrounds appear */
-body:not(.dark) :where(div, section, header, footer, main, aside, nav, article)[style*="background-color: rgb(55, 65, 81)"],
-body:not(.dark) :where(div, section, header, footer, main, aside, nav, article)[style*="background-color:#374151"],
-body:not(.dark) :where(div, section, header, footer, main, aside, nav, article)[style*="background: #374151"],
-body:not(.dark) :where(div, section, header, footer, main, aside, nav, article)[style*="backgroundColor: '#374151'"] {
+:root:not(.dark) :where(div, section, header, footer, main, aside, nav, article)[style*="background-color: rgb(55, 65, 81)"],
+:root:not(.dark) :where(div, section, header, footer, main, aside, nav, article)[style*="background-color:#374151"],
+:root:not(.dark) :where(div, section, header, footer, main, aside, nav, article)[style*="background: #374151"],
+:root:not(.dark) :where(div, section, header, footer, main, aside, nav, article)[style*="backgroundColor: '#374151'"] {
   background-color: var(--surface-1) !important;
   color: var(--text-primary) !important;
 }
 
 /* In light mode, only coerce accidental `text-white` on non-interactive text nodes. */
-body:not(.dark) :where(div, span, p, li, td, th, label, small, code, pre, h1, h2, h3, h4, h5, h6).text-white {
+:root:not(.dark) :where(div, span, p, li, td, th, label, small, code, pre, h1, h2, h3, h4, h5, h6).text-white {
   color: var(--text-primary) !important;
 }
 
 /* Fix hover states - ensure text remains visible */
-body:not(.dark) .hover\:bg-slate-100:hover,
-body:not(.dark) .hover\:bg-gray-100:hover,
-body:not(.dark) .hover\:bg-gray-200:hover {
+:root:not(.dark) .hover\:bg-slate-100:hover,
+:root:not(.dark) .hover\:bg-gray-100:hover,
+:root:not(.dark) .hover\:bg-gray-200:hover {
   color: var(--text-primary) !important;
 }
 
 /* Ensure all text in light mode uses proper colors */
-body:not(.dark) .text-gray-600,
-body:not(.dark) .text-gray-700,
-body:not(.dark) .text-gray-800,
-body:not(.dark) .text-gray-900 {
+:root:not(.dark) .text-gray-600,
+:root:not(.dark) .text-gray-700,
+:root:not(.dark) .text-gray-800,
+:root:not(.dark) .text-gray-900 {
   color: var(--text-primary) !important;
 }
 
@@ -604,8 +604,58 @@ html, body, #root {
   color: var(--text-primary) !important;
 }
 
-/* Ensure dark buttons keep a white foreground in light mode (do not override interactive `text-white`). */
-body:not(.dark) :where(button, a)[class*="text-white"] {
+/* Top menu bar (File/Edit/View/Reasoner/...) hover styles */
+.ontocode-top-menu .ontocode-top-menu-button {
+  color: var(--text-primary);
+}
+
+:root:not(.dark) .ontocode-top-menu .ontocode-top-menu-button:hover,
+:root:not(.dark) .ontocode-top-menu .ontocode-top-menu-button.is-open {
+  background-color: #f3f4f6 !important; /* light grey */
+  color: #7c3aed !important; /* purple-600 */
+}
+
+:root.dark .ontocode-top-menu .ontocode-top-menu-button:hover,
+:root.dark .ontocode-top-menu .ontocode-top-menu-button.is-open {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+  color: var(--text-primary) !important;
+}
+
+.ontocode-top-menu .ontocode-top-menu-item {
+  color: var(--text-primary);
+}
+
+:root:not(.dark) .ontocode-top-menu .ontocode-top-menu-item:hover {
+  background-color: #f3f4f6 !important;
+  color: #7c3aed !important;
+}
+
+:root.dark .ontocode-top-menu .ontocode-top-menu-item:hover {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+  color: var(--text-primary) !important;
+}
+
+/* Icon buttons (e.g., Theme Settings) */
+.ontocode-icon-hover-accent {
+  color: var(--text-secondary);
+}
+
+:root:not(.dark) .ontocode-icon-hover-accent:hover {
+  background-color: #f3f4f6 !important; /* light grey */
+  color: #7c3aed !important; /* purple-600 */
+}
+
+:root.dark .ontocode-icon-hover-accent {
+  color: var(--text-secondary);
+}
+
+:root.dark .ontocode-icon-hover-accent:hover {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+  color: var(--text-primary) !important;
+}
+
+/* Ensure buttons/links that explicitly use `text-white` remain white in light mode. */
+:root:not(.dark) :where(button, a).text-white {
   color: #FFFFFF !important;
 }
 
