@@ -114,12 +114,10 @@ const ManchesterSyntaxEditor: React.FC<ManchesterSyntaxEditorProps> = ({
               <textarea
                 value={expression}
                 onChange={handleInputChange}
-                className={`w-full h-32 p-3 border rounded-md font-mono text-sm focus:ring-2 focus:outline-none ${
+                className={`w-full h-32 p-3 border rounded-md font-mono text-sm focus:ring-2 focus:outline-none bg-white text-black ${
                   isValid ? 'focus:ring-purple-500' : 'border-red-300 focus:ring-red-500'
                 }`}
                 style={{ 
-                  color: 'var(--text-primary)', 
-                  backgroundColor: 'var(--surface-2)', 
                   borderColor: isValid ? 'var(--border)' : '#fca5a5' 
                 }}
                 placeholder="e.g. Cell and hasPart some Nucleus"

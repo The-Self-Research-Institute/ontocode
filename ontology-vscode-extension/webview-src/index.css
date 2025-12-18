@@ -229,26 +229,27 @@ body {
 }
 
 /* Fix light mode - prevent dark mode colors */
-body:not(.dark) .bg-gray-800,
-body:not(.dark) .bg-gray-900 {
+body:not(.dark) :where(div, section, header, footer, main, aside, nav, article).bg-gray-800,
+body:not(.dark) :where(div, section, header, footer, main, aside, nav, article).bg-gray-900 {
   background-color: var(--surface-1) !important;
 }
 
-body:not(.dark) .bg-gray-700,
-body:not(.dark) .bg-gray-600 {
+body:not(.dark) :where(div, section, header, footer, main, aside, nav, article).bg-gray-700,
+body:not(.dark) :where(div, section, header, footer, main, aside, nav, article).bg-gray-600 {
   background-color: var(--surface-2) !important;
 }
 
 /* Force white backgrounds in light mode where dark backgrounds appear */
-body:not(.dark) [style*="background-color: rgb(55, 65, 81)"],
-body:not(.dark) [style*="background-color:#374151"],
-body:not(.dark) [style*="background: #374151"],
-body:not(.dark) [style*="backgroundColor: '#374151'"] {
+body:not(.dark) :where(div, section, header, footer, main, aside, nav, article)[style*="background-color: rgb(55, 65, 81)"],
+body:not(.dark) :where(div, section, header, footer, main, aside, nav, article)[style*="background-color:#374151"],
+body:not(.dark) :where(div, section, header, footer, main, aside, nav, article)[style*="background: #374151"],
+body:not(.dark) :where(div, section, header, footer, main, aside, nav, article)[style*="backgroundColor: '#374151'"] {
   background-color: var(--surface-1) !important;
   color: var(--text-primary) !important;
 }
 
-body:not(.dark) .text-white {
+/* In light mode, only coerce accidental `text-white` on non-interactive text nodes. */
+body:not(.dark) :where(div, span, p, li, td, th, label, small, code, pre, h1, h2, h3, h4, h5, h6).text-white {
   color: var(--text-primary) !important;
 }
 
@@ -344,13 +345,14 @@ body:not(.dark) .text-gray-900 {
 /* Button variants */
 .btn-primary {
   background-color: var(--accent);
-  color: var(--on-accent);
+  color: #FFFFFF;
   border: none;
 }
 
 .btn-primary:hover {
-  background-color: var(--accent);
-  filter: brightness(1.1);
+  background-color: #FFFFFF;
+  color: var(--accent);
+  border: 1px solid var(--accent);
 }
 
 .btn-tonal {
@@ -360,7 +362,8 @@ body:not(.dark) .text-gray-900 {
 }
 
 .btn-tonal:hover {
-  background-color: var(--accent-hover);
+  background-color: #f3f4f6;
+  color: var(--accent);
 }
 
 .btn-outline {
@@ -370,7 +373,8 @@ body:not(.dark) .text-gray-900 {
 }
 
 .btn-outline:hover {
-  background-color: var(--hover-overlay);
+  background-color: #f3f4f6;
+  color: var(--accent);
 }
 
 /* Interaction states */
@@ -470,9 +474,9 @@ body:not(.dark) .text-gray-900 {
 }
 
 .theme-input {
-  background-color: var(--surface-2);
+  background-color: #FFFFFF;
   border: 1px solid var(--border);
-  color: var(--text-primary);
+  color: #000000;
 }
 
 .theme-input::placeholder {
@@ -576,6 +580,33 @@ html, body, #root {
 :where(input[type="text"], input[type="search"], input[type="email"], input[type="password"], input[type="url"], textarea)::placeholder {
   color: var(--text-tertiary);
   opacity: 0.9;
+}
+
+/* Theme-safe form controls (works across core UI + plugins) */
+:where(input, textarea, select):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]) {
+  background-color: var(--surface-2) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border) !important;
+}
+
+:where(input, textarea, select):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+:where(input, textarea, select):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"])::placeholder {
+  color: var(--text-tertiary) !important;
+  opacity: 0.9;
+}
+
+:where(textarea) {
+  background-color: var(--surface-2) !important;
+  color: var(--text-primary) !important;
+}
+
+/* Ensure dark buttons keep a white foreground in light mode (do not override interactive `text-white`). */
+body:not(.dark) :where(button, a)[class*="text-white"] {
+  color: #FFFFFF !important;
 }
 
 /* Resizable panel handles */
