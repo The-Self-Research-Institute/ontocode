@@ -90,6 +90,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
   const [uninstallPluginId, setUninstallPluginId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [updatingPlugin, setUpdatingPlugin] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<'name' | 'downloads' | 'rating'>('downloads');
 
   const categories = ['All', 'Visualization', 'Editor', 'Reasoning', 'Query', 'Import/Export', 'Utility'];
 
@@ -393,14 +394,31 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
   // COMPUTED VALUES
   // =============================================================================
 
-  const filteredPlugins = plugins.filter(plugin => {
-    const matchesSearch = 
-      plugin.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      plugin.description.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = 
-      selectedCategory === 'All' || plugin.category === selectedCategory;
-    return matchesSearch && matchesCategory;
-  });
+  const filteredPlugins = plugins
+    .filter(plugin => {
+      const matchesSearch = 
+        plugin.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        plugin.description.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesCategory = 
+        selectedCategory === 'All' || plugin.category === selectedCategory;
+      return matchesSearch && matchesCategory;
+    })
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'name':
+          return a.name.localeCompare(b.name);
+        case 'downloads':
+          const aDownloads = a.stats?.totalDownloads || 0;
+          const bDownloads = b.stats?.totalDownloads || 0;
+          return bDownloads - aDownloads; // Descending order
+        case 'rating':
+          const aRating = a.stats?.averageRating || 0;
+          const bRating = b.stats?.averageRating || 0;
+          return bRating - aRating; // Descending order
+        default:
+          return 0;
+      }
+    });
 
   // =============================================================================
   // RENDER HELPERS
@@ -475,9 +493,20 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
                 placeholder="Search plugins..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-black"
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-black bg-white"
               />
             </div>
+            
+            {/* Sort Dropdown */}
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as 'name' | 'downloads' | 'rating')}
+              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-black bg-white font-medium"
+            >
+              <option value="downloads">Sort by Downloads</option>
+              <option value="rating">Sort by Rating</option>
+              <option value="name">Sort by Name</option>
+            </select>
           </div>
 
           {/* Category Filters */}

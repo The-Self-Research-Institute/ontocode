@@ -529,7 +529,7 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext }> =
       </div>
       <div className="p-4 flex-grow flex flex-col gap-4">
         <textarea 
-          className="w-full h-32 p-3 font-mono text-sm border-2 border-gray-400 rounded-lg bg-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-gray-900 placeholder-gray-500"
+          className="w-full h-32 p-3 font-mono text-sm border-2 border-gray-400 rounded-lg bg-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-black placeholder-gray-500"
           value={query} 
           onChange={(e) => setQuery(e.target.value)} 
           placeholder="Enter SQWRL query… e.g., Person(?p) ^ hasAge(?p, ?age) -> sqwrl:select(?p, ?age)" 
@@ -1202,7 +1202,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
                   placeholder="Search axioms... (e.g., Adult, Person, hasAge)"
                   value={searchFilter}
                   onChange={(e) => setSearchFilter(e.target.value)}
-                  className="w-full pl-10 pr-8 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-300 focus:border-purple-400"
+                  className="w-full pl-10 pr-8 py-2 text-sm text-black border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-300 focus:border-purple-400"
                 />
                 {searchFilter && (
                   <button
@@ -1805,7 +1805,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                 placeholder="Search rules..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-200"
+                className="w-full pl-9 pr-3 py-1.5 text-sm text-black border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-200"
               />
             </div>
             {/* Selection controls */}
@@ -1956,7 +1956,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                       value={editForm.ruleName}
                       onChange={e => setEditForm(prev => ({ ...prev, ruleName: e.target.value }))}
                       disabled={!isEditing}
-                      className="w-full px-4 py-2.5 text-base font-medium border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-200 disabled:bg-gray-50 disabled:text-gray-600"
+                      className="w-full px-4 py-2.5 text-base text-black font-medium border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-200 disabled:bg-gray-50 disabled:text-gray-600"
                       placeholder="Enter rule name"
                     />
                     
@@ -1969,7 +1969,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                           value={editForm.category}
                           onChange={e => setEditForm(prev => ({ ...prev, category: e.target.value }))}
                           disabled={!isEditing}
-                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-200 disabled:bg-gray-50"
+                          className="w-full px-3 py-2 text-sm text-black border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-200 disabled:bg-gray-50"
                           placeholder="e.g., Classification"
                         />
                       </div>
@@ -2021,7 +2021,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                       value={editForm.ruleText}
                       onChange={e => setEditForm(prev => ({ ...prev, ruleText: e.target.value }))}
                       disabled={!isEditing}
-                      className="w-full h-32 px-4 py-3 font-mono text-sm resize-none focus:outline-none disabled:bg-gray-50 text-gray-900 disabled:text-gray-700"
+                      className="w-full h-32 px-4 py-3 font-mono text-sm resize-none focus:outline-none disabled:bg-gray-50 bg-white text-black disabled:text-gray-700"
                       placeholder="Person(?p) ^ hasAge(?p, ?age) ^ swrlb:greaterThan(?age, 18) -> Adult(?p)"
                     />
 
@@ -2046,7 +2046,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                       value={editForm.comment}
                       onChange={e => setEditForm(prev => ({ ...prev, comment: e.target.value }))}
                       disabled={!isEditing}
-                      className="w-full h-20 px-3 py-2 text-sm border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-purple-200 disabled:bg-gray-50"
+                      className="w-full h-20 px-3 py-2 text-sm border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-purple-200 disabled:bg-gray-50 bg-white text-black"
                       placeholder="Add notes or documentation..."
                     />
                   </div>

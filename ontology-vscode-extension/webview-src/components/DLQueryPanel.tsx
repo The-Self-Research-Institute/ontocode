@@ -459,7 +459,7 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
               value={query}
               onChange={e => setQuery(e.target.value)}
               placeholder="Enter Manchester OWL class expression...&#10;Examples: Person, hasChild some Man, Pizza and hasTopping some MozzarellaTopping"
-              className="w-full h-24 border border-gray-200 rounded-lg p-3 font-mono text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none text-gray-900"
+              className="w-full h-24 border border-gray-200 rounded-lg p-3 font-mono text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none bg-white text-black"
               onKeyDown={e => {
                 if (e.key === 'Enter' && e.ctrlKey) {
                   e.preventDefault();

@@ -23,7 +23,7 @@ const ManchesterSyntaxEditor: React.FC<ManchesterSyntaxEditorProps> = ({ initial
   return (
     <div className="p-2 border border-purple-300 bg-purple-50 rounded-md my-1">
       <textarea
-        className="w-full h-20 p-2 font-mono text-xs border border-gray-300 rounded-md bg-white focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+        className="w-full h-20 p-2 font-mono text-xs border border-gray-300 rounded-md bg-white text-black focus:ring-2 focus:ring-purple-500 focus:border-transparent"
         value={value}
         onChange={(e) => setValue(e.target.value)}
         placeholder="Enter Manchester syntax... e.g., hasTopping some MozzarellaTopping"

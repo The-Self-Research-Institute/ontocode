@@ -1,43 +1,130 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Check } from 'lucide-react';
-
-type Suggestion = { label: string; value: string };
+import EntityHierarchy from '../EntityHierarchy';
+import type { TreeNode } from '../../types';
 
 interface PropertyAssertionDialogProps {
   isOpen: boolean;
   title: string;
-  propertyLabel: string;
-  targetLabel: string;
   isObjectProperty: boolean;
-  propertySuggestions?: Suggestion[];
-  targetSuggestions?: Suggestion[];
-  onChange: (next: { propertyLabel: string; targetLabel: string; isObjectProperty: boolean }) => void;
+  
+  // Hierarchy Data
+  objectPropertiesTree?: TreeNode[];
+  dataPropertiesTree?: TreeNode[];
+  
+  // Legacy/Simple mode props
+  propertySuggestions?: { label: string; value: string }[];
+  targetSuggestions?: { label: string; value: string }[];
+  
+  // Initial values
+  initialPropertyLabel?: string;
+  initialTargetLabel?: string;
+  
+  // Callbacks
+  onConfirm: (data: { 
+    propertyLabel: string; 
+    targetLabel: string; 
+    isObjectProperty: boolean;
+    language?: string;
+    datatype?: string;
+  }) => void;
   onCancel: () => void;
-  onConfirm: () => void;
+  
+  // Legacy props
+  propertyLabel?: string;
+  targetLabel?: string;
+  showTypeSelector?: boolean;
+  onChange?: (next: { propertyLabel: string; targetLabel: string; isObjectProperty: boolean }) => void;
 }
+
+const DATATYPES = [
+  'xsd:string',
+  'xsd:integer',
+  'xsd:decimal',
+  'xsd:double',
+  'xsd:float',
+  'xsd:boolean',
+  'xsd:dateTime',
+  'xsd:date',
+  'xsd:time',
+  'rdf:PlainLiteral',
+  'rdfs:Literal',
+  'xsd:anyURI'
+];
 
 const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
   isOpen,
   title,
-  propertyLabel,
-  targetLabel,
   isObjectProperty,
+  objectPropertiesTree = [],
+  dataPropertiesTree = [],
   propertySuggestions = [],
   targetSuggestions = [],
-  onChange,
+  initialPropertyLabel = '',
+  initialTargetLabel = '',
+  onConfirm,
   onCancel,
-  onConfirm
+  // Legacy props handling
+  propertyLabel: legacyPropertyLabel,
+  targetLabel: legacyTargetLabel,
+  onChange
 }) => {
-  const [touched, setTouched] = useState(false);
+  // Initialize state with either new props or legacy props
+  const [propertyLabel, setPropertyLabel] = useState(initialPropertyLabel || legacyPropertyLabel || '');
+  const [targetLabel, setTargetLabel] = useState(initialTargetLabel || legacyTargetLabel || '');
+  const [language, setLanguage] = useState('');
+  const [datatype, setDatatype] = useState('xsd:string');
+  
+  // For hierarchy selection
+  const [selectedNode, setSelectedNode] = useState<TreeNode | null>(null);
+  const [expandedNodes, setExpandedNodes] = useState<string[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
-    if (isOpen) setTouched(false);
-  }, [isOpen]);
+    if (isOpen) {
+      setPropertyLabel(initialPropertyLabel || legacyPropertyLabel || '');
+      setTargetLabel(initialTargetLabel || legacyTargetLabel || '');
+      setLanguage('');
+      setDatatype('xsd:string');
+      setSelectedNode(null);
+      setSearchQuery('');
+    }
+  }, [isOpen, initialPropertyLabel, initialTargetLabel, legacyPropertyLabel, legacyTargetLabel]);
 
-  const canConfirm = propertyLabel.trim().length > 0 && targetLabel.trim().length > 0;
+  // Update property label when node selected
+  useEffect(() => {
+    if (selectedNode) {
+      setPropertyLabel(selectedNode.label || selectedNode.id);
+      // If legacy onChange is present, call it
+      if (onChange) {
+        onChange({ propertyLabel: selectedNode.label || selectedNode.id, targetLabel, isObjectProperty });
+      }
+    }
+  }, [selectedNode]);
 
-  const propertyListId = useMemo(() => `prop-suggestions-${Math.random().toString(16).slice(2)}`, []);
-  const targetListId = useMemo(() => `target-suggestions-${Math.random().toString(16).slice(2)}`, []);
+  // Handle manual input changes for legacy support
+  const handlePropertyChange = (val: string) => {
+    setPropertyLabel(val);
+    if (onChange) onChange({ propertyLabel: val, targetLabel, isObjectProperty });
+  };
+
+  const handleTargetChange = (val: string) => {
+    setTargetLabel(val);
+    if (onChange) onChange({ propertyLabel, targetLabel: val, isObjectProperty });
+  };
+
+  const handleConfirm = () => {
+    onConfirm({
+      propertyLabel,
+      targetLabel,
+      isObjectProperty,
+      language: !isObjectProperty ? language : undefined,
+      datatype: !isObjectProperty ? datatype : undefined
+    });
+  };
+
+  const activeTree = isObjectProperty ? objectPropertiesTree : dataPropertiesTree;
+  const showHierarchy = activeTree && activeTree.length > 0;
 
   if (!isOpen) return null;
 
@@ -48,131 +135,152 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
         style={{
           backgroundColor: 'var(--vscode-editor-background)',
           color: 'var(--vscode-foreground)',
-          maxWidth: 'min(860px, calc(100vw - 32px))',
-          maxHeight: 'min(520px, calc(100vh - 32px))',
+          maxWidth: '900px',
+          height: '600px',
           resize: 'both',
-          overflow: 'auto'
+          overflow: 'hidden'
         }}
         onClick={e => e.stopPropagation()}
       >
+        {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: 'var(--vscode-panel-border)' }}>
           <div className="font-semibold">{title}</div>
-          <button
-            onClick={onCancel}
-            className="p-1 rounded"
-            style={{ color: 'var(--vscode-descriptionForeground)' }}
-            title="Close"
-          >
+          <button onClick={onCancel} className="p-1 rounded hover:bg-gray-700/20">
             <X size={18} />
           </button>
         </div>
 
-        <div className="p-4 flex-1 min-h-0">
-          <div className="flex items-center gap-3 mb-3">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="radio"
-                name="propType"
-                checked={isObjectProperty}
-                onChange={() => onChange({ propertyLabel, targetLabel, isObjectProperty: true })}
-              />
-              Object property
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="radio"
-                name="propType"
-                checked={!isObjectProperty}
-                onChange={() => onChange({ propertyLabel, targetLabel, isObjectProperty: false })}
-              />
-              Data property
-            </label>
-          </div>
+        {/* Body */}
+        <div className="flex-1 flex min-h-0">
+          {/* Left: Property Hierarchy */}
+          {showHierarchy && (
+            <div className="w-1/3 border-r flex flex-col" style={{ borderColor: 'var(--vscode-panel-border)' }}>
+              <div className="p-2 border-b bg-gray-50/5 dark:bg-gray-900/20" style={{ borderColor: 'var(--vscode-panel-border)' }}>
+                <span className="text-xs font-bold uppercase opacity-70">
+                  {isObjectProperty ? 'Object Properties' : 'Data Properties'}
+                </span>
+              </div>
+              <div className="flex-1 overflow-auto">
+                <EntityHierarchy
+                  entitiesTab={isObjectProperty ? 'ObjectProperties' : 'DataProperties'}
+                  filteredData={activeTree}
+                  selectedItem={selectedNode}
+                  expandedNodes={expandedNodes}
+                  searchQuery={searchQuery}
+                  onSearchQueryChange={setSearchQuery}
+                  onSelectItem={(item) => setSelectedNode(item as TreeNode)}
+                  onToggleNode={(id) => setExpandedNodes(prev => prev.includes(id) ? prev.filter(n => n !== id) : [...prev, id])}
+                  onAddItem={() => {}}
+                  onDeleteItem={() => {}}
+                  hideToolbarActions={true}
+                />
+              </div>
+            </div>
+          )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {/* Right: Form */}
+          <div className={`flex-1 p-4 flex flex-col gap-4 overflow-auto ${!showHierarchy ? 'w-full' : ''}`}>
+            
+            {/* Property Name (Read-only if selected from tree, or editable) */}
             <div>
+              <label className="block text-xs font-medium mb-1 opacity-70">
+                {isObjectProperty ? 'Object Property' : 'Data Property'}
+              </label>
               <input
                 type="text"
-                placeholder={isObjectProperty ? 'Enter object property name' : 'Enter data property name'}
                 value={propertyLabel}
-                list={propertySuggestions.length ? propertyListId : undefined}
-                onChange={e => onChange({ propertyLabel: e.target.value, targetLabel, isObjectProperty })}
-                onBlur={() => setTouched(true)}
-                className="w-full px-3 py-2 rounded border text-sm"
+                onChange={e => handlePropertyChange(e.target.value)}
+                list={propertySuggestions.length ? "prop-suggestions" : undefined}
+                className="w-full px-3 py-2 rounded border text-sm bg-transparent"
+                style={{ borderColor: 'var(--vscode-input-border)', backgroundColor: 'var(--vscode-input-background)' }}
+                placeholder="Select a property or type name..."
               />
               {propertySuggestions.length > 0 && (
-                <datalist id={propertyListId}>
-                  {propertySuggestions.map(s => (
-                    <option key={s.value} value={s.label} />
-                  ))}
+                <datalist id="prop-suggestions">
+                  {propertySuggestions.map(s => <option key={s.value} value={s.label} />)}
                 </datalist>
-              )}
-              {!propertyLabel.trim() && touched && (
-                <div className="text-xs mt-1" style={{ color: 'var(--vscode-inputValidation-errorForeground)' }}>
-                  Property is required
-                </div>
               )}
             </div>
 
-            <div>
-              <input
-                type="text"
-                placeholder={isObjectProperty ? 'Enter individual name' : 'Enter literal value'}
-                value={targetLabel}
-                list={isObjectProperty && targetSuggestions.length ? targetListId : undefined}
-                onChange={e => onChange({ propertyLabel, targetLabel: e.target.value, isObjectProperty })}
-                onBlur={() => setTouched(true)}
-                className="w-full px-3 py-2 rounded border text-sm"
-              />
-              {isObjectProperty && targetSuggestions.length > 0 && (
-                <datalist id={targetListId}>
-                  {targetSuggestions.map(s => (
-                    <option key={s.value} value={s.label} />
-                  ))}
-                </datalist>
-              )}
-              {!targetLabel.trim() && touched && (
-                <div className="text-xs mt-1" style={{ color: 'var(--vscode-inputValidation-errorForeground)' }}>
-                  {isObjectProperty ? 'Individual is required' : 'Value is required'}
+            {/* Target / Value */}
+            <div className="flex-1 flex flex-col">
+              <label className="block text-xs font-medium mb-1 opacity-70">
+                {isObjectProperty ? 'Individual' : 'Value'}
+              </label>
+              {isObjectProperty ? (
+                <div className="relative">
+                   <input
+                    type="text"
+                    value={targetLabel}
+                    onChange={e => handleTargetChange(e.target.value)}
+                    list="target-suggestions"
+                    className="w-full px-3 py-2 rounded border text-sm bg-transparent"
+                    style={{ borderColor: 'var(--vscode-input-border)', backgroundColor: 'var(--vscode-input-background)' }}
+                    placeholder="Enter individual name"
+                  />
+                  <datalist id="target-suggestions">
+                    {targetSuggestions.map(s => <option key={s.value} value={s.label} />)}
+                  </datalist>
                 </div>
+              ) : (
+                <textarea
+                  value={targetLabel}
+                  onChange={e => handleTargetChange(e.target.value)}
+                  className="w-full flex-1 px-3 py-2 rounded border text-sm bg-transparent resize-none font-mono"
+                  style={{ borderColor: 'var(--vscode-input-border)', backgroundColor: 'var(--vscode-input-background)' }}
+                  placeholder="Enter literal value..."
+                />
               )}
             </div>
-          </div>
 
-          <div className="text-xs mt-3 text-center" style={{ color: 'var(--vscode-descriptionForeground)' }}>
-            (Tip: Use <strong>CTRL+Space</strong> to auto-complete names)
+            {/* Data Property Extras */}
+            {!isObjectProperty && (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium mb-1 opacity-70">Language Tag</label>
+                  <input
+                    type="text"
+                    value={language}
+                    onChange={e => setLanguage(e.target.value)}
+                    className="w-full px-3 py-2 rounded border text-sm bg-transparent"
+                    style={{ borderColor: 'var(--vscode-input-border)', backgroundColor: 'var(--vscode-input-background)' }}
+                    placeholder="e.g. en, fr"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1 opacity-70">Datatype</label>
+                  <select
+                    value={datatype}
+                    onChange={e => setDatatype(e.target.value)}
+                    className="w-full px-3 py-2 rounded border text-sm bg-transparent"
+                    style={{ borderColor: 'var(--vscode-input-border)', backgroundColor: 'var(--vscode-input-background)' }}
+                  >
+                    {DATATYPES.map(dt => (
+                      <option key={dt} value={dt}>{dt}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
-        <div
-          className="px-4 py-3 border-t flex justify-center gap-2"
-          style={{ borderColor: 'var(--vscode-panel-border)', backgroundColor: 'var(--vscode-editorWidget-background)' }}
-        >
-          <button
-            onClick={onConfirm}
-            disabled={!canConfirm}
-            className="px-6 py-1.5 rounded border text-sm font-medium disabled:opacity-50"
-            style={{
-              borderColor: 'var(--vscode-button-border, transparent)',
-              backgroundColor: 'var(--vscode-button-background)',
-              color: 'var(--vscode-button-foreground)'
-            }}
-          >
-            <span className="inline-flex items-center gap-2">
-              <Check size={16} />
-              OK
-            </span>
-          </button>
+        {/* Footer */}
+        <div className="px-4 py-3 border-t flex justify-end gap-2" style={{ borderColor: 'var(--vscode-panel-border)', backgroundColor: 'var(--vscode-editorWidget-background)' }}>
           <button
             onClick={onCancel}
-            className="px-6 py-1.5 rounded border text-sm font-medium"
-            style={{
-              borderColor: 'var(--vscode-button-secondaryBorder, var(--vscode-input-border))',
-              backgroundColor: 'var(--vscode-button-secondaryBackground, var(--vscode-input-background))',
-              color: 'var(--vscode-button-secondaryForeground, var(--vscode-foreground))'
-            }}
+            className="px-4 py-2 rounded text-sm hover:bg-gray-700/20"
           >
             Cancel
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={!propertyLabel || !targetLabel}
+            className="px-4 py-2 rounded text-sm font-medium flex items-center gap-2 disabled:opacity-50"
+            style={{ backgroundColor: 'var(--vscode-button-background)', color: 'var(--vscode-button-foreground)' }}
+          >
+            <Check size={16} />
+            OK
           </button>
         </div>
       </div>
@@ -181,4 +289,3 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
 };
 
 export default PropertyAssertionDialog;
-

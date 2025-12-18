@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.stream.Collectors;
 
 @Service
@@ -491,6 +493,28 @@ public class OntologyMutationService {
             return "DELETE DATA {\n"
                 + "<" + op.iri() + "> <" + op.property() + "> " + literal(op.value()) + " .\n"
                 + "}";
+        } else if (type.equals("addNegativeObjectPropertyAssertion")) {
+            String npaIri = negativePropertyAssertionIri(op, true);
+            return "INSERT DATA {\n"
+                + "<" + npaIri + "> a owl:NegativePropertyAssertion ;\n"
+                + "  owl:sourceIndividual <" + op.iri() + "> ;\n"
+                + "  owl:assertionProperty <" + op.property() + "> ;\n"
+                + "  owl:targetIndividual <" + op.target() + "> .\n"
+                + "}";
+        } else if (type.equals("deleteNegativeObjectPropertyAssertion")) {
+            String npaIri = negativePropertyAssertionIri(op, true);
+            return "DELETE WHERE { <" + npaIri + "> ?p ?o }";
+        } else if (type.equals("addNegativeDataPropertyAssertion")) {
+            String npaIri = negativePropertyAssertionIri(op, false);
+            return "INSERT DATA {\n"
+                + "<" + npaIri + "> a owl:NegativePropertyAssertion ;\n"
+                + "  owl:sourceIndividual <" + op.iri() + "> ;\n"
+                + "  owl:assertionProperty <" + op.property() + "> ;\n"
+                + "  owl:targetValue " + literal(op.value()) + " .\n"
+                + "}";
+        } else if (type.equals("deleteNegativeDataPropertyAssertion")) {
+            String npaIri = negativePropertyAssertionIri(op, false);
+            return "DELETE WHERE { <" + npaIri + "> ?p ?o }";
         } else if (type.equals("addSameIndividual")) {
             return "INSERT DATA {\n"
                 + "<" + op.iri() + "> owl:sameAs <" + op.target() + "> .\n"
@@ -544,6 +568,29 @@ public class OntologyMutationService {
             .replace("\r", "\\r")    // Carriage return
             .replace("\t", "\\t");   // Tab
         return "\"%s\"".formatted(escaped);
+    }
+
+    private String negativePropertyAssertionIri(MutationOp op, boolean isObjectTarget) {
+        String raw = isObjectTarget
+            ? "%s|%s|%s".formatted(op.iri(), op.property(), op.target())
+            : "%s|%s|%s".formatted(op.iri(), op.property(), op.value());
+
+        String hash = sha256Hex(raw);
+        return "http://ontocode.org/axiom/negativePropertyAssertion/" + hash;
+    }
+
+    private String sha256Hex(String input) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] bytes = digest.digest(input.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(bytes.length * 2);
+            for (byte b : bytes) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to compute SHA-256", e);
+        }
     }
 
     // Helper method to generate an rdfs:label triple if label is present
