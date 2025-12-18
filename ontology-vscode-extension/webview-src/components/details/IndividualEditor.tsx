@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, Loader2 } from 'lucide-react';
 import { Panel, AnnotationsDisplay, MultiSelectSection } from './common';
 import type { Individual, PropertyAssertion } from '../../types';
-import { ManchesterSyntaxEditor } from '../dialogs';
+import { ManchesterSyntaxEditor, IndividualSelectorDialog, PropertyAssertionDialog } from '../dialogs';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import apiClient from '../../services/apiClient';
 
@@ -21,6 +21,10 @@ const IndividualEditor: React.FC<{
   const [newAssertion, setNewAssertion] = useState({ propertyLabel: '', targetLabel: '', isObjectProperty: true });
   const [isLoading, setIsLoading] = useState(false);
   const [detailsFetched, setDetailsFetched] = useState<string | null>(null);
+  const [propertySuggestions, setPropertySuggestions] = useState<{ label: string; value: string }[]>([]);
+  const [individualSuggestions, setIndividualSuggestions] = useState<{ label: string; value: string }[]>([]);
+  const [sameDiffDialog, setSameDiffDialog] = useState<null | { mode: 'same' | 'different' }>(null);
+  const [allIndividuals, setAllIndividuals] = useState<Individual[]>([]);
 
   // Fetch individual details when component mounts or item changes
   useEffect(() => {
@@ -114,6 +118,53 @@ const IndividualEditor: React.FC<{
     } catch (error) {
       console.error('Failed to add property assertion:', error);
       alert('Failed to add property assertion. See console for details.');
+    }
+  };
+
+  const openPropertyAssertionDialog = async (isObjectProperty: boolean) => {
+    setNewAssertion(p => ({ ...p, isObjectProperty }));
+    setIsAddingAssertion(true);
+
+    try {
+      if (!projectId) return;
+      const [propsRes, indsRes] = await Promise.all([
+        apiClient.get<any>(`/api/ontology/${isObjectProperty ? 'object-properties' : 'data-properties'}/${projectId}`),
+        isObjectProperty ? apiClient.get<any>(`/api/ontology/individuals/${projectId}`) : Promise.resolve({ data: [] })
+      ]);
+
+      const props = Array.isArray(propsRes?.data) ? propsRes.data : propsRes?.data?.properties || [];
+      const propSuggestions = (props || []).map((p: any) => ({
+        label: p.label || p.name || (typeof p === 'string' ? p.split('#').pop() : String(p)),
+        value: p.id || p.iri || p.value || p.label || String(p)
+      }));
+      setPropertySuggestions(propSuggestions);
+
+      if (isObjectProperty) {
+        const inds = Array.isArray(indsRes?.data) ? indsRes.data : indsRes?.data?.individuals || [];
+        const indSuggestions = (inds || []).map((i: any) => ({
+          label: i.label || (typeof i === 'string' ? i.split('#').pop() : String(i)),
+          value: i.id || i.iri || i.value || i.label || String(i)
+        }));
+        setIndividualSuggestions(indSuggestions);
+      } else {
+        setIndividualSuggestions([]);
+      }
+    } catch (e) {
+      console.error('[IndividualEditor] Failed to load suggestions for assertion dialog:', e);
+      setPropertySuggestions([]);
+      setIndividualSuggestions([]);
+    }
+  };
+
+  const openSameDifferentDialog = async (mode: 'same' | 'different') => {
+    setSameDiffDialog({ mode });
+    try {
+      const res = await apiClient.get<any>(`/api/ontology/individuals/${projectId}`);
+      const inds = Array.isArray(res?.data) ? res.data : res?.data?.individuals || [];
+      setAllIndividuals(inds);
+    } catch (e) {
+      console.error('[IndividualEditor] Failed to load individuals:', e);
+      setAllIndividuals([]);
     }
   };
 
@@ -232,7 +283,7 @@ const IndividualEditor: React.FC<{
             <div className="mb-4 last:mb-0">
               <div className="flex justify-between items-center mb-1">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Object property assertions</h4>
-                <button onClick={() => { setNewAssertion(p => ({...p, isObjectProperty: true})); setIsAddingAssertion(true); }} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors" title="Add object property assertion">
+                <button onClick={() => openPropertyAssertionDialog(true)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors" title="Add object property assertion">
                   <Plus size={14} />
                 </button>
               </div>
@@ -270,7 +321,7 @@ const IndividualEditor: React.FC<{
             <div className="mb-4 last:mb-0">
               <div className="flex justify-between items-center mb-1">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Data property assertions</h4>
-                <button onClick={() => { setNewAssertion(p => ({...p, isObjectProperty: false})); setIsAddingAssertion(true); }} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-green-600 transition-colors" title="Add data property assertion">
+                <button onClick={() => openPropertyAssertionDialog(false)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-green-600 transition-colors" title="Add data property assertion">
                   <Plus size={14} />
                 </button>
               </div>
@@ -304,24 +355,26 @@ const IndividualEditor: React.FC<{
               </div>
             </div>
 
-            {/* Add Assertion Form (shown when adding) */}
-            {isAddingAssertion && (
-                <div className="p-2 border border-purple-200 rounded-md bg-purple-50 space-y-2 text-xs mb-4">
-                    <div className="font-semibold text-purple-800">
-                      Add {newAssertion.isObjectProperty ? 'Object' : 'Data'} Property Assertion
-                    </div>
-                    <div className="flex gap-2 items-center">
-                       <label className="flex items-center gap-1"><input type="radio" name="propType" checked={newAssertion.isObjectProperty} onChange={() => setNewAssertion(p => ({...p, isObjectProperty: true}))} /> Object</label>
-                       <label className="flex items-center gap-1"><input type="radio" name="propType" checked={!newAssertion.isObjectProperty} onChange={() => setNewAssertion(p => ({...p, isObjectProperty: false}))}/> Data</label>
-                    </div>
-                    <input value={newAssertion.propertyLabel} onChange={e => setNewAssertion(p => ({...p, propertyLabel: e.target.value}))} placeholder="Property" className="w-full p-1.5 border rounded" style={{ color: 'var(--text-primary)', backgroundColor: 'var(--surface-1)', borderColor: 'var(--border)' }}/>
-                    <input value={newAssertion.targetLabel} onChange={e => setNewAssertion(p => ({...p, targetLabel: e.target.value}))} placeholder={newAssertion.isObjectProperty ? "Target Individual" : "Literal Value"} className="w-full p-1.5 border rounded" style={{ color: 'var(--text-primary)', backgroundColor: 'var(--surface-1)', borderColor: 'var(--border)' }}/>
-                    <div className="flex justify-end gap-2">
-                         <button onClick={() => setIsAddingAssertion(false)} className="px-2 py-1 bg-gray-200 rounded hover:bg-gray-300">Cancel</button>
-                         <button onClick={handleAddAssertion} className="px-2 py-1 bg-purple-600 text-white rounded hover:bg-purple-700">Save</button>
-                    </div>
-                </div>
-            )}
+            {/* Add Assertion Dialog (Protégé-style) */}
+            <PropertyAssertionDialog
+              isOpen={isAddingAssertion}
+              title={`Property assertions: ${item.label}`}
+              propertyLabel={newAssertion.propertyLabel}
+              targetLabel={newAssertion.targetLabel}
+              isObjectProperty={newAssertion.isObjectProperty}
+              propertySuggestions={propertySuggestions}
+              targetSuggestions={individualSuggestions}
+              onChange={(next) => setNewAssertion(next)}
+              onCancel={() => {
+                setIsAddingAssertion(false);
+                setNewAssertion(p => ({ ...p, propertyLabel: '', targetLabel: '' }));
+              }}
+              onConfirm={async () => {
+                await handleAddAssertion();
+                setIsAddingAssertion(false);
+                setNewAssertion(p => ({ ...p, propertyLabel: '', targetLabel: '' }));
+              }}
+            />
 
             {/* Same Individual As / Different Individual From Section */}
             <div className="mb-4 last:mb-0">
@@ -333,7 +386,7 @@ const IndividualEditor: React.FC<{
                 <MultiSelectSection
                     title="Same Individual As"
                     items={item.sameIndividualAs}
-                    onAddClick={() => openEditor("Add Same Individual As (IRI)", handleAddSameAs)}
+                    onAddClick={() => openSameDifferentDialog('same')}
                     onDelete={handleDeleteSameAs}
                     themeColor="purple"
                     itemEntityType="individual"
@@ -343,7 +396,7 @@ const IndividualEditor: React.FC<{
                 <MultiSelectSection
                     title="Different Individual From"
                     items={item.differentIndividualFrom}
-                    onAddClick={() => openEditor("Add Different Individual From (IRI)", handleAddDifferentFrom)}
+                    onAddClick={() => openSameDifferentDialog('different')}
                     onDelete={handleDeleteDifferentFrom}
                     themeColor="purple"
                     itemEntityType="individual"
@@ -365,6 +418,30 @@ const IndividualEditor: React.FC<{
               setIsEditorOpen(false);
           }}
           projectId={projectId}
+        />
+      )}
+
+      {/* Protégé-style selector for same/different individuals */}
+      {sameDiffDialog && (
+        <IndividualSelectorDialog
+          isOpen={true}
+          onClose={() => setSameDiffDialog(null)}
+          title={sameDiffDialog.mode === 'same' ? `Same Individual As: ${item.label}` : `Different Individuals: ${item.label}`}
+          individuals={allIndividuals}
+          projectId={projectId}
+          excludeIndividualIds={[
+            item.id,
+            ...(sameDiffDialog.mode === 'same' ? (item.sameIndividualAs || []) : (item.differentIndividualFrom || []))
+          ]}
+          minSelection={1}
+          onConfirm={async (inds) => {
+            if (sameDiffDialog.mode === 'same') {
+              for (const ind of inds) await handleAddSameAs(ind.id);
+            } else {
+              for (const ind of inds) await handleAddDifferentFrom(ind.id);
+            }
+            setSameDiffDialog(null);
+          }}
         />
       )}
     </div>

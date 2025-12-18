@@ -19,6 +19,7 @@ export { default as KeyboardShortcutsDialog } from './KeyboardShortcutsDialog';
 export { default as EntityPreferencesDialog } from './EntityPreferencesDialog';
 export { default as IRIEditorDialog } from './IRIEditorDialog';
 export { default as IndividualSelectorDialog } from './IndividualSelectorDialog';
+export { default as PropertyAssertionDialog } from './PropertyAssertionDialog';
 
 // Annotation Property Description Dialogs (Protégé-style)
 export { default as AnnotationPropertyDomainDialog } from './AnnotationPropertyDomainDialog';
