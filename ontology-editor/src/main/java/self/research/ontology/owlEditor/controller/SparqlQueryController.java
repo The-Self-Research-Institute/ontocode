@@ -97,6 +97,8 @@ public class SparqlQueryController {
     @PostMapping("/query/{projectId}")
     public ResponseEntity<?> query(@PathVariable String projectId,
                                    @RequestBody SparqlRequest request) {
+        long startTime = System.currentTimeMillis();
+        
         TupleQueryResult rs = datasetService.execSelect(projectId, request.query());
         List<String> vars = rs.getBindingNames();
         List<Map<String, String>> rows = new ArrayList<>();
@@ -108,9 +110,13 @@ public class SparqlQueryController {
             }
             rows.add(row);
         }
+        
+        long executionTime = System.currentTimeMillis() - startTime;
+        
         return ResponseEntity.ok(Map.of(
                 "head", Map.of("vars", vars),
-                "results", rows));
+                "results", rows,
+                "executionTime", executionTime));
     }
 
     @PostMapping("/update/{projectId}")

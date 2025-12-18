@@ -1,7 +1,7 @@
 // src/Dashboard.tsx
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
-  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, DatabaseZap, Upload, FolderOpen, Sparkles, Clock, Users, Download, RefreshCw, AlertCircle, Puzzle, Zap, BookOpen, Brain, Network, GitMerge
+  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, DatabaseZap, Upload, FolderOpen, Sparkles, Clock, Users, Download, RefreshCw, AlertCircle, Puzzle, Zap, BookOpen, Brain, Network, GitMerge, Palette
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
@@ -11,6 +11,7 @@ import { syncService } from "../services/syncService";
 import type { TreeNode, Property, Individual, OntologyMetadata, SelectableItem, AnnotationProperty, Datatype } from '../types';
 import { useAuth } from '../custom-hook/useAuth';
 import { useCollaboration } from '../contexts/CollaborationContext';
+import { useTheme } from '../contexts/ThemeContext';
 import EntityHierarchy from './EntityHierarchy';
 import ClassEditor from './details/ClassEditor';
 import PropertyEditor from './details/PropertyEditor';
@@ -24,6 +25,7 @@ import CollaborationPanel, { CollaborationPanelRef } from './CollaborationPanel'
 import HistoryPanel from './HistoryPanel';
 import ToastNotification from './ToastNotification';
 import ShareDialog from './ShareDialog';
+import ThemeSettings from './ThemeSettings';
 // ImportProgressToast removed per user request
 import { QueueStatusIndicator, GlobalQueueStats } from './QueueStatusIndicator';
 import {
@@ -83,11 +85,11 @@ const LoadingDialog = ({ isOpen, message }: { isOpen: boolean; message?: string 
   if (!isOpen) return null;
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl p-8 max-w-sm w-full mx-4">
+      <div className="bg-theme-surface rounded-lg shadow-xl p-8 max-w-sm w-full mx-4" style={{ borderColor: 'var(--color-border)' }}>
         <div className="flex flex-col items-center">
-          <Loader2 size={48} className="text-purple-600 animate-spin mb-4" />
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">{message || "Loading Ontology"}</h3>
-          <p className="text-sm text-gray-500 text-center">Please wait while we process your ontology data...</p>
+          <Loader2 size={48} className="animate-spin mb-4" style={{ color: 'var(--color-primary)' }} />
+          <h3 className="text-lg font-semibold mb-2" style={{ color: 'var(--color-text)' }}>{message || "Loading Ontology"}</h3>
+          <p className="text-sm text-center" style={{ color: 'var(--color-text-secondary)' }}>Please wait while we process your ontology data...</p>
         </div>
       </div>
     </div>
@@ -110,7 +112,7 @@ const LoadingChoiceDialog = ({
   if (!isOpen) return null;
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]">
-      <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+      <div className="bg-theme-surface rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
         <div className="flex items-start mb-4">
           <div className="flex-shrink-0 w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center mr-3">
             <Loader2 size={20} className="text-purple-600 animate-spin" />
@@ -198,10 +200,10 @@ const PluginPlaceholder: React.FC<PluginPlaceholderProps> = ({
   error
 }) => {
   return (
-    <div className="h-full flex items-center justify-center bg-gradient-to-br from-gray-50 via-white to-gray-100 p-8">
+    <div className="h-full flex items-center justify-center p-8" style={{ backgroundColor: 'var(--bg)', color: 'var(--text-primary)' }}>
       <div className="max-w-2xl w-full">
         {/* Main Card */}
-        <div className="bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
+        <div className="rounded-2xl shadow-xl overflow-hidden" style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border)' }}>
           {/* Header with gradient */}
           <div className={`bg-gradient-to-r ${accentColor} p-8 text-white relative overflow-hidden`}>
             {/* Background pattern */}
@@ -226,51 +228,51 @@ const PluginPlaceholder: React.FC<PluginPlaceholderProps> = ({
           <div className="p-8">
             {/* Features Grid */}
             <div className="mb-8">
-              <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-4 flex items-center gap-2">
-                <Sparkles size={16} className="text-purple-500" />
+              <h3 className="text-sm font-semibold uppercase tracking-wider mb-4 flex items-center gap-2 text-secondary">
+                <Sparkles size={16} className="text-accent" />
                 Key Features
               </h3>
               <div className="grid grid-cols-2 gap-3">
                 {features.map((feature, index) => (
-                  <div key={index} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100 hover:border-purple-200 hover:bg-purple-50 transition-all">
-                    <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center flex-shrink-0">
+                  <div key={index} className="flex items-center gap-3 p-3 rounded-lg transition-all hover-overlay" style={{ backgroundColor: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+                    <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center flex-shrink-0">
                       <Check size={12} className="text-white" />
                     </div>
-                    <span className="text-sm text-gray-700 font-medium">{feature}</span>
+                    <span className="text-sm font-medium text-primary">{feature}</span>
                   </div>
                 ))}
               </div>
             </div>
 
             {/* Status & Action */}
-            <div className="border-t border-gray-100 pt-6">
+            <div className="pt-6" style={{ borderTop: '1px solid var(--divider)' }}>
               {error ? (
-                <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3">
-                  <AlertCircle size={20} className="text-red-500 flex-shrink-0 mt-0.5" />
+                <div className="mb-4 p-4 rounded-xl flex items-start gap-3" style={{ backgroundColor: 'var(--error-tint)', border: '1px solid var(--error)' }}>
+                  <AlertCircle size={20} className="flex-shrink-0 mt-0.5" style={{ color: 'var(--error)' }} />
                   <div className="flex-1">
                     <p className="text-sm font-medium text-red-800">Failed to load plugin</p>
                     <p className="text-xs text-red-600 mt-1">{error}</p>
                   </div>
                 </div>
               ) : isLoading ? (
-                <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-xl flex items-center gap-3">
-                  <Loader2 size={20} className="text-blue-500 animate-spin" />
+                <div className="mb-4 p-4 rounded-xl flex items-center gap-3" style={{ backgroundColor: 'var(--info-tint)', border: '1px solid var(--info)' }}>
+                  <Loader2 size={20} className="animate-spin" style={{ color: 'var(--info)' }} />
                   <div>
                     <p className="text-sm font-medium text-blue-800">Loading plugin...</p>
                     <p className="text-xs text-blue-600 mt-0.5">Downloading and initializing components</p>
                   </div>
                 </div>
               ) : isInstalled ? (
-                <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3">
-                  <AlertCircle size={20} className="text-amber-500 flex-shrink-0 mt-0.5" />
+                <div className="mb-4 p-4 rounded-xl flex items-start gap-3" style={{ backgroundColor: 'var(--warning-tint)', border: '1px solid var(--warning)' }}>
+                  <AlertCircle size={20} className="flex-shrink-0 mt-0.5" style={{ color: 'var(--warning)' }} />
                   <div>
                     <p className="text-sm font-medium text-amber-800">Plugin installed but not loaded</p>
                     <p className="text-xs text-amber-600 mt-1">Click the button below to load the plugin</p>
                   </div>
                 </div>
               ) : (
-                <div className="mb-4 p-4 bg-gray-50 border border-gray-200 rounded-xl flex items-start gap-3">
-                  <Package size={20} className="text-gray-400 flex-shrink-0 mt-0.5" />
+                <div className="mb-4 p-4 rounded-xl flex items-start gap-3" style={{ backgroundColor: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+                  <Package size={20} className="flex-shrink-0 mt-0.5 text-tertiary" />
                   <div>
                     <p className="text-sm font-medium text-gray-700">Plugin not installed</p>
                     <p className="text-xs text-gray-500 mt-1">Install from the marketplace to unlock these features</p>
@@ -316,7 +318,7 @@ const PluginPlaceholder: React.FC<PluginPlaceholderProps> = ({
         </div>
 
         {/* Footer tip */}
-        <p className="text-center text-xs text-gray-400 mt-4">
+        <p className="text-center text-xs text-gray-700 mt-4">
           Tip: Access all plugins from the <span className="font-medium">Settings → Plugin Marketplace</span>
         </p>
       </div>
@@ -403,7 +405,7 @@ const TopMenuBar = ({
   const menuItems = ['File', 'Edit', 'View', 'Reasoner', 'Tools', 'Window', 'Help'];
 
   return (
-    <header ref={menuRef} className="bg-gray-200 text-gray-800 text-xs flex items-center px-2 relative border-b border-gray-300 h-8 flex-shrink-0">
+    <header ref={menuRef} className="ontocode-top-menu text-xs flex items-center px-2 relative border-b h-8 flex-shrink-0" style={{ backgroundColor: 'var(--color-background)', color: 'var(--color-text)', borderBottomColor: 'var(--color-border)' }}>
       <div className="flex items-center gap-1 p-2 mr-2">
         <Package size={16} className="text-purple-600" />
       </div>
@@ -414,20 +416,20 @@ const TopMenuBar = ({
               onClick={() => {
                 setOpenMenu(openMenu === item ? null : item);
               }}
-              className="px-3 py-1 hover:bg-gray-300 rounded-sm"
+              className={`ontocode-top-menu-button cursor-pointer disabled:cursor-not-allowed px-3 py-1 rounded-sm transition-colors ${openMenu === item ? 'is-open' : ''}`}
             >
               {item}
             </button>
             {openMenu === item && (
-              <div className={`absolute left-0 mt-1 ${item === 'File' ? 'w-[360px]' : 'w-48'} bg-white border border-gray-300 rounded-lg shadow-xl z-20 overflow-hidden`}>
+              <div className={`ontocode-top-menu-dropdown absolute left-0 mt-1 ${item === 'File' ? 'w-[360px]' : 'w-48'} bg-theme-surface border rounded-lg shadow-xl z-20 overflow-hidden`} style={{ borderColor: 'var(--color-border)' }}>
                 {item === "View" ? (
                   <div className="py-1">
-                    <button
-                      onClick={() => {
-                        onOpenPluginMarketplace();
-                        setOpenMenu(null);
-                      }}
-                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                      <button
+                        onClick={() => {
+                          onOpenPluginMarketplace();
+                          setOpenMenu(null);
+                        }}
+                      className="ontocode-top-menu-item cursor-pointer disabled:cursor-not-allowed w-full text-left px-4 py-2 text-xs flex items-center gap-2"
                     >
                       <Package size={14} />
                       Plugin Marketplace
@@ -586,8 +588,8 @@ const OpenFileDialog = ({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-white rounded-lg shadow-2xl w-full max-w-md mx-4 max-h-[70vh] flex flex-col" onClick={e => e.stopPropagation()}>
-        <div className="p-4 border-b border-gray-200">
+      <div className="bg-theme-surface rounded-lg shadow-2xl w-full max-w-md mx-4 max-h-[70vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="p-4 border-b" style={{ borderColor: 'var(--color-border)' }}>
           <div className="relative">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
@@ -596,7 +598,13 @@ const OpenFileDialog = ({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               autoFocus
-              className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm"
+              className="w-full pl-10 pr-3 py-2 border rounded-lg focus:ring-2 text-sm"
+              style={{ 
+                borderColor: 'var(--color-border)',
+                backgroundColor: 'var(--color-surface)',
+                color: 'var(--color-text)',
+                '--tw-ring-color': 'var(--color-primary)'
+              } as React.CSSProperties}
             />
           </div>
         </div>
@@ -622,11 +630,11 @@ const OpenFileDialog = ({
                       }}
                       className={`flex items-center gap-3 p-2 px-3 rounded-md cursor-pointer transition-all ${
                         isActive
-                          ? 'bg-purple-50 border border-purple-300'
-                          : 'hover:bg-gray-50 border border-transparent'
+                          ? 'selected'
+                          : 'hover-overlay border border-transparent'
                       }`}
                     >
-                      <FileText size={18} className="text-purple-500" />
+                      <FileText size={18} className="text-accent" />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="text-xs font-medium text-gray-900 truncate">{file.filename}</span>
@@ -731,9 +739,9 @@ const ConfirmDialog = ({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4" onClick={e => e.stopPropagation()}>
-        <h3 className="text-lg font-semibold text-black mb-4">{title}</h3>
-        <p className="text-sm text-gray-700 mb-6">{message}</p>
+      <div className="bg-theme-surface rounded-lg shadow-xl p-6 max-w-md w-full mx-4" onClick={e => e.stopPropagation()}>
+        <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--color-text)' }}>{title}</h3>
+        <p className="text-sm mb-6" style={{ color: 'var(--color-text-secondary)' }}>{message}</p>
         <div className="flex justify-end gap-3">
           <button 
             onClick={() => {
@@ -947,7 +955,7 @@ const DetailsPanel = ({
     case 'Datatypes':
       return <DatatypeEditor item={selectedItem as Datatype} onUpdate={onUpdate} {...sharedProps} />;
     default:
-      return <div className="bg-white rounded-lg border p-4"><AnnotationsDisplay annotations={selectedItem.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} /></div>;
+      return <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4"><AnnotationsDisplay annotations={selectedItem.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} /></div>;
   }
 };
 // #endregion
@@ -968,7 +976,34 @@ const Dashboard = () => {
   // #region State
   const { user, logout } = useAuth();
   const collaboration = useCollaboration();
+  const { actualMode } = useTheme();
   const readonlyMode = false; // Allow editing by default
+  const [showThemeSettings, setShowThemeSettings] = useState(false);
+
+  const showToast = useCallback(
+    (message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') => {
+      collaboration.addNotification({
+        type,
+        message,
+        userId: user?.email || 'system',
+        username: user?.username || 'You',
+        userColor: '#6366f1',
+        timestamp: Date.now(),
+      });
+
+      if (window.vscode) {
+        window.vscode.postMessage({
+          type: 'showNotification',
+          notification: {
+            type,
+            title: 'OntoCode',
+            message,
+          },
+        });
+      }
+    },
+    [collaboration, user?.email, user?.username]
+  );
   const [projectId, setProjectId] = useState<string | null>(null);
   const [availableProjects, setAvailableProjects] = useState<any[]>([]);
   const [showProjectSelector, setShowProjectSelector] = useState(false);
@@ -4216,8 +4251,8 @@ const Dashboard = () => {
     switch (mainTab) {
       case 'CodeView':
         return (
-          <div className="flex h-full bg-gray-100">
-            <div className="flex-1 flex flex-col bg-white">
+          <div className="flex h-full" style={{ backgroundColor: 'var(--color-background)' }}>
+            <div className="flex-1 flex flex-col bg-theme-surface">
               <div className="p-4 border-b border-gray-200">
                 <h2 className="text-lg font-semibold">OWL/RDF Code View</h2>
                 <p className="text-sm text-gray-600 mt-1">View the ontology in different serialization formats</p>
@@ -4504,13 +4539,13 @@ const Dashboard = () => {
                             <div className="text-xs font-semibold text-purple-900">{propertyLabel}</div>
                             <div className="text-[10px] text-gray-400 font-mono truncate" title={key}>{key}</div>
                           </div>
-                          <div className="px-3 py-2 bg-white text-xs text-gray-700">{value?.toString() || ''}</div>
+                          <div className="px-3 py-2 bg-white dark:bg-gray-700 text-xs text-gray-700 dark:text-gray-300">{value?.toString() || ''}</div>
                         </div>
                       );
                     })}
                   </div>
                 ) : (
-                  <div className="text-xs text-gray-400 italic p-2 bg-gray-50 border border-gray-200 rounded">No annotations</div>
+                  <div className="text-xs italic p-2 rounded" style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>No annotations</div>
                 )}
               </div>
               <div className="border-t border-gray-200">
@@ -4522,21 +4557,21 @@ const Dashboard = () => {
                     </button>
                   ))}
                 </div>
-                <div className="bg-white p-2 min-h-24 text-sm">
+                <div className="p-2 min-h-24 text-sm" style={{ backgroundColor: 'var(--bg)' }}>
                   {activeOntologySubTab === 'prefixes' ? (
-                    <div className="max-h-48 overflow-y-auto border border-gray-200 rounded">
+                    <div className="max-h-48 overflow-y-auto border rounded" style={{ borderColor: 'var(--border)' }}>
                       <table className="w-full text-left text-xs">
-                        <thead className="bg-gray-50 sticky top-0">
-                          <tr className="border-b">
-                            <th className="p-1.5 font-semibold">Prefix</th>
-                            <th className="p-1.5 font-semibold">Namespace</th>
+                        <thead className="sticky top-0" style={{ backgroundColor: 'var(--surface-1)' }}>
+                          <tr className="border-b" style={{ borderColor: 'var(--border)' }}>
+                            <th className="p-1.5 font-semibold" style={{ color: 'var(--text-primary)' }}>Prefix</th>
+                            <th className="p-1.5 font-semibold" style={{ color: 'var(--text-primary)' }}>Namespace</th>
                           </tr>
                         </thead>
                         <tbody>
                           {(metadata as any)?.prefixes?.map((p: { prefix: string; namespace: string }) => (
-                            <tr key={p.prefix} className="border-b hover:bg-gray-50">
-                              <td className="p-1.5 font-mono">{p.prefix}</td>
-                              <td className="p-1.5 text-blue-700 break-all">{p.namespace}</td>
+                            <tr key={p.prefix} className="border-b hover:bg-gray-50 dark:hover:bg-gray-700" style={{ borderColor: 'var(--border)' }}>
+                              <td className="p-1.5 font-mono" style={{ color: 'var(--text-primary)' }}>{p.prefix}</td>
+                              <td className="p-1.5 break-all" style={{ color: 'var(--accent)' }}>{p.namespace}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -4584,8 +4619,8 @@ const Dashboard = () => {
                   <div className="space-y-1 text-xs">
                     {Object.entries(metricSection.data).map(([key, value]) => (value ?? null) !== null && (
                       <div key={key} className="flex justify-between items-center">
-                        <span className="text-gray-600">{key}</span>
-                        <span className="font-medium bg-gray-100 px-1.5 py-0.5 rounded">{Number(value).toLocaleString()}</span>
+                        <span className="text-black">{key}</span>
+                        <span className="font-bold text-black bg-gray-50 px-1.5 py-0.5 rounded">{Number(value).toLocaleString()}</span>
                       </div>
                     ))}
                   </div>
@@ -4619,7 +4654,7 @@ const Dashboard = () => {
               <div className="border bg-white h-full flex flex-col">
                 <div className="flex text-xs border-b flex-shrink-0">
                   <button className="px-3 py-1.5 bg-white border-r font-semibold">Direct instances</button>
-                  <button className="px-3 py-1.5 bg-gray-100 text-gray-500 hover:bg-gray-200">Individuals (inferred)</button>
+                  <button className="px-3 py-1.5 bg-gray-100 text-gray-700 hover:bg-gray-200">Individuals (inferred)</button>
                 </div>
                 {selectedClassForIndividuals ? (
                   <div className="p-1 flex-1 overflow-y-auto">
@@ -4631,7 +4666,7 @@ const Dashboard = () => {
                         </div>
                       ))
                     ) : (
-                      <div className="p-4 text-sm text-gray-400 italic flex items-center justify-center h-full">
+                      <div className="p-4 text-sm text-gray-600 italic flex items-center justify-center h-full">
                         No instances found for {selectedClassForIndividuals.label}.
                       </div>
                     )}
@@ -4710,9 +4745,67 @@ const Dashboard = () => {
                   userEmail: user?.email || 'anonymous'
                 });
                 showToast(`Created class "${className}"`, 'success');
+                // Refresh class hierarchy and metadata after successful class creation
+                await refreshClassHierarchy();
+                await fetchData(projectId, false);
               } catch (e) {
-                console.warn("DL add endpoint not available");
-                showToast(`Class creation simulated: ${className}`, 'info');
+                // Fallback for older backend versions: create via the existing mutations endpoint.
+                const status = (e as any)?.status ?? (e as any)?.response?.status ?? (e as any)?.data?.status;
+                if (status !== 404) {
+                  console.warn('DL add failed:', e);
+                  showToast(`Failed to create class: ${className}`, 'error');
+                  return;
+                }
+
+                // Resolve target IRI from known classes (supports simple expressions like "Course").
+                const normalizedExpr = (expression || '').trim();
+                const byIri = normalizedExpr.startsWith('http://') || normalizedExpr.startsWith('https://');
+                const target = byIri
+                  ? normalizedExpr
+                  : flattenClassHierarchy(classHierarchy).find(c => c.label?.toLowerCase() === normalizedExpr.toLowerCase())?.id;
+
+                if (!target) {
+                  showToast('Only simple class names are supported for Add to Ontology right now.', 'warning');
+                  return;
+                }
+
+                const normalizedClassName = (className || '').trim().replace(/\s+/g, '_');
+                const base =
+                  target.includes('#') ? target.split('#')[0] + '#' :
+                  target.includes('/') ? target.substring(0, target.lastIndexOf('/') + 1) :
+                  'http://example.com/ont#';
+
+                const newIri = base + normalizedClassName;
+
+                const mutationBody = {
+                  ops: [
+                    {
+                      type: 'createClass',
+                      iri: newIri,
+                      label: className,
+                      parent: 'http://www.w3.org/2002/07/owl#Thing',
+                    },
+                    {
+                      type: 'addEquivalentClass',
+                      iri: newIri,
+                      target,
+                    },
+                  ],
+                  userId: user?.email || 'anonymous',
+                  username: user?.username || user?.email || 'Anonymous',
+                  sessionId: `dl-add-${Date.now()}`,
+                };
+
+                try {
+                  await apiClient.post(`/api/ontology/mutations/${projectId}?draft=false`, mutationBody);
+                  showToast(`Created class "${className}"`, 'success');
+                  // Refresh class hierarchy and metadata after successful class creation
+                  await refreshClassHierarchy();
+                  await fetchData(projectId, false);
+                } catch (e2) {
+                  console.warn('Mutation fallback failed:', e2);
+                  showToast(`Failed to create class: ${className}`, 'error');
+                }
               }
             }}
             showNotification={(message, type) => showToast(message, type)}
@@ -5152,7 +5245,14 @@ const Dashboard = () => {
                 </button>
               )}
               <span className="text-xs text-gray-600">Welcome, {user?.username || 'Guest'}</span>
-              <button onClick={logout} className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-md">
+              <button 
+                onClick={() => setShowThemeSettings(true)}
+                className="ontocode-icon-hover-accent cursor-pointer disabled:cursor-not-allowed flex items-center gap-1.5 text-xs p-2 rounded-md"
+                title="Theme Settings"
+              >
+                <Palette size={14} />
+              </button>
+              <button onClick={logout} className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-md cursor-pointer">
                 <LogOut size={14} />
                 Logout
               </button>
@@ -5445,6 +5545,12 @@ const Dashboard = () => {
 
       {/* Global Queue Stats */}
       <GlobalQueueStats visible={true} />
+
+      {/* Theme Settings */}
+      <ThemeSettings
+        isOpen={showThemeSettings}
+        onClose={() => setShowThemeSettings(false)}
+      />
 
       {/* History Panel */}
       {projectId && (

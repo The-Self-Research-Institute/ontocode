@@ -124,7 +124,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({ projects, onSe
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
               <h3 className="mt-2 text-sm font-medium text-gray-900">No projects found</h3>
-              <p className="mt-1 text-sm text-gray-500">Upload an ontology file to create a new project</p>
+              <p className="mt-1 text-sm text-gray-700">Upload an ontology file to create a new project</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -144,7 +144,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({ projects, onSe
                           <span className="font-medium">File:</span> {project.filename}
                         </p>
                       )}
-                      <div className="flex items-center gap-4 mt-2 text-sm text-gray-500">
+                      <div className="flex items-center gap-4 mt-2 text-sm text-gray-700">
                         <span>Updated: {formatDate(project.updatedAt)}</span>
                         {getStatusDisplay(project)}
                       </div>
@@ -168,7 +168,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({ projects, onSe
                             </div>
                           )}
                           {((project.metadata as any).tripleCount !== undefined || (project.metadata.counts?.triples !== undefined)) && (
-                            <div className="text-gray-500 text-xs mt-1">
+                            <div className="text-gray-700 text-xs mt-1">
                               {(project.metadata as any).tripleCount || project.metadata.counts?.triples} triples
                             </div>
                           )}

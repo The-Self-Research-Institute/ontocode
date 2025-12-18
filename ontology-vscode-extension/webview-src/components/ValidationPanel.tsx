@@ -138,7 +138,7 @@ const ValidationPanel: React.FC<ValidationPanelProps> = ({ projectId }) => {
       <header className="p-6 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-cyan-50">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+            <h1 className="text-2xl font-bold text-black flex items-center gap-2">
               <Shield className="text-blue-600" size={32} />
               Ontology Validation
             </h1>
@@ -174,7 +174,7 @@ const ValidationPanel: React.FC<ValidationPanelProps> = ({ projectId }) => {
                 <AlertCircle size={20} />
                 <span className="text-sm font-medium">Errors</span>
               </div>
-              <p className="text-2xl font-bold text-gray-800">{result.errorCount}</p>
+              <p className="text-2xl font-bold text-black">{result.errorCount}</p>
             </div>
             
             <div className={`p-4 rounded-lg ${result.warningCount > 0 ? 'bg-yellow-50 border border-yellow-200' : 'bg-gray-50'}`}>
@@ -182,7 +182,7 @@ const ValidationPanel: React.FC<ValidationPanelProps> = ({ projectId }) => {
                 <AlertTriangle size={20} />
                 <span className="text-sm font-medium">Warnings</span>
               </div>
-              <p className="text-2xl font-bold text-gray-800">{result.warningCount}</p>
+              <p className="text-2xl font-bold text-black">{result.warningCount}</p>
             </div>
             
             <div className={`p-4 rounded-lg ${result.infoCount > 0 ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'}`}>
@@ -190,7 +190,7 @@ const ValidationPanel: React.FC<ValidationPanelProps> = ({ projectId }) => {
                 <Info size={20} />
                 <span className="text-sm font-medium">Info</span>
               </div>
-              <p className="text-2xl font-bold text-gray-800">{result.infoCount}</p>
+              <p className="text-2xl font-bold text-black">{result.infoCount}</p>
             </div>
           </div>
         )}
@@ -213,7 +213,7 @@ const ValidationPanel: React.FC<ValidationPanelProps> = ({ projectId }) => {
                   <CheckCircle size={24} className="text-green-600" />
                 )}
                 <div>
-                  <h3 className="font-bold text-gray-800">
+                  <h3 className="font-bold text-black">
                     {result.hasErrors ? 'Validation Failed' : 'Validation Passed'}
                   </h3>
                   <p className="text-sm text-gray-700">{result.summary}</p>
@@ -298,7 +298,7 @@ const ValidationPanel: React.FC<ValidationPanelProps> = ({ projectId }) => {
 
         {/* Empty State */}
         {!result && !isValidating && (
-          <div className="flex items-center justify-center h-64 text-gray-400">
+          <div className="flex items-center justify-center h-64 text-gray-600">
             <div className="text-center">
               <Shield size={64} className="mx-auto mb-4 opacity-20" />
               <p className="text-lg font-medium">No validation results yet</p>

@@ -1086,7 +1086,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                   value={manchesterExpression}
                   onChange={(e) => setManchesterExpression(e.target.value)}
                   placeholder="e.g., Cell and hasPart some Nucleus&#10;      Person and hasAge some xsd:integer&#10;      hasSibling min 2 Person"
-                  className="flex-1 p-4 border border-gray-300 rounded font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                  className="flex-1 p-4 border border-gray-300 rounded font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none bg-white text-black"
                 />
               </div>
               <div className="mt-4 p-4 bg-blue-50 rounded border border-blue-200">

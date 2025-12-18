@@ -1874,6 +1874,8 @@ public class OntologyQueryService {
             SELECT ?prop ?obj ?objLabel WHERE {
               <%s> ?prop ?obj .
               FILTER(?prop != rdf:type)
+              FILTER(?prop != owl:sameAs)
+              FILTER(?prop != owl:differentFrom)
               FILTER NOT EXISTS { ?prop a owl:AnnotationProperty }
               OPTIONAL { ?obj rdfs:label ?objLabel }
             }
@@ -1901,6 +1903,48 @@ public class OntologyQueryService {
                 
                 propertyAssertions.add(assertion);
             }
+        }
+
+        // Get negative property assertions (OWL2 NegativePropertyAssertion)
+        String negativePropsQuery = PREFIXES + """
+            SELECT ?prop ?targetInd ?targetIndLabel ?targetValue WHERE {
+              ?npa a owl:NegativePropertyAssertion ;
+                   owl:sourceIndividual <%s> ;
+                   owl:assertionProperty ?prop .
+              OPTIONAL {
+                ?npa owl:targetIndividual ?targetInd .
+                OPTIONAL { ?targetInd rdfs:label ?targetIndLabel }
+              }
+              OPTIONAL { ?npa owl:targetValue ?targetValue . }
+            }
+            """.formatted(individualIri);
+        TupleQueryResult negRs = datasetService.execSelect(projectId, negativePropsQuery);
+        while (negRs.hasNext()) {
+            BindingSet sol = negRs.next();
+            String propIri = resource(sol, "prop");
+            if (propIri == null) continue;
+
+            Map<String, Object> assertion = new LinkedHashMap<>();
+            assertion.put("id", "neg-assertion-" + propertyAssertions.size());
+            assertion.put("propertyIri", propIri);
+            assertion.put("propertyLabel", localName(propIri));
+            assertion.put("isNegative", true);
+
+            Value targetInd = sol.getValue("targetInd");
+            Value targetValue = sol.getValue("targetValue");
+            if (targetInd != null && targetInd.isIRI()) {
+                assertion.put("targetIri", targetInd.stringValue());
+                assertion.put("targetLabel", sol.hasBinding("targetIndLabel") ? literal(sol, "targetIndLabel") : localName(targetInd.stringValue()));
+                assertion.put("isObjectProperty", true);
+            } else if (targetValue != null) {
+                assertion.put("targetLiteral", targetValue.stringValue());
+                assertion.put("isObjectProperty", false);
+            } else {
+                // Skip malformed NPA without a target
+                continue;
+            }
+
+            propertyAssertions.add(assertion);
         }
         details.put("propertyAssertions", propertyAssertions);
         
@@ -1939,6 +1983,73 @@ public class OntologyQueryService {
         details.put("differentIndividualFrom", differentFrom);
         
         return details;
+    }
+
+    public Map<String, Object> getOntologySchema(String projectId) {
+        Map<String, Object> schema = new LinkedHashMap<>();
+        
+        // Get all classes
+        String classesQuery = PREFIXES + """
+            SELECT DISTINCT ?class WHERE {
+              ?class a owl:Class .
+              FILTER(isIRI(?class))
+              FILTER(?class != owl:Thing && ?class != owl:Nothing)
+            }
+            ORDER BY ?class
+            LIMIT 1000
+            """;
+        TupleQueryResult classesResult = datasetService.execSelect(projectId, classesQuery);
+        List<String> classes = new ArrayList<>();
+        while (classesResult.hasNext()) {
+            BindingSet sol = classesResult.next();
+            String cls = resource(sol, "class");
+            if (cls != null) {
+                classes.add(cls);
+            }
+        }
+        schema.put("classes", classes);
+        
+        // Get all object properties
+        String objectPropsQuery = PREFIXES + """
+            SELECT DISTINCT ?prop WHERE {
+              ?prop a owl:ObjectProperty .
+              FILTER(isIRI(?prop))
+            }
+            ORDER BY ?prop
+            LIMIT 1000
+            """;
+        TupleQueryResult objResult = datasetService.execSelect(projectId, objectPropsQuery);
+        List<String> objectProperties = new ArrayList<>();
+        while (objResult.hasNext()) {
+            BindingSet sol = objResult.next();
+            String prop = resource(sol, "prop");
+            if (prop != null) {
+                objectProperties.add(prop);
+            }
+        }
+        schema.put("objectProperties", objectProperties);
+        
+        // Get all data properties
+        String dataPropsQuery = PREFIXES + """
+            SELECT DISTINCT ?prop WHERE {
+              ?prop a owl:DatatypeProperty .
+              FILTER(isIRI(?prop))
+            }
+            ORDER BY ?prop
+            LIMIT 1000
+            """;
+        TupleQueryResult dataResult = datasetService.execSelect(projectId, dataPropsQuery);
+        List<String> dataProperties = new ArrayList<>();
+        while (dataResult.hasNext()) {
+            BindingSet sol = dataResult.next();
+            String prop = resource(sol, "prop");
+            if (prop != null) {
+                dataProperties.add(prop);
+            }
+        }
+        schema.put("dataProperties", dataProperties);
+        
+        return schema;
     }
 }
 

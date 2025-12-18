@@ -287,14 +287,14 @@ ${memberships.map(m => `<${m.entity}> fuzzy:hasMembership [
                   placeholder="Entity IRI (e.g., :patient1)"
                   value={newEntity}
                   onChange={(e) => setNewEntity(e.target.value)}
-                  className="col-span-1 px-3 py-2 bg-[#1e1e1e] border border-gray-600 rounded text-white"
+                  className="col-span-1 px-3 py-2 bg-[#1e1e1e] border border-gray-600 rounded text-black"
                 />
                 <input
                   type="text"
                   placeholder="Fuzzy Class (e.g., :HighRisk)"
                   value={newFuzzyClass}
                   onChange={(e) => setNewFuzzyClass(e.target.value)}
-                  className="col-span-1 px-3 py-2 bg-[#1e1e1e] border border-gray-600 rounded text-white"
+                  className="col-span-1 px-3 py-2 bg-[#1e1e1e] border border-gray-600 rounded text-black"
                 />
                 <div className="col-span-1 flex items-center gap-2">
                   <label className="text-sm">Degree:</label>
@@ -375,13 +375,13 @@ ${memberships.map(m => `<${m.entity}> fuzzy:hasMembership [
                   placeholder="Condition (e.g., ?x fuzzy:hasMembership ?m AND degree > 0.7)"
                   value={newCondition}
                   onChange={(e) => setNewCondition(e.target.value)}
-                  className="w-full px-3 py-2 bg-[#1e1e1e] border border-gray-600 rounded h-20 text-white"
+                  className="w-full px-3 py-2 bg-white border border-gray-300 rounded h-20 text-black"
                 />
                 <textarea
                   placeholder="Action (e.g., :requiresMonitoring(?x, true))"
                   value={newAction}
                   onChange={(e) => setNewAction(e.target.value)}
-                  className="w-full px-3 py-2 bg-[#1e1e1e] border border-gray-600 rounded h-20 text-white"
+                  className="w-full px-3 py-2 bg-white border border-gray-300 rounded h-20 text-black"
                 />
                 <button
                   onClick={addRule}
@@ -459,7 +459,7 @@ WHERE {
   FILTER(?degree > 0.7)
 }
 ORDER BY DESC(?degree)`}
-                className="w-full px-3 py-2 bg-[#1e1e1e] border border-gray-600 rounded h-64 font-mono text-sm text-white"
+                className="w-full px-3 py-2 bg-white border border-gray-300 rounded h-64 font-mono text-sm text-black"
               />
               <button
                 onClick={executeFuzzyQuery}

@@ -22,7 +22,7 @@ export function PrimaryTabs({
     <div className="border-b bg-white">
       <div className="mx-auto max-w-screen-2xl px-4 py-3 flex items-center gap-4">
         <div className="flex items-center gap-2 mr-6">
-          <span className="text-sm text-gray-500">Active ontology</span>
+          <span className="text-sm text-gray-700">Active ontology</span>
           <select
             className="text-sm border rounded-md px-2 py-1"
             value={activeOntology ?? ""}

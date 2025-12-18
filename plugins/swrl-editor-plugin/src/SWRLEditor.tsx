@@ -3,8 +3,8 @@ import {
   Plus, Trash2, Play, Save, Check, X, AlertCircle, Loader2, 
   ChevronDown, ChevronRight, ChevronUp, Copy, Download, Upload, BarChart2, 
   BookOpen, Search, ToggleLeft, ToggleRight, Zap, FileText,
-  Info, Code, List, Grid3X3, Filter, RefreshCw, Settings, LayoutTemplate,
-  HelpCircle, Maximize2, Minimize2, Eye, EyeOff
+  Info, Code, List, Filter, RefreshCw, Settings, LayoutTemplate,
+  HelpCircle, Maximize2, Minimize2, Eye, EyeOff, Sparkles
 } from 'lucide-react';
 import apiClient from './apiClient';
 import type { SwrlRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext, BuiltInCategory, InferredAxiom } from './types';
@@ -14,11 +14,59 @@ import type { SwrlRule, ValidationResult as SwrlValidationResult, ExecutionRespo
 // ============================================================================
 
 const RULE_TEMPLATES = [
+  // Basic Classification
   { name: 'Class Membership', template: 'Person(?p) ^ hasAge(?p, ?age) ^ swrlb:greaterThanOrEqual(?age, 18) -> Adult(?p)', description: 'Classify individuals based on property values' },
   { name: 'Property Transfer', template: 'hasParent(?x, ?y) ^ hasBrother(?y, ?z) -> hasUncle(?x, ?z)', description: 'Infer a relationship based on a chain of properties' },
-  { name: 'Math Calculation', template: 'Item(?i) ^ hasPrice(?i, ?p) ^ swrlb:multiply(?tax, ?p, 0.08) -> hasTax(?i, ?tax)', description: 'Calculate a value using math built-ins' },
-  { name: 'String Matching', template: 'Person(?p) ^ hasName(?p, ?name) ^ swrlb:startsWith(?name, "Dr.") -> Doctor(?p)', description: 'Classify based on string patterns' },
-  { name: 'Temporal Relation', template: 'Event(?e1) ^ Event(?e2) ^ hasTime(?e1, ?t1) ^ hasTime(?e2, ?t2) ^ temporal:before(?t1, ?t2) -> Precedes(?e1, ?e2)', description: 'Infer temporal order of events' },
+  
+  // Math & Calculations
+  { name: 'Tax Calculation', template: 'Item(?i) ^ hasPrice(?i, ?p) ^ swrlb:multiply(?tax, ?p, 0.08) -> hasTax(?i, ?tax)', description: 'Calculate tax using multiplication' },
+  { name: 'Total Price', template: 'Item(?i) ^ hasPrice(?i, ?p) ^ hasTax(?i, ?t) ^ swrlb:add(?total, ?p, ?t) -> hasTotalPrice(?i, ?total)', description: 'Sum multiple values' },
+  { name: 'Discount Price', template: 'Item(?i) ^ hasPrice(?i, ?p) ^ hasDiscount(?i, ?d) ^ swrlb:multiply(?off, ?p, ?d) ^ swrlb:subtract(?final, ?p, ?off) -> hasDiscountedPrice(?i, ?final)', description: 'Calculate discount with multiple operations' },
+  { name: 'Distance Formula', template: 'Point(?p1) ^ Point(?p2) ^ hasX(?p1, ?x1) ^ hasX(?p2, ?x2) ^ hasY(?p1, ?y1) ^ hasY(?p2, ?y2) ^ swrlb:subtract(?dx, ?x2, ?x1) ^ swrlb:subtract(?dy, ?y2, ?y1) ^ swrlb:pow(?dx2, ?dx, 2) ^ swrlb:pow(?dy2, ?dy, 2) ^ swrlb:add(?sum, ?dx2, ?dy2) ^ swrlm:sqrt(?dist, ?sum) -> hasDistance(?p1, ?p2, ?dist)', description: 'Euclidean distance calculation' },
+  { name: 'BMI Calculation', template: 'Person(?p) ^ hasWeight(?p, ?w) ^ hasHeight(?p, ?h) ^ swrlb:pow(?h2, ?h, 2) ^ swrlb:divide(?bmi, ?w, ?h2) -> hasBMI(?p, ?bmi)', description: 'Body Mass Index calculation' },
+  { name: 'Average Score', template: 'Student(?s) ^ hasScore1(?s, ?s1) ^ hasScore2(?s, ?s2) ^ hasScore3(?s, ?s3) ^ swrlb:add(?sum, ?s1, ?s2, ?s3) ^ swrlb:divide(?avg, ?sum, 3) -> hasAverageScore(?s, ?avg)', description: 'Calculate average of multiple values' },
+  
+  // String Operations
+  { name: 'String Prefix Match', template: 'Person(?p) ^ hasName(?p, ?name) ^ swrlb:startsWith(?name, "Dr.") -> Doctor(?p)', description: 'Classify based on string prefix' },
+  { name: 'String Suffix Match', template: 'Person(?p) ^ hasEmail(?p, ?email) ^ swrlb:endsWith(?email, ".edu") -> Student(?p)', description: 'Classify based on string suffix' },
+  { name: 'String Contains', template: 'Document(?d) ^ hasContent(?d, ?text) ^ swrlb:contains(?text, "urgent") -> UrgentDocument(?d)', description: 'Match substring in text' },
+  { name: 'Email Validation', template: 'Person(?p) ^ hasEmail(?p, ?email) ^ swrlb:matches(?email, "^[a-zA-Z0-9+_.-]+@[a-zA-Z0-9.-]+$") -> hasValidEmail(?p, true)', description: 'Validate format with regex' },
+  { name: 'Name Concatenation', template: 'Person(?p) ^ hasFirstName(?p, ?f) ^ hasLastName(?p, ?l) ^ swrlb:stringConcat(?full, ?f, " ", ?l) -> hasFullName(?p, ?full)', description: 'Combine multiple strings' },
+  { name: 'Uppercase Conversion', template: 'Person(?p) ^ hasName(?p, ?name) ^ swrlb:upperCase(?upper, ?name) -> hasUppercaseName(?p, ?upper)', description: 'Convert string to uppercase' },
+  
+  // Date & Time
+  { name: 'Date Comparison', template: 'Event(?e) ^ hasDate(?e, ?d) ^ swrlb:date(?today, 2024, 12, 17, "") ^ swrlb:greaterThan(?d, ?today) -> FutureEvent(?e)', description: 'Compare dates' },
+  { name: 'Age from Birth Year', template: 'Person(?p) ^ hasBirthYear(?p, ?y) ^ swrlb:subtract(?age, 2024, ?y) -> hasAge(?p, ?age)', description: 'Calculate age from year' },
+  { name: 'Duration Check', template: 'Event(?e) ^ hasStartTime(?e, ?start) ^ hasEndTime(?e, ?end) ^ swrlb:subtract(?duration, ?end, ?start) ^ swrlb:greaterThan(?duration, 60) -> LongEvent(?e)', description: 'Check event duration' },
+  
+  // Temporal Relations
+  { name: 'Temporal Ordering', template: 'Event(?e1) ^ Event(?e2) ^ hasTime(?e1, ?t1) ^ hasTime(?e2, ?t2) ^ temporal:before(?t1, ?t2) -> Precedes(?e1, ?e2)', description: 'Infer temporal order using Allen relations' },
+  { name: 'Overlapping Events', template: 'Event(?e1) ^ Event(?e2) ^ hasInterval(?e1, ?i1) ^ hasInterval(?e2, ?i2) ^ temporal:overlaps(?i1, ?i2) -> Concurrent(?e1, ?e2)', description: 'Find overlapping time intervals' },
+  
+  // Comparisons & Conditions
+  { name: 'Equality Check', template: 'Person(?p) ^ hasAge(?p, ?age) ^ swrlb:equal(?age, 18) -> NewAdult(?p)', description: 'Test equality' },
+  { name: 'Range Check', template: 'Product(?p) ^ hasPrice(?p, ?price) ^ swrlb:greaterThanOrEqual(?price, 100) ^ swrlb:lessThanOrEqual(?price, 500) -> MidRangeProduct(?p)', description: 'Value within range' },
+  { name: 'Multi-Condition', template: 'Person(?p) ^ hasAge(?p, ?age) ^ hasIncome(?p, ?income) ^ swrlb:greaterThan(?age, 25) ^ swrlb:greaterThan(?income, 50000) -> QualifiedBuyer(?p)', description: 'Multiple conditions with AND logic' },
+  
+  // Advanced Math
+  { name: 'Square Root', template: 'Square(?s) ^ hasArea(?s, ?a) ^ swrlm:sqrt(?side, ?a) -> hasSideLength(?s, ?side)', description: 'Calculate square root' },
+  { name: 'Trigonometry', template: 'Triangle(?t) ^ hasAngle(?t, ?degrees) ^ swrlm:toRadians(?rad, ?degrees) ^ swrlm:sin(?sine, ?rad) -> hasSine(?t, ?sine)', description: 'Trigonometric calculation' },
+  { name: 'Exponential Growth', template: 'Investment(?i) ^ hasPrincipal(?i, ?p) ^ hasRate(?i, ?r) ^ hasYears(?i, ?y) ^ swrlb:multiply(?rt, ?r, ?y) ^ swrlm:exp(?e, ?rt) ^ swrlb:multiply(?value, ?p, ?e) -> hasFinalValue(?i, ?value)', description: 'Compound interest calculation' },
+  
+  // SQWRL Queries
+  { name: 'Select & Count', template: 'Person(?p) -> sqwrl:select(?p) ^ sqwrl:count(?p)', description: 'Count matching individuals' },
+  { name: 'Min/Max Values', template: 'Person(?p) ^ hasAge(?p, ?age) -> sqwrl:select(?p, ?age) ^ sqwrl:min(?age)', description: 'Find minimum value' },
+  { name: 'Order Results', template: 'Person(?p) ^ hasName(?p, ?name) ^ hasAge(?p, ?age) -> sqwrl:select(?name, ?age) ^ sqwrl:orderBy(?age)', description: 'Sort query results' },
+  { name: 'Average Aggregation', template: 'Student(?s) ^ hasScore(?s, ?score) -> sqwrl:select(?s) ^ sqwrl:avg(?score)', description: 'Calculate average in query' },
+  
+  // Property Chains
+  { name: 'Uncle Relation', template: 'hasParent(?x, ?y) ^ hasBrother(?y, ?z) -> hasUncle(?x, ?z)', description: 'Infer uncle through parent and sibling' },
+  { name: 'Grandparent', template: 'hasParent(?x, ?y) ^ hasParent(?y, ?z) -> hasGrandparent(?x, ?z)', description: 'Two-level ancestry relation' },
+  { name: 'Colleague Relation', template: 'worksFor(?p1, ?org) ^ worksFor(?p2, ?org) ^ swrlb:notEqual(?p1, ?p2) -> hasColleague(?p1, ?p2)', description: 'Same organization implies colleague' },
+  
+  // Domain-Specific
+  { name: 'Course Prerequisites', template: 'Course(?c1) ^ Course(?c2) ^ hasCourseCode(?c1, ?code1) ^ hasCourseCode(?c2, ?code2) ^ swrlb:lessThan(?code1, ?code2) -> isPrerequisiteFor(?c1, ?c2)', description: 'Infer prerequisites from course codes' },
+  { name: 'Sibling Inference', template: 'Person(?p1) ^ Person(?p2) ^ hasParent(?p1, ?parent) ^ hasParent(?p2, ?parent) ^ swrlb:notEqual(?p1, ?p2) -> hasSibling(?p1, ?p2)', description: 'Same parent implies sibling' },
 ];
 
 const SWRL_BUILTINS_QUICK = [
@@ -179,26 +227,29 @@ const ConfirmDialog: React.FC<{
   if (!isOpen) return null;
   
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full mx-4 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-        <div className="p-5 border-b border-gray-100">
-          <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
+    <div className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm" style={{ backgroundColor: 'var(--overlay)' }}>
+      <div className="rounded-xl shadow-2xl max-w-md w-full mx-4 overflow-hidden animate-in fade-in zoom-in-95 duration-200" style={{ backgroundColor: 'var(--surface-1)' }}>
+        <div className="p-5" style={{ borderBottom: '1px solid var(--border)' }}>
+          <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>{title}</h3>
         </div>
         <div className="p-5">
-          <p className="text-gray-600">{message}</p>
+          <p style={{ color: 'var(--text-secondary)' }}>{message}</p>
         </div>
-        <div className="flex justify-end gap-3 p-4 bg-gray-50">
+        <div className="flex justify-end gap-3 p-4" style={{ backgroundColor: 'var(--surface-2)' }}>
           <button
             onClick={onCancel}
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+            className="px-4 py-2 text-sm font-medium rounded-lg transition-colors"
+            style={{ color: 'var(--text-primary)', backgroundColor: 'var(--surface-1)', border: '1px solid var(--border)' }}
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
-            className={`px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors ${
-              danger ? 'bg-red-600 hover:bg-red-700' : 'bg-purple-600 hover:bg-purple-700'
-            }`}
+            className="px-4 py-2 text-sm font-medium rounded-lg transition-colors"
+            style={{
+              backgroundColor: danger ? 'var(--error)' : '#8b5cf6',
+              color: danger ? 'var(--on-error)' : '#ffffff'
+            }}
           >
             {confirmText}
           </button>
@@ -275,7 +326,7 @@ const RuleListItem: React.FC<RuleListItemProps> = ({
       </button>
       <button
         onClick={onDelete}
-        className="p-1.5 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
+        className="p-1.5 rounded-md text-gray-500 hover:text-red-600 hover:bg-red-50 opacity-60 group-hover:opacity-100 transition-all"
         title="Delete rule"
       >
         <Trash2 size={14} />
@@ -291,11 +342,15 @@ const RuleListItem: React.FC<RuleListItemProps> = ({
 interface QuickInsertProps {
   onInsert: (text: string) => void;
   disabled?: boolean;
+  dynamicTemplates?: typeof RULE_TEMPLATES;
 }
 
-const QuickInsertPanel: React.FC<QuickInsertProps> = ({ onInsert, disabled }) => {
+const QuickInsertPanel: React.FC<QuickInsertProps> = ({ onInsert, disabled, dynamicTemplates = [] }) => {
   const [expanded, setExpanded] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
+  
+  // Combine static and dynamic templates
+  const allTemplates = [...dynamicTemplates, ...RULE_TEMPLATES];
 
   return (
     <div className="bg-gray-50 border-t border-gray-200">
@@ -318,7 +373,7 @@ const QuickInsertPanel: React.FC<QuickInsertProps> = ({ onInsert, disabled }) =>
             onClick={() => { setShowTemplates(!showTemplates); setExpanded(false); }}
             className={`px-2 py-1 text-xs rounded flex items-center gap-1 transition-colors ${showTemplates ? 'bg-purple-100 text-purple-700' : 'text-purple-600 hover:bg-purple-50'}`}
           >
-            <LayoutTemplate size={12} /> Templates
+            <LayoutTemplate size={12} /> Templates {dynamicTemplates.length > 0 && <span className="text-[10px] bg-green-500 text-white px-1 rounded">{dynamicTemplates.length}</span>}
           </button>
           <button
             onClick={() => { setExpanded(!expanded); setShowTemplates(false); }}
@@ -331,7 +386,33 @@ const QuickInsertPanel: React.FC<QuickInsertProps> = ({ onInsert, disabled }) =>
 
       {/* Templates */}
       {showTemplates && (
-        <div className="p-2 pt-0 grid grid-cols-1 gap-1 max-h-40 overflow-y-auto">
+        <div className="p-2 pt-0 space-y-2 max-h-80 overflow-y-auto">
+          {dynamicTemplates.length > 0 && (
+            <div>
+              <div className="text-[10px] font-semibold text-green-700 uppercase tracking-wide px-2 py-1 bg-green-50 rounded flex items-center gap-1">
+                <Sparkles size={10} /> Ontology-Specific Templates ({dynamicTemplates.length})
+              </div>
+              <div className="grid grid-cols-1 gap-1 mt-1">
+                {dynamicTemplates.map((t, i) => (
+                  <button
+                    key={`dyn-${i}`}
+                    onClick={() => { onInsert(t.template); setShowTemplates(false); }}
+                    disabled={disabled}
+                    className="text-left px-3 py-2 text-xs bg-green-50 border border-green-200 rounded hover:bg-green-100 hover:border-green-300 disabled:opacity-50 group"
+                  >
+                    <div className="font-medium text-green-800 group-hover:text-green-900">{t.name}</div>
+                    <div className="text-[10px] text-green-600 truncate">{t.description}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          <div>
+            <div className="text-[10px] font-semibold text-purple-700 uppercase tracking-wide px-2 py-1 bg-purple-50 rounded">
+              General Templates ({RULE_TEMPLATES.length})
+            </div>
+            <div className="grid grid-cols-1 gap-1 mt-1">
           {RULE_TEMPLATES.map((t, i) => (
             <button
               key={i}
@@ -343,6 +424,8 @@ const QuickInsertPanel: React.FC<QuickInsertProps> = ({ onInsert, disabled }) =>
               <div className="text-[10px] text-gray-500 truncate">{t.description}</div>
             </button>
           ))}
+        </div>
+          </div>
         </div>
       )}
 
@@ -446,7 +529,7 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext }> =
       </div>
       <div className="p-4 flex-grow flex flex-col gap-4">
         <textarea 
-          className="w-full h-32 p-3 font-mono text-sm border-2 border-gray-400 rounded-lg bg-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-gray-900 placeholder-gray-500"
+          className="w-full h-32 p-3 font-mono text-sm border-2 border-gray-400 rounded-lg bg-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-black placeholder-gray-500"
           value={query} 
           onChange={(e) => setQuery(e.target.value)} 
           placeholder="Enter SQWRL query… e.g., Person(?p) ^ hasAge(?p, ?age) -> sqwrl:select(?p, ?age)" 
@@ -1119,7 +1202,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
                   placeholder="Search axioms... (e.g., Adult, Person, hasAge)"
                   value={searchFilter}
                   onChange={(e) => setSearchFilter(e.target.value)}
-                  className="w-full pl-10 pr-8 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-300 focus:border-purple-400"
+                  className="w-full pl-10 pr-8 py-2 text-sm text-black border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-300 focus:border-purple-400"
                 />
                 {searchFilter && (
                   <button
@@ -1278,6 +1361,8 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
   const [expandedBuiltInCategory, setExpandedBuiltInCategory] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ isOpen: boolean; ruleName: string; ruleId: string }>({ isOpen: false, ruleName: '', ruleId: '' });
   const [searchQuery, setSearchQuery] = useState('');
+  const [dynamicTemplates, setDynamicTemplates] = useState<typeof RULE_TEMPLATES>([]);
+  const [ontologySchema, setOntologySchema] = useState<{ classes: string[], objectProperties: string[], dataProperties: string[] } | null>(null);
 
   // Form state
   const [editForm, setEditForm] = useState({
@@ -1294,9 +1379,107 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
   // Debounced validation
   const debouncedRuleText = useDebounce(editForm.ruleText, 500);
 
+  // Load ontology schema and generate dynamic templates
+  const loadOntologySchema = useCallback(async () => {
+    try {
+      const res = await apiClient.get<{ classes: string[], objectProperties: string[], dataProperties: string[] }>(
+        `/api/ontology/${projectId}/schema`
+      );
+      setOntologySchema(res);
+      
+      // Generate dynamic templates based on actual ontology
+      const classes = res.classes.map(c => extractLocalName(c)).filter(c => c && !c.startsWith('owl:') && !c.startsWith('rdf:'));
+      const objProps = res.objectProperties.map(p => extractLocalName(p)).filter(p => p && !p.startsWith('owl:') && !p.startsWith('rdf:'));
+      const dataProps = res.dataProperties.map(p => extractLocalName(p)).filter(p => p && !p.startsWith('owl:') && !p.startsWith('rdf:'));
+      
+      const generated: typeof RULE_TEMPLATES = [];
+      
+      // Class membership rule (if we have classes and data properties)
+      if (classes.length > 0 && dataProps.length > 0) {
+        const cls1 = classes[0];
+        const cls2 = classes.length > 1 ? classes[1] : `${cls1}Premium`;
+        const dataProp = dataProps[0];
+        generated.push({
+          name: `${cls1} Classification`,
+          template: `${cls1}(?x) ^ ${dataProp}(?x, ?val) ^ swrlb:greaterThan(?val, 100) -> ${cls2}(?x)`,
+          description: `Classify ${cls1} into ${cls2} based on ${dataProp} value`
+        });
+      }
+      
+      // Property chain (if we have object properties)
+      if (classes.length > 0 && objProps.length >= 2) {
+        const cls = classes[0];
+        const prop1 = objProps[0];
+        const prop2 = objProps[1];
+        const inferredProp = objProps.length > 2 ? objProps[2] : `inferred${prop1}`;
+        generated.push({
+          name: `${prop1} Chain`,
+          template: `${cls}(?x) ^ ${prop1}(?x, ?y) ^ ${prop2}(?y, ?z) -> ${inferredProp}(?x, ?z)`,
+          description: `Infer ${inferredProp} through ${prop1} and ${prop2} chain`
+        });
+      }
+      
+      // Math calculation (if we have data properties)
+      if (classes.length > 0 && dataProps.length >= 2) {
+        const cls = classes[0];
+        const prop1 = dataProps[0];
+        const prop2 = dataProps.length > 1 ? dataProps[1] : `calculated${prop1}`;
+        generated.push({
+          name: `Calculate ${prop2}`,
+          template: `${cls}(?x) ^ ${prop1}(?x, ?val) ^ swrlb:multiply(?result, ?val, 1.1) -> ${prop2}(?x, ?result)`,
+          description: `Calculate ${prop2} from ${prop1} using math operations`
+        });
+      }
+      
+      // String matching (if we have string properties)
+      if (classes.length >= 2 && dataProps.length > 0) {
+        const cls1 = classes[0];
+        const cls2 = classes[1];
+        const prop = dataProps[0];
+        generated.push({
+          name: `${cls2} from ${prop}`,
+          template: `${cls1}(?x) ^ ${prop}(?x, ?str) ^ swrlb:contains(?str, "special") -> ${cls2}(?x)`,
+          description: `Classify as ${cls2} based on ${prop} content`
+        });
+      }
+      
+      // Property equality check - infer relationship property
+      if (classes.length > 0 && objProps.length >= 2) {
+        const cls1 = classes[0];
+        const prop1 = objProps[0];
+        const prop2 = objProps[1];
+        const inferredProp = objProps.length > 2 ? objProps[2] : `relatedBy${prop1}`;
+        generated.push({
+          name: `Same ${prop1} ${prop2}`,
+          template: `${cls1}(?x) ^ ${cls1}(?y) ^ ${prop1}(?x, ?ref) ^ ${prop2}(?y, ?ref) ^ swrlb:notEqual(?x, ?y) -> ${inferredProp}(?x, ?y)`,
+          description: `Infer ${inferredProp} relationship between ${cls1} instances sharing ${prop1}/${prop2} value`
+        });
+      }
+      
+      // SQWRL query template
+      if (classes.length > 0 && dataProps.length > 0) {
+        const cls = classes[0];
+        const prop = dataProps[0];
+        generated.push({
+          name: `Query ${cls} by ${prop}`,
+          template: `${cls}(?x) ^ ${prop}(?x, ?val) -> sqwrl:select(?x, ?val) ^ sqwrl:orderBy(?val)`,
+          description: `Query and sort ${cls} instances by ${prop}`
+        });
+      }
+      
+      setDynamicTemplates(generated);
+    } catch (e) {
+      console.error('Failed to load ontology schema:', e);
+      setDynamicTemplates([]);
+    }
+  }, [projectId]);
+
+  useEffect(() => { loadOntologySchema(); }, [loadOntologySchema]);
+
   // Load rules
   const loadRules = useCallback(async () => {
     setIsLoading(true);
+      console.log('Loaded rules:');
     try {
       const res = await apiClient.get<{ content: SwrlRule[] }>(`/api/swrl/${projectId}/rules`);
       setRules(res.content || []);
@@ -1319,7 +1502,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
     const validate = async () => {
       try {
         const res = await apiClient.post<SwrlValidationResult>(
-          `/api/swrl/${projectId}/rules/validate`,
+          `/api/swrl/${projectId}/validate`,
           { ruleText: debouncedRuleText }
         );
         setValidationResult(res);
@@ -1622,7 +1805,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                 placeholder="Search rules..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-200"
+                className="w-full pl-9 pr-3 py-1.5 text-sm text-black border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-200"
               />
             </div>
             {/* Selection controls */}
@@ -1773,7 +1956,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                       value={editForm.ruleName}
                       onChange={e => setEditForm(prev => ({ ...prev, ruleName: e.target.value }))}
                       disabled={!isEditing}
-                      className="w-full px-4 py-2.5 text-base font-medium border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-200 disabled:bg-gray-50 disabled:text-gray-600"
+                      className="w-full px-4 py-2.5 text-base text-black font-medium border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-200 disabled:bg-gray-50 disabled:text-gray-600"
                       placeholder="Enter rule name"
                     />
                     
@@ -1786,7 +1969,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                           value={editForm.category}
                           onChange={e => setEditForm(prev => ({ ...prev, category: e.target.value }))}
                           disabled={!isEditing}
-                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-200 disabled:bg-gray-50"
+                          className="w-full px-3 py-2 text-sm text-black border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-200 disabled:bg-gray-50"
                           placeholder="e.g., Classification"
                         />
                       </div>
@@ -1838,7 +2021,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                       value={editForm.ruleText}
                       onChange={e => setEditForm(prev => ({ ...prev, ruleText: e.target.value }))}
                       disabled={!isEditing}
-                      className="w-full h-32 px-4 py-3 font-mono text-sm resize-none focus:outline-none disabled:bg-gray-50 text-gray-900 disabled:text-gray-700"
+                      className="w-full h-32 px-4 py-3 font-mono text-sm resize-none focus:outline-none disabled:bg-gray-50 bg-white text-black disabled:text-gray-700"
                       placeholder="Person(?p) ^ hasAge(?p, ?age) ^ swrlb:greaterThan(?age, 18) -> Adult(?p)"
                     />
 
@@ -1853,7 +2036,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                     )}
 
                     {/* Quick Insert */}
-                    <QuickInsertPanel onInsert={insertAtCursor} disabled={!isEditing} />
+                    <QuickInsertPanel onInsert={insertAtCursor} disabled={!isEditing} dynamicTemplates={dynamicTemplates} />
                   </div>
 
                   {/* Description */}
@@ -1863,7 +2046,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                       value={editForm.comment}
                       onChange={e => setEditForm(prev => ({ ...prev, comment: e.target.value }))}
                       disabled={!isEditing}
-                      className="w-full h-20 px-3 py-2 text-sm border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-purple-200 disabled:bg-gray-50"
+                      className="w-full h-20 px-3 py-2 text-sm border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-purple-200 disabled:bg-gray-50 bg-white text-black"
                       placeholder="Add notes or documentation..."
                     />
                   </div>

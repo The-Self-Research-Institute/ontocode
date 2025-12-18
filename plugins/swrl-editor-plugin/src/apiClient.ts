@@ -33,7 +33,7 @@ class ApiClient {
 
   private async request<T>(method: string, url: string, data?: any): Promise<T> {
     if (this.isVSCode) {
-      return this.proxyRequest<T>(method, url, data);
+      return this.fetchRequest(method, url, data);
     } else {
       return this.fetchRequest<T>(method, url, data);
     }
@@ -81,7 +81,13 @@ class ApiClient {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
 
-    return response.json();
+    // Handle empty responses (e.g., DELETE operations)
+    const text = await response.text();
+    if (!text || text.trim() === '') {
+      return {} as T;
+    }
+    
+    return JSON.parse(text);
   }
 
   public get<T>(url: string): Promise<T> {

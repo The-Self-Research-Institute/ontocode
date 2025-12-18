@@ -205,7 +205,7 @@ const DatatypeDefinitionDialog: React.FC<DatatypeDefinitionDialogProps> = ({
                   value={expression}
                   onChange={(e) => setExpression(e.target.value)}
                   placeholder="Enter data range expression..."
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-red-500 focus:border-red-500 text-sm font-mono resize-none"
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-red-500 focus:border-red-500 text-sm font-mono resize-none bg-white text-black"
                   autoFocus
                 />
               </div>
