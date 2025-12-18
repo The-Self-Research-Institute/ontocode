@@ -607,6 +607,7 @@ html, body, #root {
 /* Top menu bar (File/Edit/View/Reasoner/...) hover styles */
 .ontocode-top-menu .ontocode-top-menu-button {
   color: var(--text-primary);
+  cursor: pointer !important;
 }
 
 :root:not(.dark) .ontocode-top-menu .ontocode-top-menu-button:hover,
@@ -623,6 +624,12 @@ html, body, #root {
 
 .ontocode-top-menu .ontocode-top-menu-item {
   color: var(--text-primary);
+  cursor: pointer !important;
+}
+
+.ontocode-top-menu .ontocode-top-menu-item:disabled,
+.ontocode-top-menu .ontocode-top-menu-button:disabled {
+  cursor: not-allowed;
 }
 
 :root:not(.dark) .ontocode-top-menu .ontocode-top-menu-item:hover {
@@ -638,6 +645,11 @@ html, body, #root {
 /* Icon buttons (e.g., Theme Settings) */
 .ontocode-icon-hover-accent {
   color: var(--text-secondary);
+  cursor: pointer !important;
+}
+
+.ontocode-icon-hover-accent:disabled {
+  cursor: not-allowed;
 }
 
 :root:not(.dark) .ontocode-icon-hover-accent:hover {
