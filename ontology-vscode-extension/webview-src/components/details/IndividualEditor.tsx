@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, Loader2 } from 'lucide-react';
 import { Panel, AnnotationsDisplay, MultiSelectSection } from './common';
 import type { Individual, PropertyAssertion, TreeNode } from '../../types';
-import { ManchesterSyntaxEditor, IndividualSelectorDialog, PropertyAssertionDialog, ClassSelectorDialog } from '../dialogs';
+import { ManchesterSyntaxEditor, IndividualSelectorDialog, PropertyAssertionDialog, ClassExpressionDialog } from '../dialogs';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import apiClient from '../../services/apiClient';
 
@@ -203,6 +203,13 @@ const IndividualEditor: React.FC<{
     }
   };
 
+  const handleAddType = async (expression: string) => {
+      try {
+          await ontologyMutationService.addClassAssertion(projectId, item.id, expression);
+          onUpdate({ ...item, types: [...(item.types || []), expression] });
+      } catch (e) { console.error(e); }
+  };
+
   const openSameDifferentDialog = async (mode: 'same' | 'different') => {
     setSameDiffDialog({ mode });
     try {
@@ -281,14 +288,6 @@ const IndividualEditor: React.FC<{
       } catch (e) { console.error(e); }
   };
 
-  const handleAddType = async (iri: string) => {
-      try {
-          await ontologyMutationService.addClassAssertion(projectId, item.id, iri);
-          // Optimistic update
-          onUpdate({ ...item, types: [...(item.types || []), iri] });
-      } catch (e) { console.error(e); }
-  };
-
   const openEditor = (title: string, action: (val: string) => void) => {
       setEditorTitle(title);
       setEditorAction(() => action);
@@ -335,7 +334,10 @@ const IndividualEditor: React.FC<{
               </div>
               <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm p-1.5 space-y-1">
                 {item.types?.map(type => (
-                    <div key={type} className="text-xs p-1 bg-gray-50 rounded border border-gray-100">{type.split('#').pop()}</div>
+                    <div key={type} className="text-xs p-1 bg-gray-50 rounded border border-gray-100 flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-yellow-500 flex-shrink-0"></div>
+                        <span>{type.split('#').pop()}</span>
+                    </div>
                 ))}
                 {(!item.types || item.types.length === 0) && (
                     <div className="text-xs text-gray-400 italic p-1">No types defined</div>
@@ -557,16 +559,19 @@ const IndividualEditor: React.FC<{
       {/* Protégé-style selector for same/different individuals */}
       {/* Protégé-style type selector */}
       {typeDialogOpen && (
-        <ClassSelectorDialog
+        <ClassExpressionDialog
           isOpen={true}
           onClose={() => setTypeDialogOpen(false)}
           title={`Types: ${item.label}`}
           classHierarchy={typeClassHierarchy}
           projectId={projectId}
-          onSelect={(node) => {
-            handleAddType(node.id);
+          onConfirm={(expression) => {
+            handleAddType(expression);
             setTypeDialogOpen(false);
           }}
+          objectProperties={[]} // We can pass these if needed for restrictions
+          dataProperties={[]}
+          allowedTabs={['hierarchy', 'classExpression', 'objectRestriction', 'dataRestriction']}
         />
       )}
 

@@ -405,7 +405,7 @@ const TopMenuBar = ({
   const menuItems = ['File', 'Edit', 'View', 'Reasoner', 'Tools', 'Window', 'Help'];
 
   return (
-    <header ref={menuRef} className="text-xs flex items-center px-2 relative border-b h-8 flex-shrink-0" style={{ backgroundColor: 'var(--color-background)', color: 'var(--color-text)', borderBottomColor: 'var(--color-border)' }}>
+    <header ref={menuRef} className="ontocode-top-menu text-xs flex items-center px-2 relative border-b h-8 flex-shrink-0" style={{ backgroundColor: 'var(--color-background)', color: 'var(--color-text)', borderBottomColor: 'var(--color-border)' }}>
       <div className="flex items-center gap-1 p-2 mr-2">
         <Package size={16} className="text-purple-600" />
       </div>
@@ -416,12 +416,12 @@ const TopMenuBar = ({
               onClick={() => {
                 setOpenMenu(openMenu === item ? null : item);
               }}
-              className="px-3 py-1 hover:bg-gray-300 dark:hover:bg-gray-700 rounded-sm"
+              className={`ontocode-top-menu-button px-3 py-1 rounded-sm transition-colors ${openMenu === item ? 'is-open' : ''}`}
             >
               {item}
             </button>
             {openMenu === item && (
-              <div className={`absolute left-0 mt-1 ${item === 'File' ? 'w-[360px]' : 'w-48'} bg-theme-surface border rounded-lg shadow-xl z-20 overflow-hidden`} style={{ borderColor: 'var(--color-border)' }}>
+              <div className={`ontocode-top-menu-dropdown absolute left-0 mt-1 ${item === 'File' ? 'w-[360px]' : 'w-48'} bg-theme-surface border rounded-lg shadow-xl z-20 overflow-hidden`} style={{ borderColor: 'var(--color-border)' }}>
                 {item === "View" ? (
                   <div className="py-1">
                     <button
@@ -429,7 +429,7 @@ const TopMenuBar = ({
                         onOpenPluginMarketplace();
                         setOpenMenu(null);
                       }}
-                      className="w-full text-left px-4 py-2 text-xs text-white hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                      className="ontocode-top-menu-item w-full text-left px-4 py-2 text-xs flex items-center gap-2"
                     >
                       <Package size={14} />
                       Plugin Marketplace
@@ -5247,7 +5247,7 @@ const Dashboard = () => {
               <span className="text-xs text-gray-600">Welcome, {user?.username || 'Guest'}</span>
               <button 
                 onClick={() => setShowThemeSettings(true)}
-                className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-800 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700 p-2 rounded-md"
+                className="ontocode-icon-hover-accent flex items-center gap-1.5 text-xs p-2 rounded-md"
                 title="Theme Settings"
               >
                 <Palette size={14} />
