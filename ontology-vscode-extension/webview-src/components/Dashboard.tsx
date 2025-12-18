@@ -416,7 +416,7 @@ const TopMenuBar = ({
               onClick={() => {
                 setOpenMenu(openMenu === item ? null : item);
               }}
-              className={`ontocode-top-menu-button px-3 py-1 rounded-sm transition-colors ${openMenu === item ? 'is-open' : ''}`}
+              className={`ontocode-top-menu-button cursor-pointer disabled:cursor-not-allowed px-3 py-1 rounded-sm transition-colors ${openMenu === item ? 'is-open' : ''}`}
             >
               {item}
             </button>
@@ -424,12 +424,12 @@ const TopMenuBar = ({
               <div className={`ontocode-top-menu-dropdown absolute left-0 mt-1 ${item === 'File' ? 'w-[360px]' : 'w-48'} bg-theme-surface border rounded-lg shadow-xl z-20 overflow-hidden`} style={{ borderColor: 'var(--color-border)' }}>
                 {item === "View" ? (
                   <div className="py-1">
-                    <button
-                      onClick={() => {
-                        onOpenPluginMarketplace();
-                        setOpenMenu(null);
-                      }}
-                      className="ontocode-top-menu-item w-full text-left px-4 py-2 text-xs flex items-center gap-2"
+                      <button
+                        onClick={() => {
+                          onOpenPluginMarketplace();
+                          setOpenMenu(null);
+                        }}
+                      className="ontocode-top-menu-item cursor-pointer disabled:cursor-not-allowed w-full text-left px-4 py-2 text-xs flex items-center gap-2"
                     >
                       <Package size={14} />
                       Plugin Marketplace
@@ -5247,12 +5247,12 @@ const Dashboard = () => {
               <span className="text-xs text-gray-600">Welcome, {user?.username || 'Guest'}</span>
               <button 
                 onClick={() => setShowThemeSettings(true)}
-                className="ontocode-icon-hover-accent flex items-center gap-1.5 text-xs p-2 rounded-md"
+                className="ontocode-icon-hover-accent cursor-pointer disabled:cursor-not-allowed flex items-center gap-1.5 text-xs p-2 rounded-md"
                 title="Theme Settings"
               >
                 <Palette size={14} />
               </button>
-              <button onClick={logout} className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-md">
+              <button onClick={logout} className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-md cursor-pointer">
                 <LogOut size={14} />
                 Logout
               </button>

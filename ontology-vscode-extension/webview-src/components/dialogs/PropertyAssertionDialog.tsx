@@ -131,17 +131,20 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onCancel}>
       <div
-        className="w-full mx-4 rounded-lg shadow-xl flex flex-col bg-white dark:bg-[#1e1e1e] text-black dark:text-white"
+        className="w-full mx-4 rounded-lg shadow-xl flex flex-col"
         style={{
           maxWidth: '900px',
           height: '600px',
           resize: 'both',
-          overflow: 'hidden'
+          overflow: 'hidden',
+          backgroundColor: 'var(--surface-1)',
+          color: 'var(--text-primary)',
+          borderColor: 'var(--border)'
         }}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+        <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
           <div className="font-semibold">{title}</div>
           <button onClick={onCancel} className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800">
             <X size={18} />
@@ -152,8 +155,8 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
         <div className="flex-1 flex min-h-0">
           {/* Left: Property Hierarchy */}
           {showHierarchy && (
-            <div className="w-1/3 border-r border-gray-200 dark:border-gray-700 flex flex-col">
-              <div className="p-2 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
+            <div className="w-1/3 border-r flex flex-col" style={{ borderColor: 'var(--border)' }}>
+              <div className="p-2 border-b" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--surface-2)' }}>
                 <span className="text-xs font-bold uppercase opacity-70">
                   {isObjectProperty ? 'Object Properties' : 'Data Properties'}
                 </span>
@@ -189,7 +192,12 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
                 value={propertyLabel}
                 onChange={e => handlePropertyChange(e.target.value)}
                 list={propertySuggestions.length ? "prop-suggestions" : undefined}
-                className="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-600 text-sm bg-white dark:bg-[#2d2d2d]"
+                className="w-full px-3 py-2 rounded border text-sm"
+                style={{ 
+                  backgroundColor: 'var(--bg)', 
+                  color: 'var(--text-primary)',
+                  borderColor: 'var(--border)'
+                }}
                 placeholder="Select a property or type name..."
               />
               {propertySuggestions.length > 0 && (
@@ -211,7 +219,12 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
                     value={targetLabel}
                     onChange={e => handleTargetChange(e.target.value)}
                     list="target-suggestions"
-                    className="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-600 text-sm bg-white dark:bg-[#2d2d2d]"
+                    className="w-full px-3 py-2 rounded border text-sm"
+                    style={{ 
+                      backgroundColor: 'var(--bg)', 
+                      color: 'var(--text-primary)',
+                      borderColor: 'var(--border)'
+                    }}
                     placeholder="Enter individual name"
                   />
                   <datalist id="target-suggestions">
@@ -222,7 +235,12 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
                 <textarea
                   value={targetLabel}
                   onChange={e => handleTargetChange(e.target.value)}
-                  className="w-full flex-1 px-3 py-2 rounded border border-gray-300 dark:border-gray-600 text-sm bg-white dark:bg-[#2d2d2d] resize-none font-mono"
+                  className="w-full flex-1 px-3 py-2 rounded border text-sm resize-none font-mono"
+                  style={{ 
+                    backgroundColor: 'var(--bg)', 
+                    color: 'var(--text-primary)',
+                    borderColor: 'var(--border)'
+                  }}
                   placeholder="Enter literal value..."
                 />
               )}
@@ -237,7 +255,12 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
                     type="text"
                     value={language}
                     onChange={e => setLanguage(e.target.value)}
-                    className="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-600 text-sm bg-white dark:bg-[#2d2d2d]"
+                    className="w-full px-3 py-2 rounded border text-sm"
+                    style={{ 
+                      backgroundColor: 'var(--bg)', 
+                      color: 'var(--text-primary)',
+                      borderColor: 'var(--border)'
+                    }}
                     placeholder="e.g. en, fr"
                   />
                 </div>
@@ -246,7 +269,12 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
                   <select
                     value={datatype}
                     onChange={e => setDatatype(e.target.value)}
-                    className="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-600 text-sm bg-white dark:bg-[#2d2d2d]"
+                    className="w-full px-3 py-2 rounded border text-sm"
+                    style={{ 
+                      backgroundColor: 'var(--bg)', 
+                      color: 'var(--text-primary)',
+                      borderColor: 'var(--border)'
+                    }}
                   >
                     {DATATYPES.map(dt => (
                       <option key={dt} value={dt}>{dt}</option>
@@ -259,10 +287,14 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2 bg-gray-50 dark:bg-gray-900">
+        <div className="px-4 py-3 border-t flex justify-end gap-2" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--surface-2)' }}>
           <button
             onClick={onCancel}
-            className="px-4 py-2 rounded text-sm hover:bg-gray-200 dark:hover:bg-gray-800 border border-gray-300 dark:border-gray-600"
+            className="px-4 py-2 rounded text-sm border hover-overlay"
+            style={{ 
+              borderColor: 'var(--border)',
+              color: 'var(--text-primary)'
+            }}
           >
             Cancel
           </button>
