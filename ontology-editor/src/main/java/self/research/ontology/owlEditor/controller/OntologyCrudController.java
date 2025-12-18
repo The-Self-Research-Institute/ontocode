@@ -64,46 +64,64 @@ public class OntologyCrudController {
                 "message", "Changes recorded as draft"
             ));
         } else {
-            // Apply directly to GraphDB and record to history
-            log.info("[MUTATION] Applying {} operations directly to GraphDB for project {}", 
-                request.ops().size(), projectId);
-            
-            String userId = request.userId() != null ? request.userId() : "anonymous";
-            String username = request.username() != null ? request.username() : "Anonymous";
-            
-            mutationService.apply(projectId, request.ops());
-            
-            // Record each operation to GraphDB history and broadcast to collaborators
-            for (OntologyMutationService.MutationOp op : request.ops()) {
-                String entityIRI = op.iri();
-                String entityLabel = op.label();
-                String oldValue = op.oldValue(); // Get oldValue from MutationOp
-                String newValue = op.value();
-                String annotationProperty = op.property(); // Get annotation property for annotation operations
-                
-                historyService.recordEdit(
-                    projectId, 
-                    userId, 
-                    username, 
-                    op.type(), 
-                    entityIRI, 
-                    entityLabel, 
-                    oldValue, 
-                    newValue, 
-                    op.type() + " operation",
-                    annotationProperty
-                );
+            try {
+                // Apply directly to GraphDB and record to history
+                log.info("[MUTATION] Applying {} operations directly to GraphDB for project {}",
+                    request.ops().size(), projectId);
 
-                collaborativeEditService.broadcastMutation(projectId, op, userId, username);
+                String userId = request.userId() != null ? request.userId() : "anonymous";
+                String username = request.username() != null ? request.username() : "Anonymous";
+
+                mutationService.apply(projectId, request.ops());
+
+                // Record each operation to GraphDB history and broadcast to collaborators
+                for (OntologyMutationService.MutationOp op : request.ops()) {
+                    String entityIRI = op.iri();
+                    String entityLabel = op.label();
+                    String oldValue = op.oldValue();
+                    String newValue = op.value();
+                    String annotationProperty = op.property();
+
+                    historyService.recordEdit(
+                        projectId,
+                        userId,
+                        username,
+                        op.type(),
+                        entityIRI,
+                        entityLabel,
+                        oldValue,
+                        newValue,
+                        op.type() + " operation",
+                        annotationProperty
+                    );
+
+                    collaborativeEditService.broadcastMutation(projectId, op, userId, username);
+                }
+
+                log.info("[MUTATION] Recorded {} changes to GraphDB history", request.ops().size());
+
+                return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "draft", false,
+                    "message", "Changes applied directly"
+                ));
+            } catch (IllegalArgumentException e) {
+                log.warn("[MUTATION] Rejected mutation request for project {}: {}", projectId, e.getMessage());
+                return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "draft", false,
+                    "error", "Bad Request",
+                    "message", e.getMessage()
+                ));
+            } catch (Exception e) {
+                log.error("[MUTATION] Failed to apply mutations for project {}: {}", projectId, e.getMessage(), e);
+                return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "draft", false,
+                    "error", "Internal Server Error",
+                    "message", "Failed to apply mutations"
+                ));
             }
-            
-            log.info("[MUTATION] Recorded {} changes to GraphDB history", request.ops().size());
-            
-            return ResponseEntity.ok(Map.of(
-                "success", true,
-                "draft", false,
-                "message", "Changes applied directly"
-            ));
         }
     }
     

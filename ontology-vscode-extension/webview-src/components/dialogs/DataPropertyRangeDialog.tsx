@@ -179,7 +179,7 @@ const DataPropertyRangeDialog: React.FC<DataPropertyRangeDialogProps> = ({
                 value={expression}
                 onChange={(e) => setExpression(e.target.value)}
                 placeholder="Enter data range expression..."
-                className="w-full h-32 px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 text-sm font-mono"
+                className="w-full h-32 px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 text-sm font-mono bg-white text-black"
               />
             </div>
           )}

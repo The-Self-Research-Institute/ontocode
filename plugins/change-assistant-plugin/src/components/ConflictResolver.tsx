@@ -140,7 +140,7 @@ const ConflictResolver: React.FC<ConflictResolverProps> = ({ conflict, onResolve
               value={mergedValue}
               onChange={(e) => setMergedValue(e.target.value)}
               placeholder="Enter your merged value here..."
-              className="w-full font-mono text-sm p-3 border rounded resize-none"
+              className="w-full font-mono text-sm p-3 border rounded resize-none bg-white text-black"
               rows={4}
               disabled={selectedResolution !== 'merge'}
             />

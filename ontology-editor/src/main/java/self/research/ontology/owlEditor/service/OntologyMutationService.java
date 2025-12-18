@@ -4,11 +4,17 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
+import org.eclipse.rdf4j.repository.RepositoryConnection;
+import org.eclipse.rdf4j.query.TupleQuery;
+import org.eclipse.rdf4j.query.TupleQueryResult;
+import org.eclipse.rdf4j.query.BindingSet;
 
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.stream.Collectors;
 
 @Service
@@ -51,7 +57,7 @@ public class OntologyMutationService {
         log.info("[MUTATION] Project: {}", projectId);
         
         String sparql = PREFIXES + "\n" + ops.stream()
-                .map(this::toUpdate)
+                .map(op -> toUpdate(projectId, op))
                 .filter(s -> s != null && !s.isBlank()) // Filter out empty statements
                 .collect(Collectors.joining("\n;\n"));
         
@@ -142,7 +148,7 @@ public class OntologyMutationService {
         }, metadataExecutor);
     }
 
-    private String toUpdate(MutationOp op) {
+    private String toUpdate(String projectId, MutationOp op) {
         // Validate IRI is not null for operations that require it
         if (op.iri() == null || op.iri().isBlank() || "null".equals(op.iri())) {
             log.error("[MUTATION] Invalid IRI for operation {}: iri={}", op.type(), op.iri());
@@ -350,7 +356,57 @@ public class OntologyMutationService {
                 + "<" + op.iri() + "> a <" + op.target() + "> .\n"
                 + "}";
         } else if (type.equals("addAxiom")) {
-            return "";
+            // Back-compat/generic axiom support used by some UI components.
+            // We only support a small set of axiom "kinds" that can be expressed as direct RDF triples.
+            //
+            // Payload convention from the webview:
+            // - op.classIri(): subject (class or individual)
+            // - op.target(): object (IRI) OR expression string
+            // - op.value(): axiom kind (e.g., SubClassOf, EquivalentTo, SameIndividual, DifferentIndividuals, ClassAssertion)
+            String axiomKind = op.value();
+            String subject = op.classIri();
+            String object = op.target();
+
+            if (axiomKind == null || axiomKind.isBlank()) {
+                log.warn("[MUTATION] addAxiom missing axiom kind: {}", op);
+                return "";
+            }
+            if (subject == null || subject.isBlank() || object == null || object.isBlank()) {
+                log.warn("[MUTATION] addAxiom missing subject/object: {}", op);
+                return "";
+            }
+
+            return switch (axiomKind) {
+                case "SameIndividual" ->
+                    "INSERT DATA {\n"
+                        + "<" + subject + "> owl:sameAs <" + object + "> .\n"
+                        + "<" + object + "> owl:sameAs <" + subject + "> .\n"
+                        + "}";
+                case "DifferentIndividuals" ->
+                    "INSERT DATA {\n"
+                        + "<" + subject + "> owl:differentFrom <" + object + "> .\n"
+                        + "<" + object + "> owl:differentFrom <" + subject + "> .\n"
+                        + "}";
+                case "ClassAssertion" ->
+                    "INSERT DATA {\n"
+                        + "<" + subject + "> a <" + object + "> .\n"
+                        + "}";
+                case "EquivalentTo", "SubClassOf", "DisjointWith" -> {
+                    // Without a Manchester parser, only accept a direct IRI as the RHS.
+                    if (object.startsWith("http://") || object.startsWith("https://") || object.startsWith("urn:")) {
+                        String predicate = getAxiomPredicate(axiomKind);
+                        yield "INSERT DATA {\n"
+                            + "<" + subject + "> " + predicate + " <" + object + "> .\n"
+                            + "}";
+                    }
+                    log.warn("[MUTATION] addAxiom unsupported (non-IRI RHS) kind={} target={}", axiomKind, object);
+                    yield "";
+                }
+                default -> {
+                    log.warn("[MUTATION] addAxiom unsupported kind={}", axiomKind);
+                    yield "";
+                }
+            };
         } else if (type.equals("addDisjointUnion")) {
             log.info("[MUTATION] Processing addDisjointUnion: iri={}, value={}", op.iri(), op.value());
             String[] memberIris = op.value() != null ? op.value().split(",") : new String[0];
@@ -441,10 +497,54 @@ public class OntologyMutationService {
             return "DELETE DATA {\n"
                 + "<" + op.iri() + "> <" + op.property() + "> " + literal(op.value()) + " .\n"
                 + "}";
+        } else if (type.equals("addNegativeObjectPropertyAssertion")) {
+            String npaIri = negativePropertyAssertionIri(op, true);
+            return "INSERT DATA {\n"
+                + "<" + npaIri + "> a owl:NegativePropertyAssertion ;\n"
+                + "  owl:sourceIndividual <" + op.iri() + "> ;\n"
+                + "  owl:assertionProperty <" + op.property() + "> ;\n"
+                + "  owl:targetIndividual <" + op.target() + "> .\n"
+                + "}";
+        } else if (type.equals("deleteNegativeObjectPropertyAssertion")) {
+            String npaIri = negativePropertyAssertionIri(op, true);
+            return "DELETE WHERE { <" + npaIri + "> ?p ?o }";
+        } else if (type.equals("addNegativeDataPropertyAssertion")) {
+            String npaIri = negativePropertyAssertionIri(op, false);
+            return "INSERT DATA {\n"
+                + "<" + npaIri + "> a owl:NegativePropertyAssertion ;\n"
+                + "  owl:sourceIndividual <" + op.iri() + "> ;\n"
+                + "  owl:assertionProperty <" + op.property() + "> ;\n"
+                + "  owl:targetValue " + literal(op.value()) + " .\n"
+                + "}";
+        } else if (type.equals("deleteNegativeDataPropertyAssertion")) {
+            String npaIri = negativePropertyAssertionIri(op, false);
+            return "DELETE WHERE { <" + npaIri + "> ?p ?o }";
+        } else if (type.equals("addSameIndividual")) {
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> owl:sameAs <" + op.target() + "> .\n"
+                + "<" + op.target() + "> owl:sameAs <" + op.iri() + "> .\n"
+                + "}";
+        } else if (type.equals("deleteSameIndividual")) {
+            return "DELETE DATA {\n"
+                + "<" + op.iri() + "> owl:sameAs <" + op.target() + "> .\n"
+                + "<" + op.target() + "> owl:sameAs <" + op.iri() + "> .\n"
+                + "}";
+        } else if (type.equals("addDifferentIndividual")) {
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> owl:differentFrom <" + op.target() + "> .\n"
+                + "<" + op.target() + "> owl:differentFrom <" + op.iri() + "> .\n"
+                + "}";
+        } else if (type.equals("deleteDifferentIndividual")) {
+            return "DELETE DATA {\n"
+                + "<" + op.iri() + "> owl:differentFrom <" + op.target() + "> .\n"
+                + "<" + op.target() + "> owl:differentFrom <" + op.iri() + "> .\n"
+                + "}";
         } else if (type.equals("addClassAssertion")) {
             // Add rdf:type assertion to an existing individual
+            if (op.classIri() == null) return "";
+            String classExpr = buildClassExpressionSparql(projectId, op.classIri());
             return "INSERT DATA {\n"
-                + "<" + op.iri() + "> a <" + op.classIri() + "> .\n"
+                + "<" + op.iri() + "> a " + classExpr + " .\n"
                 + "}";
         } else if (type.equals("removeClassAssertion")) {
             // Remove rdf:type assertion from an individual
@@ -474,6 +574,29 @@ public class OntologyMutationService {
             .replace("\r", "\\r")    // Carriage return
             .replace("\t", "\\t");   // Tab
         return "\"%s\"".formatted(escaped);
+    }
+
+    private String negativePropertyAssertionIri(MutationOp op, boolean isObjectTarget) {
+        String raw = isObjectTarget
+            ? "%s|%s|%s".formatted(op.iri(), op.property(), op.target())
+            : "%s|%s|%s".formatted(op.iri(), op.property(), op.value());
+
+        String hash = sha256Hex(raw);
+        return "http://ontocode.org/axiom/negativePropertyAssertion/" + hash;
+    }
+
+    private String sha256Hex(String input) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] bytes = digest.digest(input.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(bytes.length * 2);
+            for (byte b : bytes) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to compute SHA-256", e);
+        }
     }
 
     // Helper method to generate an rdfs:label triple if label is present
@@ -1001,6 +1124,69 @@ public class OntologyMutationService {
     /**
      * Helper method to get the axiom predicate based on axiom type
      */
+    private boolean isComplexExpression(String expression) {
+        if (expression == null) return false;
+        return expression.contains(" ") && !expression.trim().startsWith("<") && !expression.trim().startsWith("_:");
+    }
+
+    private String resolveEntity(String projectId, String name) {
+        if (name == null) return null;
+        String trimmed = name.trim();
+        
+        // If it's already an IRI or CURIE, return it
+        if (trimmed.startsWith("http") || trimmed.startsWith("urn:") || trimmed.startsWith("_:")) return trimmed;
+        if (trimmed.contains(":") && !trimmed.contains(" ")) return trimmed; // CURIE like owl:Thing
+        
+        // Try to find by label
+        // Escape quotes in name
+        String escapedName = trimmed.replace("\"", "\\\"");
+        String query = PREFIXES + """
+            SELECT ?iri WHERE {
+                ?iri rdfs:label "%s" .
+            } LIMIT 1
+            """.formatted(escapedName);
+            
+        try {
+            TupleQueryResult result = datasetService.execSelect(projectId, query);
+            if (result.hasNext()) {
+                BindingSet bs = result.next();
+                return bs.getValue("iri").stringValue();
+            }
+        } catch (Exception e) {
+            log.warn("Failed to resolve entity '{}': {}", trimmed, e.getMessage());
+        }
+        return trimmed; // Fallback
+    }
+
+    private String buildClassExpressionSparql(String projectId, String expression) {
+        if (!isComplexExpression(expression)) {
+             // Ensure it's wrapped in <> if it's a full IRI and not already wrapped
+             String trimmed = expression.trim();
+             if ((trimmed.startsWith("http") || trimmed.startsWith("urn:")) && !trimmed.startsWith("<")) {
+                 return "<" + trimmed + ">";
+             }
+             return trimmed; // CURIE or already wrapped
+        }
+
+        // Simple parser for "P some C"
+        // Regex: ^(\S+)\s+(some|only)\s+(.+)$
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile("^(\\S+)\\s+(some|only)\\s+(.+)$");
+        java.util.regex.Matcher m = p.matcher(expression);
+        
+        if (m.find()) {
+            String property = m.group(1);
+            String type = m.group(2);
+            String target = m.group(3);
+            
+            String propertyIri = resolveEntity(projectId, property);
+            String targetIri = resolveEntity(projectId, target);
+            
+            return buildRestrictionBody(propertyIri, type, targetIri, null, false);
+        }
+        
+        throw new IllegalArgumentException("Unsupported complex expression: " + expression);
+    }
+
     private String getAxiomPredicate(String axiomType) {
         if (axiomType == null) {
             return "rdfs:subClassOf";

@@ -1624,7 +1624,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
                       value={newComment}
                       onChange={(e) => setNewComment(e.target.value)}
                       placeholder="Add a comment..."
-                      className="w-full border rounded p-2 text-sm h-16 resize-none"
+                      className="w-full border rounded p-2 text-sm h-16 resize-none bg-white text-black"
                     />
                     <button
                       onClick={() => {
@@ -1671,7 +1671,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
               value={newComment}
               onChange={(e) => setNewComment(e.target.value)}
               placeholder="Enter your comment..."
-              className="w-full border rounded p-2 text-sm h-24 resize-none"
+              className="w-full border rounded p-2 text-sm h-24 resize-none bg-white text-black"
             />
             <div className="flex gap-2 mt-3">
               <button

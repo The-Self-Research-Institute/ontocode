@@ -14,6 +14,7 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.http.HttpMethod;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.web.filter.CorsFilter;
@@ -55,7 +56,9 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable) // Disable CSRF for stateless API
                 .cors(cors -> cors.configurationSource(corsConfigurationSource())) // Enable CORS
                 .authorizeHttpRequests(authorize -> authorize
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll() // Always allow preflight
                         .requestMatchers("/api/auth/**").permitAll() // Allow public access to auth endpoints
+                        .requestMatchers("/error").permitAll()
                         .anyRequest().authenticated() // All other requests require authentication (will be handled by gateway)
                 )
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)); // Stateless sessions
@@ -72,12 +75,13 @@ public class SecurityConfig {
         CorsConfiguration configuration = new CorsConfiguration();
         
         // Allow requests from common development origins and production
-        configuration.setAllowedOrigins(Arrays.asList(
-            "http://localhost:3000",           // React dev server
-            "http://localhost:5173",           // Vite dev server
-            "http://localhost:8082",           // Gateway
-            "vscode-webview://*",              // VS Code webview
-            "*"                                // Allow all for development (remove in production)
+        configuration.setAllowedOriginPatterns(Arrays.asList(
+            "http://localhost:*",              // Local development (any port)
+            "http://127.0.0.1:*",             // Local development (loopback)
+            "https://localhost:*",            // Local development over HTTPS
+            "vscode-webview://*",             // VS Code webview
+            "vscode-webview-resource://*", 
+            "null"                            // Some sandboxed/webview contexts
         ));
         
         // Allow all HTTP methods

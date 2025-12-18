@@ -275,6 +275,96 @@ const dispatchHostEvent = (name: string, detail: Record<string, any>): boolean =
   }
 };
 
+type VowlLayoutRadii = {
+  class: number;
+  individual: number;
+  datatype: number;
+};
+
+type VowlLayoutResult = {
+  positions: Map<string, { x: number; y: number }>;
+  radii: VowlLayoutRadii;
+};
+
+const computeVowlLayout = (
+  nodes: D3Node[], 
+  width: number, 
+  height: number,
+  classDistanceParam: number = 100,
+  datatypeDistanceParam: number = 100
+): VowlLayoutResult => {
+  const safeWidth = Math.max(width, 1);
+  const safeHeight = Math.max(height, 1);
+  const centerX = safeWidth / 2;
+  const centerY = safeHeight / 2;
+  
+  // Scale the radii based on the distance parameters
+  // Range: 20-200 maps to 0.2-2.0 scale (100 is default)
+  const classScale = Math.max(0.2, Math.min(2.0, classDistanceParam / 100));
+  const datatypeScale = Math.max(0.2, Math.min(2.0, datatypeDistanceParam / 100));
+  
+  const baseMaxRadius = Math.max(120, Math.min(centerX, centerY) - 60);
+  const maxRadius = baseMaxRadius * classScale;
+  const classRadius = maxRadius * 0.85;
+  const individualRadius = Math.max(80 * classScale, classRadius * 0.55);
+  const datatypeRadius = Math.min(maxRadius * datatypeScale, classRadius * 1.25 * datatypeScale);
+
+  const positions = new Map<string, { x: number; y: number }>();
+  const classes = nodes.filter(node => node.type === 'class');
+  const individuals = nodes.filter(node => node.type === 'individual');
+  const datatypes = nodes.filter(node => node.type === 'datatype');
+
+  const assignRing = (
+    ringNodes: D3Node[],
+    radius: number,
+    span: number,
+    offset: number
+  ) => {
+    if (ringNodes.length === 0) {
+      return;
+    }
+    const step = ringNodes.length === 1 ? 0 : span / ringNodes.length;
+    ringNodes.forEach((node, index) => {
+      const angle = offset + (ringNodes.length === 1 ? 0 : index * step);
+      const x = centerX + Math.cos(angle) * radius;
+      const y = centerY + Math.sin(angle) * radius;
+      positions.set(node.id, { x, y });
+    });
+  };
+
+  assignRing(classes, classRadius, Math.PI * 2, -Math.PI / 2);
+  assignRing(individuals, individualRadius, Math.PI * 1.8, -Math.PI / 2);
+  assignRing(datatypes, datatypeRadius, Math.PI * 1.2, -Math.PI / 2 + Math.PI / 6);
+
+  const thingNode = classes.find(
+    node => node.label === 'Thing' || node.id === 'owl:Thing' || node.id.includes('owl#Thing')
+  );
+  if (thingNode) {
+    positions.set(thingNode.id, {
+      x: centerX,
+      y: Math.max(80, centerY - classRadius - 40)
+    });
+  }
+
+  nodes.forEach((node, index) => {
+    if (!positions.has(node.id)) {
+      positions.set(node.id, {
+        x: centerX + (index % 5) * 14 - 28,
+        y: centerY + ((index % 7) - 3) * 12
+      });
+    }
+  });
+
+  return {
+    positions,
+    radii: {
+      class: classRadius,
+      individual: individualRadius,
+      datatype: datatypes.length ? datatypeRadius : classRadius * 1.15
+    }
+  };
+};
+
 export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   projectId,
   context,
@@ -419,8 +509,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const [sidebarSearchTerm, setSidebarSearchTerm] = useState('');
 
   // VOWL Controls
-  const [classDistance, setClassDistance] = useState(50);
-  const [datatypeDistance, setDatatypeDistance] = useState(20);
+  const [classDistance, setClassDistance] = useState(100);
+  const [datatypeDistance, setDatatypeDistance] = useState(100);
   const [isLayoutPaused, setIsLayoutPaused] = useState(false);
 
   // Panels
@@ -555,6 +645,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       console.log(`[Filtering] Force mode: Filtered to classes, individuals, datatypes - ${filtered.length} nodes`);
     }
 
+    // OntoGraph Mode: focus on class hierarchy for clean Protégé-style layout
+    if (visualizationType === 'ontograph') {
+      const beforeFilter = filtered.length;
+      filtered = filtered.filter(node => node.type === 'class');
+      console.log(`[Filtering] OntoGraph mode: Focused on classes ${beforeFilter} -> ${filtered.length}`);
+    }
+
     console.log(`[Filtering] visibleNodes: ${visibleNodes.length}, after type filter: ${filtered.length}`);
 
     // Search filter (Note: Search now handled by handleSearch with path expansion)
@@ -664,7 +761,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
     
     // **Force/OntoGraph Mode: Show property relation edges if filters allow them**
-    if (visualizationType === 'force' || visualizationType === 'ontograph') {
+    if (visualizationType === 'force') {
       const beforeFilter = filtered.length;
       filtered = filtered.filter(edge => {
         if (edge.type === 'propertyRelation') {
@@ -695,6 +792,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       
       console.log(`[Filtering] ${visualizationType} mode: Filtered property edges ${beforeFilter} -> ${filtered.length}`);
     }
+
+    if (visualizationType === 'ontograph') {
+      const beforeFilter = filtered.length;
+      filtered = filtered.filter(edge => edge.type === 'subClassOf');
+      console.log(`[Filtering] OntoGraph mode: Keeping subclass hierarchy edges ${beforeFilter} -> ${filtered.length}`);
+    }
     
     console.log('[AdvancedGraphView] Filtered edges:', filtered.length);
     if (filtered.length === 0 && visibleEdges.length > 0) {
@@ -707,29 +810,40 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
   // Generate dynamic legend based on current graph
   const dynamicLegend = useMemo(() => {
+    console.log('[Legend] Computing dynamic legend - Mode:', visualizationType, 'Visible nodes:', visibleNodes.length, 'Visible edges:', visibleEdges.length);
+    
     if (visualizationType === 'vowl') {
-      // VOWL Mode - dynamic legend based on actual nodes/edges
+      // VOWL Mode - dynamic legend based on visible nodes in the current graph
       const legend: Array<{ name: string; type: string; nodeType?: string; color?: string; stroke?: string; strokeDasharray?: string }> = [];
       
-      // Check for external vs internal classes
-      const hasExternalClass = filteredNodes.some(n => 
+      // Use visibleNodes (after hierarchy filters) for accurate legend
+      const nodeTypes = new Set(visibleNodes.map(n => n.type));
+      const edgeTypes = new Set(visibleEdges.map(e => e.type));
+      
+      console.log('[Legend] VOWL - Node types:', Array.from(nodeTypes), 'Edge types:', Array.from(edgeTypes));
+      
+      // Check for specific node types in visible nodes
+      const hasThing = visibleNodes.some(n => n.label === 'Thing' || n.id === 'owl:Thing');
+      const hasClass = nodeTypes.has('class') && visibleNodes.some(n => n.type === 'class' && n.label !== 'Thing');
+      const hasDatatype = nodeTypes.has('datatype');
+      const hasIndividual = nodeTypes.has('individual');
+      
+      // Distinguish internal vs external classes if present
+      const hasExternalClass = visibleNodes.some(n => 
         n.type === 'class' && (['Item', 'UserAccount', 'Concept'].includes(n.label) || n.label?.includes('external'))
       );
-      const hasInternalClass = filteredNodes.some(n => 
-        n.type === 'class' && !(['Item', 'UserAccount', 'Concept'].includes(n.label) || n.label?.includes('external'))
+      const hasInternalClass = visibleNodes.some(n => 
+        n.type === 'class' && !(['Item', 'UserAccount', 'Concept'].includes(n.label) || n.label?.includes('external')) && n.label !== 'Thing'
       );
-      const hasThing = filteredNodes.some(n => n.label === 'Thing' || n.id === 'owl:Thing');
-      const hasDatatype = filteredNodes.some(n => n.type === 'datatype');
-      const hasIndividual = filteredNodes.some(n => n.type === 'individual');
       
+      // Add node type legends
+      if (hasThing) legend.push({ name: 'Thing (Dashed Border)', type: 'node', nodeType: 'class', color: '#ffffff' });
       if (hasExternalClass) legend.push({ name: 'External Class (Dark Blue)', type: 'node', nodeType: 'class', color: '#4682b4' });
       if (hasInternalClass) legend.push({ name: 'Internal Class (Light Blue)', type: 'node', nodeType: 'class', color: '#acd5f2' });
-      if (hasThing) legend.push({ name: 'Thing (Dashed Border)', type: 'node', nodeType: 'class', color: '#ffffff' });
       if (hasDatatype) legend.push({ name: 'Datatype / Literal (Light Orange)', type: 'node', nodeType: 'datatype', color: '#FFD9B3' });
       if (hasIndividual) legend.push({ name: 'Individual (Rectangle)', type: 'node', nodeType: 'individual', color: '#E74C3C' });
       
-      // Edge types
-      const edgeTypes = new Set(filteredEdges.map(e => e.type));
+      // Add edge type legends based on visible edges
       if (edgeTypes.has('propertyRelation')) {
         legend.push({ name: 'Object Property', type: 'edge', stroke: '#000000', strokeDasharray: '0' });
         legend.push({ name: 'Data Property', type: 'edge', stroke: '#000000', strokeDasharray: '0' });
@@ -744,22 +858,19 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         legend.push({ name: 'Regular Property (Blue)', type: 'label', color: '#BBDEFB' });
       }
       
+      console.log('[Legend] VOWL legend items:', legend.length, 'Details:', legend.map(l => ({name: l.name, type: l.type, nodeType: l.nodeType, color: l.color})));
       return legend;
     } else {
-      // Standard Mode - dynamic legend based on actual nodes/edges
+      // Standard Mode (Force-directed & OntoGraph) - dynamic legend based on visible nodes/edges
       const legend: Array<{ name: string; type: string; nodeType?: string; color?: string; stroke?: string; strokeDasharray?: string }> = [];
       
-      // Node types from actual graph
-      const nodeTypes = new Set(filteredNodes.map(n => n.type));
-      if (nodeTypes.has('class')) legend.push({ name: 'Class', type: 'node', nodeType: 'class', color: '#4A90E2' });
-      if (nodeTypes.has('objectProperty')) legend.push({ name: 'Object Property', type: 'node', nodeType: 'objectProperty', color: '#50C878' });
-      if (nodeTypes.has('dataProperty')) legend.push({ name: 'Datatype Property', type: 'node', nodeType: 'dataProperty', color: '#ec4899' });
-      if (nodeTypes.has('individual')) legend.push({ name: 'Individual', type: 'node', nodeType: 'individual', color: '#E74C3C' });
-      if (nodeTypes.has('annotation')) legend.push({ name: 'Annotation Property', type: 'node', nodeType: 'annotation', color: '#9B59B6' });
-      if (nodeTypes.has('datatype')) legend.push({ name: 'Datatype', type: 'node', nodeType: 'datatype', color: '#FFA500' });
+      // Node types from visible nodes in current graph
+      const nodeTypes = new Set(visibleNodes.map(n => n.type));
       
-      // Edge types from actual graph
-      const edgeTypes = new Set(filteredEdges.map(e => e.type));
+      if (nodeTypes.has('class')) legend.push({ name: 'Class', type: 'node', nodeType: 'class', color: '#4A90E2' });
+      
+      // Edge types from visible edges in current graph
+      const edgeTypes = new Set(visibleEdges.map(e => e.type));
       if (edgeTypes.has('subClassOf')) legend.push({ name: 'SubClass Of', type: 'edge', stroke: '#2563eb', strokeDasharray: '0' });
       if (edgeTypes.has('domain')) legend.push({ name: 'Domain', type: 'edge', stroke: '#10b981', strokeDasharray: '0' });
       if (edgeTypes.has('range')) legend.push({ name: 'Range', type: 'edge', stroke: '#f59e0b', strokeDasharray: '0' });
@@ -768,9 +879,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       if (edgeTypes.has('disjointWith')) legend.push({ name: 'Disjoint', type: 'edge', stroke: '#ef4444', strokeDasharray: '3,3' });
       if (edgeTypes.has('propertyRelation')) legend.push({ name: 'Property Relation', type: 'edge', stroke: '#6b7280', strokeDasharray: '0' });
       
+      console.log('[Legend] Standard legend items:', legend.length);
       return legend;
     }
-  }, [visualizationType, filteredNodes, filteredEdges]);
+  }, [visualizationType, visibleNodes, visibleEdges]);
 
   // Performance tracking (disabled for production performance)
   const renderTime = useRef(0);
@@ -839,74 +951,27 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           graphData.edges.filter((e: OntologyEdge) => e.type === 'propertyRelation').slice(0, 5)
         );
 
-        // Initialize with all classes and top-level properties
-        const classNodes = graphData.nodes.filter((n: OntologyNode) => n.type === 'class');
-        
-        console.log('[AdvancedGraphView] 🔍 Class nodes found:', classNodes.length);
-        console.log('[AdvancedGraphView] 📋 All classes:', classNodes.map((n, i) => `${i+1}. ${n.label} (${n.id})`).join('\n'));
-        
-        // Check for subClassOf edges
-        const subClassEdges = graphData.edges.filter((e: OntologyEdge) => e.type === 'subClassOf');
-        console.log('[AdvancedGraphView] 🔗 SubClass edges found:', subClassEdges.length);
-        console.log('[AdvancedGraphView] 📋 All SubClass relationships:', 
-          subClassEdges.map((e, i) => {
-            const from = graphData.nodes.find(n => n.id === e.from);
-            const to = graphData.nodes.find(n => n.id === e.to);
-            return `${i+1}. ${from?.label || e.from} -> ${to?.label || e.to}`;
-          }).join('\n')
-        );
-        
-        // Always show ALL classes (including subclasses) regardless of visualization type
-        const classIdsToShow = classNodes.map(n => n.id);
-        
-        console.log('[AdvancedGraphView] 🎯 Classes to show:', classIdsToShow.length);
-        console.log('[AdvancedGraphView] 🎯 Class IDs:', classIdsToShow);
-        
-        // Get only top-level properties (properties without domain or range relationships)
-        const topLevelPropertyIds = graphData.nodes
-          .filter((n: OntologyNode) => n.type === 'objectProperty' || n.type === 'dataProperty' || n.type === 'annotation')
-          .filter((prop: OntologyNode) => {
-            const hasDomain = graphData.edges.some((e: OntologyEdge) => e.type === 'domain' && e.to === prop.id);
-            const hasRange = graphData.edges.some((e: OntologyEdge) => e.type === 'range' && e.from === prop.id);
-            return !hasDomain && !hasRange;
-          })
-          .map((n: OntologyNode) => n.id);
-        
-        // Get all individuals and datatypes
-        const individualsAndDatatypesIds = graphData.nodes
-          .filter((n: OntologyNode) => n.type === 'individual' || n.type === 'datatype')
-          .map((n: OntologyNode) => n.id);
-        
-        const initialVisibleIds = [...classIdsToShow, ...topLevelPropertyIds, ...individualsAndDatatypesIds];
-        
-        // CRITICAL FIX: Mark Thing as expanded so its child edges are shown
-        const thingNode = graphData.nodes.find((n: OntologyNode) => 
-          n.label === 'Thing' || n.id.includes('Thing') || n.id === 'owl:Thing'
-        );
-        const initialExpandedIds: string[] = [];
-        if (thingNode) {
-          initialExpandedIds.push(thingNode.id);
-          console.log('[AdvancedGraphView] 🎯 Thing node found:', thingNode.id, '- Marking as expanded to show connections');
-        }
-        
-        console.log('[AdvancedGraphView] 🎯 Initial visible IDs count:', initialVisibleIds.length);
-        console.log('[AdvancedGraphView] 🎯 Breakdown - Classes:', classIdsToShow.length, 'Properties:', topLevelPropertyIds.length, 'Individuals/Datatypes:', individualsAndDatatypesIds.length);
-        console.log('[AdvancedGraphView] 🎯 Expanded IDs:', initialExpandedIds);
-        
-        // Update state in single batch
+        // Update state with fetched data
         setAllNodes(graphData.nodes);
         setAllEdges(graphData.edges);
         
         console.log('[AdvancedGraphView] ✅ Set allNodes:', graphData.nodes.length, 'allEdges:', graphData.edges.length);
         
+        // Use collapseAllNodes function for consistent initial state
+        // This shows root entities + first-level children for ALL entity types
+        const { newExpandedIds, newVisibleIds } = collapseAllNodes(graphData.nodes, graphData.edges);
+        
         updateHierarchyState(() => ({
-          visible: new Set(initialVisibleIds),
-          expanded: new Set(initialExpandedIds)
+          visible: newVisibleIds,
+          expanded: newExpandedIds
         }));
         
-        console.log('[AdvancedGraphView] ✅ Updated hierarchy state with', initialVisibleIds.length, 'visible IDs');
+        console.log('[AdvancedGraphView] ✅ Initial hierarchy state:', {
+          visible: newVisibleIds.size,
+          expanded: newExpandedIds.size,
+          total: graphData.nodes.length
+        });
 
-        console.log(`[Hierarchy] Initial view: ${initialVisibleIds.length} entities (${classIdsToShow.length} all classes + ${topLevelPropertyIds.length} top-level properties + ${individualsAndDatatypesIds.length} individuals/datatypes) out of ${graphData.nodes.length} total`);
         setLoading(false);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -1048,6 +1113,18 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       
       return { ...node, x, y };
     });
+
+    let vowlLayout: VowlLayoutResult | null = null;
+    if (visualizationType === 'vowl') {
+      vowlLayout = computeVowlLayout(d3Nodes, width, height, classDistance, datatypeDistance);
+      d3Nodes.forEach(node => {
+        const position = vowlLayout?.positions.get(node.id);
+        if (position) {
+          node.x = position.x;
+          node.y = position.y;
+        }
+      });
+    }
 
     // Apply OntoGraph hierarchical layout if selected
     if (visualizationType === 'ontograph') {
@@ -1206,9 +1283,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           // Much stronger repulsion in WebVOWL mode for organized layout
           if (visualizationType === 'vowl') {
             if (node.type === 'class') {
-              return nodeCount > 100 ? -3500 : -5000; // Increased from -3000
+              return nodeCount > 200 ? -1400 : -1200;
             }
-            return nodeCount > 100 ? -2500 : -3500; // Increased from -2000
+            if (node.type === 'datatype') {
+              return nodeCount > 200 ? -1100 : -950;
+            }
+            return nodeCount > 200 ? -900 : -800;
           }
           // Force mode - adaptive strength for large graphs (100k nodes)
           if (visualizationType === 'force') {
@@ -1228,7 +1308,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           }
           return nodeCount > 100 ? -500 : -800;
         })
-        .distanceMax(visualizationType === 'vowl' ? 2000 : (nodeCount > 10000 ? 800 : 1200))
+        .distanceMax(visualizationType === 'vowl' ? Math.min(width, height) * 1.2 : (nodeCount > 10000 ? 800 : 1200))
         .theta(nodeCount > 50000 ? 0.9 : 0.7) : null)
       .force('center', usePhysics ? d3.forceCenter(width / 2, height / 2)
         .strength(visualizationType === 'vowl' ? 0.02 : 0.03) : null)
@@ -1242,11 +1322,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           if (visualizationType === 'vowl') {
             // Different collision radii based on node type - increased to prevent overlap
             if (node.type === 'class') {
-              return size * 10.0; // Further increased for classes
+              return size * 4.5;
             } else if (node.type === 'datatype') {
-              return size * 9.0; // Further increased for datatypes
+              return size * 3.6;
             }
-            return size * 8.0; // Further increased for individuals
+            return size * 3.2;
           }
           // Force mode - adaptive collision radius for scalability
           if (visualizationType === 'force') {
@@ -1276,13 +1356,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         const node = d as D3Node;
         // Stronger vertical positioning in VOWL mode
         if (visualizationType === 'vowl') {
-          if (node.type === 'class') {
-            return height * 0.35;
-          } else if (node.type === 'individual') {
-            return height * 0.75;
-          } else if (node.type === 'datatype') {
-            return height * 0.65;
-          }
           return height / 2;
         }
         // Standard mode positioning
@@ -1294,20 +1367,49 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           return height * 0.6;
         }
         return height / 2;
-      }).strength(visualizationType === 'vowl' ? 0.25 : 0.15) : null)
-      .force('x', usePhysics ? d3.forceX(width / 2).strength(visualizationType === 'vowl' ? 0.01 : 0.02) : null)
+      }).strength(visualizationType === 'vowl' ? 0.18 : 0.15) : null)
+      .force('x', usePhysics ? d3.forceX(d => {
+        const node = d as D3Node;
+        if (visualizationType === 'force') {
+          if (node.type === 'class') {
+            return width * 0.35;
+          }
+          if (node.type === 'individual') {
+            return width * 0.62;
+          }
+          if (node.type === 'datatype') {
+            return width * 0.78;
+          }
+        }
+        if (visualizationType === 'vowl') {
+          return width / 2;
+        }
+        return width / 2;
+      }).strength(visualizationType === 'force' ? 0.14 : visualizationType === 'vowl' ? 0.05 : 0.02) : null)
       .alphaDecay(usePhysics ? (visualizationType === 'vowl' ? 0.02 : 0.03) : 1) // Increased for faster settling
       .velocityDecay(usePhysics ? (visualizationType === 'vowl' ? 0.6 : 0.5) : 0.8) // Increased for more damping
       .alpha(isLayoutPaused || !usePhysics ? 0 : 1.0)
       .alphaMin(0.001)
       .alphaTarget(0);
 
+    if (visualizationType === 'vowl' && usePhysics && vowlLayout) {
+      simulation.force('radial', d3.forceRadial<D3Node>(node => {
+        if (node.type === 'datatype') {
+          return vowlLayout!.radii.datatype;
+        }
+        if (node.type === 'individual') {
+          return vowlLayout!.radii.individual;
+        }
+        return vowlLayout!.radii.class;
+      }, width / 2, height / 2).strength(0.75));
+    }
+
     simulationRef.current = simulation;
 
     // Pre-calculate stable positions before rendering (run simulation silently)
     if (usePhysics && !isLayoutPaused) {
       // Run simulation for several ticks to get stable positions
-      const preTicks = visualizationType === 'vowl' ? 100 : 50; // More ticks for VOWL due to stronger forces
+      const preTicks = visualizationType === 'vowl' ? 60 : 50;
       for (let i = 0; i < preTicks; i++) {
         simulation.tick();
       }
@@ -1337,54 +1439,54 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .join('path')
       .attr('fill', 'none')
       .attr('stroke', d => {
+        const isDark = document.documentElement.classList.contains('dark');
+        
         if (visualizationType === 'vowl') {
           // Determine property type for proper coloring
           const sourceNode = allNodes.find(n => n.id === d.from);
           const targetNode = allNodes.find(n => n.id === d.to);
           
           if (d.type === 'subClassOf') {
-            return '#374151'; // Dark gray for subClassOf
+            return isDark ? '#9ca3af' : '#374151'; // Light gray in dark mode, dark gray in light mode
           }
           if (d.type === 'propertyRelation') {
             // Annotation properties - purple
             if (sourceNode?.type === 'annotation') {
-              return '#7c3aed';
+              return isDark ? '#a78bfa' : '#7c3aed';
             }
             // Data properties - pink
             if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
-              return '#db2777';
+              return isDark ? '#f472b6' : '#db2777';
             }
             // Object properties - cyan
-            return '#0891b2';
+            return isDark ? '#22d3ee' : '#0891b2';
           }
           
           const vowlEdge = vowlNotationService.edgeToVOWLEdge(d);
-          return vowlEdge.stroke || '#000000';
+          return isDark ? '#94a3b8' : (vowlEdge.stroke || '#000000');
         }
         if (visualizationType === 'ontograph') {
-          // Protégé-style colors
-          if (d.type === 'subClassOf') return '#9C27B0'; // Purple for subClassOf
-          if (d.type === 'instanceOf') return '#FFA726'; // Orange for instances
+          // Protégé-style colors with dark mode support
+          if (d.type === 'subClassOf') return isDark ? '#c084fc' : '#9C27B0'; // Purple
+          if (d.type === 'instanceOf') return isDark ? '#fbbf24' : '#FFA726'; // Orange
           if (d.type === 'propertyRelation') {
-            // Different colors for different property types
             const sourceNode = allNodes.find(n => n.id === d.from);
             const targetNode = allNodes.find(n => n.id === d.to);
-            if (sourceNode?.type === 'annotation') return '#8b5cf6'; // Purple for annotation properties
-            if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return '#ec4899'; // Pink for data properties
-            return '#06b6d4'; // Cyan for object properties
+            if (sourceNode?.type === 'annotation') return isDark ? '#a78bfa' : '#8b5cf6';
+            if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return isDark ? '#f472b6' : '#ec4899';
+            return isDark ? '#22d3ee' : '#06b6d4';
           }
-          return '#9C27B0'; // Default purple
+          return isDark ? '#c084fc' : '#9C27B0';
         }
-        // Force mode - match reference image styling
-        if (d.type === 'subClassOf') return '#FFA500'; // Orange for subClassOf
-        if (d.type === 'instanceOf') return '#000000'; // Black for instanceOf
+        // Force mode - with dark mode support
+        if (d.type === 'subClassOf') return isDark ? '#fbbf24' : '#FFA500';
+        if (d.type === 'instanceOf') return isDark ? '#cbd5e1' : '#000000';
         if (d.type === 'propertyRelation') {
           const targetNode = allNodes.find(n => n.id === d.to);
-          // Gray for data properties pointing to datatypes or literal values
-          if (targetNode?.type === 'datatype' || targetNode?.label?.startsWith('"')) return '#999999';
-          return '#000000'; // Black for object properties
+          if (targetNode?.type === 'datatype' || targetNode?.label?.startsWith('"')) return isDark ? '#94a3b8' : '#999999';
+          return isDark ? '#cbd5e1' : '#000000';
         }
-        return '#000000'; // Default black
+        return isDark ? '#cbd5e1' : '#000000';
       })
       .attr('stroke-width', d => {
         if (visualizationType === 'vowl') {
@@ -1533,42 +1635,44 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .attr('font-weight', visualizationType === 'vowl' ? '500' : '400')
       .attr('font-family', visualizationType === 'vowl' ? 'Arial, sans-serif' : 'inherit')
       .attr('fill', d => {
+        const isDark = document.documentElement.classList.contains('dark');
+        
         if (visualizationType === 'vowl') {
           // Determine property type for proper label coloring
           const sourceNode = allNodes.find(n => n.id === d.from);
           const targetNode = allNodes.find(n => n.id === d.to);
           
           if (d.type === 'subClassOf') {
-            return '#1f2937'; // Dark for subClassOf
+            return isDark ? '#d1d5db' : '#1f2937'; // Light gray in dark mode
           }
           
           if (d.type === 'propertyRelation') {
             // Annotation properties - dark purple
             if (sourceNode?.type === 'annotation') {
-              return '#6b21a8';
+              return isDark ? '#c4b5fd' : '#6b21a8';
             }
             // Data properties - dark pink
             if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
-              return '#be185d';
+              return isDark ? '#f9a8d4' : '#be185d';
             }
             // Object properties - dark cyan
             const isFunctional = d.metadata?.functional;
-            return isFunctional ? '#2E7D32' : '#065f46'; // Green for functional, dark cyan for regular
+            return isDark ? '#67e8f9' : (isFunctional ? '#2E7D32' : '#065f46');
           }
           
-          return '#1565C0'; // Default dark blue
+          return isDark ? '#93c5fd' : '#1565C0';
         }
-        // Color labels by property type
+        // Color labels by property type with dark mode support
         if (d.type === 'propertyRelation') {
           const sourceNode = allNodes.find(n => n.id === d.from);
           const targetNode = allNodes.find(n => n.id === d.to);
-          if (sourceNode?.type === 'annotation') return '#7c3aed'; // Dark purple for annotation properties
-          if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return '#db2777'; // Dark pink for data properties
-          return '#0891b2'; // Dark cyan for object properties
+          if (sourceNode?.type === 'annotation') return isDark ? '#c4b5fd' : '#7c3aed';
+          if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return isDark ? '#f9a8d4' : '#db2777';
+          return isDark ? '#67e8f9' : '#0891b2';
         }
-        if (d.type === 'subClassOf') return '#7c3aed'; // Purple
-        if (d.type === 'instanceOf') return '#ea580c'; // Orange
-        return '#666';
+        if (d.type === 'subClassOf') return isDark ? '#c4b5fd' : '#7c3aed';
+        if (d.type === 'instanceOf') return isDark ? '#fdba74' : '#ea580c';
+        return isDark ? '#d1d5db' : '#666';
       })
       .attr('text-anchor', 'middle')
       .attr('dominant-baseline', 'middle')
@@ -2392,11 +2496,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
   const handleSearch = useCallback((query: string) => {
     if (!query) {
-      // Clear search - show only root nodes
-      const rootIds = getRootNodes(allNodes, allEdges);
+      // Clear search - use collapseAll for consistent behavior (shows roots + first level)
+      const { newExpandedIds, newVisibleIds } = collapseAllNodes(allNodes, allEdges);
       updateHierarchyState(() => ({
-        visible: new Set(rootIds),
-        expanded: new Set()
+        visible: newVisibleIds,
+        expanded: newExpandedIds
       }));
       setSearchQuery('');
       return;
@@ -2796,28 +2900,93 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       link.click();
       URL.revokeObjectURL(url);
     } else if (format === 'png' && svgRef.current) {
-      const svgData = new XMLSerializer().serializeToString(svgRef.current);
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      const img = new Image();
-
-      img.onload = () => {
-        canvas.width = img.width;
-        canvas.height = img.height;
-        ctx?.drawImage(img, 0, 0);
-        canvas.toBlob(blob => {
-          if (blob) {
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = `ontology-graph-${projectId}.png`;
-            link.click();
-            URL.revokeObjectURL(url);
-          }
-        });
-      };
-
-      img.src = 'data:image/svg+xml;base64,' + btoa(svgData);
+      try {
+        const svgElement = svgRef.current;
+        
+        // Get SVG dimensions
+        const bbox = svgElement.getBBox();
+        const width = Math.max(bbox.width + 40, 800);
+        const height = Math.max(bbox.height + 40, 600);
+        
+        // Clone SVG and set explicit dimensions
+        const clonedSvg = svgElement.cloneNode(true) as SVGSVGElement;
+        clonedSvg.setAttribute('width', width.toString());
+        clonedSvg.setAttribute('height', height.toString());
+        clonedSvg.setAttribute('viewBox', `${bbox.x - 20} ${bbox.y - 20} ${width} ${height}`);
+        
+        // Serialize SVG
+        const svgData = new XMLSerializer().serializeToString(clonedSvg);
+        
+        // Create canvas
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        
+        if (!ctx) {
+          console.error('Failed to get canvas context');
+          return;
+        }
+        
+        // Create image
+        const img = new Image();
+        
+        img.onload = () => {
+          // Fill white background
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, width, height);
+          
+          // Draw SVG
+          ctx.drawImage(img, 0, 0);
+          
+          // Convert to PNG and download
+          canvas.toBlob(blob => {
+            if (blob) {
+              const url = URL.createObjectURL(blob);
+              const link = document.createElement('a');
+              link.href = url;
+              link.download = `ontology-graph-${projectId}.png`;
+              link.click();
+              URL.revokeObjectURL(url);
+            }
+          }, 'image/png');
+        };
+        
+        img.onerror = (e) => {
+          console.error('Failed to load SVG image for PNG export:', e);
+        };
+        
+        // Encode SVG data properly (handle Unicode)
+        const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(svgBlob);
+        img.src = url;
+        
+        // Clean up after image loads
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          
+          // Fill white background
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, width, height);
+          
+          // Draw SVG
+          ctx.drawImage(img, 0, 0);
+          
+          // Convert to PNG and download
+          canvas.toBlob(blob => {
+            if (blob) {
+              const pngUrl = URL.createObjectURL(blob);
+              const link = document.createElement('a');
+              link.href = pngUrl;
+              link.download = `ontology-graph-${projectId}.png`;
+              link.click();
+              URL.revokeObjectURL(pngUrl);
+            }
+          }, 'image/png');
+        };
+      } catch (error) {
+        console.error('PNG export failed:', error);
+      }
     }
   };
 
@@ -3025,21 +3194,21 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             padding: '8px 10px',
             cursor: 'pointer',
             borderRadius: '6px',
-            backgroundColor: selectedNodes.has(node.id) ? '#e0e7ff' : '#ffffff',
-            border: selectedNodes.has(node.id) ? '1px solid #c7d2fe' : '1px solid transparent',
+            backgroundColor: selectedNodes.has(node.id) ? 'var(--accent-tint)' : 'var(--surface-1)',
+            border: selectedNodes.has(node.id) ? '1px solid var(--accent)' : '1px solid transparent',
             transition: 'all 0.2s ease',
             marginBottom: '2px',
-            boxShadow: selectedNodes.has(node.id) ? '0 1px 3px rgba(99, 102, 241, 0.1)' : 'none'
+            boxShadow: selectedNodes.has(node.id) ? '0 1px 3px var(--accent-tint)' : 'none'
           }}
           onMouseEnter={(e) => {
             if (!selectedNodes.has(node.id)) {
-              e.currentTarget.style.backgroundColor = '#f9fafb';
-              e.currentTarget.style.borderColor = '#e5e7eb';
+              e.currentTarget.style.backgroundColor = 'var(--surface-2)';
+              e.currentTarget.style.borderColor = 'var(--border)';
             }
           }}
           onMouseLeave={(e) => {
             if (!selectedNodes.has(node.id)) {
-              e.currentTarget.style.backgroundColor = '#ffffff';
+              e.currentTarget.style.backgroundColor = 'var(--surface-1)';
               e.currentTarget.style.borderColor = 'transparent';
             }
           }}
@@ -3342,10 +3511,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           onChange={(e) => setVisualizationType(e.target.value as VisualizationType)}
           style={{
             padding: '6px 12px',
-            border: '1px solid #e5e7eb',
+            border: '1px solid var(--border)',
             borderRadius: '6px',
             fontSize: '13px',
-            backgroundColor: '#fff',
+            backgroundColor: 'var(--surface-1)',
+            color: 'var(--text-primary)',
             cursor: 'pointer',
             minWidth: '180px',
             fontWeight: '500'
@@ -3375,29 +3545,16 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         {/* Hierarchical navigation */}
         <button
           onClick={() => {
-            // Show ALL nodes of ALL types with full expansion
-            console.log('[Expand All] Expanding all nodes with full hierarchy');
-            
-            const allNodeIds = allNodes.map(n => n.id);
-            
-            // Mark all class nodes as expanded to show their children
-            const classNodeIds = allNodes
-              .filter(n => n.type === 'class')
-              .map(n => n.id);
+            // Use the expandAllNodes function for consistent behavior
+            console.log('[Expand All] Using expandAllNodes function');
+            const { newExpandedIds, newVisibleIds } = expandAllNodes(allNodes);
             
             updateHierarchyState(() => ({
-              visible: new Set(allNodeIds),
-              expanded: new Set(classNodeIds) // Mark all classes as expanded
+              visible: newVisibleIds,
+              expanded: newExpandedIds
             }));
             
-            console.log('[Expand All] ✅ Expanded all', allNodeIds.length, 'nodes:', {
-              classes: allNodes.filter(n => n.type === 'class').length,
-              individuals: allNodes.filter(n => n.type === 'individual').length,
-              objectProperties: allNodes.filter(n => n.type === 'objectProperty').length,
-              dataProperties: allNodes.filter(n => n.type === 'dataProperty').length,
-              datatypes: allNodes.filter(n => n.type === 'datatype').length,
-              annotations: allNodes.filter(n => n.type === 'annotation').length
-            });
+            console.log('[Expand All] ✅ Expanded all', allNodes.length, 'nodes');
           }}
           style={styles.btn}
           title="Expand All - Show full hierarchy of all entity types"
@@ -3407,46 +3564,16 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         </button>
         <button
           onClick={() => {
-            // Show root classes (including Thing) with their immediate children
-            // Plus all non-hierarchical entities
-            console.log('[Collapse All] Collapsing to root classes with first-level children');
+            // Use the collapseAllNodes function for consistent behavior
+            console.log('[Collapse All] Using collapseAllNodes function');
+            const { newExpandedIds, newVisibleIds } = collapseAllNodes(allNodes, allEdges);
             
-            const classNodes = allNodes.filter(n => n.type === 'class');
-            
-            // Get root classes (including Thing/owl:Thing)
-            const rootClassIds = getRootNodes(classNodes, allEdges);
-            
-            // Get immediate children of root classes to show Thing's connections
-            const firstLevelChildrenIds: string[] = [];
-            rootClassIds.forEach(rootId => {
-              const children = allEdges
-                .filter(e => e.type === 'subClassOf' && e.to === rootId)
-                .map(e => e.from);
-              firstLevelChildrenIds.push(...children);
-            });
-            
-            // Get all non-class entities (properties, individuals, datatypes, annotations)
-            const nonClassEntityIds = allNodes
-              .filter(n => n.type !== 'class')
-              .map(n => n.id);
-            
-            // Combine: root classes + their children + non-class entities
-            const visibleIds = [...rootClassIds, ...firstLevelChildrenIds, ...nonClassEntityIds];
-
             updateHierarchyState(() => ({
-              visible: new Set(visibleIds),
-              expanded: new Set(rootClassIds) // Mark root classes as expanded
+              visible: newVisibleIds,
+              expanded: newExpandedIds
             }));
             
-            console.log('[Collapse All] ✅ Showing', visibleIds.length, 'entities:', {
-              rootClasses: rootClassIds.length,
-              firstLevelChildren: firstLevelChildrenIds.length,
-              individuals: allNodes.filter(n => n.type === 'individual').length,
-              objectProperties: allNodes.filter(n => n.type === 'objectProperty').length,
-              dataProperties: allNodes.filter(n => n.type === 'dataProperty').length,
-              datatypes: allNodes.filter(n => n.type === 'datatype').length,
-              annotations: allNodes.filter(n => n.type === 'annotation').length
-            });
+            console.log('[Collapse All] ✅ Done');
           }}
           style={styles.btn}
           title="Collapse All - Show root classes with their immediate children"
@@ -4139,7 +4266,7 @@ const styles: Record<string, React.CSSProperties> = {
     height: '100%',
     display: 'flex',
     flexDirection: 'column',
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--bg)',
     overflow: 'hidden'
   },
   mainRow: {
@@ -4147,7 +4274,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'row',
     overflow: 'hidden',
-    backgroundColor: '#fafbfc'
+    backgroundColor: 'var(--surface-1)'
   },
   firstColumn: {
     flex: 1,
@@ -4157,8 +4284,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   toolbar: {
     padding: '10px 12px',
-    backgroundColor: '#ffffff',
-    borderBottom: '1px solid #e5e7eb',
+    backgroundColor: 'var(--surface-1)',
+    borderBottom: '1px solid var(--border)',
     display: 'flex',
     gap: '6px',
     alignItems: 'center',
@@ -4170,12 +4297,12 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: '6px',
     padding: '7px 11px',
-    background: '#ffffff',
-    border: '1px solid #d1d5db',
+    background: 'var(--surface-1)',
+    border: '1px solid var(--border)',
     borderRadius: '6px',
     cursor: 'pointer',
     fontSize: '13px',
-    color: '#374151',
+    color: 'var(--text-primary)',
     fontWeight: '500',
     transition: 'all 0.2s'
   },
@@ -4184,12 +4311,12 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: '6px',
     padding: '7px 11px',
-    background: '#667eea',
-    border: '1px solid #667eea',
+    background: 'var(--accent)',
+    border: '1px solid var(--accent)',
     borderRadius: '6px',
     cursor: 'pointer',
     fontSize: '13px',
-    color: '#ffffff',
+    color: 'var(--on-accent)',
     fontWeight: '500',
     transition: 'all 0.2s'
   },
@@ -4198,30 +4325,30 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: '6px',
     padding: '7px 11px',
-    background: '#eef2ff',
-    border: '1px solid #667eea',
+    background: 'var(--accent-tint)',
+    border: '1px solid var(--accent)',
     borderRadius: '6px',
     cursor: 'pointer',
     fontSize: '13px',
-    color: '#667eea',
+    color: 'var(--accent)',
     fontWeight: '500',
     transition: 'all 0.2s'
   },
   divider: {
     width: '1px',
     height: '24px',
-    backgroundColor: '#e5e7eb'
+    backgroundColor: 'var(--divider)'
   },
   stats: {
     fontSize: '13px',
-    color: '#6b7280',
+    color: 'var(--text-secondary)',
     padding: '0 12px'
   },
   graphContentArea: {
     flex: 1,
     position: 'relative',
     overflow: 'hidden',
-    backgroundColor: '#ffffff'
+    backgroundColor: 'var(--bg)'
   },
   content: {
     flex: 1,
@@ -4229,15 +4356,15 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'row',
     position: 'relative',
     overflow: 'hidden',
-    backgroundColor: '#f5f5f5',
+    backgroundColor: 'var(--surface-1)',
     gap: '0'
   },
   graphArea: {
     flex: 1,
     position: 'relative',
     overflow: 'hidden',
-    backgroundColor: '#ffffff',
-    borderRight: '2px solid #e0e0e0'
+    backgroundColor: 'var(--bg)',
+    borderRight: '2px solid var(--border)'
   },
   svg: {
     width: '100%',
@@ -4249,7 +4376,7 @@ const styles: Record<string, React.CSSProperties> = {
     top: '20px',
     left: '20px',
     width: '300px',
-    background: 'white',
+    background: 'var(--surface-1)',
     borderRadius: '12px',
     boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
     overflow: 'hidden',
@@ -4261,7 +4388,7 @@ const styles: Record<string, React.CSSProperties> = {
     left: '20px',
     width: '280px',
     maxHeight: '80vh',
-    background: 'white',
+    background: 'var(--surface-1)',
     borderRadius: '12px',
     boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
     overflow: 'hidden',
@@ -4272,7 +4399,7 @@ const styles: Record<string, React.CSSProperties> = {
     top: '20px',
     right: '20px',
     width: '320px',
-    background: 'white',
+    background: 'var(--surface-1)',
     borderRadius: '12px',
     boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
     overflow: 'hidden',
@@ -4282,8 +4409,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   panelHeader: {
     padding: '16px 20px',
-    background: '#f9fafb',
-    borderBottom: '1px solid #e5e7eb',
+    background: 'var(--surface-2)',
+    borderBottom: '1px solid var(--border)',
     display: 'flex',
     alignItems: 'center',
     gap: '8px'
@@ -4293,12 +4420,12 @@ const styles: Record<string, React.CSSProperties> = {
     margin: 0,
     fontSize: '16px',
     fontWeight: '600',
-    color: '#111827'
+    color: 'var(--text-primary)'
   },
   closeBtn: {
     background: 'transparent',
     border: 'none',
-    color: '#9ca3af',
+    color: 'var(--text-tertiary)',
     cursor: 'pointer',
     fontSize: '24px',
     lineHeight: '1',
@@ -4310,15 +4437,17 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
     padding: '12px 16px',
     border: 'none',
-    borderBottom: '1px solid #e5e7eb',
+    borderBottom: '1px solid var(--border)',
     fontSize: '14px',
     outline: 'none',
-    boxSizing: 'border-box'
+    boxSizing: 'border-box',
+    backgroundColor: 'var(--surface-1)',
+    color: 'var(--text-primary)'
   },
   searchResults: {
     padding: '12px 16px',
     fontSize: '13px',
-    color: '#6b7280'
+    color: 'var(--text-secondary)'
   },
   propertyContent: {
     padding: '16px',
@@ -4331,14 +4460,14 @@ const styles: Record<string, React.CSSProperties> = {
   propertyLabel: {
     fontSize: '11px',
     fontWeight: '600',
-    color: '#6b7280',
+    color: 'var(--text-secondary)',
     textTransform: 'uppercase',
     letterSpacing: '0.5px',
     marginBottom: '4px'
   },
   propertyValue: {
     fontSize: '14px',
-    color: '#111827',
+    color: 'var(--text-primary)',
     lineHeight: '1.5'
   },
   loadingOverlay: {
@@ -4347,7 +4476,7 @@ const styles: Record<string, React.CSSProperties> = {
     left: 0,
     right: 0,
     bottom: 0,
-    background: 'rgba(255,255,255,0.9)',
+    background: 'var(--overlay)',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
@@ -4359,8 +4488,8 @@ const styles: Record<string, React.CSSProperties> = {
     top: '50%',
     left: '50%',
     transform: 'translate(-50%, -50%)',
-    background: 'white',
-    border: '2px solid #ef4444',
+    background: 'var(--surface-1)',
+    border: '2px solid var(--error)',
     borderRadius: '8px',
     padding: '20px',
     boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
@@ -4371,20 +4500,20 @@ const styles: Record<string, React.CSSProperties> = {
   },
   contextMenu: {
     position: 'fixed',
-    background: 'white',
+    background: 'var(--surface-1)',
     borderRadius: '8px',
     boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
     padding: '8px 0',
     zIndex: 1000,
     minWidth: '200px',
-    border: '1px solid #e5e7eb'
+    border: '1px solid var(--border)'
   },
   contextMenuHeader: {
     padding: '8px 16px',
     fontSize: '13px',
     fontWeight: '600',
-    color: '#111827',
-    borderBottom: '1px solid #e5e7eb',
+    color: 'var(--text-primary)',
+    borderBottom: '1px solid var(--border)',
     marginBottom: '4px'
   },
   contextMenuItem: {
@@ -4394,7 +4523,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none',
     textAlign: 'left',
     fontSize: '14px',
-    color: '#374151',
+    color: 'var(--text-primary)',
     cursor: 'pointer',
     transition: 'background 0.2s',
     display: 'flex',
@@ -4404,7 +4533,7 @@ const styles: Record<string, React.CSSProperties> = {
   modalOverlay: {
     position: 'fixed',
     inset: 0,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    backgroundColor: 'var(--overlay)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -4414,18 +4543,18 @@ const styles: Record<string, React.CSSProperties> = {
   modal: {
     width: '100%',
     maxWidth: '420px',
-    backgroundColor: '#fff',
+    backgroundColor: 'var(--surface-1)',
     borderRadius: '10px',
     boxShadow: '0 20px 45px rgba(0,0,0,0.25)',
     overflow: 'hidden',
-    border: '1px solid #e5e7eb'
+    border: '1px solid var(--border)'
   },
   modalHeader: {
     padding: '14px 18px',
-    borderBottom: '1px solid #e5e7eb',
+    borderBottom: '1px solid var(--border)',
     fontSize: '15px',
     fontWeight: 600,
-    color: '#111827'
+    color: 'var(--text-primary)'
   },
   modalBody: {
     padding: '18px'
@@ -4435,23 +4564,24 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'flex-end',
     gap: '8px',
     padding: '12px 18px',
-    borderTop: '1px solid #e5e7eb',
-    backgroundColor: '#f9fafb'
+    borderTop: '1px solid var(--border)',
+    backgroundColor: 'var(--surface-2)'
   },
   modalButton: {
     padding: '8px 16px',
     borderRadius: '6px',
-    border: '1px solid #d1d5db',
-    backgroundColor: '#fff',
+    border: '1px solid var(--border)',
+    backgroundColor: 'var(--surface-1)',
+    color: 'var(--text-primary)',
     cursor: 'pointer',
     fontSize: '14px'
   },
   modalButtonPrimary: {
     padding: '8px 16px',
     borderRadius: '6px',
-    border: '1px solid #2563eb',
-    backgroundColor: '#2563eb',
-    color: '#fff',
+    border: '1px solid var(--accent)',
+    backgroundColor: 'var(--accent)',
+    color: 'var(--on-accent)',
     cursor: 'pointer',
     fontSize: '14px'
   },
@@ -4459,14 +4589,16 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
     padding: '8px 10px',
     borderRadius: '6px',
-    border: '1px solid #d1d5db',
+    border: '1px solid var(--border)',
+    backgroundColor: 'var(--surface-1)',
+    color: 'var(--text-primary)',
     fontSize: '14px'
   },
   modalLinkButton: {
     marginTop: '12px',
     background: 'none',
     border: 'none',
-    color: '#2563eb',
+    color: 'var(--accent)',
     fontSize: '13px',
     padding: 0,
     cursor: 'pointer',

@@ -207,7 +207,7 @@ const PropertyExpressionDialog: React.FC<PropertyExpressionDialogProps> = ({
                   value={manchesterExpression}
                   onChange={(e) => setManchesterExpression(e.target.value)}
                   placeholder="Enter Manchester OWL Syntax expression for property"
-                  className={`flex-1 p-4 border-2 border-${propertyColor}-200 rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-${propertyColor}-500 focus:border-transparent resize-none bg-white shadow-sm`}
+                  className={`flex-1 p-4 border-2 border-${propertyColor}-200 rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-${propertyColor}-500 focus:border-transparent resize-none bg-white text-black shadow-sm`}
                 />
               </div>
               <div className={`mt-4 p-4 bg-white rounded-lg border border-${propertyColor}-200 shadow-sm`}>

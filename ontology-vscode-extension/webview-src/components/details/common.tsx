@@ -430,6 +430,13 @@ export const AxiomSubsection: React.FC<{
   };
 
   const theme = themeColor ? themes[themeColor] : null;
+    const themeBorder = {
+        blue: 'var(--info)',
+        green: 'var(--success)',
+        orange: 'var(--warning)',
+        yellow: 'var(--warning)',
+        purple: 'var(--accent)'
+    }[themeColor || 'blue'];
 
   return (
     <div className="mb-3 last:mb-0">
@@ -438,13 +445,17 @@ export const AxiomSubsection: React.FC<{
         <button 
           onClick={handleAddButtonClick}
           onKeyDown={handleHeaderKeyDown}
-          className={`w-full flex justify-between items-center px-2 py-1.5 transition-colors ${theme.headerBg} ${theme.headerText} ${theme.hoverBg} ${isFocused ? `ring-1 ${theme.focusRing}` : ''}`}
+          className={`w-full flex justify-between items-center px-2 py-1.5 transition-colors ${isFocused ? '' : 'hover-overlay'} text-primary`}
+          style={{
+            backgroundColor: isFocused ? 'var(--selected-bg)' : 'var(--surface-2)',
+            borderLeft: `2px solid ${themeBorder}`,
+          }}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
         >
           <span className="text-xs font-medium">{title}</span>
           {onAddClick && (
-            <span className={`text-stone-400 transition-colors ${theme.plusHover}`}>
+            <span className="transition-colors hover-text-accent" style={{ color: 'var(--text-tertiary)' }}>
               <Plus size={14}/>
             </span>
           )}
@@ -458,20 +469,23 @@ export const AxiomSubsection: React.FC<{
           onBlur={() => setIsFocused(false)}
           onKeyDown={handleHeaderKeyDown}
         >
-          <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">
+          <h4 className="text-xs font-bold text-tertiary uppercase tracking-wider">
             {title}
-            {isFocused && <span className="ml-2 text-[10px] text-purple-600">(Press Enter to add)</span>}
+            {isFocused && <span className="ml-2 text-[10px] text-accent">(Press Enter to add)</span>}
           </h4>
           <button 
             onClick={handleAddButtonClick} 
-            className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600 transition-colors" 
+            className="p-1 hover-overlay rounded text-tertiary hover-text-accent transition-colors" 
             title={`Add ${title} (Enter when focused)`}
           >
             <Plus size={14} />
           </button>
         </div>
       )}
-      <div className={`bg-white border border-gray-200 overflow-hidden shadow-sm ${theme ? 'border-t-0 rounded-b-sm' : 'rounded-md'}`}>
+      <div
+        className={`border overflow-hidden shadow-sm ${theme ? 'border-t-0 rounded-b-sm' : 'rounded-md'}`}
+        style={{ backgroundColor: 'var(--surface-1)', borderColor: 'var(--border)' }}
+      >
         {hasContent ? (
           <>
             {/* Asserted axioms */}
@@ -592,19 +606,26 @@ export const AnnotationsDisplay = ({ annotations, onDelete, onEdit }: {
   });
   
   return (
-    <div className="divide-y divide-stone-200">
+    <div className="rounded-sm overflow-hidden" style={{ border: '1px solid var(--border)' }}>
       {sortedAnnotations.map(([key, value]) => {
         const propertyLabel = getPropertyLabel(key);
         
         return (
-          <div key={key} className="group bg-white hover:bg-stone-50 transition-colors">
+          <div
+            key={key}
+            className="group transition-colors border-b last:border-b-0"
+            style={{ backgroundColor: 'var(--surface-1)', borderColor: 'var(--border)' }}
+          >
             {/* Property header row - Clean minimal style */}
-            <div className="flex items-center justify-between px-3 py-1.5 bg-stone-50 border-b border-stone-100">
+            <div
+              className="flex items-center justify-between px-3 py-1.5 border-b"
+              style={{ backgroundColor: 'var(--surface-2)', borderColor: 'var(--border)' }}
+            >
               <div className="flex items-center gap-2 flex-1 min-w-0">
-                <span className="text-xs font-medium text-stone-600">
+                <span className="text-xs font-medium text-secondary">
                   {propertyLabel}
                 </span>
-                <span className="text-[10px] text-stone-400 font-mono truncate" title={key}>
+                <span className="text-[10px] text-tertiary font-mono truncate" title={key}>
                   ({key})
                 </span>
               </div>
@@ -612,18 +633,18 @@ export const AnnotationsDisplay = ({ annotations, onDelete, onEdit }: {
                 {onEdit && (
                   <button 
                     onClick={() => onEdit(key, value)} 
-                    className="p-1 rounded hover:bg-stone-200 transition-all"
+                    className="p-1 rounded hover-overlay transition-all"
                     title={`Edit ${propertyLabel}`}
                   >
-                    <Edit2 size={12} className="text-stone-500" />
+                    <Edit2 size={12} className="text-tertiary hover-text-accent" />
                   </button>
                 )}
                 <button 
                   onClick={() => onDelete(key)} 
-                  className="p-1 rounded hover:bg-red-100 transition-all"
+                  className="p-1 rounded hover-overlay transition-all"
                   title={`Delete ${propertyLabel}`}
                 >
-                  <Trash2 size={12} className="text-stone-400 hover:text-red-500" />
+                  <Trash2 size={12} className="text-tertiary hover-text-error" />
                 </button>
               </div>
             </div>
@@ -682,12 +703,12 @@ export const Panel = ({
     }, [isOpen]);
     
     return (
-        <div className={`border bg-white rounded-sm flex flex-col ${themeColor?.split(' ')[2] || 'border-[#D6C9AD]'}`}>
-            <div className={`text-xs font-semibold p-1.5 flex items-center justify-between border-b ${themeClasses}`}>
+        <div className="border rounded-sm flex flex-col" style={{ backgroundColor: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
+            <div className="text-xs font-semibold p-1.5 flex items-center justify-between border-b" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-background)', color: 'var(--color-text)' }}>
                 <div className="flex items-center">
                     <button 
                       onClick={() => setIsOpen(!isOpen)} 
-                      className="mr-1 p-0.5 rounded hover:bg-black/10"
+                      className="mr-1 p-0.5 rounded hover:opacity-70"
                       aria-expanded={isOpen}
                       aria-controls={`panel-content-${title}`}
                     >
@@ -701,7 +722,7 @@ export const Panel = ({
               id={`panel-content-${title}`}
               className={`transition-all duration-300 ease-in-out ${isOpen ? 'block' : 'hidden'}`}
             >
-                {isOpen && <div ref={contentRef} className="bg-white overflow-y-auto max-h-[600px]">{children}</div>}
+                {isOpen && <div ref={contentRef} className="overflow-y-auto max-h-[600px]" style={{ backgroundColor: 'var(--color-surface)' }}>{children}</div>}
             </div>
         </div>
     );

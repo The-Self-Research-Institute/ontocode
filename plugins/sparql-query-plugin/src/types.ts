@@ -27,6 +27,7 @@ export interface SparqlQueryResult {
   results: {
     bindings: SparqlBinding[];
   };
+  executionTime?: number;
 }
 
 export interface OntologyPrefix {

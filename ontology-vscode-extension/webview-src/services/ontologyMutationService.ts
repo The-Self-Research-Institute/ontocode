@@ -524,6 +524,111 @@ export const ontologyMutationService = {
   },
 
   /**
+   * Add a negative object property assertion to an individual
+   * Adds an owl:NegativePropertyAssertion blank node.
+   */
+  async addNegativeObjectPropertyAssertion(
+    projectId: string,
+    individualIri: string,
+    propertyIri: string,
+    targetIndividualIri: string,
+    userId?: string,
+    username?: string
+  ): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'addNegativeObjectPropertyAssertion',
+      iri: individualIri,
+      property: propertyIri,
+      target: targetIndividualIri
+    }], undefined, userId, username);
+  },
+
+  /**
+   * Delete a negative object property assertion from an individual
+   */
+  async deleteNegativeObjectPropertyAssertion(
+    projectId: string,
+    individualIri: string,
+    propertyIri: string,
+    targetIndividualIri: string,
+    userId?: string,
+    username?: string
+  ): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'deleteNegativeObjectPropertyAssertion',
+      iri: individualIri,
+      property: propertyIri,
+      target: targetIndividualIri
+    }], undefined, userId, username);
+  },
+
+  /**
+   * Add a negative data property assertion to an individual
+   */
+  async addNegativeDataPropertyAssertion(
+    projectId: string,
+    individualIri: string,
+    propertyIri: string,
+    literalValue: string,
+    userId?: string,
+    username?: string
+  ): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'addNegativeDataPropertyAssertion',
+      iri: individualIri,
+      property: propertyIri,
+      value: literalValue
+    }], undefined, userId, username);
+  },
+
+  /**
+   * Delete a negative data property assertion from an individual
+   */
+  async deleteNegativeDataPropertyAssertion(
+    projectId: string,
+    individualIri: string,
+    propertyIri: string,
+    literalValue: string,
+    userId?: string,
+    username?: string
+  ): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'deleteNegativeDataPropertyAssertion',
+      iri: individualIri,
+      property: propertyIri,
+      value: literalValue
+    }], undefined, userId, username);
+  },
+
+  /**
+     * Add a SameIndividual axiom between two individuals
+     */
+    async addSameIndividual(projectId: string, individualIri1: string, individualIri2: string, userId?: string, username?: string): Promise<void> {
+      await this.applyMutations(projectId, [{ type: 'addSameIndividual', iri: individualIri1, target: individualIri2 }], undefined, userId, username);
+    },
+
+    /**
+     * Delete a SameIndividual axiom between two individuals
+     */
+    async deleteSameIndividual(projectId: string, individualIri1: string, individualIri2: string, userId?: string, username?: string): Promise<void> {
+      await this.applyMutations(projectId, [{ type: 'deleteSameIndividual', iri: individualIri1, target: individualIri2 }], undefined, userId, username);
+    },
+
+    /**
+     * Add a DifferentIndividuals axiom between two individuals
+     */
+    async addDifferentIndividual(projectId: string, individualIri1: string, individualIri2: string, userId?: string, username?: string): Promise<void> {
+      await this.applyMutations(projectId, [{ type: 'addDifferentIndividual', iri: individualIri1, target: individualIri2 }], undefined, userId, username);
+    },
+
+    /**
+     * Delete a DifferentIndividuals axiom between two individuals
+     */
+    async deleteDifferentIndividual(projectId: string, individualIri1: string, individualIri2: string, userId?: string, username?: string): Promise<void> {
+      await this.applyMutations(projectId, [{ type: 'deleteDifferentIndividual', iri: individualIri1, target: individualIri2 }], undefined, userId, username);
+    },
+
+  /**
    * Make siblings disjoint - adds pairwise disjointWith axioms
    */
   async makeSiblingsDisjoint(projectId: string, classIds: string[], userId?: string, username?: string): Promise<void> {

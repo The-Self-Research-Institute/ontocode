@@ -214,7 +214,7 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ isOpen, onClose, projectId, u
                   Add
                 </button>
               </div>
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-gray-700">
                 {selectedPermission === 'edit' ? 'Users can view and edit the file' : 'Users can only view the file'}
               </p>
             </div>

@@ -107,56 +107,56 @@ export const StatsDashboard: React.FC<StatsDashboardProps> = ({
   };
 
   return (
-    <div className="p-6 overflow-auto" style={{ width, height, background: '#f9fafb' }}>
-      <h2 className="text-2xl font-bold mb-6 text-gray-800">Ontology Statistics</h2>
+    <div className="p-6 overflow-auto" style={{ width, height, backgroundColor: 'var(--bg)' }}>
+      <h2 className="text-2xl font-bold mb-6" style={{ color: 'var(--text-primary)' }}>Ontology Statistics</h2>
       
       {/* Overview Cards */}
       <div className="grid grid-cols-4 gap-4 mb-6">
-        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+        <div className="p-4 rounded-lg shadow-sm" style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border)' }}>
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">Total Nodes</p>
-              <p className="text-2xl font-bold text-gray-900">{stats.totalNodes}</p>
+              <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Total Nodes</p>
+              <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{stats.totalNodes}</p>
             </div>
-            <Box className="text-blue-500" size={32} />
+            <Box style={{ color: 'var(--accent)' }} size={32} />
           </div>
         </div>
         
-        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+        <div className="p-4 rounded-lg shadow-sm" style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border)' }}>
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">Total Edges</p>
-              <p className="text-2xl font-bold text-gray-900">{stats.totalEdges}</p>
+              <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Total Edges</p>
+              <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{stats.totalEdges}</p>
             </div>
-            <GitBranch className="text-green-500" size={32} />
+            <GitBranch style={{ color: 'var(--success)' }} size={32} />
           </div>
         </div>
         
-        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+        <div className="p-4 rounded-lg shadow-sm" style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border)' }}>
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">Hierarchy Depth</p>
-              <p className="text-2xl font-bold text-gray-900">{stats.hierarchyDepth}</p>
+              <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Hierarchy Depth</p>
+              <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{stats.hierarchyDepth}</p>
             </div>
-            <TrendingUp className="text-purple-500" size={32} />
+            <TrendingUp style={{ color: 'var(--accent)' }} size={32} />
           </div>
         </div>
         
-        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+        <div className="p-4 rounded-lg shadow-sm" style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border)' }}>
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">Avg Connectivity</p>
-              <p className="text-2xl font-bold text-gray-900">{stats.connectivity}</p>
+              <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Avg Connectivity</p>
+              <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{stats.connectivity}</p>
             </div>
-            <Database className="text-orange-500" size={32} />
+            <Database style={{ color: 'var(--warning)' }} size={32} />
           </div>
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-6">
         {/* Node Types Distribution */}
-        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+        <div className="p-6 rounded-lg shadow-sm" style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border)' }}>
+          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
             <PieChart size={20} />
             Node Type Distribution
           </h3>
@@ -166,10 +166,10 @@ export const StatsDashboard: React.FC<StatsDashboardProps> = ({
               return (
                 <div key={type}>
                   <div className="flex justify-between text-sm mb-1">
-                    <span className="capitalize">{type}</span>
-                    <span className="font-semibold">{count} ({percentage}%)</span>
+                    <span className="capitalize" style={{ color: 'var(--text-primary)' }}>{type}</span>
+                    <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{count} ({percentage}%)</span>
                   </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div className="w-full rounded-full h-2" style={{ backgroundColor: 'var(--surface-3)' }}>
                     <div
                       className="h-2 rounded-full transition-all duration-300"
                       style={{
@@ -185,8 +185,8 @@ export const StatsDashboard: React.FC<StatsDashboardProps> = ({
         </div>
 
         {/* Edge Types Distribution */}
-        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+        <div className="p-6 rounded-lg shadow-sm" style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border)' }}>
+          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
             <BarChart3 size={20} />
             Relationship Type Distribution
           </h3>
@@ -196,10 +196,10 @@ export const StatsDashboard: React.FC<StatsDashboardProps> = ({
               return (
                 <div key={type}>
                   <div className="flex justify-between text-sm mb-1">
-                    <span className="capitalize">{type.replace(/([A-Z])/g, ' $1').trim()}</span>
-                    <span className="font-semibold">{count} ({percentage}%)</span>
+                    <span className="capitalize" style={{ color: 'var(--text-primary)' }}>{type.replace(/([A-Z])/g, ' $1').trim()}</span>
+                    <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{count} ({percentage}%)</span>
                   </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div className="w-full rounded-full h-2" style={{ backgroundColor: 'var(--surface-3)' }}>
                     <div
                       className="h-2 rounded-full transition-all duration-300"
                       style={{
@@ -215,26 +215,26 @@ export const StatsDashboard: React.FC<StatsDashboardProps> = ({
         </div>
 
         {/* Most Connected Nodes */}
-        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 col-span-2">
-          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+        <div className="p-6 rounded-lg shadow-sm col-span-2" style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border)' }}>
+          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
             <Users size={20} />
             Most Connected Nodes
           </h3>
           <div className="space-y-2">
             {stats.mostConnected.map(({ node, count }, index) => (
-              <div key={node?.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+              <div key={node?.id} className="flex items-center justify-between p-3 rounded-lg" style={{ backgroundColor: 'var(--surface-2)' }}>
                 <div className="flex items-center gap-3">
-                  <div className="text-lg font-bold text-gray-400">#{index + 1}</div>
+                  <div className="text-lg font-bold" style={{ color: 'var(--text-tertiary)' }}>#{index + 1}</div>
                   <div>
-                    <div className="font-semibold text-gray-900">{node?.label}</div>
-                    <div className="text-sm text-gray-600 capitalize">{node?.type}</div>
+                    <div className="font-semibold" style={{ color: 'var(--text-primary)' }}>{node?.label}</div>
+                    <div className="text-sm capitalize" style={{ color: 'var(--text-secondary)' }}>{node?.type}</div>
                   </div>
                 </div>
                 <div className="text-right">
                   <div className="text-lg font-bold" style={{ color: nodeTypeColors[node?.type || ''] || '#6b7280' }}>
                     {count}
                   </div>
-                  <div className="text-xs text-gray-600">connections</div>
+                  <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>connections</div>
                 </div>
               </div>
             ))}

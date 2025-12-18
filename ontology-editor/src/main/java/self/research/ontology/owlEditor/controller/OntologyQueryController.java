@@ -127,4 +127,9 @@ public class OntologyQueryController {
     public ResponseEntity<?> debug(@PathVariable String projectId) {
         return ResponseEntity.ok(queryService.debugInfo(projectId));
     }
+
+    @GetMapping("/{projectId}/schema")
+    public ResponseEntity<?> getOntologySchema(@PathVariable String projectId) {
+        return ResponseEntity.ok(queryService.getOntologySchema(projectId));
+    }
 }

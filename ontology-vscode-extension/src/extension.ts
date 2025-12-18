@@ -452,14 +452,18 @@ class OntoCodePanel {
                     status: axiosError.response?.status,
                     data: axiosError.response?.data,
                 };
-                console.error('[Proxy] API Request Error:', {
+
+                const errorLogPayload = {
                     url: fullUrl,
+                    method: type.replace('api', '').toUpperCase(),
                     status: axiosError.response?.status,
                     statusText: axiosError.response?.statusText,
+                    responseHeaders: axiosError.response?.headers,
                     data: axiosError.response?.data,
                     message: axiosError.message,
                     requestBody: type === 'apiPost' ? message.body : undefined
-                });
+                };
+                console.error('[Proxy] API Request Error:', JSON.stringify(errorLogPayload, null, 2));
             } else if (e instanceof Error) {
                 errorResponse = { message: e.message };
                 console.error('[Proxy] API Request Error:', e.message);

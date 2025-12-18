@@ -129,7 +129,7 @@ export const RatingModal: React.FC<RatingModalProps> = ({
               onChange={(e) => setReview(e.target.value)}
               rows={4}
               placeholder="Share your experience with this plugin..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500 text-sm text-black placeholder-gray-400"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500 text-sm bg-white text-black placeholder-gray-400"
             />
           </div>
 
@@ -143,7 +143,7 @@ export const RatingModal: React.FC<RatingModalProps> = ({
               onChange={(e) => setMerits(e.target.value)}
               rows={3}
               placeholder="What are the plugin's strengths?"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500 text-sm text-black placeholder-gray-400"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500 text-sm bg-white text-black placeholder-gray-400"
             />
           </div>
 
@@ -157,7 +157,7 @@ export const RatingModal: React.FC<RatingModalProps> = ({
               onChange={(e) => setDemerits(e.target.value)}
               rows={3}
               placeholder="Any areas for improvement?"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500 text-sm text-black placeholder-gray-400"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500 text-sm bg-white text-black placeholder-gray-400"
             />
           </div>
         </div>

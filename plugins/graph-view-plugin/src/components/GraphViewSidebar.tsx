@@ -74,8 +74,8 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
   viewMode = 'graph',
   vowlLegend = [],
   onSearchChange,
-  classDistance = 100,
-  datatypeDistance = 100,
+  classDistance = 50,
+  datatypeDistance = 20,
   onClassDistanceChange,
   onDatatypeDistanceChange,
   onPauseLayout,
@@ -414,11 +414,14 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
     );
   };
 
-  // Get available node types from current graph
+  // Get available node types from current graph (excluding properties)
   const availableNodeTypes = useMemo(() => {
     const types = new Set<string>();
     nodes.forEach(node => {
-      if (node.type) types.add(node.type);
+      // Exclude objectProperty and dataProperty from Node Types
+      if (node.type && node.type !== 'objectProperty' && node.type !== 'dataProperty') {
+        types.add(node.type);
+      }
     });
     return Array.from(types).sort();
   }, [nodes]);
@@ -580,6 +583,9 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                     style={styles.topFilterCheckbox}
                   />
                   <span>Object Properties</span>
+                  <span style={{ marginLeft: 'auto', color: '#9ca3af', fontSize: '11px' }}>
+                    ({nodes.filter(n => n.type === 'objectProperty').length})
+                  </span>
                 </label>
                 <label style={styles.topFilterLabel}>
                   <input
@@ -589,6 +595,9 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                     style={styles.topFilterCheckbox}
                   />
                   <span>Data Properties</span>
+                  <span style={{ marginLeft: 'auto', color: '#9ca3af', fontSize: '11px' }}>
+                    ({nodes.filter(n => n.type === 'dataProperty').length})
+                  </span>
                 </label>
                 <label style={styles.topFilterLabel}>
                   <input
@@ -598,6 +607,9 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                     style={styles.topFilterCheckbox}
                   />
                   <span>SubClass Relationships</span>
+                  <span style={{ marginLeft: 'auto', color: '#9ca3af', fontSize: '11px' }}>
+                    ({edges.filter(e => e.type === 'subClassOf').length})
+                  </span>
                 </label>
               </div>
             )}
@@ -685,81 +697,154 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
 
             {/* Entity List */}
             <div style={styles.entityList}>
-              {filteredNodes.map(node => (
-                <div
-                  key={node.id}
-                  className="entity-item"
-                  style={{
-                    ...styles.entityItem,
-                    ...(selectedNode?.id === node.id ? styles.selectedEntity : {})
-                  }}
-                  onClick={() => onNodeSelect(node)}
-                  onMouseEnter={() => onNodeHighlight(node.id)}
-                  onMouseLeave={() => onNodeHighlight(null)}
-                >
-                  {/* Type-specific icon/shape */}
-                  {node.type === 'class' ? (
-                    <div style={{
-                      width: '14px',
-                      height: '14px',
-                      borderRadius: '50%',
-                      backgroundColor: '#4A90E2',
-                      border: '2px solid #2c3e50',
-                      flexShrink: 0
-                    }} />
-                  ) : node.type === 'objectProperty' ? (
-                    <div style={{
-                      width: '14px',
-                      height: '14px',
-                      borderRadius: '50%',
-                      backgroundColor: '#50C878',
-                      border: '2px solid #2c3e50',
-                      flexShrink: 0
-                    }} />
-                  ) : node.type === 'dataProperty' ? (
-                    <div style={{
-                      width: '12px',
-                      height: '12px',
-                      backgroundColor: '#ec4899',
-                      border: '2px solid #2c3e50',
-                      flexShrink: 0,
-                      borderRadius: '2px'
-                    }} />
-                  ) : node.type === 'datatype' ? (
-                    <div style={{
-                      width: '12px',
-                      height: '12px',
-                      backgroundColor: '#FFA500',
-                      border: '2px solid #2c3e50',
-                      flexShrink: 0,
-                      borderRadius: '2px'
-                    }} />
-                  ) : node.type === 'individual' ? (
-                    <div style={{
-                      width: '0',
-                      height: '0',
-                      borderLeft: '7px solid transparent',
-                      borderRight: '7px solid transparent',
-                      borderBottom: '12px solid #E74C3C',
-                      flexShrink: 0,
-                      position: 'relative',
-                      top: '-2px'
-                    }} />
-                  ) : node.type === 'annotation' ? (
-                    <div style={{
-                      width: '14px',
-                      height: '14px',
-                      borderRadius: '50%',
-                      backgroundColor: '#9B59B6',
-                      border: '2px solid #2c3e50',
-                      flexShrink: 0
-                    }} />
-                  ) : (
-                    <span style={styles.entityBullet}>●</span>
-                  )}
-                  <span style={styles.entityLabel}>{node.label || node.id}</span>
-                </div>
-              ))}
+              {filteredNodes.map(node => {
+                // Determine if class is Thing or external
+                const isThing = node.label === 'Thing' || node.id.includes('owl#Thing');
+                const isExternal = node.label?.includes('external') || ['Item', 'UserAccount', 'Concept'].includes(node.label || '');
+                
+                // Get color based on node type (matching graph visualization)
+                let nodeColor = '#667eea'; // default class color
+                if (node.type === 'class') {
+                  if (viewMode === 'vowl') {
+                    if (isThing) nodeColor = '#ffffff';
+                    else if (isExternal) nodeColor = '#4682b4';
+                    else nodeColor = '#acd5f2';
+                  } else if (viewMode === 'force') {
+                    nodeColor = '#FFE4B5'; // Light peach for force mode classes
+                  } else if (viewMode === 'ontograph') {
+                    nodeColor = '#E8EAF6'; // Light purple-grey for OntoGraph
+                  } else {
+                    nodeColor = '#667eea';
+                  }
+                } else if (node.type === 'objectProperty') {
+                  nodeColor = '#06b6d4';
+                } else if (node.type === 'dataProperty') {
+                  nodeColor = '#ec4899';
+                } else if (node.type === 'individual') {
+                  nodeColor = viewMode === 'force' ? '#a78bfa' : '#10b981';
+                } else if (node.type === 'datatype') {
+                  nodeColor = viewMode === 'vowl' ? '#FFD9B3' : (viewMode === 'force' ? '#FFFFFF' : '#FFA500');
+                } else if (node.type === 'annotation') {
+                  nodeColor = viewMode === 'vowl' ? '#e8d5f2' : '#8b5cf6';
+                }
+                
+                return (
+                  <div
+                    key={node.id}
+                    className="entity-item"
+                    style={{
+                      ...styles.entityItem,
+                      ...(selectedNode?.id === node.id ? styles.selectedEntity : {})
+                    }}
+                    onClick={() => onNodeSelect(node)}
+                    onMouseEnter={() => onNodeHighlight(node.id)}
+                    onMouseLeave={() => onNodeHighlight(null)}
+                  >
+                    {/* Type-specific shape matching graph visualization */}
+                    {node.type === 'class' ? (
+                      // Classes: Circle for VOWL/OntoGraph, Ellipse for Force mode, Rectangle for OntoGraph
+                      viewMode === 'force' ? (
+                        <div style={{
+                          width: '24px',
+                          height: '14px',
+                          borderRadius: '50%',
+                          backgroundColor: nodeColor,
+                          border: '2px solid #000000',
+                          flexShrink: 0,
+                          marginRight: '8px'
+                        }} />
+                      ) : viewMode === 'ontograph' ? (
+                        <div style={{
+                          width: '22px',
+                          height: '12px',
+                          borderRadius: '3px',
+                          backgroundColor: nodeColor,
+                          border: '2px solid #5E35B1',
+                          flexShrink: 0,
+                          marginRight: '8px'
+                        }} />
+                      ) : (
+                        // VOWL: Circle (solid border for normal, dashed for Thing)
+                        <div style={{
+                          width: '16px',
+                          height: '16px',
+                          borderRadius: '50%',
+                          backgroundColor: nodeColor,
+                          border: isThing ? '2px dashed #1f2937' : '2px solid #1f2937',
+                          flexShrink: 0,
+                          marginRight: '8px'
+                        }} />
+                      )
+                    ) : node.type === 'objectProperty' ? (
+                      // Object Properties: Circle (cyan)
+                      <div style={{
+                        width: '16px',
+                        height: '16px',
+                        borderRadius: '50%',
+                        backgroundColor: nodeColor,
+                        border: '2px solid #1f2937',
+                        flexShrink: 0,
+                        marginRight: '8px'
+                      }} />
+                    ) : node.type === 'dataProperty' ? (
+                      // Data Properties: Square (pink)
+                      <div style={{
+                        width: '14px',
+                        height: '14px',
+                        backgroundColor: nodeColor,
+                        border: '2px solid #1f2937',
+                        flexShrink: 0,
+                        borderRadius: '3px',
+                        marginRight: '8px'
+                      }} />
+                    ) : node.type === 'datatype' ? (
+                      // Datatypes: Rounded Rectangle - white rectangle for force, dashed for VOWL
+                      <div style={{
+                        width: '24px',
+                        height: '12px',
+                        backgroundColor: nodeColor,
+                        border: viewMode === 'vowl' ? '2px dashed #1f2937' : (viewMode === 'force' ? '1px solid #999999' : '2px solid #1f2937'),
+                        flexShrink: 0,
+                        borderRadius: viewMode === 'force' ? '3px' : '6px',
+                        marginRight: '8px'
+                      }} />
+                    ) : node.type === 'individual' ? (
+                      // Individuals: Rectangle - purple for force mode, green otherwise
+                      <div style={{
+                        width: viewMode === 'force' ? '28px' : '20px',
+                        height: '12px',
+                        backgroundColor: nodeColor,
+                        border: viewMode === 'force' ? '2px solid #000000' : '2px solid #1f2937',
+                        flexShrink: 0,
+                        borderRadius: '3px',
+                        marginRight: '8px'
+                      }} />
+                    ) : node.type === 'annotation' ? (
+                      // Annotation Properties: Hexagon (light purple)
+                      <svg width="18" height="18" viewBox="-9 -9 18 18" style={{ flexShrink: 0, marginRight: '8px' }}>
+                        <polygon
+                          points="0,-7 6,-3.5 6,3.5 0,7 -6,3.5 -6,-3.5"
+                          fill={nodeColor}
+                          stroke="#1f2937"
+                          strokeWidth="2"
+                        />
+                      </svg>
+                    ) : (
+                      // Default: Circle
+                      <div style={{
+                        width: '16px',
+                        height: '16px',
+                        borderRadius: '50%',
+                        backgroundColor: nodeColor,
+                        border: '2px solid #1f2937',
+                        flexShrink: 0,
+                        marginRight: '8px'
+                      }} />
+                    )}
+                    <span style={styles.entityLabel}>{node.label || node.id}</span>
+                  </div>
+                );
+              })}
               {filteredNodes.length === 0 && (
                 <div style={styles.emptyState}>
                   {searchTerm ? 'No entities found' : 'Select a class or property to view details'}
@@ -964,19 +1049,47 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
             <div style={styles.vowlLegendSection}>
               {/* Node Types */}
               <div style={styles.legendCategory}>Node Types</div>
-              {vowlLegend.filter(item => item.type === 'node').map((item, index) => (
-                <div key={`node-${index}`} style={styles.vowlLegendItem}>
-                  {/* Render shape based on node type and name */}
+              {(() => {
+                const nodeItems = vowlLegend.filter(item => item.type === 'node');
+                console.log('[Sidebar Legend] Rendering node items:', nodeItems.length, nodeItems.map(i => ({name: i.name, nodeType: i.nodeType, color: i.color})));
+                return nodeItems.map((item) => (
+                  <div key={`node-${item.nodeType}-${item.name}`} style={styles.vowlLegendItem}>
+                  {/* Render shape based on node type and name - matching graph visualization */}
                   {item.nodeType === 'class' ? (
-                    <div style={{
-                      width: '20px',
-                      height: '20px',
-                      borderRadius: '50%',
-                      backgroundColor: item.color || '#4A90E2',
-                      border: item.name.includes('Thing') ? '2px dashed #1f2937' : '2px solid #1f2937',
-                      flexShrink: 0
-                    }} />
+                    // Classes: Circle for VOWL/OntoGraph, Ellipse indicator for Force mode
+                    viewMode === 'force' && item.name.includes('Ellipse') ? (
+                      // Force mode: Ellipse shape indicator
+                      <div style={{
+                        width: '28px',
+                        height: '16px',
+                        borderRadius: '50%',
+                        backgroundColor: item.color || '#FFE4B5',
+                        border: '2px solid #000000',
+                        flexShrink: 0
+                      }} />
+                    ) : viewMode === 'ontograph' ? (
+                      // OntoGraph mode: Rectangle with rounded corners
+                      <div style={{
+                        width: '26px',
+                        height: '14px',
+                        borderRadius: '3px',
+                        backgroundColor: item.color || '#E8EAF6',
+                        border: '2px solid #5E35B1',
+                        flexShrink: 0
+                      }} />
+                    ) : (
+                      // VOWL mode: Circle (solid border for normal classes, dashed for Thing)
+                      <div style={{
+                        width: '20px',
+                        height: '20px',
+                        borderRadius: '50%',
+                        backgroundColor: item.color || '#acd5f2',
+                        border: item.name.includes('Thing') ? '2px dashed #1f2937' : '2px solid #1f2937',
+                        flexShrink: 0
+                      }} />
+                    )
                   ) : item.nodeType === 'objectProperty' ? (
+                    // Object Properties: Circle (green)
                     <div style={{
                       width: '20px',
                       height: '20px',
@@ -986,6 +1099,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                       flexShrink: 0
                     }} />
                   ) : item.nodeType === 'dataProperty' || item.nodeType === 'datatypeProperty' ? (
+                    // Data Properties: Square (pink)
                     <div style={{
                       width: '18px',
                       height: '18px',
@@ -995,24 +1109,37 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                       borderRadius: '3px'
                     }} />
                   ) : item.nodeType === 'individual' ? (
+                    // Individuals: Rectangle (all modes)
                     <div style={{
-                      width: '22px',
-                      height: '14px',
-                      backgroundColor: item.color || '#E74C3C',
-                      border: '2px solid #1f2937',
+                      width: viewMode === 'force' ? '32px' : '28px',
+                      height: '16px',
+                      backgroundColor: item.color || (viewMode === 'force' ? '#a78bfa' : '#E74C3C'),
+                      border: viewMode === 'force' ? '2px solid #000000' : '2px solid #1f2937',
                       flexShrink: 0,
-                      borderRadius: '3px'
+                      borderRadius: '4px'
                     }} />
                   ) : item.nodeType === 'datatype' ? (
+                    // Datatypes: Rounded Rectangle - white for force mode, dashed for VOWL
                     <div style={{
-                      width: '28px',
-                      height: '14px',
-                      backgroundColor: item.color || '#FFD9B3',
-                      border: '2px dashed #1f2937',
+                      width: '32px',
+                      height: '16px',
+                      backgroundColor: item.color || (viewMode === 'force' ? '#FFFFFF' : '#FFD9B3'),
+                      border: viewMode === 'vowl' ? '2px dashed #1f2937' : (viewMode === 'force' ? '1px solid #999999' : '2px solid #1f2937'),
                       flexShrink: 0,
-                      borderRadius: '7px'
+                      borderRadius: viewMode === 'force' ? '3px' : '8px'
                     }} />
+                  ) : item.nodeType === 'annotation' ? (
+                    // Annotation Properties: Hexagon (light purple)
+                    <svg width="24" height="24" viewBox="-12 -12 24 24" style={{ flexShrink: 0 }}>
+                      <polygon
+                        points="0,-10 8.66,-5 8.66,5 0,10 -8.66,5 -8.66,-5"
+                        fill={item.color || '#e8d5f2'}
+                        stroke="#1f2937"
+                        strokeWidth="2"
+                      />
+                    </svg>
                   ) : (
+                    // Default: Circle
                     <div style={{
                       width: '20px',
                       height: '20px',
@@ -1024,14 +1151,15 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                   )}
                   <span style={styles.vowlLegendLabel}>{item.name}</span>
                 </div>
-              ))}
+              ));
+              })()}
               
               {/* Edge Types */}
               {vowlLegend.filter(item => item.type === 'edge').length > 0 && (
                 <>
                   <div style={styles.legendCategory}>Relationship Types</div>
-                  {vowlLegend.filter(item => item.type === 'edge').map((item, index) => (
-                    <div key={`edge-${index}`} style={styles.vowlLegendItem}>
+                  {vowlLegend.filter(item => item.type === 'edge').map((item) => (
+                    <div key={`edge-${item.name}`} style={styles.vowlLegendItem}>
                       <svg width="28" height="4" style={{ flexShrink: 0 }}>
                         <line 
                           x1="0" 
@@ -1053,8 +1181,8 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
               {vowlLegend.filter(item => item.type === 'label').length > 0 && (
                 <>
                   <div style={styles.legendCategory}>Property Label Colors</div>
-                  {vowlLegend.filter(item => item.type === 'label').map((item, index) => (
-                    <div key={`label-${index}`} style={styles.vowlLegendItem}>
+                  {vowlLegend.filter(item => item.type === 'label').map((item) => (
+                    <div key={`label-${item.name}`} style={styles.vowlLegendItem}>
                       <div style={{
                         width: '20px',
                         height: '12px',
@@ -1123,8 +1251,8 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
         )}
       </div>
 
-      {/* VOWL Controls Section - Show in VOWL mode or when Settings button clicked */}
-      {(viewMode === 'vowl' || showSettings) && (
+      {/* VOWL Controls Section - Show only when Settings button clicked */}
+      {showSettings && (
         <div style={styles.accordionSection}>
           <div 
             className="accordion-header"
@@ -1141,7 +1269,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                 <label style={styles.controlLabel}>Class Distance:</label>
                 <input
                   type="range"
-                  min="20"
+                  min="10"
                   max="200"
                   value={classDistance}
                   onChange={(e) => onClassDistanceChange?.(parseInt(e.target.value))}
@@ -1155,8 +1283,8 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                 <label style={styles.controlLabel}>Datatype Distance:</label>
                 <input
                   type="range"
-                  min="20"
-                  max="200"
+                  min="5"
+                  max="150"
                   value={datatypeDistance}
                   onChange={(e) => onDatatypeDistanceChange?.(parseInt(e.target.value))}
                   style={styles.slider}
@@ -1227,8 +1355,8 @@ const styles: Record<string, React.CSSProperties> = {
     width: '340px',
     minWidth: '280px',
     maxWidth: '600px',
-    background: '#ffffff',
-    borderLeft: '1px solid #e5e7eb',
+    background: 'var(--surface-1)',
+    borderLeft: '1px solid var(--border)',
     boxShadow: '-2px 0 8px rgba(0, 0, 0, 0.04)',
     display: 'flex',
     flexDirection: 'column',
@@ -1241,7 +1369,7 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1,
     overflowY: 'auto',
     overflowX: 'hidden',
-    backgroundColor: '#fafbfc'
+    backgroundColor: 'var(--bg)'
   },
   resizeHandle: {
     position: 'absolute',
@@ -1257,7 +1385,7 @@ const styles: Record<string, React.CSSProperties> = {
   accordionSection: {
     marginBottom: '1px',
     flexShrink: 0,
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
     borderRadius: '0'
   },
   accordionHeader: {
@@ -1265,16 +1393,16 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: '12px 16px',
-    background: '#f8f9fa',
+    background: 'var(--surface-2)',
     cursor: 'pointer',
     userSelect: 'none',
     transition: 'all 0.2s ease',
-    borderBottom: '1px solid #e5e7eb'
+    borderBottom: '1px solid var(--border)'
   },
   accordionTitle: {
     fontSize: '11px',
     fontWeight: '600',
-    color: '#374151',
+    color: 'var(--text-primary)',
     letterSpacing: '0.5px',
     textTransform: 'uppercase'
   },
@@ -1283,7 +1411,7 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     gap: '8px',
     padding: '14px 16px',
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
     fontSize: '13px',
     flexShrink: 0
   },
@@ -1293,19 +1421,19 @@ const styles: Record<string, React.CSSProperties> = {
   filterCategoryTitle: {
     fontSize: '11px',
     fontWeight: '700',
-    color: '#5f6368',
+    color: 'var(--text-secondary)',
     textTransform: 'uppercase',
     letterSpacing: '0.5px',
     marginBottom: '8px',
     paddingBottom: '4px',
-    borderBottom: '1px solid #e8eaed'
+    borderBottom: '1px solid var(--divider)'
   },
   topFilterLabel: {
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
     cursor: 'pointer',
-    color: '#5f6368',
+    color: 'var(--text-secondary)',
     userSelect: 'none',
     fontSize: '13px',
     fontWeight: '500',
@@ -1316,17 +1444,17 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     width: '16px',
     height: '16px',
-    accentColor: '#1a73e8',
+    accentColor: 'var(--accent)',
     borderRadius: '3px'
   },
   combinedSection: {
     display: 'flex',
     flexDirection: 'column',
-    backgroundColor: '#ffffff'
+    backgroundColor: 'var(--surface-1)'
   },
   searchSection: {
     padding: '14px 16px',
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
     flexShrink: 0
   },
   searchInputContainer: {
@@ -1340,24 +1468,25 @@ const styles: Record<string, React.CSSProperties> = {
     left: '12px',
     top: '50%',
     transform: 'translateY(-50%)',
-    color: '#9aa0a6',
+    color: 'var(--text-tertiary)',
     pointerEvents: 'none'
   },
   searchInput: {
     width: '100%',
     padding: '12px 14px 12px 42px',
-    border: '2px solid #e8eaed',
+    border: '2px solid var(--border)',
     borderRadius: '24px',
     fontSize: '13px',
     outline: 'none',
     boxSizing: 'border-box',
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
+    color: 'var(--text-primary)',
     transition: 'all 0.3s ease',
     fontFamily: 'inherit',
     boxShadow: '0 2px 8px rgba(0,0,0,0.05)'
   },
   entitySelector: {
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
     padding: '12px 16px',
     flexShrink: 0
   },
@@ -1370,9 +1499,9 @@ const styles: Record<string, React.CSSProperties> = {
   },
   entityTab: {
     padding: '8px 6px',
-    border: '1px solid #dadce0',
-    backgroundColor: '#ffffff',
-    color: '#5f6368',
+    border: '1px solid var(--border)',
+    backgroundColor: 'var(--surface-1)',
+    color: 'var(--text-secondary)',
     fontSize: '11px',
     fontWeight: '500',
     cursor: 'pointer',
@@ -1385,31 +1514,31 @@ const styles: Record<string, React.CSSProperties> = {
     boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
   },
   activeEntityTab: {
-    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-    color: '#ffffff',
+    background: 'var(--accent)',
+    color: 'var(--on-accent)',
     fontWeight: '600',
-    borderColor: '#667eea',
-    boxShadow: '0 4px 12px rgba(102, 126, 234, 0.4)',
+    borderColor: 'var(--accent)',
+    boxShadow: '0 4px 12px var(--accent-tint)',
     transform: 'translateY(-2px) scale(1.05)'
   },
   filterSection: {
     display: 'flex',
     flexDirection: 'column',
-    backgroundColor: '#ffffff'
+    backgroundColor: 'var(--surface-1)'
   },
   filterTitle: {
     padding: '12px 16px',
     fontSize: '12px',
-    color: '#9aa0a6',
-    borderBottom: '1px solid #e8eaed',
+    color: 'var(--text-tertiary)',
+    borderBottom: '1px solid var(--divider)',
     fontStyle: 'italic',
     flexShrink: 0,
     fontWeight: '400'
   },
   entityList: {
     padding: '0',
-    backgroundColor: '#ffffff',
-    borderTop: '1px solid #e8eaed'
+    backgroundColor: 'var(--surface-1)',
+    borderTop: '1px solid var(--divider)'
   },
   entityItem: {
     display: 'flex',
@@ -1418,22 +1547,22 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '10px 16px',
     cursor: 'pointer',
     fontSize: '13px',
-    color: '#202124',
+    color: 'var(--text-primary)',
     transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
     borderLeft: '3px solid transparent'
   },
   selectedEntity: {
-    backgroundColor: '#f0f2ff',
-    borderLeftColor: '#667eea',
+    backgroundColor: 'var(--accent-tint)',
+    borderLeftColor: 'var(--accent)',
     fontWeight: '600',
-    boxShadow: 'inset 0 0 12px rgba(102, 126, 234, 0.1)'
+    boxShadow: 'inset 0 0 12px var(--accent-tint)'
   },
   entityBullet: {
     fontSize: '12px',
-    color: '#667eea',
+    color: 'var(--accent)',
     flexShrink: 0,
     lineHeight: 1,
-    textShadow: '0 1px 2px rgba(102, 126, 234, 0.3)'
+    textShadow: '0 1px 2px var(--accent-tint)'
   },
   entityLabel: {
     flex: 1,
@@ -1444,26 +1573,26 @@ const styles: Record<string, React.CSSProperties> = {
   emptyState: {
     padding: '48px 24px',
     textAlign: 'center',
-    color: '#9aa0a6',
+    color: 'var(--text-tertiary)',
     fontSize: '14px',
     fontStyle: 'italic',
     lineHeight: '1.5'
   },
   vowlLegendSection: {
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
     padding: '14px 16px',
     flexShrink: 0
   },
   legendCategory: {
     fontSize: '11px',
     fontWeight: '700',
-    color: '#667eea',
+    color: 'var(--accent)',
     textTransform: 'uppercase',
     letterSpacing: '0.8px',
     marginTop: '8px',
     marginBottom: '8px',
     paddingBottom: '6px',
-    borderBottom: '2px solid #e8eaed'
+    borderBottom: '2px solid var(--divider)'
   },
   vowlLegendItem: {
     display: 'flex',
@@ -1471,20 +1600,20 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '12px',
     padding: '10px 12px',
     marginBottom: '6px',
-    backgroundColor: '#f8f9fa',
+    backgroundColor: 'var(--surface-2)',
     borderRadius: '6px',
-    border: '1px solid #e8eaed',
+    border: '1px solid var(--border)',
     transition: 'all 0.2s ease',
     cursor: 'default'
   },
   vowlLegendLabel: {
     fontSize: '12px',
-    color: '#374151',
+    color: 'var(--text-primary)',
     fontWeight: '500',
     flex: 1
   },
   statsSection: {
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
     padding: '14px 16px',
     flexShrink: 0
   },
@@ -1501,17 +1630,17 @@ const styles: Record<string, React.CSSProperties> = {
     transition: 'all 0.2s ease'
   },
   statLabel: {
-    color: '#5f6368',
+    color: 'var(--text-secondary)',
     fontWeight: '500'
   },
   statValue: {
-    color: '#667eea',
+    color: 'var(--accent)',
     fontWeight: '700',
     fontSize: '15px',
-    textShadow: '0 1px 2px rgba(102, 126, 234, 0.2)'
+    textShadow: '0 1px 2px var(--accent-tint)'
   },
   detailsSection: {
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
     padding: '16px',
     maxHeight: '400px',
     overflowY: 'auto',
@@ -1520,12 +1649,12 @@ const styles: Record<string, React.CSSProperties> = {
   detailRow: {
     marginBottom: '16px',
     paddingBottom: '12px',
-    borderBottom: '1px solid #f1f3f4'
+    borderBottom: '1px solid var(--divider)'
   },
   detailLabel: {
     fontSize: '11px',
     fontWeight: '600',
-    color: '#5f6368',
+    color: 'var(--text-secondary)',
     textTransform: 'uppercase',
     letterSpacing: '0.5px',
     marginBottom: '6px',
@@ -1533,18 +1662,18 @@ const styles: Record<string, React.CSSProperties> = {
   },
   detailValue: {
     fontSize: '13px',
-    color: '#202124',
+    color: 'var(--text-primary)',
     lineHeight: '1.5'
   },
   detailLink: {
-    color: '#1a73e8',
+    color: 'var(--accent)',
     textDecoration: 'none',
     fontWeight: '500',
     transition: 'color 0.2s ease'
   },
   // New Entity Details Card Styles (Blood Pressure style)
   entityTitleHeader: {
-    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+    background: 'var(--accent)',
     padding: '20px 20px',
     borderTopLeftRadius: '0',
     borderTopRightRadius: '0'
@@ -1552,19 +1681,19 @@ const styles: Record<string, React.CSSProperties> = {
   entityTitle: {
     fontSize: '18px',
     fontWeight: '700',
-    color: '#ffffff',
+    color: 'var(--on-accent)',
     margin: 0,
     textShadow: '0 1px 3px rgba(0,0,0,0.2)',
     letterSpacing: '0.3px'
   },
   entityDetailsTable: {
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
     padding: '0'
   },
   entityDetailRow: {
     display: 'flex',
     padding: '14px 20px',
-    borderBottom: '1px solid #e8eaed',
+    borderBottom: '1px solid var(--divider)',
     transition: 'background-color 0.2s ease',
     alignItems: 'flex-start',
     minHeight: '50px'
@@ -1572,7 +1701,7 @@ const styles: Record<string, React.CSSProperties> = {
   entityDetailLabel: {
     fontSize: '14px',
     fontWeight: '600',
-    color: '#202124',
+    color: 'var(--text-primary)',
     minWidth: '130px',
     flexShrink: 0,
     paddingRight: '16px',
@@ -1580,7 +1709,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   entityDetailValue: {
     fontSize: '14px',
-    color: '#5f6368',
+    color: 'var(--text-secondary)',
     flex: 1,
     lineHeight: '1.6',
     wordBreak: 'break-word'
@@ -1588,15 +1717,15 @@ const styles: Record<string, React.CSSProperties> = {
   typeBadge: {
     display: 'inline-block',
     padding: '4px 12px',
-    backgroundColor: '#667eea',
-    color: '#ffffff',
+    backgroundColor: 'var(--accent)',
+    color: 'var(--on-accent)',
     borderRadius: '4px',
     fontSize: '12px',
     fontWeight: '600',
     textTransform: 'capitalize'
   },
   iriLink: {
-    color: '#1a73e8',
+    color: 'var(--accent)',
     textDecoration: 'none',
     fontSize: '12px',
     wordBreak: 'break-all',
@@ -1611,14 +1740,14 @@ const styles: Record<string, React.CSSProperties> = {
   relatedEntityBadge: {
     display: 'inline-block',
     padding: '5px 10px',
-    backgroundColor: '#f1f3f4',
-    color: '#5f6368',
+    backgroundColor: 'var(--surface-2)',
+    color: 'var(--text-secondary)',
     borderRadius: '4px',
     fontSize: '12px',
     fontWeight: '500',
     cursor: 'pointer',
     transition: 'all 0.2s ease',
-    border: '1px solid #dadce0'
+    border: '1px solid var(--border)'
   },
   relatedList: {
     display: 'flex',
@@ -1631,11 +1760,11 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: '8px',
     padding: '6px 10px',
-    backgroundColor: '#f8f9fa',
+    backgroundColor: 'var(--surface-2)',
     borderRadius: '4px',
     cursor: 'pointer',
     fontSize: '12px',
-    color: '#5f6368',
+    color: 'var(--text-secondary)',
     transition: 'all 0.2s ease',
     border: '1px solid transparent'
   },
@@ -1644,12 +1773,12 @@ const styles: Record<string, React.CSSProperties> = {
     right: '26px',
     top: '50%',
     transform: 'translateY(-50%)',
-    color: '#9aa0a6',
+    color: 'var(--text-tertiary)',
     cursor: 'pointer',
     transition: 'color 0.2s ease'
   },
   vowlControlsSection: {
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
     padding: '16px',
     flexShrink: 0
   },
@@ -1659,7 +1788,7 @@ const styles: Record<string, React.CSSProperties> = {
   controlLabel: {
     fontSize: '12px',
     fontWeight: '600',
-    color: '#5f6368',
+    color: 'var(--text-secondary)',
     marginBottom: '8px',
     display: 'block'
   },
@@ -1668,7 +1797,7 @@ const styles: Record<string, React.CSSProperties> = {
     height: '6px',
     borderRadius: '3px',
     outline: 'none',
-    background: 'linear-gradient(to right, #e8eaed 0%, #667eea 100%)',
+    background: 'linear-gradient(to right, var(--border) 0%, var(--accent) 100%)',
     WebkitAppearance: 'none',
     appearance: 'none',
     cursor: 'pointer'
@@ -1678,7 +1807,7 @@ const styles: Record<string, React.CSSProperties> = {
     marginLeft: '12px',
     fontSize: '13px',
     fontWeight: '600',
-    color: '#667eea',
+    color: 'var(--accent)',
     minWidth: '35px',
     textAlign: 'right'
   },
@@ -1690,10 +1819,10 @@ const styles: Record<string, React.CSSProperties> = {
   controlButton: {
     flex: 1,
     padding: '10px 16px',
-    background: '#ffffff',
-    border: '2px solid #667eea',
+    background: 'var(--surface-1)',
+    border: '2px solid var(--accent)',
     borderRadius: '8px',
-    color: '#667eea',
+    color: 'var(--accent)',
     fontSize: '13px',
     fontWeight: '600',
     cursor: 'pointer',
@@ -1701,38 +1830,38 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'center'
   },
   controlButtonActive: {
-    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-    color: '#ffffff',
-    borderColor: '#667eea'
+    background: 'var(--accent)',
+    color: 'var(--on-accent)',
+    borderColor: 'var(--accent)'
   },
   // VOWL Sidebar Header Styles
   vowlSidebarHeader: {
-    background: '#f8f9fa',
+    background: 'var(--surface-2)',
     padding: '16px',
     boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)',
-    borderBottom: '1px solid #e5e7eb'
+    borderBottom: '1px solid var(--border)'
   },
   vowlSidebarTitle: {
     fontSize: '14px',
     fontWeight: '600',
-    color: '#1f2937',
+    color: 'var(--text-primary)',
     marginBottom: '4px'
   },
   vowlSidebarSubtitle: {
     fontSize: '12px',
-    color: '#6b7280',
+    color: 'var(--text-secondary)',
     fontWeight: '400'
   },
   // VOWL Controls Card Styles
   vowlControlsCard: {
     marginBottom: '1px',
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
     borderRadius: '0'
   },
   vowlControlsHeader: {
     padding: '12px 16px',
-    background: '#f8f9fa',
-    color: '#374151',
+    background: 'var(--surface-2)',
+    color: 'var(--text-primary)',
     fontWeight: '600',
     fontSize: '11px',
     letterSpacing: '0.5px',
@@ -1742,7 +1871,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     userSelect: 'none',
     transition: 'all 0.2s ease',
-    borderBottom: '1px solid #e5e7eb'
+    borderBottom: '1px solid var(--border)'
   },
   vowlControlsTitle: {
     fontSize: '11px',
@@ -1752,14 +1881,14 @@ const styles: Record<string, React.CSSProperties> = {
   },
   vowlControlsContent: {
     padding: '16px',
-    backgroundColor: '#ffffff'
+    backgroundColor: 'var(--surface-1)'
   },
   vowlControlGroup: {
     marginBottom: '20px',
     padding: '12px',
-    backgroundColor: '#f9fafb',
+    backgroundColor: 'var(--surface-2)',
     borderRadius: '6px',
-    border: '1px solid #e5e7eb'
+    border: '1px solid var(--border)'
   },
   vowlControlHeader: {
     display: 'flex',
@@ -1770,13 +1899,13 @@ const styles: Record<string, React.CSSProperties> = {
   vowlControlLabel: {
     fontSize: '12px',
     fontWeight: '600',
-    color: '#374151'
+    color: 'var(--text-primary)'
   },
   vowlControlValue: {
     fontSize: '13px',
     fontWeight: '600',
-    color: '#667eea',
-    backgroundColor: '#eef2ff',
+    color: 'var(--accent)',
+    backgroundColor: 'var(--accent-tint)',
     padding: '4px 10px',
     borderRadius: '4px',
     minWidth: '45px',
@@ -1804,7 +1933,7 @@ const styles: Record<string, React.CSSProperties> = {
     left: 0,
     right: 0,
     height: '6px',
-    backgroundColor: '#e5e7eb',
+    backgroundColor: 'var(--border)',
     borderRadius: '3px',
     transform: 'translateY(-50%)',
     overflow: 'hidden',
@@ -1812,7 +1941,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   sliderFill: {
     height: '100%',
-    backgroundColor: '#667eea',
+    backgroundColor: 'var(--accent)',
     transition: 'width 0.1s ease',
     borderRadius: '3px'
   },
@@ -1823,12 +1952,12 @@ const styles: Record<string, React.CSSProperties> = {
   },
   sliderLabelMin: {
     fontSize: '10px',
-    color: '#9ca3af',
+    color: 'var(--text-tertiary)',
     fontWeight: '500'
   },
   sliderLabelMax: {
     fontSize: '10px',
-    color: '#9ca3af',
+    color: 'var(--text-tertiary)',
     fontWeight: '500'
   },
   vowlLayoutControls: {
@@ -1839,10 +1968,10 @@ const styles: Record<string, React.CSSProperties> = {
   vowlControlButton: {
     flex: 1,
     padding: '10px 14px',
-    background: '#ffffff',
-    border: '1px solid #d1d5db',
+    background: 'var(--surface-1)',
+    border: '1px solid var(--border)',
     borderRadius: '6px',
-    color: '#374151',
+    color: 'var(--text-primary)',
     fontSize: '12px',
     fontWeight: '600',
     cursor: 'pointer',
@@ -1850,17 +1979,17 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'center'
   },
   vowlControlButtonActive: {
-    background: '#667eea',
-    color: '#ffffff',
-    borderColor: '#667eea'
+    background: 'var(--accent)',
+    color: 'var(--on-accent)',
+    borderColor: 'var(--accent)'
   },
   vowlResetButton: {
     flex: 1,
     padding: '10px 14px',
-    background: '#ffffff',
-    border: '1px solid #d1d5db',
+    background: 'var(--surface-1)',
+    border: '1px solid var(--border)',
     borderRadius: '6px',
-    color: '#374151',
+    color: 'var(--text-primary)',
     fontSize: '12px',
     fontWeight: '600',
     cursor: 'pointer',
@@ -1870,13 +1999,13 @@ const styles: Record<string, React.CSSProperties> = {
   // VOWL Entity Card Styles
   vowlEntityCard: {
     marginBottom: '1px',
-    backgroundColor: '#ffffff',
+    backgroundColor: 'var(--surface-1)',
     borderRadius: '0'
   },
   vowlEntityHeader: {
     padding: '12px 16px',
-    background: '#f8f9fa',
-    color: '#374151',
+    background: 'var(--surface-2)',
+    color: 'var(--text-primary)',
     fontWeight: '600',
     fontSize: '11px',
     letterSpacing: '0.5px',
@@ -1886,7 +2015,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     userSelect: 'none',
     transition: 'all 0.2s ease',
-    borderBottom: '1px solid #e5e7eb'
+    borderBottom: '1px solid var(--border)'
   },
   vowlEntityTitle: {
     fontSize: '11px',
@@ -1896,27 +2025,27 @@ const styles: Record<string, React.CSSProperties> = {
   },
   vowlEntityInfo: {
     padding: '16px',
-    backgroundColor: '#ffffff'
+    backgroundColor: 'var(--surface-1)'
   },
   vowlEntityRow: {
     display: 'flex',
     alignItems: 'center',
     marginBottom: '12px',
     padding: '10px',
-    backgroundColor: '#f9fafb',
+    backgroundColor: 'var(--surface-2)',
     borderRadius: '6px',
-    border: '1px solid #e5e7eb'
+    border: '1px solid var(--border)'
   },
   vowlEntityLabel: {
     fontSize: '12px',
     fontWeight: '600',
-    color: '#6b7280',
+    color: 'var(--text-secondary)',
     minWidth: '70px'
   },
   vowlEntityBadge: {
     fontSize: '12px',
     fontWeight: '600',
-    color: '#ffffff',
+    color: 'var(--on-accent)',
     padding: '4px 12px',
     borderRadius: '4px',
     textTransform: 'capitalize'
@@ -1924,7 +2053,7 @@ const styles: Record<string, React.CSSProperties> = {
   vowlEntityLink: {
     fontSize: '12px',
     fontWeight: '500',
-    color: '#667eea',
+    color: 'var(--accent)',
     textDecoration: 'none',
     transition: 'color 0.2s ease',
     wordBreak: 'break-all'

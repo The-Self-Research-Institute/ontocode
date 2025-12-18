@@ -178,7 +178,7 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
               value={value}
               onChange={e => setValue(e.target.value)}
               placeholder="Enter annotation value..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-black min-h-[100px]"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 bg-white text-black min-h-[100px]"
             />
           </div>
 
