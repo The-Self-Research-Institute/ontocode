@@ -429,7 +429,7 @@ const TopMenuBar = ({
                         onOpenPluginMarketplace();
                         setOpenMenu(null);
                       }}
-                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                      className="w-full text-left px-4 py-2 text-xs text-white hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
                     >
                       <Package size={14} />
                       Plugin Marketplace

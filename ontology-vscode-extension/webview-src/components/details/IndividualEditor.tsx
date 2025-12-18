@@ -193,7 +193,7 @@ const IndividualEditor: React.FC<{
 
   const handleAddSameAs = async (iri: string) => {
       try {
-          await ontologyMutationService.addAxiom(projectId, item.id, 'SameIndividual' as any, iri);
+          await ontologyMutationService.addSameIndividual(projectId, item.id, iri, userId, username);
           // Optimistic update
           onUpdate({ ...item, sameIndividualAs: [...(item.sameIndividualAs || []), iri] });
       } catch (e) { console.error(e); }
@@ -201,25 +201,29 @@ const IndividualEditor: React.FC<{
 
   const handleAddDifferentFrom = async (iri: string) => {
       try {
-          await ontologyMutationService.addAxiom(projectId, item.id, 'DifferentIndividuals' as any, iri);
+          await ontologyMutationService.addDifferentIndividual(projectId, item.id, iri, userId, username);
           // Optimistic update
           onUpdate({ ...item, differentIndividualFrom: [...(item.differentIndividualFrom || []), iri] });
       } catch (e) { console.error(e); }
   };
 
   const handleDeleteSameAs = async (iri: string) => {
-      // Implement delete
-      onUpdate({ ...item, sameIndividualAs: item.sameIndividualAs?.filter(i => i !== iri) });
+      try {
+        await ontologyMutationService.deleteSameIndividual(projectId, item.id, iri, userId, username);
+        onUpdate({ ...item, sameIndividualAs: item.sameIndividualAs?.filter(i => i !== iri) });
+      } catch (e) { console.error(e); }
   };
 
   const handleDeleteDifferentFrom = async (iri: string) => {
-      // Implement delete
-      onUpdate({ ...item, differentIndividualFrom: item.differentIndividualFrom?.filter(i => i !== iri) });
+      try {
+        await ontologyMutationService.deleteDifferentIndividual(projectId, item.id, iri, userId, username);
+        onUpdate({ ...item, differentIndividualFrom: item.differentIndividualFrom?.filter(i => i !== iri) });
+      } catch (e) { console.error(e); }
   };
 
   const handleAddType = async (iri: string) => {
       try {
-          await ontologyMutationService.addAxiom(projectId, item.id, 'ClassAssertion' as any, iri);
+          await ontologyMutationService.addClassAssertion(projectId, item.id, iri);
           // Optimistic update
           onUpdate({ ...item, types: [...(item.types || []), iri] });
       } catch (e) { console.error(e); }

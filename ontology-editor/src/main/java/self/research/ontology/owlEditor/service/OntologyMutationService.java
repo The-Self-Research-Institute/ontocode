@@ -350,7 +350,57 @@ public class OntologyMutationService {
                 + "<" + op.iri() + "> a <" + op.target() + "> .\n"
                 + "}";
         } else if (type.equals("addAxiom")) {
-            return "";
+            // Back-compat/generic axiom support used by some UI components.
+            // We only support a small set of axiom "kinds" that can be expressed as direct RDF triples.
+            //
+            // Payload convention from the webview:
+            // - op.classIri(): subject (class or individual)
+            // - op.target(): object (IRI) OR expression string
+            // - op.value(): axiom kind (e.g., SubClassOf, EquivalentTo, SameIndividual, DifferentIndividuals, ClassAssertion)
+            String axiomKind = op.value();
+            String subject = op.classIri();
+            String object = op.target();
+
+            if (axiomKind == null || axiomKind.isBlank()) {
+                log.warn("[MUTATION] addAxiom missing axiom kind: {}", op);
+                return "";
+            }
+            if (subject == null || subject.isBlank() || object == null || object.isBlank()) {
+                log.warn("[MUTATION] addAxiom missing subject/object: {}", op);
+                return "";
+            }
+
+            return switch (axiomKind) {
+                case "SameIndividual" ->
+                    "INSERT DATA {\n"
+                        + "<" + subject + "> owl:sameAs <" + object + "> .\n"
+                        + "<" + object + "> owl:sameAs <" + subject + "> .\n"
+                        + "}";
+                case "DifferentIndividuals" ->
+                    "INSERT DATA {\n"
+                        + "<" + subject + "> owl:differentFrom <" + object + "> .\n"
+                        + "<" + object + "> owl:differentFrom <" + subject + "> .\n"
+                        + "}";
+                case "ClassAssertion" ->
+                    "INSERT DATA {\n"
+                        + "<" + subject + "> a <" + object + "> .\n"
+                        + "}";
+                case "EquivalentTo", "SubClassOf", "DisjointWith" -> {
+                    // Without a Manchester parser, only accept a direct IRI as the RHS.
+                    if (object.startsWith("http://") || object.startsWith("https://") || object.startsWith("urn:")) {
+                        String predicate = getAxiomPredicate(axiomKind);
+                        yield "INSERT DATA {\n"
+                            + "<" + subject + "> " + predicate + " <" + object + "> .\n"
+                            + "}";
+                    }
+                    log.warn("[MUTATION] addAxiom unsupported (non-IRI RHS) kind={} target={}", axiomKind, object);
+                    yield "";
+                }
+                default -> {
+                    log.warn("[MUTATION] addAxiom unsupported kind={}", axiomKind);
+                    yield "";
+                }
+            };
         } else if (type.equals("addDisjointUnion")) {
             log.info("[MUTATION] Processing addDisjointUnion: iri={}, value={}", op.iri(), op.value());
             String[] memberIris = op.value() != null ? op.value().split(",") : new String[0];
@@ -440,6 +490,26 @@ public class OntologyMutationService {
         } else if (type.equals("deleteDataPropertyAssertion")) {
             return "DELETE DATA {\n"
                 + "<" + op.iri() + "> <" + op.property() + "> " + literal(op.value()) + " .\n"
+                + "}";
+        } else if (type.equals("addSameIndividual")) {
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> owl:sameAs <" + op.target() + "> .\n"
+                + "<" + op.target() + "> owl:sameAs <" + op.iri() + "> .\n"
+                + "}";
+        } else if (type.equals("deleteSameIndividual")) {
+            return "DELETE DATA {\n"
+                + "<" + op.iri() + "> owl:sameAs <" + op.target() + "> .\n"
+                + "<" + op.target() + "> owl:sameAs <" + op.iri() + "> .\n"
+                + "}";
+        } else if (type.equals("addDifferentIndividual")) {
+            return "INSERT DATA {\n"
+                + "<" + op.iri() + "> owl:differentFrom <" + op.target() + "> .\n"
+                + "<" + op.target() + "> owl:differentFrom <" + op.iri() + "> .\n"
+                + "}";
+        } else if (type.equals("deleteDifferentIndividual")) {
+            return "DELETE DATA {\n"
+                + "<" + op.iri() + "> owl:differentFrom <" + op.target() + "> .\n"
+                + "<" + op.target() + "> owl:differentFrom <" + op.iri() + "> .\n"
                 + "}";
         } else if (type.equals("addClassAssertion")) {
             // Add rdf:type assertion to an existing individual

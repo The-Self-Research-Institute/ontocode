@@ -1439,54 +1439,54 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .join('path')
       .attr('fill', 'none')
       .attr('stroke', d => {
+        const isDark = document.documentElement.classList.contains('dark');
+        
         if (visualizationType === 'vowl') {
           // Determine property type for proper coloring
           const sourceNode = allNodes.find(n => n.id === d.from);
           const targetNode = allNodes.find(n => n.id === d.to);
           
           if (d.type === 'subClassOf') {
-            return '#374151'; // Dark gray for subClassOf
+            return isDark ? '#9ca3af' : '#374151'; // Light gray in dark mode, dark gray in light mode
           }
           if (d.type === 'propertyRelation') {
             // Annotation properties - purple
             if (sourceNode?.type === 'annotation') {
-              return '#7c3aed';
+              return isDark ? '#a78bfa' : '#7c3aed';
             }
             // Data properties - pink
             if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
-              return '#db2777';
+              return isDark ? '#f472b6' : '#db2777';
             }
             // Object properties - cyan
-            return '#0891b2';
+            return isDark ? '#22d3ee' : '#0891b2';
           }
           
           const vowlEdge = vowlNotationService.edgeToVOWLEdge(d);
-          return vowlEdge.stroke || '#000000';
+          return isDark ? '#94a3b8' : (vowlEdge.stroke || '#000000');
         }
         if (visualizationType === 'ontograph') {
-          // Protégé-style colors
-          if (d.type === 'subClassOf') return '#9C27B0'; // Purple for subClassOf
-          if (d.type === 'instanceOf') return '#FFA726'; // Orange for instances
+          // Protégé-style colors with dark mode support
+          if (d.type === 'subClassOf') return isDark ? '#c084fc' : '#9C27B0'; // Purple
+          if (d.type === 'instanceOf') return isDark ? '#fbbf24' : '#FFA726'; // Orange
           if (d.type === 'propertyRelation') {
-            // Different colors for different property types
             const sourceNode = allNodes.find(n => n.id === d.from);
             const targetNode = allNodes.find(n => n.id === d.to);
-            if (sourceNode?.type === 'annotation') return '#8b5cf6'; // Purple for annotation properties
-            if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return '#ec4899'; // Pink for data properties
-            return '#06b6d4'; // Cyan for object properties
+            if (sourceNode?.type === 'annotation') return isDark ? '#a78bfa' : '#8b5cf6';
+            if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return isDark ? '#f472b6' : '#ec4899';
+            return isDark ? '#22d3ee' : '#06b6d4';
           }
-          return '#9C27B0'; // Default purple
+          return isDark ? '#c084fc' : '#9C27B0';
         }
-        // Force mode - match reference image styling
-        if (d.type === 'subClassOf') return '#FFA500'; // Orange for subClassOf
-        if (d.type === 'instanceOf') return '#000000'; // Black for instanceOf
+        // Force mode - with dark mode support
+        if (d.type === 'subClassOf') return isDark ? '#fbbf24' : '#FFA500';
+        if (d.type === 'instanceOf') return isDark ? '#cbd5e1' : '#000000';
         if (d.type === 'propertyRelation') {
           const targetNode = allNodes.find(n => n.id === d.to);
-          // Gray for data properties pointing to datatypes or literal values
-          if (targetNode?.type === 'datatype' || targetNode?.label?.startsWith('"')) return '#999999';
-          return '#000000'; // Black for object properties
+          if (targetNode?.type === 'datatype' || targetNode?.label?.startsWith('"')) return isDark ? '#94a3b8' : '#999999';
+          return isDark ? '#cbd5e1' : '#000000';
         }
-        return '#000000'; // Default black
+        return isDark ? '#cbd5e1' : '#000000';
       })
       .attr('stroke-width', d => {
         if (visualizationType === 'vowl') {
@@ -1635,42 +1635,44 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .attr('font-weight', visualizationType === 'vowl' ? '500' : '400')
       .attr('font-family', visualizationType === 'vowl' ? 'Arial, sans-serif' : 'inherit')
       .attr('fill', d => {
+        const isDark = document.documentElement.classList.contains('dark');
+        
         if (visualizationType === 'vowl') {
           // Determine property type for proper label coloring
           const sourceNode = allNodes.find(n => n.id === d.from);
           const targetNode = allNodes.find(n => n.id === d.to);
           
           if (d.type === 'subClassOf') {
-            return '#1f2937'; // Dark for subClassOf
+            return isDark ? '#d1d5db' : '#1f2937'; // Light gray in dark mode
           }
           
           if (d.type === 'propertyRelation') {
             // Annotation properties - dark purple
             if (sourceNode?.type === 'annotation') {
-              return '#6b21a8';
+              return isDark ? '#c4b5fd' : '#6b21a8';
             }
             // Data properties - dark pink
             if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
-              return '#be185d';
+              return isDark ? '#f9a8d4' : '#be185d';
             }
             // Object properties - dark cyan
             const isFunctional = d.metadata?.functional;
-            return isFunctional ? '#2E7D32' : '#065f46'; // Green for functional, dark cyan for regular
+            return isDark ? '#67e8f9' : (isFunctional ? '#2E7D32' : '#065f46');
           }
           
-          return '#1565C0'; // Default dark blue
+          return isDark ? '#93c5fd' : '#1565C0';
         }
-        // Color labels by property type
+        // Color labels by property type with dark mode support
         if (d.type === 'propertyRelation') {
           const sourceNode = allNodes.find(n => n.id === d.from);
           const targetNode = allNodes.find(n => n.id === d.to);
-          if (sourceNode?.type === 'annotation') return '#7c3aed'; // Dark purple for annotation properties
-          if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return '#db2777'; // Dark pink for data properties
-          return '#0891b2'; // Dark cyan for object properties
+          if (sourceNode?.type === 'annotation') return isDark ? '#c4b5fd' : '#7c3aed';
+          if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return isDark ? '#f9a8d4' : '#db2777';
+          return isDark ? '#67e8f9' : '#0891b2';
         }
-        if (d.type === 'subClassOf') return '#7c3aed'; // Purple
-        if (d.type === 'instanceOf') return '#ea580c'; // Orange
-        return '#666';
+        if (d.type === 'subClassOf') return isDark ? '#c4b5fd' : '#7c3aed';
+        if (d.type === 'instanceOf') return isDark ? '#fdba74' : '#ea580c';
+        return isDark ? '#d1d5db' : '#666';
       })
       .attr('text-anchor', 'middle')
       .attr('dominant-baseline', 'middle')

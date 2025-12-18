@@ -326,7 +326,7 @@ const RuleListItem: React.FC<RuleListItemProps> = ({
       </button>
       <button
         onClick={onDelete}
-        className="p-1.5 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
+        className="p-1.5 rounded-md text-gray-500 hover:text-red-600 hover:bg-red-50 opacity-60 group-hover:opacity-100 transition-all"
         title="Delete rule"
       >
         <Trash2 size={14} />
