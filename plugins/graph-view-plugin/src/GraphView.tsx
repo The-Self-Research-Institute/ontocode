@@ -98,7 +98,19 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
     showLabels: true,
     showArrows: true,
     physics: true,
-    nodeSize: 25
+    nodeSize: 25,
+    edgeWidth: 2,
+    showConfidence: false,
+    showTemporal: false,
+    showProvenance: false,
+    colorByType: true,
+    colorByConfidence: false,
+    maxNodes: 1000,
+    clusterNodes: false,
+    lazyLoad: false,
+    multiSelect: false,
+    contextMenu: false,
+    tooltips: false
   });
   
   const [visibleTypes, setVisibleTypes] = useState({
@@ -156,11 +168,11 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
     };
 
     const visNodes: Node[] = nodes
-      .filter(node => visibleTypes[node.type])
+      .filter(node => Object.prototype.hasOwnProperty.call(visibleTypes, node.type) && visibleTypes[node.type as keyof typeof visibleTypes])
       .map(node => ({
         id: node.id,
         label: settings.showLabels ? node.label : '',
-        color: node.color || typeColors[node.type],
+        color: node.color || (typeColors.hasOwnProperty(node.type) ? typeColors[node.type as keyof typeof typeColors] : '#cccccc'),
         shape: node.type === 'class' ? 'box' : node.type === 'individual' ? 'ellipse' : 'diamond',
         size: settings.nodeSize,
         font: {
@@ -173,9 +185,16 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
       .filter(edge => {
         const fromNode = nodes.find(n => n.id === edge.from);
         const toNode = nodes.find(n => n.id === edge.to);
-        return fromNode && toNode && 
-               visibleTypes[fromNode.type] && 
-               visibleTypes[toNode.type];
+        const isFromTypeVisible = fromNode && Object.prototype.hasOwnProperty.call(visibleTypes, fromNode.type);
+        const isToTypeVisible = toNode && Object.prototype.hasOwnProperty.call(visibleTypes, toNode.type);
+        return (
+          fromNode &&
+          toNode &&
+          isFromTypeVisible &&
+          isToTypeVisible &&
+          visibleTypes[fromNode.type as keyof typeof visibleTypes] &&
+          visibleTypes[toNode.type as keyof typeof visibleTypes]
+        );
       })
       .map(edge => ({
         id: edge.id,
@@ -243,11 +262,21 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
     networkRef.current = network;
 
     // Event listeners
-    network.on('selectNode', (params) => {
-      const nodeId = params.nodes[0];
-      const node = nodes.find(n => n.id === nodeId);
+    interface SelectNodeParams {
+      nodes: string[];
+      edges: string[];
+      event?: Event;
+      pointer?: {
+      DOM: { x: number; y: number };
+      canvas: { x: number; y: number };
+      };
+    }
+
+    network.on('selectNode', (params: SelectNodeParams) => {
+      const nodeId: string = params.nodes[0];
+      const node: OntologyNode | undefined = nodes.find((n: OntologyNode) => n.id === nodeId);
       if (node) {
-        setSelectedNode(node);
+      setSelectedNode(node);
       }
     });
 

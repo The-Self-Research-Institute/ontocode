@@ -1,107 +1,129 @@
 # Graph View Plugin - Feature List
 
 ## Overview
-The Graph View Plugin provides interactive visualization of ontologies with support for multiple layout algorithms, hierarchical navigation, and dynamic filtering capabilities.
+The Graph View Plugin provides interactive visualization of ontologies with support for multiple layout algorithms, hierarchical navigation for all entity types, and dynamic filtering capabilities.
 
 ## Quick Feature Summary
 
-1. **Multiple Visualization Modes** - Switch between WebVOWL, Force-Directed, and OntoGraph layouts for different visualization needs
-2. **Layout Controls** - Adjust class and datatype distances in real-time with sliders (20-200 range)
-3. **Color-Coded Node Visualization** - Distinct colors and shapes for classes, datatypes, individuals, and properties
-4. **Intelligent Edge Routing** - Layer-based straight-line routing prevents edge crossings and overlaps
-5. **Expand/Collapse Navigation** - Interactive hierarchy control with expand/collapse icons for each node
-6. **Lazy Loading** - Incremental hierarchy loading prevents performance issues with large ontologies
-7. **Node Type Filters** - Toggle visibility of classes, individuals, datatypes, and properties
-8. **Property Visibility Controls** - Show/hide object properties, data properties, and subClassOf relationships with counts
-9. **Entity Search & Selection** - Real-time search with auto-centering and highlighting of selected entities
-10. **Dynamic Context-Aware Legend** - Automatically updates to show only visible node and edge types
-11. **Real-Time Statistics** - Live entity counts for classes, individuals, properties, and relationships
-12. **Interactive Tooltips** - Hover over nodes and edges to see labels, types, and URIs
-13. **Zoom & Pan Controls** - Mouse wheel zoom, drag to pan, and double-click to center nodes
-14. **Sidebar Organization** - Collapsible accordion sections for controls, filters, search, and statistics
-15. **Settings Management** - Toggle VOWL controls visibility with settings icon for cleaner interface
-16. **Performance Optimizations** - Memoized computations, efficient filtering, and optimized DOM manipulation
-17. **Layer-Based Edge Routing** - Priority system (subClassOf → properties → domain/range) with perpendicular offsets
-18. **OWL 2 Parsing Support** - Full support for classes, properties, individuals, and relationships from OWL files
-19. **Browser Compatibility** - Tested on Chrome 90+, Firefox 88+, Safari 14+, and Edge 90+
-20. **Technical Stack** - Built with React 18, D3.js v7, TypeScript, and Webpack
-21. **Future Roadmap** - Planned features include SVG/PNG export, custom color schemes, and SPARQL integration
-22. **Known Limitations** - Performance impact with 500+ entities, deep hierarchies require scrolling
-23. **Testing Support** - Includes test ontologies and 25 comprehensive test cases
-24. **Documentation** - Complete README, test cases, debug guide, and inline code documentation
+| # | Feature | Description |
+|---|---------|-------------|
+| 1 | **Multiple Visualization Modes** | Switch between WebVOWL, Force-Directed, and OntoGraph layouts for different visualization needs |
+| 2 | **Layout Controls** | Adjust class and datatype distances in real-time with sliders (20-200 range) |
+| 3 | **Color-Coded Node Visualization** | Distinct colors and shapes for classes, datatypes, individuals, and properties |
+| 4 | **Intelligent Edge Routing** | Layer-based straight-line routing prevents edge crossings and overlaps |
+| 5 | **Universal Hierarchy Navigation** | Expand/collapse for ALL entity types: classes, object properties, data properties, and individuals |
+| 6 | **Lazy Loading** | Incremental hierarchy loading prevents performance issues with large ontologies |
+| 7 | **Node Type Filters** | Toggle visibility of classes, individuals, datatypes, and properties |
+| 8 | **Property Visibility Controls** | Show/hide object properties, data properties, and subClassOf relationships with counts |
+| 9 | **Entity Search & Selection** | Real-time search with path expansion, auto-centering, and highlighting |
+| 10 | **Dynamic Context-Aware Legend** | Automatically updates to show only visible node and edge types with content-based keys |
+| 11 | **Real-Time Statistics** | Live entity counts for classes, individuals, properties, and relationships |
+| 12 | **Interactive Tooltips** | Hover over nodes and edges to see labels, types, and URIs |
+| 13 | **Zoom & Pan Controls** | Mouse wheel zoom, drag to pan, fit-to-screen, and double-click to center nodes |
+| 14 | **Sidebar Organization** | Collapsible accordion sections for controls, filters, search, and statistics |
+| 15 | **Settings Management** | Toggle VOWL controls visibility with settings icon for cleaner interface |
+| 16 | **Performance Optimizations** | Memoized computations, efficient Set-based filtering, and optimized DOM manipulation |
+| 17 | **Layer-Based Edge Routing** | Priority system (subClassOf → subPropertyOf → properties → domain/range) with perpendicular offsets |
+| 18 | **OWL 2 Parsing Support** | Full support for classes, properties, individuals, and relationships from OWL files |
+| 19 | **Browser Compatibility** | Tested on Chrome 90+, Firefox 88+, Safari 14+, and Edge 90+ |
+| 20 | **Technical Stack** | Built with React 18, D3.js v7, TypeScript, and Webpack |
+| 21 | **Export Options** | Export graph as SVG or PNG image |
+| 22 | **Collaboration Support** | Real-time multi-user editing with collaboration panel |
+| 23 | **Context Menu Actions** | Right-click to add child/sibling classes, delete, or expand branches |
+| 24 | **Testing Support** | Includes test ontologies and 25 comprehensive test cases |
 
 
-Toolbar Features (Top of Graph View)
-Primary Actions & Visualization
-Refresh Data: Reloads graph data from the server to fetch the latest ontology changes.
+    
 
-Visualization Selector: Switch between Force-Directed (physics-based), WebVOWL (concentric rings), and OntoGraph (class hierarchy) modes.
+---
 
-View & Navigation Controls
-Zoom Controls: Buttons to increase (+) or decrease (-) the zoom level.
+## Toolbar Features
 
-Fit to Screen: Auto-adjusts the viewport to display all visible nodes.
+### Primary Actions
+| Button | Icon | Description |
+|--------|------|-------------|
+| **Refresh** | 🔄 | Reloads graph data from the server to fetch the latest ontology changes |
+| **Visualization Selector** | ▼ | Dropdown to switch between Force-Directed, WebVOWL, and OntoGraph modes |
 
-Expand All: Reveals the full hierarchy of all entity types (classes, properties, individuals).
+### View & Navigation Controls
+| Button | Icon | Description |
+|--------|------|-------------|
+| **Zoom In** | + | Increases the zoom level |
+| **Zoom Out** | - | Decreases the zoom level |
+| **Fit to Screen** | ⛶ | Auto-adjusts the viewport to display all visible nodes |
+| **Expand All** | 📂 | Shows full hierarchy of ALL entity types (classes, properties, individuals) |
+| **Collapse All** | 📁 | Shows only root entities with their immediate children |
 
-Collapse All: Retracts the view to show only root entities and immediate children.
+### Feature Toggles
+| Button | Icon | Description |
+|--------|------|-------------|
+| **Edit Mode** | ✏️ | Enables editing capabilities (add/delete classes) - only when not readonly |
+| **Search** | 🔍 | Opens search panel with path expansion |
+| **Filters** | ⚙️ | Opens filter sidebar for node/edge type visibility |
+| **Settings** | ⚙️ | Opens VOWL controls and settings |
+| **Explorer** | 📄 | Toggles the right sidebar (Graph Explorer) |
+| **Grid** | ⊞ | Shows/hides background grid pattern |
+| **Physics** | ⚡ | Enables/disables physics simulation |
+| **Legend** | 📜 | Shows/hides the dynamic legend panel |
+| **Collaboration** | 👥 | Opens real-time multi-user editing panel |
 
-Feature Toggles
-Edit Mode: Enables editing capabilities (add/delete/modify) when not in read-only mode.
+### Statistics & Export
+| Element | Description |
+|---------|-------------|
+| **Stats Display** | Shows "X/Y nodes (Z%) · N expanded · 1.0x" with lazy loading indicator |
+| **Export SVG** | Downloads the graph as a vector SVG file |
+| **Export PNG** | Downloads the graph as a raster PNG image |
 
-Panel Toggles: Buttons to show/hide Search, Filters, Settings, Explorer, and Legend panels.
+---
 
-Visual Aids: Toggle the background Grid for alignment or Physics for simulation control.
+## Sidebar Features (Graph Explorer)
 
-Collaboration: Opens the real-time multi-user editing panel.
+### Search & Entity Browser
+| Feature | Description |
+|---------|-------------|
+| **Entity Search** | Real-time, case-insensitive filtering by name or IRI |
+| **Entity Tabs** | Six tabs: Classes, Object Properties, Data Properties, Individuals, Annotations, Datatypes |
+| **Class Navigator** | Tree view with parent (↑) and child (↓) expansion buttons |
+| **Hierarchy Dialog** | Click class names to open detailed navigator with parent/child counts |
 
-Statistics & Export
-Status Display: Shows visible/total node counts, expanded nodes, and current zoom level.
+### Graph Filtering
+| Filter | Description |
+|--------|-------------|
+| **Node Type Filters** | Checkboxes to toggle classes, individuals, datatypes, annotations with live counts |
+| **Relationship Filters** | Toggle edge types (subClassOf, subPropertyOf, instanceOf, domain, range) |
+| **Property Visibility** | Controls for object/data properties in WebVOWL/OntoGraph modes |
 
-Lazy Loading Indicator: Displays a "⚡" icon when the graph exceeds 1000 nodes.
+### WebVOWL Controls
+| Control | Range | Description |
+|---------|-------|-------------|
+| **Class Distance** | 20-200 | Adjusts radius of class ring in concentric layout |
+| **Datatype Distance** | 20-200 | Adjusts radius of datatype ring |
+| **Pause/Resume** | Toggle | Freezes/unfreezes physics simulation |
+| **Reset Layout** | Button | Resets nodes to initial WebVOWL positions |
 
-Export Options: Download the current graph view as a vector SVG or raster PNG image.
+### Entity Details Panel
+| Section | Content |
+|---------|---------|
+| **Selected Node** | Label, Type, IRI, Description |
+| **Related Entities** | Parents, Children, Properties, Instances |
+| **Statistics** | Total nodes, edges, and counts per entity type |
+| **Dynamic Legend** | Visual guide for node/edge types (updates with visible content) |
 
-Sidebar Features (Right Panel - Graph Explorer)
-Search & Hierarchy
-Entity Search: Real-time, case-insensitive filtering by name or IRI across all tabs.
+### Resize Handle
+- Drag the left edge to adjust sidebar width (280-600px)
 
-Entity Tabs: Browse specific types via six dedicated tabs (Classes, Object/Data Properties, Individuals, Annotations, Datatypes).
+---
 
-Class Navigator: Tree view with specific Parent (↑) and Child (↓) expansion buttons.
+## Special Interactions
 
-Hierarchy Dialog: Click class names to open a detailed navigator showing parent/child counts.
-
-Graph Filtering
-Node Type Filters: Checkboxes to toggle classes, individuals, datatypes, and annotations with live counts.
-
-Relationship Filters: Toggle edge types (subClassOf, domain, range) with specific counts.
-
-Property Visibility: Controls to show/hide object and datatype properties in WebVOWL/OntoGraph modes.
-
-WebVOWL Controls
-Distance Sliders: Adjust the radius of Class and Datatype rings (20–200 range).
-
-Simulation Controls: Options to Pause/Resume physics or Reset the layout to defaults.
-
-Entity Details & Statistics
-Selected Node Info: Displays Label, Type, IRI, Description, and related entities (Parents, Children, Instances).
-
-Global Statistics: Comprehensive breakdown of total nodes, total edges, and counts per entity type.
-
-Dynamic Legend: Visual guide for node shapes/colors and edge styles; updates based on visible content.
-
-Resize Handle: Drag the left edge to adjust sidebar width (280–600px).
-
-Special Interactions
-Graph Interactivity
-Cross-Highlighting: Hovering a sidebar entity highlights the corresponding node in the graph.
-
-Synced Selection: Clicking an entity selects it in both the sidebar and the graph view.
-
-Real-Time Filtering: All filter changes immediately update the graph visualization and statistics.
-
-Context Menu: Right-click nodes to Add Child/Sibling, Delete Class, or Expand/Collapse specific branches.
+| Interaction | Description |
+|-------------|-------------|
+| **Cross-Highlighting** | Hovering a sidebar entity highlights the corresponding node in the graph |
+| **Synced Selection** | Clicking an entity selects it in both the sidebar and graph view |
+| **Real-Time Filtering** | All filter changes immediately update the graph and statistics |
+| **Context Menu** | Right-click nodes to Add Child/Sibling, Delete Class, or Expand/Collapse |
+| **Double-Click** | Centers and highlights the clicked node |
+| **Drag Nodes** | Temporarily displace nodes (physics re-stabilizes in force mode) |
 
 ---
 
@@ -176,22 +198,41 @@ Context Menu: Right-click nodes to Add Child/Sibling, Delete Class, or Expand/Co
 
 ## Hierarchical Navigation
 
-### 5. Expand/Collapse Controls
+### 5. Universal Hierarchy Support
+The hierarchy system now supports ALL entity types, not just classes:
+
+| Entity Type | Hierarchy Edge | Expand/Collapse |
+|-------------|---------------|-----------------|
+| **Classes** | subClassOf | ✅ Full support |
+| **Object Properties** | subPropertyOf | ✅ Full support |
+| **Data Properties** | subPropertyOf | ✅ Full support |
+| **Individuals** | instanceOf | ✅ Shows parent class |
+
+### Expand/Collapse Controls
 - **Individual Node Control**:
   - Click expand icon (▶) to show children
   - Click collapse icon (▼) to hide descendants
   - Icons toggle based on state
-  - Smooth transitions
+  - Works for classes, properties, and individuals
+
+- **Expand All Button**:
+  - Shows ALL nodes of ALL types
+  - Marks all entities as expanded
+  - Displays complete ontology hierarchy
 
 - **Collapse All Button**:
-  - Shows root classes + first-level children
-  - Maintains all non-class entities (individuals, properties)
+  - Shows root entities for each type + first-level children
+  - Maintains separate hierarchies for classes, object properties, data properties
+  - Preserves datatypes, annotations, and other non-hierarchical entities
   - Quick reset to overview state
-  - Prevents information overload
 
 ### 6. Lazy Loading
-- Initial load shows roots + first-level children only
+- Initial load shows roots + first-level children for each entity type
 - Children load incrementally on expansion
+- Supports lazy loading for:
+  - Class hierarchies (subClassOf)
+  - Property hierarchies (subPropertyOf)  
+  - Individual relationships (instanceOf)
 - Prevents performance issues with large ontologies
 - Maintains responsive user experience
 - No duplicate nodes in hierarchy
@@ -263,10 +304,11 @@ Context Menu: Right-click nodes to Add Child/Sibling, Delete Class, or Expand/Co
 
 ### 11. Symbol Accuracy
 - Legend symbols exactly match graph rendering
-- Colors synchronized
+- Colors synchronized with actual node colors
 - Border styles (solid/dashed) consistent
+- **Content-based React keys** for proper re-rendering
 - Real-time updates on graph changes
-- React-based dynamic rendering
+- React useMemo optimization for performance
 
 ---
 
@@ -392,11 +434,12 @@ Context Menu: Right-click nodes to Add Child/Sibling, Delete Class, or Expand/Co
 
 ### 22. Layer-Based Routing (WebVOWL)
 - **Layer Priority System**:
-  - Layer 0: subClassOf edges
-  - Layer 1: propertyRelation edges
-  - Layer 2: domain/range edges
-  - Layer 3: instanceOf edges
-  - Layer 4: custom edges
+  - Layer 0: subClassOf edges (class hierarchy)
+  - Layer 1: subPropertyOf edges (property hierarchy)
+  - Layer 2: propertyRelation edges
+  - Layer 3: domain/range edges
+  - Layer 4: instanceOf edges
+  - Layer 5: custom edges
 
 - **Parallel Edge Handling**:
   - Perpendicular offset calculation
@@ -423,7 +466,8 @@ Context Menu: Right-click nodes to Add Child/Sibling, Delete Class, or Expand/Co
 - Annotation property handling
 
 ### 25. Relationship Mapping
-- subClassOf relationships preserved
+- subClassOf relationships preserved (class hierarchy)
+- **subPropertyOf relationships** (property hierarchy)
 - Object property connections
 - Data property associations
 - Domain and range links
@@ -498,8 +542,7 @@ Context Menu: Right-click nodes to Add Child/Sibling, Delete Class, or Expand/Co
 ## Future Enhancements (Planned)
 
 ### Roadmap
-- [ ] Export graph as SVG/PNG
-- [ ] Custom color schemes
+- [ ] Custom color schemes/themes
 - [ ] Advanced SPARQL query integration
 - [ ] Collaborative editing markers
 - [ ] Undo/Redo for layout changes
@@ -508,6 +551,7 @@ Context Menu: Right-click nodes to Add Child/Sibling, Delete Class, or Expand/Co
 - [ ] Animation speed control
 - [ ] Layout presets/templates
 - [ ] Enhanced touch device support
+- [ ] Graph comparison view
 
 ---
 
@@ -551,10 +595,18 @@ Context Menu: Right-click nodes to Add Child/Sibling, Delete Class, or Expand/Co
 
 ## Version Information
 
-**Current Version**: 2.0.0  
+**Current Version**: 3.1.0  
 **Last Updated**: December 16, 2025  
 **Compatibility**: VS Code Extension API compatible  
 **License**: MIT (or as specified in package.json)
+
+### Recent Changes (v3.1.0)
+- ✅ Universal hierarchy navigation for ALL entity types (classes, object properties, data properties, individuals)
+- ✅ Support for subPropertyOf edges in hierarchy
+- ✅ Content-based React keys for proper legend re-rendering
+- ✅ Enhanced collapseAll to show root entities per type
+- ✅ SVG/PNG export functionality
+- ✅ Collaboration panel integration
 
 ---
 

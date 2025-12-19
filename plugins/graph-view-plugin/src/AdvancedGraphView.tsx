@@ -864,20 +864,35 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       // Standard Mode (Force-directed & OntoGraph) - dynamic legend based on visible nodes/edges
       const legend: Array<{ name: string; type: string; nodeType?: string; color?: string; stroke?: string; strokeDasharray?: string }> = [];
       
-      // Node types from visible nodes in current graph
+      // Node types from visible nodes in current graph - use actual TYPE_COLORS
       const nodeTypes = new Set(visibleNodes.map(n => n.type));
       
-      if (nodeTypes.has('class')) legend.push({ name: 'Class', type: 'node', nodeType: 'class', color: '#4A90E2' });
+      // For force mode, use special colors for classes
+      if (visualizationType === 'force') {
+        if (nodeTypes.has('class')) legend.push({ name: 'Class (Ellipse)', type: 'node', nodeType: 'class', color: '#FFE4B5' });
+        if (nodeTypes.has('individual')) legend.push({ name: 'Individual (Rectangle)', type: 'node', nodeType: 'individual', color: '#a78bfa' });
+        if (nodeTypes.has('datatype')) legend.push({ name: 'Datatype (Rectangle)', type: 'node', nodeType: 'datatype', color: '#FFFFFF' });
+        if (nodeTypes.has('objectProperty')) legend.push({ name: 'Object Property', type: 'node', nodeType: 'objectProperty', color: TYPE_COLORS.objectProperty });
+        if (nodeTypes.has('dataProperty')) legend.push({ name: 'Data Property', type: 'node', nodeType: 'dataProperty', color: TYPE_COLORS.dataProperty });
+      } else {
+        // OntoGraph mode
+        if (nodeTypes.has('class')) legend.push({ name: 'Class', type: 'node', nodeType: 'class', color: '#E8EAF6' });
+        if (nodeTypes.has('individual')) legend.push({ name: 'Individual', type: 'node', nodeType: 'individual', color: TYPE_COLORS.individual });
+        if (nodeTypes.has('datatype')) legend.push({ name: 'Datatype', type: 'node', nodeType: 'datatype', color: TYPE_COLORS.datatype });
+        if (nodeTypes.has('objectProperty')) legend.push({ name: 'Object Property', type: 'node', nodeType: 'objectProperty', color: TYPE_COLORS.objectProperty });
+        if (nodeTypes.has('dataProperty')) legend.push({ name: 'Data Property', type: 'node', nodeType: 'dataProperty', color: TYPE_COLORS.dataProperty });
+      }
+      if (nodeTypes.has('annotation')) legend.push({ name: 'Annotation', type: 'node', nodeType: 'annotation', color: TYPE_COLORS.annotation });
       
       // Edge types from visible edges in current graph
       const edgeTypes = new Set(visibleEdges.map(e => e.type));
-      if (edgeTypes.has('subClassOf')) legend.push({ name: 'SubClass Of', type: 'edge', stroke: '#2563eb', strokeDasharray: '0' });
-      if (edgeTypes.has('domain')) legend.push({ name: 'Domain', type: 'edge', stroke: '#10b981', strokeDasharray: '0' });
-      if (edgeTypes.has('range')) legend.push({ name: 'Range', type: 'edge', stroke: '#f59e0b', strokeDasharray: '0' });
-      if (edgeTypes.has('instanceOf')) legend.push({ name: 'Instance Of', type: 'edge', stroke: '#8b5cf6', strokeDasharray: '5,5' });
-      if (edgeTypes.has('equivalentClass')) legend.push({ name: 'Equivalent', type: 'edge', stroke: '#ec4899', strokeDasharray: '0' });
-      if (edgeTypes.has('disjointWith')) legend.push({ name: 'Disjoint', type: 'edge', stroke: '#ef4444', strokeDasharray: '3,3' });
-      if (edgeTypes.has('propertyRelation')) legend.push({ name: 'Property Relation', type: 'edge', stroke: '#6b7280', strokeDasharray: '0' });
+      if (edgeTypes.has('subClassOf')) legend.push({ name: 'SubClass Of', type: 'edge', stroke: EDGE_TYPE_COLORS.subClassOf, strokeDasharray: '0' });
+      if (edgeTypes.has('domain')) legend.push({ name: 'Domain', type: 'edge', stroke: EDGE_TYPE_COLORS.domain, strokeDasharray: '0' });
+      if (edgeTypes.has('range')) legend.push({ name: 'Range', type: 'edge', stroke: EDGE_TYPE_COLORS.range, strokeDasharray: '0' });
+      if (edgeTypes.has('instanceOf')) legend.push({ name: 'Instance Of', type: 'edge', stroke: EDGE_TYPE_COLORS.instanceOf, strokeDasharray: '5,5' });
+      if (edgeTypes.has('equivalentClass')) legend.push({ name: 'Equivalent', type: 'edge', stroke: EDGE_TYPE_COLORS.equivalentClass, strokeDasharray: '0' });
+      if (edgeTypes.has('disjointWith')) legend.push({ name: 'Disjoint', type: 'edge', stroke: EDGE_TYPE_COLORS.disjointWith, strokeDasharray: '3,3' });
+      if (edgeTypes.has('propertyRelation')) legend.push({ name: 'Property Relation', type: 'edge', stroke: EDGE_TYPE_COLORS.propertyRelation, strokeDasharray: '0' });
       
       console.log('[Legend] Standard legend items:', legend.length);
       return legend;

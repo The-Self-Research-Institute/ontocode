@@ -30,6 +30,7 @@ export class CollaborationManager implements ICollaborationManager {
     private onImportStatusUpdate?: (status: any) => void;
     private onConnectionChange?: (connected: boolean) => void;
     private onError?: (error: string) => void;
+    private onShareNotification?: (notification: any) => void;
 
     constructor(
         private serverUrl: string,
@@ -325,6 +326,7 @@ export class CollaborationManager implements ICollaborationManager {
         onImportStatusUpdate?: (status: any) => void;
         onConnectionChange?: (connected: boolean) => void;
         onError?: (error: string) => void;
+        onShareNotification?: (notification: any) => void;
     }): void {
         this.onEditReceived = handlers.onEditReceived;
         this.onPresenceUpdate = handlers.onPresenceUpdate;
@@ -332,6 +334,7 @@ export class CollaborationManager implements ICollaborationManager {
         this.onImportStatusUpdate = handlers.onImportStatusUpdate;
         this.onConnectionChange = handlers.onConnectionChange;
         this.onError = handlers.onError;
+        this.onShareNotification = handlers.onShareNotification;
     }
 
     /**
@@ -479,6 +482,43 @@ export class CollaborationManager implements ICollaborationManager {
 
         this.subscriptions.set(`import-${projectId}`, subscription);
         console.log(`[CollaborationManager] ✅ Subscribed to import status for project: ${projectId}`);
+    }
+
+    /**
+     * Subscribe to share notifications for the current user.
+     * Receives instant notifications when files are shared with this user.
+     */
+    subscribeToShareNotifications(userEmail: string): void {
+        if (!this.client) {
+            console.error('[CollaborationManager] ❌ Cannot subscribe to share notifications - no client');
+            return;
+        }
+
+        console.log(`[CollaborationManager] 📡 Subscribing to /topic/shares/${userEmail}`);
+
+        const subscription = this.client.subscribe(
+            `/topic/shares/${userEmail}`,
+            (message: IMessage) => {
+                console.log('[CollaborationManager] 📨 Received share notification:', message.body);
+                try {
+                    const shareNotification = JSON.parse(message.body);
+
+                    console.log('[CollaborationManager] ✅ Parsed share notification:', shareNotification);
+
+                    if (this.onShareNotification) {
+                        console.log('[CollaborationManager] 📤 Calling onShareNotification handler');
+                        this.onShareNotification(shareNotification);
+                    } else {
+                        console.warn('[CollaborationManager] ⚠️  No onShareNotification handler registered!');
+                    }
+                } catch (error) {
+                    console.error('[CollaborationManager] ❌ Error parsing share notification:', error);
+                }
+            }
+        );
+
+        this.subscriptions.set(`shares-${userEmail}`, subscription);
+        console.log(`[CollaborationManager] ✅ Subscribed to share notifications for: ${userEmail}`);
     }
 
     private processPendingEdits(): void {

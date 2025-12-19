@@ -3,6 +3,7 @@ package self.research.ontology.owlEditor.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.client.HttpClientErrorException;
@@ -22,6 +23,7 @@ public class ProjectShareService {
     private final RestTemplate restTemplate;
     private final EmailNotificationService emailNotificationService;
     private final ProjectMetadataService metadataService;
+    private final SimpMessagingTemplate messagingTemplate;
     
     @Value("${auth.service.url:http://localhost:8086}")
     private String authServiceUrl;
@@ -86,16 +88,15 @@ public class ProjectShareService {
         }
         ProjectShare savedShare = shareRepository.save(share);
         
-        // Send email notification
+        // Get file name and owner info
+        String fileName = metadataService.readStatus(projectId)
+                .map(status -> status.filename())
+                .orElse("Untitled File");
+        String fromUsername = share.getOwnerEmail().split("@")[0];
+        String fromEmail = share.getOwnerEmail();
+        
+        // Send email notification (async)
         try {
-            // Get file name from project metadata
-            String fileName = metadataService.readStatus(projectId)
-                    .map(status -> status.filename())
-                    .orElse("Untitled File");
-            
-            // Extract username from owner email (part before @)
-            String fromUsername = share.getOwnerEmail().split("@")[0];
-            
             emailNotificationService.sendShareNotification(
                 email, 
                 fromUsername, 
@@ -105,6 +106,28 @@ public class ProjectShareService {
         } catch (Exception e) {
             log.error("Failed to send share notification email, but share was created", e);
             // Don't throw - email failure shouldn't break sharing
+        }
+        
+        // Send WebSocket notification (instant)
+        try {
+            self.research.ontology.owlEditor.model.collaboration.ShareNotification notification = 
+                self.research.ontology.owlEditor.model.collaboration.ShareNotification.builder()
+                    .projectId(projectId)
+                    .fileName(fileName)
+                    .sharedByUsername(fromUsername)
+                    .sharedByEmail(fromEmail)
+                    .sharedWithEmail(email)
+                    .permission(permission != null ? permission : "view")
+                    .message(String.format("%s shared '%s' with you (%s access)", 
+                        fromUsername, fileName, permission != null ? permission : "view"))
+                    .timestamp(System.currentTimeMillis())
+                    .build();
+            
+            messagingTemplate.convertAndSend("/topic/shares/" + email, notification);
+            log.info("Sent real-time share notification to {} for project {}", email, projectId);
+        } catch (Exception e) {
+            log.error("Failed to send WebSocket share notification", e);
+            // Don't throw - notification failure shouldn't break sharing
         }
         
         return savedShare;
