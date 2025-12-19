@@ -139,6 +139,8 @@ export interface ICollaborationManager {
         onImportStatusUpdate?: (status: any) => void;
         onConnectionChange?: (connected: boolean) => void;
         onError?: (error: string) => void;
+        onShareNotification?: (notification: any) => void;
     }): void;
     isConnected(): boolean;
+    subscribeToShareNotifications(userEmail: string): void;
 }

@@ -15,8 +15,8 @@ echo ========================================
 echo.
 
 :: Define Java Versions
-set "JAVA17_HOME=C:\Program Files\Eclipse Adoptium\jdk-17.0.17.10-hotspot"
-set "JAVA21_HOME=C:\Program Files\Eclipse Adoptium\jdk-21.0.9.10-hotspot"
+set "JAVA17_HOME=C:\Program Files\Java\jdk-17"
+set "JAVA21_HOME=C:\Program Files\Java\jdk-21"
 
 :: Check if Maven daemon is available
 where mvn >nul 2>&1

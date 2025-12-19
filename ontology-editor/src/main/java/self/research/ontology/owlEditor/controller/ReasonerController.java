@@ -43,21 +43,39 @@ public class ReasonerController {
      * Load ontology from GridFS
      */
     private OWLOntology loadOntology(String projectId) throws Exception {
+        log.info("Loading ontology for project: {}", projectId);
+        
         if (ontologyCache.containsKey(projectId)) {
+            log.info("Returning cached ontology for project: {}", projectId);
             return ontologyCache.get(projectId);
         }
 
+        // Try both metadata.projectId and filename
         GridFSFile file = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(projectId)));
+        
         if (file == null) {
+            log.warn("File not found with metadata.projectId={}, trying filename", projectId);
+            file = gridfs.findOne(new Query(Criteria.where("filename").is(projectId + ".owl")));
+        }
+        
+        if (file == null) {
+            log.error("Ontology file not found for project: {}", projectId);
             throw new RuntimeException("Ontology file not found for project: " + projectId);
         }
 
+        log.info("Found ontology file: {}", file.getFilename());
         GridFsResource resource = gridfs.getResource(file);
+        
         try (InputStream inputStream = resource.getInputStream()) {
             OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+            log.info("Loading ontology from input stream...");
             OWLOntology ontology = manager.loadOntologyFromOntologyDocument(inputStream);
+            log.info("Ontology loaded successfully: {} axioms", ontology.getAxiomCount());
             ontologyCache.put(projectId, ontology);
             return ontology;
+        } catch (Exception e) {
+            log.error("Error loading ontology from GridFS", e);
+            throw e;
         }
     }
 
@@ -101,11 +119,21 @@ public class ReasonerController {
             return ResponseEntity.ok(result);
             
         } catch (Exception e) {
-            log.error("Error checking consistency", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
+            log.error("Error checking consistency for project: " + projectId, e);
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("success", false);
+            errorResponse.put("error", e.getMessage());
+            errorResponse.put("errorType", e.getClass().getSimpleName());
+            errorResponse.put("projectId", projectId);
+            
+            // Include stack trace in development
+            if (log.isDebugEnabled()) {
+                java.io.StringWriter sw = new java.io.StringWriter();
+                e.printStackTrace(new java.io.PrintWriter(sw));
+                errorResponse.put("stackTrace", sw.toString());
+            }
+            
+            return ResponseEntity.status(500).body(errorResponse);
         }
     }
 

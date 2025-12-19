@@ -46,6 +46,11 @@ const PLUGIN_BUNDLES = [
     pluginId: 'sparql-query-plugin',
     version: '1.0.0',
     bundlePath: path.join(PLUGINS_DIR, 'sparql-query-plugin', 'dist', 'index.js')
+  },
+  {
+    pluginId: 'reasoner-plugin',
+    version: '1.0.0',
+    bundlePath: path.join(PLUGINS_DIR, 'reasoner-plugin', 'dist', 'index.js')
   }
 ];
 
