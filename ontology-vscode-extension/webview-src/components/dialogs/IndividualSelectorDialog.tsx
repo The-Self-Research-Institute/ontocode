@@ -44,15 +44,27 @@ const IndividualSelectorDialog: React.FC<IndividualSelectorDialogProps> = ({
   const [inlineIndividualName, setInlineIndividualName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
 
-  // Filter individuals - show all available individuals, not just those with the classIri type
-  // The purpose of this dialog is to ADD class assertions, so we should show individuals
-  // that don't have the type yet (they will get the type when we confirm)
+  // Load individuals from API if needed, or filter from provided list
+  useEffect(() => {
+    const loadIndividuals = async () => {
+      // If classIri is provided and we have projectId, try to load individuals of that class
+      if (classIri && projectId && individuals.length === 0) {
+        try {
+          const response = await apiClient.get<any>(`/api/ontology/individuals/${projectId}?classIri=${encodeURIComponent(classIri)}`);
+          const loadedIndividuals = response?.data?.individuals || response?.individuals || [];
+          // Note: We still show all individuals, but we've attempted to load class-specific ones
+          console.log('[IndividualSelectorDialog] Loaded individuals for class:', classIri, 'count:', loadedIndividuals.length);
+        } catch (error) {
+          console.error('[IndividualSelectorDialog] Failed to load individuals:', error);
+        }
+      }
+    };
+    loadIndividuals();
+  }, [classIri, projectId, individuals.length]);
+  
+  // Filter individuals - show all available individuals
   useEffect(() => {
     let filtered = individuals;
-    
-    // Note: We DON'T filter by classIri here because we want to show ALL individuals
-    // so users can add the class assertion to them. The classIri is used only for
-    // context/display purposes, not for filtering.
     
     // Exclude specified individuals (those already having this class type)
     if (excludeIndividualIds.length > 0) {

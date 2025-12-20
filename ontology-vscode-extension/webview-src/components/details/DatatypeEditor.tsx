@@ -23,6 +23,10 @@ const UsageTab: React.FC<{
   const [loading, setLoading] = useState(true);
   const [usages, setUsages] = useState<UsageItem[]>([]);
   const [filter, setFilter] = useState('');
+  const [showTypes, setShowTypes] = useState({
+    range: true,
+    restriction: true
+  });
 
   useEffect(() => {
     loadUsages();
@@ -32,8 +36,8 @@ const UsageTab: React.FC<{
     setLoading(true);
     try {
       const response = await apiClient.get<any>(`/api/ontology/datatypes/usage/${projectId}?datatypeIri=${encodeURIComponent(datatypeIri)}`);
-      const usageData = response?.data || response || [];
-      setUsages(usageData);
+      const usageData = response?.data?.data || response?.data || response || [];
+      setUsages(Array.isArray(usageData) ? usageData : []);
     } catch (error) {
       console.error('Failed to load usage data:', error);
       setUsages([]);
@@ -43,8 +47,14 @@ const UsageTab: React.FC<{
   };
 
   const filteredUsages = usages.filter(u =>
-    (u.subjectLabel || u.subject || '').toLowerCase().includes(filter.toLowerCase())
+    (u.subjectLabel || u.subject || '').toLowerCase().includes(filter.toLowerCase()) &&
+    showTypes[u.type as keyof typeof showTypes] !== false
   );
+
+  const usagesByType = {
+    range: filteredUsages.filter(u => u.type === 'range'),
+    restriction: filteredUsages.filter(u => u.type === 'restriction')
+  };
 
   if (loading) {
     return <div className="p-4 text-sm text-gray-500">Loading usage information...</div>;
@@ -68,6 +78,17 @@ const UsageTab: React.FC<{
               className="w-full pl-7 pr-2 py-1 text-xs rounded focus:outline-none theme-input"
             />
           </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2 text-xs">
+          <label className="flex items-center gap-1 cursor-pointer">
+            <input type="checkbox" checked={showTypes.range} onChange={(e) => setShowTypes({...showTypes, range: e.target.checked})} className="w-3 h-3" />
+            <span>ranges ({usagesByType.range.length})</span>
+          </label>
+          <label className="flex items-center gap-1 cursor-pointer">
+            <input type="checkbox" checked={showTypes.restriction} onChange={(e) => setShowTypes({...showTypes, restriction: e.target.checked})} className="w-3 h-3" />
+            <span>restrictions ({usagesByType.restriction.length})</span>
+          </label>
         </div>
       </div>
 

@@ -87,6 +87,8 @@ type ExtensionMessage =
   // Fix: Added message types for API requests to the proxy
   | { type: 'apiGet'; requestId: string; url: string; params?: Record<string, unknown> }
   | { type: 'apiPost'; requestId: string; url: string; body?: unknown }
+  | { type: 'apiPut'; requestId: string; url: string; body?: unknown }
+  | { type: 'apiPatch'; requestId: string; url: string; body?: unknown }
   | { type: 'apiDelete'; requestId: string; url: string; params?: Record<string, unknown> }
   | { type: 'proxyRequest'; reqId: string; config: any }
   | { type: 'webviewReady' }
@@ -299,6 +301,8 @@ class OntoCodePanel {
                     // Fix: Added cases to handle API proxy requests from the webview
                     case 'apiGet':
                     case 'apiPost':
+                    case 'apiPut':
+                    case 'apiPatch':
                     case 'apiDelete':
                         this.handleApiRequest(message);
                         break;
@@ -392,7 +396,7 @@ class OntoCodePanel {
      * Fix: New method to handle API requests from the webview, acting as a proxy.
      * This centralizes API calls, attaches auth tokens, and bypasses CORS issues.
      */
-    private async handleApiRequest(message: Extract<ExtensionMessage, { type: 'apiGet' | 'apiPost' | 'apiDelete' }>) {
+    private async handleApiRequest(message: Extract<ExtensionMessage, { type: 'apiGet' | 'apiPost' | 'apiPut' | 'apiPatch' | 'apiDelete' }>) {
         const { requestId, type, url } = message;
         
         // Check if this is a public endpoint (login/signup) that doesn't require authentication
@@ -428,13 +432,19 @@ class OntoCodePanel {
 
             switch (type) {
                 case 'apiGet':
-                    response = await axios.get(fullUrl, { ...axiosConfig, params: message.params });
+                    response = await axios.get(fullUrl, { ...axiosConfig, params: (message as any).params });
                     break;
                 case 'apiPost':
-                    response = await axios.post(fullUrl, message.body, axiosConfig);
+                    response = await axios.post(fullUrl, (message as any).body, axiosConfig);
+                    break;
+                case 'apiPut':
+                    response = await axios.put(fullUrl, (message as any).body, axiosConfig);
+                    break;
+                case 'apiPatch':
+                    response = await axios.patch(fullUrl, (message as any).body, axiosConfig);
                     break;
                 case 'apiDelete':
-                    response = await axios.delete(fullUrl, { ...axiosConfig, params: message.params });
+                    response = await axios.delete(fullUrl, { ...axiosConfig, params: (message as any).params });
                     break;
             }
 
