@@ -333,6 +333,120 @@ public class OntologyQueryService {
         return usages;
     }
 
+    public List<Map<String, String>> datatypeUsage(String projectId, String datatypeIri) {
+        List<Map<String, String>> usages = new ArrayList<>();
+        
+        // 1. Find data properties with this range
+        String rangeQuery = PREFIXES + """
+            SELECT DISTINCT ?prop ?label WHERE {
+              ?prop rdfs:range <%s> .
+              OPTIONAL { ?prop rdfs:label ?label }
+            }
+            """.formatted(datatypeIri);
+        TupleQueryResult ranges = datasetService.execSelect(projectId, rangeQuery);
+        while (ranges.hasNext()) {
+            BindingSet sol = ranges.next();
+            Map<String, String> usage = new LinkedHashMap<>();
+            usage.put("type", "range");
+            String propIri = resource(sol, "prop");
+            if (propIri != null) {
+                usage.put("subject", propIri);
+                usage.put("subjectLabel", sol.hasBinding("label") ? literal(sol, "label") : localName(propIri));
+                usage.put("context", "Range of data property");
+                usages.add(usage);
+            }
+        }
+        
+        // 2. Find restrictions using this datatype
+        String restrictionQuery = PREFIXES + """
+            SELECT DISTINCT ?class ?label WHERE {
+              ?class rdfs:subClassOf|owl:equivalentClass ?restriction .
+              ?restriction owl:onDataRange|owl:someValuesFrom|owl:allValuesFrom <%s> .
+              FILTER(isIRI(?class))
+              OPTIONAL { ?class rdfs:label ?label }
+            }
+            """.formatted(datatypeIri);
+        TupleQueryResult restrictions = datasetService.execSelect(projectId, restrictionQuery);
+        while (restrictions.hasNext()) {
+            BindingSet sol = restrictions.next();
+            Map<String, String> usage = new LinkedHashMap<>();
+            usage.put("type", "restriction");
+            String classIri = resource(sol, "class");
+            if (classIri != null) {
+                usage.put("subject", classIri);
+                usage.put("subjectLabel", sol.hasBinding("label") ? literal(sol, "label") : localName(classIri));
+                usage.put("context", "Used in data restriction");
+                usages.add(usage);
+            }
+        }
+
+        return usages;
+    }
+
+    public List<Map<String, String>> individualUsage(String projectId, String individualIri) {
+        List<Map<String, String>> usages = new ArrayList<>();
+        
+        // 1. Find object property assertions where this is the object
+        String assertionQuery = PREFIXES + """
+            SELECT DISTINCT ?subject ?prop ?label WHERE {
+              ?subject ?prop <%s> .
+              ?prop a owl:ObjectProperty .
+              OPTIONAL { ?subject rdfs:label ?label }
+            }
+            """.formatted(individualIri);
+        TupleQueryResult assertions = datasetService.execSelect(projectId, assertionQuery);
+        while (assertions.hasNext()) {
+            BindingSet sol = assertions.next();
+            Map<String, String> usage = new LinkedHashMap<>();
+            usage.put("type", "assertion");
+            String subjectIri = resource(sol, "subject");
+            String propIri = resource(sol, "prop");
+            if (subjectIri != null) {
+                usage.put("subject", subjectIri);
+                usage.put("subjectLabel", sol.hasBinding("label") ? literal(sol, "label") : localName(subjectIri));
+                usage.put("predicate", propIri);
+                usage.put("context", "Object of " + localName(propIri));
+                usages.add(usage);
+            }
+        }
+        
+        // 2. Find SameIndividual/DifferentIndividuals
+        String sameDiffQuery = PREFIXES + """
+            SELECT DISTINCT ?other ?type ?label WHERE {
+              {
+                <%s> owl:sameAs ?other .
+                BIND("same" AS ?type)
+              } UNION {
+                ?other owl:sameAs <%s> .
+                BIND("same" AS ?type)
+              } UNION {
+                <%s> owl:differentFrom ?other .
+                BIND("different" AS ?type)
+              } UNION {
+                ?other owl:differentFrom <%s> .
+                BIND("different" AS ?type)
+              }
+              OPTIONAL { ?other rdfs:label ?label }
+            }
+            """.formatted(individualIri, individualIri, individualIri, individualIri);
+        TupleQueryResult sameDiffs = datasetService.execSelect(projectId, sameDiffQuery);
+        while (sameDiffs.hasNext()) {
+            BindingSet sol = sameDiffs.next();
+            Map<String, String> usage = new LinkedHashMap<>();
+            String type = sol.hasBinding("type") ? literal(sol, "type") : "unknown";
+            usage.put("type", type);
+            String otherIri = resource(sol, "other");
+            if (otherIri != null) {
+                usage.put("subject", otherIri);
+                usage.put("subjectLabel", sol.hasBinding("label") ? literal(sol, "label") : localName(otherIri));
+                usage.put("context", type.equals("same") ? "SameIndividualAs" : "DifferentIndividualFrom");
+                usages.add(usage);
+            }
+        }
+
+        return usages;
+    }
+
     public List<DatatypeDto> datatypes(String projectId, int limit, int offset) {
         // First get datatypes declared in the ontology
         String query = PREFIXES + """
@@ -853,6 +967,146 @@ public class OntologyQueryService {
                 usage.put("subjectLabel", propLabel);
                 usage.put("context", value);
                 usage.put("annotationProperty", propIri);
+                usages.add(usage);
+            }
+        }
+        
+        return usages;
+    }
+
+    public List<Map<String, String>> propertyUsage(String projectId, String propertyIri) {
+        List<Map<String, String>> usages = new ArrayList<>();
+        
+        // 1. Find domains
+        String domainQuery = PREFIXES + """
+            SELECT DISTINCT ?domain ?label WHERE {
+              <%s> rdfs:domain ?domain .
+              FILTER(isIRI(?domain))
+              OPTIONAL { ?domain rdfs:label ?label }
+            }
+            """.formatted(propertyIri);
+        TupleQueryResult domains = datasetService.execSelect(projectId, domainQuery);
+        while (domains.hasNext()) {
+            BindingSet sol = domains.next();
+            Map<String, String> usage = new LinkedHashMap<>();
+            usage.put("type", "domain");
+            String domainIri = resource(sol, "domain");
+            if (domainIri != null) {
+                usage.put("subject", domainIri);
+                usage.put("subjectLabel", sol.hasBinding("label") ? literal(sol, "label") : localName(domainIri));
+                usage.put("context", "Domain of property");
+                usages.add(usage);
+            }
+        }
+        
+        // 2. Find ranges
+        String rangeQuery = PREFIXES + """
+            SELECT DISTINCT ?range ?label WHERE {
+              <%s> rdfs:range ?range .
+              FILTER(isIRI(?range))
+              OPTIONAL { ?range rdfs:label ?label }
+            }
+            """.formatted(propertyIri);
+        TupleQueryResult ranges = datasetService.execSelect(projectId, rangeQuery);
+        while (ranges.hasNext()) {
+            BindingSet sol = ranges.next();
+            Map<String, String> usage = new LinkedHashMap<>();
+            usage.put("type", "range");
+            String rangeIri = resource(sol, "range");
+            if (rangeIri != null) {
+                usage.put("subject", rangeIri);
+                usage.put("subjectLabel", sol.hasBinding("label") ? literal(sol, "label") : localName(rangeIri));
+                usage.put("context", "Range of property");
+                usages.add(usage);
+            }
+        }
+        
+        // 3. Find subproperties
+        String subPropQuery = PREFIXES + """
+            SELECT DISTINCT ?sub ?label WHERE {
+              ?sub rdfs:subPropertyOf <%s> .
+              FILTER(isIRI(?sub) && ?sub != <%s>)
+              OPTIONAL { ?sub rdfs:label ?label }
+            }
+            """.formatted(propertyIri, propertyIri);
+        TupleQueryResult subProps = datasetService.execSelect(projectId, subPropQuery);
+        while (subProps.hasNext()) {
+            BindingSet sol = subProps.next();
+            Map<String, String> usage = new LinkedHashMap<>();
+            usage.put("type", "subproperty");
+            String subIri = resource(sol, "sub");
+            if (subIri != null) {
+                usage.put("subject", subIri);
+                usage.put("subjectLabel", sol.hasBinding("label") ? literal(sol, "label") : localName(subIri));
+                usage.put("context", "SubPropertyOf");
+                usages.add(usage);
+            }
+        }
+
+        // 4. Find superproperties
+        String superPropQuery = PREFIXES + """
+            SELECT DISTINCT ?super ?label WHERE {
+              <%s> rdfs:subPropertyOf ?super .
+              FILTER(isIRI(?super) && ?super != <%s>)
+              OPTIONAL { ?super rdfs:label ?label }
+            }
+            """.formatted(propertyIri, propertyIri);
+        TupleQueryResult superProps = datasetService.execSelect(projectId, superPropQuery);
+        while (superProps.hasNext()) {
+            BindingSet sol = superProps.next();
+            Map<String, String> usage = new LinkedHashMap<>();
+            usage.put("type", "superproperty");
+            String superIri = resource(sol, "super");
+            if (superIri != null) {
+                usage.put("subject", superIri);
+                usage.put("subjectLabel", sol.hasBinding("label") ? literal(sol, "label") : localName(superIri));
+                usage.put("context", "SuperPropertyOf");
+                usages.add(usage);
+            }
+        }
+        
+        // 5. Find property assertions in individuals
+        String assertionQuery = PREFIXES + """
+            SELECT DISTINCT ?subject ?label WHERE {
+              ?subject <%s> ?any .
+              OPTIONAL { ?subject rdfs:label ?label }
+            }
+            LIMIT 1000
+            """.formatted(propertyIri);
+        TupleQueryResult assertions = datasetService.execSelect(projectId, assertionQuery);
+        while (assertions.hasNext()) {
+            BindingSet sol = assertions.next();
+            Map<String, String> usage = new LinkedHashMap<>();
+            usage.put("type", "assertion");
+            String subjectIri = resource(sol, "subject");
+            if (subjectIri != null) {
+                usage.put("subject", subjectIri);
+                usage.put("subjectLabel", sol.hasBinding("label") ? literal(sol, "label") : localName(subjectIri));
+                usage.put("context", "Property assertion");
+                usages.add(usage);
+            }
+        }
+        
+        // 6. Find restrictions using this property
+        String restrictionQuery = PREFIXES + """
+            SELECT DISTINCT ?class ?label WHERE {
+              ?class rdfs:subClassOf ?restriction .
+              ?restriction a owl:Restriction ;
+                           owl:onProperty <%s> .
+              FILTER(isIRI(?class))
+              OPTIONAL { ?class rdfs:label ?label }
+            }
+            """.formatted(propertyIri);
+        TupleQueryResult restrictions = datasetService.execSelect(projectId, restrictionQuery);
+        while (restrictions.hasNext()) {
+            BindingSet sol = restrictions.next();
+            Map<String, String> usage = new LinkedHashMap<>();
+            usage.put("type", "restriction");
+            String classIri = resource(sol, "class");
+            if (classIri != null) {
+                usage.put("subject", classIri);
+                usage.put("subjectLabel", sol.hasBinding("label") ? literal(sol, "label") : localName(classIri));
+                usage.put("context", "Used in restriction");
                 usages.add(usage);
             }
         }

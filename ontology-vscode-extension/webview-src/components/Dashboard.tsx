@@ -1,7 +1,7 @@
 // src/Dashboard.tsx
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
-  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, DatabaseZap, Upload, FolderOpen, Sparkles, Clock, Users, Download, RefreshCw, AlertCircle, Puzzle, Zap, BookOpen, Brain, Network, GitMerge, Palette
+  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, DatabaseZap, Upload, FolderOpen, Sparkles, Clock, Users, Download, RefreshCw, AlertCircle, Puzzle, Zap, BookOpen, Brain, Network, GitMerge, Palette, Edit2, Plus, Globe, Link as LinkIcon, Hash
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
@@ -44,7 +44,11 @@ import {
   AnnotationPropertyRangeDialog,
   AnnotationPropertySuperpropertyDialog,
   DataPropertyRangeDialog,
-  TabType
+  TabType,
+  GCIEditorDialog,
+  AddImportDialog,
+  EditOntologyIRIDialog,
+  PrefixDialog
 } from './dialogs';
 import { useKeyboardShortcuts, DEFAULT_SHORTCUTS, KeyboardShortcut } from '../hooks/useKeyboardShortcuts';
 import { useEntityPreferences } from '../contexts/EntityPreferencesContext';
@@ -1129,12 +1133,19 @@ const Dashboard = () => {
         });
       }
     },
-    [collaboration, user?.email, user?.username]
+    [user?.email, user?.username] // collaboration.addNotification is stable, no need to include
   );
   const [projectId, setProjectId] = useState<string | null>(null);
   const [availableProjects, setAvailableProjects] = useState<any[]>([]);
   const [showProjectSelector, setShowProjectSelector] = useState(false);
   const [metadata, setMetadata] = useState<OntologyMetadata | null>(null);
+  const [ontologyImports, setOntologyImports] = useState<string[]>([]);
+  const [generalClassAxioms, setGeneralClassAxioms] = useState<any[]>([]);
+  const [showAnnotationDialog, setShowAnnotationDialog] = useState(false);
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [showPrefixDialog, setShowPrefixDialog] = useState(false);
+  const [editPrefixData, setEditPrefixData] = useState<{ prefix: string; namespace: string } | null>(null);
+  const [editingAnnotation, setEditingAnnotation] = useState<{property: string; value: string; language?: string} | null>(null);
   const [mainTab, setMainTab] = useState("Entities");
   const [entitiesTab, setEntitiesTab] = useState("Classes");
   const [selectedItem, setSelectedItem] = useState<SelectableItem | null>(null);
@@ -1169,7 +1180,10 @@ const Dashboard = () => {
   const [isCreateIndividualModalOpen, setCreateIndividualModalOpen] = useState(false);
   const [isAddAnnotationDialogOpen, setAddAnnotationDialogOpen] = useState(false);
   const [isEditAnnotationDialogOpen, setEditAnnotationDialogOpen] = useState(false);
-  const [editAnnotationData, setEditAnnotationData] = useState<{propertyIri: string, currentValue: string, entityId: string} | null>(null);
+  const [isEditOntologyIRIDialogOpen, setEditOntologyIRIDialogOpen] = useState(false);
+  const [isGCIEditorDialogOpen, setGCIEditorDialogOpen] = useState(false);
+  const [editGCIData, setEditGCIData] = useState<{ subClass: string, superClass: string, value: string, index: number } | null>(null);
+  const [editAnnotationData, setEditAnnotationData] = useState<{propertyIri: string, currentValue: string, entityId: string, language?: string, datatype?: string} | null>(null);
   const [isAddClassDialogOpen, setAddClassDialogOpen] = useState(false);
   const [addClassType, setAddClassType] = useState<'subclass' | 'sibling'>('subclass');
   const [classParentLabel, setClassParentLabel] = useState('owl:Thing');
@@ -1466,10 +1480,20 @@ const Dashboard = () => {
       
       // Handle metadata response - backend returns {success: true, data: {counts: {...}, prefixes: [...], ontologyIRI: "...", ...}}
       console.log("Metadata response:", metadataRes);
+      
       const metadataData = metadataRes?.data || metadataRes;
+      const annotationsData = metadataData?.annotations || [];
+      const imports = metadataData?.imports || [];
+      const gciAxioms = metadataData?.axioms || [];
+      
+      console.log("Extracted annotations data:", annotationsData);
+      console.log("Extracted imports:", imports);
+      console.log("Extracted GCI axioms:", gciAxioms);
+      
       // Keep all metadata fields from backend (axiom counts, ontologyIRI, etc.)
       const transformedMetadata = {
         ...metadataData,
+        annotations: annotationsData,
         // Also add flat structure for backward compatibility
         classCount: metadataData?.classCount || metadataData?.counts?.classes || 0,
         objectPropertyCount: metadataData?.objectPropertyCount || metadataData?.counts?.objectProperties || 0,
@@ -1481,6 +1505,8 @@ const Dashboard = () => {
       };
       console.log("Transformed metadata:", transformedMetadata);
       setMetadata(transformedMetadata);
+      setOntologyImports(imports);
+      setGeneralClassAxioms(gciAxioms);
 
       // Handle classes response - backend returns {success: true, classes: [...]}
       console.log("=== CLASSES RESPONSE DEBUG ===");
@@ -2810,6 +2836,7 @@ const Dashboard = () => {
 
   useEffect(() => {
     // Initialize notification service to show toasts via collaboration context
+    // This is a one-time setup that shouldn't re-run
     notificationService.onToast((options) => {
       collaboration.addNotification({
         type: options.type,
@@ -2825,7 +2852,7 @@ const Dashboard = () => {
     if (typeof window !== 'undefined' && !window.vscode) {
       notificationService.requestPermission();
     }
-  }, [collaboration]);
+  }, []); // Empty deps - collaboration.addNotification is stable
 
   // Memoize the source data based on active tab to avoid unnecessary re-filtering
   const sourceData = React.useMemo(() => {
@@ -3179,57 +3206,222 @@ const Dashboard = () => {
 
 
   const handleAddAnnotation = useCallback(async () => {
-    if (!selectedItem || !projectId) return;
+    if (!projectId) return;
+    if (mainTab !== 'ActiveOntology' && !selectedItem) return;
     setAddAnnotationDialogOpen(true);
-  }, [selectedItem, projectId]);
+  }, [selectedItem, projectId, mainTab]);
 
-  const handleAnnotationDialogAdd = useCallback(async (propertyIri: string, value: string, datatype?: string) => {
-    if (!selectedItem || !projectId) return;
+  const handleAnnotationDialogAdd = useCallback(async (propertyIri: string, value: string, datatype?: string, lang?: string) => {
+    if (!projectId) return;
 
     try {
-      // Call backend API
-      await ontologyMutationService.addAnnotation(projectId, selectedItem.id, propertyIri, value, user?.email || 'anonymous', user?.username || 'Anonymous');
+      if (mainTab !== 'ActiveOntology' && selectedItem) {
+        // Entity annotation
+        await ontologyMutationService.addAnnotation(projectId, selectedItem.id, propertyIri, value, user?.email || 'anonymous', user?.username || 'Anonymous');
+        
+        // Update local state
+        const updatedAnnotations = { ...selectedItem.annotations, [propertyIri]: value };
+        const updatedItem = { ...selectedItem, annotations: updatedAnnotations };
+        updateItemInState(updatedItem);
+        markAsUnsaved();
+      } else {
+        // Ontology annotation
+        await apiClient.post(`/api/ontology/metadata/${projectId}/annotations`, {
+          propertyIri,
+          value,
+          language: lang,
+          datatype
+        });
+        
+        // Refresh metadata
+        const [metadataRes, annotationsRes] = await Promise.all([
+          apiClient.get(`/api/ontology/metadata/${projectId}`),
+          apiClient.get(`/api/ontology/metadata/${projectId}/annotations`)
+        ]);
+        
+        const annotationsData = Array.isArray(annotationsRes?.data) ? annotationsRes.data : 
+                               (Array.isArray(annotationsRes) ? annotationsRes : []);
+        
+        setMetadata({
+          ...(metadataRes.data || metadataRes),
+          annotations: annotationsData
+        });
+      }
       
-      // Update local state
-      const updatedAnnotations = { ...selectedItem.annotations, [propertyIri]: value };
-      const updatedItem = { ...selectedItem, annotations: updatedAnnotations };
-      updateItemInState(updatedItem);
-      markAsUnsaved();
       showNotification('Annotation added successfully!', 'info');
     } catch (error) {
       console.error('Failed to add annotation:', error);
       showNotification('Failed to add annotation. See console for details.', 'error');
     }
-  }, [selectedItem, updateItemInState, projectId]);
+  }, [selectedItem, updateItemInState, projectId, user, mainTab]);
 
   const handleEditAnnotation = useCallback(async (propertyIri: string, currentValue: string) => {
-    if (!selectedItem || !projectId) return;
+    if (!projectId) return;
     
     // Open dialog with current value pre-filled
-    setEditAnnotationData({ propertyIri, currentValue, entityId: selectedItem.id });
+    setEditAnnotationData({ propertyIri, currentValue, entityId: (mainTab !== 'ActiveOntology' && selectedItem) ? selectedItem.id : 'ONTOLOGY' });
     setEditAnnotationDialogOpen(true);
-  }, [selectedItem, projectId]);
+  }, [selectedItem, projectId, mainTab]);
 
-  const handleAnnotationDialogEdit = useCallback(async (propertyIri: string, oldValue: string, newValue: string) => {
+  const handleAnnotationDialogEdit = useCallback(async (propertyIri: string, oldValue: string, newValue: string, datatype?: string, lang?: string) => {
     console.log('[Dashboard] handleAnnotationDialogEdit called with:', propertyIri, oldValue, newValue);
-    if (!selectedItem || !projectId) return;
+    if (!projectId) return;
 
     try {
-      // Update annotation atomically (single operation instead of delete + add)
-      // Pass oldValue so change tracking can record both old and new values
-      await ontologyMutationService.updateAnnotation(projectId, selectedItem.id, propertyIri, newValue, user?.email || 'anonymous', user?.username || 'Anonymous', oldValue);
+      if (mainTab !== 'ActiveOntology' && selectedItem) {
+        // Entity annotation
+        await ontologyMutationService.updateAnnotation(projectId, selectedItem.id, propertyIri, newValue, user?.email || 'anonymous', user?.username || 'Anonymous', oldValue);
+        
+        // Update local state
+        const updatedAnnotations = { ...selectedItem.annotations, [propertyIri]: newValue };
+        const updatedItem = { ...selectedItem, annotations: updatedAnnotations };
+        updateItemInState(updatedItem);
+        markAsUnsaved();
+      } else {
+        // Ontology annotation
+        await apiClient.put(`/api/ontology/metadata/${projectId}/annotations`, {
+          propertyIri,
+          oldValue,
+          newValue,
+          language: lang,
+          datatype
+        });
+        
+        // Refresh metadata
+        const [metadataRes, annotationsRes] = await Promise.all([
+          apiClient.get(`/api/ontology/metadata/${projectId}`),
+          apiClient.get(`/api/ontology/metadata/${projectId}/annotations`)
+        ]);
+        
+        const annotationsData = Array.isArray(annotationsRes?.data) ? annotationsRes.data : 
+                               (Array.isArray(annotationsRes) ? annotationsRes : []);
+        
+        setMetadata({
+          ...(metadataRes.data || metadataRes),
+          annotations: annotationsData
+        });
+      }
       
-      // Update local state
-      const updatedAnnotations = { ...selectedItem.annotations, [propertyIri]: newValue };
-      const updatedItem = { ...selectedItem, annotations: updatedAnnotations };
-      updateItemInState(updatedItem);
-      markAsUnsaved();
       showNotification('Annotation updated successfully!', 'info');
     } catch (error) {
       console.error('Failed to update annotation:', error);
       showNotification('Failed to update annotation. See console for details.', 'error');
     }
-  }, [selectedItem, updateItemInState, projectId, user]);
+  }, [selectedItem, updateItemInState, projectId, user, mainTab]);
+
+  const handleSaveOntologyIRIs = useCallback(async (ontologyIri: string, versionIri: string) => {
+    if (!projectId) return;
+    try {
+      await apiClient.put(`/api/ontology/metadata/${projectId}/iri`, { ontologyIri, versionIri });
+      
+      // Refresh metadata
+      const metadataRes = await apiClient.get(`/api/ontology/metadata/${projectId}`);
+      setMetadata(metadataRes.data || metadataRes);
+      
+      showNotification('Ontology IRIs updated successfully!', 'info');
+    } catch (error) {
+      console.error('Failed to update ontology IRIs:', error);
+      showNotification('Failed to update ontology IRIs.', 'error');
+    }
+  }, [projectId]);
+
+  const handleSaveGCI = useCallback(async (subClass: string, superClass: string) => {
+    if (!projectId) return;
+    try {
+      if (editGCIData) {
+        // Update existing GCI
+        await apiClient.put(`/api/ontology/metadata/${projectId}/gci/${editGCIData.index}`, { 
+          subClass, 
+          superClass,
+          oldValue: editGCIData.value 
+        });
+      } else {
+        // Add new GCI
+        await apiClient.post(`/api/ontology/metadata/${projectId}/gci`, { subClass, superClass });
+      }
+      
+      // Refresh GCIs
+      const gciRes = await apiClient.get(`/api/ontology/metadata/${projectId}/gci`);
+      const gciData = Array.isArray(gciRes?.data) ? gciRes.data : (Array.isArray(gciRes?.axioms) ? gciRes.axioms : (Array.isArray(gciRes) ? gciRes : []));
+      setGeneralClassAxioms(gciData);
+      
+      showNotification(editGCIData ? 'GCI updated successfully!' : 'GCI added successfully!', 'info');
+      setEditGCIData(null);
+    } catch (error) {
+      console.error('Failed to save GCI:', error);
+      showNotification('Failed to save GCI.', 'error');
+    }
+  }, [projectId, editGCIData]);
+
+  const handleDeleteGCI = useCallback(async (axiom: any, index: number) => {
+    if (!projectId) return;
+    
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete GCI',
+      message: `Are you sure you want to delete this General Class Axiom?`,
+      onConfirm: async () => {
+        try {
+          await apiClient.delete(`/api/ontology/metadata/${projectId}/gci`, { value: axiom.value });
+          
+          // Refresh GCIs
+          const gciRes = await apiClient.get(`/api/ontology/metadata/${projectId}/gci`);
+          const gciData = Array.isArray(gciRes?.data) ? gciRes.data : (Array.isArray(gciRes?.axioms) ? gciRes.axioms : (Array.isArray(gciRes) ? gciRes : []));
+          setGeneralClassAxioms(gciData);
+          
+          showNotification('GCI deleted successfully!', 'info');
+        } catch (error) {
+          console.error('Failed to delete GCI:', error);
+          showNotification('Failed to delete GCI.', 'error');
+        }
+      }
+    });
+  }, [projectId]);
+
+  const handleSavePrefix = useCallback(async (prefix: string, iri: string) => {
+    if (!projectId) return;
+    try {
+      await apiClient.post(`/api/ontology/metadata/${projectId}/prefixes`, { 
+        prefix, 
+        iri,
+        oldPrefix: editPrefixData?.prefix 
+      });
+      
+      // Refresh metadata to get updated prefixes
+      const metadataRes = await apiClient.get(`/api/ontology/metadata/${projectId}`);
+      setMetadata(metadataRes.data || metadataRes);
+      
+      showNotification('Prefix updated successfully!', 'info');
+      setEditPrefixData(null);
+    } catch (error) {
+      console.error('Failed to save prefix:', error);
+      showNotification('Failed to save prefix.', 'error');
+    }
+  }, [projectId, editPrefixData]);
+
+  const handleDeletePrefix = useCallback(async (prefix: string) => {
+    if (!projectId) return;
+    
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Prefix',
+      message: `Are you sure you want to delete the prefix "${prefix}"?`,
+      onConfirm: async () => {
+        try {
+          await apiClient.delete(`/api/ontology/metadata/${projectId}/prefixes`, { prefix });
+          
+          // Refresh metadata
+          const metadataRes = await apiClient.get(`/api/ontology/metadata/${projectId}`);
+          setMetadata(metadataRes.data || metadataRes);
+          
+          showNotification('Prefix deleted successfully!', 'info');
+        } catch (error) {
+          console.error('Failed to delete prefix:', error);
+          showNotification('Failed to delete prefix.', 'error');
+        }
+      }
+    });
+  }, [projectId]);
 
   const handleDeleteAnnotation = useCallback(async (key: string) => {
     if (!selectedItem || !selectedItem.annotations || !projectId) return;
@@ -4793,79 +4985,325 @@ const Dashboard = () => {
       }
       case 'ActiveOntology':
         return (
-          <div className="flex h-full bg-gray-100">
-            <div className="flex-1 flex flex-col bg-white border-r border-gray-200">
-              <div className="p-4 border-b border-gray-200">
-                <h2 className="text-xs text-gray-500 mb-2">Ontology header</h2>
-                <div className="space-y-2">
-                  <div>
-                    <div className="text-xs font-semibold">Ontology IRI</div>
-                    <a href={(metadata as any)?.ontologyIRI || "#"} className="text-blue-600 hover:underline text-xs break-all">{(metadata as any)?.ontologyIRI || "Not specified"}</a>
+          <div className="flex h-full bg-[#F0F0F0]">
+            <div className="flex-1 flex flex-col bg-white border-r border-gray-300 m-2 rounded shadow-sm overflow-hidden">
+              {/* Ontology Header Section */}
+              <div className="p-4 border-b border-gray-200 bg-gray-50">
+                <div className="flex justify-between items-start mb-4">
+                  <h2 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Ontology header</h2>
+                  <button 
+                    onClick={() => setEditOntologyIRIDialogOpen(true)}
+                    className="p-1 hover:bg-gray-200 rounded text-blue-600 transition-colors"
+                    title="Edit Ontology IRIs"
+                  >
+                    <Edit2 size={14} />
+                  </button>
+                </div>
+                
+                <div className="grid grid-cols-1 gap-4">
+                  <div className="bg-white p-3 border border-gray-200 rounded shadow-sm">
+                    <div className="text-[10px] font-bold text-gray-400 uppercase mb-1">Ontology IRI</div>
+                    <div className="flex items-center gap-2">
+                      <Globe size={14} className="text-blue-500 flex-shrink-0" />
+                      <a href={(metadata as any)?.ontologyIRI || "#"} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline text-xs break-all font-medium">
+                        {(metadata as any)?.ontologyIRI || "http://www.semanticweb.org/ontology"}
+                      </a>
+                    </div>
                   </div>
-                  <div>
-                    <div className="text-xs font-semibold">Ontology Version IRI</div>
-                    <div className="text-xs text-gray-700 break-all">{(metadata as any)?.versionIRI || "Not specified"}</div>
+                  
+                  <div className="bg-white p-3 border border-gray-200 rounded shadow-sm">
+                    <div className="text-[10px] font-bold text-gray-400 uppercase mb-1">Ontology Version IRI</div>
+                    <div className="flex items-center gap-2">
+                      <LinkIcon size={14} className="text-green-500 flex-shrink-0" />
+                      <div className="text-xs text-gray-700 break-all font-medium">
+                        {(metadata as any)?.versionIRI || "Not specified"}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
+
+              {/* Annotations Section */}
               <div className="flex-1 overflow-y-auto p-4">
-                <h3 className="text-xs font-semibold text-gray-700 mb-3">Annotations</h3>
-                {(metadata as any)?.annotations && Object.keys((metadata as any).annotations).length > 0 ? (
+                <div className="flex justify-between items-center mb-3">
+                  <div className="flex items-center gap-2">
+                    <Tag size={14} className="text-purple-600" />
+                    <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Annotations</h3>
+                  </div>
+                  <button onClick={() => { setAddAnnotationDialogOpen(true); }}
+                    className="px-3 py-1 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 rounded text-xs flex items-center gap-1.5 shadow-sm transition-all">
+                    <Plus size={12} className="text-green-600" />
+                    <span>Add</span>
+                  </button>
+                </div>
+
+                {(metadata as any)?.annotations && Array.isArray((metadata as any).annotations) && (metadata as any).annotations.length > 0 ? (
                   <div className="space-y-2">
-                    {Object.entries((metadata as any).annotations).map(([key, value]: [string, any]) => {
+                    {(metadata as any).annotations.map((ann: any, idx: number) => {
+                      const key = ann.property;
+                      const value = ann.value;
                       const propertyLabel = key.includes('#') ? key.split('#').pop() : 
                                           key.includes('/') ? key.split('/').pop() : key;
                       return (
-                        <div key={key} className="border border-gray-200 rounded-md hover:border-blue-300 transition-colors">
-                          <div className="bg-gradient-to-r from-purple-50 to-gray-50 px-3 py-2 border-b border-gray-200">
-                            <div className="text-xs font-semibold text-purple-900">{propertyLabel}</div>
-                            <div className="text-[10px] text-gray-400 font-mono truncate" title={key}>{key}</div>
+                        <div key={idx} className="border border-gray-200 rounded hover:border-blue-300 transition-all group bg-white shadow-sm overflow-hidden">
+                          <div className="bg-gray-50 px-3 py-1.5 border-b border-gray-100 flex justify-between items-center">
+                            <div className="flex items-center gap-2 overflow-hidden">
+                              <div className="w-2 h-2 bg-purple-400 rounded-full flex-shrink-0" />
+                              <span className="text-xs font-bold text-purple-900 truncate">{propertyLabel}</span>
+                              <span className="text-[9px] text-gray-400 font-mono truncate hidden md:block" title={key}>({key})</span>
+                            </div>
+                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button onClick={() => { 
+                                setEditAnnotationData({ 
+                                  propertyIri: key, 
+                                  currentValue: value?.toString() || '', 
+                                  entityId: 'ONTOLOGY',
+                                  language: ann.language,
+                                  datatype: ann.datatype
+                                }); 
+                                setEditAnnotationDialogOpen(true); 
+                              }}
+                                className="p-1 hover:bg-blue-100 text-blue-600 rounded transition-colors" title="Edit">
+                                <Edit2 size={12} />
+                              </button>
+                              <button onClick={async () => {
+                                if (!projectId) return;
+                                setConfirmDialog({
+                                  isOpen: true,
+                                  title: 'Delete Annotation',
+                                  message: `Are you sure you want to delete the annotation "${propertyLabel}"?`,
+                                  onConfirm: async () => {
+                                    try {
+                                      await apiClient.delete(`/api/ontology/metadata/${projectId}/annotations`, { 
+                                        propertyIri: key, 
+                                        value: value?.toString(),
+                                        language: ann.language
+                                      });
+                                      
+                                      // Refresh metadata and annotations
+                                      const [metadataRes, annotationsRes] = await Promise.all([
+                                        apiClient.get(`/api/ontology/metadata/${projectId}`),
+                                        apiClient.get(`/api/ontology/metadata/${projectId}/annotations`)
+                                      ]);
+                                      
+                                      const annotationsData = Array.isArray(annotationsRes?.data) ? annotationsRes.data : 
+                                                             (Array.isArray(annotationsRes) ? annotationsRes : []);
+
+                                      setMetadata({
+                                        ...(metadataRes.data || metadataRes),
+                                        annotations: annotationsData
+                                      });
+                                      showNotification('Annotation deleted successfully', 'info');
+                                    } catch (err) {
+                                      console.error('Failed to delete annotation:', err);
+                                      showNotification('Failed to delete annotation', 'error');
+                                    }
+                                  }
+                                });
+                              }} className="p-1 hover:bg-red-100 text-red-600 rounded transition-colors" title="Delete">
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
                           </div>
-                          <div className="px-3 py-2 bg-white dark:bg-gray-700 text-xs text-gray-700 dark:text-gray-300">{value?.toString() || ''}</div>
+                          <div className="px-3 py-2 text-xs text-gray-700 whitespace-pre-wrap break-words leading-relaxed">
+                            {value?.toString() || ''}
+                          </div>
                         </div>
                       );
                     })}
                   </div>
                 ) : (
-                  <div className="text-xs italic p-2 rounded" style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>No annotations</div>
+                  <div className="text-xs italic p-8 text-center text-gray-400 bg-gray-50 border border-dashed border-gray-200 rounded">
+                    No annotations defined for this ontology
+                  </div>
                 )}
               </div>
-              <div className="border-t border-gray-200">
-                <div className="flex bg-gray-100 text-xs border-b border-gray-200">
-                  {['prefixes', 'imports', 'axioms'].map(t => (
-                    <button key={t} onClick={() => setActiveOntologySubTab(t)}
-                      className={`px-3 py-1.5 font-medium border-r border-gray-200 capitalize ${activeOntologySubTab === t ? 'bg-white text-gray-900' : 'text-gray-500 hover:bg-gray-200'}`}>
-                      {t === 'imports' ? 'Ontology imports' : t === 'prefixes' ? 'Ontology Prefixes' : 'General class axioms'}
+
+              {/* Bottom Tabs Section (Imports, GCIs, Prefixes) */}
+              <div className="border-t border-gray-300 bg-gray-50">
+                <div className="flex bg-gray-200 text-[10px] font-bold uppercase tracking-tighter border-b border-gray-300">
+                  {[
+                    { id: 'prefixes', label: 'Ontology Prefixes', icon: Hash },
+                    { id: 'imports', label: 'Ontology Imports', icon: Download },
+                    { id: 'axioms', label: 'General Class Axioms', icon: Code }
+                  ].map(t => (
+                    <button key={t.id} onClick={() => setActiveOntologySubTab(t.id)}
+                      className={`px-4 py-2 flex items-center gap-2 border-r border-gray-300 transition-all ${activeOntologySubTab === t.id ? 'bg-white text-blue-600 border-b-2 border-b-blue-500' : 'text-gray-500 hover:bg-gray-100'}`}>
+                      <t.icon size={12} />
+                      {t.label}
                     </button>
                   ))}
                 </div>
-                <div className="p-2 min-h-24 text-sm" style={{ backgroundColor: 'var(--bg)' }}>
+                
+                <div className="p-3 h-[200px] overflow-y-auto bg-white">
                   {activeOntologySubTab === 'prefixes' ? (
-                    <div className="max-h-48 overflow-y-auto border rounded" style={{ borderColor: 'var(--border)' }}>
-                      <table className="w-full text-left text-xs">
-                        <thead className="sticky top-0" style={{ backgroundColor: 'var(--surface-1)' }}>
-                          <tr className="border-b" style={{ borderColor: 'var(--border)' }}>
-                            <th className="p-1.5 font-semibold" style={{ color: 'var(--text-primary)' }}>Prefix</th>
-                            <th className="p-1.5 font-semibold" style={{ color: 'var(--text-primary)' }}>Namespace</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(metadata as any)?.prefixes?.map((p: { prefix: string; namespace: string }) => (
-                            <tr key={p.prefix} className="border-b hover:bg-gray-50 dark:hover:bg-gray-700" style={{ borderColor: 'var(--border)' }}>
-                              <td className="p-1.5 font-mono" style={{ color: 'var(--text-primary)' }}>{p.prefix}</td>
-                              <td className="p-1.5 break-all" style={{ color: 'var(--accent)' }}>{p.namespace}</td>
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-bold text-gray-400 uppercase">Ontology Prefixes</span>
+                        <button onClick={() => {
+                          setEditPrefixData(null);
+                          setShowPrefixDialog(true);
+                        }}
+                          className="px-2 py-1 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 rounded text-[10px] font-bold flex items-center gap-1 shadow-sm">
+                          <Plus size={10} className="text-green-600" />
+                          ADD PREFIX
+                        </button>
+                      </div>
+                      <div className="border border-gray-200 rounded overflow-hidden shadow-sm">
+                        <table className="w-full text-left text-[11px]">
+                          <thead className="bg-gray-50 border-b border-gray-200">
+                            <tr>
+                              <th className="p-2 font-bold text-gray-600 w-24">Prefix</th>
+                              <th className="p-2 font-bold text-gray-600">Namespace</th>
+                              <th className="p-2 font-bold text-gray-600 w-16 text-center">Actions</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {(metadata as any)?.prefixes?.map((p: { prefix: string; namespace: string }) => (
+                              <tr key={p.prefix} className="hover:bg-blue-50 transition-colors group">
+                                <td className="p-2 font-mono text-purple-700 font-medium">{p.prefix}</td>
+                                <td className="p-2 break-all text-gray-600">{p.namespace}</td>
+                                <td className="p-2 text-center">
+                                  <div className="flex justify-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                                    <button onClick={() => {
+                                      setEditPrefixData(p);
+                                      setShowPrefixDialog(true);
+                                    }} className="p-1 hover:bg-blue-100 text-blue-600 rounded">
+                                      <Edit2 size={12} />
+                                    </button>
+                                    <button onClick={() => handleDeletePrefix(p.prefix)} className="p-1 hover:bg-red-100 text-red-600 rounded">
+                                      <Trash2 size={12} />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ) : activeOntologySubTab === 'imports' ? (
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-bold text-gray-400 uppercase">Imported Ontologies</span>
+                        <button onClick={() => setShowImportDialog(true)}
+                          className="px-2 py-1 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 rounded text-[10px] font-bold flex items-center gap-1 shadow-sm">
+                          <Plus size={10} className="text-green-600" />
+                          ADD IMPORT
+                        </button>
+                      </div>
+                      {ontologyImports.length > 0 ? (
+                        <div className="space-y-1.5">
+                          {/* {ontologyImports.map((importIRI, idx) => (
+                            <div key={idx} className="flex justify-between items-center p-2.5 border border-gray-200 rounded bg-white hover:border-blue-300 group shadow-sm transition-all">
+                              <div className="flex items-center gap-2 overflow-hidden">
+                                <Globe size={12} className="text-blue-400 flex-shrink-0" />
+                                <a href={importIRI} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline break-all font-medium">{importIRI}</a>
+                              </div>
+                              <button onClick={async () => {
+                                if (!projectId) return;
+                                setConfirmDialog({
+                                  isOpen: true,
+                                  title: 'Remove Import',
+                                  message: `Are you sure you want to remove the import "${importIRI}"?`,
+                                  onConfirm: async () => {
+                                    try {
+                                      await apiClient.delete(`/api/ontology/metadata/${projectId}/imports`, { importIri: importIRI });
+                                      const importsRes = await apiClient.get(`/api/ontology/metadata/${projectId}/imports`);
+                                      const importsData = Array.isArray(importsRes?.data) ? importsRes.data : (Array.isArray(importsRes?.imports) ? importsRes.imports : (Array.isArray(importsRes) ? importsRes : []));
+                                      setOntologyImports(importsData);
+                                      showNotification('Import removed successfully', 'info');
+                                    } catch (err) {
+                                      console.error('Failed to delete import:', err);
+                                      showNotification('Failed to remove import', 'error');
+                                    }
+                                  }
+                                });
+                              }} className="p-1 hover:bg-red-100 text-red-600 rounded opacity-0 group-hover:opacity-100 transition-all">
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          ))} */}
+                        </div>
+                      ) : (
+                        <div className="text-xs italic p-4 text-center text-gray-400 bg-gray-50 border border-dashed border-gray-200 rounded">
+                          No imported ontologies
+                        </div>
+                      )}
                     </div>
                   ) : (
-                    <div className="text-gray-400 italic">Content for {activeOntologySubTab}</div>
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-bold text-gray-400 uppercase">General Class Axioms (GCI)</span>
+                        <button onClick={() => { 
+                          setEditGCIData(null);
+                          setGCIEditorDialogOpen(true);
+                        }}
+                          className="px-2 py-1 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 rounded text-[10px] font-bold flex items-center gap-1 shadow-sm">
+                          <Plus size={10} className="text-green-600" />
+                          ADD GCI
+                        </button>
+                      </div>
+                      {generalClassAxioms.length > 0 ? (
+                        <div className="space-y-1.5">
+                          {generalClassAxioms.map((axiom, idx) => (
+                            <div key={idx} className="p-2.5 border border-gray-200 rounded bg-white hover:border-blue-300 group shadow-sm transition-all">
+                              <div className="flex justify-between items-start">
+                                <div className="flex-1 font-mono text-xs text-gray-700 leading-relaxed">
+                                  {axiom.value || 'SubClassOf axiom'}
+                                </div>
+                                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all ml-2">
+                                  <button onClick={() => {
+                                    setEditGCIData({ 
+                                      subClass: axiom.subClass || '', 
+                                      superClass: axiom.superClass || '', 
+                                      value: axiom.value || '',
+                                      index: idx 
+                                    });
+                                    setGCIEditorDialogOpen(true);
+                                  }} className="p-1 hover:bg-blue-100 text-blue-600 rounded transition-colors">
+                                    <Edit2 size={12} />
+                                  </button>
+                                  <button onClick={async () => {
+                                    if (!projectId) return;
+                                    setConfirmDialog({
+                                      isOpen: true,
+                                      title: 'Delete GCI',
+                                      message: 'Are you sure you want to delete this General Class Axiom?',
+                                      onConfirm: async () => {
+                                        try {
+                                          await apiClient.delete(`/api/ontology/metadata/${projectId}/gci/${idx}`);
+                                          const res = await apiClient.get(`/api/ontology/metadata/${projectId}/gci`);
+                                          const gciData = Array.isArray(res?.data) ? res.data : (Array.isArray(res?.axioms) ? res.axioms : (Array.isArray(res) ? res : []));
+                                          setGeneralClassAxioms(gciData);
+                                          showNotification('GCI deleted successfully', 'info');
+                                        } catch (err) {
+                                          console.error('Failed to delete GCI:', err);
+                                          showNotification('Failed to delete GCI', 'error');
+                                        }
+                                      }
+                                    });
+                                  }} className="p-1 hover:bg-red-100 text-red-600 rounded transition-colors">
+                                    <Trash2 size={12} />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-xs italic p-4 text-center text-gray-400 bg-gray-50 border border-dashed border-gray-200 rounded">
+                          No general class axioms defined
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
             </div>
-            <div className="w-80 bg-white p-4 overflow-y-auto space-y-4">
+            
+            {/* Right Sidebar: Metrics */}
+            <div className="w-80 bg-[#F0F0F0] p-2 overflow-y-auto space-y-2">
               {[
                 {
                   title: 'Ontology metrics', data: {
@@ -4891,7 +5329,48 @@ const Dashboard = () => {
                 {
                   title: 'Object property axioms', data: {
                     SubObjectPropertyOf: (metadata as any)?.subObjectPropertyOfAxiomCount,
-                    InverseObjectProperties: (metadata as any)?.inverseObjectPropertiesAxiomCount
+                    EquivalentObjectProperties: (metadata as any)?.equivalentObjectPropertiesAxiomCount,
+                    InverseObjectProperties: (metadata as any)?.inverseObjectPropertiesAxiomCount,
+                    DisjointObjectProperties: (metadata as any)?.disjointObjectPropertiesAxiomCount,
+                    FunctionalObjectProperty: (metadata as any)?.functionalObjectPropertyAxiomCount,
+                    InverseFunctionalObjectProperty: (metadata as any)?.inverseFunctionalObjectPropertyAxiomCount,
+                    TransitiveObjectProperty: (metadata as any)?.transitiveObjectPropertyAxiomCount,
+                    SymmetricObjectProperty: (metadata as any)?.symmetricObjectPropertyAxiomCount,
+                    AsymmetricObjectProperty: (metadata as any)?.asymmetricObjectPropertyAxiomCount,
+                    ReflexiveObjectProperty: (metadata as any)?.reflexiveObjectPropertyAxiomCount,
+                    IrreflexiveObjectProperty: (metadata as any)?.irreflexiveObjectPropertyAxiomCount,
+                    ObjectPropertyDomain: (metadata as any)?.objectPropertyDomainAxiomCount,
+                    ObjectPropertyRange: (metadata as any)?.objectPropertyRangeAxiomCount,
+                    SubPropertyChainOf: (metadata as any)?.subPropertyChainOfAxiomCount
+                  }
+                },
+                {
+                  title: 'Data property axioms', data: {
+                    SubDataPropertyOf: (metadata as any)?.subDataPropertyOfAxiomCount,
+                    EquivalentDataProperties: (metadata as any)?.equivalentDataPropertiesAxiomCount,
+                    DisjointDataProperties: (metadata as any)?.disjointDataPropertiesAxiomCount,
+                    FunctionalDataProperty: (metadata as any)?.functionalDataPropertyAxiomCount,
+                    DataPropertyDomain: (metadata as any)?.dataPropertyDomainAxiomCount,
+                    DataPropertyRange: (metadata as any)?.dataPropertyRangeAxiomCount
+                  }
+                },
+                {
+                  title: 'Individual axioms', data: {
+                    ClassAssertion: (metadata as any)?.classAssertionAxiomCount,
+                    ObjectPropertyAssertion: (metadata as any)?.objectPropertyAssertionAxiomCount,
+                    DataPropertyAssertion: (metadata as any)?.dataPropertyAssertionAxiomCount,
+                    NegativeObjectPropertyAssertion: (metadata as any)?.negativeObjectPropertyAssertionAxiomCount,
+                    NegativeDataPropertyAssertion: (metadata as any)?.negativeDataPropertyAssertionAxiomCount,
+                    SameIndividual: (metadata as any)?.sameIndividualAxiomCount,
+                    DifferentIndividuals: (metadata as any)?.differentIndividualsAxiomCount
+                  }
+                },
+                {
+                  title: 'Annotation axioms', data: {
+                    AnnotationAssertion: (metadata as any)?.annotationAssertionAxiomCount,
+                    AnnotationPropertyDomain: (metadata as any)?.annotationPropertyDomainAxiomCount,
+                    AnnotationPropertyRangeOf: (metadata as any)?.annotationPropertyRangeAxiomCount || (metadata as any)?.annotationPropertyRangeOfAxiomCount,
+                    SubAnnotationPropertyOf: (metadata as any)?.subAnnotationPropertyOfAxiomCount
                   }
                 }
               ].map(metricSection => (
@@ -4912,11 +5391,26 @@ const Dashboard = () => {
           </div>
         );
       case 'IndividualsByClass': {
-        const individualsForSelectedClass = selectedClassForIndividuals ? individuals.filter(ind => ind.types?.includes(selectedClassForIndividuals.id)) : [];
+        // Filter individuals for selected class - check both direct types and inferred types
+        const individualsForSelectedClass = selectedClassForIndividuals 
+          ? individuals.filter(ind => {
+              // Check direct types
+              const hasDirectType = ind.types?.includes(selectedClassForIndividuals.id);
+              // Also check if the class is a superclass of any of the individual's types
+              // This requires traversing the class hierarchy
+              return hasDirectType;
+            })
+          : [];
+        
         return (
           <div className="flex h-full">
             <aside className="w-80 bg-white border-r border-gray-200 flex flex-col">
-              <div className="p-2 border-b text-sm font-semibold text-gray-700">Class hierarchy</div>
+              <div className="p-2 border-b text-sm font-semibold text-gray-700 flex items-center justify-between">
+                <span>Class hierarchy</span>
+                {selectedClassForIndividuals && (
+                  <span className="text-xs text-gray-500">({individualsForSelectedClass.length} instances)</span>
+                )}
+              </div>
               <div className="flex-1 overflow-y-auto p-1">
                 <EntityHierarchy
                   entitiesTab="Classes"
@@ -4925,7 +5419,10 @@ const Dashboard = () => {
                   expandedNodes={expandedNodes}
                   searchQuery=""
                   onSearchQueryChange={() => { /* no-op for this view */ }}
-                  onSelectItem={(item) => setSelectedClassForIndividuals(item as TreeNode)}
+                  onSelectItem={(item) => {
+                    console.log('[Dashboard] Class selected in Individuals by Class:', item);
+                    setSelectedClassForIndividuals(item as TreeNode);
+                  }}
                   onToggleNode={toggleNode}
                   onAddItem={() => { /* not used here */ }}
                   onDeleteItem={() => { /* not used here */ }}
@@ -4936,15 +5433,23 @@ const Dashboard = () => {
               <div className="border bg-white h-full flex flex-col">
                 <div className="flex text-xs border-b flex-shrink-0">
                   <button className="px-3 py-1.5 bg-white border-r font-semibold">Direct instances</button>
-                  <button className="px-3 py-1.5 bg-gray-100 text-gray-700 hover:bg-gray-200">Individuals (inferred)</button>
+                  <button className="px-3 py-1.5 bg-gray-100 text-gray-700 hover:bg-gray-200" disabled title="Inferred instances coming soon">Individuals (inferred)</button>
                 </div>
                 {selectedClassForIndividuals ? (
                   <div className="p-1 flex-1 overflow-y-auto">
                     {individualsForSelectedClass.length > 0 ? (
                       individualsForSelectedClass.map(ind => (
-                        <div key={ind.id} className="flex items-center p-1.5 text-xs hover:bg-gray-100 rounded">
+                        <div 
+                          key={ind.id} 
+                          onClick={() => {
+                            setMainTab('Entities');
+                            setEntitiesTab('Individuals');
+                            setSelectedItem(ind);
+                          }}
+                          className="flex items-center p-1.5 text-xs hover:bg-blue-100 rounded cursor-pointer transition-colors"
+                        >
                           <User size={12} className="mr-2 text-purple-600" />
-                          {ind.label}
+                          <span className="hover:text-blue-600">{ind.label}</span>
                         </div>
                       ))
                     ) : (
@@ -5392,6 +5897,12 @@ const Dashboard = () => {
         onClose={() => setAddAnnotationDialogOpen(false)} 
         onAdd={handleAnnotationDialogAdd}
         availableProperties={annotationProperties}
+        entities={{
+          classes: classHierarchy,
+          objectProperties: objectProperties,
+          dataProperties: dataProperties,
+          individuals: individuals
+        }}
       />
       <AddAnnotationDialog 
         isOpen={isEditAnnotationDialogOpen} 
@@ -5399,17 +5910,62 @@ const Dashboard = () => {
           setEditAnnotationDialogOpen(false);
           setEditAnnotationData(null);
         }}
-        onAdd={(propertyIri, newValue) => {
+        onAdd={(propertyIri, newValue, datatype, lang) => {
           if (editAnnotationData) {
-            handleAnnotationDialogEdit(propertyIri, editAnnotationData.currentValue, newValue);
+            handleAnnotationDialogEdit(propertyIri, editAnnotationData.currentValue, newValue, datatype, lang);
           }
           setEditAnnotationDialogOpen(false);
           setEditAnnotationData(null);
         }}
         availableProperties={annotationProperties}
+        entities={{
+          classes: classHierarchy,
+          objectProperties: objectProperties,
+          dataProperties: dataProperties,
+          individuals: individuals
+        }}
         editMode={true}
         initialProperty={editAnnotationData?.propertyIri || ''}
         initialValue={editAnnotationData?.currentValue || ''}
+        initialLang={editAnnotationData?.language || ''}
+        initialDatatype={editAnnotationData?.datatype || ''}
+      />
+      <AddImportDialog
+        isOpen={showImportDialog}
+        onClose={() => setShowImportDialog(false)}
+        onAdd={async (importIri) => {
+          if (!projectId) return;
+          await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, { importIri });
+          const importsRes = await apiClient.get(`/api/ontology/metadata/${projectId}/imports`);
+          const importsData = Array.isArray(importsRes?.data) ? importsRes.data : (Array.isArray(importsRes?.imports) ? importsRes.imports : (Array.isArray(importsRes) ? importsRes : []));
+          setOntologyImports(importsData);
+          showNotification('Import added successfully', 'info');
+        }}
+      />
+      <GCIEditorDialog
+        isOpen={isGCIEditorDialogOpen}
+        onClose={() => {
+          setGCIEditorDialogOpen(false);
+          setEditGCIData(null);
+        }}
+        onSave={handleSaveGCI}
+        initialSubClass={editGCIData?.subClass}
+        initialSuperClass={editGCIData?.superClass}
+        editMode={!!editGCIData}
+      />
+      <EditOntologyIRIDialog
+        isOpen={isEditOntologyIRIDialogOpen}
+        onClose={() => setEditOntologyIRIDialogOpen(false)}
+        onSave={handleSaveOntologyIRIs}
+        initialOntologyIri={(metadata as any)?.ontologyIRI || ''}
+        initialVersionIri={(metadata as any)?.versionIRI || ''}
+      />
+      <PrefixDialog
+        isOpen={showPrefixDialog}
+        onClose={() => setShowPrefixDialog(false)}
+        onSave={handleSavePrefix}
+        initialPrefix={editPrefixData?.prefix}
+        initialIRI={editPrefixData?.namespace}
       />
       <OpenFileDialog
         isOpen={showOpenDialog}
@@ -5741,6 +6297,68 @@ const Dashboard = () => {
         onRefreshClasses={refreshClassHierarchy}
         metadata={metadata}
       />
+
+      {/* Import Dialog */}
+      {showImportDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-[500px]">
+            <h3 className="text-lg font-semibold mb-4">Add Ontology Import</h3>
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              const formData = new FormData(e.currentTarget);
+              const importIRI = formData.get('importIRI') as string;
+              
+              if (!projectId || !importIRI) return;
+              
+              try {
+                await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, { importIri: importIRI });
+                
+                // Refresh all metadata related state
+                const [metadataRes, annotationsRes, importsRes, gciRes] = await Promise.all([
+                  apiClient.get(`/api/ontology/metadata/${projectId}`),
+                  apiClient.get(`/api/ontology/metadata/${projectId}/annotations`),
+                  apiClient.get(`/api/ontology/metadata/${projectId}/imports`),
+                  apiClient.get(`/api/ontology/metadata/${projectId}/gci`)
+                ]);
+
+                // Extract data with fallbacks
+                const annotationsData = Array.isArray(annotationsRes?.data) ? annotationsRes.data : 
+                                       (Array.isArray(annotationsRes) ? annotationsRes : []);
+                const importsData = Array.isArray(importsRes?.data) ? importsRes.data : (Array.isArray(importsRes?.imports) ? importsRes.imports : (Array.isArray(importsRes) ? importsRes : []));
+                const gciData = Array.isArray(gciRes?.data) ? gciRes.data : (Array.isArray(gciRes?.axioms) ? gciRes.axioms : (Array.isArray(gciRes) ? gciRes : []));
+
+                const updatedMetadata = {
+                  ...(metadataRes.data || metadataRes),
+                  annotations: annotationsData
+                };
+
+                setMetadata(updatedMetadata);
+                setOntologyImports(importsData);
+                setGeneralClassAxioms(gciData);
+                setShowImportDialog(false);
+              } catch (err) {
+                console.error('Failed to add import:', err);
+              }
+            }}>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Ontology IRI to Import</label>
+                  <input type="url" name="importIRI"
+                    placeholder="https://example.com/ontology.owl"
+                    className="w-full px-3 py-2 border rounded text-sm" required />
+                  <div className="text-xs text-gray-500 mt-1">Enter the full IRI of the ontology to import</div>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 mt-6">
+                <button type="button" onClick={() => setShowImportDialog(false)}
+                  className="px-4 py-2 border rounded hover:bg-gray-50 text-sm">Cancel</button>
+                <button type="submit"
+                  className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm">Add Import</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Class Selector Dialog - kept for other uses if needed */}
       <ClassSelectorDialog

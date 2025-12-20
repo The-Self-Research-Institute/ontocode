@@ -16,6 +16,7 @@ interface MultiPropertySelectorDialogProps {
   title?: string;
   minSelection?: number;
   initialSelectedIds?: string[]; // Pre-selected property IRIs for edit mode
+  currentPropertyIri?: string; // Current property IRI for validation (e.g., in disjoint dialog)
   projectId?: string;
   onAddObjectProperty?: (type: 'subclass' | 'sibling', parentId?: string, name?: string) => Promise<void>;
   onAddDataProperty?: (type: 'subclass' | 'sibling', parentId?: string, name?: string) => Promise<void>;
@@ -40,7 +41,8 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
   onAddObjectProperty,
   onAddDataProperty,
   onDeleteProperty,
-  onRefreshProperties
+  onRefreshProperties,
+  currentPropertyIri
 }) => {
   const [selectedProperties, setSelectedProperties] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -53,6 +55,10 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
   const [showInlinePropertyCreate, setShowInlinePropertyCreate] = useState(false);
   const [inlinePropertyName, setInlinePropertyName] = useState('');
   const [isCreatingProperty, setIsCreatingProperty] = useState(false);
+  
+  // For disjoint property validation: check if current property is in selection
+  const isDisjointDialog = title?.toLowerCase().includes('disjoint');
+  const hasSelfSelection = isDisjointDialog && currentPropertyIri && selectedProperties.includes(currentPropertyIri);
 
   // Track hierarchy updates to ensure re-renders
   const [objectPropertiesTree, setObjectPropertiesTree] = useState<TreeNode[]>([]);
@@ -418,8 +424,9 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
             </button>
             <button 
               onClick={handleConfirm} 
-              disabled={selectedProperties.length < minSelection}
+              disabled={selectedProperties.length < minSelection || (isDisjointDialog && hasSelfSelection)}
               className="px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              title={isDisjointDialog && hasSelfSelection ? "Cannot make a property disjoint with itself" : ""}
             >
               Confirm ({selectedProperties.length})
             </button>

@@ -476,6 +476,19 @@ const ClassEditor: React.FC<{
     }
   };
 
+  // Navigation handler for clicking properties in axiom descriptions
+  const handleNavigate = (iri: string, type: string) => {
+    console.log('[ClassEditor] Navigate to:', { iri, type });
+    // Find the property in the lists
+    const property = properties.find(p => p.id === iri) || dataProperties.find(p => p.id === iri);
+    if (property) {
+      // Trigger parent navigation by updating the item - the parent Dashboard will handle the actual navigation
+      // For now, just log it - the parent component should handle this
+      console.log('[ClassEditor] Found property to navigate:', property);
+      // TODO: Implement navigation callback from parent
+    }
+  };
+
   const openEditor = (type: AxiomType, title: string, existingValue?: string, existingId?: string, initialTab?: 'hierarchy' | 'objectRestriction' | 'dataRestriction' | 'classExpression', restrictionData?: any) => {
     console.log('[ClassEditor] openEditor called:', { type, title, classHierarchyLength: classHierarchy.length });
     setEditorType(type);
@@ -981,10 +994,40 @@ const ClassEditor: React.FC<{
 
   const handleEditDisjointWith = (axiomId: string) => {
     console.log('[ClassEditor] handleEditDisjointWith called:', { classIri: item.id, axiomId });
-    // The axiomId is the IRI of the disjoint class
-    setEditingDisjointWithId(axiomId);
-    setEditingDisjointWithTarget(axiomId);
-    setIsDisjointWithOpen(true);
+    // Find the axiom to edit
+    const axiom = classDetails?.disjointClassesAxioms?.find((a: Axiom) => a.id === axiomId) || 
+                  item.disjointClassesAxioms?.find((a: Axiom) => a.id === axiomId);
+    
+    if (!axiom) {
+      console.error('[ClassEditor] Axiom not found for editing:', axiomId);
+      return;
+    }
+    
+    // Check if it's a simple class axiom or complex expression
+    const isSimpleIri = axiomId.startsWith('http://') || axiomId.startsWith('https://') || axiomId.startsWith('urn:');
+    const isRestriction = axiom.isRestriction === true || axiom.isRestriction === 'true';
+    
+    if (isRestriction && axiom.propertyIri) {
+      // Open the editor with restriction data
+      const isDataProperty = axiom.propertyIri === 'http://www.w3.org/2002/07/owl#topDataProperty' 
+        || dataProperties.some(p => p.id === axiom.propertyIri);
+      
+      const restrictionData = {
+        propertyIri: axiom.propertyIri,
+        restrictionType: axiom.restrictionType,
+        fillerIri: axiom.fillerIri,
+        isDataProperty
+      };
+      
+      openEditor('DisjointWith', 'Disjoint Class Expression', axiom.definition, axiomId, 
+                 isDataProperty ? 'dataRestriction' : 'objectRestriction', restrictionData);
+    } else if (isSimpleIri) {
+      // Simple class axiom - open hierarchy tab
+      openEditor('DisjointWith', 'Disjoint Class Expression', axiom.definition, axiomId, 'hierarchy');
+    } else {
+      // Complex expression - open class expression editor
+      openEditor('DisjointWith', 'Disjoint Class Expression', axiom.definition, axiomId, 'classExpression');
+    }
   };
 
   const handleDisjointUnionConfirm = async (nodes: TreeNode[]) => {
@@ -1374,6 +1417,7 @@ const ClassEditor: React.FC<{
                   properties={properties}
                   dataProperties={dataProperties}
                   themeColor="yellow"
+                  onNavigate={handleNavigate}
                 />
                 
                 {/* SubClass Of Section */}
@@ -1389,6 +1433,7 @@ const ClassEditor: React.FC<{
                   properties={properties}
                   dataProperties={dataProperties}
                   themeColor="yellow"
+                  onNavigate={handleNavigate}
                 />
 
                 {/* General Class Axioms Section - GCIs mentioning this class */}
@@ -1462,6 +1507,7 @@ const ClassEditor: React.FC<{
                   properties={properties}
                   dataProperties={dataProperties}
                   themeColor="yellow"
+                  onNavigate={handleNavigate}
                 />
 
                 {/* Disjoint Union Of Section */}

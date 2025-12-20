@@ -67,9 +67,11 @@ public class OntologyIndexService {
         """;
 
     private final GraphDBDatasetService datasetService;
+    private final OntologyMetadataService metadataService;
 
-    public OntologyIndexService(GraphDBDatasetService datasetService) {
+    public OntologyIndexService(GraphDBDatasetService datasetService, OntologyMetadataService metadataService) {
         this.datasetService = datasetService;
+        this.metadataService = metadataService;
     }
 
     public Map<String, Object> computeMetadata(String projectId) {
@@ -130,7 +132,7 @@ public class OntologyIndexService {
 
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("counts", counts);
-        meta.put("prefixes", prefixList(projectId));
+        meta.put("prefixes", datasetService.getPrefixes(projectId));
         meta.put("lastUpdated", Instant.now().toString());
         
         // Add ontology identity
@@ -141,6 +143,12 @@ public class OntologyIndexService {
             meta.put("versionIRI", versionIri);
         }
         
+        // Add ontology annotations
+        meta.put("annotations", metadataService.getOntologyAnnotations(projectId));
+        
+        // Add ontology imports
+        meta.put("imports", metadataService.getOntologyImports(projectId));
+        
         // Add axiom counts for Protégé-like display
         meta.put("axiomCount", (int) counts.getOrDefault("triples", 0));
         meta.put("logicalAxiomCount", logicalAxioms);
@@ -149,6 +157,7 @@ public class OntologyIndexService {
         meta.put("objectPropertyCount", counts.getOrDefault("objectProperties", 0));
         meta.put("dataPropertyCount", counts.getOrDefault("dataProperties", 0));
         meta.put("individualCount", counts.getOrDefault("individuals", 0));
+        meta.put("annotationPropertyCount", counts.getOrDefault("annotationProperties", 0));
         meta.put("subClassOfAxiomCount", axiomCounts.get("subClassOf"));
         meta.put("equivalentClassesAxiomCount", axiomCounts.get("equivalentClasses"));
         meta.put("disjointClassesAxiomCount", axiomCounts.get("disjointClasses"));
@@ -167,18 +176,6 @@ public class OntologyIndexService {
             }
         }
         return 0;
-    }
-
-    private List<Map<String, String>> prefixList(String projectId) {
-        return datasetService.getPrefixes(projectId).entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .map(entry -> {
-                    Map<String, String> row = new LinkedHashMap<>();
-                    row.put("prefix", entry.getKey());
-                    row.put("namespace", entry.getValue());
-                    return row;
-                })
-                .collect(Collectors.toCollection(ArrayList::new));
     }
 
     private int literalToInt(BindingSet sol, String var) {
