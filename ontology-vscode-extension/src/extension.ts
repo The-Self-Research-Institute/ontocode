@@ -443,6 +443,12 @@ class OntoCodePanel {
                 case 'apiPatch':
                     response = await axios.patch(fullUrl, (message as any).body, axiosConfig);
                     break;
+                case 'apiPut':
+                    response = await axios.put(fullUrl, message.body, axiosConfig);
+                    break;
+                case 'apiPatch':
+                    response = await axios.patch(fullUrl, message.body, axiosConfig);
+                    break;
                 case 'apiDelete':
                     response = await axios.delete(fullUrl, { ...axiosConfig, params: (message as any).params });
                     break;
@@ -473,7 +479,7 @@ class OntoCodePanel {
                     responseHeaders: axiosError.response?.headers,
                     data: axiosError.response?.data,
                     message: axiosError.message,
-                    requestBody: type === 'apiPost' ? message.body : undefined
+                    requestBody: type === 'apiPost' || type === 'apiPut' || type === 'apiPatch' ? message.body : undefined
                 };
                 console.error('[Proxy] API Request Error:', JSON.stringify(errorLogPayload, null, 2));
             } else if (e instanceof Error) {

@@ -379,7 +379,7 @@ public class ProjectLoadController {
     /**
      * Get ontology content in specified format for code view
      * @param projectId The project ID
-     * @param format The format (turtle, rdfxml, ntriples, jsonld) - defaults to rdfxml
+     * @param format The format (turtle, rdfxml, ntriples, jsonld, owlxml, manchester, functional) - defaults to rdfxml
      * @return Ontology content as plain text
      */
     @GetMapping("/{projectId}/content")

@@ -309,7 +309,8 @@ public class ReasonerController {
     public ResponseEntity<Map<String, Object>> getInferredSubClasses(
             @PathVariable String projectId,
             @RequestParam String classIri,
-            @RequestParam(defaultValue = "HERMIT") String reasonerType
+            @RequestParam(defaultValue = "HERMIT") String reasonerType,
+            @RequestParam(defaultValue = "false") boolean direct
     ) {
         try {
             OWLOntology ontology = loadOntology(projectId);
@@ -318,7 +319,7 @@ public class ReasonerController {
             OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
             OWLClass owlClass = df.getOWLClass(IRI.create(classIri));
             
-            Set<OWLClass> subClasses = reasonerService.getInferredSubClasses(ontology, owlClass, type);
+            Set<OWLClass> subClasses = reasonerService.getInferredSubClasses(ontology, owlClass, type, direct);
             
             List<Map<String, String>> subClassesList = subClasses.stream()
                 .map(cls -> Map.of(
@@ -331,6 +332,7 @@ public class ReasonerController {
                 "success", true,
                 "classIri", classIri,
                 "reasonerType", type.getDisplayName(),
+                "direct", direct,
                 "inferredSubClasses", subClassesList
             ));
             
@@ -341,6 +343,118 @@ public class ReasonerController {
                 "error", e.getMessage()
             ));
         }
+    }
+
+    /**
+     * Get inferred object property hierarchy
+     * GET /api/ontology/{projectId}/reasoner/inferred-object-property-hierarchy
+     */
+    @GetMapping("/{projectId}/reasoner/inferred-object-property-hierarchy")
+    public ResponseEntity<Map<String, Object>> getInferredObjectPropertyHierarchy(
+            @PathVariable String projectId,
+            @RequestParam(defaultValue = "HERMIT") String reasonerType
+    ) {
+        try {
+            OWLOntology ontology = loadOntology(projectId);
+            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
+
+            OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
+            OWLObjectProperty topProperty = df.getOWLTopObjectProperty();
+
+            Set<String> visited = new HashSet<>();
+            Map<String, Object> root = buildObjectPropertyNode(ontology, topProperty, type, visited);
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "projectId", projectId,
+                    "reasonerType", type.getDisplayName(),
+                    "hierarchy", List.of(root)
+            ));
+        } catch (Exception e) {
+            log.error("Error getting inferred object property hierarchy", e);
+            return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "error", e.getMessage()
+            ));
+        }
+    }
+
+    /**
+     * Get inferred data property hierarchy
+     * GET /api/ontology/{projectId}/reasoner/inferred-data-property-hierarchy
+     */
+    @GetMapping("/{projectId}/reasoner/inferred-data-property-hierarchy")
+    public ResponseEntity<Map<String, Object>> getInferredDataPropertyHierarchy(
+            @PathVariable String projectId,
+            @RequestParam(defaultValue = "HERMIT") String reasonerType
+    ) {
+        try {
+            OWLOntology ontology = loadOntology(projectId);
+            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
+
+            OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
+            OWLDataProperty topProperty = df.getOWLTopDataProperty();
+
+            Set<String> visited = new HashSet<>();
+            Map<String, Object> root = buildDataPropertyNode(ontology, topProperty, type, visited);
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "projectId", projectId,
+                    "reasonerType", type.getDisplayName(),
+                    "hierarchy", List.of(root)
+            ));
+        } catch (Exception e) {
+            log.error("Error getting inferred data property hierarchy", e);
+            return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "error", e.getMessage()
+            ));
+        }
+    }
+
+    private Map<String, Object> buildObjectPropertyNode(OWLOntology ontology, OWLObjectProperty property, ReasonerType type, Set<String> visited) {
+        String iri = property.getIRI().toString();
+        if (visited.contains(iri)) {
+            return Map.of("id", iri, "label", getLabel(property, ontology), "children", List.of(), "hasChildren", false);
+        }
+        visited.add(iri);
+
+        Set<OWLObjectPropertyExpression> subProps = reasonerService.getInferredSubObjectProperties(ontology, property, type, true);
+        List<Map<String, Object>> children = subProps.stream()
+                .filter(expr -> !expr.isAnonymous())
+                .map(expr -> buildObjectPropertyNode(ontology, expr.asOWLObjectProperty(), type, visited))
+                .toList();
+
+        Map<String, Object> node = new HashMap<>();
+        node.put("id", iri);
+        node.put("label", getLabel(property, ontology));
+        node.put("children", children);
+        node.put("hasChildren", !children.isEmpty());
+        node.put("type", "ObjectProperty");
+        return node;
+    }
+
+    private Map<String, Object> buildDataPropertyNode(OWLOntology ontology, OWLDataProperty property, ReasonerType type, Set<String> visited) {
+        String iri = property.getIRI().toString();
+        if (visited.contains(iri)) {
+            return Map.of("id", iri, "label", getLabel(property, ontology), "children", List.of(), "hasChildren", false);
+        }
+        visited.add(iri);
+
+        Set<OWLDataPropertyExpression> subProps = reasonerService.getInferredSubDataProperties(ontology, property, type, true);
+        List<Map<String, Object>> children = subProps.stream()
+                .filter(expr -> !expr.isAnonymous())
+                .map(expr -> buildDataPropertyNode(ontology, expr.asOWLDataProperty(), type, visited))
+                .toList();
+
+        Map<String, Object> node = new HashMap<>();
+        node.put("id", iri);
+        node.put("label", getLabel(property, ontology));
+        node.put("children", children);
+        node.put("hasChildren", !children.isEmpty());
+        node.put("type", "DatatypeProperty");
+        return node;
     }
 
     /**

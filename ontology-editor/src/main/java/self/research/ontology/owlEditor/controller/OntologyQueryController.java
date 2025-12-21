@@ -55,6 +55,15 @@ public class OntologyQueryController {
                 queryService.properties(projectId, type, limit, offset)));
     }
 
+    @GetMapping("/properties/usage/{projectId}")
+    public ResponseEntity<?> propertyUsage(@PathVariable String projectId,
+                                           @RequestParam String propertyIri) {
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", queryService.propertyUsage(projectId, propertyIri)
+        ));
+    }
+
     @GetMapping("/individuals/{projectId}")
     public ResponseEntity<?> individuals(@PathVariable String projectId,
                                          @RequestParam(defaultValue = "50") int limit,
@@ -128,6 +137,31 @@ public class OntologyQueryController {
     public ResponseEntity<?> classInstances(@PathVariable String projectId,
                                            @RequestParam String classIri) {
         return ResponseEntity.ok(queryService.getClassInstances(projectId, classIri));
+    }
+
+    @GetMapping("/classes/instance-counts/{projectId}")
+    public ResponseEntity<?> classInstanceCounts(@PathVariable String projectId) {
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", queryService.getClassInstanceCounts(projectId)
+        ));
+    }
+
+    @GetMapping("/ontology/imports/{projectId}")
+    public ResponseEntity<?> ontologyImports(@PathVariable String projectId) {
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", queryService.ontologyImports(projectId)
+        ));
+    }
+
+    @GetMapping("/ontology/gci/{projectId}")
+    public ResponseEntity<?> generalClassAxioms(@PathVariable String projectId,
+                                                @RequestParam(defaultValue = "200") int limit) {
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", queryService.generalClassAxioms(projectId, limit)
+        ));
     }
 
     @GetMapping("/{projectId}/individuals/{individualIri}")
