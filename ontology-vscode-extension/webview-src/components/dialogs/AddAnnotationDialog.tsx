@@ -10,6 +10,7 @@ interface AddAnnotationDialogProps {
   editMode?: boolean;
   initialProperty?: string;
   initialValue?: string;
+  initialDatatype?: string;
 }
 
 const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({ 
@@ -19,7 +20,8 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
   availableProperties,
   editMode = false,
   initialProperty = '',
-  initialValue = ''
+  initialValue = '',
+  initialDatatype = 'xsd:string'
 }) => {
   const [selectedProperty, setSelectedProperty] = useState(initialProperty);
   const [customProperty, setCustomProperty] = useState('');
@@ -33,6 +35,7 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
     if (isOpen && editMode) {
       setSelectedProperty(initialProperty);
       setValue(initialValue);
+      setDatatype(initialDatatype || 'xsd:string');
     } else if (!isOpen) {
       // Reset on close
       setSelectedProperty('');

@@ -38,6 +38,7 @@ import {
   PropertyExpressionDialog,
   ObjectPropertyExpressionDialog,
   AddDatatypeDialog,
+  PropertyAssertionDialog,
   KeyboardShortcutsDialog,
   EntityPreferencesDialog,
   AnnotationPropertyDomainDialog,
@@ -77,6 +78,15 @@ const findParentNode = (nodes: any[], targetId: string, parent: any | null = nul
     }
   }
   return null;
+};
+
+const DATATYPE_IRI_MAP: Record<string, string> = {
+  'xsd:string': 'http://www.w3.org/2001/XMLSchema#string',
+  'xsd:boolean': 'http://www.w3.org/2001/XMLSchema#boolean',
+  'xsd:integer': 'http://www.w3.org/2001/XMLSchema#integer',
+  'xsd:decimal': 'http://www.w3.org/2001/XMLSchema#decimal',
+  'xsd:dateTime': 'http://www.w3.org/2001/XMLSchema#dateTime',
+  'xsd:anyURI': 'http://www.w3.org/2001/XMLSchema#anyURI'
 };
 
 // #region Helper Components
@@ -1008,11 +1018,47 @@ const Dashboard = () => {
   const [availableProjects, setAvailableProjects] = useState<any[]>([]);
   const [showProjectSelector, setShowProjectSelector] = useState(false);
   const [metadata, setMetadata] = useState<OntologyMetadata | null>(null);
+  const [ontologyImports, setOntologyImports] = useState<string[]>([]);
+  const [generalClassAxioms, setGeneralClassAxioms] = useState<Array<{
+    subExpression: string;
+    superClassIri?: string;
+    superClassLabel?: string;
+    definition?: string;
+  }>>([]);
+  const [ontologyAnnotations, setOntologyAnnotations] = useState<Array<{
+    propertyIri: string;
+    value: string;
+    datatype?: string;
+    lang?: string;
+  }>>([]);
+  const [prefixMappings, setPrefixMappings] = useState<Array<{ prefix: string; namespace: string }>>([]);
+  const [isEditingOntologyId, setIsEditingOntologyId] = useState(false);
+  const [ontologyIriDraft, setOntologyIriDraft] = useState('');
+  const [versionIriDraft, setVersionIriDraft] = useState('');
+  const [isPrefixEditing, setIsPrefixEditing] = useState(false);
+  const [importDraft, setImportDraft] = useState('');
+  const [isOntologyAnnotationDialogOpen, setIsOntologyAnnotationDialogOpen] = useState(false);
+  const [quickEditParentItem, setQuickEditParentItem] = useState<SelectableItem | null>(null);
+  const [quickEditNoteItem, setQuickEditNoteItem] = useState<SelectableItem | null>(null);
+  const [isQuickParentDialogOpen, setQuickParentDialogOpen] = useState(false);
+  const [isQuickPropertyParentDialogOpen, setQuickPropertyParentDialogOpen] = useState(false);
+  const [isQuickNoteDialogOpen, setQuickNoteDialogOpen] = useState(false);
+  const [ontologyAnnotationEditTarget, setOntologyAnnotationEditTarget] = useState<{
+    propertyIri: string;
+    value: string;
+    datatype?: string;
+  } | null>(null);
   const [mainTab, setMainTab] = useState("Entities");
   const [entitiesTab, setEntitiesTab] = useState("Classes");
   const [selectedItem, setSelectedItem] = useState<SelectableItem | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchOptions, setSearchOptions] = useState({
+    useRegex: false,
+    searchAnnotations: false,
+    hideDeprecated: false,
+    hideBuiltins: false
+  });
   const [isInitialLoading, setIsInitialLoading] = useState(false);
   const [hasFetchedProjects, setHasFetchedProjects] = useState(false);
   const [hasUserSelectedFile, setHasUserSelectedFile] = useState(false);
@@ -1052,6 +1098,8 @@ const Dashboard = () => {
   const [isAddDatatypeDialogOpen, setAddDatatypeDialogOpen] = useState(false);
   const [isKeyboardShortcutsDialogOpen, setKeyboardShortcutsDialogOpen] = useState(false);
   const [isEntityPreferencesDialogOpen, setEntityPreferencesDialogOpen] = useState(false);
+  const classHierarchyRefreshInFlight = useRef(false);
+  const lastClassHierarchyRefreshAt = useRef(0);
 
   useEffect(() => {
     hasUserSelectedFileRef.current = hasUserSelectedFile;
@@ -1091,6 +1139,25 @@ const Dashboard = () => {
   });
 
   const [selectedClassForIndividuals, setSelectedClassForIndividuals] = useState<TreeNode | null>(null);
+  const [classInstances, setClassInstances] = useState<Individual[]>([]);
+  const [classInstancesLoading, setClassInstancesLoading] = useState(false);
+  const [classInstancesQuery, setClassInstancesQuery] = useState('');
+  const [classInstancesView, setClassInstancesView] = useState<'direct' | 'inferred' | 'all'>('direct');
+  const [classTreeSearchQuery, setClassTreeSearchQuery] = useState('');
+  const [selectedClassIndividual, setSelectedClassIndividual] = useState<Individual | null>(null);
+  const [selectedClassIndividualDetails, setSelectedClassIndividualDetails] = useState<Individual | null>(null);
+  const [selectedClassIndividualLoading, setSelectedClassIndividualLoading] = useState(false);
+  const [classInstanceCounts, setClassInstanceCounts] = useState<Record<string, { direct?: number; inferred?: number; total?: number }>>({});
+  const [hierarchyViewModes, setHierarchyViewModes] = useState<Record<string, 'asserted' | 'inferred'>>({
+    Classes: 'asserted',
+    ObjectProperties: 'asserted',
+    DataProperties: 'asserted',
+    Datatypes: 'asserted'
+  });
+  const [isClassIndividualAnnotationDialogOpen, setClassIndividualAnnotationDialogOpen] = useState(false);
+  const [isClassIndividualTypeDialogOpen, setClassIndividualTypeDialogOpen] = useState(false);
+  const [isClassIndividualPropertyDialogOpen, setClassIndividualPropertyDialogOpen] = useState(false);
+  const [classIndividualPropertyIsObject, setClassIndividualPropertyIsObject] = useState(true);
   const [dlQuery, setDlQuery] = useState('Pizza and hasTopping some MozzarellaTopping');
   const [dlQueryResults, setDlQueryResults] = useState<string[] | null>(null);
   const [isDlQueryLoading, setIsDlQueryLoading] = useState(false);
@@ -1098,8 +1165,10 @@ const Dashboard = () => {
   const [classHierarchy, setClassHierarchy] = useState<TreeNode[]>([]);
   const [objectProperties, setObjectProperties] = useState<Property[]>([]);
   const [objectPropertyHierarchy, setObjectPropertyHierarchy] = useState<any[]>([]);
+  const [inferredObjectPropertyHierarchy, setInferredObjectPropertyHierarchy] = useState<TreeNode[]>([]);
   const [dataProperties, setDataProperties] = useState<Property[]>([]);
   const [dataPropertyHierarchy, setDataPropertyHierarchy] = useState<any[]>([]);
+  const [inferredDataPropertyHierarchy, setInferredDataPropertyHierarchy] = useState<TreeNode[]>([]);
   const [annotationProperties, setAnnotationProperties] = useState<AnnotationProperty[]>([]);
   const [individuals, setIndividuals] = useState<Individual[]>([]);
   const [datatypes, setDatatypes] = useState<Datatype[]>([]);
@@ -1117,10 +1186,49 @@ const Dashboard = () => {
   const [visibleMainTabs, setVisibleMainTabs] = useState(['ActiveOntology', 'Entities', 'IndividualsByClass', 'DLQuery', 'CodeView']);
   const [showPluginMarketplace, setShowPluginMarketplace] = useState(false);
   const [installedPlugins, setInstalledPlugins] = useState<Set<string>>(new Set());
+
+  const currentHierarchyViewMode = hierarchyViewModes[entitiesTab] || 'asserted';
+  const setCurrentHierarchyViewMode = (mode: 'asserted' | 'inferred') => {
+    setHierarchyViewModes(prev => ({ ...prev, [entitiesTab]: mode }));
+  };
+
+  const resolveDatatypeIri = (datatype?: string) => {
+    if (!datatype) return undefined;
+    return DATATYPE_IRI_MAP[datatype] || datatype;
+  };
+
+  const shortenDatatype = (datatype?: string) => {
+    if (!datatype) return 'xsd:string';
+    const entry = Object.entries(DATATYPE_IRI_MAP).find(([, iri]) => iri === datatype);
+    if (entry) return entry[0];
+    if (datatype.includes('#')) {
+      return `xsd:${datatype.split('#').pop()}`;
+    }
+    return datatype;
+  };
+
+  const applyInstanceCountsToTree = useCallback((
+    nodes: TreeNode[],
+    counts: Record<string, { direct?: number; inferred?: number; total?: number }>
+  ): TreeNode[] => {
+    return nodes.map((node) => {
+      const countEntry = counts[node.id];
+      const direct = countEntry?.direct;
+      const inferred = countEntry?.inferred;
+      const total = countEntry ? (countEntry.total ?? (direct ?? 0) + (inferred ?? 0)) : undefined;
+      return {
+        ...node,
+        directInstanceCount: direct,
+        inferredInstanceCount: inferred,
+        totalInstanceCount: total,
+        children: node.children ? applyInstanceCountsToTree(node.children, counts) : node.children
+      };
+    });
+  }, []);
   const [pluginLoadingStates, setPluginLoadingStates] = useState<Record<string, { loading: boolean; error: string | null }>>({});
   
   // Code View states
-  const [codeViewFormat, setCodeViewFormat] = useState<'turtle' | 'rdfxml' | 'ntriples' | 'owl'>('turtle');
+  const [codeViewFormat, setCodeViewFormat] = useState<'turtle' | 'rdfxml' | 'ntriples' | 'owlxml' | 'manchester' | 'functional'>('turtle');
   const [codeViewContent, setCodeViewContent] = useState<string>('');
   const [codeViewLoading, setCodeViewLoading] = useState(false);
 
@@ -1308,10 +1416,15 @@ const Dashboard = () => {
       const dataFetchPromise = Promise.all([
         apiClient.get<any>(`/api/ontology/metadata/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/classes/top-level/${currentProjectId}`),
+        apiClient.get<any>(`/api/ontology/classes/instance-counts/${currentProjectId}`).catch(() => null),
         apiClient.get<any>(`/api/ontology/properties/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/individuals/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/annotation-properties/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/datatypes/${currentProjectId}`),
+        apiClient.get<any>(`/api/ontology/ontology/imports/${currentProjectId}`),
+        apiClient.get<any>(`/api/ontology/ontology/gci/${currentProjectId}?limit=200`),
+        apiClient.get<any>(`/api/ontology/ontology/annotations/${currentProjectId}`),
+        apiClient.get<any>(`/api/ontology/ontology/prefixes/${currentProjectId}`)
       ]);
       
       // Allow UI to be responsive immediately if not waiting
@@ -1322,7 +1435,19 @@ const Dashboard = () => {
       }
       
       // Continue loading in background
-      const [metadataRes, topLevelRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes] = await dataFetchPromise;
+      const [
+        metadataRes,
+        topLevelRes,
+        instanceCountsRes,
+        propertiesRes,
+        individualsRes,
+        annotationPropsRes,
+        datatypesRes,
+        importsRes,
+        gciRes,
+        ontologyAnnotationsRes,
+        prefixesRes
+      ] = await dataFetchPromise;
       
       console.log('[Dashboard] ✅ Data loaded from GraphDB database successfully!');
       console.log('[Dashboard] 📊 This data includes all saved changes from the database');
@@ -1344,6 +1469,32 @@ const Dashboard = () => {
       };
       console.log("Transformed metadata:", transformedMetadata);
       setMetadata(transformedMetadata);
+
+      const instanceCountsPayload = instanceCountsRes?.data || instanceCountsRes;
+      const instanceCountsData = instanceCountsPayload?.data || instanceCountsPayload || {};
+      if (instanceCountsData && typeof instanceCountsData === 'object') {
+        setClassInstanceCounts(instanceCountsData);
+      }
+
+      const importsPayload = importsRes?.data || importsRes;
+      const importsData = importsPayload?.data || importsPayload || [];
+      setOntologyImports(Array.isArray(importsData) ? importsData : []);
+
+      const gciPayload = gciRes?.data || gciRes;
+      const gciData = gciPayload?.data || gciPayload || [];
+      setGeneralClassAxioms(Array.isArray(gciData) ? gciData : []);
+
+      const ontologyAnnotationsPayload = ontologyAnnotationsRes?.data || ontologyAnnotationsRes;
+      const ontologyAnnotationsData = ontologyAnnotationsPayload?.data || ontologyAnnotationsPayload || [];
+      setOntologyAnnotations(Array.isArray(ontologyAnnotationsData) ? ontologyAnnotationsData : []);
+
+      const prefixesPayload = prefixesRes?.data || prefixesRes;
+      const prefixesData = prefixesPayload?.data || prefixesPayload || {};
+      const prefixList = Object.entries(prefixesData).map(([prefix, namespace]) => ({
+        prefix,
+        namespace: String(namespace)
+      }));
+      setPrefixMappings(prefixList);
 
       // Handle classes response - backend returns {success: true, classes: [...]}
       console.log("=== CLASSES RESPONSE DEBUG ===");
@@ -1404,7 +1555,11 @@ const Dashboard = () => {
       console.log("Setting classHierarchy with owl:Thing");
       console.log("=== END OWL:THING DEBUG ===");
       
-      setClassHierarchy([owlThingNode]);
+      const resolvedCounts = (instanceCountsData && typeof instanceCountsData === 'object')
+        ? instanceCountsData
+        : {};
+      const hierarchyWithCounts = applyInstanceCountsToTree([owlThingNode], resolvedCounts);
+      setClassHierarchy(hierarchyWithCounts);
 
       // Handle properties response
       console.log("=== PROPERTIES RESPONSE DEBUG ===");
@@ -1670,6 +1825,162 @@ const Dashboard = () => {
     }
   }, []); // waitForProcessingComplete doesn't depend on state/props, stable reference
 
+  useEffect(() => {
+    if (metadata?.ontologyIRI) {
+      setOntologyIriDraft(metadata.ontologyIRI);
+    }
+    if (metadata?.versionIRI !== undefined) {
+      setVersionIriDraft(metadata.versionIRI || '');
+    }
+  }, [metadata?.ontologyIRI, metadata?.versionIRI]);
+
+  const refreshOntologyAnnotations = async () => {
+    if (!projectId) return;
+    try {
+      const response = await apiClient.get<any>(`/api/ontology/ontology/annotations/${projectId}`);
+      const payload = response?.data || response;
+      const data = payload?.data || payload || [];
+      setOntologyAnnotations(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('[Dashboard] Failed to refresh ontology annotations:', error);
+    }
+  };
+
+  const refreshOntologyImports = async () => {
+    if (!projectId) return;
+    try {
+      const response = await apiClient.get<any>(`/api/ontology/ontology/imports/${projectId}`);
+      const payload = response?.data || response;
+      const data = payload?.data || payload || [];
+      setOntologyImports(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('[Dashboard] Failed to refresh ontology imports:', error);
+    }
+  };
+
+  const refreshPrefixes = async () => {
+    if (!projectId) return;
+    try {
+      const response = await apiClient.get<any>(`/api/ontology/ontology/prefixes/${projectId}`);
+      const payload = response?.data || response;
+      const data = payload?.data || payload || {};
+      const list = Object.entries(data).map(([prefix, namespace]) => ({
+        prefix,
+        namespace: String(namespace)
+      }));
+      setPrefixMappings(list);
+    } catch (error) {
+      console.error('[Dashboard] Failed to refresh prefixes:', error);
+    }
+  };
+
+  const handleSaveOntologyId = async () => {
+    if (!projectId || !ontologyIriDraft.trim()) return;
+    try {
+      await apiClient.put(`/api/ontology/ontology/id/${projectId}`, {
+        ontologyIRI: ontologyIriDraft.trim(),
+        versionIRI: versionIriDraft.trim() || null
+      });
+      setIsEditingOntologyId(false);
+      await apiClient.get(`/api/ontology/metadata/${projectId}`)
+        .then((res) => {
+          const data = res?.data || res;
+          setMetadata({ ...(metadata || {}), ...data });
+        })
+        .catch(() => {});
+    } catch (error) {
+      console.error('[Dashboard] Failed to update ontology ID:', error);
+      notificationService.error('Update Failed', 'Could not update ontology IRI/version.');
+    }
+  };
+
+  const handleAddOntologyAnnotation = async (propertyIri: string, value: string, datatype?: string) => {
+    if (!projectId) return;
+    try {
+      await apiClient.post(`/api/ontology/ontology/annotations/${projectId}`, {
+        propertyIri,
+        value,
+        datatypeIri: resolveDatatypeIri(datatype)
+      });
+      await refreshOntologyAnnotations();
+    } catch (error) {
+      console.error('[Dashboard] Failed to add ontology annotation:', error);
+      notificationService.error('Annotation Failed', 'Could not add ontology annotation.');
+    }
+  };
+
+  const handleUpdateOntologyAnnotation = async (propertyIri: string, oldValue: string, newValue: string, datatype?: string) => {
+    if (!projectId) return;
+    try {
+      await apiClient.put(`/api/ontology/ontology/annotations/${projectId}`, {
+        propertyIri,
+        oldValue,
+        newValue,
+        datatypeIri: resolveDatatypeIri(datatype)
+      });
+      await refreshOntologyAnnotations();
+    } catch (error) {
+      console.error('[Dashboard] Failed to update ontology annotation:', error);
+      notificationService.error('Annotation Failed', 'Could not update ontology annotation.');
+    }
+  };
+
+  const handleDeleteOntologyAnnotation = async (propertyIri: string, value: string, datatype?: string) => {
+    if (!projectId) return;
+    try {
+      await apiClient.delete(`/api/ontology/ontology/annotations/${projectId}`, {
+        params: {
+          propertyIri,
+          value,
+          datatypeIri: resolveDatatypeIri(datatype)
+        }
+      });
+      await refreshOntologyAnnotations();
+    } catch (error) {
+      console.error('[Dashboard] Failed to delete ontology annotation:', error);
+      notificationService.error('Annotation Failed', 'Could not delete ontology annotation.');
+    }
+  };
+
+  const handleAddImport = async () => {
+    if (!projectId || !importDraft.trim()) return;
+    try {
+      await apiClient.post(`/api/ontology/ontology/imports/${projectId}`, {
+        importIri: importDraft.trim()
+      });
+      setImportDraft('');
+      await refreshOntologyImports();
+    } catch (error) {
+      console.error('[Dashboard] Failed to add import:', error);
+      notificationService.error('Import Failed', 'Could not add import.');
+    }
+  };
+
+  const handleRemoveImport = async (iri: string) => {
+    if (!projectId) return;
+    try {
+      await apiClient.delete(`/api/ontology/ontology/imports/${projectId}`, {
+        params: { importIri: iri }
+      });
+      await refreshOntologyImports();
+    } catch (error) {
+      console.error('[Dashboard] Failed to remove import:', error);
+      notificationService.error('Import Failed', 'Could not remove import.');
+    }
+  };
+
+  const handleSavePrefixes = async () => {
+    if (!projectId) return;
+    try {
+      await apiClient.put(`/api/ontology/ontology/prefixes/${projectId}`, prefixMappings);
+      setIsPrefixEditing(false);
+      await refreshPrefixes();
+    } catch (error) {
+      console.error('[Dashboard] Failed to save prefixes:', error);
+      notificationService.error('Prefixes Failed', 'Could not save prefixes.');
+    }
+  };
+
   // Update real-time sync status based on collaboration state
   useEffect(() => {
     if (!projectId) return;
@@ -1683,6 +1994,66 @@ const Dashboard = () => {
         setSyncMode('public');
     }
   }, [projectId, collaboration.state.activeUsers, user?.id]);
+
+  const loadClassInstances = useCallback(async () => {
+    if (!projectId || !selectedClassForIndividuals) {
+      setClassInstances([]);
+      return;
+    }
+    setClassInstancesLoading(true);
+    try {
+      const response = await apiClient.get<any>(
+        `/api/ontology/classes/instances/${projectId}?classIri=${encodeURIComponent(selectedClassForIndividuals.id)}`
+      );
+      const payload = response?.data || response;
+      const instances = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
+      setClassInstances(instances);
+    } catch (error) {
+      console.error('[Dashboard] Failed to load class instances:', error);
+      setClassInstances([]);
+    } finally {
+      setClassInstancesLoading(false);
+    }
+  }, [projectId, selectedClassForIndividuals]);
+
+  useEffect(() => {
+    setClassInstancesQuery('');
+    setClassInstancesView('direct');
+    setSelectedClassIndividual(null);
+    setSelectedClassIndividualDetails(null);
+    loadClassInstances();
+  }, [loadClassInstances]);
+
+  const refreshSelectedClassIndividualDetails = useCallback(async () => {
+    if (!projectId || !selectedClassIndividual?.id) {
+      setSelectedClassIndividualDetails(null);
+      return;
+    }
+    setSelectedClassIndividualLoading(true);
+    try {
+      const response = await apiClient.get<any>(
+        `/api/ontology/individual-details/${projectId}?individualIri=${encodeURIComponent(selectedClassIndividual.id)}`
+      );
+      const details = response?.data || response;
+      if (details) {
+        setSelectedClassIndividualDetails({
+          ...selectedClassIndividual,
+          types: details.types || selectedClassIndividual.types,
+          annotations: details.annotations || selectedClassIndividual.annotations,
+          propertyAssertions: details.propertyAssertions || []
+        });
+      }
+    } catch (error) {
+      console.error('[Dashboard] Failed to load individual details:', error);
+      setSelectedClassIndividualDetails(null);
+    } finally {
+      setSelectedClassIndividualLoading(false);
+    }
+  }, [projectId, selectedClassIndividual]);
+
+  useEffect(() => {
+    refreshSelectedClassIndividualDetails();
+  }, [refreshSelectedClassIndividualDetails]);
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -1798,6 +2169,31 @@ const Dashboard = () => {
       isMountedRef.current = false;
     };
   }, []);
+
+  const getLocalName = (iri?: string) => {
+    if (!iri) return '';
+    if (iri.includes('#')) {
+      return iri.split('#').pop() || iri;
+    }
+    const parts = iri.split('/');
+    return parts[parts.length - 1] || iri;
+  };
+
+  const resolvePropertyIriByLabel = (labelOrIri: string, properties: Property[]) => {
+    if (!labelOrIri) return undefined;
+    if (labelOrIri.startsWith('http://') || labelOrIri.startsWith('https://')) return labelOrIri;
+    const normalized = labelOrIri.toLowerCase();
+    const found = properties.find(prop => (prop.label || getLocalName(prop.id)).toLowerCase() === normalized);
+    return found?.id;
+  };
+
+  const resolveIndividualIriByLabel = (labelOrIri: string) => {
+    if (!labelOrIri) return undefined;
+    if (labelOrIri.startsWith('http://') || labelOrIri.startsWith('https://')) return labelOrIri;
+    const normalized = labelOrIri.toLowerCase();
+    const found = individuals.find(ind => (ind.label || getLocalName(ind.id)).toLowerCase() === normalized);
+    return found?.id;
+  };
 
   // Handle loading choice dialog actions
   const handleWaitForLoading = useCallback(() => {
@@ -2040,14 +2436,15 @@ const Dashboard = () => {
       const updateTree = (nodes: TreeNode[]): TreeNode[] =>
         nodes.map((n: TreeNode) => {
           if (n.id === nodeId) {
+            const mappedChildren = children.map((c: TopLevelClass) => ({
+              ...c,
+              children: c.hasChildren ? undefined : undefined, // Use undefined for consistency
+              hasChildren: c.hasChildren,
+              subClassOfAxioms: [{ id: nodeId, type: 'SubClassOf', definition: n.label }]
+            }));
             return {
               ...n,
-              children: children.map((c: TopLevelClass) => ({
-                ...c,
-                children: c.hasChildren ? undefined : undefined, // Use undefined for consistency
-                hasChildren: c.hasChildren,
-                subClassOfAxioms: [{ id: nodeId, type: 'SubClassOf', definition: n.label }]
-              }))
+              children: applyInstanceCountsToTree(mappedChildren, classInstanceCounts)
             };
           }
           if (n.children) {
@@ -2059,6 +2456,106 @@ const Dashboard = () => {
       setClassHierarchy(prevHierarchy => updateTree(prevHierarchy));
     } catch (error) {
       console.error(`Failed to load children for ${nodeId}`, error);
+    }
+  }, [projectId, classInstanceCounts, applyInstanceCountsToTree]);
+
+  const fetchInferredChildren = useCallback(async (nodeId: string) => {
+    if (!projectId) return [];
+    try {
+      const response = await apiClient.get<any>(
+        `/api/ontology/${projectId}/reasoner/inferred-subclasses`,
+        { classIri: nodeId, direct: true }
+      );
+      const payload = response?.data || response;
+      const items = payload?.inferredSubClasses || payload?.data?.inferredSubClasses || [];
+      return Array.isArray(items) ? items : [];
+    } catch (error) {
+      console.error('[Dashboard] Failed to load inferred subclasses:', error);
+      return [];
+    }
+  }, [projectId]);
+
+  const loadInferredChildren = useCallback(async (nodeId: string) => {
+    if (!projectId) return;
+    const inferred = await fetchInferredChildren(nodeId);
+    const mappedChildren: TreeNode[] = inferred
+      .filter((item: any) => item?.iri && item.iri !== 'http://www.w3.org/2002/07/owl#Nothing')
+      .map((item: any) => ({
+        id: item.iri,
+        label: item.label || getLocalName(item.iri),
+        children: [],
+        hasChildren: true,
+        subClassOfAxioms: [{ id: nodeId, type: 'SubClassOf', definition: getLocalName(nodeId) || 'Thing' }]
+      }));
+
+    const updateTree = (nodes: TreeNode[]): TreeNode[] =>
+      nodes.map((n: TreeNode) => {
+        if (n.id === nodeId) {
+          const withCounts = applyInstanceCountsToTree(mappedChildren, classInstanceCounts);
+          return {
+            ...n,
+            children: withCounts,
+            hasChildren: withCounts.length > 0
+          };
+        }
+        if (n.children) {
+          return { ...n, children: updateTree(n.children) };
+        }
+        return n;
+      });
+
+    setClassHierarchy(prevHierarchy => updateTree(prevHierarchy));
+  }, [projectId, fetchInferredChildren, applyInstanceCountsToTree, classInstanceCounts, getLocalName]);
+
+  const loadInferredHierarchy = useCallback(async () => {
+    if (!projectId) return;
+    const rootId = "http://www.w3.org/2002/07/owl#Thing";
+    const inferred = await fetchInferredChildren(rootId);
+    const topLevelNodes: TreeNode[] = inferred
+      .filter((item: any) => item?.iri && item.iri !== rootId && item.iri !== 'http://www.w3.org/2002/07/owl#Nothing')
+      .map((item: any) => ({
+        id: item.iri,
+        label: item.label || getLocalName(item.iri),
+        children: [],
+        hasChildren: true,
+        subClassOfAxioms: [{ id: 'sub1', type: 'SubClassOf', definition: 'Thing' }]
+      }));
+
+    const owlThingNode: TreeNode = {
+      id: rootId,
+      label: "owl:Thing",
+      children: topLevelNodes,
+      hasChildren: topLevelNodes.length > 0,
+      annotations: {}
+    };
+
+    const hierarchyWithCounts = applyInstanceCountsToTree([owlThingNode], classInstanceCounts);
+    setClassHierarchy(hierarchyWithCounts);
+  }, [projectId, fetchInferredChildren, applyInstanceCountsToTree, classInstanceCounts, getLocalName]);
+
+  const loadInferredObjectPropertyHierarchy = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-object-property-hierarchy`);
+      const payload = res?.data || res;
+      const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
+      setInferredObjectPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
+    } catch (error) {
+      console.error('[Dashboard] Failed to load inferred object property hierarchy:', error);
+      setInferredObjectPropertyHierarchy([]);
+    }
+  }, [projectId]);
+
+  const loadInferredDataPropertyHierarchy = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-data-property-hierarchy`);
+      const payload = res?.data || res;
+      const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
+      setInferredDataPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
+    } catch (error) {
+      console.error('[Dashboard] Failed to load inferred data property hierarchy:', error);
+      setInferredDataPropertyHierarchy([]);
     }
   }, [projectId]);
 
@@ -2131,6 +2628,17 @@ const Dashboard = () => {
 
   const refreshClassHierarchy = useCallback(async () => {
     if (!projectId) return;
+    const now = Date.now();
+    if (classHierarchyRefreshInFlight.current) {
+      console.warn('[Dashboard] Skipping class hierarchy refresh: already in flight');
+      return;
+    }
+    if (now - lastClassHierarchyRefreshAt.current < 2000) {
+      console.warn('[Dashboard] Skipping class hierarchy refresh: throttled');
+      return;
+    }
+    classHierarchyRefreshInFlight.current = true;
+    lastClassHierarchyRefreshAt.current = now;
     try {
       const topLevelRes = await apiClient.get<any>(`/api/ontology/classes/top-level/${projectId}`);
       
@@ -2160,7 +2668,8 @@ const Dashboard = () => {
         annotations: {}
       };
 
-      setClassHierarchy([owlThingNode]);
+      const hierarchyWithCounts = applyInstanceCountsToTree([owlThingNode], classInstanceCounts);
+      setClassHierarchy(hierarchyWithCounts);
       console.log('[Dashboard] ✅ Class hierarchy refreshed via refreshClassHierarchy');
       
       // Re-load children for all previously expanded nodes to preserve tree state
@@ -2176,8 +2685,19 @@ const Dashboard = () => {
       }
     } catch (error) {
       console.error('[Dashboard] Failed to refresh class hierarchy:', error);
+    } finally {
+      classHierarchyRefreshInFlight.current = false;
     }
-  }, [projectId, expandedNodes, loadChildren]);
+  }, [projectId, expandedNodes, loadChildren, classInstanceCounts, applyInstanceCountsToTree]);
+
+  useEffect(() => {
+    if (!projectId || mainTab !== 'Entities' || entitiesTab !== 'Classes') return;
+    if (currentHierarchyViewMode === 'inferred') {
+      loadInferredHierarchy();
+    } else {
+      refreshClassHierarchy();
+    }
+  }, [projectId, mainTab, entitiesTab, currentHierarchyViewMode, loadInferredHierarchy, refreshClassHierarchy]);
 
   // Handle remote edits from collaborative users in real-time
   useEffect(() => {
@@ -2665,26 +3185,124 @@ const Dashboard = () => {
   const sourceData = React.useMemo(() => {
     switch (entitiesTab) {
       case "Classes": return classHierarchy;
-      case "ObjectProperties": return objectPropertyHierarchy;
-      case "DataProperties": return dataPropertyHierarchy;
+      case "ObjectProperties":
+        return hierarchyViewModes.ObjectProperties === 'inferred'
+          ? inferredObjectPropertyHierarchy
+          : objectPropertyHierarchy;
+      case "DataProperties":
+        return hierarchyViewModes.DataProperties === 'inferred'
+          ? inferredDataPropertyHierarchy
+          : dataPropertyHierarchy;
       case "AnnotationProperties": return annotationProperties;
       case "Individuals": return individuals;
       case "Datatypes": return datatypes;
       default: return [];
     }
-  }, [entitiesTab, classHierarchy, objectPropertyHierarchy, dataPropertyHierarchy, annotationProperties, individuals, datatypes]);
+  }, [
+    entitiesTab,
+    classHierarchy,
+    objectPropertyHierarchy,
+    dataPropertyHierarchy,
+    inferredObjectPropertyHierarchy,
+    inferredDataPropertyHierarchy,
+    hierarchyViewModes.ObjectProperties,
+    hierarchyViewModes.DataProperties,
+    annotationProperties,
+    individuals,
+    datatypes
+  ]);
 
   // Filter data based on search query
   const filteredData = React.useMemo(() => {
-    if (!searchQuery) return sourceData;
+    const trimmedQuery = searchQuery.trim();
+    const lowercasedQuery = trimmedQuery.toLowerCase();
+    let regex: RegExp | null = null;
+    if (searchOptions.useRegex && trimmedQuery) {
+      try {
+        regex = new RegExp(trimmedQuery, 'i');
+      } catch (error) {
+        console.warn('[Dashboard] Invalid regex:', error);
+        regex = null;
+      }
+    }
 
-    const lowercasedQuery = searchQuery.toLowerCase();
+    const builtinsByTab: Record<string, Set<string>> = {
+      Classes: new Set([
+        'http://www.w3.org/2002/07/owl#Thing',
+        'http://www.w3.org/2002/07/owl#Nothing'
+      ]),
+      ObjectProperties: new Set([
+        'http://www.w3.org/2002/07/owl#topObjectProperty',
+        'http://www.w3.org/2002/07/owl#bottomObjectProperty'
+      ]),
+      DataProperties: new Set([
+        'http://www.w3.org/2002/07/owl#topDataProperty',
+        'http://www.w3.org/2002/07/owl#bottomDataProperty'
+      ]),
+      AnnotationProperties: new Set([
+        'http://www.w3.org/2000/01/rdf-schema#label',
+        'http://www.w3.org/2000/01/rdf-schema#comment',
+        'http://www.w3.org/2000/01/rdf-schema#seeAlso',
+        'http://www.w3.org/2000/01/rdf-schema#isDefinedBy',
+        'http://www.w3.org/2002/07/owl#deprecated'
+      ]),
+      Datatypes: new Set([
+        'http://www.w3.org/2000/01/rdf-schema#Literal',
+        'http://www.w3.org/1999/02/22-rdf-syntax-ns#PlainLiteral',
+        'http://www.w3.org/2001/XMLSchema#string',
+        'http://www.w3.org/2001/XMLSchema#integer',
+        'http://www.w3.org/2001/XMLSchema#decimal',
+        'http://www.w3.org/2001/XMLSchema#float',
+        'http://www.w3.org/2001/XMLSchema#double',
+        'http://www.w3.org/2001/XMLSchema#boolean',
+        'http://www.w3.org/2001/XMLSchema#date',
+        'http://www.w3.org/2001/XMLSchema#dateTime',
+        'http://www.w3.org/2001/XMLSchema#anyURI'
+      ])
+    };
+
+    const isBuiltIn = (item: SelectableItem) => {
+      if (!searchOptions.hideBuiltins) return false;
+      const builtins = builtinsByTab[entitiesTab];
+      return builtins ? builtins.has(item.id) : false;
+    };
+
+    const isDeprecated = (item: SelectableItem) => {
+      if (!searchOptions.hideDeprecated) return false;
+      const annotations = (item as any).annotations || {};
+      const deprecatedValue = annotations['http://www.w3.org/2002/07/owl#deprecated'] || annotations['owl:deprecated'];
+      if (!deprecatedValue) return false;
+      const normalized = String(deprecatedValue).toLowerCase();
+      return normalized === 'true' || normalized === '1' || normalized === 'yes';
+    };
+
+    const matchesQuery = (item: SelectableItem) => {
+      if (!trimmedQuery) return true;
+      const annotationBlob = searchOptions.searchAnnotations && (item as any).annotations
+        ? Object.entries((item as any).annotations)
+          .map(([key, value]) => `${key} ${String(value)}`)
+          .join(' ')
+        : '';
+      const haystack = `${item.label || ''} ${item.id || ''} ${annotationBlob}`;
+      if (regex) return regex.test(haystack);
+      return haystack.toLowerCase().includes(lowercasedQuery);
+    };
+
     const filterRecursively = (items: SelectableItem[]): SelectableItem[] => {
       const results: SelectableItem[] = [];
       for (const item of items) {
-        let matches = item.label?.toLowerCase().includes(lowercasedQuery);
-        // Check for children in both TreeNode and our extended Property objects
+        if (isDeprecated(item)) {
+          continue;
+        }
+
         const children = (item as any).children;
+        if (isBuiltIn(item) && children?.length) {
+          const childResults = filterRecursively(children);
+          results.push(...childResults);
+          continue;
+        }
+
+        let matches = matchesQuery(item);
         if (children) {
           const childResults = filterRecursively(children);
           if (childResults.length > 0) {
@@ -2699,7 +3317,7 @@ const Dashboard = () => {
       return results;
     };
     return filterRecursively(sourceData);
-  }, [searchQuery, sourceData]);
+  }, [searchQuery, sourceData, entitiesTab, searchOptions]);
 
   useEffect(() => {
     // Load previously installed plugins from localStorage
@@ -2797,10 +3415,14 @@ const Dashboard = () => {
       
       if (node && node.hasChildren && (!node.children || node.children.length === 0)) {
         console.log(`Node ${nodeId} needs children loaded`);
-        await loadChildren(nodeId);
+        if (entitiesTab === 'Classes' && currentHierarchyViewMode === 'inferred') {
+          await loadInferredChildren(nodeId);
+        } else {
+          await loadChildren(nodeId);
+        }
       }
     }
-  }, [expandedNodes, classHierarchy, loadChildren]);
+  }, [expandedNodes, classHierarchy, loadChildren, loadInferredChildren, entitiesTab, currentHierarchyViewMode]);
 
   // Expose a safe global for bundles/minified code paths that still reference toggleNode
   useEffect(() => {
@@ -3199,6 +3821,24 @@ const Dashboard = () => {
       console.error('Failed to refresh properties:', error);
     }
   }, [projectId]);
+
+  useEffect(() => {
+    if (!projectId || mainTab !== 'Entities' || entitiesTab !== 'ObjectProperties') return;
+    if (hierarchyViewModes.ObjectProperties === 'inferred') {
+      loadInferredObjectPropertyHierarchy();
+    } else {
+      refreshProperties();
+    }
+  }, [projectId, mainTab, entitiesTab, hierarchyViewModes.ObjectProperties, loadInferredObjectPropertyHierarchy, refreshProperties]);
+
+  useEffect(() => {
+    if (!projectId || mainTab !== 'Entities' || entitiesTab !== 'DataProperties') return;
+    if (hierarchyViewModes.DataProperties === 'inferred') {
+      loadInferredDataPropertyHierarchy();
+    } else {
+      refreshProperties();
+    }
+  }, [projectId, mainTab, entitiesTab, hierarchyViewModes.DataProperties, loadInferredDataPropertyHierarchy, refreshProperties]);
 
   // Handler for creating object properties with name parameter
   const handleAddObjectProperty = useCallback(async (
@@ -4210,7 +4850,7 @@ const Dashboard = () => {
   // #endregion
 
   // #region Render Methods
-  const fetchCodeViewContent = useCallback(async (format: 'turtle' | 'rdfxml' | 'ntriples' | 'owl') => {
+  const fetchCodeViewContent = useCallback(async (format: 'turtle' | 'rdfxml' | 'ntriples' | 'owlxml' | 'manchester' | 'functional') => {
     if (!projectId) return;
     setCodeViewLoading(true);
     try {
@@ -4258,7 +4898,7 @@ const Dashboard = () => {
                 <p className="text-sm text-gray-600 mt-1">View the ontology in different serialization formats</p>
               </div>
               <div className="flex-1 flex flex-col overflow-hidden p-4">
-                <div className="mb-4 flex gap-2 flex-shrink-0">
+                <div className="mb-4 flex gap-2 flex-wrap flex-shrink-0">
                   <button
                     onClick={() => fetchCodeViewContent('turtle')}
                     className={`px-3 py-1 text-sm rounded-md ${
@@ -4290,14 +4930,34 @@ const Dashboard = () => {
                     N-Triples
                   </button>
                   <button
-                    onClick={() => fetchCodeViewContent('owl')}
+                    onClick={() => fetchCodeViewContent('owlxml')}
                     className={`px-3 py-1 text-sm rounded-md ${
-                      codeViewFormat === 'owl'
+                      codeViewFormat === 'owlxml'
                         ? 'bg-purple-600 text-white hover:bg-purple-700'
                         : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                     }`}
                   >
                     OWL/XML
+                  </button>
+                  <button
+                    onClick={() => fetchCodeViewContent('manchester')}
+                    className={`px-3 py-1 text-sm rounded-md ${
+                      codeViewFormat === 'manchester'
+                        ? 'bg-purple-600 text-white hover:bg-purple-700'
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                  >
+                    Manchester
+                  </button>
+                  <button
+                    onClick={() => fetchCodeViewContent('functional')}
+                    className={`px-3 py-1 text-sm rounded-md ${
+                      codeViewFormat === 'functional'
+                        ? 'bg-purple-600 text-white hover:bg-purple-700'
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                  >
+                    Functional
                   </button>
                   <button
                     onClick={() => fetchCodeViewContent(codeViewFormat)}
@@ -4514,32 +5174,121 @@ const Dashboard = () => {
           <div className="flex h-full bg-gray-100">
             <div className="flex-1 flex flex-col bg-white border-r border-gray-200">
               <div className="p-4 border-b border-gray-200">
-                <h2 className="text-xs text-gray-500 mb-2">Ontology header</h2>
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className="text-xs text-gray-500">Ontology header</h2>
+                  <div className="flex gap-2">
+                    {isEditingOntologyId ? (
+                      <>
+                        <button
+                          onClick={handleSaveOntologyId}
+                          className="px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => {
+                            setIsEditingOntologyId(false);
+                            setOntologyIriDraft(metadata?.ontologyIRI || '');
+                            setVersionIriDraft(metadata?.versionIRI || '');
+                          }}
+                          className="px-2 py-1 text-xs bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => setIsEditingOntologyId(true)}
+                        className="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+                      >
+                        Edit
+                      </button>
+                    )}
+                  </div>
+                </div>
                 <div className="space-y-2">
                   <div>
                     <div className="text-xs font-semibold">Ontology IRI</div>
-                    <a href={(metadata as any)?.ontologyIRI || "#"} className="text-blue-600 hover:underline text-xs break-all">{(metadata as any)?.ontologyIRI || "Not specified"}</a>
+                    {isEditingOntologyId ? (
+                      <input
+                        value={ontologyIriDraft}
+                        onChange={(e) => setOntologyIriDraft(e.target.value)}
+                        className="w-full px-2 py-1 text-xs border rounded"
+                        placeholder="http://example.org/ontology"
+                      />
+                    ) : (
+                      <a href={(metadata as any)?.ontologyIRI || "#"} className="text-blue-600 hover:underline text-xs break-all">{(metadata as any)?.ontologyIRI || "Not specified"}</a>
+                    )}
                   </div>
                   <div>
                     <div className="text-xs font-semibold">Ontology Version IRI</div>
-                    <div className="text-xs text-gray-700 break-all">{(metadata as any)?.versionIRI || "Not specified"}</div>
+                    {isEditingOntologyId ? (
+                      <input
+                        value={versionIriDraft}
+                        onChange={(e) => setVersionIriDraft(e.target.value)}
+                        className="w-full px-2 py-1 text-xs border rounded"
+                        placeholder="http://example.org/ontology/1.0.0"
+                      />
+                    ) : (
+                      <div className="text-xs text-gray-700 break-all">{(metadata as any)?.versionIRI || "Not specified"}</div>
+                    )}
                   </div>
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto p-4">
-                <h3 className="text-xs font-semibold text-gray-700 mb-3">Annotations</h3>
-                {(metadata as any)?.annotations && Object.keys((metadata as any).annotations).length > 0 ? (
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-xs font-semibold text-gray-700">Annotations</h3>
+                  <button
+                    onClick={() => {
+                      setOntologyAnnotationEditTarget(null);
+                      setIsOntologyAnnotationDialogOpen(true);
+                    }}
+                    className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+                  >
+                    Add
+                  </button>
+                </div>
+                {ontologyAnnotations.length > 0 ? (
                   <div className="space-y-2">
-                    {Object.entries((metadata as any).annotations).map(([key, value]: [string, any]) => {
-                      const propertyLabel = key.includes('#') ? key.split('#').pop() : 
-                                          key.includes('/') ? key.split('/').pop() : key;
+                    {ontologyAnnotations.map((annotation, idx) => {
+                      const key = `${annotation.propertyIri}-${annotation.value}-${idx}`;
+                      const propertyLabel = annotation.propertyIri.includes('#') ? annotation.propertyIri.split('#').pop() :
+                        annotation.propertyIri.includes('/') ? annotation.propertyIri.split('/').pop() : annotation.propertyIri;
                       return (
                         <div key={key} className="border border-gray-200 rounded-md hover:border-blue-300 transition-colors">
-                          <div className="bg-gradient-to-r from-purple-50 to-gray-50 px-3 py-2 border-b border-gray-200">
-                            <div className="text-xs font-semibold text-purple-900">{propertyLabel}</div>
-                            <div className="text-[10px] text-gray-400 font-mono truncate" title={key}>{key}</div>
+                          <div className="bg-gradient-to-r from-purple-50 to-gray-50 px-3 py-2 border-b border-gray-200 flex items-center justify-between">
+                            <div>
+                              <div className="text-xs font-semibold text-purple-900">{propertyLabel}</div>
+                              <div className="text-[10px] text-gray-400 font-mono truncate" title={annotation.propertyIri}>{annotation.propertyIri}</div>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => {
+                                  setOntologyAnnotationEditTarget({
+                                    propertyIri: annotation.propertyIri,
+                                    value: annotation.value,
+                                    datatype: annotation.datatype
+                                  });
+                                  setIsOntologyAnnotationDialogOpen(true);
+                                }}
+                                className="px-2 py-1 text-[10px] bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => handleDeleteOntologyAnnotation(annotation.propertyIri, annotation.value, annotation.datatype)}
+                                className="px-2 py-1 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
+                              >
+                                Delete
+                              </button>
+                            </div>
                           </div>
-                          <div className="px-3 py-2 bg-white dark:bg-gray-700 text-xs text-gray-700 dark:text-gray-300">{value?.toString() || ''}</div>
+                          <div className="px-3 py-2 bg-white text-xs text-gray-700">
+                            <div className="break-words">{annotation.value}</div>
+                            {annotation.datatype && (
+                              <div className="text-[10px] text-gray-500 mt-1">Datatype: {shortenDatatype(annotation.datatype)}</div>
+                            )}
+                          </div>
                         </div>
                       );
                     })}
@@ -4558,27 +5307,168 @@ const Dashboard = () => {
                   ))}
                 </div>
                 <div className="p-2 min-h-24 text-sm" style={{ backgroundColor: 'var(--bg)' }}>
-                  {activeOntologySubTab === 'prefixes' ? (
-                    <div className="max-h-48 overflow-y-auto border rounded" style={{ borderColor: 'var(--border)' }}>
-                      <table className="w-full text-left text-xs">
-                        <thead className="sticky top-0" style={{ backgroundColor: 'var(--surface-1)' }}>
-                          <tr className="border-b" style={{ borderColor: 'var(--border)' }}>
-                            <th className="p-1.5 font-semibold" style={{ color: 'var(--text-primary)' }}>Prefix</th>
-                            <th className="p-1.5 font-semibold" style={{ color: 'var(--text-primary)' }}>Namespace</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(metadata as any)?.prefixes?.map((p: { prefix: string; namespace: string }) => (
-                            <tr key={p.prefix} className="border-b hover:bg-gray-50 dark:hover:bg-gray-700" style={{ borderColor: 'var(--border)' }}>
-                              <td className="p-1.5 font-mono" style={{ color: 'var(--text-primary)' }}>{p.prefix}</td>
-                              <td className="p-1.5 break-all" style={{ color: 'var(--accent)' }}>{p.namespace}</td>
+                  {activeOntologySubTab === 'prefixes' && (
+                    <div className="border rounded" style={{ borderColor: 'var(--border)' }}>
+                      <div className="flex items-center justify-between px-2 py-1.5 border-b" style={{ borderColor: 'var(--border)' }}>
+                        <div className="text-[11px] text-gray-600">Prefix mappings</div>
+                        <div className="flex gap-2">
+                          {isPrefixEditing ? (
+                            <>
+                              <button
+                                onClick={handleSavePrefixes}
+                                className="px-2 py-0.5 text-[10px] bg-green-600 text-white rounded"
+                              >
+                                Save
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setIsPrefixEditing(false);
+                                  refreshPrefixes();
+                                }}
+                                className="px-2 py-0.5 text-[10px] bg-gray-200 text-gray-700 rounded"
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => setIsPrefixEditing(true)}
+                              className="px-2 py-0.5 text-[10px] bg-gray-100 text-gray-700 rounded"
+                            >
+                              Edit
+                            </button>
+                          )}
+                          {isPrefixEditing && (
+                            <button
+                              onClick={() => setPrefixMappings(prev => [...prev, { prefix: '', namespace: '' }])}
+                              className="px-2 py-0.5 text-[10px] bg-blue-600 text-white rounded"
+                            >
+                              Add
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="max-h-48 overflow-y-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead className="sticky top-0" style={{ backgroundColor: 'var(--surface-1)' }}>
+                            <tr className="border-b" style={{ borderColor: 'var(--border)' }}>
+                              <th className="p-1.5 font-semibold" style={{ color: 'var(--text-primary)' }}>Prefix</th>
+                              <th className="p-1.5 font-semibold" style={{ color: 'var(--text-primary)' }}>Namespace</th>
+                              {isPrefixEditing && <th className="p-1.5" />}
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody>
+                            {prefixMappings.map((p, idx) => (
+                              <tr key={`${p.prefix}-${idx}`} className="border-b hover:bg-gray-50" style={{ borderColor: 'var(--border)' }}>
+                                <td className="p-1.5 font-mono" style={{ color: 'var(--text-primary)' }}>
+                                  {isPrefixEditing ? (
+                                    <input
+                                      value={p.prefix}
+                                      onChange={(e) => {
+                                        const next = [...prefixMappings];
+                                        next[idx] = { ...next[idx], prefix: e.target.value };
+                                        setPrefixMappings(next);
+                                      }}
+                                      className="w-full px-1 py-0.5 text-xs border rounded"
+                                    />
+                                  ) : (
+                                    p.prefix
+                                  )}
+                                </td>
+                                <td className="p-1.5 break-all" style={{ color: 'var(--accent)' }}>
+                                  {isPrefixEditing ? (
+                                    <input
+                                      value={p.namespace}
+                                      onChange={(e) => {
+                                        const next = [...prefixMappings];
+                                        next[idx] = { ...next[idx], namespace: e.target.value };
+                                        setPrefixMappings(next);
+                                      }}
+                                      className="w-full px-1 py-0.5 text-xs border rounded"
+                                    />
+                                  ) : (
+                                    p.namespace
+                                  )}
+                                </td>
+                                {isPrefixEditing && (
+                                  <td className="p-1.5 text-right">
+                                    <button
+                                      onClick={() => setPrefixMappings(prev => prev.filter((_, rowIdx) => rowIdx !== idx))}
+                                      className="px-2 py-0.5 text-[10px] bg-red-100 text-red-700 rounded"
+                                    >
+                                      Remove
+                                    </button>
+                                  </td>
+                                )}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      {isPrefixEditing && (
+                        <div className="px-2 py-1 text-[10px] text-gray-500 border-t" style={{ borderColor: 'var(--border)' }}>
+                          Prefix changes apply at the repository level.
+                        </div>
+                      )}
                     </div>
-                  ) : (
-                    <div className="text-gray-400 italic">Content for {activeOntologySubTab}</div>
+                  )}
+                  {activeOntologySubTab === 'imports' && (
+                    <div className="max-h-48 overflow-y-auto border rounded text-xs" style={{ borderColor: 'var(--border)' }}>
+                      <div className="p-2 border-b flex items-center gap-2" style={{ borderColor: 'var(--border)' }}>
+                        <input
+                          value={importDraft}
+                          onChange={(e) => setImportDraft(e.target.value)}
+                          placeholder="http://example.org/imported.owl"
+                          className="flex-1 px-2 py-1 text-xs border rounded"
+                        />
+                        <button
+                          onClick={handleAddImport}
+                          className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+                        >
+                          Add
+                        </button>
+                      </div>
+                      {ontologyImports.length === 0 ? (
+                        <div className="p-3 text-gray-400 italic">No ontology imports</div>
+                      ) : (
+                        <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                          {ontologyImports.map((iri) => (
+                            <li key={iri} className="p-2 hover:bg-gray-50 flex items-center justify-between gap-2">
+                              <div className="font-mono break-all" style={{ color: 'var(--accent)' }}>{iri}</div>
+                              <button
+                                onClick={() => handleRemoveImport(iri)}
+                                className="px-2 py-1 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
+                              >
+                                Remove
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                  {activeOntologySubTab === 'axioms' && (
+                    <div className="max-h-48 overflow-y-auto border rounded text-xs" style={{ borderColor: 'var(--border)' }}>
+                      {generalClassAxioms.length === 0 ? (
+                        <div className="p-3 text-gray-400 italic">No general class axioms detected</div>
+                      ) : (
+                        <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                          {generalClassAxioms.map((axiom, idx) => (
+                            <li key={`${axiom.subExpression}-${idx}`} className="p-2 hover:bg-gray-50 dark:hover:bg-gray-700">
+                              <div className="text-[11px] text-gray-600">General class axiom</div>
+                              <div className="font-medium text-gray-800">
+                                {axiom.definition || 'Anonymous class expression'}
+                              </div>
+                              {axiom.superClassIri && (
+                                <div className="text-[10px] font-mono text-gray-500 break-all">
+                                  {axiom.superClassIri}
+                                </div>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
@@ -4594,7 +5484,11 @@ const Dashboard = () => {
                     'Object property': (metadata as any)?.objectPropertyCount,
                     'Data property': (metadata as any)?.dataPropertyCount,
                     'Individual': (metadata as any)?.individualCount,
-                    'Annotation Property': annotationProperties.length
+                    'Annotation property': (metadata as any)?.annotationPropertyCount ?? annotationProperties.length,
+                    'Datatype': (metadata as any)?.datatypeCount,
+                    'Imports': (metadata as any)?.importsCount,
+                    'Prefixes': (metadata as any)?.prefixCount,
+                    'Triples': (metadata as any)?.tripleCount
                   }
                 },
                 {
@@ -4607,9 +5501,21 @@ const Dashboard = () => {
                   }
                 },
                 {
-                  title: 'Object property axioms', data: {
+                  title: 'Property axioms', data: {
                     SubObjectPropertyOf: (metadata as any)?.subObjectPropertyOfAxiomCount,
-                    InverseObjectProperties: (metadata as any)?.inverseObjectPropertiesAxiomCount
+                    InverseObjectProperties: (metadata as any)?.inverseObjectPropertiesAxiomCount,
+                    'Object domain': (metadata as any)?.objectPropertyDomainAxiomCount,
+                    'Object range': (metadata as any)?.objectPropertyRangeAxiomCount,
+                    'Data domain': (metadata as any)?.dataPropertyDomainAxiomCount,
+                    'Data range': (metadata as any)?.dataPropertyRangeAxiomCount
+                  }
+                },
+                {
+                  title: 'Assertion axioms', data: {
+                    'Class assertions': (metadata as any)?.classAssertionAxiomCount,
+                    'Object assertions': (metadata as any)?.objectPropertyAssertionCount,
+                    'Data assertions': (metadata as any)?.dataPropertyAssertionCount,
+                    'Annotation assertions': (metadata as any)?.annotationAssertionCount
                   }
                 }
               ].map(metricSection => (
@@ -4630,7 +5536,23 @@ const Dashboard = () => {
           </div>
         );
       case 'IndividualsByClass': {
-        const individualsForSelectedClass = selectedClassForIndividuals ? individuals.filter(ind => ind.types?.includes(selectedClassForIndividuals.id)) : [];
+        const filteredInstances = classInstances.filter((ind) => {
+          if (!classInstancesQuery) return true;
+          const query = classInstancesQuery.toLowerCase();
+          return (
+            (ind.label || '').toLowerCase().includes(query) ||
+            (ind.id || '').toLowerCase().includes(query)
+          );
+        });
+        const directInstances = filteredInstances.filter(ind => !ind.isInferred);
+        const inferredInstances = filteredInstances.filter(ind => ind.isInferred);
+        const visibleInstances =
+          classInstancesView === 'direct'
+            ? directInstances
+            : classInstancesView === 'inferred'
+              ? inferredInstances
+              : filteredInstances;
+
         return (
           <div className="flex h-full">
             <aside className="w-80 bg-white border-r border-gray-200 flex flex-col">
@@ -4641,8 +5563,8 @@ const Dashboard = () => {
                   filteredData={classHierarchy}
                   selectedItem={selectedClassForIndividuals}
                   expandedNodes={expandedNodes}
-                  searchQuery=""
-                  onSearchQueryChange={() => { /* no-op for this view */ }}
+                  searchQuery={classTreeSearchQuery}
+                  onSearchQueryChange={setClassTreeSearchQuery}
                   onSelectItem={(item) => setSelectedClassForIndividuals(item as TreeNode)}
                   onToggleNode={toggleNode}
                   onAddItem={() => { /* not used here */ }}
@@ -4652,24 +5574,301 @@ const Dashboard = () => {
             </aside>
             <main className="flex-1 p-2 bg-gray-50">
               <div className="border bg-white h-full flex flex-col">
-                <div className="flex text-xs border-b flex-shrink-0">
-                  <button className="px-3 py-1.5 bg-white border-r font-semibold">Direct instances</button>
-                  <button className="px-3 py-1.5 bg-gray-100 text-gray-700 hover:bg-gray-200">Individuals (inferred)</button>
+                <div className="flex items-center justify-between text-xs border-b flex-shrink-0">
+                  <div className="flex">
+                    <button
+                      onClick={() => setClassInstancesView('direct')}
+                      className={`px-3 py-1.5 border-r font-semibold ${classInstancesView === 'direct' ? 'bg-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                    >
+                      Direct instances ({directInstances.length})
+                    </button>
+                    <button
+                      onClick={() => setClassInstancesView('inferred')}
+                      className={`px-3 py-1.5 border-r font-semibold ${classInstancesView === 'inferred' ? 'bg-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                    >
+                      Inferred ({inferredInstances.length})
+                    </button>
+                    <button
+                      onClick={() => setClassInstancesView('all')}
+                      className={`px-3 py-1.5 font-semibold ${classInstancesView === 'all' ? 'bg-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                    >
+                      All ({filteredInstances.length})
+                    </button>
+                  </div>
+                  <div className="px-2 flex items-center gap-2">
+                    <input
+                      value={classInstancesQuery}
+                      onChange={(e) => setClassInstancesQuery(e.target.value)}
+                      placeholder="Filter individuals..."
+                      className="px-2 py-1 text-xs border rounded"
+                    />
+                    {selectedClassForIndividuals && (
+                      <button
+                        onClick={async () => {
+                          const name = window.prompt(`Create individual in ${selectedClassForIndividuals.label}`);
+                          if (!name || !projectId) return;
+                          try {
+                            await ontologyMutationService.addIndividual(projectId, name, selectedClassForIndividuals.id);
+                            await loadClassInstances();
+                          } catch (error) {
+                            console.error('[Dashboard] Failed to create individual:', error);
+                            notificationService.error('Create Failed', 'Could not create individual.');
+                          }
+                        }}
+                        className="px-2 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-700"
+                      >
+                        Add
+                      </button>
+                    )}
+                  </div>
                 </div>
                 {selectedClassForIndividuals ? (
-                  <div className="p-1 flex-1 overflow-y-auto">
-                    {individualsForSelectedClass.length > 0 ? (
-                      individualsForSelectedClass.map(ind => (
-                        <div key={ind.id} className="flex items-center p-1.5 text-xs hover:bg-gray-100 rounded">
-                          <User size={12} className="mr-2 text-purple-600" />
-                          {ind.label}
+                  <div className="flex-1 flex min-h-0">
+                    <div className="w-1/2 border-r border-gray-200 overflow-y-auto">
+                      {classInstancesLoading ? (
+                        <div className="p-4 text-sm text-gray-600 italic flex items-center justify-center h-full">
+                          Loading individuals for {selectedClassForIndividuals.label}...
                         </div>
-                      ))
-                    ) : (
-                      <div className="p-4 text-sm text-gray-600 italic flex items-center justify-center h-full">
-                        No instances found for {selectedClassForIndividuals.label}.
-                      </div>
-                    )}
+                      ) : visibleInstances.length > 0 ? (
+                        visibleInstances.map(ind => (
+                          <div
+                            key={ind.id}
+                            onClick={() => setSelectedClassIndividual(ind)}
+                            className={`group flex items-center justify-between p-1.5 text-xs hover:bg-gray-100 rounded cursor-pointer ${selectedClassIndividual?.id === ind.id ? 'bg-purple-50' : ''}`}
+                          >
+                            <div className="flex items-center">
+                              <User size={12} className="mr-2 text-purple-600" />
+                              {ind.label}
+                              {ind.isInferred && (
+                                <span className="ml-2 px-1.5 py-0.5 text-[10px] rounded bg-purple-100 text-purple-700">Inferred</span>
+                              )}
+                            </div>
+                            {!ind.isInferred && (
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  if (!projectId || !selectedClassForIndividuals) return;
+                                  try {
+                                    await ontologyMutationService.removeClassAssertion(
+                                      projectId,
+                                      ind.id,
+                                      selectedClassForIndividuals.id
+                                    );
+                                    await loadClassInstances();
+                                  } catch (error) {
+                                    console.error('[Dashboard] Failed to remove class assertion:', error);
+                                    notificationService.error('Remove Failed', 'Could not remove class assertion.');
+                                  }
+                                }}
+                                className="opacity-0 group-hover:opacity-100 px-2 py-0.5 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                        ))
+                      ) : (
+                        <div className="p-4 text-sm text-gray-600 italic flex items-center justify-center h-full">
+                          No instances found for {selectedClassForIndividuals.label}.
+                        </div>
+                      )}
+                    </div>
+                    <div className="w-1/2 overflow-y-auto bg-gray-50">
+                      {selectedClassIndividualLoading ? (
+                        <div className="p-4 text-sm text-gray-600 italic flex items-center justify-center h-full">
+                          Loading individual details...
+                        </div>
+                      ) : selectedClassIndividualDetails ? (
+                        <div className="p-3 space-y-3 text-xs">
+                          <div className="bg-white border border-gray-200 rounded p-2">
+                            <div className="font-semibold text-gray-800">{selectedClassIndividualDetails.label}</div>
+                            <div className="text-[11px] text-gray-500 font-mono break-all">{selectedClassIndividualDetails.id}</div>
+                          </div>
+                          <div className="bg-white border border-gray-200 rounded p-2">
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="font-semibold text-gray-700">Types</div>
+                              <button
+                                onClick={() => setClassIndividualTypeDialogOpen(true)}
+                                className="px-2 py-0.5 text-[10px] bg-purple-100 text-purple-700 rounded hover:bg-purple-200"
+                              >
+                                Add
+                              </button>
+                            </div>
+                            {selectedClassIndividualDetails.types?.length ? (
+                              <div className="space-y-1">
+                                {selectedClassIndividualDetails.types.map(type => (
+                                  <div key={type} className="group flex items-center justify-between text-[11px] text-gray-600">
+                                    <span className="truncate">{getLocalName(type)}</span>
+                                    <button
+                                      onClick={async () => {
+                                        if (!projectId || !selectedClassIndividualDetails) return;
+                                        try {
+                                          await ontologyMutationService.removeClassAssertion(
+                                            projectId,
+                                            selectedClassIndividualDetails.id,
+                                            type
+                                          );
+                                          if (selectedClassForIndividuals?.id === type) {
+                                            await loadClassInstances();
+                                          }
+                                          await refreshSelectedClassIndividualDetails();
+                                        } catch (error) {
+                                          console.error('[Dashboard] Failed to remove type assertion:', error);
+                                          notificationService.error('Remove Failed', 'Could not remove type assertion.');
+                                        }
+                                      }}
+                                      className="opacity-0 group-hover:opacity-100 px-2 py-0.5 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-[11px] text-gray-400">No types</div>
+                            )}
+                          </div>
+                          <div className="bg-white border border-gray-200 rounded p-2">
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="font-semibold text-gray-700">Annotations</div>
+                              <button
+                                onClick={() => setClassIndividualAnnotationDialogOpen(true)}
+                                className="px-2 py-0.5 text-[10px] bg-purple-100 text-purple-700 rounded hover:bg-purple-200"
+                              >
+                                Add
+                              </button>
+                            </div>
+                            {selectedClassIndividualDetails.annotations && Object.keys(selectedClassIndividualDetails.annotations).length > 0 ? (
+                              <div className="space-y-1">
+                                {Object.entries(selectedClassIndividualDetails.annotations).map(([key, value]) => (
+                                  <div key={key} className="group flex items-center justify-between text-[11px] text-gray-600">
+                                    <span className="truncate">
+                                      <span className="font-mono">{getLocalName(key) || key}</span>: {String(value)}
+                                    </span>
+                                    <button
+                                      onClick={async () => {
+                                        if (!projectId || !selectedClassIndividualDetails) return;
+                                        try {
+                                          await ontologyMutationService.deleteAnnotation(
+                                            projectId,
+                                            selectedClassIndividualDetails.id,
+                                            key,
+                                            String(value)
+                                          );
+                                          await refreshSelectedClassIndividualDetails();
+                                        } catch (error) {
+                                          console.error('[Dashboard] Failed to remove annotation:', error);
+                                          notificationService.error('Remove Failed', 'Could not remove annotation.');
+                                        }
+                                      }}
+                                      className="opacity-0 group-hover:opacity-100 px-2 py-0.5 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-[11px] text-gray-400">No annotations</div>
+                            )}
+                          </div>
+                          <div className="bg-white border border-gray-200 rounded p-2">
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="font-semibold text-gray-700">Property assertions</div>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => {
+                                    setClassIndividualPropertyIsObject(true);
+                                    setClassIndividualPropertyDialogOpen(true);
+                                  }}
+                                  className="px-2 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+                                >
+                                  Add object
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setClassIndividualPropertyIsObject(false);
+                                    setClassIndividualPropertyDialogOpen(true);
+                                  }}
+                                  className="px-2 py-0.5 text-[10px] bg-green-100 text-green-700 rounded hover:bg-green-200"
+                                >
+                                  Add data
+                                </button>
+                              </div>
+                            </div>
+                            {selectedClassIndividualDetails.propertyAssertions?.length ? (
+                              <div className="space-y-1">
+                                {selectedClassIndividualDetails.propertyAssertions.map(assertion => (
+                                  <div key={assertion.id} className="group flex items-center justify-between text-[11px] text-gray-600">
+                                    <span className="truncate">
+                                      <span className="font-semibold">{assertion.propertyLabel}</span>
+                                      {assertion.isNegative ? ' (not)' : ''}: {assertion.targetLabel || assertion.targetIri || assertion.targetLiteral}
+                                    </span>
+                                    <button
+                                      onClick={async () => {
+                                        if (!projectId || !selectedClassIndividualDetails) return;
+                                        try {
+                                          if (assertion.isObjectProperty) {
+                                            const target = assertion.targetIri || assertion.targetLabel;
+                                            if (!target) return;
+                                            if (assertion.isNegative) {
+                                              await ontologyMutationService.deleteNegativeObjectPropertyAssertion(
+                                                projectId,
+                                                selectedClassIndividualDetails.id,
+                                                assertion.propertyIri,
+                                                target
+                                              );
+                                            } else {
+                                              await ontologyMutationService.deleteObjectPropertyAssertion(
+                                                projectId,
+                                                selectedClassIndividualDetails.id,
+                                                assertion.propertyIri,
+                                                target
+                                              );
+                                            }
+                                          } else {
+                                            const value = assertion.targetLiteral;
+                                            if (!value) return;
+                                            if (assertion.isNegative) {
+                                              await ontologyMutationService.deleteNegativeDataPropertyAssertion(
+                                                projectId,
+                                                selectedClassIndividualDetails.id,
+                                                assertion.propertyIri,
+                                                value
+                                              );
+                                            } else {
+                                              await ontologyMutationService.deleteDataPropertyAssertion(
+                                                projectId,
+                                                selectedClassIndividualDetails.id,
+                                                assertion.propertyIri,
+                                                value
+                                              );
+                                            }
+                                          }
+                                          await refreshSelectedClassIndividualDetails();
+                                        } catch (error) {
+                                          console.error('[Dashboard] Failed to remove property assertion:', error);
+                                          notificationService.error('Remove Failed', 'Could not remove property assertion.');
+                                        }
+                                      }}
+                                      className="opacity-0 group-hover:opacity-100 px-2 py-0.5 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-[11px] text-gray-400">No assertions</div>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-4 text-sm text-gray-400 italic flex items-center justify-center h-full">
+                          Select an individual to see details.
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <div className="p-4 text-sm text-gray-400 italic flex items-center justify-center h-full">
@@ -5128,6 +6327,180 @@ const Dashboard = () => {
         initialProperty={editAnnotationData?.propertyIri || ''}
         initialValue={editAnnotationData?.currentValue || ''}
       />
+      <AddAnnotationDialog
+        isOpen={isOntologyAnnotationDialogOpen}
+        onClose={() => {
+          setIsOntologyAnnotationDialogOpen(false);
+          setOntologyAnnotationEditTarget(null);
+        }}
+        onAdd={(propertyIri, value, datatype) => {
+          if (ontologyAnnotationEditTarget) {
+            handleUpdateOntologyAnnotation(
+              propertyIri,
+              ontologyAnnotationEditTarget.value,
+              value,
+              ontologyAnnotationEditTarget.datatype
+            );
+          } else {
+            handleAddOntologyAnnotation(propertyIri, value, datatype);
+          }
+          setIsOntologyAnnotationDialogOpen(false);
+          setOntologyAnnotationEditTarget(null);
+        }}
+        availableProperties={annotationProperties}
+        editMode={!!ontologyAnnotationEditTarget}
+        initialProperty={ontologyAnnotationEditTarget?.propertyIri || ''}
+        initialValue={ontologyAnnotationEditTarget?.value || ''}
+        initialDatatype={shortenDatatype(ontologyAnnotationEditTarget?.datatype)}
+      />
+      <AddAnnotationDialog
+        isOpen={isQuickNoteDialogOpen}
+        onClose={() => {
+          setQuickNoteDialogOpen(false);
+          setQuickEditNoteItem(null);
+        }}
+        onAdd={async (propertyIri, value) => {
+          if (!projectId || !quickEditNoteItem) return;
+          try {
+            const annotations = (quickEditNoteItem as any).annotations || {};
+            const existingValue = annotations[propertyIri];
+            if (existingValue) {
+              await ontologyMutationService.updateAnnotation(
+                projectId,
+                quickEditNoteItem.id,
+                propertyIri,
+                value,
+                user?.email || 'anonymous',
+                user?.username || 'Anonymous',
+                String(existingValue)
+              );
+            } else {
+              await ontologyMutationService.addAnnotation(
+                projectId,
+                quickEditNoteItem.id,
+                propertyIri,
+                value,
+                user?.email || 'anonymous',
+                user?.username || 'Anonymous'
+              );
+            }
+            updateItemInState({
+              ...quickEditNoteItem,
+              annotations: { ...annotations, [propertyIri]: value }
+            } as SelectableItem);
+          } catch (error) {
+            console.error('[Dashboard] Failed to save quick note:', error);
+            notificationService.error('Quick Note Failed', 'Could not save note.');
+          } finally {
+            setQuickNoteDialogOpen(false);
+            setQuickEditNoteItem(null);
+          }
+        }}
+        availableProperties={annotationProperties}
+        editMode={true}
+        initialProperty={'http://www.w3.org/2000/01/rdf-schema#comment'}
+        initialValue={
+          quickEditNoteItem && (quickEditNoteItem as any).annotations
+            ? String((quickEditNoteItem as any).annotations['http://www.w3.org/2000/01/rdf-schema#comment'] || '')
+            : ''
+        }
+      />
+      <AddAnnotationDialog
+        isOpen={isClassIndividualAnnotationDialogOpen}
+        onClose={() => setClassIndividualAnnotationDialogOpen(false)}
+        onAdd={async (propertyIri, value) => {
+          if (!projectId || !selectedClassIndividualDetails) return;
+          try {
+            await ontologyMutationService.addAnnotation(
+              projectId,
+              selectedClassIndividualDetails.id,
+              propertyIri,
+              value
+            );
+            await refreshSelectedClassIndividualDetails();
+          } catch (error) {
+            console.error('[Dashboard] Failed to add annotation:', error);
+            notificationService.error('Annotation Failed', 'Could not add annotation.');
+          }
+        }}
+        availableProperties={annotationProperties}
+      />
+      <ClassSelectorDialog
+        isOpen={isClassIndividualTypeDialogOpen}
+        onClose={() => setClassIndividualTypeDialogOpen(false)}
+        onSelect={async (node) => {
+          if (!projectId || !selectedClassIndividualDetails) return;
+          try {
+            await ontologyMutationService.addClassAssertion(
+              projectId,
+              selectedClassIndividualDetails.id,
+              node.id
+            );
+            if (selectedClassForIndividuals?.id === node.id) {
+              await loadClassInstances();
+            }
+            await refreshSelectedClassIndividualDetails();
+          } catch (error) {
+            console.error('[Dashboard] Failed to add type assertion:', error);
+            notificationService.error('Type Failed', 'Could not add type assertion.');
+          } finally {
+            setClassIndividualTypeDialogOpen(false);
+          }
+        }}
+        classHierarchy={classHierarchy}
+        projectId={projectId || undefined}
+        onToggleNode={toggleNode}
+        externalExpandedNodes={expandedNodes}
+        title="Add type"
+        onAddClass={handleAddClassInline}
+        onDeleteClass={() => handleDeleteItem()}
+        metadata={metadata}
+      />
+      <PropertyAssertionDialog
+        isOpen={isClassIndividualPropertyDialogOpen}
+        title={classIndividualPropertyIsObject ? 'Add object property assertion' : 'Add data property assertion'}
+        isObjectProperty={classIndividualPropertyIsObject}
+        objectPropertiesTree={objectPropertyHierarchy}
+        dataPropertiesTree={dataPropertyHierarchy}
+        onConfirm={async (data) => {
+          if (!projectId || !selectedClassIndividualDetails) return;
+          try {
+            if (data.isObjectProperty) {
+              const propertyIri = resolvePropertyIriByLabel(data.propertyLabel, objectProperties);
+              const targetIri = resolveIndividualIriByLabel(data.targetLabel);
+              if (!propertyIri || !targetIri) {
+                notificationService.error('Add Failed', 'Property or target individual not found.');
+                return;
+              }
+              await ontologyMutationService.addObjectPropertyAssertion(
+                projectId,
+                selectedClassIndividualDetails.id,
+                propertyIri,
+                targetIri
+              );
+            } else {
+              const propertyIri = resolvePropertyIriByLabel(data.propertyLabel, dataProperties);
+              if (!propertyIri) {
+                notificationService.error('Add Failed', 'Data property not found.');
+                return;
+              }
+              await ontologyMutationService.addDataPropertyAssertion(
+                projectId,
+                selectedClassIndividualDetails.id,
+                propertyIri,
+                data.targetLabel
+              );
+            }
+            await refreshSelectedClassIndividualDetails();
+          } catch (error) {
+            console.error('[Dashboard] Failed to add property assertion:', error);
+            notificationService.error('Add Failed', 'Could not add property assertion.');
+          } finally {
+            setClassIndividualPropertyDialogOpen(false);
+          }
+        }}
+        onCancel={() => setClassIndividualPropertyDialogOpen(false)}
+      />
       <OpenFileDialog
         isOpen={showOpenDialog}
         onClose={() => setShowOpenDialog(false)}
@@ -5289,6 +6662,8 @@ const Dashboard = () => {
                 expandedNodes={expandedNodes}
                 searchQuery={searchQuery}
                 onSearchQueryChange={setSearchQuery}
+                searchOptions={searchOptions}
+                onSearchOptionsChange={setSearchOptions}
                 onSelectItem={setSelectedItem}
                 onToggleNode={toggleNode}
                 onAddItem={handleAddItem}
@@ -5296,6 +6671,20 @@ const Dashboard = () => {
                 onMakeSiblingsDisjoint={handleMakeSiblingsDisjoint}
                 onOpenPreferences={() => setEntityPreferencesDialogOpen(true)}
                 onRenameItem={handleRenameItem}
+                onQuickSetParent={(item) => {
+                  setQuickEditParentItem(item);
+                  if (entitiesTab === 'Classes') {
+                    setQuickParentDialogOpen(true);
+                  } else if (entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties') {
+                    setQuickPropertyParentDialogOpen(true);
+                  }
+                }}
+                onQuickAddNote={(item) => {
+                  setQuickEditNoteItem(item);
+                  setQuickNoteDialogOpen(true);
+                }}
+                viewMode={currentHierarchyViewMode}
+                onViewModeChange={setCurrentHierarchyViewMode}
               />
 
               <section className="flex-1 overflow-hidden p-2 bg-slate-200 flex flex-col">
@@ -5392,6 +6781,40 @@ const Dashboard = () => {
         onDeleteClass={() => handleDeleteItem()}
         metadata={metadata}
       />
+      <ClassSelectorDialog
+        isOpen={isQuickParentDialogOpen}
+        onClose={() => {
+          setQuickParentDialogOpen(false);
+          setQuickEditParentItem(null);
+        }}
+        onSelect={async (node) => {
+          if (!projectId || !quickEditParentItem) return;
+          try {
+            await ontologyMutationService.addSubClassOf(
+              projectId,
+              quickEditParentItem.id,
+              node.id,
+              user?.email || 'anonymous',
+              user?.username || 'Anonymous'
+            );
+            await refreshClassHierarchy();
+          } catch (error) {
+            console.error('[Dashboard] Failed to set parent class:', error);
+            notificationService.error('Parent Failed', 'Could not set parent class.');
+          } finally {
+            setQuickParentDialogOpen(false);
+            setQuickEditParentItem(null);
+          }
+        }}
+        classHierarchy={classHierarchy}
+        projectId={projectId || undefined}
+        onToggleNode={toggleNode}
+        externalExpandedNodes={expandedNodes}
+        title="Set parent class"
+        onAddClass={handleAddClassInline}
+        onDeleteClass={() => handleDeleteItem()}
+        metadata={metadata}
+      />
 
       {/* Property Expression Dialog */}
       <PropertyExpressionDialog
@@ -5404,6 +6827,39 @@ const Dashboard = () => {
         propertyHierarchy={objectPropertyHierarchy}
         propertyType={selectedItem?.type === 'DataProperty' ? 'data' : 'object'}
         title={`Select ${selectorTarget ? selectorTarget.charAt(0).toUpperCase() + selectorTarget.slice(1) : 'Property'}`}
+      />
+      <PropertyExpressionDialog
+        isOpen={isQuickPropertyParentDialogOpen}
+        onClose={() => {
+          setQuickPropertyParentDialogOpen(false);
+          setQuickEditParentItem(null);
+        }}
+        onConfirm={async (expression) => {
+          if (!projectId || !quickEditParentItem) return;
+          try {
+            await ontologyMutationService.addSubPropertyOf(
+              projectId,
+              quickEditParentItem.id,
+              expression,
+              user?.email || 'anonymous',
+              user?.username || 'Anonymous'
+            );
+            await refreshProperties();
+          } catch (error) {
+            console.error('[Dashboard] Failed to set parent property:', error);
+            notificationService.error('Parent Failed', 'Could not set parent property.');
+          } finally {
+            setQuickPropertyParentDialogOpen(false);
+            setQuickEditParentItem(null);
+          }
+        }}
+        propertyHierarchy={
+          (quickEditParentItem as any)?.type === 'DatatypeProperty'
+            ? dataPropertyHierarchy
+            : objectPropertyHierarchy
+        }
+        propertyType={(quickEditParentItem as any)?.type === 'DatatypeProperty' ? 'data' : 'object'}
+        title="Set parent property"
       />
 
       {/* Object Property Expression Dialog - Protégé-style with inverse checkbox */}
