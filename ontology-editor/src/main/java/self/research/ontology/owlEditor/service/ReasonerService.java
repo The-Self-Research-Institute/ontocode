@@ -271,8 +271,8 @@ public class ReasonerService {
     public Set<OWLDataPropertyExpression> getInferredSubDataProperties(OWLOntology ontology, OWLDataProperty property, ReasonerType type, boolean direct) {
         OWLReasoner reasoner = getReasoner(ontology, type);
         try {
-            NodeSet<OWLDataPropertyExpression> subProps = reasoner.getSubDataProperties(property, direct);
-            return subProps.getFlattened();
+            NodeSet<OWLDataProperty> subProps = reasoner.getSubDataProperties(property, direct);
+            return new HashSet<>(subProps.getFlattened());
         } catch (Exception e) {
             log.error("Error getting inferred sub data properties", e);
             return Collections.emptySet();

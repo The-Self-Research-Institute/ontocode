@@ -55,15 +55,6 @@ public class OntologyQueryController {
                 queryService.properties(projectId, type, limit, offset)));
     }
 
-    @GetMapping("/properties/usage/{projectId}")
-    public ResponseEntity<?> propertyUsage(@PathVariable String projectId,
-                                           @RequestParam String propertyIri) {
-        return ResponseEntity.ok(Map.of(
-                "success", true,
-                "data", queryService.propertyUsage(projectId, propertyIri)
-        ));
-    }
-
     @GetMapping("/individuals/{projectId}")
     public ResponseEntity<?> individuals(@PathVariable String projectId,
                                          @RequestParam(defaultValue = "50") int limit,
