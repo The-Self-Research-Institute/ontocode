@@ -4479,6 +4479,7 @@ const Dashboard = () => {
 
   // Add this state near other useState declarations at the top of Dashboard component
   const [editPrefixData, setEditPrefixData] = useState<{ prefix: string } | null>(null);
+  const [showPrefixDialog, setShowPrefixDialog] = useState(false);
   
     const handleSavePrefix = useCallback(async (prefix: string, iri: string) => {
       if (!projectId) return;
