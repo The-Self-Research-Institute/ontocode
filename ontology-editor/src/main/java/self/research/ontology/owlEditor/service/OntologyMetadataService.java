@@ -163,31 +163,41 @@ public class OntologyMetadataService {
     /**
      * Update an ontology annotation
      */
-    public void updateOntologyAnnotation(String projectId, String propertyIri, String oldValue, String newValue, String language, String datatype) {
+        public void updateOntologyAnnotation(
+                        String projectId,
+                        String propertyIri,
+                        String oldValue,
+                        String newValue,
+                        String language,
+                        String datatype,
+                        String originalPropertyIri) {
         String ontologyIri = getOntologyIri(projectId);
         if (ontologyIri == null) {
             throw new RuntimeException("Ontology IRI not found for project " + projectId);
         }
         ontologyIri = formatResource(ontologyIri);
 
-        String prop = formatResource(propertyIri);
+                String insertProp = formatResource(propertyIri);
+                String deleteProp = formatResource(
+                                (originalPropertyIri != null && !originalPropertyIri.isBlank()) ? originalPropertyIri : propertyIri
+                );
         String newLiteral = formatLiteral(newValue, language, datatype);
         
         // Use a robust DELETE/INSERT/WHERE that matches by string value if exact match fails
         String update = PREFIXES + String.format("""
             DELETE {
-              %s %s ?old .
+                            %s %s ?old .
             }
             INSERT {
-              %s %s %s .
+                            %s %s %s .
             }
             WHERE {
-              %s %s ?old .
+                            %s %s ?old .
               FILTER(STR(?old) = "%s")
             }
-            """, ontologyIri, prop, 
-                 ontologyIri, prop, newLiteral,
-                 ontologyIri, prop, escapeString(oldValue));
+                        """, ontologyIri, deleteProp,
+                                 ontologyIri, insertProp, newLiteral,
+                                 ontologyIri, deleteProp, escapeString(oldValue));
 
         datasetService.execUpdate(projectId, update);
     }

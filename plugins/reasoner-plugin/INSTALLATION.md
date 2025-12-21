@@ -1,4 +1,18 @@
-# OWL Reasoner Plugin - Installation Summary
+# OWL Reasoner Plugin (Archived)
+
+> ⚠️ **Deprecated** – The standalone OWL Reasoner plugin has been retired now that OntoCode ships with a native Reasoner Console inside the dashboard. Keep this document only for historical reference; new deployments should use the built-in experience.
+
+## Use the Built-in Reasoner
+1. Open the OntoCode dashboard and switch to the **Reasoner** tab.
+2. Pick the desired reasoner (HermiT, ELK, Pellet, Openllet, Structural) from the dropdown.
+3. Click **Classify** to run reasoning, review unsatisfiable classes/equivalent classes, and refresh as ontology edits occur.
+4. Toggle **Auto-sync** if you want the reasoner to re-run automatically after changes.
+
+All classic plugin features—consistency checks, hierarchy visualization, statistics, and exports—are available there without installing anything.
+
+---
+
+## Historical Installation Summary
 
 ## ✅ Plugin Successfully Created!
 

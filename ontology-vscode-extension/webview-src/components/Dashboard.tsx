@@ -1,7 +1,7 @@
 // src/Dashboard.tsx
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
-  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, DatabaseZap, Upload, FolderOpen, Sparkles, Clock, Users, Download, RefreshCw, AlertCircle, Puzzle, Zap, BookOpen, Brain, Network, GitMerge, Palette, Edit2, Plus, Globe, Link as LinkIcon, Hash
+  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, Square, DatabaseZap, Upload, FolderOpen, Sparkles, Clock, Users, Download, RefreshCw, AlertCircle, Puzzle, Zap, BookOpen, Brain, Network, GitMerge, Palette, Edit2, Plus, Globe, Link as LinkIcon, Hash
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
@@ -81,6 +81,90 @@ const findParentNode = (nodes: any[], targetId: string, parent: any | null = nul
     }
   }
   return null;
+};
+
+const REASONER_ID_MAP: Record<string, string> = {
+  HermiT: 'HERMIT',
+  ELK: 'ELK',
+  Pellet: 'PELLET',
+  Openllet: 'OPENLLET',
+  Structural: 'STRUCTURAL'
+};
+
+const REASONER_OPTIONS = Object.keys(REASONER_ID_MAP);
+
+const normalizeReasonerType = (label: string): string => REASONER_ID_MAP[label] || 'HERMIT';
+
+// Convert the flat depth-annotated classification list from the backend into a nested tree
+const buildHierarchyTree = (nodes: any[]): any[] => {
+  if (!Array.isArray(nodes)) return [];
+
+  const stack: any[] = [];
+  const roots: any[] = [];
+
+  nodes.forEach((node) => {
+    const depth = Number((node && (node as any).depth) ?? 0);
+    const copy = { ...node, children: [] as any[] };
+
+    while (stack.length > 0 && (stack[stack.length - 1]?.depth ?? 0) >= depth) {
+      stack.pop();
+    }
+
+    if (stack.length === 0) {
+      roots.push(copy);
+    } else {
+      stack[stack.length - 1].children.push(copy);
+    }
+
+    stack.push(copy);
+  });
+
+  return roots;
+};
+
+const extractResponseData = (payload: any) => {
+  if (payload && typeof payload === 'object' && 'data' in payload) {
+    return (payload as any).data ?? {};
+  }
+  return payload ?? {};
+};
+
+const combineReasonerResults = (classificationPayload: any, statsPayload?: any) => {
+  const classificationData = extractResponseData(classificationPayload);
+  const statsData = statsPayload ? extractResponseData(statsPayload) : null;
+  const existingStats = (classificationData as any)?.stats || {};
+  const classHierarchyTree = buildHierarchyTree((classificationData as any)?.classHierarchy || []);
+
+  if (!statsData) {
+    return {
+      ...classificationData,
+      classHierarchyTree
+    };
+  }
+
+  const unsatRaw = statsData.unsatisfiableClasses;
+  const unsatCount = unsatRaw === -1
+    ? 0
+    : (statsData.unsatisfiableClasses || 0);
+  const isConsistent = statsData.isConsistent === false || unsatRaw === -1
+    ? false
+    : true;
+
+  return {
+    ...classificationData,
+    classHierarchyTree,
+    stats: {
+      ...existingStats,
+      unsatisfiableClassesRaw: unsatRaw,
+      classHierarchyNodes: statsData.classCount ?? existingStats.classHierarchyNodes ?? 0,
+      objectPropertyNodes: statsData.propertyCount ?? existingStats.objectPropertyNodes ?? 0,
+      dataPropertyNodes: statsData.dataPropertyCount ?? existingStats.dataPropertyNodes ?? 0,
+      individuals: statsData.individualCount ?? existingStats.individuals ?? 0,
+      satisfiableClasses: statsData.satisfiableClasses ?? existingStats.satisfiableClasses ?? 0,
+      unsatisfiableClasses: unsatCount,
+      isConsistent
+    }
+  };
 };
 
 // #region Helper Components
@@ -169,6 +253,192 @@ const LoadingChoiceDialog = ({
           >
             Continue Working
           </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ReasonerExplanationModal = ({
+  isOpen,
+  onClose,
+  data,
+  loading,
+  error
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  data: any;
+  loading: boolean;
+  error: string | null;
+}) => {
+  if (!isOpen) return null;
+
+  const causes = data?.causes || [];
+  const isConsistent = data?.isConsistent ?? data?.consistent;
+  const heading = isConsistent === false ? 'Ontology is inconsistent' : (isConsistent === true ? 'Ontology is consistent' : 'Explanation');
+
+  return (
+    <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center">
+      <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full mx-4 overflow-hidden border" style={{ borderColor: 'var(--color-border)' }}>
+        <div className="flex items-center justify-between px-5 py-3 border-b bg-gray-50">
+          <div className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+            <AlertCircle size={16} className="text-red-500" />
+            Inconsistency explanation
+          </div>
+          <button onClick={onClose} className="text-xs text-gray-500 hover:text-gray-800">Close</button>
+        </div>
+
+        <div className="p-5 max-h-[70vh] overflow-y-auto text-sm text-gray-700">
+          {loading ? (
+            <div className="flex items-center gap-2 text-gray-600">
+              <Loader2 size={18} className="animate-spin" />
+              Computing explanation…
+            </div>
+          ) : error ? (
+            <div className="flex items-center gap-2 text-red-600">
+              <AlertCircle size={16} />
+              {error}
+            </div>
+          ) : data ? (
+            <>
+              <div className="mb-4">
+                <div className="text-xs uppercase text-gray-500 font-semibold mb-1">Summary</div>
+                <div className="text-gray-800 font-medium">{data.message || heading}</div>
+                {typeof data.totalIssues === 'number' && (
+                  <div className="text-[11px] text-gray-500">Issues detected: {data.totalIssues}</div>
+                )}
+                {isConsistent === false && (
+                  <div className="mt-1 text-[11px] text-red-600">The ontology failed consistency checks. See causes below.</div>
+                )}
+                {isConsistent === true && (
+                  <div className="mt-1 text-[11px] text-green-600">The ontology is consistent; no inconsistency causes detected.</div>
+                )}
+              </div>
+
+              {causes.length === 0 ? (
+                <div className="text-gray-600">No detailed causes returned by the backend.</div>
+              ) : (
+                <div className="space-y-3">
+                  {causes.map((cause: any, idx: number) => (
+                    <div key={idx} className="border rounded-lg p-3 bg-gray-50">
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="text-sm font-semibold text-gray-800">{cause.title || cause.type}</div>
+                        {cause.severity && <span className="text-[11px] uppercase text-red-600 font-semibold">{cause.severity}</span>}
+                      </div>
+                      {cause.description && <div className="text-xs text-gray-600 mb-2">{cause.description}</div>}
+                      {cause.classes && Array.isArray(cause.classes) && (
+                        <div className="text-[11px] text-gray-700 space-y-1">
+                          {cause.classes.map((cls: any, i: number) => (
+                            <div key={i} className="bg-white border rounded px-2 py-1">
+                              <div className="font-semibold">{cls.label || cls.iri || 'Class'}</div>
+                              {cls.reason && <div className="text-gray-600">{cls.reason}</div>}
+                              {cls.iri && <div className="text-gray-500">{cls.iri}</div>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {cause.violations && Array.isArray(cause.violations) && (
+                        <div className="text-[11px] text-gray-700 space-y-1">
+                          {cause.violations.map((violation: any, i: number) => {
+                            const isPropertyViolation = violation.property || violation.propertyIri;
+                            return (
+                              <div key={i} className="bg-white border rounded px-2 py-1">
+                                {violation.individual && <div className="font-semibold">{violation.individual}</div>}
+                                {violation.disjointClasses && (
+                                  <div className="text-gray-600">Classes: {(violation.disjointClasses as string[]).join(', ')}</div>
+                                )}
+                                {violation.individualIri && <div className="text-gray-500">{violation.individualIri}</div>}
+
+                                {isPropertyViolation && (
+                                  <div className="space-y-1">
+                                    <div className="font-semibold text-gray-800">{violation.property || 'Property'}</div>
+                                    {violation.propertyIri && <div className="text-gray-500">{violation.propertyIri}</div>}
+                                    <div className="text-gray-600">
+                                      Domain constraints: {violation.hasDomainConstraints ? 'present' : 'none'}; Range constraints: {violation.hasRangeConstraints ? 'present' : 'none'}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {!violation.individual && !isPropertyViolation && (
+                                  <pre className="text-[10px] text-gray-600 overflow-x-auto">{JSON.stringify(violation, null, 2)}</pre>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {cause.tips && Array.isArray(cause.tips) && (
+                        <ul className="list-disc list-inside text-[11px] text-gray-700 space-y-1">
+                          {cause.tips.map((tip: string, i: number) => (
+                            <li key={i}>{tip}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="text-gray-600">No explanation available.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ReasonerSettingsDialog = ({
+  isOpen,
+  selectedReasoner,
+  isSynced,
+  onSelectReasoner,
+  onToggleSync,
+  onClose
+}: {
+  isOpen: boolean;
+  selectedReasoner: string;
+  isSynced: boolean;
+  onSelectReasoner: (reasoner: string) => void;
+  onToggleSync: () => void;
+  onClose: () => void;
+}) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[65] bg-black/40 flex items-center justify-center">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 border" style={{ borderColor: 'var(--color-border)' }}>
+        <div className="px-5 py-3 border-b bg-gray-50 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+            <Settings size={16} />
+            Reasoner settings
+          </div>
+          <button onClick={onClose} className="text-xs text-gray-500 hover:text-gray-800">Close</button>
+        </div>
+        <div className="p-5 space-y-4 text-sm text-gray-800">
+          <div>
+            <div className="text-xs uppercase text-gray-500 font-semibold mb-1">Active reasoner</div>
+            <select
+              value={selectedReasoner}
+              onChange={(event) => onSelectReasoner(event.target.value)}
+              className="w-full border rounded px-3 py-2 text-sm"
+            >
+              {REASONER_OPTIONS.map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={isSynced}
+              onChange={onToggleSync}
+              className="rounded border-gray-300"
+            />
+            Synchronize reasoner after edits
+          </label>
+          <p className="text-xs text-gray-500">Matches Protégé: keep the reasoner in sync or run manually.</p>
         </div>
       </div>
     </div>
@@ -354,6 +624,10 @@ const TopMenuBar = ({
   onStopReasoner,
   onToggleReasonerSync,
   onSelectReasoner,
+  onCheckConsistency,
+  onExplainInconsistency,
+  onOpenReasonerSettings,
+  isConsistencyLoading,
 }: {
   fileList: FileInfo[];
   myFiles: FileInfo[];
@@ -378,6 +652,10 @@ const TopMenuBar = ({
   onStopReasoner?: () => void;
   onToggleReasonerSync?: () => void;
   onSelectReasoner?: (reasoner: string) => void;
+  onCheckConsistency?: () => void;
+  onExplainInconsistency?: () => void;
+  onOpenReasonerSettings?: () => void;
+  isConsistencyLoading?: boolean;
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -481,6 +759,17 @@ const TopMenuBar = ({
                     <button
                       onClick={() => {
                         setOpenMenu(null);
+                        if (onCheckConsistency) onCheckConsistency();
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                      disabled={isReasonerLoading || isConsistencyLoading}
+                    >
+                      {isConsistencyLoading ? <Loader2 size={12} className="animate-spin" /> : null}
+                      Check consistency
+                    </button>
+                    <button
+                      onClick={() => {
+                        setOpenMenu(null);
                         if (onToggleReasonerSync) onToggleReasonerSync();
                       }}
                       className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
@@ -501,8 +790,10 @@ const TopMenuBar = ({
                     <button
                       onClick={() => {
                         setOpenMenu(null);
+                        if (onExplainInconsistency) onExplainInconsistency();
                       }}
-                      className="w-full text-left px-4 py-2 text-xs text-gray-400 cursor-not-allowed"
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                      disabled={isReasonerLoading}
                     >
                       Explain inconsistent ontology
                     </button>
@@ -511,6 +802,7 @@ const TopMenuBar = ({
                       onClick={() => {
                         // Configure reasoner preferences
                         setOpenMenu(null);
+                        if (onOpenReasonerSettings) onOpenReasonerSettings();
                       }}
                       className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
                     >
@@ -1183,7 +1475,14 @@ const Dashboard = () => {
   const [isEditOntologyIRIDialogOpen, setEditOntologyIRIDialogOpen] = useState(false);
   const [isGCIEditorDialogOpen, setGCIEditorDialogOpen] = useState(false);
   const [editGCIData, setEditGCIData] = useState<{ subClass: string, superClass: string, value: string, index: number } | null>(null);
-  const [editAnnotationData, setEditAnnotationData] = useState<{propertyIri: string, currentValue: string, entityId: string, language?: string, datatype?: string} | null>(null);
+  const [editAnnotationData, setEditAnnotationData] = useState<{
+    propertyIri: string;
+    currentValue: string;
+    entityId: string;
+    language?: string;
+    datatype?: string;
+    originalPropertyIri?: string;
+  } | null>(null);
   const [isAddClassDialogOpen, setAddClassDialogOpen] = useState(false);
   const [addClassType, setAddClassType] = useState<'subclass' | 'sibling'>('subclass');
   const [classParentLabel, setClassParentLabel] = useState('owl:Thing');
@@ -1242,7 +1541,138 @@ const Dashboard = () => {
   const [isReasonerSynced, setIsReasonerSynced] = useState(false);
   const [reasonerResults, setReasonerResults] = useState<any>(null);
   const [isReasonerLoading, setIsReasonerLoading] = useState(false);
-  const [showReasonerResults, setShowReasonerResults] = useState(false);
+  const [isConsistencyLoading, setIsConsistencyLoading] = useState(false);
+  const [consistencyResult, setConsistencyResult] = useState<any | null>(null);
+  const [explanationState, setExplanationState] = useState<{ open: boolean; loading: boolean; data: any; error: string | null }>(
+    { open: false, loading: false, data: null, error: null }
+  );
+  const [isReasonerSettingsOpen, setIsReasonerSettingsOpen] = useState(false);
+
+  const fetchReasonerBundle = useCallback(async (reasonerType: string) => {
+    if (!projectId) {
+      throw new Error('No ontology loaded');
+    }
+
+    const [classificationResponse, statsResponse] = await Promise.all([
+      apiClient.post(
+        `/plugin-service/api/reasoner/${projectId}/classify`,
+        { reasonerType }
+      ),
+      apiClient.get(
+        `/plugin-service/api/reasoner/${projectId}/stats?reasonerType=${reasonerType}`
+      ).catch(error => {
+        console.warn('[Dashboard] Reasoner stats request failed:', error);
+        return null;
+      })
+    ]);
+
+    return combineReasonerResults(classificationResponse, statsResponse ?? undefined);
+  }, [projectId]);
+
+  const startReasoner = useCallback(async () => {
+    if (!projectId) {
+      notificationService.error('No Ontology Loaded', 'Please load an ontology first');
+      return;
+    }
+
+    if (isReasonerLoading) {
+      return;
+    }
+
+    setIsReasonerLoading(true);
+    setIsReasonerRunning(true);
+
+    try {
+      const reasonerType = normalizeReasonerType(selectedReasoner);
+      const results = await fetchReasonerBundle(reasonerType);
+      setReasonerResults(results);
+      setMainTab('Reasoner');
+      notificationService.success('Classification Complete', `${selectedReasoner} reasoner completed successfully`);
+    } catch (error: any) {
+      console.error('[Dashboard] Reasoner error:', error);
+      notificationService.error('Classification Failed', error?.response?.data?.error || error?.message || 'Classification failed');
+      setIsReasonerRunning(false);
+    } finally {
+      setIsReasonerLoading(false);
+    }
+  }, [fetchReasonerBundle, isReasonerLoading, projectId, selectedReasoner]);
+
+  const stopReasoner = useCallback(() => {
+    setIsReasonerRunning(false);
+    setIsReasonerLoading(false);
+    setReasonerResults(null);
+    notificationService.success('Reasoner Stopped', 'Reasoner has been stopped');
+  }, []);
+
+  const toggleReasonerSync = useCallback(() => {
+    const newSyncState = !isReasonerSynced;
+    setIsReasonerSynced(newSyncState);
+    console.log('[Dashboard] Reasoner auto-sync:', newSyncState ? 'enabled' : 'disabled');
+    if (newSyncState) {
+      notificationService.success('Auto-sync Enabled', 'Reasoner will automatically re-run on changes');
+    } else {
+      notificationService.info('Auto-sync Disabled', 'Reasoner will only run manually');
+    }
+  }, [isReasonerSynced]);
+
+  const handleSelectReasoner = useCallback((reasoner: string) => {
+    setSelectedReasoner(reasoner);
+    notificationService.info('Reasoner Selected', `${reasoner} reasoner is now active`);
+  }, []);
+
+  const checkConsistency = useCallback(async () => {
+    if (!projectId) {
+      notificationService.error('No Ontology Loaded', 'Please load an ontology first');
+      return;
+    }
+
+    try {
+      setIsConsistencyLoading(true);
+      const reasonerType = normalizeReasonerType(selectedReasoner);
+      const resp = await apiClient.post(
+        `/plugin-service/api/reasoner/${projectId}/consistency`,
+        { reasonerType }
+      );
+      const data = extractResponseData(resp);
+      setConsistencyResult(data);
+
+      const inconsistent = data?.consistent === false || data?.isConsistent === false;
+      if (inconsistent) {
+        notificationService.error('Ontology Inconsistent', 'Open the explanation to inspect the causes.');
+      } else {
+        notificationService.success('Consistency Checked', `${selectedReasoner} reports the ontology is consistent`);
+      }
+    } catch (error: any) {
+      console.error('[Dashboard] Consistency check failed:', error);
+      setConsistencyResult({ error: error?.message || 'Consistency check failed' });
+      notificationService.error('Consistency Check Failed', error?.message || 'Unable to check ontology consistency');
+    } finally {
+      setIsConsistencyLoading(false);
+    }
+  }, [projectId, selectedReasoner]);
+
+  const explainInconsistency = useCallback(async () => {
+    if (!projectId) {
+      notificationService.error('No Ontology Loaded', 'Please load an ontology first');
+      return;
+    }
+
+    try {
+      setExplanationState({ open: true, loading: true, data: null, error: null });
+      const reasonerType = normalizeReasonerType(selectedReasoner);
+      const resp = await apiClient.post(
+        `/plugin-service/api/reasoner/${projectId}/explain-inconsistency`,
+        { reasonerType }
+      );
+      const data = extractResponseData(resp);
+      setExplanationState({ open: true, loading: false, data, error: null });
+      notificationService.info('Explanation Ready', 'Review the inconsistency report.');
+    } catch (error: any) {
+      console.error('[Dashboard] Explain inconsistency failed:', error);
+      setExplanationState({ open: true, loading: false, data: null, error: error?.message || 'Failed to explain inconsistency' });
+      notificationService.error('Explain Inconsistency Failed', error?.message || 'Could not compute explanation');
+    }
+  }, [projectId, selectedReasoner]);
 
   const [classHierarchy, setClassHierarchy] = useState<TreeNode[]>([]);
   const [objectProperties, setObjectProperties] = useState<Property[]>([]);
@@ -1300,8 +1730,7 @@ const Dashboard = () => {
         'graph-view-plugin': 'Graph',
         'fuzzy-ontology-plugin': 'Fuzzy',
         'change-assistant-plugin': 'Changes',
-        'sparql-query-plugin': 'SPARQL',
-        'reasoner-plugin': 'Reasoner'
+        'sparql-query-plugin': 'SPARQL'
       };
       
       const tabId = pluginToTabMap[pluginId];
@@ -1377,8 +1806,7 @@ const Dashboard = () => {
         'graph-view-plugin': 'Graph',
         'fuzzy-ontology-plugin': 'Fuzzy',
         'change-assistant-plugin': 'Changes',
-        'sparql-query-plugin': 'SPARQL',
-        'reasoner-plugin': 'Reasoner'
+        'sparql-query-plugin': 'SPARQL'
       };
       
       const tabId = pluginToTabMap[pluginId];
@@ -2911,8 +3339,7 @@ const Dashboard = () => {
           'graph-view-plugin': 'Graph',
           'fuzzy-ontology-plugin': 'Fuzzy',
           'change-assistant-plugin': 'Changes',
-          'sparql-query-plugin': 'SPARQL',
-          'reasoner-plugin': 'Reasoner'
+          'sparql-query-plugin': 'SPARQL'
         };
         
         const tabsToShow = pluginIds
@@ -3037,19 +3464,16 @@ const Dashboard = () => {
       // Debounce reasoner re-run to avoid too many calls
       setTimeout(async () => {
         try {
-          const response = await apiClient.post(
-            `/plugin-service/api/reasoner/${projectId}/classify`,
-            { reasonerType: selectedReasoner.toUpperCase() }
-          );
-          console.log('[DEBUG] Auto-sync: Reasoner response received:', response);
-          setReasonerResults(response.data);
+          const reasonerType = normalizeReasonerType(selectedReasoner);
+          const results = await fetchReasonerBundle(reasonerType);
+          setReasonerResults(results);
           console.log('[DEBUG] Auto-sync: Reasoner updated successfully');
         } catch (error) {
           console.error('[DEBUG] Auto-sync: Reasoner update failed', error);
         }
       }, 2000); // Wait 2 seconds after last change
     }
-  }, [updateDraftCount, isReasonerSynced, isReasonerRunning, projectId, selectedReasoner]);
+  }, [updateDraftCount, isReasonerSynced, isReasonerRunning, projectId, selectedReasoner, fetchReasonerBundle]);
 
   // Save changes to backend (applies drafts to GraphDB)
   const handleSave = useCallback(async () => {
@@ -3211,11 +3635,52 @@ const Dashboard = () => {
     setAddAnnotationDialogOpen(true);
   }, [selectedItem, projectId, mainTab]);
 
-  const handleAnnotationDialogAdd = useCallback(async (propertyIri: string, value: string, datatype?: string, lang?: string) => {
+  const updateActiveOntologyAnnotations = useCallback((updater: (annotations: any[]) => any[]) => {
+    setMetadata(prev => {
+      if (!prev) {
+        return prev;
+      }
+
+      const currentAnnotations = Array.isArray((prev as any).annotations)
+        ? [...(prev as any).annotations]
+        : [];
+
+      const nextAnnotations = updater(currentAnnotations);
+      return {
+        ...(prev as any),
+        annotations: nextAnnotations
+      } as OntologyMetadata;
+    });
+  }, []);
+
+  const refreshOntologyAnnotations = useCallback(async () => {
     if (!projectId) return;
 
     try {
-      if (mainTab !== 'ActiveOntology' && selectedItem) {
+      const [metadataRes, annotationsRes] = await Promise.all([
+        apiClient.get(`/api/ontology/metadata/${projectId}`),
+        apiClient.get(`/api/ontology/metadata/${projectId}/annotations`)
+      ]);
+
+      const annotationsData = Array.isArray(annotationsRes?.data) ? annotationsRes.data :
+                             (Array.isArray(annotationsRes) ? annotationsRes : []);
+
+      setMetadata({
+        ...(metadataRes.data || metadataRes),
+        annotations: annotationsData
+      });
+    } catch (error) {
+      console.error('[Dashboard] Failed to refresh ontology annotations:', error);
+    }
+  }, [projectId]);
+
+  const handleAnnotationDialogAdd = useCallback(async (propertyIri: string, value: string, datatype?: string, lang?: string) => {
+    if (!projectId) return;
+
+    const isEntityAnnotation = mainTab !== 'ActiveOntology' && !!selectedItem;
+
+    try {
+      if (isEntityAnnotation && selectedItem) {
         // Entity annotation
         await ontologyMutationService.addAnnotation(projectId, selectedItem.id, propertyIri, value, user?.email || 'anonymous', user?.username || 'Anonymous');
         
@@ -3226,6 +3691,16 @@ const Dashboard = () => {
         markAsUnsaved();
       } else {
         // Ontology annotation
+        updateActiveOntologyAnnotations(current => ([
+          ...current,
+          {
+            property: propertyIri,
+            value,
+            language: lang || undefined,
+            datatype
+          }
+        ]));
+
         await apiClient.post(`/api/ontology/metadata/${projectId}/annotations`, {
           propertyIri,
           value,
@@ -3233,42 +3708,50 @@ const Dashboard = () => {
           datatype
         });
         
-        // Refresh metadata
-        const [metadataRes, annotationsRes] = await Promise.all([
-          apiClient.get(`/api/ontology/metadata/${projectId}`),
-          apiClient.get(`/api/ontology/metadata/${projectId}/annotations`)
-        ]);
-        
-        const annotationsData = Array.isArray(annotationsRes?.data) ? annotationsRes.data : 
-                               (Array.isArray(annotationsRes) ? annotationsRes : []);
-        
-        setMetadata({
-          ...(metadataRes.data || metadataRes),
-          annotations: annotationsData
-        });
+        await refreshOntologyAnnotations();
       }
       
       showNotification('Annotation added successfully!', 'info');
     } catch (error) {
       console.error('Failed to add annotation:', error);
+      if (!isEntityAnnotation) {
+        await refreshOntologyAnnotations();
+      }
       showNotification('Failed to add annotation. See console for details.', 'error');
     }
-  }, [selectedItem, updateItemInState, projectId, user, mainTab]);
+  }, [selectedItem, updateItemInState, projectId, user, mainTab, updateActiveOntologyAnnotations, refreshOntologyAnnotations]);
 
   const handleEditAnnotation = useCallback(async (propertyIri: string, currentValue: string) => {
     if (!projectId) return;
     
     // Open dialog with current value pre-filled
-    setEditAnnotationData({ propertyIri, currentValue, entityId: (mainTab !== 'ActiveOntology' && selectedItem) ? selectedItem.id : 'ONTOLOGY' });
+    setEditAnnotationData({
+      propertyIri,
+      originalPropertyIri: propertyIri,
+      currentValue,
+      entityId: (mainTab !== 'ActiveOntology' && selectedItem) ? selectedItem.id : 'ONTOLOGY'
+    });
     setEditAnnotationDialogOpen(true);
   }, [selectedItem, projectId, mainTab]);
 
-  const handleAnnotationDialogEdit = useCallback(async (propertyIri: string, oldValue: string, newValue: string, datatype?: string, lang?: string) => {
+  const handleAnnotationDialogEdit = useCallback(async (
+    propertyIri: string,
+    oldValue: string,
+    newValue: string,
+    datatype?: string,
+    lang?: string,
+    originalPropertyIri?: string,
+    oldLang?: string,
+    oldDatatype?: string
+  ) => {
     console.log('[Dashboard] handleAnnotationDialogEdit called with:', propertyIri, oldValue, newValue);
     if (!projectId) return;
 
+    const isEntityAnnotation = mainTab !== 'ActiveOntology' && !!selectedItem;
+    const targetPropertyIri = originalPropertyIri || propertyIri;
+
     try {
-      if (mainTab !== 'ActiveOntology' && selectedItem) {
+      if (isEntityAnnotation && selectedItem) {
         // Entity annotation
         await ontologyMutationService.updateAnnotation(projectId, selectedItem.id, propertyIri, newValue, user?.email || 'anonymous', user?.username || 'Anonymous', oldValue);
         
@@ -3279,35 +3762,58 @@ const Dashboard = () => {
         markAsUnsaved();
       } else {
         // Ontology annotation
+        updateActiveOntologyAnnotations(current => {
+          const matchIndex = current.findIndex((annotation: any) => {
+            if (!annotation) {
+              return false;
+            }
+
+            const matchesProperty = annotation.property === targetPropertyIri;
+            const existingValue = annotation.value?.toString?.() ?? annotation.value;
+            const matchesValue = existingValue === oldValue;
+            const matchesLanguage = (annotation.language || '') === (oldLang || '');
+            const matchesDatatype = (annotation.datatype || '') === (oldDatatype || '');
+            return matchesProperty && matchesValue && matchesLanguage && matchesDatatype;
+          });
+
+          const nextValue = {
+            ...(matchIndex >= 0 ? current[matchIndex] : {}),
+            property: propertyIri,
+            value: newValue,
+            language: lang || undefined,
+            datatype
+          };
+
+          if (matchIndex >= 0) {
+            current[matchIndex] = nextValue;
+          } else {
+            current.push(nextValue);
+          }
+
+          return current;
+        });
+
         await apiClient.put(`/api/ontology/metadata/${projectId}/annotations`, {
           propertyIri,
+          originalPropertyIri: originalPropertyIri || propertyIri,
           oldValue,
           newValue,
           language: lang,
           datatype
         });
         
-        // Refresh metadata
-        const [metadataRes, annotationsRes] = await Promise.all([
-          apiClient.get(`/api/ontology/metadata/${projectId}`),
-          apiClient.get(`/api/ontology/metadata/${projectId}/annotations`)
-        ]);
-        
-        const annotationsData = Array.isArray(annotationsRes?.data) ? annotationsRes.data : 
-                               (Array.isArray(annotationsRes) ? annotationsRes : []);
-        
-        setMetadata({
-          ...(metadataRes.data || metadataRes),
-          annotations: annotationsData
-        });
+        await refreshOntologyAnnotations();
       }
       
       showNotification('Annotation updated successfully!', 'info');
     } catch (error) {
       console.error('Failed to update annotation:', error);
+      if (!isEntityAnnotation) {
+        await refreshOntologyAnnotations();
+      }
       showNotification('Failed to update annotation. See console for details.', 'error');
     }
-  }, [selectedItem, updateItemInState, projectId, user, mainTab]);
+  }, [selectedItem, updateItemInState, projectId, user, mainTab, updateActiveOntologyAnnotations, refreshOntologyAnnotations]);
 
   const handleSaveOntologyIRIs = useCallback(async (ontologyIri: string, versionIri: string) => {
     if (!projectId) return;
@@ -4949,38 +5455,246 @@ const Dashboard = () => {
         );
       }
       case 'Reasoner': {
-        const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === 'reasoner-plugin');
-        const loadingState = pluginLoadingStates['reasoner-plugin'];
-        
-        if (plugin?.component && projectId) {
-          const PluginComponent = plugin.component;
-          return <PluginComponent 
-            projectId={projectId}
-            apiBaseUrl={(window as any).API_BASE_URL || 'http://localhost:8082'}
-          />;
-        }
-        
+        const stats = reasonerResults?.stats || null;
+        const unsatList = reasonerResults?.unsatisfiableClasses || [];
+        const equivalentGroups = reasonerResults?.equivalentClasses || [];
+        const consistencyData = consistencyResult || null;
+        const consistencyUnsat = consistencyData?.unsatisfiableClasses || [];
+        const combinedUnsat = unsatList.length > 0 ? unsatList : consistencyUnsat;
+        const consistentFlag = (stats?.isConsistent ?? consistencyData?.consistent ?? consistencyData?.isConsistent);
+        const unsatRaw = stats?.unsatisfiableClassesRaw;
+        const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1 || !!(
+          (stats && ((stats.unsatisfiableClasses ?? 0) > 0 || stats.isConsistent === false)) ||
+          combinedUnsat.length > 0
+        );
+        const entityCards = [
+          { label: 'Classes', value: stats?.classHierarchyNodes ?? reasonerResults?.totalClasses ?? 0, color: 'text-green-600' },
+          { label: 'Object Properties', value: stats?.objectPropertyNodes ?? reasonerResults?.totalObjectProperties ?? 0, color: 'text-blue-600' },
+          { label: 'Data Properties', value: stats?.dataPropertyNodes ?? reasonerResults?.totalDataProperties ?? 0, color: 'text-orange-600' },
+          { label: 'Individuals', value: stats?.individuals ?? reasonerResults?.totalIndividuals ?? 0, color: 'text-purple-600' }
+        ];
+        const classHierarchyToRender = reasonerResults?.classHierarchyTree || reasonerResults?.classHierarchy;
+
         return (
-          <PluginPlaceholder
-            pluginId="reasoner-plugin"
-            pluginName="OWL Reasoner"
-            description="HermiT-inspired OWL reasoner for consistency checking, classification, realization, and inference with support for multiple reasoners."
-            icon={<Zap size={32} className="text-white" />}
-            features={[
-              "Consistency checking",
-              "Classification",
-              "Realization",
-              "HermiT, Pellet, FaCT++, ELK",
-              "Inferred axioms",
-              "Export results"
-            ]}
-            accentColor="from-yellow-500 via-amber-500 to-orange-600"
-            onInstall={() => handleInstallPlugin('reasoner-plugin')}
-            onRetryLoad={() => handleRetryLoadPlugin('reasoner-plugin')}
-            isInstalled={installedPlugins.has('reasoner-plugin')}
-            isLoading={loadingState?.loading || false}
-            error={loadingState?.error}
-          />
+          <div className="flex flex-col h-full bg-[#F6F7FB]">
+            <div className="flex flex-wrap items-center justify-between gap-4 px-5 py-4 bg-white border-b border-gray-200">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center">
+                  <Brain size={20} className="text-purple-600" />
+                </div>
+                <div>
+                  <h2 className="text-base font-semibold text-gray-800">Reasoner Console</h2>
+                  <p className="text-xs text-gray-500">Run semantic classification</p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={selectedReasoner}
+                  onChange={(event) => handleSelectReasoner(event.target.value)}
+                  className="text-xs border border-gray-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                >
+                  {REASONER_OPTIONS.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={startReasoner}
+                  disabled={!projectId || isReasonerLoading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50"
+                >
+                  {isReasonerLoading ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+                  {isReasonerLoading ? 'Running…' : 'Classify'}
+                </button>
+                <button
+                  onClick={stopReasoner}
+                  disabled={!isReasonerRunning}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  <Square size={14} />
+                  Stop
+                </button>
+                <button
+                  onClick={checkConsistency}
+                  disabled={!projectId || isConsistencyLoading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  {isConsistencyLoading ? <Loader2 size={14} className="animate-spin" /> : <AlertCircle size={14} />}
+                  Check consistency
+                </button>
+                <button
+                  onClick={explainInconsistency}
+                  disabled={!projectId || isReasonerLoading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                  title="Run inconsistency explanation (Protégé style)"
+                >
+                  <Brain size={14} />
+                  Explain
+                </button>
+                <label className="flex items-center gap-1.5 text-[11px] text-gray-600 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={isReasonerSynced}
+                    onChange={toggleReasonerSync}
+                    className="rounded border-gray-300"
+                  />
+                  Auto-sync
+                </label>
+              </div>
+            </div>
+
+            <div className="px-5 py-2 bg-white border-b border-gray-200 text-[11px] text-gray-600 flex flex-wrap items-center gap-4">
+              <div className={`flex items-center gap-2 px-3 py-1 rounded-full ${isReasonerRunning ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                <span className={`w-2 h-2 rounded-full ${isReasonerRunning ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
+                {isReasonerRunning ? 'Reasoner active' : 'Reasoner stopped'}
+              </div>
+              <span>Selected: {selectedReasoner}</span>
+              {isReasonerSynced && <span className="text-blue-600 font-medium">Auto-sync enabled</span>}
+              {!projectId && <span className="text-red-500">No ontology loaded</span>}
+            </div>
+
+            <div className="flex-1 overflow-hidden p-5">
+              {isReasonerLoading ? (
+                <div className="h-full flex flex-col items-center justify-center gap-3 text-gray-500">
+                  <Loader2 size={32} className="animate-spin" />
+                  <p>Running {selectedReasoner}…</p>
+                </div>
+              ) : reasonerResults ? (
+                <div className="h-full grid grid-cols-1 lg:grid-cols-[360px,1fr] gap-5">
+                  <div className="bg-white rounded-lg border shadow-sm flex flex-col overflow-hidden">
+                    <div className={`px-4 py-4 border-b ${isOntologyInconsistent ? 'bg-red-50 border-red-100' : 'bg-green-50 border-green-100'}`}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                          <AlertCircle size={16} className={isOntologyInconsistent ? 'text-red-500' : 'text-green-500'} />
+                          Ontology Status
+                        </div>
+                        <span className={`text-xs font-bold ${isOntologyInconsistent ? 'text-red-600' : 'text-green-600'}`}>
+                          {isOntologyInconsistent ? 'Inconsistent' : 'Consistent'}
+                        </span>
+                      </div>
+                      {stats && (
+                        <p className="mt-2 text-[11px] text-gray-600">
+                          {(stats.satisfiableClasses ?? 'n/a')} satisfiable / {(stats.unsatisfiableClassesRaw === -1 ? 'n/a' : (stats.unsatisfiableClasses ?? 0))} unsatisfiable
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="px-4 py-4 border-b">
+                      <div className="grid grid-cols-2 gap-3">
+                        {entityCards.map((card) => (
+                          <div key={card.label} className="text-center p-2 rounded border bg-gray-50">
+                            <div className={`text-xl font-semibold ${card.color}`}>{card.value}</div>
+                            <div className="text-[11px] text-gray-600">{card.label}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {combinedUnsat.length > 0 && (
+                      <div className="px-4 py-4 border-b bg-red-50 border-red-100">
+                        <div className="flex items-center justify-between text-xs font-semibold text-red-700 mb-2">
+                          <div className="flex items-center gap-2">
+                            <AlertCircle size={14} /> Unsatisfiable Classes ({combinedUnsat.length})
+                          </div>
+                          <button
+                            onClick={explainInconsistency}
+                            className="text-[11px] px-2 py-1 rounded border border-red-200 text-red-700 hover:bg-red-100"
+                            disabled={isReasonerLoading}
+                          >
+                            Explain
+                          </button>
+                        </div>
+                        <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
+                          {combinedUnsat.map((cls: any, idx: number) => {
+                            const clsData = typeof cls === 'string'
+                              ? { iri: cls, label: cls.split('#').pop() || cls.split('/').pop() || cls }
+                              : cls;
+                            return (
+                              <div key={idx} className="bg-white rounded px-2 py-1 text-[11px] text-red-700">
+                                <div className="font-semibold">{clsData.label}</div>
+                                <div className="text-[10px] text-red-500">{clsData.iri}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {equivalentGroups.length > 0 && (
+                      <div className="px-4 py-4">
+                        <div className="flex items-center gap-2 text-xs font-semibold text-blue-700 mb-2">
+                          <GitMerge size={14} /> Equivalent Classes
+                        </div>
+                        <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
+                          {equivalentGroups.map((group: string[], idx: number) => (
+                            <div key={idx} className="bg-blue-50 border border-blue-100 rounded px-2 py-1 text-[11px] text-blue-700">
+                              {group.join(' ≡ ')}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="bg-white rounded-lg border shadow-sm flex flex-col overflow-hidden">
+                    <div className="px-4 py-3 border-b flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 font-semibold text-gray-700">
+                        <Network size={16} />
+                        <span>Inferred Class Hierarchy</span>
+                      </div>
+                      <button
+                        onClick={startReasoner}
+                        disabled={isReasonerLoading || !projectId}
+                        className="text-xs flex items-center gap-1 px-3 py-1.5 rounded border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                      >
+                        <RefreshCw size={12} />
+                        Refresh
+                      </button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto px-4 py-3 text-sm text-gray-700">
+                      {classHierarchyToRender && classHierarchyToRender.length > 0 ? (
+                        <div className="space-y-1">
+                          {renderClassHierarchy(classHierarchyToRender)}
+                        </div>
+                      ) : (
+                        <div className="text-xs text-gray-500">
+                          Run the reasoner to generate the inferred hierarchy.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center gap-3 text-center text-gray-500">
+                  <Brain size={48} className="text-purple-500" />
+                  <p className="text-sm">Start {selectedReasoner} to classify the active ontology.</p>
+                  {isConsistencyLoading && (
+                    <div className="flex items-center gap-2 text-gray-600 text-xs">
+                      <Loader2 size={14} className="animate-spin" />
+                      Checking consistency…
+                    </div>
+                  )}
+                  {consistencyResult && !isConsistencyLoading && (
+                    <div className={`px-3 py-2 rounded border text-xs ${
+                      (consistencyResult.consistent === false || consistencyResult.isConsistent === false)
+                        ? 'bg-red-50 border-red-200 text-red-700'
+                        : 'bg-green-50 border-green-200 text-green-700'
+                    }`}>
+                      {(consistencyResult.consistent === false || consistencyResult.isConsistent === false)
+                        ? 'Ontology is inconsistent'
+                        : 'Ontology is consistent'}
+                    </div>
+                  )}
+                  <button
+                    onClick={startReasoner}
+                    disabled={!projectId || isReasonerLoading}
+                    className="px-4 py-2 rounded-md bg-purple-600 text-white text-sm font-medium hover:bg-purple-700 disabled:opacity-50"
+                  >
+                    Run {selectedReasoner}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         );
       }
       case 'ActiveOntology':
@@ -5056,6 +5770,7 @@ const Dashboard = () => {
                               <button onClick={() => { 
                                 setEditAnnotationData({ 
                                   propertyIri: key, 
+                                  originalPropertyIri: key,
                                   currentValue: value?.toString() || '', 
                                   entityId: 'ONTOLOGY',
                                   language: ann.language,
@@ -5912,7 +6627,16 @@ const Dashboard = () => {
         }}
         onAdd={(propertyIri, newValue, datatype, lang) => {
           if (editAnnotationData) {
-            handleAnnotationDialogEdit(propertyIri, editAnnotationData.currentValue, newValue, datatype, lang);
+            handleAnnotationDialogEdit(
+              propertyIri,
+              editAnnotationData.currentValue,
+              newValue,
+              datatype,
+              lang,
+              editAnnotationData.originalPropertyIri || editAnnotationData.propertyIri,
+              editAnnotationData.language,
+              editAnnotationData.datatype
+            );
           }
           setEditAnnotationDialogOpen(false);
           setEditAnnotationData(null);
@@ -5993,6 +6717,21 @@ const Dashboard = () => {
         preferences={preferences}
         onSave={updatePreferences}
       />
+      <ReasonerExplanationModal
+        isOpen={explanationState.open}
+        onClose={() => setExplanationState(prev => ({ ...prev, open: false }))}
+        data={explanationState.data}
+        loading={explanationState.loading}
+        error={explanationState.error}
+      />
+      <ReasonerSettingsDialog
+        isOpen={isReasonerSettingsOpen}
+        selectedReasoner={selectedReasoner}
+        isSynced={isReasonerSynced}
+        onSelectReasoner={handleSelectReasoner}
+        onToggleSync={toggleReasonerSync}
+        onClose={() => setIsReasonerSettingsOpen(false)}
+      />
 
       <div className="h-screen bg-gray-50 flex flex-col text-sm max-h-screen">
         <TopMenuBar
@@ -6027,89 +6766,14 @@ const Dashboard = () => {
           isReasonerLoading={isReasonerLoading}
           isReasonerSynced={isReasonerSynced}
           selectedReasoner={selectedReasoner}
-          onStartReasoner={async () => {
-            if (!projectId) {
-              notificationService.error('No Ontology Loaded', 'Please load an ontology first');
-              return;
-            }
-            setIsReasonerLoading(true);
-            setIsReasonerRunning(true);
-            try {
-              // Map reasoner names to backend format
-              const reasonerMap: Record<string, string> = {
-                'HermiT': 'HERMIT',
-                'ELK': 'ELK',
-                'Pellet': 'PELLET',
-                'Openllet': 'OPENLLET',
-                'Structural': 'STRUCTURAL'
-              };
-              const reasonerType = reasonerMap[selectedReasoner] || 'HERMIT';
-              
-              console.log(`[Dashboard] Starting ${selectedReasoner} reasoner for project ${projectId}`);
-              const response = await apiClient.post(
-                `/plugin-service/api/reasoner/${projectId}/classify`,
-                { reasonerType }
-              );
-              
-              console.log('[Dashboard] Reasoner response:', response);
-              
-              // Get stats as well
-              const statsResponse = await apiClient.get(
-                `/plugin-service/api/reasoner/${projectId}/stats?reasonerType=${reasonerType}`
-              );
-              console.log('[Dashboard] Stats response:', statsResponse);
-              
-              // Handle -1 unsatisfiableClasses value (means inconsistent)
-              const unsatCount = statsResponse.unsatisfiableClasses === -1 ? 0 : (statsResponse.unsatisfiableClasses || 0);
-              
-              // Combine response and stats
-              const combinedResults = {
-                ...response,
-                stats: {
-                  classHierarchyNodes: statsResponse.classCount || 0,
-                  objectPropertyNodes: statsResponse.propertyCount || 0,
-                  dataPropertyNodes: statsResponse.dataPropertyCount || 0,
-                  individuals: statsResponse.individualCount || 0,
-                  satisfiableClasses: statsResponse.satisfiableClasses || 0,
-                  unsatisfiableClasses: unsatCount,
-                  isConsistent: statsResponse.isConsistent !== false
-                }
-              };
-              
-              setReasonerResults(combinedResults);
-              setShowReasonerResults(true);
-              setMainTab('Reasoner'); // Switch to Reasoner tab
-              notificationService.success('Classification Complete', `${selectedReasoner} reasoner completed successfully`);
-            } catch (error: any) {
-              console.error('[Dashboard] Reasoner error:', error);
-              notificationService.error('Classification Failed', error.response?.data?.error || error.message || 'Classification failed');
-              setIsReasonerRunning(false);
-            } finally {
-              setIsReasonerLoading(false);
-            }
-          }}
-          onStopReasoner={() => {
-            console.log('[Dashboard] Stopping reasoner');
-            setIsReasonerRunning(false);
-            setReasonerResults(null);
-            setShowReasonerResults(false);
-            notificationService.success('Reasoner Stopped', 'Reasoner has been stopped');
-          }}
-          onToggleReasonerSync={() => {
-            const newSyncState = !isReasonerSynced;
-            setIsReasonerSynced(newSyncState);
-            console.log('[Dashboard] Reasoner auto-sync:', newSyncState ? 'enabled' : 'disabled');
-            if (newSyncState) {
-              notificationService.success('Auto-sync Enabled', 'Reasoner will automatically re-run on changes');
-            } else {
-              notificationService.info('Auto-sync Disabled', 'Reasoner will only run manually');
-            }
-          }}
-          onSelectReasoner={(reasoner: string) => {
-            console.log('[Dashboard] Selected reasoner:', reasoner);
-            setSelectedReasoner(reasoner);
-            notificationService.info('Reasoner Selected', `${reasoner} reasoner is now active`);
-          }}
+          onStartReasoner={startReasoner}
+          onStopReasoner={stopReasoner}
+          onToggleReasonerSync={toggleReasonerSync}
+          onSelectReasoner={handleSelectReasoner}
+          onCheckConsistency={checkConsistency}
+          onExplainInconsistency={explainInconsistency}
+          onOpenReasonerSettings={() => setIsReasonerSettingsOpen(true)}
+          isConsistencyLoading={isConsistencyLoading}
         />
 
         <div className="bg-white border-b border-gray-200 flex-shrink-0">
@@ -6549,144 +7213,6 @@ const Dashboard = () => {
         />
       )}
 
-      {/* Reasoner Results Panel */}
-      {showReasonerResults && reasonerResults && (
-        <div className="fixed right-4 top-20 w-96 max-h-[calc(100vh-120px)] bg-white rounded-lg shadow-2xl border-2 border-purple-500 flex flex-col z-50">
-          {/* Header */}
-          <div className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-4 py-3 rounded-t-lg flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Brain size={20} />
-              <h3 className="font-semibold">Reasoner Results - {selectedReasoner}</h3>
-            </div>
-            <button
-              onClick={() => setShowReasonerResults(false)}
-              className="hover:bg-white/20 rounded p-1 transition-colors"
-            >
-              ×
-            </button>
-          </div>
-
-          {/* Statistics Dashboard */}
-          <div className="px-4 py-3 bg-gray-50 border-b space-y-3">
-            {/* Consistency Status */}
-            {reasonerResults.stats && (
-              <div className={`bg-white rounded-lg shadow-sm p-3 border-l-4 ${
-                (reasonerResults.stats.unsatisfiableClasses > 0 || reasonerResults.unsatisfiableClasses?.length > 0)
-                  ? 'border-red-500'
-                  : 'border-green-500'
-              }`}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className={`w-3 h-3 rounded-full ${
-                      (reasonerResults.stats.unsatisfiableClasses > 0 || reasonerResults.unsatisfiableClasses?.length > 0)
-                        ? 'bg-red-500'
-                        : 'bg-green-500'
-                    }`}></div>
-                    <span className="text-sm font-semibold text-gray-700">Ontology Status</span>
-                  </div>
-                  <span className={`text-sm font-bold ${
-                    (reasonerResults.stats.unsatisfiableClasses > 0 || reasonerResults.unsatisfiableClasses?.length > 0)
-                      ? 'text-red-600'
-                      : 'text-green-600'
-                  }`}>
-                    {(reasonerResults.stats.unsatisfiableClasses > 0 || reasonerResults.unsatisfiableClasses?.length > 0)
-                      ? 'Inconsistent'
-                      : 'Consistent'
-                    }
-                  </span>
-                </div>
-                {reasonerResults.stats.satisfiableClasses !== undefined && (
-                  <div className="mt-2 text-xs text-gray-600">
-                    {reasonerResults.stats.satisfiableClasses} satisfiable / {reasonerResults.stats.unsatisfiableClasses >= 0 ? reasonerResults.stats.unsatisfiableClasses : 0} unsatisfiable
-                  </div>
-                )}
-              </div>
-            )}
-            
-            {/* Entity Counts */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="text-center p-2 bg-white rounded shadow-sm">
-                <div className="text-2xl font-bold text-green-600">{reasonerResults.stats?.classHierarchyNodes || 0}</div>
-                <div className="text-xs text-gray-600">Classes</div>
-              </div>
-              <div className="text-center p-2 bg-white rounded shadow-sm">
-                <div className="text-2xl font-bold text-blue-600">{reasonerResults.stats?.objectPropertyNodes || 0}</div>
-                <div className="text-xs text-gray-600">Properties</div>
-              </div>
-              <div className="text-center p-2 bg-white rounded shadow-sm">
-                <div className="text-2xl font-bold text-orange-600">{reasonerResults.stats?.dataPropertyNodes || 0}</div>
-                <div className="text-xs text-gray-600">Data Properties</div>
-              </div>
-              <div className="text-center p-2 bg-white rounded shadow-sm">
-                <div className="text-2xl font-bold text-purple-600">{reasonerResults.stats?.individuals || 0}</div>
-                <div className="text-xs text-gray-600">Individuals</div>
-              </div>
-            </div>
-          </div>
-
-          {/* Unsatisfiable Classes Warning */}
-          {reasonerResults.unsatisfiableClasses && reasonerResults.unsatisfiableClasses.length > 0 && (
-            <div className="px-4 py-3 bg-red-50 border-b border-red-200">
-              <div className="flex items-center gap-2 text-red-700 font-semibold mb-2">
-                <AlertCircle size={16} />
-                <span>Unsatisfiable Classes ({reasonerResults.unsatisfiableClasses.length})</span>
-              </div>
-              <div className="space-y-1 max-h-24 overflow-y-auto">
-                {reasonerResults.unsatisfiableClasses.map((cls: any, idx: number) => {
-                  const clsData = typeof cls === 'string' ? { iri: cls, label: cls.split('#').pop() || cls.split('/').pop() || cls } : cls;
-                  return (
-                    <div key={idx} className="text-xs text-red-600 bg-white px-2 py-1 rounded">
-                      <div className="font-semibold">{clsData.label}</div>
-                      <div className="text-[10px] text-red-500">{clsData.iri}</div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Equivalent Classes */}
-          {reasonerResults.equivalentClasses && reasonerResults.equivalentClasses.length > 0 && (
-            <div className="px-4 py-3 border-b">
-              <div className="flex items-center gap-2 text-blue-700 font-semibold mb-2">
-                <GitMerge size={16} />
-                <span>Equivalent Classes</span>
-              </div>
-              <div className="space-y-2 max-h-32 overflow-y-auto">
-                {reasonerResults.equivalentClasses.map((group: string[], idx: number) => (
-                  <div key={idx} className="text-xs bg-blue-50 px-2 py-1 rounded">
-                    {group.join(' ≡ ')}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Inferred Class Hierarchy */}
-          <div className="flex-1 overflow-y-auto px-4 py-3">
-            <div className="flex items-center gap-2 text-gray-700 font-semibold mb-2">
-              <Network size={16} />
-              <span>Inferred Class Hierarchy</span>
-            </div>
-            <div className="space-y-1">
-              {reasonerResults.classHierarchy && renderClassHierarchy(reasonerResults.classHierarchy)}
-            </div>
-          </div>
-
-          {/* Status Footer */}
-          <div className="px-4 py-2 bg-gray-50 border-t rounded-b-lg flex items-center justify-between text-xs">
-            <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${isReasonerRunning ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`}></div>
-              <span className="text-gray-600">{isReasonerRunning ? 'Running' : 'Stopped'}</span>
-            </div>
-            <div className="flex items-center gap-2 text-gray-500">
-              {isReasonerSynced && <span className="text-blue-600">Auto-sync ON</span>}
-              <Clock size={12} />
-              <span>{new Date().toLocaleTimeString()}</span>
-            </div>
-          </div>
-        </div>
-      )}
     </>
   );
 };
