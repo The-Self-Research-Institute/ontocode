@@ -3,7 +3,7 @@ import { Search, X, ChevronDown, ChevronUp, WrapText } from 'lucide-react';
 
 interface CodeHighlighterProps {
   content: string;
-  format: 'turtle' | 'rdfxml' | 'ntriples' | 'owl';
+  format: 'turtle' | 'rdfxml' | 'ntriples' | 'owlxml' | 'manchester' | 'functional';
 }
 
 const MAX_LINES_INITIAL = 500; // Show first 500 lines initially
@@ -186,7 +186,11 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({ content, forma
           case 'ntriples':
             processedLine = highlightNTriplesLine(line);
             break;
-          case 'owl':
+          case 'owlxml':
+            processedLine = highlightRDFXMLLine(line);
+            break;
+          case 'manchester':
+          case 'functional':
             processedLine = highlightOWLLine(line);
             break;
           default:

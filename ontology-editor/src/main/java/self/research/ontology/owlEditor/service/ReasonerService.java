@@ -201,16 +201,20 @@ public class ReasonerService {
     /**
      * Get inferred subclasses for a class
      */
-    public Set<OWLClass> getInferredSubClasses(OWLOntology ontology, OWLClass owlClass, ReasonerType type) {
+    public Set<OWLClass> getInferredSubClasses(OWLOntology ontology, OWLClass owlClass, ReasonerType type, boolean direct) {
         OWLReasoner reasoner = getReasoner(ontology, type);
         
         try {
-            NodeSet<OWLClass> subClasses = reasoner.getSubClasses(owlClass, false);
+            NodeSet<OWLClass> subClasses = reasoner.getSubClasses(owlClass, direct);
             return subClasses.getFlattened();
         } catch (Exception e) {
             log.error("Error getting inferred subclasses", e);
             return Collections.emptySet();
         }
+    }
+
+    public Set<OWLClass> getInferredSubClasses(OWLOntology ontology, OWLClass owlClass, ReasonerType type) {
+        return getInferredSubClasses(ontology, owlClass, type, false);
     }
 
     /**
@@ -241,6 +245,42 @@ public class ReasonerService {
             log.error("Error getting inferred types", e);
             return Collections.emptySet();
         }
+    }
+
+    /**
+     * Get inferred sub object properties for a property
+     */
+    public Set<OWLObjectPropertyExpression> getInferredSubObjectProperties(OWLOntology ontology, OWLObjectProperty property, ReasonerType type, boolean direct) {
+        OWLReasoner reasoner = getReasoner(ontology, type);
+        try {
+            NodeSet<OWLObjectPropertyExpression> subProps = reasoner.getSubObjectProperties(property, direct);
+            return subProps.getFlattened();
+        } catch (Exception e) {
+            log.error("Error getting inferred sub object properties", e);
+            return Collections.emptySet();
+        }
+    }
+
+    public Set<OWLObjectPropertyExpression> getInferredSubObjectProperties(OWLOntology ontology, OWLObjectProperty property, ReasonerType type) {
+        return getInferredSubObjectProperties(ontology, property, type, false);
+    }
+
+    /**
+     * Get inferred sub data properties for a property
+     */
+    public Set<OWLDataPropertyExpression> getInferredSubDataProperties(OWLOntology ontology, OWLDataProperty property, ReasonerType type, boolean direct) {
+        OWLReasoner reasoner = getReasoner(ontology, type);
+        try {
+            NodeSet<OWLDataPropertyExpression> subProps = reasoner.getSubDataProperties(property, direct);
+            return subProps.getFlattened();
+        } catch (Exception e) {
+            log.error("Error getting inferred sub data properties", e);
+            return Collections.emptySet();
+        }
+    }
+
+    public Set<OWLDataPropertyExpression> getInferredSubDataProperties(OWLOntology ontology, OWLDataProperty property, ReasonerType type) {
+        return getInferredSubDataProperties(ontology, property, type, false);
     }
 
     /**

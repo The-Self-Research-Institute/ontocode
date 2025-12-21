@@ -11,6 +11,18 @@ interface EntityHierarchyProps {
   expandedNodes: string[];
   searchQuery: string;
   onSearchQueryChange: (query: string) => void;
+  searchOptions?: {
+    useRegex: boolean;
+    searchAnnotations: boolean;
+    hideDeprecated: boolean;
+    hideBuiltins: boolean;
+  };
+  onSearchOptionsChange?: (next: {
+    useRegex: boolean;
+    searchAnnotations: boolean;
+    hideDeprecated: boolean;
+    hideBuiltins: boolean;
+  }) => void;
   onSelectItem: (item: SelectableItem) => void;
   onToggleNode: (nodeId: string) => void;
   onAddItem: (type: 'subclass' | 'sibling' | 'individual') => void;
@@ -19,6 +31,10 @@ interface EntityHierarchyProps {
   onMoveClass?: (classId: string, newParentId: string) => void;
   onOpenPreferences?: () => void;
   onRenameItem?: (itemId: string, newLabel: string) => void;
+  onQuickSetParent?: (item: SelectableItem) => void;
+  onQuickAddNote?: (item: SelectableItem) => void;
+  viewMode?: 'asserted' | 'inferred';
+  onViewModeChange?: (mode: 'asserted' | 'inferred') => void;
   hideToolbarActions?: boolean; // Hide add/delete buttons
   selectedProperties?: string[]; // For multi-select mode (HasKey dialog)
   multiSelectMode?: boolean; // Enable checkbox multi-select
@@ -31,6 +47,8 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
   expandedNodes,
   searchQuery,
   onSearchQueryChange,
+  searchOptions,
+  onSearchOptionsChange,
   onSelectItem,
   onToggleNode,
   onAddItem,
@@ -39,12 +57,15 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
   onMoveClass,
   onOpenPreferences,
   onRenameItem,
+  onQuickSetParent,
+  onQuickAddNote,
+  viewMode = 'asserted',
+  onViewModeChange,
   hideToolbarActions = false,
   selectedProperties = [],
   multiSelectMode = false,
 }) => {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: SelectableItem } | null>(null);
-  const [viewMode, setViewMode] = useState<'asserted' | 'inferred'>('asserted');
   const [draggedItem, setDraggedItem] = useState<SelectableItem | null>(null);
   const [renamingItemId, setRenamingItemId] = useState<string | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
@@ -76,15 +97,15 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
       if (e.key === 'a' || e.key === 'A') {
-        setViewMode('asserted');
+        onViewModeChange?.('asserted');
       } else if (e.key === 'i' || e.key === 'I') {
-        setViewMode('inferred');
+        onViewModeChange?.('inferred');
       }
     };
 
     document.addEventListener('keydown', handleKeyPress);
     return () => document.removeEventListener('keydown', handleKeyPress);
-  }, []);
+  }, [onViewModeChange]);
 
   // Listen for F2 rename trigger from Dashboard
   useEffect(() => {
@@ -288,6 +309,15 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
               {item.label}
             </span>
           )}
+
+          {entitiesTab === 'Classes' && (item as TreeNode).totalInstanceCount !== undefined && (
+            <span
+              className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-700 border border-gray-200"
+              title={`Instances: ${(item as TreeNode).directInstanceCount ?? 0} direct, ${(item as TreeNode).inferredInstanceCount ?? 0} inferred`}
+            >
+              {(item as TreeNode).totalInstanceCount}
+            </span>
+          )}
           
           {/* Active User Cursors */}
           {usersViewingNode.length > 0 && (
@@ -343,7 +373,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
           {(entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties' || entitiesTab === 'Datatypes') && (
             <div className="flex items-center gap-0.5 bg-gray-100 rounded px-1 py-0.5">
               <button
-                onClick={() => setViewMode('asserted')}
+                onClick={() => onViewModeChange?.('asserted')}
                 className={`px-2 py-0.5 text-[10px] rounded transition-colors whitespace-nowrap ${
                   viewMode === 'asserted' 
                     ? 'bg-purple-600 text-white font-semibold' 
@@ -354,7 +384,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
                 Asserted
               </button>
               <button
-                onClick={() => setViewMode('inferred')}
+                onClick={() => onViewModeChange?.('inferred')}
                 className={`px-2 py-0.5 text-[10px] rounded transition-colors whitespace-nowrap ${
                   viewMode === 'inferred' 
                     ? 'bg-yellow-500 text-white font-semibold' 
@@ -458,10 +488,10 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
                       <PlusCircle size={14} />
                  </button>
               )}
-             <button
+              <button
                 title="Delete selected entity"
                 aria-label="Delete selected entity"
-                disabled={!selectedItem || viewMode === 'inferred'}
+                disabled={!selectedItem || ((entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties' || entitiesTab === 'Datatypes') && viewMode === 'inferred')}
                 onClick={() => onDeleteItem()}
                 className="p-0.5 rounded text-gray-600 hover:text-red-600 disabled:text-gray-400 disabled:opacity-80"
              >
@@ -494,6 +524,47 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
                     '--tw-ring-color': 'var(--color-primary)'
                   } as React.CSSProperties} />
           </div>
+
+          {onSearchOptionsChange && searchOptions && (
+            <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-gray-600">
+              <label className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={searchOptions.useRegex}
+                  onChange={(e) => onSearchOptionsChange({ ...searchOptions, useRegex: e.target.checked })}
+                  className="w-3 h-3"
+                />
+                Regex
+              </label>
+              <label className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={searchOptions.searchAnnotations}
+                  onChange={(e) => onSearchOptionsChange({ ...searchOptions, searchAnnotations: e.target.checked })}
+                  className="w-3 h-3"
+                />
+                Annotations
+              </label>
+              <label className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={searchOptions.hideDeprecated}
+                  onChange={(e) => onSearchOptionsChange({ ...searchOptions, hideDeprecated: e.target.checked })}
+                  className="w-3 h-3"
+                />
+                Hide deprecated
+              </label>
+              <label className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={searchOptions.hideBuiltins}
+                  onChange={(e) => onSearchOptionsChange({ ...searchOptions, hideBuiltins: e.target.checked })}
+                  className="w-3 h-3"
+                />
+                Hide built-ins
+              </label>
+            </div>
+          )}
           
           {/* Tips banner */}
           {!hideToolbarActions && entitiesTab === 'Classes' && viewMode === 'asserted' && (
@@ -523,7 +594,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
       </div>
 
       {/* Context Menu */}
-      {contextMenu && entitiesTab === 'Classes' && (
+      {contextMenu && (entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties') && (
         <div
           ref={contextMenuRef}
           className="fixed bg-white border border-gray-300 rounded shadow-lg py-1 z-50"
@@ -540,19 +611,43 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
             <Edit3 size={14} />
             Rename
           </button>
-          <button
-            className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
-            onClick={() => {
-              onSelectItem(contextMenu.item);
-              if (onMakeSiblingsDisjoint) {
+          {onQuickSetParent && (
+            <button
+              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
+              onClick={() => {
+                onQuickSetParent(contextMenu.item);
+                setContextMenu(null);
+              }}
+            >
+              <GitBranch size={14} />
+              Set parent
+            </button>
+          )}
+          {onQuickAddNote && (
+            <button
+              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
+              onClick={() => {
+                onQuickAddNote(contextMenu.item);
+                setContextMenu(null);
+              }}
+            >
+              <Edit3 size={14} />
+              Quick note
+            </button>
+          )}
+          {entitiesTab === 'Classes' && onMakeSiblingsDisjoint && (
+            <button
+              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
+              onClick={() => {
+                onSelectItem(contextMenu.item);
                 onMakeSiblingsDisjoint();
-              }
-              setContextMenu(null);
-            }}
-          >
-            <Binary size={14} />
-            Make Siblings Disjoint
-          </button>
+                setContextMenu(null);
+              }}
+            >
+              <Binary size={14} />
+              Make Siblings Disjoint
+            </button>
+          )}
         </div>
       )}
     </aside>

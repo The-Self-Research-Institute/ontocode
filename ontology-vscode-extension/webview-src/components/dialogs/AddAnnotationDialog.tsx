@@ -45,6 +45,14 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
       setSelectedProperty(initialProperty || 'http://www.w3.org/2000/01/rdf-schema#label');
       setValue(initialValue);
       setLang(initialLang);
+      setDatatype(initialDatatype || 'xsd:string');
+    } else if (!isOpen) {
+      // Reset on close
+      setSelectedProperty('');
+      setValue('');
+      setDatatype('xsd:string');
+      setSearchQuery('');
+      setLang(initialLang);
       setDatatype(initialDatatype);
       setActiveTab('Literal');
     }

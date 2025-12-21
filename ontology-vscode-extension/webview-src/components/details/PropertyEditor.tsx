@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Plus, Trash2, CheckSquare, Square, Edit3, Search } from 'lucide-react';
 import { Panel, AnnotationsDisplay, MultiSelectSection } from './common';
 import { ManchesterSyntaxEditor, PropertyChainDialog } from '../dialogs';
@@ -6,153 +6,126 @@ import apiClient from '../../services/apiClient';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import type { Property } from '../../types';
 
-interface UsageItem {
+type PropertyUsageItem = {
   type: string;
-  subject: string;
+  subject?: string;
   subjectLabel?: string;
-  predicate?: string;
-  object?: string;
-  context?: string;
-}
+  target?: string;
+  targetLabel?: string;
+  value?: string;
+};
 
-const PropertyUsageTab: React.FC<{ 
-  propertyIri: string; 
-  projectId: string;
-  label: string;
-  propertyType: string;
-}> = ({ propertyIri, projectId, label, propertyType }) => {
-  const [loading, setLoading] = useState(true);
-  const [usages, setUsages] = useState<UsageItem[]>([]);
-  const [filter, setFilter] = useState('');
-  const [showTypes, setShowTypes] = useState({
-    domain: true,
-    range: true,
-    subproperty: true,
-    superproperty: true,
-    assertion: true,
-    restriction: true,
-    annotation: true
-  });
+const PropertyUsageTab: React.FC<{ projectId: string; propertyIri: string; label: string }> = ({
+  projectId,
+  propertyIri,
+  label
+}) => {
+  const [usageItems, setUsageItems] = useState<PropertyUsageItem[]>([]);
+  const [query, setQuery] = useState('');
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    loadUsages();
-  }, [propertyIri, projectId]);
-
-  const loadUsages = async () => {
-    setLoading(true);
-    try {
-      let endpoint = `/api/ontology/properties/usage/${projectId}?propertyIri=${encodeURIComponent(propertyIri)}`;
-      if (propertyType === 'AnnotationProperty') {
-        endpoint = `/api/ontology/annotation-properties/${projectId}/usage?propertyIri=${encodeURIComponent(propertyIri)}`;
+    const loadUsage = async () => {
+      if (!projectId || !propertyIri) return;
+      setLoading(true);
+      try {
+        const res = await apiClient.get<any>(`/api/ontology/properties/usage/${projectId}`, { propertyIri });
+        const payload = res?.data || res;
+        const items = payload?.data || payload || [];
+        setUsageItems(Array.isArray(items) ? items : []);
+      } catch (error) {
+        console.error('[PropertyUsageTab] Failed to load usage:', error);
+        setUsageItems([]);
+      } finally {
+        setLoading(false);
       }
-      
-      const response = await apiClient.get<any>(endpoint);
-      const usageData = response?.data?.data || response?.data || response || [];
-      setUsages(Array.isArray(usageData) ? usageData : []);
-    } catch (error) {
-      console.error('Failed to load usage data:', error);
-      setUsages([]);
-    } finally {
-      setLoading(false);
-    }
-  };
+    };
+    loadUsage();
+  }, [projectId, propertyIri]);
 
-  const filteredUsages = usages.filter(u => 
-    (u.subjectLabel || u.subject || '').toLowerCase().includes(filter.toLowerCase()) &&
-    showTypes[u.type as keyof typeof showTypes] !== false
-  );
+  const lowerQuery = query.trim().toLowerCase();
+  const filtered = lowerQuery
+    ? usageItems.filter(item => {
+        const haystack = [
+          item.type,
+          item.subjectLabel,
+          item.subject,
+          item.targetLabel,
+          item.target,
+          item.value
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return haystack.includes(lowerQuery);
+      })
+    : usageItems;
 
-  const usagesByType = {
-    domain: filteredUsages.filter(u => u.type === 'domain'),
-    range: filteredUsages.filter(u => u.type === 'range'),
-    subproperty: filteredUsages.filter(u => u.type === 'subproperty'),
-    superproperty: filteredUsages.filter(u => u.type === 'superproperty'),
-    assertion: filteredUsages.filter(u => u.type === 'assertion'),
-    restriction: filteredUsages.filter(u => u.type === 'restriction'),
-    annotation: filteredUsages.filter(u => u.type === 'annotation')
-  };
+  const grouped = filtered.reduce<Record<string, PropertyUsageItem[]>>((acc, item) => {
+    acc[item.type] = acc[item.type] || [];
+    acc[item.type].push(item);
+    return acc;
+  }, {});
 
-  if (loading) {
-    return <div className="p-4 text-sm text-gray-500">Loading usage information...</div>;
-  }
+  const sections: Array<{ key: string; label: string }> = [
+    { key: 'assertion_object', label: 'Object assertions' },
+    { key: 'assertion_data', label: 'Data assertions' },
+    { key: 'domain', label: 'Domain' },
+    { key: 'range', label: 'Range' },
+    { key: 'superProperty', label: 'Super properties' },
+    { key: 'subProperty', label: 'Sub properties' },
+    { key: 'inverse', label: 'Inverse properties' },
+    { key: 'equivalent', label: 'Equivalent properties' },
+    { key: 'disjoint', label: 'Disjoint properties' },
+    { key: 'propertyChain', label: 'Property chains' }
+  ];
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="p-2 border-b border-gray-200 space-y-2">
-        <div className="text-xs text-gray-600">
-          Found <span className="font-bold text-purple-600">{usages.length}</span> uses of <span className="font-semibold">{label}</span>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          <div className="flex-1 relative">
-            <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Filter usages..."
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              className="w-full pl-7 pr-2 py-1 text-xs rounded focus:outline-none theme-input"
-            />
-          </div>
-        </div>
-
-        <div className="flex flex-wrap gap-2 text-xs">
-          {propertyType !== 'AnnotationProperty' && (
-            <>
-              <label className="flex items-center gap-1 cursor-pointer">
-                <input type="checkbox" checked={showTypes.domain} onChange={(e) => setShowTypes({...showTypes, domain: e.target.checked})} className="w-3 h-3" />
-                <span>domains ({usagesByType.domain.length})</span>
-              </label>
-              <label className="flex items-center gap-1 cursor-pointer">
-                <input type="checkbox" checked={showTypes.range} onChange={(e) => setShowTypes({...showTypes, range: e.target.checked})} className="w-3 h-3" />
-                <span>ranges ({usagesByType.range.length})</span>
-              </label>
-              <label className="flex items-center gap-1 cursor-pointer">
-                <input type="checkbox" checked={showTypes.subproperty} onChange={(e) => setShowTypes({...showTypes, subproperty: e.target.checked})} className="w-3 h-3" />
-                <span>subproperties ({usagesByType.subproperty.length})</span>
-              </label>
-              <label className="flex items-center gap-1 cursor-pointer">
-                <input type="checkbox" checked={showTypes.superproperty} onChange={(e) => setShowTypes({...showTypes, superproperty: e.target.checked})} className="w-3 h-3" />
-                <span>superproperties ({usagesByType.superproperty.length})</span>
-              </label>
-              <label className="flex items-center gap-1 cursor-pointer">
-                <input type="checkbox" checked={showTypes.assertion} onChange={(e) => setShowTypes({...showTypes, assertion: e.target.checked})} className="w-3 h-3" />
-                <span>assertions ({usagesByType.assertion.length})</span>
-              </label>
-              <label className="flex items-center gap-1 cursor-pointer">
-                <input type="checkbox" checked={showTypes.restriction} onChange={(e) => setShowTypes({...showTypes, restriction: e.target.checked})} className="w-3 h-3" />
-                <span>restrictions ({usagesByType.restriction.length})</span>
-              </label>
-            </>
-          )}
-          {propertyType === 'AnnotationProperty' && (
-            <label className="flex items-center gap-1 cursor-pointer">
-              <input type="checkbox" checked={showTypes.annotation} onChange={(e) => setShowTypes({...showTypes, annotation: e.target.checked})} className="w-3 h-3" />
-              <span>annotations ({usagesByType.annotation.length})</span>
-            </label>
-          )}
-        </div>
+    <div className="bg-white border border-gray-200 rounded-sm">
+      <div className="px-3 py-2 border-b border-gray-200 flex items-center justify-between">
+        <div className="text-xs font-semibold text-gray-700">Usage: {label}</div>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Filter usage..."
+          className="px-2 py-1 text-[11px] border rounded"
+        />
       </div>
-
-      <div className="flex-1 overflow-y-auto p-2">
-        {filteredUsages.length === 0 ? (
-          <div className="text-xs text-gray-400 italic text-center py-4">No usages found</div>
-        ) : (
-          <div className="space-y-1">
-            {filteredUsages.map((u, idx) => (
-              <div key={idx} className="p-2 bg-gray-50 rounded border border-gray-200 hover:bg-gray-100">
-                <div className="flex items-start gap-2">
-                  <span className="text-[10px] font-semibold text-orange-600 uppercase min-w-[80px] mt-0.5">{u.type}</span>
-                  <div className="flex-1 text-xs">
-                    <div className="font-mono text-purple-700 break-all">{u.subjectLabel || u.subject}</div>
-                    {u.context && <div className="text-gray-500 mt-1 italic">{u.context}</div>}
-                  </div>
+      {loading ? (
+        <div className="p-4 text-xs text-gray-500 italic">Loading usage…</div>
+      ) : sections.every(section => !grouped[section.key]?.length) ? (
+        <div className="p-4 text-xs text-gray-500 italic">No usage found.</div>
+      ) : (
+        <div className="p-3 space-y-3 text-xs">
+          {sections.map(section => {
+            const items = grouped[section.key];
+            if (!items?.length) return null;
+            return (
+              <div key={section.key} className="space-y-1">
+                <div className="font-semibold text-gray-700">
+                  {section.label} ({items.length})
+                </div>
+                <div className="space-y-1">
+                  {items.map((item, idx) => (
+                    <div key={`${section.key}-${idx}`} className="text-[11px] text-gray-600">
+                      {item.subjectLabel || item.subject ? (
+                        <span className="font-semibold">{item.subjectLabel || item.subject}</span>
+                      ) : null}
+                      {item.targetLabel || item.target ? (
+                        <span>
+                          {item.subjectLabel || item.subject ? ' → ' : ''}
+                          {item.targetLabel || item.target}
+                        </span>
+                      ) : null}
+                      {item.value ? <span className="font-mono">{item.value}</span> : null}
+                    </div>
+                  ))}
                 </div>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };
@@ -189,7 +162,7 @@ const PropertyEditor: React.FC<{
     onAddEquivalentClick,
     objectProperties = []
 }) => {
-    const [activeTab, setActiveTab] = useState<'annotations' | 'usage' | 'description'>('annotations');
+    const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('annotations');
     const [isEditorOpen, setIsEditorOpen] = useState(false);
     const [editorTitle, setEditorTitle] = useState("");
     const [editorAction, setEditorAction] = useState<((val: string) => void) | null>(null);
@@ -402,6 +375,17 @@ const PropertyEditor: React.FC<{
                 >
                     Description
                 </button>
+                <button 
+                    onClick={() => setActiveTab('usage')}
+                    className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors ${
+                        activeTab === 'usage' 
+                            ? `border-${themeColor}-600 text-${themeColor}-700 bg-white` 
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                    }`}
+                    style={activeTab === 'usage' ? { borderColor: isObjectProperty ? '#2563eb' : isDataProperty ? '#16a34a' : '#ea580c' } : {}}
+                >
+                    Usage
+                </button>
             </div>
 
             {/* Main Content */}
@@ -423,23 +407,12 @@ const PropertyEditor: React.FC<{
                         </div>
                     </div>
                 )}
-
                 {activeTab === 'usage' && (
-                    <div className="flex flex-col h-full min-h-0">
-                        {/* Usage Panel Header - Protégé style */}
-                        <div className={`${headerGradient} text-white px-3 py-2 flex items-center justify-between rounded-t-sm flex-shrink-0`}>
-                            <span className="text-sm font-semibold">Usage: {item.label}</span>
-                        </div>
-                        {/* Usage Content */}
-                        <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm flex-1 min-h-0">
-                            <PropertyUsageTab 
-                                propertyIri={item.id} 
-                                projectId={projectId} 
-                                label={item.label} 
-                                propertyType={item.type}
-                            />
-                        </div>
-                    </div>
+                    <PropertyUsageTab
+                        projectId={projectId}
+                        propertyIri={item.id}
+                        label={item.label}
+                    />
                 )}
 
                 {activeTab === 'description' && (
