@@ -9,6 +9,9 @@ export interface TreeNode {
   parent?: string;
   children?: TreeNode[] | null;
   hasChildren?: boolean;
+  directInstanceCount?: number;
+  inferredInstanceCount?: number;
+  totalInstanceCount?: number;
   annotations?: Record<string, string>;
   equivalentClassesAxioms?: Axiom[];
   subClassOfAxioms?: Axiom[];
@@ -44,6 +47,7 @@ export interface Individual {
   propertyAssertions?: PropertyAssertion[];
   sameIndividualAs?: string[];
   differentIndividualFrom?: string[];
+  isInferred?: boolean;
 }
 
 export type AnnotationProperty = {
@@ -105,6 +109,27 @@ export interface OntologyMetadata {
   annotationPropertyCount?: number;
   individualCount?: number;
   axiomCount?: number;
+  logicalAxiomCount?: number;
+  declarationAxiomCount?: number;
+  gciCount?: number;
+  hiddenGciCount?: number;
+  subClassOfAxiomCount?: number;
+  equivalentClassesAxiomCount?: number;
+  disjointClassesAxiomCount?: number;
+  subObjectPropertyOfAxiomCount?: number;
+  inverseObjectPropertiesAxiomCount?: number;
+  objectPropertyDomainAxiomCount?: number;
+  objectPropertyRangeAxiomCount?: number;
+  dataPropertyDomainAxiomCount?: number;
+  dataPropertyRangeAxiomCount?: number;
+  classAssertionAxiomCount?: number;
+  objectPropertyAssertionCount?: number;
+  dataPropertyAssertionCount?: number;
+  annotationAssertionCount?: number;
+  datatypeCount?: number;
+  importsCount?: number;
+  prefixCount?: number;
+  tripleCount?: number;
 }
 
 export interface OntologyPrefix {

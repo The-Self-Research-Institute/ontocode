@@ -3,7 +3,7 @@ import { Plus, Trash2, Search } from 'lucide-react';
 import { Panel, AnnotationsDisplay } from './common';
 import { DatatypeDefinitionDialog } from '../dialogs';
 import apiClient from '../../services/apiClient';
-import ontologyMutationService from '../../services/ontologyMutationService';
+import datatypeDefinitionService, { DatatypeDefinition } from '../../services/datatypeDefinitionService';
 import type { Datatype } from '../../types';
 
 interface UsageItem {
@@ -92,12 +92,6 @@ const UsageTab: React.FC<{
   );
 };
 
-interface DatatypeDefinition {
-  id: string;
-  expression: string;
-  type: 'builtin' | 'restriction' | 'enumeration' | 'union' | 'intersection';
-}
-
 const DescriptionTab: React.FC<{
   item: Datatype;
   projectId: string;
@@ -105,6 +99,35 @@ const DescriptionTab: React.FC<{
 }> = ({ item, projectId, onUpdate }) => {
   const [definitions, setDefinitions] = useState<DatatypeDefinition[]>([]);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [isLoadingDefinitions, setIsLoadingDefinitions] = useState(false);
+
+  useEffect(() => {
+    let isActive = true;
+    const loadDefinitions = async () => {
+      if (!projectId || !item?.id) return;
+      setIsLoadingDefinitions(true);
+      try {
+        const data = await datatypeDefinitionService.listDefinitions(projectId, item.id);
+        if (isActive) {
+          setDefinitions(data || []);
+        }
+      } catch (error) {
+        console.error('Failed to load datatype definitions:', error);
+        if (isActive) {
+          setDefinitions([]);
+        }
+      } finally {
+        if (isActive) {
+          setIsLoadingDefinitions(false);
+        }
+      }
+    };
+
+    loadDefinitions();
+    return () => {
+      isActive = false;
+    };
+  }, [item?.id, projectId]);
 
   const handleAddDefinition = () => {
     setIsAddDialogOpen(true);
@@ -112,18 +135,19 @@ const DescriptionTab: React.FC<{
 
   const handleConfirmDefinition = async (expression: string, type: 'builtin' | 'expression') => {
     try {
-      // TODO: Call backend API to add datatype definition
       const defType = type === 'builtin' ? 'builtin' :
-                     expression.includes('[') ? 'restriction' :
-                     expression.includes('{') ? 'enumeration' :
-                     expression.includes('or') ? 'union' : 'intersection';
+        expression.includes('[') ? 'restriction' :
+          expression.includes('{') ? 'enumeration' :
+            expression.includes('or') ? 'union' : 'intersection';
 
-      const newDef: DatatypeDefinition = {
-        id: Date.now().toString(),
+      const newDef = await datatypeDefinitionService.createDefinition(
+        projectId,
+        item.id,
         expression,
-        type: defType as any
-      };
-      setDefinitions(prev => [...prev, newDef]);
+        defType
+      );
+
+      setDefinitions(prev => [newDef, ...prev]);
     } catch (error) {
       console.error('Failed to add datatype definition:', error);
     }
@@ -131,7 +155,7 @@ const DescriptionTab: React.FC<{
 
   const handleDeleteDefinition = async (id: string) => {
     try {
-      // TODO: Call backend API to delete datatype definition
+      await datatypeDefinitionService.deleteDefinition(projectId, id);
       setDefinitions(prev => prev.filter(d => d.id !== id));
     } catch (error) {
       console.error('Failed to delete datatype definition:', error);
@@ -156,7 +180,11 @@ const DescriptionTab: React.FC<{
         }
       >
         <div className="space-y-2">
-          {definitions.length === 0 ? (
+          {isLoadingDefinitions ? (
+            <div className="text-xs text-gray-500 italic p-2 bg-gray-50 rounded border border-gray-200">
+              Loading datatype definitions...
+            </div>
+          ) : definitions.length === 0 ? (
             <div className="text-xs text-gray-500 italic p-2 bg-gray-50 rounded border border-gray-200">
               No datatype definitions. Click + to add a restriction, enumeration, or range.
             </div>
@@ -165,7 +193,7 @@ const DescriptionTab: React.FC<{
               <div key={def.id} className="flex items-center justify-between p-2 bg-white border border-gray-200 rounded text-xs hover:bg-gray-50">
                 <div className="flex-1">
                   <div className="font-mono text-gray-800">{def.expression}</div>
-                  <div className="text-[10px] text-gray-500 mt-1">{def.type}</div>
+                  <div className="text-[10px] text-gray-500 mt-1">{def.definitionType}</div>
                 </div>
                 <button
                   onClick={() => handleDeleteDefinition(def.id)}

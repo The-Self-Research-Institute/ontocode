@@ -333,6 +333,193 @@ public class OntologyQueryService {
         return usages;
     }
 
+    public List<Map<String, String>> propertyUsage(String projectId, String propertyIri) {
+        List<Map<String, String>> usages = new ArrayList<>();
+
+        String assertionQuery = PREFIXES + """
+            SELECT ?subject ?subjectLabel ?obj ?objLabel WHERE {
+              ?subject <%s> ?obj .
+              OPTIONAL { ?subject rdfs:label ?subjectLabel }
+              OPTIONAL { ?obj rdfs:label ?objLabel }
+            }
+            ORDER BY STR(?subject)
+            LIMIT 2000
+            """.formatted(propertyIri);
+        TupleQueryResult assertionRs = datasetService.execSelect(projectId, assertionQuery);
+        while (assertionRs.hasNext()) {
+            BindingSet sol = assertionRs.next();
+            String subjectIri = resource(sol, "subject");
+            if (subjectIri == null) {
+                continue;
+            }
+            String subjectLabel = literal(sol, "subjectLabel");
+            Value objValue = sol.getValue("obj");
+            if (objValue != null && objValue.isIRI()) {
+                String targetIri = objValue.stringValue();
+                String targetLabel = sol.hasBinding("objLabel") ? literal(sol, "objLabel") : localName(targetIri);
+                usages.add(Map.of(
+                        "type", "assertion_object",
+                        "subject", subjectIri,
+                        "subjectLabel", subjectLabel.isBlank() ? localName(subjectIri) : subjectLabel,
+                        "target", targetIri,
+                        "targetLabel", targetLabel
+                ));
+            } else if (objValue != null) {
+                usages.add(Map.of(
+                        "type", "assertion_data",
+                        "subject", subjectIri,
+                        "subjectLabel", subjectLabel.isBlank() ? localName(subjectIri) : subjectLabel,
+                        "value", objValue.stringValue()
+                ));
+            }
+        }
+
+        String domainQuery = PREFIXES + """
+            SELECT ?domain ?label WHERE {
+              <%s> rdfs:domain ?domain .
+              OPTIONAL { ?domain rdfs:label ?label }
+            }
+            """.formatted(propertyIri);
+        TupleQueryResult domainRs = datasetService.execSelect(projectId, domainQuery);
+        while (domainRs.hasNext()) {
+            BindingSet sol = domainRs.next();
+            String domainIri = resource(sol, "domain");
+            if (domainIri == null) continue;
+            usages.add(Map.of(
+                    "type", "domain",
+                    "target", domainIri,
+                    "targetLabel", sol.hasBinding("label") ? literal(sol, "label") : localName(domainIri)
+            ));
+        }
+
+        String rangeQuery = PREFIXES + """
+            SELECT ?range ?label WHERE {
+              <%s> rdfs:range ?range .
+              OPTIONAL { ?range rdfs:label ?label }
+            }
+            """.formatted(propertyIri);
+        TupleQueryResult rangeRs = datasetService.execSelect(projectId, rangeQuery);
+        while (rangeRs.hasNext()) {
+            BindingSet sol = rangeRs.next();
+            String rangeIri = resource(sol, "range");
+            if (rangeIri == null) continue;
+            usages.add(Map.of(
+                    "type", "range",
+                    "target", rangeIri,
+                    "targetLabel", sol.hasBinding("label") ? literal(sol, "label") : localName(rangeIri)
+            ));
+        }
+
+        String superQuery = PREFIXES + """
+            SELECT ?super ?label WHERE {
+              <%s> rdfs:subPropertyOf ?super .
+              OPTIONAL { ?super rdfs:label ?label }
+            }
+            """.formatted(propertyIri);
+        TupleQueryResult superRs = datasetService.execSelect(projectId, superQuery);
+        while (superRs.hasNext()) {
+            BindingSet sol = superRs.next();
+            String superIri = resource(sol, "super");
+            if (superIri == null) continue;
+            usages.add(Map.of(
+                    "type", "superProperty",
+                    "target", superIri,
+                    "targetLabel", sol.hasBinding("label") ? literal(sol, "label") : localName(superIri)
+            ));
+        }
+
+        String subQuery = PREFIXES + """
+            SELECT ?sub ?label WHERE {
+              ?sub rdfs:subPropertyOf <%s> .
+              OPTIONAL { ?sub rdfs:label ?label }
+            }
+            """.formatted(propertyIri);
+        TupleQueryResult subRs = datasetService.execSelect(projectId, subQuery);
+        while (subRs.hasNext()) {
+            BindingSet sol = subRs.next();
+            String subIri = resource(sol, "sub");
+            if (subIri == null) continue;
+            usages.add(Map.of(
+                    "type", "subProperty",
+                    "target", subIri,
+                    "targetLabel", sol.hasBinding("label") ? literal(sol, "label") : localName(subIri)
+            ));
+        }
+
+        String inverseQuery = PREFIXES + """
+            SELECT ?inv ?label WHERE {
+              <%s> owl:inverseOf ?inv .
+              OPTIONAL { ?inv rdfs:label ?label }
+            }
+            """.formatted(propertyIri);
+        TupleQueryResult inverseRs = datasetService.execSelect(projectId, inverseQuery);
+        while (inverseRs.hasNext()) {
+            BindingSet sol = inverseRs.next();
+            String invIri = resource(sol, "inv");
+            if (invIri == null) continue;
+            usages.add(Map.of(
+                    "type", "inverse",
+                    "target", invIri,
+                    "targetLabel", sol.hasBinding("label") ? literal(sol, "label") : localName(invIri)
+            ));
+        }
+
+        String equivQuery = PREFIXES + """
+            SELECT ?equiv ?label WHERE {
+              <%s> owl:equivalentProperty ?equiv .
+              OPTIONAL { ?equiv rdfs:label ?label }
+            }
+            """.formatted(propertyIri);
+        TupleQueryResult equivRs = datasetService.execSelect(projectId, equivQuery);
+        while (equivRs.hasNext()) {
+            BindingSet sol = equivRs.next();
+            String equivIri = resource(sol, "equiv");
+            if (equivIri == null) continue;
+            usages.add(Map.of(
+                    "type", "equivalent",
+                    "target", equivIri,
+                    "targetLabel", sol.hasBinding("label") ? literal(sol, "label") : localName(equivIri)
+            ));
+        }
+
+        String disjointQuery = PREFIXES + """
+            SELECT ?disjoint ?label WHERE {
+              <%s> owl:propertyDisjointWith ?disjoint .
+              OPTIONAL { ?disjoint rdfs:label ?label }
+            }
+            """.formatted(propertyIri);
+        TupleQueryResult disjointRs = datasetService.execSelect(projectId, disjointQuery);
+        while (disjointRs.hasNext()) {
+            BindingSet sol = disjointRs.next();
+            String disjointIri = resource(sol, "disjoint");
+            if (disjointIri == null) continue;
+            usages.add(Map.of(
+                    "type", "disjoint",
+                    "target", disjointIri,
+                    "targetLabel", sol.hasBinding("label") ? literal(sol, "label") : localName(disjointIri)
+            ));
+        }
+
+        String chainQuery = PREFIXES + """
+            SELECT ?chain WHERE {
+              <%s> owl:propertyChainAxiom ?chain .
+            }
+            """.formatted(propertyIri);
+        TupleQueryResult chainRs = datasetService.execSelect(projectId, chainQuery);
+        while (chainRs.hasNext()) {
+            BindingSet sol = chainRs.next();
+            Value chainValue = sol.getValue("chain");
+            if (chainValue != null) {
+                usages.add(Map.of(
+                        "type", "propertyChain",
+                        "value", chainValue.stringValue()
+                ));
+            }
+        }
+
+        return usages;
+    }
+
     public List<DatatypeDto> datatypes(String projectId, int limit, int offset) {
         // First get datatypes declared in the ontology
         String query = PREFIXES + """
@@ -452,6 +639,20 @@ public class OntologyQueryService {
         return "";
     }
 
+    private int literalToInt(BindingSet sol, String var) {
+        if (sol.hasBinding(var)) {
+            Value node = sol.getValue(var);
+            if (node != null && node.isLiteral()) {
+                try {
+                    return Integer.parseInt(node.stringValue());
+                } catch (NumberFormatException ignored) {
+                    return 0;
+                }
+            }
+        }
+        return 0;
+    }
+
     private List<String> splitPipe(String value) {
         if (value == null || value.isBlank()) {
             return List.of();
@@ -503,6 +704,55 @@ public class OntologyQueryService {
 
     private String normalize(String value) {
         return value == null ? "" : value.toLowerCase(Locale.ROOT);
+    }
+
+    public List<String> ontologyImports(String projectId) {
+        String query = PREFIXES + """
+            SELECT DISTINCT ?import WHERE {
+              ?ont a owl:Ontology .
+              ?ont owl:imports ?import .
+            }
+            ORDER BY ?import
+            """;
+        TupleQueryResult rs = datasetService.execSelect(projectId, query);
+        List<String> imports = new ArrayList<>();
+        while (rs.hasNext()) {
+            BindingSet sol = rs.next();
+            Value importVal = sol.getValue("import");
+            if (importVal != null) {
+                imports.add(importVal.stringValue());
+            }
+        }
+        return imports;
+    }
+
+    public List<Map<String, String>> generalClassAxioms(String projectId, int limit) {
+        String query = PREFIXES + """
+            SELECT DISTINCT ?sub ?super ?label WHERE {
+              ?sub rdfs:subClassOf ?super .
+              FILTER(isBlank(?sub))
+              OPTIONAL { ?super rdfs:label ?label }
+            }
+            """;
+        TupleQueryResult rs = datasetService.execSelect(projectId, query);
+        List<Map<String, String>> axioms = new ArrayList<>();
+        int count = 0;
+        while (rs.hasNext() && count < limit) {
+            BindingSet sol = rs.next();
+            Value subVal = sol.getValue("sub");
+            String subExpr = subVal != null ? subVal.stringValue() : "Anonymous class expression";
+            String superIri = resource(sol, "super");
+            String superLabel = sol.hasBinding("label") ? literal(sol, "label") : localName(superIri);
+
+            Map<String, String> axiom = new LinkedHashMap<>();
+            axiom.put("subExpression", subExpr);
+            axiom.put("superClassIri", superIri);
+            axiom.put("superClassLabel", superLabel);
+            axiom.put("definition", "Anonymous class expression <= " + (superLabel.isBlank() ? superIri : superLabel));
+            axioms.add(axiom);
+            count++;
+        }
+        return axioms;
     }
 
     public Map<String, Object> debugInfo(String projectId) {
@@ -1803,6 +2053,70 @@ public class OntologyQueryService {
         }
         
         return instances;
+    }
+
+    /**
+     * Get per-class instance counts (asserted and inferred).
+     */
+    public Map<String, Map<String, Integer>> getClassInstanceCounts(String projectId) {
+        Map<String, Map<String, Integer>> counts = new LinkedHashMap<>();
+
+        String assertedQuery = PREFIXES + """
+            SELECT ?class (COUNT(DISTINCT ?individual) AS ?count) WHERE {
+              {
+                GRAPH <http://www.ontotext.com/explicit> {
+                  ?individual a ?class .
+                }
+              } UNION {
+                ?individual a ?class .
+              }
+              FILTER(isIRI(?class))
+              FILTER(?class != owl:NamedIndividual)
+            }
+            GROUP BY ?class
+            """;
+        TupleQueryResult assertedRs = datasetService.execSelect(projectId, assertedQuery);
+        while (assertedRs.hasNext()) {
+            BindingSet sol = assertedRs.next();
+            String classIri = resource(sol, "class");
+            if (classIri != null) {
+                counts.computeIfAbsent(classIri, key -> new LinkedHashMap<>())
+                        .put("direct", literalToInt(sol, "count"));
+            }
+        }
+
+        String inferredQuery = PREFIXES + """
+            SELECT ?class (COUNT(DISTINCT ?individual) AS ?count) WHERE {
+              GRAPH <http://www.ontotext.com/inferred> {
+                ?individual a ?class .
+              }
+              FILTER(isIRI(?class))
+              FILTER(?class != owl:NamedIndividual)
+              FILTER NOT EXISTS {
+                GRAPH <http://www.ontotext.com/explicit> {
+                  ?individual a ?class .
+                }
+              }
+            }
+            GROUP BY ?class
+            """;
+        TupleQueryResult inferredRs = datasetService.execSelect(projectId, inferredQuery);
+        while (inferredRs.hasNext()) {
+            BindingSet sol = inferredRs.next();
+            String classIri = resource(sol, "class");
+            if (classIri != null) {
+                counts.computeIfAbsent(classIri, key -> new LinkedHashMap<>())
+                        .put("inferred", literalToInt(sol, "count"));
+            }
+        }
+
+        counts.forEach((classIri, entry) -> {
+            int direct = entry.getOrDefault("direct", 0);
+            int inferred = entry.getOrDefault("inferred", 0);
+            entry.put("total", direct + inferred);
+        });
+
+        return counts;
     }
 
     /**
