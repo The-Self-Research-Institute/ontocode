@@ -11,7 +11,8 @@
  * 2. Graph View Plugin
  * 3. SWRL Editor Plugin
  * 4. Change Assistant Plugin
- * 5. WebVOWL Plugin
+ * 5. SPARQL Query Plugin
+ *    (Reasoner features ship inside the core dashboard now.)
  */
 
 const { MongoClient } = require('mongodb');
@@ -146,7 +147,7 @@ Perfect for users who need to:
     createdAt: new Date(),
     updatedAt: new Date()
   },
-  {
+   {
     pluginId: 'reasoner-plugin',
     name: 'OWL Reasoner',
     shortDescription: 'HermiT-inspired OWL reasoner for consistency checking, classification, realization, and inference',

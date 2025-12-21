@@ -68,11 +68,12 @@ public class OntologyMetadataController {
                                              @RequestBody Map<String, String> request) {
         try {
             String propertyIri = request.get("propertyIri");
+            String originalPropertyIri = request.getOrDefault("originalPropertyIri", propertyIri);
             String oldValue = request.get("oldValue");
             String newValue = request.get("newValue");
             String language = request.get("language");
             String datatype = request.get("datatype");
-            metadataService.updateOntologyAnnotation(projectId, propertyIri, oldValue, newValue, language, datatype);
+            metadataService.updateOntologyAnnotation(projectId, propertyIri, oldValue, newValue, language, datatype, originalPropertyIri);
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             log.error("Error updating annotation", e);
