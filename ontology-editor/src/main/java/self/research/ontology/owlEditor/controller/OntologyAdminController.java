@@ -99,6 +99,11 @@ public class OntologyAdminController {
         return ResponseEntity.ok(Map.of("success", true, "data", adminService.getPrefixes(projectId)));
     }
 
+    @GetMapping("/imports/{projectId}")
+    public ResponseEntity<?> getImports(@PathVariable String projectId) {
+        return ResponseEntity.ok(Map.of("success", true, "data", adminService.getImports(projectId)));
+    }
+
     @PutMapping("/prefixes/{projectId}")
     public ResponseEntity<?> updatePrefixes(@PathVariable String projectId,
                                             @RequestBody List<PrefixMappingRequest> prefixes) {

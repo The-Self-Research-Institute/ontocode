@@ -24,39 +24,40 @@ public class ReasonerService {
 
     private final Map<String, OWLReasoner> reasonerCache = new HashMap<>();
     
-    public enum ReasonerType {
-        HERMIT("HermiT"),
-        PELLET("Pellet"),
-        OPENLLET("Openllet"),
-        FACTPLUSPLUS("FaCT++"),
-        ELK("ELK"),
-        STRUCTURAL("Structural");
-
-        private final String displayName;
-
-        ReasonerType(String displayName) {
-            this.displayName = displayName;
-        }
-
-        public String getDisplayName() {
-            return displayName;
-        }
-    }
-
     /**
      * Create or get cached reasoner for an ontology
      */
     public OWLReasoner getReasoner(OWLOntology ontology, ReasonerType type) {
-        String cacheKey = ontology.getOntologyID().toString() + "-" + type.name();
+        // Use identity hash code to ensure we get a new reasoner if the ontology object changes
+        String cacheKey = System.identityHashCode(ontology) + "-" + type.name();
         
         if (reasonerCache.containsKey(cacheKey)) {
             OWLReasoner cached = reasonerCache.get(cacheKey);
             if (cached != null) {
+                try {
+                    cached.flush();
+                } catch (Exception e) {
+                    log.warn("Failed to flush reasoner: {}", e.getMessage());
+                }
                 return cached;
             }
         }
 
         OWLReasoner reasoner = createReasoner(ontology, type);
+        
+        // Precompute inferences for new reasoner to ensure full hierarchy is available
+        log.info("Precomputing inferences for new {} reasoner", type.getDisplayName());
+        try {
+            reasoner.precomputeInferences(
+                InferenceType.CLASS_HIERARCHY,
+                InferenceType.OBJECT_PROPERTY_HIERARCHY,
+                InferenceType.DATA_PROPERTY_HIERARCHY,
+                InferenceType.CLASS_ASSERTIONS
+            );
+        } catch (Exception e) {
+            log.warn("Failed to precompute inferences, some results might be incomplete", e);
+        }
+        
         reasonerCache.put(cacheKey, reasoner);
         return reasoner;
     }
@@ -76,7 +77,15 @@ public class ReasonerService {
                 case HERMIT:
                     // HermiT - Hypertableau-based reasoner, best for complex ontologies
                     log.info("Using HermiT (Hypertableau) reasoner");
-                    return new ReasonerFactory().createReasoner(ontology, config);
+                    // Note: HermiT 1.4.3.456 has a binary compatibility issue with OWLAPI 5.5.0
+                    // specifically regarding OWLOntologyID.getDefaultDocumentIRI()
+                    // Falling back to Openllet if HermiT fails to initialize
+                    try {
+                        return new ReasonerFactory().createReasoner(ontology, config);
+                    } catch (NoSuchMethodError e) {
+                        log.error("HermiT binary compatibility error with OWLAPI 5.5.0: {}. Falling back to Openllet.", e.getMessage());
+                        return OpenlletReasonerFactory.getInstance().createReasoner(ontology, config);
+                    }
                     
                 case PELLET:
                 case OPENLLET:
@@ -153,7 +162,11 @@ public class ReasonerService {
             log.info("Starting classification with {}", type.getDisplayName());
             long startTime = System.currentTimeMillis();
             
-            reasoner.precomputeInferences(InferenceType.CLASS_HIERARCHY);
+            reasoner.precomputeInferences(
+                InferenceType.CLASS_HIERARCHY,
+                InferenceType.OBJECT_PROPERTY_HIERARCHY,
+                InferenceType.DATA_PROPERTY_HIERARCHY
+            );
             
             long duration = System.currentTimeMillis() - startTime;
             log.info("Classification completed in {} ms", duration);
@@ -254,9 +267,13 @@ public class ReasonerService {
         OWLReasoner reasoner = getReasoner(ontology, type);
         try {
             NodeSet<OWLObjectPropertyExpression> subProps = reasoner.getSubObjectProperties(property, direct);
-            return subProps.getFlattened();
+            Set<OWLObjectPropertyExpression> result = subProps.getFlattened();
+            if (property.isOWLTopObjectProperty()) {
+                log.debug("Found {} sub-properties of owl:topObjectProperty (direct={})", result.size(), direct);
+            }
+            return result;
         } catch (Exception e) {
-            log.error("Error getting inferred sub object properties", e);
+            log.error("Error getting inferred sub object properties for {}", property.getIRI(), e);
             return Collections.emptySet();
         }
     }
@@ -272,9 +289,13 @@ public class ReasonerService {
         OWLReasoner reasoner = getReasoner(ontology, type);
         try {
             NodeSet<OWLDataProperty> subProps = reasoner.getSubDataProperties(property, direct);
-            return new HashSet<>(subProps.getFlattened());
+            Set<OWLDataPropertyExpression> result = new HashSet<>(subProps.getFlattened());
+            if (property.isOWLTopDataProperty()) {
+                log.debug("Found {} sub-properties of owl:topDataProperty (direct={})", result.size(), direct);
+            }
+            return result;
         } catch (Exception e) {
-            log.error("Error getting inferred sub data properties", e);
+            log.error("Error getting inferred sub data properties for {}", property.getIRI(), e);
             return Collections.emptySet();
         }
     }
@@ -363,7 +384,24 @@ public class ReasonerService {
     }
 
     /**
-     * Dispose reasoner for specific ontology
+     * Dispose reasoner for specific ontology object
+     */
+    public void disposeReasoner(OWLOntology ontology, ReasonerType type) {
+        String cacheKey = System.identityHashCode(ontology) + "-" + type.name();
+        OWLReasoner reasoner = reasonerCache.remove(cacheKey);
+        
+        if (reasoner != null) {
+            try {
+                reasoner.dispose();
+                log.info("Disposed {} reasoner for ontology object {}", type.getDisplayName(), System.identityHashCode(ontology));
+            } catch (Exception e) {
+                log.warn("Error disposing reasoner", e);
+            }
+        }
+    }
+
+    /**
+     * Dispose reasoner for specific ontology ID string
      */
     public void disposeReasoner(String ontologyId, ReasonerType type) {
         String cacheKey = ontologyId + "-" + type.name();
