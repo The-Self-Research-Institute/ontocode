@@ -67,9 +67,11 @@ public class OntologyIndexService {
         """;
 
     private final GraphDBDatasetService datasetService;
+    private final OntologyMetadataService metadataService;
 
-    public OntologyIndexService(GraphDBDatasetService datasetService) {
+    public OntologyIndexService(GraphDBDatasetService datasetService, OntologyMetadataService metadataService) {
         this.datasetService = datasetService;
+        this.metadataService = metadataService;
     }
 
     public Map<String, Object> computeMetadata(String projectId) {
@@ -114,6 +116,103 @@ public class OntologyIndexService {
         // DisjointClasses
         String disjointQuery = PREFIXES + "SELECT (COUNT(*) AS ?count) WHERE { ?c1 owl:disjointWith ?c2 }";
         axiomCounts.put("disjointClasses", querySingleCount(projectId, disjointQuery));
+
+        // Object property axioms
+        String subObjectPropertyQuery = PREFIXES + """
+            SELECT (COUNT(*) AS ?count) WHERE {
+              ?p a owl:ObjectProperty .
+              ?p rdfs:subPropertyOf ?super .
+            }
+            """;
+        axiomCounts.put("subObjectPropertyOf", querySingleCount(projectId, subObjectPropertyQuery));
+
+        String inverseObjectPropertyQuery = PREFIXES + """
+            SELECT (COUNT(*) AS ?count) WHERE {
+              ?p owl:inverseOf ?q .
+            }
+            """;
+        axiomCounts.put("inverseObjectProperties", querySingleCount(projectId, inverseObjectPropertyQuery));
+
+        String objectPropertyDomainQuery = PREFIXES + """
+            SELECT (COUNT(*) AS ?count) WHERE {
+              ?p a owl:ObjectProperty .
+              ?p rdfs:domain ?c .
+            }
+            """;
+        axiomCounts.put("objectPropertyDomain", querySingleCount(projectId, objectPropertyDomainQuery));
+
+        String objectPropertyRangeQuery = PREFIXES + """
+            SELECT (COUNT(*) AS ?count) WHERE {
+              ?p a owl:ObjectProperty .
+              ?p rdfs:range ?c .
+            }
+            """;
+        axiomCounts.put("objectPropertyRange", querySingleCount(projectId, objectPropertyRangeQuery));
+
+        // Data property axioms
+        String dataPropertyDomainQuery = PREFIXES + """
+            SELECT (COUNT(*) AS ?count) WHERE {
+              ?p a owl:DatatypeProperty .
+              ?p rdfs:domain ?c .
+            }
+            """;
+        axiomCounts.put("dataPropertyDomain", querySingleCount(projectId, dataPropertyDomainQuery));
+
+        String dataPropertyRangeQuery = PREFIXES + """
+            SELECT (COUNT(*) AS ?count) WHERE {
+              ?p a owl:DatatypeProperty .
+              ?p rdfs:range ?d .
+            }
+            """;
+        axiomCounts.put("dataPropertyRange", querySingleCount(projectId, dataPropertyRangeQuery));
+
+        // Assertion axioms
+        String classAssertionQuery = PREFIXES + """
+            SELECT (COUNT(*) AS ?count) WHERE {
+              ?ind rdf:type ?class .
+              FILTER(?class != owl:NamedIndividual)
+            }
+            """;
+        axiomCounts.put("classAssertion", querySingleCount(projectId, classAssertionQuery));
+
+        String objectPropertyAssertionQuery = PREFIXES + """
+            SELECT (COUNT(*) AS ?count) WHERE {
+              ?s ?p ?o .
+              ?p a owl:ObjectProperty .
+            }
+            """;
+        axiomCounts.put("objectPropertyAssertion", querySingleCount(projectId, objectPropertyAssertionQuery));
+
+        String dataPropertyAssertionQuery = PREFIXES + """
+            SELECT (COUNT(*) AS ?count) WHERE {
+              ?s ?p ?o .
+              ?p a owl:DatatypeProperty .
+            }
+            """;
+        axiomCounts.put("dataPropertyAssertion", querySingleCount(projectId, dataPropertyAssertionQuery));
+
+        String annotationAssertionQuery = PREFIXES + """
+            SELECT (COUNT(*) AS ?count) WHERE {
+              ?s ?p ?o .
+              ?p a owl:AnnotationProperty .
+            }
+            """;
+        axiomCounts.put("annotationAssertion", querySingleCount(projectId, annotationAssertionQuery));
+
+        String datatypeCountQuery = PREFIXES + """
+            SELECT (COUNT(DISTINCT ?dt) AS ?count) WHERE {
+              ?dt a rdfs:Datatype .
+            }
+            """;
+        int datatypeCount = querySingleCount(projectId, datatypeCountQuery);
+
+        String importsCountQuery = PREFIXES + """
+            SELECT (COUNT(*) AS ?count) WHERE {
+              ?ont a owl:Ontology .
+              ?ont owl:imports ?imp .
+            }
+            """;
+        int importsCount = querySingleCount(projectId, importsCountQuery);
         
         // Declaration axioms (classes + properties + individuals)
         int declarations = (int) counts.getOrDefault("classes", 0) 
@@ -130,7 +229,7 @@ public class OntologyIndexService {
 
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("counts", counts);
-        meta.put("prefixes", prefixList(projectId));
+        meta.put("prefixes", datasetService.getPrefixes(projectId));
         meta.put("lastUpdated", Instant.now().toString());
         
         // Add ontology identity
@@ -141,6 +240,12 @@ public class OntologyIndexService {
             meta.put("versionIRI", versionIri);
         }
         
+        // Add ontology annotations
+        meta.put("annotations", metadataService.getOntologyAnnotations(projectId));
+        
+        // Add ontology imports
+        meta.put("imports", metadataService.getOntologyImports(projectId));
+        
         // Add axiom counts for Protégé-like display
         meta.put("axiomCount", (int) counts.getOrDefault("triples", 0));
         meta.put("logicalAxiomCount", logicalAxioms);
@@ -149,9 +254,23 @@ public class OntologyIndexService {
         meta.put("objectPropertyCount", counts.getOrDefault("objectProperties", 0));
         meta.put("dataPropertyCount", counts.getOrDefault("dataProperties", 0));
         meta.put("individualCount", counts.getOrDefault("individuals", 0));
+        meta.put("annotationPropertyCount", counts.getOrDefault("annotationProperties", 0));
+        meta.put("datatypeCount", datatypeCount);
+        meta.put("importsCount", importsCount);
+        meta.put("prefixCount", meta.containsKey("prefixes") ? ((List<?>) meta.get("prefixes")).size() : 0);
         meta.put("subClassOfAxiomCount", axiomCounts.get("subClassOf"));
         meta.put("equivalentClassesAxiomCount", axiomCounts.get("equivalentClasses"));
         meta.put("disjointClassesAxiomCount", axiomCounts.get("disjointClasses"));
+        meta.put("subObjectPropertyOfAxiomCount", axiomCounts.get("subObjectPropertyOf"));
+        meta.put("inverseObjectPropertiesAxiomCount", axiomCounts.get("inverseObjectProperties"));
+        meta.put("objectPropertyDomainAxiomCount", axiomCounts.get("objectPropertyDomain"));
+        meta.put("objectPropertyRangeAxiomCount", axiomCounts.get("objectPropertyRange"));
+        meta.put("dataPropertyDomainAxiomCount", axiomCounts.get("dataPropertyDomain"));
+        meta.put("dataPropertyRangeAxiomCount", axiomCounts.get("dataPropertyRange"));
+        meta.put("classAssertionAxiomCount", axiomCounts.get("classAssertion"));
+        meta.put("objectPropertyAssertionCount", axiomCounts.get("objectPropertyAssertion"));
+        meta.put("dataPropertyAssertionCount", axiomCounts.get("dataPropertyAssertion"));
+        meta.put("annotationAssertionCount", axiomCounts.get("annotationAssertion"));
         meta.put("gciCount", 0);  // General Class Inclusions - requires reasoning
         meta.put("hiddenGciCount", 0);
         
@@ -167,18 +286,6 @@ public class OntologyIndexService {
             }
         }
         return 0;
-    }
-
-    private List<Map<String, String>> prefixList(String projectId) {
-        return datasetService.getPrefixes(projectId).entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .map(entry -> {
-                    Map<String, String> row = new LinkedHashMap<>();
-                    row.put("prefix", entry.getKey());
-                    row.put("namespace", entry.getValue());
-                    return row;
-                })
-                .collect(Collectors.toCollection(ArrayList::new));
     }
 
     private int literalToInt(BindingSet sol, String var) {

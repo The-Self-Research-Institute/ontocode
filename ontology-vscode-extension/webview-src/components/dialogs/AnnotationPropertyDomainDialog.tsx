@@ -93,9 +93,10 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
               ...n,
               children: children.map((c: TreeNode & { hasChildren?: boolean }) => ({
                 ...c,
-                children: c.hasChildren ? undefined : c.children,
-                hasChildren: c.hasChildren
-              }))
+                children: c.hasChildren ? [] : (c.children || []),
+                hasChildren: c.hasChildren || false
+              })),
+              hasChildren: true
             };
           }
           if (n.children) {

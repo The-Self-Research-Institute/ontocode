@@ -186,7 +186,8 @@ export const AxiomRow: React.FC<{
   hasAxiomAnnotations?: boolean;
   properties?: any[];
   dataProperties?: any[];
-}> = ({ axiom, onDelete, onEdit, onEditClick, isInferred: isInferredProp = false, isInActiveOntology = false, ontologyIri, hasAxiomAnnotations = false, properties = [], dataProperties = [] }) => {
+  onNavigate?: (iri: string, type: string) => void;
+}> = ({ axiom, onDelete, onEdit, onEditClick, isInferred: isInferredProp = false, isInActiveOntology = false, ontologyIri, hasAxiomAnnotations = false, properties = [], dataProperties = [], onNavigate }) => {
   // Handle isInferred from prop or axiom object (can be boolean or string 'true')
   const isInferred = isInferredProp || axiom.isInferred === true || axiom.isInferred === 'true';
   const [isEditing, setIsEditing] = useState(false);
@@ -272,6 +273,7 @@ export const AxiomRow: React.FC<{
                 axiom={axiom}
                 properties={properties}
                 dataProperties={dataProperties}
+                onNavigate={onNavigate}
               />
               {isInferred && (
                 <span className="ml-2 text-[10px] bg-yellow-200 text-yellow-800 px-1.5 py-0.5 rounded">Inferred</span>
@@ -362,7 +364,8 @@ export const AxiomSubsection: React.FC<{
   properties?: any[];
   dataProperties?: any[];
   themeColor?: 'yellow' | 'blue' | 'green' | 'orange' | 'purple'; // Protégé-style colored headers
-}> = ({ title, axioms, inferredAxioms, onAdd, onEdit, onEditClick, onDelete, emptyMessage, onAddClick, activeOntologyIri, properties = [], dataProperties = [], themeColor }) => {
+  onNavigate?: (iri: string, type: string) => void;
+}> = ({ title, axioms, inferredAxioms, onAdd, onEdit, onEditClick, onDelete, emptyMessage, onAddClick, activeOntologyIri, properties = [], dataProperties = [], themeColor, onNavigate }) => {
   const [isAdding, setIsAdding] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
 
@@ -502,6 +505,7 @@ export const AxiomSubsection: React.FC<{
                 hasAxiomAnnotations={false}
                 properties={properties}
                 dataProperties={dataProperties}
+                onNavigate={onNavigate}
               />
             ))}
             {/* Inferred axioms */}
@@ -516,6 +520,7 @@ export const AxiomSubsection: React.FC<{
                 ontologyIri="Inferred by reasoner"
                 properties={properties}
                 dataProperties={dataProperties}
+                onNavigate={onNavigate}
               />
             ))}
           </>

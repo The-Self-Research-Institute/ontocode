@@ -28,3 +28,9 @@ export { default as AnnotationPropertySuperpropertyDialog } from './AnnotationPr
 
 // Data Property Dialogs (Protégé-style)
 export { default as DataPropertyRangeDialog } from './DataPropertyRangeDialog';
+
+// Active Ontology Dialogs
+export { default as AddImportDialog } from './AddImportDialog';
+export { default as GCIEditorDialog } from './GCIEditorDialog';
+export { default as EditOntologyIRIDialog } from './EditOntologyIRIDialog';
+export { default as PrefixDialog } from './PrefixDialog';

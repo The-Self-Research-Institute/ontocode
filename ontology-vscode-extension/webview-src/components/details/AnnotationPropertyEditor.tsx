@@ -1,41 +1,160 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Plus, Tag, Edit3, Search } from 'lucide-react';
 import { AnnotationsDisplay, MultiSelectSection } from './common';
 import ontologyMutationService from '../../services/ontologyMutationService';
+import apiClient from '../../services/apiClient';
 import type { AnnotationProperty } from '../../types';
 
-/**
- * AnnotationPropertyEditor - Protégé-style editor for OWL Annotation Properties
- * 
- * Based on Protégé's OWLAnnotationPropertyDescriptionFrame.java:
- * - 3 sections in Description tab:
- *   1. OWLAnnotationPropertyDomainFrameSection - "Domains (intersection)"
- *   2. OWLAnnotationPropertyRangeFrameSection - "Range (intersection)"
- *   3. OWLSubAnnotationPropertyFrameSection - "Superproperties"
- * 
- * Annotation properties in OWL:
- * - CAN have: Annotations, Domains, Ranges, Superproperties
- * - CANNOT have: Equivalent properties, Characteristics, Inverse properties, Property chains
- * - Do NOT participate in reasoning (unlike Object/Data properties)
- * 
- * Tabs match Protégé:
- * - Annotations (OWLAnnotationPropertyAnnotationsViewComponent)
- * - Description (OWLAnnotationPropertyDescriptionViewComponent)
- * - Usage (OWLAnnotationPropertyUsageViewComponent)
- */
-
-interface AnnotationPropertyEditorProps {
-  item: AnnotationProperty;
-  onUpdate: (updatedItem: AnnotationProperty) => void;
-  onAddAnnotation: () => void;
-  onEditAnnotation: (propertyIri: string, currentValue: string) => void;
-  onDeleteAnnotation: (key: string) => void;
-  activeTheme?: string;
-  projectId: string;
-  onAddSubPropertyClick?: () => void;
-  onAddDomainClick?: () => void;
-  onAddRangeClick?: () => void;
+interface UsageItem {
+  type: string;
+  subject: string;
+  subjectLabel?: string;
+  predicate?: string;
+  object?: string;
+  context?: string;
 }
+
+const PropertyUsageTab: React.FC<{ 
+  propertyIri: string; 
+  projectId: string; 
+  label: string;
+  propertyType: string;
+}> = ({ propertyIri, projectId, label, propertyType }) => {
+  const [loading, setLoading] = useState(true);
+  const [usages, setUsages] = useState<UsageItem[]>([]);
+  const [filter, setFilter] = useState('');
+  const [showTypes, setShowTypes] = useState({
+    domain: true,
+    range: true,
+    subproperty: true,
+    superproperty: true,
+    assertion: true,
+    restriction: true,
+    annotation: true
+  });
+
+  useEffect(() => {
+    loadUsages();
+  }, [propertyIri, projectId]);
+
+  const loadUsages = async () => {
+    setLoading(true);
+    try {
+      let endpoint = `/api/ontology/properties/usage/${projectId}?propertyIri=${encodeURIComponent(propertyIri)}`;
+      if (propertyType === 'AnnotationProperty') {
+        endpoint = `/api/ontology/annotation-properties/${projectId}/usage?propertyIri=${encodeURIComponent(propertyIri)}`;
+      }
+      
+      const response = await apiClient.get<any>(endpoint);
+      const usageData = response?.data?.data || response?.data || response || [];
+      setUsages(Array.isArray(usageData) ? usageData : []);
+    } catch (error) {
+      console.error('Failed to load usage data:', error);
+      setUsages([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const filteredUsages = usages.filter(u => 
+    (u.subjectLabel || u.subject || '').toLowerCase().includes(filter.toLowerCase()) &&
+    showTypes[u.type as keyof typeof showTypes] !== false
+  );
+
+  const usagesByType = {
+    domain: filteredUsages.filter(u => u.type === 'domain'),
+    range: filteredUsages.filter(u => u.type === 'range'),
+    subproperty: filteredUsages.filter(u => u.type === 'subproperty'),
+    superproperty: filteredUsages.filter(u => u.type === 'superproperty'),
+    assertion: filteredUsages.filter(u => u.type === 'assertion'),
+    restriction: filteredUsages.filter(u => u.type === 'restriction'),
+    annotation: filteredUsages.filter(u => u.type === 'annotation')
+  };
+
+  if (loading) {
+    return <div className="p-4 text-sm text-gray-500">Loading usage information...</div>;
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="p-2 border-b border-gray-200 space-y-2">
+        <div className="text-xs text-gray-600">
+          Found <span className="font-bold text-purple-600">{usages.length}</span> uses of <span className="font-semibold">{label}</span>
+        </div>
+        
+        <div className="flex items-center gap-2">
+          <div className="flex-1 relative">
+            <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Filter usages..."
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              className="w-full pl-7 pr-2 py-1 text-xs rounded focus:outline-none theme-input"
+            />
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2 text-xs">
+          {propertyType !== 'AnnotationProperty' && (
+            <>
+              <label className="flex items-center gap-1 cursor-pointer">
+                <input type="checkbox" checked={showTypes.domain} onChange={(e) => setShowTypes({...showTypes, domain: e.target.checked})} className="w-3 h-3" />
+                <span>domains ({usagesByType.domain.length})</span>
+              </label>
+              <label className="flex items-center gap-1 cursor-pointer">
+                <input type="checkbox" checked={showTypes.range} onChange={(e) => setShowTypes({...showTypes, range: e.target.checked})} className="w-3 h-3" />
+                <span>ranges ({usagesByType.range.length})</span>
+              </label>
+              <label className="flex items-center gap-1 cursor-pointer">
+                <input type="checkbox" checked={showTypes.subproperty} onChange={(e) => setShowTypes({...showTypes, subproperty: e.target.checked})} className="w-3 h-3" />
+                <span>subproperties ({usagesByType.subproperty.length})</span>
+              </label>
+              <label className="flex items-center gap-1 cursor-pointer">
+                <input type="checkbox" checked={showTypes.superproperty} onChange={(e) => setShowTypes({...showTypes, superproperty: e.target.checked})} className="w-3 h-3" />
+                <span>superproperties ({usagesByType.superproperty.length})</span>
+              </label>
+              <label className="flex items-center gap-1 cursor-pointer">
+                <input type="checkbox" checked={showTypes.assertion} onChange={(e) => setShowTypes({...showTypes, assertion: e.target.checked})} className="w-3 h-3" />
+                <span>assertions ({usagesByType.assertion.length})</span>
+              </label>
+              <label className="flex items-center gap-1 cursor-pointer">
+                <input type="checkbox" checked={showTypes.restriction} onChange={(e) => setShowTypes({...showTypes, restriction: e.target.checked})} className="w-3 h-3" />
+                <span>restrictions ({usagesByType.restriction.length})</span>
+              </label>
+            </>
+          )}
+          {propertyType === 'AnnotationProperty' && (
+            <label className="flex items-center gap-1 cursor-pointer">
+              <input type="checkbox" checked={showTypes.annotation} onChange={(e) => setShowTypes({...showTypes, annotation: e.target.checked})} className="w-3 h-3" />
+              <span>annotations ({usagesByType.annotation.length})</span>
+            </label>
+          )}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-2">
+        {filteredUsages.length === 0 ? (
+          <div className="text-xs text-gray-400 italic text-center py-4">No usages found</div>
+        ) : (
+          <div className="space-y-1">
+            {filteredUsages.map((u, idx) => (
+              <div key={idx} className="p-2 bg-gray-50 rounded border border-gray-200 hover:bg-gray-100">
+                <div className="flex items-start gap-2">
+                  <span className="text-[10px] font-semibold text-orange-600 uppercase min-w-[80px] mt-0.5">{u.type || 'annotation'}</span>
+                  <div className="flex-1 text-xs">
+                    <div className="font-mono text-purple-700 break-all">{u.subjectLabel || u.subject}</div>
+                    {(u.context || u.value) && <div className="text-gray-500 mt-1 italic">{u.context || u.value}</div>}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
   item,
@@ -56,9 +175,8 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
     superProperties?: string[];
     domains?: string[];
     ranges?: string[];
-    usages?: { entityId: string; entityLabel: string; axiomType: string }[];
   };
-
+  
   const annotationCount = Object.keys(item.annotations || {}).length;
   const domainCount = extendedItem.domains?.length || 0;
   const rangeCount = extendedItem.ranges?.length || 0;
@@ -211,33 +329,12 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
         )}
 
         {activeTab === 'usage' && (
-          <div className="space-y-0">
-            {/* Usage Panel Header */}
-            <div className="bg-stone-100 border-b border-stone-300 px-3 py-1.5 flex items-center justify-between">
-              <span className="text-xs font-medium text-stone-700">Usage: {item.label}</span>
-              <div className="flex items-center gap-1">
-                <Search size={14} className="text-stone-400" />
-              </div>
-            </div>
-            {/* Usage Content */}
-            <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm p-3">
-              {extendedItem.usages && extendedItem.usages.length > 0 ? (
-                <div className="space-y-1">
-                  {extendedItem.usages.map((usage, idx) => (
-                    <div key={idx} className="flex items-center gap-2 p-1.5 hover:bg-gray-50 rounded text-sm">
-                      <span className="w-3 h-3 rounded-full bg-amber-400 flex-shrink-0" />
-                      <span className="text-gray-800">{usage.entityLabel}</span>
-                      <span className="text-gray-400 text-xs">({usage.axiomType})</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-xs text-gray-400 italic py-2 text-center">
-                  No usages found for this annotation property
-                </div>
-              )}
-            </div>
-          </div>
+          <PropertyUsageTab 
+            propertyIri={item.id} 
+            projectId={projectId} 
+            label={item.label || item.id.split(/[#/]/).pop() || ''}
+            propertyType="AnnotationProperty"
+          />
         )}
       </div>
     </div>

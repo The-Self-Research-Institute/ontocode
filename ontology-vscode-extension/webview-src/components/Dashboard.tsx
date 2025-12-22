@@ -1,7 +1,7 @@
 // src/Dashboard.tsx
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
-  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, DatabaseZap, Upload, FolderOpen, Sparkles, Clock, Users, Download, RefreshCw, AlertCircle, Puzzle, Zap, BookOpen, Brain, Network, GitMerge, Palette
+  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, Square, DatabaseZap, Upload, FolderOpen, Sparkles, Clock, Users, Download, RefreshCw, AlertCircle, Puzzle, Zap, BookOpen, Brain, Network, GitMerge, Palette, Edit2, Plus, Globe, Link as LinkIcon, Hash
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
@@ -38,13 +38,18 @@ import {
   PropertyExpressionDialog,
   ObjectPropertyExpressionDialog,
   AddDatatypeDialog,
+  PropertyAssertionDialog,
   KeyboardShortcutsDialog,
   EntityPreferencesDialog,
   AnnotationPropertyDomainDialog,
   AnnotationPropertyRangeDialog,
   AnnotationPropertySuperpropertyDialog,
   DataPropertyRangeDialog,
-  TabType
+  TabType,
+  GCIEditorDialog,
+  AddImportDialog,
+  EditOntologyIRIDialog,
+  PrefixDialog
 } from './dialogs';
 import { useKeyboardShortcuts, DEFAULT_SHORTCUTS, KeyboardShortcut } from '../hooks/useKeyboardShortcuts';
 import { useEntityPreferences } from '../contexts/EntityPreferencesContext';
@@ -79,6 +84,102 @@ const findParentNode = (nodes: any[], targetId: string, parent: any | null = nul
   return null;
 };
 
+const DATATYPE_IRI_MAP: Record<string, string> = {
+  'xsd:string': 'http://www.w3.org/2001/XMLSchema#string',
+  'xsd:boolean': 'http://www.w3.org/2001/XMLSchema#boolean',
+  'xsd:integer': 'http://www.w3.org/2001/XMLSchema#integer',
+  'xsd:decimal': 'http://www.w3.org/2001/XMLSchema#decimal',
+  'xsd:dateTime': 'http://www.w3.org/2001/XMLSchema#dateTime',
+  'xsd:anyURI': 'http://www.w3.org/2001/XMLSchema#anyURI'
+};
+
+const REASONER_ID_MAP: Record<string, string> = {
+  HermiT: 'HERMIT',
+  ELK: 'ELK',
+  Pellet: 'PELLET',
+  Openllet: 'OPENLLET',
+  Structural: 'STRUCTURAL'
+};
+
+const REASONER_OPTIONS = Object.keys(REASONER_ID_MAP);
+
+const normalizeReasonerType = (label: string): string => REASONER_ID_MAP[label] || 'HERMIT';
+
+// Convert the flat depth-annotated classification list from the backend into a nested tree
+const buildHierarchyTree = (nodes: any[]): any[] => {
+  if (!Array.isArray(nodes)) return [];
+
+  const stack: any[] = [];
+  const roots: any[] = [];
+
+  nodes.forEach((node) => {
+    const depth = Number((node && (node as any).depth) ?? 0);
+    const copy = { ...node, children: [] as any[] };
+
+    while (stack.length > 0 && (stack[stack.length - 1]?.depth ?? 0) >= depth) {
+      stack.pop();
+    }
+
+    if (stack.length === 0) {
+      roots.push(copy);
+    } else {
+      stack[stack.length - 1].children.push(copy);
+    }
+
+    stack.push(copy);
+  });
+
+  return roots;
+};
+
+const extractResponseData = (payload: any) => {
+  if (payload && typeof payload === 'object' && 'data' in payload) {
+    return (payload as any).data ?? {};
+  }
+  return payload ?? {};
+};
+
+const combineReasonerResults = (classificationPayload: any, statsPayload?: any) => {
+  const classificationData = extractResponseData(classificationPayload);
+  const statsData = statsPayload ? extractResponseData(statsPayload) : null;
+  const existingStats = (classificationData as any)?.stats || {};
+  
+  // Fix: Ensure classHierarchy is an array before building tree
+  const rawClassHierarchy = (classificationData as any)?.classHierarchy;
+  const classHierarchyArray = Array.isArray(rawClassHierarchy) ? rawClassHierarchy : [];
+  const classHierarchyTree = buildHierarchyTree(classHierarchyArray);
+
+  if (!statsData) {
+    return {
+      ...classificationData,
+      classHierarchyTree
+    };
+  }
+
+  const unsatRaw = statsData.unsatisfiableClasses;
+  const unsatCount = unsatRaw === -1
+    ? 0
+    : (statsData.unsatisfiableClasses || 0);
+  const isConsistent = statsData.isConsistent === false || unsatRaw === -1
+    ? false
+    : true;
+
+  return {
+    ...classificationData,
+    classHierarchyTree,
+    stats: {
+      ...existingStats,
+      unsatisfiableClassesRaw: unsatRaw,
+      classHierarchyNodes: statsData.classCount ?? existingStats.classHierarchyNodes ?? 0,
+      objectPropertyNodes: statsData.propertyCount ?? existingStats.objectPropertyNodes ?? 0,
+      dataPropertyNodes: statsData.dataPropertyCount ?? existingStats.dataPropertyNodes ?? 0,
+      individuals: statsData.individualCount ?? existingStats.individuals ?? 0,
+      satisfiableClasses: statsData.satisfiableClasses ?? existingStats.satisfiableClasses ?? 0,
+      unsatisfiableClasses: unsatCount,
+      isConsistent
+    }
+  };
+};
 // #region Helper Components
 
 const LoadingDialog = ({ isOpen, message }: { isOpen: boolean; message?: string }) => {
@@ -165,6 +266,192 @@ const LoadingChoiceDialog = ({
           >
             Continue Working
           </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ReasonerExplanationModal = ({
+  isOpen,
+  onClose,
+  data,
+  loading,
+  error
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  data: any;
+  loading: boolean;
+  error: string | null;
+}) => {
+  if (!isOpen) return null;
+
+  const causes = data?.causes || [];
+  const isConsistent = data?.isConsistent ?? data?.consistent;
+  const heading = isConsistent === false ? 'Ontology is inconsistent' : (isConsistent === true ? 'Ontology is consistent' : 'Explanation');
+
+  return (
+    <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center">
+      <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full mx-4 overflow-hidden border" style={{ borderColor: 'var(--color-border)' }}>
+        <div className="flex items-center justify-between px-5 py-3 border-b bg-gray-50">
+          <div className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+            <AlertCircle size={16} className="text-red-500" />
+            Inconsistency explanation
+          </div>
+          <button onClick={onClose} className="text-xs text-gray-500 hover:text-gray-800">Close</button>
+        </div>
+
+        <div className="p-5 max-h-[70vh] overflow-y-auto text-sm text-gray-700">
+          {loading ? (
+            <div className="flex items-center gap-2 text-gray-600">
+              <Loader2 size={18} className="animate-spin" />
+              Computing explanation…
+            </div>
+          ) : error ? (
+            <div className="flex items-center gap-2 text-red-600">
+              <AlertCircle size={16} />
+              {error}
+            </div>
+          ) : data ? (
+            <>
+              <div className="mb-4">
+                <div className="text-xs uppercase text-gray-500 font-semibold mb-1">Summary</div>
+                <div className="text-gray-800 font-medium">{data.message || heading}</div>
+                {typeof data.totalIssues === 'number' && (
+                  <div className="text-[11px] text-gray-500">Issues detected: {data.totalIssues}</div>
+                )}
+                {isConsistent === false && (
+                  <div className="mt-1 text-[11px] text-red-600">The ontology failed consistency checks. See causes below.</div>
+                )}
+                {isConsistent === true && (
+                  <div className="mt-1 text-[11px] text-green-600">The ontology is consistent; no inconsistency causes detected.</div>
+                )}
+              </div>
+
+              {causes.length === 0 ? (
+                <div className="text-gray-600">No detailed causes returned by the backend.</div>
+              ) : (
+                <div className="space-y-3">
+                  {causes.map((cause: any, idx: number) => (
+                    <div key={idx} className="border rounded-lg p-3 bg-gray-50">
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="text-sm font-semibold text-gray-800">{cause.title || cause.type}</div>
+                        {cause.severity && <span className="text-[11px] uppercase text-red-600 font-semibold">{cause.severity}</span>}
+                      </div>
+                      {cause.description && <div className="text-xs text-gray-600 mb-2">{cause.description}</div>}
+                      {cause.classes && Array.isArray(cause.classes) && (
+                        <div className="text-[11px] text-gray-700 space-y-1">
+                          {cause.classes.map((cls: any, i: number) => (
+                            <div key={i} className="bg-white border rounded px-2 py-1">
+                              <div className="font-semibold">{cls.label || cls.iri || 'Class'}</div>
+                              {cls.reason && <div className="text-gray-600">{cls.reason}</div>}
+                              {cls.iri && <div className="text-gray-500">{cls.iri}</div>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {cause.violations && Array.isArray(cause.violations) && (
+                        <div className="text-[11px] text-gray-700 space-y-1">
+                          {cause.violations.map((violation: any, i: number) => {
+                            const isPropertyViolation = violation.property || violation.propertyIri;
+                            return (
+                              <div key={i} className="bg-white border rounded px-2 py-1">
+                                {violation.individual && <div className="font-semibold">{violation.individual}</div>}
+                                {violation.disjointClasses && (
+                                  <div className="text-gray-600">Classes: {(violation.disjointClasses as string[]).join(', ')}</div>
+                                )}
+                                {violation.individualIri && <div className="text-gray-500">{violation.individualIri}</div>}
+
+                                {isPropertyViolation && (
+                                  <div className="space-y-1">
+                                    <div className="font-semibold text-gray-800">{violation.property || 'Property'}</div>
+                                    {violation.propertyIri && <div className="text-gray-500">{violation.propertyIri}</div>}
+                                    <div className="text-gray-600">
+                                      Domain constraints: {violation.hasDomainConstraints ? 'present' : 'none'}; Range constraints: {violation.hasRangeConstraints ? 'present' : 'none'}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {!violation.individual && !isPropertyViolation && (
+                                  <pre className="text-[10px] text-gray-600 overflow-x-auto">{JSON.stringify(violation, null, 2)}</pre>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {cause.tips && Array.isArray(cause.tips) && (
+                        <ul className="list-disc list-inside text-[11px] text-gray-700 space-y-1">
+                          {cause.tips.map((tip: string, i: number) => (
+                            <li key={i}>{tip}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="text-gray-600">No explanation available.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ReasonerSettingsDialog = ({
+  isOpen,
+  selectedReasoner,
+  isSynced,
+  onSelectReasoner,
+  onToggleSync,
+  onClose
+}: {
+  isOpen: boolean;
+  selectedReasoner: string;
+  isSynced: boolean;
+  onSelectReasoner: (reasoner: string) => void;
+  onToggleSync: () => void;
+  onClose: () => void;
+}) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[65] bg-black/40 flex items-center justify-center">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 border" style={{ borderColor: 'var(--color-border)' }}>
+        <div className="px-5 py-3 border-b bg-gray-50 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+            <Settings size={16} />
+            Reasoner settings
+          </div>
+          <button onClick={onClose} className="text-xs text-gray-500 hover:text-gray-800">Close</button>
+        </div>
+        <div className="p-5 space-y-4 text-sm text-gray-800">
+          <div>
+            <div className="text-xs uppercase text-gray-500 font-semibold mb-1">Active reasoner</div>
+            <select
+              value={selectedReasoner}
+              onChange={(event) => onSelectReasoner(event.target.value)}
+              className="w-full border rounded px-3 py-2 text-sm"
+            >
+              {REASONER_OPTIONS.map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={isSynced}
+              onChange={onToggleSync}
+              className="rounded border-gray-300"
+            />
+            Synchronize reasoner after edits
+          </label>
+          <p className="text-xs text-gray-500">Matches Protégé: keep the reasoner in sync or run manually.</p>
         </div>
       </div>
     </div>
@@ -342,6 +629,18 @@ const TopMenuBar = ({
   onOpenHistory,
   syncMode,
   onToggleSyncMode,
+  isReasonerRunning,
+  isReasonerLoading,
+  isReasonerSynced,
+  selectedReasoner,
+  onStartReasoner,
+  onStopReasoner,
+  onToggleReasonerSync,
+  onSelectReasoner,
+  onCheckConsistency,
+  onExplainInconsistency,
+  onOpenReasonerSettings,
+  isConsistencyLoading,
 }: {
   fileList: FileInfo[];
   myFiles: FileInfo[];
@@ -358,6 +657,18 @@ const TopMenuBar = ({
   onOpenHistory: () => void;
   syncMode: 'private' | 'public';
   onToggleSyncMode: () => void;
+  isReasonerRunning?: boolean;
+  isReasonerLoading?: boolean;
+  isReasonerSynced?: boolean;
+  selectedReasoner?: string;
+  onStartReasoner?: () => Promise<void>;
+  onStopReasoner?: () => void;
+  onToggleReasonerSync?: () => void;
+  onSelectReasoner?: (reasoner: string) => void;
+  onCheckConsistency?: () => void;
+  onExplainInconsistency?: () => void;
+  onOpenReasonerSettings?: () => void;
+  isConsistencyLoading?: boolean;
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -419,6 +730,12 @@ const TopMenuBar = ({
               className={`ontocode-top-menu-button cursor-pointer disabled:cursor-not-allowed px-3 py-1 rounded-sm transition-colors ${openMenu === item ? 'is-open' : ''}`}
             >
               {item}
+              {item === 'Reasoner' && isReasonerRunning && (
+                <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+              )}
+              {item === 'Reasoner' && !isReasonerRunning && (
+                <span className="text-[10px] text-gray-500">({selectedReasoner})</span>
+              )}
             </button>
             {openMenu === item && (
               <div className={`ontocode-top-menu-dropdown absolute left-0 mt-1 ${item === 'File' ? 'w-[360px]' : 'w-48'} bg-theme-surface border rounded-lg shadow-xl z-20 overflow-hidden`} style={{ borderColor: 'var(--color-border)' }}>
@@ -441,7 +758,126 @@ const TopMenuBar = ({
                   </div>
                 ) : item === "Reasoner" ? (
                   <div className="py-1">
-                    <div className="px-3 py-1 text-gray-400 text-xs">No options</div>
+                    <button
+                      onClick={async () => {
+                        setOpenMenu(null);
+                        if (onStartReasoner) await onStartReasoner();
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                      disabled={isReasonerRunning || isReasonerLoading}
+                    >
+                      {isReasonerLoading ? <Loader2 size={12} className="animate-spin" /> : null}
+                      Start reasoner
+                    </button>
+                    <button
+                      onClick={() => {
+                        setOpenMenu(null);
+                        if (onCheckConsistency) onCheckConsistency();
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                      disabled={isReasonerLoading || isConsistencyLoading}
+                    >
+                      {isConsistencyLoading ? <Loader2 size={12} className="animate-spin" /> : null}
+                      Check consistency
+                    </button>
+                    <button
+                      onClick={() => {
+                        setOpenMenu(null);
+                        if (onToggleReasonerSync) onToggleReasonerSync();
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                    >
+                      <input type="checkbox" checked={isReasonerSynced} readOnly className="pointer-events-none" />
+                      Synchronize reasoner
+                    </button>
+                    <button
+                      onClick={() => {
+                        setOpenMenu(null);
+                        if (onStopReasoner) onStopReasoner();
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
+                      disabled={!isReasonerRunning}
+                    >
+                      Stop reasoner
+                    </button>
+                    <button
+                      onClick={() => {
+                        setOpenMenu(null);
+                        if (onExplainInconsistency) onExplainInconsistency();
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                      disabled={isReasonerLoading}
+                    >
+                      Explain inconsistent ontology
+                    </button>
+                    <div className="border-t border-gray-200 my-1"></div>
+                    <button
+                      onClick={() => {
+                        // Configure reasoner preferences
+                        setOpenMenu(null);
+                        if (onOpenReasonerSettings) onOpenReasonerSettings();
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
+                    >
+                      Configure...
+                    </button>
+                    <div className="border-t border-gray-200 my-1"></div>
+                    <div className="px-4 py-1 text-[11px] text-gray-500 font-semibold">Select Reasoner:</div>
+                    <button
+                      onClick={() => {
+                        setOpenMenu(null);
+                        if (onSelectReasoner) onSelectReasoner('HermiT');
+                      }}
+                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2 ${
+                        selectedReasoner === 'HermiT' ? 'bg-blue-50 font-semibold' : ''
+                      }`}
+                    >
+                      {selectedReasoner === 'HermiT' ? '• ' : '  '}HermiT 1.4.5.519
+                    </button>
+                    <button
+                      onClick={() => {
+                        setOpenMenu(null);
+                        if (onSelectReasoner) onSelectReasoner('ELK');
+                      }}
+                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2 ${
+                        selectedReasoner === 'ELK' ? 'bg-blue-50 font-semibold' : ''
+                      }`}
+                    >
+                      {selectedReasoner === 'ELK' ? '• ' : '  '}ELK 0.4.3
+                    </button>
+                    <button
+                      onClick={() => {
+                        setOpenMenu(null);
+                        if (onSelectReasoner) onSelectReasoner('Pellet');
+                      }}
+                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
+                        selectedReasoner === 'Pellet' ? 'bg-blue-50 font-semibold' : ''
+                      }`}
+                    >
+                      {selectedReasoner === 'Pellet' ? '• ' : '  '}Pellet
+                    </button>
+                    <button
+                      onClick={() => {
+                        setOpenMenu(null);
+                        if (onSelectReasoner) onSelectReasoner('Openllet');
+                      }}
+                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
+                        selectedReasoner === 'Openllet' ? 'bg-blue-50 font-semibold' : ''
+                      }`}
+                    >
+                      {selectedReasoner === 'Openllet' ? '• ' : '  '}Openllet 2.6.5
+                    </button>
+                    <button
+                      onClick={() => {
+                        setOpenMenu(null);
+                        if (onSelectReasoner) onSelectReasoner('Structural');
+                      }}
+                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
+                        selectedReasoner === 'Structural' ? 'bg-blue-50 font-semibold' : ''
+                      }`}
+                    >
+                      {selectedReasoner === 'Structural' ? '• ' : '  '}Structural Reasoner
+                    </button>
                   </div>
                 ) : item === "File" ? (
                   <div className="flex flex-col py-1">
@@ -978,7 +1414,7 @@ const Dashboard = () => {
   const collaboration = useCollaboration();
   const { actualMode } = useTheme();
   const readonlyMode = false; // Allow editing by default
-  const [showThemeSettings, setShowThemeSettings] = useState(false);
+   const [showThemeSettings, setShowThemeSettings] = useState(false);
 
   const showToast = useCallback(
     (message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') => {
@@ -1002,17 +1438,54 @@ const Dashboard = () => {
         });
       }
     },
-    [collaboration, user?.email, user?.username]
+    [user?.email, user?.username] // collaboration.addNotification is stable, no need to include
   );
   const [projectId, setProjectId] = useState<string | null>(null);
   const [availableProjects, setAvailableProjects] = useState<any[]>([]);
   const [showProjectSelector, setShowProjectSelector] = useState(false);
   const [metadata, setMetadata] = useState<OntologyMetadata | null>(null);
+  const [ontologyImports, setOntologyImports] = useState<string[]>([]);
+  const [generalClassAxioms, setGeneralClassAxioms] = useState<Array<{
+    subExpression: string;
+    superClassIri?: string;
+    superClassLabel?: string;
+    definition?: string;
+  }>>([]);
+  const [ontologyAnnotations, setOntologyAnnotations] = useState<Array<{
+    propertyIri: string;
+    value: string;
+    datatype?: string;
+    lang?: string;
+  }>>([]);
+  const [prefixMappings, setPrefixMappings] = useState<Array<{ prefix: string; namespace: string }>>([]);
+  const [isEditingOntologyId, setIsEditingOntologyId] = useState(false);
+  const [ontologyIriDraft, setOntologyIriDraft] = useState('');
+  const [versionIriDraft, setVersionIriDraft] = useState('');
+  const [isPrefixEditing, setIsPrefixEditing] = useState(false);
+  const [importDraft, setImportDraft] = useState('');
+  const [isOntologyAnnotationDialogOpen, setIsOntologyAnnotationDialogOpen] = useState(false);
+  const [quickEditParentItem, setQuickEditParentItem] = useState<SelectableItem | null>(null);
+  const [quickEditNoteItem, setQuickEditNoteItem] = useState<SelectableItem | null>(null);
+  const [isQuickParentDialogOpen, setQuickParentDialogOpen] = useState(false);
+  const [isQuickPropertyParentDialogOpen, setQuickPropertyParentDialogOpen] = useState(false);
+  const [isQuickNoteDialogOpen, setQuickNoteDialogOpen] = useState(false);
+  const [ontologyAnnotationEditTarget, setOntologyAnnotationEditTarget] = useState<{
+    propertyIri: string;
+    value: string;
+    datatype?: string;
+  } | null>(null);
   const [mainTab, setMainTab] = useState("Entities");
   const [entitiesTab, setEntitiesTab] = useState("Classes");
   const [selectedItem, setSelectedItem] = useState<SelectableItem | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchOptions, setSearchOptions] = useState({
+    useRegex: false,
+    searchAnnotations: false,
+    hideDeprecated: false,
+    hideBuiltins: false
+  });
+  const [showImportDialog, setShowImportDialog] = useState(false);
   const [isInitialLoading, setIsInitialLoading] = useState(false);
   const [hasFetchedProjects, setHasFetchedProjects] = useState(false);
   const [hasUserSelectedFile, setHasUserSelectedFile] = useState(false);
@@ -1042,7 +1515,17 @@ const Dashboard = () => {
   const [isCreateIndividualModalOpen, setCreateIndividualModalOpen] = useState(false);
   const [isAddAnnotationDialogOpen, setAddAnnotationDialogOpen] = useState(false);
   const [isEditAnnotationDialogOpen, setEditAnnotationDialogOpen] = useState(false);
-  const [editAnnotationData, setEditAnnotationData] = useState<{propertyIri: string, currentValue: string, entityId: string} | null>(null);
+  const [isEditOntologyIRIDialogOpen, setEditOntologyIRIDialogOpen] = useState(false);
+  const [isGCIEditorDialogOpen, setGCIEditorDialogOpen] = useState(false);
+  const [editGCIData, setEditGCIData] = useState<{ subClass: string, superClass: string, value: string, index: number } | null>(null);
+  const [editAnnotationData, setEditAnnotationData] = useState<{
+    propertyIri: string;
+    currentValue: string;
+    entityId: string;
+    language?: string;
+    datatype?: string;
+    originalPropertyIri?: string;
+  } | null>(null);
   const [isAddClassDialogOpen, setAddClassDialogOpen] = useState(false);
   const [addClassType, setAddClassType] = useState<'subclass' | 'sibling'>('subclass');
   const [classParentLabel, setClassParentLabel] = useState('owl:Thing');
@@ -1052,6 +1535,8 @@ const Dashboard = () => {
   const [isAddDatatypeDialogOpen, setAddDatatypeDialogOpen] = useState(false);
   const [isKeyboardShortcutsDialogOpen, setKeyboardShortcutsDialogOpen] = useState(false);
   const [isEntityPreferencesDialogOpen, setEntityPreferencesDialogOpen] = useState(false);
+  const classHierarchyRefreshInFlight = useRef(false);
+  const lastClassHierarchyRefreshAt = useRef(0);
 
   useEffect(() => {
     hasUserSelectedFileRef.current = hasUserSelectedFile;
@@ -1091,15 +1576,192 @@ const Dashboard = () => {
   });
 
   const [selectedClassForIndividuals, setSelectedClassForIndividuals] = useState<TreeNode | null>(null);
+  const [classInstances, setClassInstances] = useState<Individual[]>([]);
+  const [classInstancesLoading, setClassInstancesLoading] = useState(false);
+  const [classInstancesQuery, setClassInstancesQuery] = useState('');
+  const [classInstancesView, setClassInstancesView] = useState<'direct' | 'inferred' | 'all'>('direct');
+  const [classTreeSearchQuery, setClassTreeSearchQuery] = useState('');
+  const [selectedClassIndividual, setSelectedClassIndividual] = useState<Individual | null>(null);
+  const [selectedClassIndividualDetails, setSelectedClassIndividualDetails] = useState<Individual | null>(null);
+  const [selectedClassIndividualLoading, setSelectedClassIndividualLoading] = useState(false);
+  const [classInstanceCounts, setClassInstanceCounts] = useState<Record<string, { direct?: number; inferred?: number; total?: number }>>({});
+  const [hierarchyViewModes, setHierarchyViewModes] = useState<Record<string, 'asserted' | 'inferred'>>({
+    Classes: 'asserted',
+    ObjectProperties: 'asserted',
+    DataProperties: 'asserted',
+    Datatypes: 'asserted'
+  });
+  const [isClassIndividualAnnotationDialogOpen, setClassIndividualAnnotationDialogOpen] = useState(false);
+  const [isClassIndividualTypeDialogOpen, setClassIndividualTypeDialogOpen] = useState(false);
+  const [isClassIndividualPropertyDialogOpen, setClassIndividualPropertyDialogOpen] = useState(false);
+  const [classIndividualPropertyIsObject, setClassIndividualPropertyIsObject] = useState(true);
   const [dlQuery, setDlQuery] = useState('Pizza and hasTopping some MozzarellaTopping');
   const [dlQueryResults, setDlQueryResults] = useState<string[] | null>(null);
   const [isDlQueryLoading, setIsDlQueryLoading] = useState(false);
 
+  // Reasoner state management
+  const [selectedReasoner, setSelectedReasoner] = useState<string>('HermiT');
+  const [isReasonerRunning, setIsReasonerRunning] = useState(false);
+  const [isReasonerSynced, setIsReasonerSynced] = useState(false);
+  const [reasonerResults, setReasonerResults] = useState<any>(null);
+  const [isReasonerLoading, setIsReasonerLoading] = useState(false);
+  const [isConsistencyLoading, setIsConsistencyLoading] = useState(false);
+  const [consistencyResult, setConsistencyResult] = useState<any | null>(null);
+  const [explanationState, setExplanationState] = useState<{ open: boolean; loading: boolean; data: any; error: string | null }>(
+    { open: false, loading: false, data: null, error: null }
+  );
+  const [isReasonerSettingsOpen, setIsReasonerSettingsOpen] = useState(false);
+
+  const fetchReasonerBundle = useCallback(async (reasonerType: string) => {
+    if (!projectId) {
+      throw new Error('No ontology loaded');
+    }
+
+    const [classificationResponse, statsResponse] = await Promise.all([
+      apiClient.post(
+        `/plugin-service/api/reasoner/${projectId}/classify`,
+        { reasonerType }
+      ),
+      apiClient.get(
+        `/plugin-service/api/reasoner/${projectId}/stats?reasonerType=${reasonerType}`
+      ).catch(error => {
+        console.warn('[Dashboard] Reasoner stats request failed:', error);
+        return null;
+      })
+    ]);
+
+    return combineReasonerResults(classificationResponse, statsResponse ?? undefined);
+  }, [projectId]);
+
+  const startReasoner = useCallback(async () => {
+    if (!projectId) {
+      notificationService.error('No Ontology Loaded', 'Please load an ontology first');
+      return;
+    }
+
+    if (isReasonerLoading) {
+      return;
+    }
+
+    setIsReasonerLoading(true);
+    setIsReasonerRunning(true);
+
+    try {
+      const reasonerType = normalizeReasonerType(selectedReasoner);
+      const results = await fetchReasonerBundle(reasonerType);
+      setReasonerResults(results);
+      setMainTab('Reasoner');
+      notificationService.success('Classification Complete', `${selectedReasoner} reasoner completed successfully`);
+    } catch (error: any) {
+      console.error('[Dashboard] Reasoner error:', error);
+      notificationService.error('Classification Failed', error?.response?.data?.error || error?.message || 'Classification failed');
+      setIsReasonerRunning(false);
+    } finally {
+      setIsReasonerLoading(false);
+    }
+  }, [fetchReasonerBundle, isReasonerLoading, projectId, selectedReasoner]);
+
+  const stopReasoner = useCallback(() => {
+    setIsReasonerRunning(false);
+    setIsReasonerLoading(false);
+    setReasonerResults(null);
+    notificationService.success('Reasoner Stopped', 'Reasoner has been stopped');
+  }, []);
+
+  const toggleReasonerSync = useCallback(() => {
+    const newSyncState = !isReasonerSynced;
+    setIsReasonerSynced(newSyncState);
+    console.log('[Dashboard] Reasoner auto-sync:', newSyncState ? 'enabled' : 'disabled');
+    if (newSyncState) {
+      notificationService.success('Auto-sync Enabled', 'Reasoner will automatically re-run on changes');
+    } else {
+      notificationService.info('Auto-sync Disabled', 'Reasoner will only run manually');
+    }
+  }, [isReasonerSynced]);
+
+  const handleSelectReasoner = useCallback((reasoner: string) => {
+    // Stop current reasoner if running
+    if (isReasonerRunning) {
+      setIsReasonerRunning(false);
+      setReasonerResults(null);
+      notificationService.info('Reasoner Stopped', 'Previous reasoner stopped due to type change');
+    }
+    
+    setSelectedReasoner(reasoner);
+    
+    // Show reasoner description
+    const descriptions: Record<string, string> = {
+      'HermiT': 'Hypertableau-based reasoner with full OWL 2 DL support - best for complex ontologies',
+      'ELK': 'High-performance reasoner optimized for EL++ profile - best for large taxonomies',
+      'Pellet': 'Complete OWL DL reasoner with SWRL support',
+      'Openllet': 'Modern fork of Pellet with improved performance and OWL API 5 support',
+      'Structural': 'Lightweight structural reasoner - fast but limited inference'
+    };
+    
+    notificationService.info('Reasoner Selected', descriptions[reasoner] || `${reasoner} reasoner is now active`);
+  }, [isReasonerRunning]);
+
+  const checkConsistency = useCallback(async () => {
+    if (!projectId) {
+      notificationService.error('No Ontology Loaded', 'Please load an ontology first');
+      return;
+    }
+
+    try {
+      setIsConsistencyLoading(true);
+      const reasonerType = normalizeReasonerType(selectedReasoner);
+      const resp = await apiClient.post(
+        `/plugin-service/api/reasoner/${projectId}/consistency`,
+        { reasonerType }
+      );
+      const data = extractResponseData(resp);
+      setConsistencyResult(data);
+
+      const inconsistent = data?.consistent === false || data?.isConsistent === false;
+      if (inconsistent) {
+        notificationService.error('Ontology Inconsistent', 'Open the explanation to inspect the causes.');
+      } else {
+        notificationService.success('Consistency Checked', `${selectedReasoner} reports the ontology is consistent`);
+      }
+    } catch (error: any) {
+      console.error('[Dashboard] Consistency check failed:', error);
+      setConsistencyResult({ error: error?.message || 'Consistency check failed' });
+      notificationService.error('Consistency Check Failed', error?.message || 'Unable to check ontology consistency');
+    } finally {
+      setIsConsistencyLoading(false);
+    }
+  }, [projectId, selectedReasoner]);
+
+  const explainInconsistency = useCallback(async () => {
+    if (!projectId) {
+      notificationService.error('No Ontology Loaded', 'Please load an ontology first');
+      return;
+    }
+
+    try {
+      setExplanationState({ open: true, loading: true, data: null, error: null });
+      const reasonerType = normalizeReasonerType(selectedReasoner);
+      const resp = await apiClient.post(
+        `/plugin-service/api/reasoner/${projectId}/explain-inconsistency`,
+        { reasonerType }
+      );
+      const data = extractResponseData(resp);
+      setExplanationState({ open: true, loading: false, data, error: null });
+      notificationService.info('Explanation Ready', 'Review the inconsistency report.');
+    } catch (error: any) {
+      console.error('[Dashboard] Explain inconsistency failed:', error);
+      setExplanationState({ open: true, loading: false, data: null, error: error?.message || 'Failed to explain inconsistency' });
+      notificationService.error('Explain Inconsistency Failed', error?.message || 'Could not compute explanation');
+    }
+  }, [projectId, selectedReasoner]);
+
   const [classHierarchy, setClassHierarchy] = useState<TreeNode[]>([]);
   const [objectProperties, setObjectProperties] = useState<Property[]>([]);
   const [objectPropertyHierarchy, setObjectPropertyHierarchy] = useState<any[]>([]);
+  const [inferredObjectPropertyHierarchy, setInferredObjectPropertyHierarchy] = useState<TreeNode[]>([]);
   const [dataProperties, setDataProperties] = useState<Property[]>([]);
   const [dataPropertyHierarchy, setDataPropertyHierarchy] = useState<any[]>([]);
+  const [inferredDataPropertyHierarchy, setInferredDataPropertyHierarchy] = useState<TreeNode[]>([]);
   const [annotationProperties, setAnnotationProperties] = useState<AnnotationProperty[]>([]);
   const [individuals, setIndividuals] = useState<Individual[]>([]);
   const [datatypes, setDatatypes] = useState<Datatype[]>([]);
@@ -1113,14 +1775,53 @@ const Dashboard = () => {
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
   const [showCollaborationPanel, setShowCollaborationPanel] = useState(false);
 
-  // Plugin tabs (SPARQL, SWRL, Fuzzy, Changes, Graph) are added dynamically when plugins are installed
-  const [visibleMainTabs, setVisibleMainTabs] = useState(['ActiveOntology', 'Entities', 'IndividualsByClass', 'DLQuery', 'CodeView']);
+  // Plugin tabs (SPARQL, SWRL, Fuzzy, Changes, Graph, Reasoner) are added dynamically when plugins are installed
+  const [visibleMainTabs, setVisibleMainTabs] = useState(['ActiveOntology', 'Entities', 'IndividualsByClass', 'DLQuery', 'Reasoner', 'CodeView']);
   const [showPluginMarketplace, setShowPluginMarketplace] = useState(false);
   const [installedPlugins, setInstalledPlugins] = useState<Set<string>>(new Set());
+
+  const currentHierarchyViewMode = hierarchyViewModes[entitiesTab] || 'asserted';
+  const setCurrentHierarchyViewMode = (mode: 'asserted' | 'inferred') => {
+    setHierarchyViewModes(prev => ({ ...prev, [entitiesTab]: mode }));
+  };
+
+  const resolveDatatypeIri = (datatype?: string) => {
+    if (!datatype) return undefined;
+    return DATATYPE_IRI_MAP[datatype] || datatype;
+  };
+
+  const shortenDatatype = (datatype?: string) => {
+    if (!datatype) return 'xsd:string';
+    const entry = Object.entries(DATATYPE_IRI_MAP).find(([, iri]) => iri === datatype);
+    if (entry) return entry[0];
+    if (datatype.includes('#')) {
+      return `xsd:${datatype.split('#').pop()}`;
+    }
+    return datatype;
+  };
+
+  const applyInstanceCountsToTree = useCallback((
+    nodes: TreeNode[],
+    counts: Record<string, { direct?: number; inferred?: number; total?: number }>
+  ): TreeNode[] => {
+    return nodes.map((node) => {
+      const countEntry = counts[node.id];
+      const direct = countEntry?.direct;
+      const inferred = countEntry?.inferred;
+      const total = countEntry ? (countEntry.total ?? (direct ?? 0) + (inferred ?? 0)) : undefined;
+      return {
+        ...node,
+        directInstanceCount: direct,
+        inferredInstanceCount: inferred,
+        totalInstanceCount: total,
+        children: node.children ? applyInstanceCountsToTree(node.children, counts) : node.children
+      };
+    });
+  }, []);
   const [pluginLoadingStates, setPluginLoadingStates] = useState<Record<string, { loading: boolean; error: string | null }>>({});
   
   // Code View states
-  const [codeViewFormat, setCodeViewFormat] = useState<'turtle' | 'rdfxml' | 'ntriples' | 'owl'>('turtle');
+  const [codeViewFormat, setCodeViewFormat] = useState<'turtle' | 'rdfxml' | 'ntriples' | 'owlxml' | 'manchester' | 'functional'>('turtle');
   const [codeViewContent, setCodeViewContent] = useState<string>('');
   const [codeViewLoading, setCodeViewLoading] = useState(false);
 
@@ -1151,7 +1852,8 @@ const Dashboard = () => {
         'graph-view-plugin': 'Graph',
         'fuzzy-ontology-plugin': 'Fuzzy',
         'change-assistant-plugin': 'Changes',
-        'sparql-query-plugin': 'SPARQL'
+        'sparql-query-plugin': 'SPARQL',
+        'Reasoner-plugin' : 'Reasoner'
       };
       
       const tabId = pluginToTabMap[pluginId];
@@ -1227,7 +1929,8 @@ const Dashboard = () => {
         'graph-view-plugin': 'Graph',
         'fuzzy-ontology-plugin': 'Fuzzy',
         'change-assistant-plugin': 'Changes',
-        'sparql-query-plugin': 'SPARQL'
+        'sparql-query-plugin': 'SPARQL',
+        'reasoner-plugin': 'Reasoner'
       };
       
       const tabId = pluginToTabMap[pluginId];
@@ -1308,10 +2011,15 @@ const Dashboard = () => {
       const dataFetchPromise = Promise.all([
         apiClient.get<any>(`/api/ontology/metadata/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/classes/top-level/${currentProjectId}`),
+        apiClient.get<any>(`/api/ontology/classes/instance-counts/${currentProjectId}`).catch(() => null),
         apiClient.get<any>(`/api/ontology/properties/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/individuals/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/annotation-properties/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/datatypes/${currentProjectId}`),
+        apiClient.get<any>(`/api/ontology/ontology/imports/${currentProjectId}`),
+        apiClient.get<any>(`/api/ontology/ontology/gci/${currentProjectId}?limit=200`),
+        apiClient.get<any>(`/api/ontology/ontology/annotations/${currentProjectId}`),
+        apiClient.get<any>(`/api/ontology/ontology/prefixes/${currentProjectId}`)
       ]);
       
       // Allow UI to be responsive immediately if not waiting
@@ -1322,17 +2030,39 @@ const Dashboard = () => {
       }
       
       // Continue loading in background
-      const [metadataRes, topLevelRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes] = await dataFetchPromise;
+      const [
+        metadataRes,
+        topLevelRes,
+        instanceCountsRes,
+        propertiesRes,
+        individualsRes,
+        annotationPropsRes,
+        datatypesRes,
+        importsRes,
+        gciRes,
+        ontologyAnnotationsRes,
+        prefixesRes
+      ] = await dataFetchPromise;
       
       console.log('[Dashboard] ✅ Data loaded from GraphDB database successfully!');
       console.log('[Dashboard] 📊 This data includes all saved changes from the database');
       
       // Handle metadata response - backend returns {success: true, data: {counts: {...}, prefixes: [...], ontologyIRI: "...", ...}}
       console.log("Metadata response:", metadataRes);
+      
       const metadataData = metadataRes?.data || metadataRes;
+      const annotationsData = metadataData?.annotations || [];
+      const imports = metadataData?.imports || [];
+      const gciAxioms = metadataData?.axioms || [];
+      
+      console.log("Extracted annotations data:", annotationsData);
+      console.log("Extracted imports:", imports);
+      console.log("Extracted GCI axioms:", gciAxioms);
+      
       // Keep all metadata fields from backend (axiom counts, ontologyIRI, etc.)
       const transformedMetadata = {
         ...metadataData,
+        annotations: annotationsData,
         // Also add flat structure for backward compatibility
         classCount: metadataData?.classCount || metadataData?.counts?.classes || 0,
         objectPropertyCount: metadataData?.objectPropertyCount || metadataData?.counts?.objectProperties || 0,
@@ -1344,6 +2074,32 @@ const Dashboard = () => {
       };
       console.log("Transformed metadata:", transformedMetadata);
       setMetadata(transformedMetadata);
+
+      const instanceCountsPayload = instanceCountsRes?.data || instanceCountsRes;
+      const instanceCountsData = instanceCountsPayload?.data || instanceCountsPayload || {};
+      if (instanceCountsData && typeof instanceCountsData === 'object') {
+        setClassInstanceCounts(instanceCountsData);
+      }
+
+      const importsPayload = importsRes?.data || importsRes;
+      const importsData = importsPayload?.data || importsPayload || [];
+      setOntologyImports(Array.isArray(importsData) ? importsData : []);
+
+      const gciPayload = gciRes?.data || gciRes;
+      const gciData = gciPayload?.data || gciPayload || [];
+      setGeneralClassAxioms(Array.isArray(gciData) ? gciData : []);
+
+      const ontologyAnnotationsPayload = ontologyAnnotationsRes?.data || ontologyAnnotationsRes;
+      const ontologyAnnotationsData = ontologyAnnotationsPayload?.data || ontologyAnnotationsPayload || [];
+      setOntologyAnnotations(Array.isArray(ontologyAnnotationsData) ? ontologyAnnotationsData : []);
+
+      const prefixesPayload = prefixesRes?.data || prefixesRes;
+      const prefixesData = prefixesPayload?.data || prefixesPayload || {};
+      const prefixList = Object.entries(prefixesData).map(([prefix, namespace]) => ({
+        prefix,
+        namespace: String(namespace)
+      }));
+      setPrefixMappings(prefixList);
 
       // Handle classes response - backend returns {success: true, classes: [...]}
       console.log("=== CLASSES RESPONSE DEBUG ===");
@@ -1404,7 +2160,11 @@ const Dashboard = () => {
       console.log("Setting classHierarchy with owl:Thing");
       console.log("=== END OWL:THING DEBUG ===");
       
-      setClassHierarchy([owlThingNode]);
+      const resolvedCounts = (instanceCountsData && typeof instanceCountsData === 'object')
+        ? instanceCountsData
+        : {};
+      const hierarchyWithCounts = applyInstanceCountsToTree([owlThingNode], resolvedCounts);
+      setClassHierarchy(hierarchyWithCounts);
 
       // Handle properties response
       console.log("=== PROPERTIES RESPONSE DEBUG ===");
@@ -1670,6 +2430,162 @@ const Dashboard = () => {
     }
   }, []); // waitForProcessingComplete doesn't depend on state/props, stable reference
 
+  useEffect(() => {
+    if (metadata?.ontologyIRI) {
+      setOntologyIriDraft(metadata.ontologyIRI);
+    }
+    if (metadata?.versionIRI !== undefined) {
+      setVersionIriDraft(metadata.versionIRI || '');
+    }
+  }, [metadata?.ontologyIRI, metadata?.versionIRI]);
+
+  const refreshOntologyAnnotations = async () => {
+    if (!projectId) return;
+    try {
+      const response = await apiClient.get<any>(`/api/ontology/ontology/annotations/${projectId}`);
+      const payload = response?.data || response;
+      const data = payload?.data || payload || [];
+      setOntologyAnnotations(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('[Dashboard] Failed to refresh ontology annotations:', error);
+    }
+  };
+
+  const refreshOntologyImports = async () => {
+    if (!projectId) return;
+    try {
+      const response = await apiClient.get<any>(`/api/ontology/ontology/imports/${projectId}`);
+      const payload = response?.data || response;
+      const data = payload?.data || payload || [];
+      setOntologyImports(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('[Dashboard] Failed to refresh ontology imports:', error);
+    }
+  };
+
+  const refreshPrefixes = async () => {
+    if (!projectId) return;
+    try {
+      const response = await apiClient.get<any>(`/api/ontology/ontology/prefixes/${projectId}`);
+      const payload = response?.data || response;
+      const data = payload?.data || payload || {};
+      const list = Object.entries(data).map(([prefix, namespace]) => ({
+        prefix,
+        namespace: String(namespace)
+      }));
+      setPrefixMappings(list);
+    } catch (error) {
+      console.error('[Dashboard] Failed to refresh prefixes:', error);
+    }
+  };
+
+  const handleSaveOntologyId = async () => {
+    if (!projectId || !ontologyIriDraft.trim()) return;
+    try {
+      await apiClient.put(`/api/ontology/ontology/id/${projectId}`, {
+        ontologyIRI: ontologyIriDraft.trim(),
+        versionIRI: versionIriDraft.trim() || null
+      });
+      setIsEditingOntologyId(false);
+      await apiClient.get(`/api/ontology/metadata/${projectId}`)
+        .then((res) => {
+          const data = res?.data || res;
+          setMetadata({ ...(metadata || {}), ...data });
+        })
+        .catch(() => {});
+    } catch (error) {
+      console.error('[Dashboard] Failed to update ontology ID:', error);
+      notificationService.error('Update Failed', 'Could not update ontology IRI/version.');
+    }
+  };
+
+  const handleAddOntologyAnnotation = async (propertyIri: string, value: string, datatype?: string) => {
+    if (!projectId) return;
+    try {
+      await apiClient.post(`/api/ontology/ontology/annotations/${projectId}`, {
+        propertyIri,
+        value,
+        datatypeIri: resolveDatatypeIri(datatype)
+      });
+      await refreshOntologyAnnotations();
+    } catch (error) {
+      console.error('[Dashboard] Failed to add ontology annotation:', error);
+      notificationService.error('Annotation Failed', 'Could not add ontology annotation.');
+    }
+  };
+
+  const handleUpdateOntologyAnnotation = async (propertyIri: string, oldValue: string, newValue: string, datatype?: string) => {
+    if (!projectId) return;
+    try {
+      await apiClient.put(`/api/ontology/ontology/annotations/${projectId}`, {
+        propertyIri,
+        oldValue,
+        newValue,
+        datatypeIri: resolveDatatypeIri(datatype)
+      });
+      await refreshOntologyAnnotations();
+    } catch (error) {
+      console.error('[Dashboard] Failed to update ontology annotation:', error);
+      notificationService.error('Annotation Failed', 'Could not update ontology annotation.');
+    }
+  };
+
+  const handleDeleteOntologyAnnotation = async (propertyIri: string, value: string, datatype?: string) => {
+    if (!projectId) return;
+    try {
+      await apiClient.delete(`/api/ontology/ontology/annotations/${projectId}`, {
+        params: {
+          propertyIri,
+          value,
+          datatypeIri: resolveDatatypeIri(datatype)
+        }
+      });
+      await refreshOntologyAnnotations();
+    } catch (error) {
+      console.error('[Dashboard] Failed to delete ontology annotation:', error);
+      notificationService.error('Annotation Failed', 'Could not delete ontology annotation.');
+    }
+  };
+
+  const handleAddImport = async () => {
+    if (!projectId || !importDraft.trim()) return;
+    try {
+      await apiClient.post(`/api/ontology/ontology/imports/${projectId}`, {
+        importIri: importDraft.trim()
+      });
+      setImportDraft('');
+      await refreshOntologyImports();
+    } catch (error) {
+      console.error('[Dashboard] Failed to add import:', error);
+      notificationService.error('Import Failed', 'Could not add import.');
+    }
+  };
+
+  const handleRemoveImport = async (iri: string) => {
+    if (!projectId) return;
+    try {
+      await apiClient.delete(`/api/ontology/ontology/imports/${projectId}`, {
+        params: { importIri: iri }
+      });
+      await refreshOntologyImports();
+    } catch (error) {
+      console.error('[Dashboard] Failed to remove import:', error);
+      notificationService.error('Import Failed', 'Could not remove import.');
+    }
+  };
+
+  const handleSavePrefixes = async () => {
+    if (!projectId) return;
+    try {
+      await apiClient.put(`/api/ontology/ontology/prefixes/${projectId}`, prefixMappings);
+      setIsPrefixEditing(false);
+      await refreshPrefixes();
+    } catch (error) {
+      console.error('[Dashboard] Failed to save prefixes:', error);
+      notificationService.error('Prefixes Failed', 'Could not save prefixes.');
+    }
+  };
+
   // Update real-time sync status based on collaboration state
   useEffect(() => {
     if (!projectId) return;
@@ -1683,6 +2599,66 @@ const Dashboard = () => {
         setSyncMode('public');
     }
   }, [projectId, collaboration.state.activeUsers, user?.id]);
+
+  const loadClassInstances = useCallback(async () => {
+    if (!projectId || !selectedClassForIndividuals) {
+      setClassInstances([]);
+      return;
+    }
+    setClassInstancesLoading(true);
+    try {
+      const response = await apiClient.get<any>(
+        `/api/ontology/classes/instances/${projectId}?classIri=${encodeURIComponent(selectedClassForIndividuals.id)}`
+      );
+      const payload = response?.data || response;
+      const instances = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
+      setClassInstances(instances);
+    } catch (error) {
+      console.error('[Dashboard] Failed to load class instances:', error);
+      setClassInstances([]);
+    } finally {
+      setClassInstancesLoading(false);
+    }
+  }, [projectId, selectedClassForIndividuals]);
+
+  useEffect(() => {
+    setClassInstancesQuery('');
+    setClassInstancesView('direct');
+    setSelectedClassIndividual(null);
+    setSelectedClassIndividualDetails(null);
+    loadClassInstances();
+  }, [loadClassInstances]);
+
+  const refreshSelectedClassIndividualDetails = useCallback(async () => {
+    if (!projectId || !selectedClassIndividual?.id) {
+      setSelectedClassIndividualDetails(null);
+      return;
+    }
+    setSelectedClassIndividualLoading(true);
+    try {
+      const response = await apiClient.get<any>(
+        `/api/ontology/individual-details/${projectId}?individualIri=${encodeURIComponent(selectedClassIndividual.id)}`
+      );
+      const details = response?.data || response;
+      if (details) {
+        setSelectedClassIndividualDetails({
+          ...selectedClassIndividual,
+          types: details.types || selectedClassIndividual.types,
+          annotations: details.annotations || selectedClassIndividual.annotations,
+          propertyAssertions: details.propertyAssertions || []
+        });
+      }
+    } catch (error) {
+      console.error('[Dashboard] Failed to load individual details:', error);
+      setSelectedClassIndividualDetails(null);
+    } finally {
+      setSelectedClassIndividualLoading(false);
+    }
+  }, [projectId, selectedClassIndividual]);
+
+  useEffect(() => {
+    refreshSelectedClassIndividualDetails();
+  }, [refreshSelectedClassIndividualDetails]);
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -1798,6 +2774,31 @@ const Dashboard = () => {
       isMountedRef.current = false;
     };
   }, []);
+
+  const getLocalName = (iri?: string) => {
+    if (!iri) return '';
+    if (iri.includes('#')) {
+      return iri.split('#').pop() || iri;
+    }
+    const parts = iri.split('/');
+    return parts[parts.length - 1] || iri;
+  };
+
+  const resolvePropertyIriByLabel = (labelOrIri: string, properties: Property[]) => {
+    if (!labelOrIri) return undefined;
+    if (labelOrIri.startsWith('http://') || labelOrIri.startsWith('https://')) return labelOrIri;
+    const normalized = labelOrIri.toLowerCase();
+    const found = properties.find(prop => (prop.label || getLocalName(prop.id)).toLowerCase() === normalized);
+    return found?.id;
+  };
+
+  const resolveIndividualIriByLabel = (labelOrIri: string) => {
+    if (!labelOrIri) return undefined;
+    if (labelOrIri.startsWith('http://') || labelOrIri.startsWith('https://')) return labelOrIri;
+    const normalized = labelOrIri.toLowerCase();
+    const found = individuals.find(ind => (ind.label || getLocalName(ind.id)).toLowerCase() === normalized);
+    return found?.id;
+  };
 
   // Handle loading choice dialog actions
   const handleWaitForLoading = useCallback(() => {
@@ -2040,14 +3041,15 @@ const Dashboard = () => {
       const updateTree = (nodes: TreeNode[]): TreeNode[] =>
         nodes.map((n: TreeNode) => {
           if (n.id === nodeId) {
+            const mappedChildren = children.map((c: TopLevelClass) => ({
+              ...c,
+              children: c.hasChildren ? undefined : undefined, // Use undefined for consistency
+              hasChildren: c.hasChildren,
+              subClassOfAxioms: [{ id: nodeId, type: 'SubClassOf', definition: n.label }]
+            }));
             return {
               ...n,
-              children: children.map((c: TopLevelClass) => ({
-                ...c,
-                children: c.hasChildren ? undefined : undefined, // Use undefined for consistency
-                hasChildren: c.hasChildren,
-                subClassOfAxioms: [{ id: nodeId, type: 'SubClassOf', definition: n.label }]
-              }))
+              children: applyInstanceCountsToTree(mappedChildren, classInstanceCounts)
             };
           }
           if (n.children) {
@@ -2059,6 +3061,106 @@ const Dashboard = () => {
       setClassHierarchy(prevHierarchy => updateTree(prevHierarchy));
     } catch (error) {
       console.error(`Failed to load children for ${nodeId}`, error);
+    }
+  }, [projectId, classInstanceCounts, applyInstanceCountsToTree]);
+
+  const fetchInferredChildren = useCallback(async (nodeId: string) => {
+    if (!projectId) return [];
+    try {
+      const response = await apiClient.get<any>(
+        `/api/ontology/${projectId}/reasoner/inferred-subclasses`,
+        { classIri: nodeId, direct: true }
+      );
+      const payload = response?.data || response;
+      const items = payload?.inferredSubClasses || payload?.data?.inferredSubClasses || [];
+      return Array.isArray(items) ? items : [];
+    } catch (error) {
+      console.error('[Dashboard] Failed to load inferred subclasses:', error);
+      return [];
+    }
+  }, [projectId]);
+
+  const loadInferredChildren = useCallback(async (nodeId: string) => {
+    if (!projectId) return;
+    const inferred = await fetchInferredChildren(nodeId);
+    const mappedChildren: TreeNode[] = inferred
+      .filter((item: any) => item?.iri && item.iri !== 'http://www.w3.org/2002/07/owl#Nothing')
+      .map((item: any) => ({
+        id: item.iri,
+        label: item.label || getLocalName(item.iri),
+        children: [],
+        hasChildren: true,
+        subClassOfAxioms: [{ id: nodeId, type: 'SubClassOf', definition: getLocalName(nodeId) || 'Thing' }]
+      }));
+
+    const updateTree = (nodes: TreeNode[]): TreeNode[] =>
+      nodes.map((n: TreeNode) => {
+        if (n.id === nodeId) {
+          const withCounts = applyInstanceCountsToTree(mappedChildren, classInstanceCounts);
+          return {
+            ...n,
+            children: withCounts,
+            hasChildren: withCounts.length > 0
+          };
+        }
+        if (n.children) {
+          return { ...n, children: updateTree(n.children) };
+        }
+        return n;
+      });
+
+    setClassHierarchy(prevHierarchy => updateTree(prevHierarchy));
+  }, [projectId, fetchInferredChildren, applyInstanceCountsToTree, classInstanceCounts, getLocalName]);
+
+  const loadInferredHierarchy = useCallback(async () => {
+    if (!projectId) return;
+    const rootId = "http://www.w3.org/2002/07/owl#Thing";
+    const inferred = await fetchInferredChildren(rootId);
+    const topLevelNodes: TreeNode[] = inferred
+      .filter((item: any) => item?.iri && item.iri !== rootId && item.iri !== 'http://www.w3.org/2002/07/owl#Nothing')
+      .map((item: any) => ({
+        id: item.iri,
+        label: item.label || getLocalName(item.iri),
+        children: [],
+        hasChildren: true,
+        subClassOfAxioms: [{ id: 'sub1', type: 'SubClassOf', definition: 'Thing' }]
+      }));
+
+    const owlThingNode: TreeNode = {
+      id: rootId,
+      label: "owl:Thing",
+      children: topLevelNodes,
+      hasChildren: topLevelNodes.length > 0,
+      annotations: {}
+    };
+
+    const hierarchyWithCounts = applyInstanceCountsToTree([owlThingNode], classInstanceCounts);
+    setClassHierarchy(hierarchyWithCounts);
+  }, [projectId, fetchInferredChildren, applyInstanceCountsToTree, classInstanceCounts, getLocalName]);
+
+  const loadInferredObjectPropertyHierarchy = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-object-property-hierarchy`);
+      const payload = res?.data || res;
+      const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
+      setInferredObjectPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
+    } catch (error) {
+      console.error('[Dashboard] Failed to load inferred object property hierarchy:', error);
+      setInferredObjectPropertyHierarchy([]);
+    }
+  }, [projectId]);
+
+  const loadInferredDataPropertyHierarchy = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-data-property-hierarchy`);
+      const payload = res?.data || res;
+      const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
+      setInferredDataPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
+    } catch (error) {
+      console.error('[Dashboard] Failed to load inferred data property hierarchy:', error);
+      setInferredDataPropertyHierarchy([]);
     }
   }, [projectId]);
 
@@ -2131,6 +3233,17 @@ const Dashboard = () => {
 
   const refreshClassHierarchy = useCallback(async () => {
     if (!projectId) return;
+    const now = Date.now();
+    if (classHierarchyRefreshInFlight.current) {
+      console.warn('[Dashboard] Skipping class hierarchy refresh: already in flight');
+      return;
+    }
+    if (now - lastClassHierarchyRefreshAt.current < 2000) {
+      console.warn('[Dashboard] Skipping class hierarchy refresh: throttled');
+      return;
+    }
+    classHierarchyRefreshInFlight.current = true;
+    lastClassHierarchyRefreshAt.current = now;
     try {
       const topLevelRes = await apiClient.get<any>(`/api/ontology/classes/top-level/${projectId}`);
       
@@ -2160,7 +3273,8 @@ const Dashboard = () => {
         annotations: {}
       };
 
-      setClassHierarchy([owlThingNode]);
+      const hierarchyWithCounts = applyInstanceCountsToTree([owlThingNode], classInstanceCounts);
+      setClassHierarchy(hierarchyWithCounts);
       console.log('[Dashboard] ✅ Class hierarchy refreshed via refreshClassHierarchy');
       
       // Re-load children for all previously expanded nodes to preserve tree state
@@ -2176,8 +3290,19 @@ const Dashboard = () => {
       }
     } catch (error) {
       console.error('[Dashboard] Failed to refresh class hierarchy:', error);
+    } finally {
+      classHierarchyRefreshInFlight.current = false;
     }
-  }, [projectId, expandedNodes, loadChildren]);
+  }, [projectId, expandedNodes, loadChildren, classInstanceCounts, applyInstanceCountsToTree]);
+
+  useEffect(() => {
+    if (!projectId || mainTab !== 'Entities' || entitiesTab !== 'Classes') return;
+    if (currentHierarchyViewMode === 'inferred') {
+      loadInferredHierarchy();
+    } else {
+      refreshClassHierarchy();
+    }
+  }, [projectId, mainTab, entitiesTab, currentHierarchyViewMode, loadInferredHierarchy, refreshClassHierarchy]);
 
   // Handle remote edits from collaborative users in real-time
   useEffect(() => {
@@ -2622,6 +3747,35 @@ const Dashboard = () => {
     };
   }, [projectId, selectedItem, entitiesTab, refreshClassHierarchy, updateItemInState, showNotification, fetchData]);
 
+  // Handle file share notifications
+  useEffect(() => {
+    const handleFileShared = (event: CustomEvent) => {
+      console.log('[Dashboard] 📨 File shared event received:', event.detail);
+      const notification = event.detail;
+      
+      // Show toast notification
+      showToast(
+        `${notification.sharedByUsername} shared "${notification.fileName}" with you (${notification.permission} access)`,
+        'info'
+      );
+      
+      // Refresh the file list to show the new shared file
+      if (projectId) {
+        console.log('[Dashboard] Refreshing data after file share...');
+        setTimeout(() => {
+          fetchData(projectId, false);
+        }, 500);
+      }
+    };
+    
+    window.addEventListener('fileShared', handleFileShared as EventListener);
+    console.log('[Dashboard] 🎧 Registered listener for file share events');
+    
+    return () => {
+      window.removeEventListener('fileShared', handleFileShared as EventListener);
+    };
+  }, [projectId, fetchData, showToast]);
+
   // Handle reconnection after WebSocket disconnect - refresh data to sync
   useEffect(() => {
     const handleReconnection = (event: Event) => {
@@ -2644,6 +3798,7 @@ const Dashboard = () => {
 
   useEffect(() => {
     // Initialize notification service to show toasts via collaboration context
+    // This is a one-time setup that shouldn't re-run
     notificationService.onToast((options) => {
       collaboration.addNotification({
         type: options.type,
@@ -2659,32 +3814,130 @@ const Dashboard = () => {
     if (typeof window !== 'undefined' && !window.vscode) {
       notificationService.requestPermission();
     }
-  }, [collaboration]);
+  }, []); // Empty deps - collaboration.addNotification is stable
 
   // Memoize the source data based on active tab to avoid unnecessary re-filtering
   const sourceData = React.useMemo(() => {
     switch (entitiesTab) {
       case "Classes": return classHierarchy;
-      case "ObjectProperties": return objectPropertyHierarchy;
-      case "DataProperties": return dataPropertyHierarchy;
+      case "ObjectProperties":
+        return hierarchyViewModes.ObjectProperties === 'inferred'
+          ? inferredObjectPropertyHierarchy
+          : objectPropertyHierarchy;
+      case "DataProperties":
+        return hierarchyViewModes.DataProperties === 'inferred'
+          ? inferredDataPropertyHierarchy
+          : dataPropertyHierarchy;
       case "AnnotationProperties": return annotationProperties;
       case "Individuals": return individuals;
       case "Datatypes": return datatypes;
       default: return [];
     }
-  }, [entitiesTab, classHierarchy, objectPropertyHierarchy, dataPropertyHierarchy, annotationProperties, individuals, datatypes]);
+  }, [
+    entitiesTab,
+    classHierarchy,
+    objectPropertyHierarchy,
+    dataPropertyHierarchy,
+    inferredObjectPropertyHierarchy,
+    inferredDataPropertyHierarchy,
+    hierarchyViewModes.ObjectProperties,
+    hierarchyViewModes.DataProperties,
+    annotationProperties,
+    individuals,
+    datatypes
+  ]);
 
   // Filter data based on search query
   const filteredData = React.useMemo(() => {
-    if (!searchQuery) return sourceData;
+    const trimmedQuery = searchQuery.trim();
+    const lowercasedQuery = trimmedQuery.toLowerCase();
+    let regex: RegExp | null = null;
+    if (searchOptions.useRegex && trimmedQuery) {
+      try {
+        regex = new RegExp(trimmedQuery, 'i');
+      } catch (error) {
+        console.warn('[Dashboard] Invalid regex:', error);
+        regex = null;
+      }
+    }
 
-    const lowercasedQuery = searchQuery.toLowerCase();
+    const builtinsByTab: Record<string, Set<string>> = {
+      Classes: new Set([
+        'http://www.w3.org/2002/07/owl#Thing',
+        'http://www.w3.org/2002/07/owl#Nothing'
+      ]),
+      ObjectProperties: new Set([
+        'http://www.w3.org/2002/07/owl#topObjectProperty',
+        'http://www.w3.org/2002/07/owl#bottomObjectProperty'
+      ]),
+      DataProperties: new Set([
+        'http://www.w3.org/2002/07/owl#topDataProperty',
+        'http://www.w3.org/2002/07/owl#bottomDataProperty'
+      ]),
+      AnnotationProperties: new Set([
+        'http://www.w3.org/2000/01/rdf-schema#label',
+        'http://www.w3.org/2000/01/rdf-schema#comment',
+        'http://www.w3.org/2000/01/rdf-schema#seeAlso',
+        'http://www.w3.org/2000/01/rdf-schema#isDefinedBy',
+        'http://www.w3.org/2002/07/owl#deprecated'
+      ]),
+      Datatypes: new Set([
+        'http://www.w3.org/2000/01/rdf-schema#Literal',
+        'http://www.w3.org/1999/02/22-rdf-syntax-ns#PlainLiteral',
+        'http://www.w3.org/2001/XMLSchema#string',
+        'http://www.w3.org/2001/XMLSchema#integer',
+        'http://www.w3.org/2001/XMLSchema#decimal',
+        'http://www.w3.org/2001/XMLSchema#float',
+        'http://www.w3.org/2001/XMLSchema#double',
+        'http://www.w3.org/2001/XMLSchema#boolean',
+        'http://www.w3.org/2001/XMLSchema#date',
+        'http://www.w3.org/2001/XMLSchema#dateTime',
+        'http://www.w3.org/2001/XMLSchema#anyURI'
+      ])
+    };
+
+    const isBuiltIn = (item: SelectableItem) => {
+      if (!searchOptions.hideBuiltins) return false;
+      const builtins = builtinsByTab[entitiesTab];
+      return builtins ? builtins.has(item.id) : false;
+    };
+
+    const isDeprecated = (item: SelectableItem) => {
+      if (!searchOptions.hideDeprecated) return false;
+      const annotations = (item as any).annotations || {};
+      const deprecatedValue = annotations['http://www.w3.org/2002/07/owl#deprecated'] || annotations['owl:deprecated'];
+      if (!deprecatedValue) return false;
+      const normalized = String(deprecatedValue).toLowerCase();
+      return normalized === 'true' || normalized === '1' || normalized === 'yes';
+    };
+
+    const matchesQuery = (item: SelectableItem) => {
+      if (!trimmedQuery) return true;
+      const annotationBlob = searchOptions.searchAnnotations && (item as any).annotations
+        ? Object.entries((item as any).annotations)
+          .map(([key, value]) => `${key} ${String(value)}`)
+          .join(' ')
+        : '';
+      const haystack = `${item.label || ''} ${item.id || ''} ${annotationBlob}`;
+      if (regex) return regex.test(haystack);
+      return haystack.toLowerCase().includes(lowercasedQuery);
+    };
+
     const filterRecursively = (items: SelectableItem[]): SelectableItem[] => {
       const results: SelectableItem[] = [];
       for (const item of items) {
-        let matches = item.label?.toLowerCase().includes(lowercasedQuery);
-        // Check for children in both TreeNode and our extended Property objects
+        if (isDeprecated(item)) {
+          continue;
+        }
+
         const children = (item as any).children;
+        if (isBuiltIn(item) && children?.length) {
+          const childResults = filterRecursively(children);
+          results.push(...childResults);
+          continue;
+        }
+
+        let matches = matchesQuery(item);
         if (children) {
           const childResults = filterRecursively(children);
           if (childResults.length > 0) {
@@ -2699,7 +3952,7 @@ const Dashboard = () => {
       return results;
     };
     return filterRecursively(sourceData);
-  }, [searchQuery, sourceData]);
+  }, [searchQuery, sourceData, entitiesTab, searchOptions]);
 
   useEffect(() => {
     // Load previously installed plugins from localStorage
@@ -2718,7 +3971,8 @@ const Dashboard = () => {
           'graph-view-plugin': 'Graph',
           'fuzzy-ontology-plugin': 'Fuzzy',
           'change-assistant-plugin': 'Changes',
-          'sparql-query-plugin': 'SPARQL'
+          'sparql-query-plugin': 'SPARQL',
+          'reasoner-plugin': 'Reasoner'
         };
         
         const tabsToShow = pluginIds
@@ -2797,10 +4051,14 @@ const Dashboard = () => {
       
       if (node && node.hasChildren && (!node.children || node.children.length === 0)) {
         console.log(`Node ${nodeId} needs children loaded`);
-        await loadChildren(nodeId);
+        if (entitiesTab === 'Classes' && currentHierarchyViewMode === 'inferred') {
+          await loadInferredChildren(nodeId);
+        } else {
+          await loadChildren(nodeId);
+        }
       }
     }
-  }, [expandedNodes, classHierarchy, loadChildren]);
+  }, [expandedNodes, classHierarchy, loadChildren, loadInferredChildren, entitiesTab, currentHierarchyViewMode]);
 
   // Expose a safe global for bundles/minified code paths that still reference toggleNode
   useEffect(() => {
@@ -2836,7 +4094,23 @@ const Dashboard = () => {
     setHasUnsavedChanges(true);
     // Update draft count after a short delay
     setTimeout(() => updateDraftCount(), 500);
-  }, [updateDraftCount]);
+    
+    // Auto-sync reasoner if enabled
+    if (isReasonerSynced && isReasonerRunning && projectId) {
+      console.log('[DEBUG] Auto-sync: Re-running reasoner after ontology change');
+      // Debounce reasoner re-run to avoid too many calls
+      setTimeout(async () => {
+        try {
+          const reasonerType = normalizeReasonerType(selectedReasoner);
+          const results = await fetchReasonerBundle(reasonerType);
+          setReasonerResults(results);
+          console.log('[DEBUG] Auto-sync: Reasoner updated successfully');
+        } catch (error) {
+          console.error('[DEBUG] Auto-sync: Reasoner update failed', error);
+        }
+      }, 2000); // Wait 2 seconds after last change
+    }
+  }, [updateDraftCount, isReasonerSynced, isReasonerRunning, projectId, selectedReasoner, fetchReasonerBundle]);
 
   // Save changes to backend (applies drafts to GraphDB)
   const handleSave = useCallback(async () => {
@@ -2993,57 +4267,287 @@ const Dashboard = () => {
 
 
   const handleAddAnnotation = useCallback(async () => {
-    if (!selectedItem || !projectId) return;
+    if (!projectId) return;
+    if (mainTab !== 'ActiveOntology' && !selectedItem) return;
     setAddAnnotationDialogOpen(true);
-  }, [selectedItem, projectId]);
+  }, [selectedItem, projectId, mainTab]);
 
-  const handleAnnotationDialogAdd = useCallback(async (propertyIri: string, value: string, datatype?: string) => {
-    if (!selectedItem || !projectId) return;
+  const updateActiveOntologyAnnotations = useCallback((updater: (annotations: any[]) => any[]) => {
+    setMetadata(prev => {
+      if (!prev) {
+        return prev;
+      }
+
+      const currentAnnotations = Array.isArray((prev as any).annotations)
+        ? [...(prev as any).annotations]
+        : [];
+
+      const nextAnnotations = updater(currentAnnotations);
+      return {
+        ...(prev as any),
+        annotations: nextAnnotations
+      } as OntologyMetadata;
+    });
+  }, []);
+
+  const handleAnnotationDialogAdd = useCallback(async (propertyIri: string, value: string, datatype?: string, lang?: string) => {
+    if (!projectId) return;
+
+    const isEntityAnnotation = mainTab !== 'ActiveOntology' && !!selectedItem;
 
     try {
-      // Call backend API
-      await ontologyMutationService.addAnnotation(projectId, selectedItem.id, propertyIri, value, user?.email || 'anonymous', user?.username || 'Anonymous');
+      if (isEntityAnnotation && selectedItem) {
+        // Entity annotation
+        await ontologyMutationService.addAnnotation(projectId, selectedItem.id, propertyIri, value, user?.email || 'anonymous', user?.username || 'Anonymous');
+        
+        // Update local state
+        const updatedAnnotations = { ...selectedItem.annotations, [propertyIri]: value };
+        const updatedItem = { ...selectedItem, annotations: updatedAnnotations };
+        updateItemInState(updatedItem);
+        markAsUnsaved();
+      } else {
+        // Ontology annotation
+        updateActiveOntologyAnnotations(current => ([
+          ...current,
+          {
+            property: propertyIri,
+            value,
+            language: lang || undefined,
+            datatype
+          }
+        ]));
+
+        await apiClient.post(`/api/ontology/metadata/${projectId}/annotations`, {
+          propertyIri,
+          value,
+          language: lang,
+          datatype
+        });
+        
+        await refreshOntologyAnnotations();
+      }
       
-      // Update local state
-      const updatedAnnotations = { ...selectedItem.annotations, [propertyIri]: value };
-      const updatedItem = { ...selectedItem, annotations: updatedAnnotations };
-      updateItemInState(updatedItem);
-      markAsUnsaved();
       showNotification('Annotation added successfully!', 'info');
     } catch (error) {
       console.error('Failed to add annotation:', error);
+      if (!isEntityAnnotation) {
+        await refreshOntologyAnnotations();
+      }
       showNotification('Failed to add annotation. See console for details.', 'error');
     }
-  }, [selectedItem, updateItemInState, projectId]);
+  }, [selectedItem, updateItemInState, projectId, user, mainTab, updateActiveOntologyAnnotations, refreshOntologyAnnotations]);
 
   const handleEditAnnotation = useCallback(async (propertyIri: string, currentValue: string) => {
-    if (!selectedItem || !projectId) return;
+    if (!projectId) return;
     
     // Open dialog with current value pre-filled
-    setEditAnnotationData({ propertyIri, currentValue, entityId: selectedItem.id });
+    setEditAnnotationData({
+      propertyIri,
+      originalPropertyIri: propertyIri,
+      currentValue,
+      entityId: (mainTab !== 'ActiveOntology' && selectedItem) ? selectedItem.id : 'ONTOLOGY'
+    });
     setEditAnnotationDialogOpen(true);
-  }, [selectedItem, projectId]);
+  }, [selectedItem, projectId, mainTab]);
 
-  const handleAnnotationDialogEdit = useCallback(async (propertyIri: string, oldValue: string, newValue: string) => {
+  const handleAnnotationDialogEdit = useCallback(async (
+    propertyIri: string,
+    oldValue: string,
+    newValue: string,
+    datatype?: string,
+    lang?: string,
+    originalPropertyIri?: string,
+    oldLang?: string,
+    oldDatatype?: string
+  ) => {
     console.log('[Dashboard] handleAnnotationDialogEdit called with:', propertyIri, oldValue, newValue);
-    if (!selectedItem || !projectId) return;
+    if (!projectId) return;
+
+    const isEntityAnnotation = mainTab !== 'ActiveOntology' && !!selectedItem;
+    const targetPropertyIri = originalPropertyIri || propertyIri;
 
     try {
-      // Update annotation atomically (single operation instead of delete + add)
-      // Pass oldValue so change tracking can record both old and new values
-      await ontologyMutationService.updateAnnotation(projectId, selectedItem.id, propertyIri, newValue, user?.email || 'anonymous', user?.username || 'Anonymous', oldValue);
+      if (isEntityAnnotation && selectedItem) {
+        // Entity annotation
+        await ontologyMutationService.updateAnnotation(projectId, selectedItem.id, propertyIri, newValue, user?.email || 'anonymous', user?.username || 'Anonymous', oldValue);
+        
+        // Update local state
+        const updatedAnnotations = { ...selectedItem.annotations, [propertyIri]: newValue };
+        const updatedItem = { ...selectedItem, annotations: updatedAnnotations };
+        updateItemInState(updatedItem);
+        markAsUnsaved();
+      } else {
+        // Ontology annotation
+        updateActiveOntologyAnnotations(current => {
+          const matchIndex = current.findIndex((annotation: any) => {
+            if (!annotation) {
+              return false;
+            }
+
+            const matchesProperty = annotation.property === targetPropertyIri;
+            const existingValue = annotation.value?.toString?.() ?? annotation.value;
+            const matchesValue = existingValue === oldValue;
+            const matchesLanguage = (annotation.language || '') === (oldLang || '');
+            const matchesDatatype = (annotation.datatype || '') === (oldDatatype || '');
+            return matchesProperty && matchesValue && matchesLanguage && matchesDatatype;
+          });
+
+          const nextValue = {
+            ...(matchIndex >= 0 ? current[matchIndex] : {}),
+            property: propertyIri,
+            value: newValue,
+            language: lang || undefined,
+            datatype
+          };
+
+          if (matchIndex >= 0) {
+            current[matchIndex] = nextValue;
+          } else {
+            current.push(nextValue);
+          }
+
+          return current;
+        });
+
+        await apiClient.put(`/api/ontology/metadata/${projectId}/annotations`, {
+          propertyIri,
+          originalPropertyIri: originalPropertyIri || propertyIri,
+          oldValue,
+          newValue,
+          language: lang,
+          datatype
+        });
+        
+        await refreshOntologyAnnotations();
+      }
       
-      // Update local state
-      const updatedAnnotations = { ...selectedItem.annotations, [propertyIri]: newValue };
-      const updatedItem = { ...selectedItem, annotations: updatedAnnotations };
-      updateItemInState(updatedItem);
-      markAsUnsaved();
       showNotification('Annotation updated successfully!', 'info');
     } catch (error) {
       console.error('Failed to update annotation:', error);
+      if (!isEntityAnnotation) {
+        await refreshOntologyAnnotations();
+      }
       showNotification('Failed to update annotation. See console for details.', 'error');
     }
-  }, [selectedItem, updateItemInState, projectId, user]);
+  }, [selectedItem, updateItemInState, projectId, user, mainTab, updateActiveOntologyAnnotations, refreshOntologyAnnotations]);
+
+  const handleSaveOntologyIRIs = useCallback(async (ontologyIri: string, versionIri: string) => {
+    if (!projectId) return;
+    try {
+      await apiClient.put(`/api/ontology/metadata/${projectId}/iri`, { ontologyIri, versionIri });
+      
+      // Refresh metadata
+      const metadataRes = await apiClient.get(`/api/ontology/metadata/${projectId}`);
+      setMetadata(metadataRes.data || metadataRes);
+      
+      showNotification('Ontology IRIs updated successfully!', 'info');
+    } catch (error) {
+      console.error('Failed to update ontology IRIs:', error);
+      showNotification('Failed to update ontology IRIs.', 'error');
+    }
+  }, [projectId]);
+
+  const handleSaveGCI = useCallback(async (subClass: string, superClass: string) => {
+    if (!projectId) return;
+    try {
+      if (editGCIData) {
+        // Update existing GCI
+        await apiClient.put(`/api/ontology/metadata/${projectId}/gci/${editGCIData.index}`, { 
+          subClass, 
+          superClass,
+          oldValue: editGCIData.value 
+        });
+      } else {
+        // Add new GCI
+        await apiClient.post(`/api/ontology/metadata/${projectId}/gci`, { subClass, superClass });
+      }
+      
+      // Refresh GCIs
+      const gciRes = await apiClient.get(`/api/ontology/metadata/${projectId}/gci`);
+      const gciData = Array.isArray(gciRes?.data) ? gciRes.data : (Array.isArray(gciRes?.axioms) ? gciRes.axioms : (Array.isArray(gciRes) ? gciRes : []));
+      setGeneralClassAxioms(gciData);
+      
+      showNotification(editGCIData ? 'GCI updated successfully!' : 'GCI added successfully!', 'info');
+      setEditGCIData(null);
+    } catch (error) {
+      console.error('Failed to save GCI:', error);
+      showNotification('Failed to save GCI.', 'error');
+    }
+  }, [projectId, editGCIData]);
+
+  const handleDeleteGCI = useCallback(async (axiom: any, index: number) => {
+    if (!projectId) return;
+    
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete GCI',
+      message: `Are you sure you want to delete this General Class Axiom?`,
+      onConfirm: async () => {
+        try {
+          await apiClient.delete(`/api/ontology/metadata/${projectId}/gci`, { value: axiom.value });
+          
+          // Refresh GCIs
+          const gciRes = await apiClient.get(`/api/ontology/metadata/${projectId}/gci`);
+          const gciData = Array.isArray(gciRes?.data) ? gciRes.data : (Array.isArray(gciRes?.axioms) ? gciRes.axioms : (Array.isArray(gciRes) ? gciRes : []));
+          setGeneralClassAxioms(gciData);
+          
+          showNotification('GCI deleted successfully!', 'info');
+        } catch (error) {
+          console.error('Failed to delete GCI:', error);
+          showNotification('Failed to delete GCI.', 'error');
+        }
+      }
+    });
+  }, [projectId]);
+
+  // Add this state near other useState declarations at the top of Dashboard component
+  const [editPrefixData, setEditPrefixData] = useState<{ prefix: string } | null>(null);
+  const [showPrefixDialog, setShowPrefixDialog] = useState(false);
+  
+    const handleSavePrefix = useCallback(async (prefix: string, iri: string) => {
+      if (!projectId) return;
+      try {
+        await apiClient.post(`/api/ontology/metadata/${projectId}/prefixes`, { 
+          prefix, 
+          iri,
+          oldPrefix: editPrefixData?.prefix 
+        });
+        
+        // Refresh metadata to get updated prefixes
+        const metadataRes = await apiClient.get(`/api/ontology/metadata/${projectId}`);
+        setMetadata(metadataRes.data || metadataRes);
+        
+        showNotification('Prefix updated successfully!', 'info');
+        setEditPrefixData(null);
+      } catch (error) {
+        console.error('Failed to save prefix:', error);
+        showNotification('Failed to save prefix.', 'error');
+      }
+    }, [projectId, editPrefixData]);
+
+  const handleDeletePrefix = useCallback(async (prefix: string) => {
+    if (!projectId) return;
+    
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Prefix',
+      message: `Are you sure you want to delete the prefix "${prefix}"?`,
+      onConfirm: async () => {
+        try {
+          await apiClient.delete(`/api/ontology/metadata/${projectId}/prefixes`, { prefix });
+          
+          // Refresh metadata
+          const metadataRes = await apiClient.get(`/api/ontology/metadata/${projectId}`);
+          setMetadata(metadataRes.data || metadataRes);
+          
+          showNotification('Prefix deleted successfully!', 'info');
+        } catch (error) {
+          console.error('Failed to delete prefix:', error);
+          showNotification('Failed to delete prefix.', 'error');
+        }
+      }
+    });
+  }, [projectId]);
 
   const handleDeleteAnnotation = useCallback(async (key: string) => {
     if (!selectedItem || !selectedItem.annotations || !projectId) return;
@@ -3199,6 +4703,24 @@ const Dashboard = () => {
       console.error('Failed to refresh properties:', error);
     }
   }, [projectId]);
+
+  useEffect(() => {
+    if (!projectId || mainTab !== 'Entities' || entitiesTab !== 'ObjectProperties') return;
+    if (hierarchyViewModes.ObjectProperties === 'inferred') {
+      loadInferredObjectPropertyHierarchy();
+    } else {
+      refreshProperties();
+    }
+  }, [projectId, mainTab, entitiesTab, hierarchyViewModes.ObjectProperties, loadInferredObjectPropertyHierarchy, refreshProperties]);
+
+  useEffect(() => {
+    if (!projectId || mainTab !== 'Entities' || entitiesTab !== 'DataProperties') return;
+    if (hierarchyViewModes.DataProperties === 'inferred') {
+      loadInferredDataPropertyHierarchy();
+    } else {
+      refreshProperties();
+    }
+  }, [projectId, mainTab, entitiesTab, hierarchyViewModes.DataProperties, loadInferredDataPropertyHierarchy, refreshProperties]);
 
   // Handler for creating object properties with name parameter
   const handleAddObjectProperty = useCallback(async (
@@ -4210,7 +5732,7 @@ const Dashboard = () => {
   // #endregion
 
   // #region Render Methods
-  const fetchCodeViewContent = useCallback(async (format: 'turtle' | 'rdfxml' | 'ntriples' | 'owl') => {
+  const fetchCodeViewContent = useCallback(async (format: 'turtle' | 'rdfxml' | 'ntriples' | 'owlxml' | 'manchester' | 'functional') => {
     if (!projectId) return;
     setCodeViewLoading(true);
     try {
@@ -4247,6 +5769,67 @@ const Dashboard = () => {
     }
   }, [mainTab, projectId, codeViewContent, codeViewFormat, fetchCodeViewContent]);
 
+  // Helper component for rendering class hierarchy nodes with tooltips
+  const ClassHierarchyNode: React.FC<{ node: any; level: number }> = ({ node, level }) => {
+    const [showTooltip, setShowTooltip] = useState(false);
+    const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+    
+    const handleMouseEnter = (e: React.MouseEvent) => {
+      setTooltipPos({ x: e.clientX, y: e.clientY });
+      setShowTooltip(true);
+    };
+    
+    const handleMouseLeave = () => {
+      setShowTooltip(false);
+    };
+    
+    return (
+      <div style={{ marginLeft: `${level * 12}px` }} className="relative">
+        <div
+          className="flex items-center gap-1 py-1 px-2 hover:bg-blue-50 rounded cursor-pointer text-xs group"
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+        >
+          {node.children && node.children.length > 0 && (
+            <ChevronRight size={12} className="text-gray-400" />
+          )}
+          <span className="font-mono text-blue-700">{node.name || node.label || node}</span>
+          {node.inferred && (
+            <span className="text-[10px] bg-green-100 text-green-700 px-1 rounded">inferred</span>
+          )}
+        </div>
+        
+        {/* Explanation Tooltip */}
+        {showTooltip && node.explanation && (
+          <div
+            className="fixed z-[9999] bg-yellow-50 border-2 border-yellow-400 rounded-lg shadow-xl p-3 max-w-sm"
+            style={{
+              left: `${tooltipPos.x + 10}px`,
+              top: `${tooltipPos.y + 10}px`,
+              pointerEvents: 'none'
+            }}
+          >
+            <div className="text-xs font-semibold text-gray-800 mb-1">Why inferred:</div>
+            <div className="text-xs text-gray-700">{node.explanation}</div>
+          </div>
+        )}
+        
+        {node.children && node.children.length > 0 && node.children.map((child: any, idx: number) => (
+          <ClassHierarchyNode key={idx} node={child} level={level + 1} />
+        ))}
+      </div>
+    );
+  };
+
+  // Helper function to render class hierarchy
+  const renderClassHierarchy = (nodes: any[]): React.ReactNode => {
+    if (!nodes || nodes.length === 0) return null;
+    
+    return nodes.map((node: any, idx: number) => (
+      <ClassHierarchyNode key={idx} node={node} level={0} />
+    ));
+  };
+
   const renderMainContent = () => {
     switch (mainTab) {
       case 'CodeView':
@@ -4258,7 +5841,7 @@ const Dashboard = () => {
                 <p className="text-sm text-gray-600 mt-1">View the ontology in different serialization formats</p>
               </div>
               <div className="flex-1 flex flex-col overflow-hidden p-4">
-                <div className="mb-4 flex gap-2 flex-shrink-0">
+                <div className="mb-4 flex gap-2 flex-wrap flex-shrink-0">
                   <button
                     onClick={() => fetchCodeViewContent('turtle')}
                     className={`px-3 py-1 text-sm rounded-md ${
@@ -4290,14 +5873,34 @@ const Dashboard = () => {
                     N-Triples
                   </button>
                   <button
-                    onClick={() => fetchCodeViewContent('owl')}
+                    onClick={() => fetchCodeViewContent('owlxml')}
                     className={`px-3 py-1 text-sm rounded-md ${
-                      codeViewFormat === 'owl'
+                      codeViewFormat === 'owlxml'
                         ? 'bg-purple-600 text-white hover:bg-purple-700'
                         : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                     }`}
                   >
                     OWL/XML
+                  </button>
+                  <button
+                    onClick={() => fetchCodeViewContent('manchester')}
+                    className={`px-3 py-1 text-sm rounded-md ${
+                      codeViewFormat === 'manchester'
+                        ? 'bg-purple-600 text-white hover:bg-purple-700'
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                  >
+                    Manchester
+                  </button>
+                  <button
+                    onClick={() => fetchCodeViewContent('functional')}
+                    className={`px-3 py-1 text-sm rounded-md ${
+                      codeViewFormat === 'functional'
+                        ? 'bg-purple-600 text-white hover:bg-purple-700'
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                  >
+                    Functional
                   </button>
                   <button
                     onClick={() => fetchCodeViewContent(codeViewFormat)}
@@ -4509,76 +6112,635 @@ const Dashboard = () => {
           />
         );
       }
+      case 'Reasoner': {
+        const stats = reasonerResults?.stats || null;
+        const unsatList = reasonerResults?.unsatisfiableClasses || [];
+        const equivalentGroups = reasonerResults?.equivalentClasses || [];
+        const consistencyData = consistencyResult || null;
+        const consistencyUnsat = consistencyData?.unsatisfiableClasses || [];
+        const combinedUnsat = unsatList.length > 0 ? unsatList : consistencyUnsat;
+        const consistentFlag = (stats?.isConsistent ?? consistencyData?.consistent ?? consistencyData?.isConsistent);
+        const unsatRaw = stats?.unsatisfiableClassesRaw;
+        const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1 || !!(
+          (stats && ((stats.unsatisfiableClasses ?? 0) > 0 || stats.isConsistent === false)) ||
+          combinedUnsat.length > 0
+        );
+        const classHierarchyToRender = reasonerResults?.classHierarchyTree || reasonerResults?.classHierarchy;
+
+        return (
+          <div className="flex flex-col h-full bg-white">
+            {/* Protégé-style Toolbar */}
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-300 bg-gray-50 flex-shrink-0">
+              {/* Start Button */}
+              <button
+                onClick={startReasoner}
+                disabled={isReasonerLoading || !projectId || isReasonerRunning}
+                className="px-3 py-1.5 text-xs font-medium bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                title="Start reasoner"
+              >
+                {isReasonerLoading ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    Starting...
+                  </>
+                ) : (
+                  <>
+                    <Play size={14} />
+                    Start
+                  </>
+                )}
+              </button>
+
+              {/* Stop Button */}
+              <button
+                onClick={stopReasoner}
+                disabled={!isReasonerRunning || isReasonerLoading}
+                className="px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                title="Stop reasoner"
+              >
+                <Square size={14} />
+                Stop
+              </button>
+
+              <div className="w-px h-6 bg-gray-300 mx-1" />
+
+              {/* Reasoner Selector Dropdown */}
+              <div className="relative group">
+                <button className="px-3 py-1.5 text-xs font-medium bg-white border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-2 min-w-[140px]">
+                  <Brain size={14} className="text-purple-600" />
+                  <span>{selectedReasoner}</span>
+                  <ChevronDown size={12} className="ml-auto" />
+                </button>
+                <div className="hidden group-hover:block absolute top-full left-0 mt-1 bg-white border border-gray-300 rounded shadow-lg z-10 min-w-[240px]">
+                  {[
+                    { name: 'HermiT', desc: 'Full OWL 2 DL - Best for complex ontologies' },
+                    { name: 'ELK', desc: 'EL++ optimized - Fast for large taxonomies' },
+                    { name: 'Pellet', desc: 'Complete OWL DL with SWRL support' },
+                    { name: 'Openllet', desc: 'Modern Pellet fork - Improved performance' },
+                    { name: 'Structural', desc: 'Lightweight - Fast but limited' }
+                  ].map(reasoner => (
+                    <button
+                      key={reasoner.name}
+                      onClick={() => handleSelectReasoner(reasoner.name)}
+                      className={`w-full text-left px-3 py-2 text-xs hover:bg-blue-50 ${
+                        selectedReasoner === reasoner.name ? 'bg-blue-50 font-semibold text-blue-700' : 'text-gray-700'
+                      }`}
+                      title={reasoner.desc}
+                    >
+                      <div className="flex items-center gap-2">
+                        {selectedReasoner === reasoner.name && <Check size={12} className="text-blue-700 flex-shrink-0" />}
+                        <div className={selectedReasoner === reasoner.name ? '' : 'ml-5'}>
+                          <div className="font-medium">{reasoner.name}</div>
+                          <div className="text-[10px] text-gray-500 mt-0.5">{reasoner.desc}</div>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="w-px h-6 bg-gray-300 mx-1" />
+
+              {/* Synchronize Checkbox */}
+              <label className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium cursor-pointer hover:bg-gray-100 rounded">
+                <input
+                  type="checkbox"
+                  checked={isReasonerSynced}
+                  onChange={toggleReasonerSync}
+                  className="w-3.5 h-3.5"
+                />
+                <span>Synchronize reasoner</span>
+              </label>
+
+              {/* Status Indicator */}
+              <div className="ml-auto flex items-center gap-2 px-3 py-1.5 text-xs">
+                <span className={`w-2 h-2 rounded-full ${isReasonerRunning ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
+                <span className="text-gray-600">
+                  {isReasonerRunning ? 'Active' : 'Stopped'}
+                </span>
+              </div>
+
+              {/* Configure Button */}
+              <button
+                className="px-3 py-1.5 text-xs font-medium bg-white border border-gray-300 rounded hover:bg-gray-50"
+                title="Configure reasoner"
+              >
+                <Settings size={14} />
+              </button>
+            </div>
+
+            {/* Main Content Area */}
+            <div className="flex-1 flex overflow-hidden">
+              {!reasonerResults && !isReasonerLoading ? (
+                /* Empty State - Before Starting Reasoner */
+                <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center p-8 bg-gray-50">
+                  <Brain size={64} className="text-gray-300" />
+                  <div className="space-y-2">
+                    <h3 className="text-lg font-semibold text-gray-700">No Reasoner Running</h3>
+                    <p className="text-sm text-gray-500 max-w-md">
+                      Click <strong>Start</strong> to begin reasoning over the ontology.<br />
+                      Select a reasoner from the dropdown menu above.
+                    </p>
+                  </div>
+                  {consistencyResult && !isConsistencyLoading && (
+                    <div className={`mt-4 px-4 py-2 rounded-md text-sm ${
+                      (consistencyResult.consistent === false || consistencyResult.isConsistent === false)
+                        ? 'bg-red-50 border border-red-200 text-red-700'
+                        : 'bg-green-50 border border-green-200 text-green-700'
+                    }`}>
+                      {(consistencyResult.consistent === false || consistencyResult.isConsistent === false)
+                        ? '⚠ Ontology is inconsistent'
+                        : '✓ Ontology is consistent'}
+                    </div>
+                  )}
+                </div>
+              ) : isReasonerLoading ? (
+                /* Loading State */
+                <div className="flex-1 flex flex-col items-center justify-center gap-4 bg-gray-50">
+                  <Loader2 size={48} className="animate-spin text-purple-600" />
+                  <div className="text-center">
+                    <p className="text-sm font-medium text-gray-700">Running {selectedReasoner} Reasoner...</p>
+                    <p className="text-xs text-gray-500 mt-1">This may take a moment for large ontologies</p>
+                  </div>
+                </div>
+              ) : (
+                /* Results View - Protégé Style Layout */
+                <>
+                  {/* Left Panel - Consistency & Stats */}
+                  <div className="w-80 border-r border-gray-300 flex flex-col overflow-hidden bg-white">
+                    {/* Consistency Status */}
+                    <div className={`px-4 py-3 border-b border-gray-300 ${
+                      isOntologyInconsistent ? 'bg-red-50' : 'bg-green-50'
+                    }`}>
+                      <div className="flex items-center gap-2 mb-1">
+                        <AlertCircle size={16} className={isOntologyInconsistent ? 'text-red-600' : 'text-green-600'} />
+                        <span className="text-sm font-semibold text-gray-900">Consistency</span>
+                      </div>
+                      <div className={`text-xs font-medium ${
+                        isOntologyInconsistent ? 'text-red-700' : 'text-green-700'
+                      }`}>
+                        {isOntologyInconsistent ? '✗ Ontology is inconsistent' : '✓ Ontology is consistent'}
+                      </div>
+                      {stats && (
+                        <div className="text-[11px] text-gray-600 mt-1">
+                          {(stats.satisfiableClasses ?? 'N/A')} satisfiable · {' '}
+                          {(stats.unsatisfiableClassesRaw === -1 ? 'N/A' : (stats.unsatisfiableClasses ?? 0))} unsatisfiable
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Reasoner Info */}
+                    <div className="px-4 py-3 border-b border-gray-300 bg-gray-50">
+                      <div className="text-xs font-semibold text-gray-700 mb-2">Reasoner Information</div>
+                      <div className="space-y-1 text-[11px] text-gray-600">
+                        <div className="flex justify-between">
+                          <span>Name:</span>
+                          <span className="font-medium text-gray-900">{selectedReasoner}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Version:</span>
+                          <span className="font-medium text-gray-900">
+                            {selectedReasoner === 'HermiT' ? '1.4.5.519' : 
+                             selectedReasoner === 'ELK' ? '0.4.3' :
+                             selectedReasoner === 'Openllet' ? '2.6.5' : 
+                             selectedReasoner === 'Pellet' ? '2.3.1' : 
+                             '1.0.0'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Status:</span>
+                          <span className={`font-medium ${isReasonerRunning ? 'text-green-600' : 'text-gray-500'}`}>
+                            {isReasonerRunning ? 'Running' : 'Stopped'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Entity Counts */}
+                    <div className="px-4 py-3 border-b border-gray-300">
+                      <div className="text-xs font-semibold text-gray-700 mb-2">Entity Counts</div>
+                      <div className="space-y-1.5">
+                        {[
+                          { label: 'Classes', value: stats?.classHierarchyNodes ?? reasonerResults?.totalClasses ?? 0, icon: '🔷' },
+                          { label: 'Object Properties', value: stats?.objectPropertyNodes ?? reasonerResults?.totalObjectProperties ?? 0, icon: '🔗' },
+                          { label: 'Data Properties', value: stats?.dataPropertyNodes ?? reasonerResults?.totalDataProperties ?? 0, icon: '📊' },
+                          { label: 'Individuals', value: stats?.individuals ?? reasonerResults?.totalIndividuals ?? 0, icon: '👤' }
+                        ].map((item) => (
+                          <div key={item.label} className="flex items-center justify-between text-xs">
+                            <span className="text-gray-600">
+                              <span className="mr-1.5">{item.icon}</span>
+                              {item.label}
+                            </span>
+                            <span className="font-semibold text-gray-900 bg-gray-100 px-2 py-0.5 rounded">
+                              {item.value}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Unsatisfiable Classes */}
+                    {combinedUnsat.length > 0 && (
+                      <div className="px-4 py-3 border-b border-gray-300 bg-red-50 flex-1 overflow-hidden flex flex-col">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="text-xs font-semibold text-red-700">
+                            ⚠ Unsatisfiable Classes ({combinedUnsat.length})
+                          </div>
+                          <button
+                            onClick={explainInconsistency}
+                            className="text-[10px] px-2 py-0.5 bg-red-600 text-white rounded hover:bg-red-700"
+                            disabled={isReasonerLoading}
+                          >
+                            Explain
+                          </button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto space-y-1">
+                          {combinedUnsat.map((cls: any, idx: number) => {
+                            const clsData = typeof cls === 'string'
+                              ? { iri: cls, label: cls.split('#').pop() || cls.split('/').pop() || cls }
+                              : cls;
+                            return (
+                              <div key={idx} className="bg-white border border-red-200 rounded px-2 py-1.5 text-[11px]">
+                                <div className="font-semibold text-red-900">{clsData.label}</div>
+                                <div className="text-[10px] text-red-600 truncate" title={clsData.iri}>
+                                  {clsData.iri}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Equivalent Classes */}
+                                        {/* Equivalent Classes */}
+                    {equivalentGroups.length > 0 && (
+                      <div className="px-4 py-3 border-b border-gray-300 bg-blue-50">
+                        <div className="text-xs font-semibold text-blue-700 mb-2 flex items-center gap-1.5">
+                          <GitMerge size={14} />
+                          Equivalent Classes ({equivalentGroups.length})
+                        </div>
+                        <div className="space-y-1 max-h-32 overflow-y-auto">
+                          {equivalentGroups.map((group: any, idx: number) => {
+                            // Handle both array and object formats
+                            const groupArray = Array.isArray(group) ? group : (group.classes || [group]);
+                            const displayText = groupArray.length > 0 
+                              ? groupArray.map((item: any) => typeof item === 'string' ? item : (item.label || item.iri || String(item))).join(' ≡ ')
+                              : 'Unknown';
+                            
+                            return (
+                              <div key={idx} className="bg-white border border-blue-200 rounded px-2 py-1 text-[11px] text-blue-800">
+                                {displayText}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Actions */}
+                    <div className="px-4 py-3 border-t border-gray-300 mt-auto bg-gray-50">
+                      <div className="space-y-2">
+                        <button
+                          onClick={explainInconsistency}
+                          disabled={!isOntologyInconsistent || isReasonerLoading}
+                          className="w-full px-3 py-2 text-xs font-medium bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                        >
+                          <AlertCircle size={14} />
+                          Explain Inconsistency
+                        </button>
+                        <button
+                          onClick={startReasoner}
+                          disabled={isReasonerLoading || !projectId}
+                          className="w-full px-3 py-2 text-xs font-medium bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                        >
+                          <RefreshCw size={14} />
+                          Re-classify
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right Panel - Inferred Class Hierarchy */}
+                  <div className="flex-1 flex flex-col overflow-hidden bg-white">
+                    <div className="px-4 py-3 border-b border-gray-300 bg-gray-50">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Network size={16} className="text-purple-600" />
+                          <span className="text-sm font-semibold text-gray-900">Inferred Class Hierarchy</span>
+                        </div>
+                        <button
+                          onClick={startReasoner}
+                          disabled={isReasonerLoading || !projectId}
+                          className="px-3 py-1.5 text-xs font-medium bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 flex items-center gap-1.5"
+                        >
+                          <RefreshCw size={12} />
+                          Refresh
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex-1 overflow-y-auto px-4 py-3">
+                      {classHierarchyToRender && classHierarchyToRender.length > 0 ? (
+                        <div className="space-y-0.5 text-sm">
+                          {renderClassHierarchy(classHierarchyToRender)}
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-center h-full text-sm text-gray-500 italic">
+                          No inferred hierarchy available. Run the reasoner to generate results.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      }
       case 'ActiveOntology':
         return (
-          <div className="flex h-full bg-gray-100">
-            <div className="flex-1 flex flex-col bg-white border-r border-gray-200">
-              <div className="p-4 border-b border-gray-200">
-                <h2 className="text-xs text-gray-500 mb-2">Ontology header</h2>
-                <div className="space-y-2">
-                  <div>
-                    <div className="text-xs font-semibold">Ontology IRI</div>
-                    <a href={(metadata as any)?.ontologyIRI || "#"} className="text-blue-600 hover:underline text-xs break-all">{(metadata as any)?.ontologyIRI || "Not specified"}</a>
+          <div className="flex h-full bg-[#F0F0F0]">
+            <div className="flex-1 flex flex-col bg-white border-r border-gray-300 m-2 rounded shadow-sm overflow-hidden">
+              {/* Ontology Header Section */}
+              <div className="p-4 border-b border-gray-200 bg-gray-50">
+                <div className="flex justify-between items-start mb-4">
+                  <h2 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Ontology header</h2>
+                  <button 
+                    onClick={() => setEditOntologyIRIDialogOpen(true)}
+                    className="p-1 hover:bg-gray-200 rounded text-blue-600 transition-colors"
+                    title="Edit Ontology IRIs"
+                  >
+                    <Edit2 size={14} />
+                  </button>
+                </div>
+                
+                <div className="grid grid-cols-1 gap-4">
+                  <div className="bg-white p-3 border border-gray-200 rounded shadow-sm">
+                    <div className="text-[10px] font-bold text-gray-400 uppercase mb-1">Ontology IRI</div>
+                    <div className="flex items-center gap-2">
+                      <Globe size={14} className="text-blue-500 flex-shrink-0" />
+                      <a href={(metadata as any)?.ontologyIRI || "#"} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline text-xs break-all font-medium">
+                        {(metadata as any)?.ontologyIRI || "http://www.semanticweb.org/ontology"}
+                      </a>
+                    </div>
                   </div>
-                  <div>
-                    <div className="text-xs font-semibold">Ontology Version IRI</div>
-                    <div className="text-xs text-gray-700 break-all">{(metadata as any)?.versionIRI || "Not specified"}</div>
+                  
+                  <div className="bg-white p-3 border border-gray-200 rounded shadow-sm">
+                    <div className="text-[10px] font-bold text-gray-400 uppercase mb-1">Ontology Version IRI</div>
+                    <div className="flex items-center gap-2">
+                      <LinkIcon size={14} className="text-green-500 flex-shrink-0" />
+                      <div className="text-xs text-gray-700 break-all font-medium">
+                        {(metadata as any)?.versionIRI || "Not specified"}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
+
+              {/* Annotations Section */}
               <div className="flex-1 overflow-y-auto p-4">
-                <h3 className="text-xs font-semibold text-gray-700 mb-3">Annotations</h3>
-                {(metadata as any)?.annotations && Object.keys((metadata as any).annotations).length > 0 ? (
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-xs font-semibold text-gray-700">Annotations</h3>
+                  <button
+                    onClick={() => {
+                      setOntologyAnnotationEditTarget(null);
+                      setIsOntologyAnnotationDialogOpen(true);
+                    }}
+                    className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+                  >
+                    Add
+                  </button>
+                </div>
+                {ontologyAnnotations.length > 0 ? (
                   <div className="space-y-2">
-                    {Object.entries((metadata as any).annotations).map(([key, value]: [string, any]) => {
-                      const propertyLabel = key.includes('#') ? key.split('#').pop() : 
-                                          key.includes('/') ? key.split('/').pop() : key;
+                    {ontologyAnnotations.map((annotation, idx) => {
+                      const key = `${annotation.propertyIri}-${annotation.value}-${idx}`;
+                      const propertyLabel = annotation.propertyIri.includes('#') ? annotation.propertyIri.split('#').pop() :
+                        annotation.propertyIri.includes('/') ? annotation.propertyIri.split('/').pop() : annotation.propertyIri;
                       return (
                         <div key={key} className="border border-gray-200 rounded-md hover:border-blue-300 transition-colors">
-                          <div className="bg-gradient-to-r from-purple-50 to-gray-50 px-3 py-2 border-b border-gray-200">
-                            <div className="text-xs font-semibold text-purple-900">{propertyLabel}</div>
-                            <div className="text-[10px] text-gray-400 font-mono truncate" title={key}>{key}</div>
+                          <div className="bg-gradient-to-r from-purple-50 to-gray-50 px-3 py-2 border-b border-gray-200 flex items-center justify-between">
+                            <div>
+                              <div className="text-xs font-semibold text-purple-900">{propertyLabel}</div>
+                              <div className="text-[10px] text-gray-400 font-mono truncate" title={annotation.propertyIri}>{annotation.propertyIri}</div>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => {
+                                  setOntologyAnnotationEditTarget({
+                                    propertyIri: annotation.propertyIri,
+                                    value: annotation.value,
+                                    datatype: annotation.datatype
+                                  });
+                                  setIsOntologyAnnotationDialogOpen(true);
+                                }}
+                                className="px-2 py-1 text-[10px] bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => handleDeleteOntologyAnnotation(annotation.propertyIri, annotation.value, annotation.datatype)}
+                                className="px-2 py-1 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
+                              >
+                                Delete
+                              </button>
+                            </div>
                           </div>
-                          <div className="px-3 py-2 bg-white dark:bg-gray-700 text-xs text-gray-700 dark:text-gray-300">{value?.toString() || ''}</div>
+                          <div className="px-3 py-2 bg-white text-xs text-gray-700">
+                            <div className="break-words">{annotation.value}</div>
+                            {annotation.datatype && (
+                              <div className="text-[10px] text-gray-500 mt-1">Datatype: {shortenDatatype(annotation.datatype)}</div>
+                            )}
+                          </div>
                         </div>
                       );
                     })}
                   </div>
                 ) : (
-                  <div className="text-xs italic p-2 rounded" style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>No annotations</div>
+                  <div className="text-xs italic p-8 text-center text-gray-400 bg-gray-50 border border-dashed border-gray-200 rounded">
+                    No annotations defined for this ontology
+                  </div>
                 )}
               </div>
-              <div className="border-t border-gray-200">
-                <div className="flex bg-gray-100 text-xs border-b border-gray-200">
-                  {['prefixes', 'imports', 'axioms'].map(t => (
-                    <button key={t} onClick={() => setActiveOntologySubTab(t)}
-                      className={`px-3 py-1.5 font-medium border-r border-gray-200 capitalize ${activeOntologySubTab === t ? 'bg-white text-gray-900' : 'text-gray-500 hover:bg-gray-200'}`}>
-                      {t === 'imports' ? 'Ontology imports' : t === 'prefixes' ? 'Ontology Prefixes' : 'General class axioms'}
+
+              {/* Bottom Tabs Section (Imports, GCIs, Prefixes) */}
+              <div className="border-t border-gray-300 bg-gray-50">
+                <div className="flex bg-gray-200 text-[10px] font-bold uppercase tracking-tighter border-b border-gray-300">
+                  {[
+                    { id: 'prefixes', label: 'Ontology Prefixes', icon: Hash },
+                    { id: 'imports', label: 'Ontology Imports', icon: Download },
+                    { id: 'axioms', label: 'General Class Axioms', icon: Code }
+                  ].map(t => (
+                    <button key={t.id} onClick={() => setActiveOntologySubTab(t.id)}
+                      className={`px-4 py-2 flex items-center gap-2 border-r border-gray-300 transition-all ${activeOntologySubTab === t.id ? 'bg-white text-blue-600 border-b-2 border-b-blue-500' : 'text-gray-500 hover:bg-gray-100'}`}>
+                      <t.icon size={12} />
+                      {t.label}
                     </button>
                   ))}
                 </div>
                 <div className="p-2 min-h-24 text-sm" style={{ backgroundColor: 'var(--bg)' }}>
-                  {activeOntologySubTab === 'prefixes' ? (
-                    <div className="max-h-48 overflow-y-auto border rounded" style={{ borderColor: 'var(--border)' }}>
-                      <table className="w-full text-left text-xs">
-                        <thead className="sticky top-0" style={{ backgroundColor: 'var(--surface-1)' }}>
-                          <tr className="border-b" style={{ borderColor: 'var(--border)' }}>
-                            <th className="p-1.5 font-semibold" style={{ color: 'var(--text-primary)' }}>Prefix</th>
-                            <th className="p-1.5 font-semibold" style={{ color: 'var(--text-primary)' }}>Namespace</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(metadata as any)?.prefixes?.map((p: { prefix: string; namespace: string }) => (
-                            <tr key={p.prefix} className="border-b hover:bg-gray-50 dark:hover:bg-gray-700" style={{ borderColor: 'var(--border)' }}>
-                              <td className="p-1.5 font-mono" style={{ color: 'var(--text-primary)' }}>{p.prefix}</td>
-                              <td className="p-1.5 break-all" style={{ color: 'var(--accent)' }}>{p.namespace}</td>
+                  {activeOntologySubTab === 'prefixes' && (
+                    <div className="border rounded" style={{ borderColor: 'var(--border)' }}>
+                      <div className="flex items-center justify-between px-2 py-1.5 border-b" style={{ borderColor: 'var(--border)' }}>
+                        <div className="text-[11px] text-gray-600">Prefix mappings</div>
+                        <div className="flex gap-2">
+                          {isPrefixEditing ? (
+                            <>
+                              <button
+                                onClick={handleSavePrefixes}
+                                className="px-2 py-0.5 text-[10px] bg-green-600 text-white rounded"
+                              >
+                                Save
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setIsPrefixEditing(false);
+                                  refreshPrefixes();
+                                }}
+                                className="px-2 py-0.5 text-[10px] bg-gray-200 text-gray-700 rounded"
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => setIsPrefixEditing(true)}
+                              className="px-2 py-0.5 text-[10px] bg-gray-100 text-gray-700 rounded"
+                            >
+                              Edit
+                            </button>
+                          )}
+                          {isPrefixEditing && (
+                            <button
+                              onClick={() => setPrefixMappings(prev => [...prev, { prefix: '', namespace: '' }])}
+                              className="px-2 py-0.5 text-[10px] bg-blue-600 text-white rounded"
+                            >
+                              Add
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="max-h-48 overflow-y-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead className="sticky top-0" style={{ backgroundColor: 'var(--surface-1)' }}>
+                            <tr className="border-b" style={{ borderColor: 'var(--border)' }}>
+                              <th className="p-1.5 font-semibold" style={{ color: 'var(--text-primary)' }}>Prefix</th>
+                              <th className="p-1.5 font-semibold" style={{ color: 'var(--text-primary)' }}>Namespace</th>
+                              {isPrefixEditing && <th className="p-1.5" />}
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody>
+                            {prefixMappings.map((p, idx) => (
+                              <tr key={`${p.prefix}-${idx}`} className="border-b hover:bg-gray-50" style={{ borderColor: 'var(--border)' }}>
+                                <td className="p-1.5 font-mono" style={{ color: 'var(--text-primary)' }}>
+                                  {isPrefixEditing ? (
+                                    <input
+                                      value={p.prefix}
+                                      onChange={(e) => {
+                                        const next = [...prefixMappings];
+                                        next[idx] = { ...next[idx], prefix: e.target.value };
+                                        setPrefixMappings(next);
+                                      }}
+                                      className="w-full px-1 py-0.5 text-xs border rounded"
+                                    />
+                                  ) : (
+                                    p.prefix
+                                  )}
+                                </td>
+                                <td className="p-1.5 break-all" style={{ color: 'var(--accent)' }}>
+                                  {isPrefixEditing ? (
+                                    <input
+                                      value={p.namespace}
+                                      onChange={(e) => {
+                                        const next = [...prefixMappings];
+                                        next[idx] = { ...next[idx], namespace: e.target.value };
+                                        setPrefixMappings(next);
+                                      }}
+                                      className="w-full px-1 py-0.5 text-xs border rounded"
+                                    />
+                                  ) : (
+                                    p.namespace
+                                  )}
+                                </td>
+                                {isPrefixEditing && (
+                                  <td className="p-1.5 text-right">
+                                    <button
+                                      onClick={() => setPrefixMappings(prev => prev.filter((_, rowIdx) => rowIdx !== idx))}
+                                      className="px-2 py-0.5 text-[10px] bg-red-100 text-red-700 rounded"
+                                    >
+                                      Remove
+                                    </button>
+                                  </td>
+                                )}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      {isPrefixEditing && (
+                        <div className="px-2 py-1 text-[10px] text-gray-500 border-t" style={{ borderColor: 'var(--border)' }}>
+                          Prefix changes apply at the repository level.
+                        </div>
+                      )}
                     </div>
-                  ) : (
-                    <div className="text-gray-400 italic">Content for {activeOntologySubTab}</div>
+                  )}
+                  {activeOntologySubTab === 'imports' && (
+                    <div className="max-h-48 overflow-y-auto border rounded text-xs" style={{ borderColor: 'var(--border)' }}>
+                      <div className="p-2 border-b flex items-center gap-2" style={{ borderColor: 'var(--border)' }}>
+                        <input
+                          value={importDraft}
+                          onChange={(e) => setImportDraft(e.target.value)}
+                          placeholder="http://example.org/imported.owl"
+                          className="flex-1 px-2 py-1 text-xs border rounded"
+                        />
+                        <button
+                          onClick={handleAddImport}
+                          className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+                        >
+                          Add
+                        </button>
+                      </div>
+                      {ontologyImports.length === 0 ? (
+                        <div className="p-3 text-gray-400 italic">No ontology imports</div>
+                      ) : (
+                        <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                          {ontologyImports.map((iri) => (
+                            <li key={iri} className="p-2 hover:bg-gray-50 flex items-center justify-between gap-2">
+                              <div className="font-mono break-all" style={{ color: 'var(--accent)' }}>{iri}</div>
+                              <button
+                                onClick={() => handleRemoveImport(iri)}
+                                className="px-2 py-1 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
+                              >
+                                Remove
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                  {activeOntologySubTab === 'axioms' && (
+                    <div className="max-h-48 overflow-y-auto border rounded text-xs" style={{ borderColor: 'var(--border)' }}>
+                      {generalClassAxioms.length === 0 ? (
+                        <div className="p-3 text-gray-400 italic">No general class axioms detected</div>
+                      ) : (
+                        <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                          {generalClassAxioms.map((axiom, idx) => (
+                            <li key={`${axiom.subExpression}-${idx}`} className="p-2 hover:bg-gray-50 dark:hover:bg-gray-700">
+                              <div className="text-[11px] text-gray-600">General class axiom</div>
+                              <div className="font-medium text-gray-800">
+                                {axiom.definition || 'Anonymous class expression'}
+                              </div>
+                              {axiom.superClassIri && (
+                                <div className="text-[10px] font-mono text-gray-500 break-all">
+                                  {axiom.superClassIri}
+                                </div>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
@@ -4594,7 +6756,11 @@ const Dashboard = () => {
                     'Object property': (metadata as any)?.objectPropertyCount,
                     'Data property': (metadata as any)?.dataPropertyCount,
                     'Individual': (metadata as any)?.individualCount,
-                    'Annotation Property': annotationProperties.length
+                    'Annotation property': (metadata as any)?.annotationPropertyCount ?? annotationProperties.length,
+                    'Datatype': (metadata as any)?.datatypeCount,
+                    'Imports': (metadata as any)?.importsCount,
+                    'Prefixes': (metadata as any)?.prefixCount,
+                    'Triples': (metadata as any)?.tripleCount
                   }
                 },
                 {
@@ -4607,9 +6773,21 @@ const Dashboard = () => {
                   }
                 },
                 {
-                  title: 'Object property axioms', data: {
+                  title: 'Property axioms', data: {
                     SubObjectPropertyOf: (metadata as any)?.subObjectPropertyOfAxiomCount,
-                    InverseObjectProperties: (metadata as any)?.inverseObjectPropertiesAxiomCount
+                    InverseObjectProperties: (metadata as any)?.inverseObjectPropertiesAxiomCount,
+                    'Object domain': (metadata as any)?.objectPropertyDomainAxiomCount,
+                    'Object range': (metadata as any)?.objectPropertyRangeAxiomCount,
+                    'Data domain': (metadata as any)?.dataPropertyDomainAxiomCount,
+                    'Data range': (metadata as any)?.dataPropertyRangeAxiomCount
+                  }
+                },
+                {
+                  title: 'Assertion axioms', data: {
+                    'Class assertions': (metadata as any)?.classAssertionAxiomCount,
+                    'Object assertions': (metadata as any)?.objectPropertyAssertionCount,
+                    'Data assertions': (metadata as any)?.dataPropertyAssertionCount,
+                    'Annotation assertions': (metadata as any)?.annotationAssertionCount
                   }
                 }
               ].map(metricSection => (
@@ -4630,19 +6808,40 @@ const Dashboard = () => {
           </div>
         );
       case 'IndividualsByClass': {
-        const individualsForSelectedClass = selectedClassForIndividuals ? individuals.filter(ind => ind.types?.includes(selectedClassForIndividuals.id)) : [];
+        const filteredInstances = classInstances.filter((ind) => {
+          if (!classInstancesQuery) return true;
+          const query = classInstancesQuery.toLowerCase();
+          return (
+            (ind.label || '').toLowerCase().includes(query) ||
+            (ind.id || '').toLowerCase().includes(query)
+          );
+        });
+        const directInstances = filteredInstances.filter(ind => !ind.isInferred);
+        const inferredInstances = filteredInstances.filter(ind => ind.isInferred);
+        const visibleInstances =
+          classInstancesView === 'direct'
+            ? directInstances
+            : classInstancesView === 'inferred'
+              ? inferredInstances
+              : filteredInstances;
+
         return (
           <div className="flex h-full">
             <aside className="w-80 bg-white border-r border-gray-200 flex flex-col">
-              <div className="p-2 border-b text-sm font-semibold text-gray-700">Class hierarchy</div>
+              <div className="p-2 border-b text-sm font-semibold text-gray-700 flex items-center justify-between">
+                <span>Class hierarchy</span>
+                {selectedClassForIndividuals && (
+                  <span className="text-xs text-gray-500">({filteredInstances.length} instances)</span>
+                )}
+              </div>
               <div className="flex-1 overflow-y-auto p-1">
                 <EntityHierarchy
                   entitiesTab="Classes"
                   filteredData={classHierarchy}
                   selectedItem={selectedClassForIndividuals}
                   expandedNodes={expandedNodes}
-                  searchQuery=""
-                  onSearchQueryChange={() => { /* no-op for this view */ }}
+                  searchQuery={classTreeSearchQuery}
+                  onSearchQueryChange={setClassTreeSearchQuery}
                   onSelectItem={(item) => setSelectedClassForIndividuals(item as TreeNode)}
                   onToggleNode={toggleNode}
                   onAddItem={() => { /* not used here */ }}
@@ -4652,24 +6851,301 @@ const Dashboard = () => {
             </aside>
             <main className="flex-1 p-2 bg-gray-50">
               <div className="border bg-white h-full flex flex-col">
-                <div className="flex text-xs border-b flex-shrink-0">
-                  <button className="px-3 py-1.5 bg-white border-r font-semibold">Direct instances</button>
-                  <button className="px-3 py-1.5 bg-gray-100 text-gray-700 hover:bg-gray-200">Individuals (inferred)</button>
+                <div className="flex items-center justify-between text-xs border-b flex-shrink-0">
+                  <div className="flex">
+                    <button
+                      onClick={() => setClassInstancesView('direct')}
+                      className={`px-3 py-1.5 border-r font-semibold ${classInstancesView === 'direct' ? 'bg-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                    >
+                      Direct instances ({directInstances.length})
+                    </button>
+                    <button
+                      onClick={() => setClassInstancesView('inferred')}
+                      className={`px-3 py-1.5 border-r font-semibold ${classInstancesView === 'inferred' ? 'bg-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                    >
+                      Inferred ({inferredInstances.length})
+                    </button>
+                    <button
+                      onClick={() => setClassInstancesView('all')}
+                      className={`px-3 py-1.5 font-semibold ${classInstancesView === 'all' ? 'bg-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                    >
+                      All ({filteredInstances.length})
+                    </button>
+                  </div>
+                  <div className="px-2 flex items-center gap-2">
+                    <input
+                      value={classInstancesQuery}
+                      onChange={(e) => setClassInstancesQuery(e.target.value)}
+                      placeholder="Filter individuals..."
+                      className="px-2 py-1 text-xs border rounded"
+                    />
+                    {selectedClassForIndividuals && (
+                      <button
+                        onClick={async () => {
+                          const name = window.prompt(`Create individual in ${selectedClassForIndividuals.label}`);
+                          if (!name || !projectId) return;
+                          try {
+                            await ontologyMutationService.addIndividual(projectId, name, selectedClassForIndividuals.id);
+                            await loadClassInstances();
+                          } catch (error) {
+                            console.error('[Dashboard] Failed to create individual:', error);
+                            notificationService.error('Create Failed', 'Could not create individual.');
+                          }
+                        }}
+                        className="px-2 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-700"
+                      >
+                        Add
+                      </button>
+                    )}
+                  </div>
                 </div>
                 {selectedClassForIndividuals ? (
-                  <div className="p-1 flex-1 overflow-y-auto">
-                    {individualsForSelectedClass.length > 0 ? (
-                      individualsForSelectedClass.map(ind => (
-                        <div key={ind.id} className="flex items-center p-1.5 text-xs hover:bg-gray-100 rounded">
-                          <User size={12} className="mr-2 text-purple-600" />
-                          {ind.label}
+                  <div className="flex-1 flex min-h-0">
+                    <div className="w-1/2 border-r border-gray-200 overflow-y-auto">
+                      {classInstancesLoading ? (
+                        <div className="p-4 text-sm text-gray-600 italic flex items-center justify-center h-full">
+                          Loading individuals for {selectedClassForIndividuals.label}...
                         </div>
-                      ))
-                    ) : (
-                      <div className="p-4 text-sm text-gray-600 italic flex items-center justify-center h-full">
-                        No instances found for {selectedClassForIndividuals.label}.
-                      </div>
-                    )}
+                      ) : visibleInstances.length > 0 ? (
+                        visibleInstances.map(ind => (
+                          <div
+                            key={ind.id}
+                            onClick={() => setSelectedClassIndividual(ind)}
+                            className={`group flex items-center justify-between p-1.5 text-xs hover:bg-gray-100 rounded cursor-pointer ${selectedClassIndividual?.id === ind.id ? 'bg-purple-50' : ''}`}
+                          >
+                            <div className="flex items-center">
+                              <User size={12} className="mr-2 text-purple-600" />
+                              {ind.label}
+                              {ind.isInferred && (
+                                <span className="ml-2 px-1.5 py-0.5 text-[10px] rounded bg-purple-100 text-purple-700">Inferred</span>
+                              )}
+                            </div>
+                            {!ind.isInferred && (
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  if (!projectId || !selectedClassForIndividuals) return;
+                                  try {
+                                    await ontologyMutationService.removeClassAssertion(
+                                      projectId,
+                                      ind.id,
+                                      selectedClassForIndividuals.id
+                                    );
+                                    await loadClassInstances();
+                                  } catch (error) {
+                                    console.error('[Dashboard] Failed to remove class assertion:', error);
+                                    notificationService.error('Remove Failed', 'Could not remove class assertion.');
+                                  }
+                                }}
+                                className="opacity-0 group-hover:opacity-100 px-2 py-0.5 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                        ))
+                      ) : (
+                        <div className="p-4 text-sm text-gray-600 italic flex items-center justify-center h-full">
+                          No instances found for {selectedClassForIndividuals.label}.
+                        </div>
+                      )}
+                    </div>
+                    <div className="w-1/2 overflow-y-auto bg-gray-50">
+                      {selectedClassIndividualLoading ? (
+                        <div className="p-4 text-sm text-gray-600 italic flex items-center justify-center h-full">
+                          Loading individual details...
+                        </div>
+                      ) : selectedClassIndividualDetails ? (
+                        <div className="p-3 space-y-3 text-xs">
+                          <div className="bg-white border border-gray-200 rounded p-2">
+                            <div className="font-semibold text-gray-800">{selectedClassIndividualDetails.label}</div>
+                            <div className="text-[11px] text-gray-500 font-mono break-all">{selectedClassIndividualDetails.id}</div>
+                          </div>
+                          <div className="bg-white border border-gray-200 rounded p-2">
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="font-semibold text-gray-700">Types</div>
+                              <button
+                                onClick={() => setClassIndividualTypeDialogOpen(true)}
+                                className="px-2 py-0.5 text-[10px] bg-purple-100 text-purple-700 rounded hover:bg-purple-200"
+                              >
+                                Add
+                              </button>
+                            </div>
+                            {selectedClassIndividualDetails.types?.length ? (
+                              <div className="space-y-1">
+                                {selectedClassIndividualDetails.types.map(type => (
+                                  <div key={type} className="group flex items-center justify-between text-[11px] text-gray-600">
+                                    <span className="truncate">{getLocalName(type)}</span>
+                                    <button
+                                      onClick={async () => {
+                                        if (!projectId || !selectedClassIndividualDetails) return;
+                                        try {
+                                          await ontologyMutationService.removeClassAssertion(
+                                            projectId,
+                                            selectedClassIndividualDetails.id,
+                                            type
+                                          );
+                                          if (selectedClassForIndividuals?.id === type) {
+                                            await loadClassInstances();
+                                          }
+                                          await refreshSelectedClassIndividualDetails();
+                                        } catch (error) {
+                                          console.error('[Dashboard] Failed to remove type assertion:', error);
+                                          notificationService.error('Remove Failed', 'Could not remove type assertion.');
+                                        }
+                                      }}
+                                      className="opacity-0 group-hover:opacity-100 px-2 py-0.5 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-[11px] text-gray-400">No types</div>
+                            )}
+                          </div>
+                          <div className="bg-white border border-gray-200 rounded p-2">
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="font-semibold text-gray-700">Annotations</div>
+                              <button
+                                onClick={() => setClassIndividualAnnotationDialogOpen(true)}
+                                className="px-2 py-0.5 text-[10px] bg-purple-100 text-purple-700 rounded hover:bg-purple-200"
+                              >
+                                Add
+                              </button>
+                            </div>
+                            {selectedClassIndividualDetails.annotations && Object.keys(selectedClassIndividualDetails.annotations).length > 0 ? (
+                              <div className="space-y-1">
+                                {Object.entries(selectedClassIndividualDetails.annotations).map(([key, value]) => (
+                                  <div key={key} className="group flex items-center justify-between text-[11px] text-gray-600">
+                                    <span className="truncate">
+                                      <span className="font-mono">{getLocalName(key) || key}</span>: {String(value)}
+                                    </span>
+                                    <button
+                                      onClick={async () => {
+                                        if (!projectId || !selectedClassIndividualDetails) return;
+                                        try {
+                                          await ontologyMutationService.deleteAnnotation(
+                                            projectId,
+                                            selectedClassIndividualDetails.id,
+                                            key,
+                                            String(value)
+                                          );
+                                          await refreshSelectedClassIndividualDetails();
+                                        } catch (error) {
+                                          console.error('[Dashboard] Failed to remove annotation:', error);
+                                          notificationService.error('Remove Failed', 'Could not remove annotation.');
+                                        }
+                                      }}
+                                      className="opacity-0 group-hover:opacity-100 px-2 py-0.5 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-[11px] text-gray-400">No annotations</div>
+                            )}
+                          </div>
+                          <div className="bg-white border border-gray-200 rounded p-2">
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="font-semibold text-gray-700">Property assertions</div>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => {
+                                    setClassIndividualPropertyIsObject(true);
+                                    setClassIndividualPropertyDialogOpen(true);
+                                  }}
+                                  className="px-2 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+                                >
+                                  Add object
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setClassIndividualPropertyIsObject(false);
+                                    setClassIndividualPropertyDialogOpen(true);
+                                  }}
+                                  className="px-2 py-0.5 text-[10px] bg-green-100 text-green-700 rounded hover:bg-green-200"
+                                >
+                                  Add data
+                                </button>
+                              </div>
+                            </div>
+                            {selectedClassIndividualDetails.propertyAssertions?.length ? (
+                              <div className="space-y-1">
+                                {selectedClassIndividualDetails.propertyAssertions.map(assertion => (
+                                  <div key={assertion.id} className="group flex items-center justify-between text-[11px] text-gray-600">
+                                    <span className="truncate">
+                                      <span className="font-semibold">{assertion.propertyLabel}</span>
+                                      {assertion.isNegative ? ' (not)' : ''}: {assertion.targetLabel || assertion.targetIri || assertion.targetLiteral}
+                                    </span>
+                                    <button
+                                      onClick={async () => {
+                                        if (!projectId || !selectedClassIndividualDetails) return;
+                                        try {
+                                          if (assertion.isObjectProperty) {
+                                            const target = assertion.targetIri || assertion.targetLabel;
+                                            if (!target) return;
+                                            if (assertion.isNegative) {
+                                              await ontologyMutationService.deleteNegativeObjectPropertyAssertion(
+                                                projectId,
+                                                selectedClassIndividualDetails.id,
+                                                assertion.propertyIri,
+                                                target
+                                              );
+                                            } else {
+                                              await ontologyMutationService.deleteObjectPropertyAssertion(
+                                                projectId,
+                                                selectedClassIndividualDetails.id,
+                                                assertion.propertyIri,
+                                                target
+                                              );
+                                            }
+                                          } else {
+                                            const value = assertion.targetLiteral;
+                                            if (!value) return;
+                                            if (assertion.isNegative) {
+                                              await ontologyMutationService.deleteNegativeDataPropertyAssertion(
+                                                projectId,
+                                                selectedClassIndividualDetails.id,
+                                                assertion.propertyIri,
+                                                value
+                                              );
+                                            } else {
+                                              await ontologyMutationService.deleteDataPropertyAssertion(
+                                                projectId,
+                                                selectedClassIndividualDetails.id,
+                                                assertion.propertyIri,
+                                                value
+                                              );
+                                            }
+                                          }
+                                          await refreshSelectedClassIndividualDetails();
+                                        } catch (error) {
+                                          console.error('[Dashboard] Failed to remove property assertion:', error);
+                                          notificationService.error('Remove Failed', 'Could not remove property assertion.');
+                                        }
+                                      }}
+                                      className="opacity-0 group-hover:opacity-100 px-2 py-0.5 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-[11px] text-gray-400">No assertions</div>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-4 text-sm text-gray-400 italic flex items-center justify-center h-full">
+                          Select an individual to see details.
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <div className="p-4 text-sm text-gray-400 italic flex items-center justify-center h-full">
@@ -5062,6 +7538,7 @@ const Dashboard = () => {
     SWRL: { label: "SWRL Rules", icon: Code },
     Fuzzy: { label: "Fuzzy Ontology", icon: Sparkles },
     Changes: { label: "Change Assistant", icon: GitBranch },
+    Reasoner: { label: "Reasoner", icon: Zap },
   };
 
   const entitiesTabs = [
@@ -5109,6 +7586,12 @@ const Dashboard = () => {
         onClose={() => setAddAnnotationDialogOpen(false)} 
         onAdd={handleAnnotationDialogAdd}
         availableProperties={annotationProperties}
+        entities={{
+          classes: classHierarchy,
+          objectProperties: objectProperties,
+          dataProperties: dataProperties,
+          individuals: individuals
+        }}
       />
       <AddAnnotationDialog 
         isOpen={isEditAnnotationDialogOpen} 
@@ -5116,17 +7599,420 @@ const Dashboard = () => {
           setEditAnnotationDialogOpen(false);
           setEditAnnotationData(null);
         }}
-        onAdd={(propertyIri, newValue) => {
+        onAdd={(propertyIri, newValue, datatype, lang) => {
           if (editAnnotationData) {
-            handleAnnotationDialogEdit(propertyIri, editAnnotationData.currentValue, newValue);
+            handleAnnotationDialogEdit(
+              propertyIri,
+              editAnnotationData.currentValue,
+              newValue,
+              datatype,
+              lang,
+              editAnnotationData.originalPropertyIri || editAnnotationData.propertyIri,
+              editAnnotationData.language,
+              editAnnotationData.datatype
+            );
           }
           setEditAnnotationDialogOpen(false);
           setEditAnnotationData(null);
         }}
         availableProperties={annotationProperties}
+        entities={{
+          classes: classHierarchy,
+          objectProperties: objectProperties,
+          dataProperties: dataProperties,
+          individuals: individuals
+        }}
         editMode={true}
         initialProperty={editAnnotationData?.propertyIri || ''}
         initialValue={editAnnotationData?.currentValue || ''}
+        initialLang={editAnnotationData?.language || ''}
+        initialDatatype={editAnnotationData?.datatype || ''}
+
+      />
+      <AddImportDialog
+        isOpen={showImportDialog}
+        onClose={() => setShowImportDialog(false)}
+        onAdd={async (importIri) => {
+          if (!projectId) return;
+          await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, { importIri });
+          const importsRes = await apiClient.get(`/api/ontology/metadata/${projectId}/imports`);
+          const importsData = Array.isArray(importsRes?.data) ? importsRes.data : (Array.isArray(importsRes?.imports) ? importsRes.imports : (Array.isArray(importsRes) ? importsRes : []));
+          setOntologyImports(importsData);
+          showNotification('Import added successfully', 'info');
+        }}
+      />
+      <GCIEditorDialog
+        isOpen={isGCIEditorDialogOpen}
+        onClose={() => {
+          setGCIEditorDialogOpen(false);
+          setEditGCIData(null);
+        }}
+        onSave={handleSaveGCI}
+        initialSubClass={editGCIData?.subClass}
+        initialSuperClass={editGCIData?.superClass}
+        editMode={!!editGCIData}
+      />
+      <EditOntologyIRIDialog
+        isOpen={isEditOntologyIRIDialogOpen}
+        onClose={() => setEditOntologyIRIDialogOpen(false)}
+        onSave={handleSaveOntologyIRIs}
+        initialOntologyIri={(metadata as any)?.ontologyIRI || ''}
+        initialVersionIri={(metadata as any)?.versionIRI || ''}
+      />
+      <PrefixDialog
+        isOpen={showPrefixDialog}
+        onClose={() => setShowPrefixDialog(false)}
+        onSave={handleSavePrefix}
+        initialPrefix={editPrefixData?.prefix}
+        initialIRI={editPrefixData?.namespace}
+      />
+      <AddAnnotationDialog
+        isOpen={isOntologyAnnotationDialogOpen}
+        onClose={() => {
+          setIsOntologyAnnotationDialogOpen(false);
+          setOntologyAnnotationEditTarget(null);
+        }}
+        onAdd={(propertyIri, value, datatype) => {
+          if (ontologyAnnotationEditTarget) {
+            handleUpdateOntologyAnnotation(
+              propertyIri,
+              ontologyAnnotationEditTarget.value,
+              value,
+              ontologyAnnotationEditTarget.datatype
+            );
+          } else {
+            handleAddOntologyAnnotation(propertyIri, value, datatype);
+          }
+          setIsOntologyAnnotationDialogOpen(false);
+          setOntologyAnnotationEditTarget(null);
+        }}
+        availableProperties={annotationProperties}
+        editMode={!!ontologyAnnotationEditTarget}
+        initialProperty={ontologyAnnotationEditTarget?.propertyIri || ''}
+        initialValue={ontologyAnnotationEditTarget?.value || ''}
+        initialDatatype={shortenDatatype(ontologyAnnotationEditTarget?.datatype)}
+      />
+      <AddAnnotationDialog
+        isOpen={isQuickNoteDialogOpen}
+        onClose={() => {
+          setQuickNoteDialogOpen(false);
+          setQuickEditNoteItem(null);
+        }}
+        onAdd={async (propertyIri, value) => {
+          if (!projectId || !quickEditNoteItem) return;
+          try {
+            const annotations = (quickEditNoteItem as any).annotations || {};
+            const existingValue = annotations[propertyIri];
+            if (existingValue) {
+              await ontologyMutationService.updateAnnotation(
+                projectId,
+                quickEditNoteItem.id,
+                propertyIri,
+                value,
+                user?.email || 'anonymous',
+                user?.username || 'Anonymous',
+                String(existingValue)
+              );
+            } else {
+              await ontologyMutationService.addAnnotation(
+                projectId,
+                quickEditNoteItem.id,
+                propertyIri,
+                value,
+                user?.email || 'anonymous',
+                user?.username || 'Anonymous'
+              );
+            }
+            updateItemInState({
+              ...quickEditNoteItem,
+              annotations: { ...annotations, [propertyIri]: value }
+            } as SelectableItem);
+          } catch (error) {
+            console.error('[Dashboard] Failed to save quick note:', error);
+            notificationService.error('Quick Note Failed', 'Could not save note.');
+          } finally {
+            setQuickNoteDialogOpen(false);
+            setQuickEditNoteItem(null);
+          }
+        }}
+        availableProperties={annotationProperties}
+        editMode={true}
+        initialProperty={'http://www.w3.org/2000/01/rdf-schema#comment'}
+        initialValue={
+          quickEditNoteItem && (quickEditNoteItem as any).annotations
+            ? String((quickEditNoteItem as any).annotations['http://www.w3.org/2000/01/rdf-schema#comment'] || '')
+            : ''
+        }
+      />
+      <AddAnnotationDialog
+        isOpen={isClassIndividualAnnotationDialogOpen}
+        onClose={() => setClassIndividualAnnotationDialogOpen(false)}
+        onAdd={async (propertyIri, value) => {
+          if (!projectId || !selectedClassIndividualDetails) return;
+          try {
+            await ontologyMutationService.addAnnotation(
+              projectId,
+              selectedClassIndividualDetails.id,
+              propertyIri,
+              value
+            );
+            await refreshSelectedClassIndividualDetails();
+          } catch (error) {
+            console.error('[Dashboard] Failed to add annotation:', error);
+            notificationService.error('Annotation Failed', 'Could not add annotation.');
+          }
+        }}
+        availableProperties={annotationProperties}
+      />
+      <ClassSelectorDialog
+        isOpen={isClassIndividualTypeDialogOpen}
+        onClose={() => setClassIndividualTypeDialogOpen(false)}
+        onSelect={async (node) => {
+          if (!projectId || !selectedClassIndividualDetails) return;
+          try {
+            await ontologyMutationService.addClassAssertion(
+              projectId,
+              selectedClassIndividualDetails.id,
+              node.id
+            );
+            if (selectedClassForIndividuals?.id === node.id) {
+              await loadClassInstances();
+            }
+            await refreshSelectedClassIndividualDetails();
+          } catch (error) {
+            console.error('[Dashboard] Failed to add type assertion:', error);
+            notificationService.error('Type Failed', 'Could not add type assertion.');
+          } finally {
+            setClassIndividualTypeDialogOpen(false);
+          }
+        }}
+        classHierarchy={classHierarchy}
+        projectId={projectId || undefined}
+        onToggleNode={toggleNode}
+        externalExpandedNodes={expandedNodes}
+        title="Add type"
+        onAddClass={handleAddClassInline}
+        onDeleteClass={() => handleDeleteItem()}
+        metadata={metadata}
+      />
+      <PropertyAssertionDialog
+        isOpen={isClassIndividualPropertyDialogOpen}
+        title={classIndividualPropertyIsObject ? 'Add object property assertion' : 'Add data property assertion'}
+        isObjectProperty={classIndividualPropertyIsObject}
+        objectPropertiesTree={objectPropertyHierarchy}
+        dataPropertiesTree={dataPropertyHierarchy}
+        onConfirm={async (data) => {
+          if (!projectId || !selectedClassIndividualDetails) return;
+          try {
+            if (data.isObjectProperty) {
+              const propertyIri = resolvePropertyIriByLabel(data.propertyLabel, objectProperties);
+              const targetIri = resolveIndividualIriByLabel(data.targetLabel);
+              if (!propertyIri || !targetIri) {
+                notificationService.error('Add Failed', 'Property or target individual not found.');
+                return;
+              }
+              await ontologyMutationService.addObjectPropertyAssertion(
+                projectId,
+                selectedClassIndividualDetails.id,
+                propertyIri,
+                targetIri
+              );
+            } else {
+              const propertyIri = resolvePropertyIriByLabel(data.propertyLabel, dataProperties);
+              if (!propertyIri) {
+                notificationService.error('Add Failed', 'Data property not found.');
+                return;
+              }
+              await ontologyMutationService.addDataPropertyAssertion(
+                projectId,
+                selectedClassIndividualDetails.id,
+                propertyIri,
+                data.targetLabel
+              );
+            }
+            await refreshSelectedClassIndividualDetails();
+          } catch (error) {
+            console.error('[Dashboard] Failed to add property assertion:', error);
+            notificationService.error('Add Failed', 'Could not add property assertion.');
+          } finally {
+            setClassIndividualPropertyDialogOpen(false);
+          }
+        }}
+        onCancel={() => setClassIndividualPropertyDialogOpen(false)}
+      />
+      <AddAnnotationDialog
+        isOpen={isOntologyAnnotationDialogOpen}
+        onClose={() => {
+          setIsOntologyAnnotationDialogOpen(false);
+          setOntologyAnnotationEditTarget(null);
+        }}
+        onAdd={(propertyIri, value, datatype) => {
+          if (ontologyAnnotationEditTarget) {
+            handleUpdateOntologyAnnotation(
+              propertyIri,
+              ontologyAnnotationEditTarget.value,
+              value,
+              ontologyAnnotationEditTarget.datatype
+            );
+          } else {
+            handleAddOntologyAnnotation(propertyIri, value, datatype);
+          }
+          setIsOntologyAnnotationDialogOpen(false);
+          setOntologyAnnotationEditTarget(null);
+        }}
+        availableProperties={annotationProperties}
+        editMode={!!ontologyAnnotationEditTarget}
+        initialProperty={ontologyAnnotationEditTarget?.propertyIri || ''}
+        initialValue={ontologyAnnotationEditTarget?.value || ''}
+        initialDatatype={shortenDatatype(ontologyAnnotationEditTarget?.datatype)}
+      />
+      <AddAnnotationDialog
+        isOpen={isQuickNoteDialogOpen}
+        onClose={() => {
+          setQuickNoteDialogOpen(false);
+          setQuickEditNoteItem(null);
+        }}
+        onAdd={async (propertyIri, value) => {
+          if (!projectId || !quickEditNoteItem) return;
+          try {
+            const annotations = (quickEditNoteItem as any).annotations || {};
+            const existingValue = annotations[propertyIri];
+            if (existingValue) {
+              await ontologyMutationService.updateAnnotation(
+                projectId,
+                quickEditNoteItem.id,
+                propertyIri,
+                value,
+                user?.email || 'anonymous',
+                user?.username || 'Anonymous',
+                String(existingValue)
+              );
+            } else {
+              await ontologyMutationService.addAnnotation(
+                projectId,
+                quickEditNoteItem.id,
+                propertyIri,
+                value,
+                user?.email || 'anonymous',
+                user?.username || 'Anonymous'
+              );
+            }
+            updateItemInState({
+              ...quickEditNoteItem,
+              annotations: { ...annotations, [propertyIri]: value }
+            } as SelectableItem);
+          } catch (error) {
+            console.error('[Dashboard] Failed to save quick note:', error);
+            notificationService.error('Quick Note Failed', 'Could not save note.');
+          } finally {
+            setQuickNoteDialogOpen(false);
+            setQuickEditNoteItem(null);
+          }
+        }}
+        availableProperties={annotationProperties}
+        editMode={true}
+        initialProperty={'http://www.w3.org/2000/01/rdf-schema#comment'}
+        initialValue={
+          quickEditNoteItem && (quickEditNoteItem as any).annotations
+            ? String((quickEditNoteItem as any).annotations['http://www.w3.org/2000/01/rdf-schema#comment'] || '')
+            : ''
+        }
+      />
+      <AddAnnotationDialog
+        isOpen={isClassIndividualAnnotationDialogOpen}
+        onClose={() => setClassIndividualAnnotationDialogOpen(false)}
+        onAdd={async (propertyIri, value) => {
+          if (!projectId || !selectedClassIndividualDetails) return;
+          try {
+            await ontologyMutationService.addAnnotation(
+              projectId,
+              selectedClassIndividualDetails.id,
+              propertyIri,
+              value
+            );
+            await refreshSelectedClassIndividualDetails();
+          } catch (error) {
+            console.error('[Dashboard] Failed to add annotation:', error);
+            notificationService.error('Annotation Failed', 'Could not add annotation.');
+          }
+        }}
+        availableProperties={annotationProperties}
+      />
+      <ClassSelectorDialog
+        isOpen={isClassIndividualTypeDialogOpen}
+        onClose={() => setClassIndividualTypeDialogOpen(false)}
+        onSelect={async (node) => {
+          if (!projectId || !selectedClassIndividualDetails) return;
+          try {
+            await ontologyMutationService.addClassAssertion(
+              projectId,
+              selectedClassIndividualDetails.id,
+              node.id
+            );
+            if (selectedClassForIndividuals?.id === node.id) {
+              await loadClassInstances();
+            }
+            await refreshSelectedClassIndividualDetails();
+          } catch (error) {
+            console.error('[Dashboard] Failed to add type assertion:', error);
+            notificationService.error('Type Failed', 'Could not add type assertion.');
+          } finally {
+            setClassIndividualTypeDialogOpen(false);
+          }
+        }}
+        classHierarchy={classHierarchy}
+        projectId={projectId || undefined}
+        onToggleNode={toggleNode}
+        externalExpandedNodes={expandedNodes}
+        title="Add type"
+        onAddClass={handleAddClassInline}
+        onDeleteClass={() => handleDeleteItem()}
+        metadata={metadata}
+      />
+      <PropertyAssertionDialog
+        isOpen={isClassIndividualPropertyDialogOpen}
+        title={classIndividualPropertyIsObject ? 'Add object property assertion' : 'Add data property assertion'}
+        isObjectProperty={classIndividualPropertyIsObject}
+        objectPropertiesTree={objectPropertyHierarchy}
+        dataPropertiesTree={dataPropertyHierarchy}
+        onConfirm={async (data) => {
+          if (!projectId || !selectedClassIndividualDetails) return;
+          try {
+            if (data.isObjectProperty) {
+              const propertyIri = resolvePropertyIriByLabel(data.propertyLabel, objectProperties);
+              const targetIri = resolveIndividualIriByLabel(data.targetLabel);
+              if (!propertyIri || !targetIri) {
+                notificationService.error('Add Failed', 'Property or target individual not found.');
+                return;
+              }
+              await ontologyMutationService.addObjectPropertyAssertion(
+                projectId,
+                selectedClassIndividualDetails.id,
+                propertyIri,
+                targetIri
+              );
+            } else {
+              const propertyIri = resolvePropertyIriByLabel(data.propertyLabel, dataProperties);
+              if (!propertyIri) {
+                notificationService.error('Add Failed', 'Data property not found.');
+                return;
+              }
+              await ontologyMutationService.addDataPropertyAssertion(
+                projectId,
+                selectedClassIndividualDetails.id,
+                propertyIri,
+                data.targetLabel
+              );
+            }
+            await refreshSelectedClassIndividualDetails();
+          } catch (error) {
+            console.error('[Dashboard] Failed to add property assertion:', error);
+            notificationService.error('Add Failed', 'Could not add property assertion.');
+          } finally {
+            setClassIndividualPropertyDialogOpen(false);
+          }
+        }}
+        onCancel={() => setClassIndividualPropertyDialogOpen(false)}
       />
       <OpenFileDialog
         isOpen={showOpenDialog}
@@ -5153,6 +8039,21 @@ const Dashboard = () => {
         onClose={() => setEntityPreferencesDialogOpen(false)}
         preferences={preferences}
         onSave={updatePreferences}
+      />
+      <ReasonerExplanationModal
+        isOpen={explanationState.open}
+        onClose={() => setExplanationState(prev => ({ ...prev, open: false }))}
+        data={explanationState.data}
+        loading={explanationState.loading}
+        error={explanationState.error}
+      />
+      <ReasonerSettingsDialog
+        isOpen={isReasonerSettingsOpen}
+        selectedReasoner={selectedReasoner}
+        isSynced={isReasonerSynced}
+        onSelectReasoner={handleSelectReasoner}
+        onToggleSync={toggleReasonerSync}
+        onClose={() => setIsReasonerSettingsOpen(false)}
       />
 
       <div className="h-screen bg-gray-50 flex flex-col text-sm max-h-screen">
@@ -5184,6 +8085,18 @@ const Dashboard = () => {
               notificationService.info('Draft Mode Enabled', 'Changes will be saved locally until you save.');
             }
           }}
+          isReasonerRunning={isReasonerRunning}
+          isReasonerLoading={isReasonerLoading}
+          isReasonerSynced={isReasonerSynced}
+          selectedReasoner={selectedReasoner}
+          onStartReasoner={startReasoner}
+          onStopReasoner={stopReasoner}
+          onToggleReasonerSync={toggleReasonerSync}
+          onSelectReasoner={handleSelectReasoner}
+          onCheckConsistency={checkConsistency}
+          onExplainInconsistency={explainInconsistency}
+          onOpenReasonerSettings={() => setIsReasonerSettingsOpen(true)}
+          isConsistencyLoading={isConsistencyLoading}
         />
 
         <div className="bg-white border-b border-gray-200 flex-shrink-0">
@@ -5289,6 +8202,8 @@ const Dashboard = () => {
                 expandedNodes={expandedNodes}
                 searchQuery={searchQuery}
                 onSearchQueryChange={setSearchQuery}
+                searchOptions={searchOptions}
+                onSearchOptionsChange={setSearchOptions}
                 onSelectItem={setSelectedItem}
                 onToggleNode={toggleNode}
                 onAddItem={handleAddItem}
@@ -5296,6 +8211,20 @@ const Dashboard = () => {
                 onMakeSiblingsDisjoint={handleMakeSiblingsDisjoint}
                 onOpenPreferences={() => setEntityPreferencesDialogOpen(true)}
                 onRenameItem={handleRenameItem}
+                onQuickSetParent={(item) => {
+                  setQuickEditParentItem(item);
+                  if (entitiesTab === 'Classes') {
+                    setQuickParentDialogOpen(true);
+                  } else if (entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties') {
+                    setQuickPropertyParentDialogOpen(true);
+                  }
+                }}
+                onQuickAddNote={(item) => {
+                  setQuickEditNoteItem(item);
+                  setQuickNoteDialogOpen(true);
+                }}
+                viewMode={currentHierarchyViewMode}
+                onViewModeChange={setCurrentHierarchyViewMode}
               />
 
               <section className="flex-1 overflow-hidden p-2 bg-slate-200 flex flex-col">
@@ -5372,6 +8301,68 @@ const Dashboard = () => {
         metadata={metadata}
       />
 
+      {/* Import Dialog */}
+      {showImportDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-[500px]">
+            <h3 className="text-lg font-semibold mb-4">Add Ontology Import</h3>
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              const formData = new FormData(e.currentTarget);
+              const importIRI = formData.get('importIRI') as string;
+              
+              if (!projectId || !importIRI) return;
+              
+              try {
+                await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, { importIri: importIRI });
+                
+                // Refresh all metadata related state
+                const [metadataRes, annotationsRes, importsRes, gciRes] = await Promise.all([
+                  apiClient.get(`/api/ontology/metadata/${projectId}`),
+                  apiClient.get(`/api/ontology/metadata/${projectId}/annotations`),
+                  apiClient.get(`/api/ontology/metadata/${projectId}/imports`),
+                  apiClient.get(`/api/ontology/metadata/${projectId}/gci`)
+                ]);
+
+                // Extract data with fallbacks
+                const annotationsData = Array.isArray(annotationsRes?.data) ? annotationsRes.data : 
+                                       (Array.isArray(annotationsRes) ? annotationsRes : []);
+                const importsData = Array.isArray(importsRes?.data) ? importsRes.data : (Array.isArray(importsRes?.imports) ? importsRes.imports : (Array.isArray(importsRes) ? importsRes : []));
+                const gciData = Array.isArray(gciRes?.data) ? gciRes.data : (Array.isArray(gciRes?.axioms) ? gciRes.axioms : (Array.isArray(gciRes) ? gciRes : []));
+
+                const updatedMetadata = {
+                  ...(metadataRes.data || metadataRes),
+                  annotations: annotationsData
+                };
+
+                setMetadata(updatedMetadata);
+                setOntologyImports(importsData);
+                setGeneralClassAxioms(gciData);
+                setShowImportDialog(false);
+              } catch (err) {
+                console.error('Failed to add import:', err);
+              }
+            }}>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Ontology IRI to Import</label>
+                  <input type="url" name="importIRI"
+                    placeholder="https://example.com/ontology.owl"
+                    className="w-full px-3 py-2 border rounded text-sm" required />
+                  <div className="text-xs text-gray-500 mt-1">Enter the full IRI of the ontology to import</div>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 mt-6">
+                <button type="button" onClick={() => setShowImportDialog(false)}
+                  className="px-4 py-2 border rounded hover:bg-gray-50 text-sm">Cancel</button>
+                <button type="submit"
+                  className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm">Add Import</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Class Selector Dialog - kept for other uses if needed */}
       <ClassSelectorDialog
         isOpen={isClassSelectorOpen}
@@ -5392,6 +8383,40 @@ const Dashboard = () => {
         onDeleteClass={() => handleDeleteItem()}
         metadata={metadata}
       />
+      <ClassSelectorDialog
+        isOpen={isQuickParentDialogOpen}
+        onClose={() => {
+          setQuickParentDialogOpen(false);
+          setQuickEditParentItem(null);
+        }}
+        onSelect={async (node) => {
+          if (!projectId || !quickEditParentItem) return;
+          try {
+            await ontologyMutationService.addSubClassOf(
+              projectId,
+              quickEditParentItem.id,
+              node.id,
+              user?.email || 'anonymous',
+              user?.username || 'Anonymous'
+            );
+            await refreshClassHierarchy();
+          } catch (error) {
+            console.error('[Dashboard] Failed to set parent class:', error);
+            notificationService.error('Parent Failed', 'Could not set parent class.');
+          } finally {
+            setQuickParentDialogOpen(false);
+            setQuickEditParentItem(null);
+          }
+        }}
+        classHierarchy={classHierarchy}
+        projectId={projectId || undefined}
+        onToggleNode={toggleNode}
+        externalExpandedNodes={expandedNodes}
+        title="Set parent class"
+        onAddClass={handleAddClassInline}
+        onDeleteClass={() => handleDeleteItem()}
+        metadata={metadata}
+      />
 
       {/* Property Expression Dialog */}
       <PropertyExpressionDialog
@@ -5404,6 +8429,39 @@ const Dashboard = () => {
         propertyHierarchy={objectPropertyHierarchy}
         propertyType={selectedItem?.type === 'DataProperty' ? 'data' : 'object'}
         title={`Select ${selectorTarget ? selectorTarget.charAt(0).toUpperCase() + selectorTarget.slice(1) : 'Property'}`}
+      />
+      <PropertyExpressionDialog
+        isOpen={isQuickPropertyParentDialogOpen}
+        onClose={() => {
+          setQuickPropertyParentDialogOpen(false);
+          setQuickEditParentItem(null);
+        }}
+        onConfirm={async (expression) => {
+          if (!projectId || !quickEditParentItem) return;
+          try {
+            await ontologyMutationService.addSubPropertyOf(
+              projectId,
+              quickEditParentItem.id,
+              expression,
+              user?.email || 'anonymous',
+              user?.username || 'Anonymous'
+            );
+            await refreshProperties();
+          } catch (error) {
+            console.error('[Dashboard] Failed to set parent property:', error);
+            notificationService.error('Parent Failed', 'Could not set parent property.');
+          } finally {
+            setQuickPropertyParentDialogOpen(false);
+            setQuickEditParentItem(null);
+          }
+        }}
+        propertyHierarchy={
+          (quickEditParentItem as any)?.type === 'DatatypeProperty'
+            ? dataPropertyHierarchy
+            : objectPropertyHierarchy
+        }
+        propertyType={(quickEditParentItem as any)?.type === 'DatatypeProperty' ? 'data' : 'object'}
+        title="Set parent property"
       />
 
       {/* Object Property Expression Dialog - Protégé-style with inverse checkbox */}
@@ -5560,6 +8618,7 @@ const Dashboard = () => {
           onClose={() => setIsHistoryPanelOpen(false)}
         />
       )}
+
     </>
   );
 };

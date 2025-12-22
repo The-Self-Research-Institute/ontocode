@@ -2,7 +2,7 @@
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from 'axios';
 
 const BASE_URL = 'http://localhost:8082'; // Your backend gateway
-const TIMEOUT = 120_000; // 120-second timeout for requests (increased from 60s for large ontologies)
+const TIMEOUT = 300_000; // Allow up to 5 minutes for heavy ontology operations
 
 // VS Code API detection
 declare global {
@@ -176,47 +176,64 @@ class ApiClient {
   // ---------- Public API Methods ----------
 
   async get<T = any>(url: string, params?: any, config?: AxiosRequestConfig): Promise<T> {
+    let data: T;
     if (this.isVSCode) {
-      console.log(url, 'post via vs')
-      return this.postViaVSCode<T>({ type: 'apiGet', url, params, headers: config?.headers });
+      data = await this.postViaVSCode<T>({ type: 'apiGet', url, params, headers: config?.headers });
+    } else {
+      const resp = await this.axiosClient!.get(url, { ...config, params });
+      data = resp.data as T;
     }
-    const resp = await this.axiosClient!.get(url, { ...config, params });
-    console.log(resp.data, url);
-    return resp.data as T;
+    return data;
   }
 
   async post<T = any>(url: string, body?: any, config?: AxiosRequestConfig): Promise<T> {
+    let data: T;
     if (this.isVSCode) {
-      // Send 'apiPost' message to the extension
-      return this.postViaVSCode<T>({ type: 'apiPost', url, body, headers: config?.headers });
+      data = await this.postViaVSCode<T>({ type: 'apiPost', url, body, headers: config?.headers });
+    } else {
+      const resp = await this.axiosClient!.post(url, body, config);
+      data = resp.data as T;
     }
-    const resp = await this.axiosClient!.post(url, body, config);
-    return resp.data as T;
+    return data;
   }
 
   async put<T = any>(url: string, body?: any, config?: AxiosRequestConfig): Promise<T> {
+    let data: T;
     if (this.isVSCode) {
-      return this.postViaVSCode<T>({ type: 'apiPut', url, body, headers: config?.headers });
+      console.log(url, 'put via vs');
+      data = await this.postViaVSCode<T>({ type: 'apiPut', url, body, headers: config?.headers });
+    } else {
+      const resp = await this.axiosClient!.put(url, body, config);
+      data = resp.data as T;
     }
-    const resp = await this.axiosClient!.put(url, body, config);
-    return resp.data as T;
+    console.log(data, url);
+    return data;
   }
 
   async patch<T = any>(url: string, body?: any, config?: AxiosRequestConfig): Promise<T> {
+    let data: T;
     if (this.isVSCode) {
-      return this.postViaVSCode<T>({ type: 'apiPatch', url, body, headers: config?.headers });
+      console.log(url, 'patch via vs');
+      data = await this.postViaVSCode<T>({ type: 'apiPatch', url, body, headers: config?.headers });
+    } else {
+      const resp = await this.axiosClient!.patch(url, body, config);
+      data = resp.data as T;
     }
-    const resp = await this.axiosClient!.patch(url, body, config);
-    return resp.data as T;
+    console.log(data, url);
+    return data;
   }
 
   async delete<T = any>(url: string, params?: any, config?: AxiosRequestConfig): Promise<T> {
+    let data: T;
     if (this.isVSCode) {
-      // Send 'apiDelete' message to the extension
-      return this.postViaVSCode<T>({ type: 'apiDelete', url, params, headers: config?.headers });
+      console.log(url, 'delete via vs');
+      data = await this.postViaVSCode<T>({ type: 'apiDelete', url, params, headers: config?.headers });
+    } else {
+      const resp = await this.axiosClient!.delete(url, { ...config, params });
+      data = resp.data as T;
     }
-    const resp = await this.axiosClient!.delete(url, { ...config, params });
-    return resp.data as T;
+    console.log(data, url);
+    return data;
   }
 }
 

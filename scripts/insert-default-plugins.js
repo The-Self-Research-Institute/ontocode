@@ -11,7 +11,8 @@
  * 2. Graph View Plugin
  * 3. SWRL Editor Plugin
  * 4. Change Assistant Plugin
- * 5. WebVOWL Plugin
+ * 5. SPARQL Query Plugin
+ *    (Reasoner features ship inside the core dashboard now.)
  */
 
 const { MongoClient } = require('mongodb');
@@ -134,6 +135,53 @@ Perfect for users who need to:
     author: 'OntoCode Team',
     authorEmail: 'admin@ontocode.com',
     keywords: ['sparql', 'query', 'ontology', 'graphdb', 'rdf', 'owl', 'semantic-web', 'triplestore', 'database'],
+    icon: null,
+    screenshots: [],
+    verified: true,
+    active: true,
+    featured: true,
+    totalDownloads: 0,
+    totalInstalls: 0,
+    averageRating: 0.0,
+    totalRatings: 0,
+    createdAt: new Date(),
+    updatedAt: new Date()
+  },
+   {
+    pluginId: 'reasoner-plugin',
+    name: 'OWL Reasoner',
+    shortDescription: 'HermiT-inspired OWL reasoner for consistency checking, classification, realization, and inference',
+    description: `The OWL Reasoner plugin provides advanced reasoning capabilities for ontologies, inspired by the HermiT reasoner from the University of Oxford.
+
+Features:
+- **Consistency Checking**: Verify if the ontology is logically consistent
+- **Classification**: Compute class hierarchy and identify equivalent/unsatisfiable classes
+- **Realization**: Determine the most specific types for all individuals
+- **Multiple Reasoners**: Support for HermiT, Pellet, FaCT++, and ELK reasoners
+- **Incremental Reasoning**: Efficient handling of ontology changes
+- **Inferred Axioms**: View all axioms inferred by the reasoner
+- **Statistics**: Detailed metrics about the reasoning process
+- **Export Results**: Save reasoning results as JSON
+
+Reasoning Tasks:
+- **Consistency**: Check for logical contradictions
+- **Classification**: Build the complete class hierarchy
+- **Realization**: Compute individual types
+- **Satisfiability**: Check if a class can have instances
+- **Entailment**: Verify if an axiom is logically entailed
+- **Explanation**: Generate justifications for entailments
+
+Perfect for users who need to:
+- Validate ontology consistency
+- Compute inferred knowledge
+- Detect modeling errors
+- Analyze complex ontologies
+- Debug logical issues`,
+    latestVersion: '1.0.0',
+    category: 'Reasoning',
+    author: 'OntoCode Team',
+    authorEmail: 'admin@ontocode.com',
+    keywords: ['reasoner', 'hermit', 'owl', 'inference', 'classification', 'consistency', 'realization', 'entailment', 'subsumption', 'satisfiability'],
     icon: null,
     screenshots: [],
     verified: true,

@@ -253,7 +253,8 @@ class PluginLoaderService {
         'swrl-editor-plugin': 'SWRLEditorPlugin',
         'graph-view-plugin': 'GraphViewPlugin',
         'change-assistant-plugin': 'ChangeAssistantPlugin',
-        'sparql-query-plugin': 'SparqlQueryPlugin'
+        'sparql-query-plugin': 'SparqlQueryPlugin',
+        'reasoner-plugin': 'ReasonerPlugin'
       };
 
       const libraryName = libraryNames[pluginId];

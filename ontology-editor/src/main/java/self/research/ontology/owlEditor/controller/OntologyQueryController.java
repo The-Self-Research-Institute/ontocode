@@ -7,9 +7,11 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import self.research.ontology.owlEditor.service.OntologyMetadataService;
 import self.research.ontology.owlEditor.service.OntologyQueryService;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
 
+import java.util.HashMap;
 import java.util.Map;
 
 @RestController
@@ -18,19 +20,15 @@ import java.util.Map;
 public class OntologyQueryController {
 
     private final OntologyQueryService queryService;
-    private final ProjectMetadataService metadataService;
+    private final ProjectMetadataService projectMetadataService;
+    private final OntologyMetadataService ontologyMetadataService;
 
     public OntologyQueryController(OntologyQueryService queryService,
-                                   ProjectMetadataService metadataService) {
+                                   ProjectMetadataService projectMetadataService,
+                                   OntologyMetadataService ontologyMetadataService) {
         this.queryService = queryService;
-        this.metadataService = metadataService;
-    }
-
-    @GetMapping("/metadata/{projectId}")
-    public ResponseEntity<?> metadata(@PathVariable String projectId) {
-        return metadataService.readMeta(projectId)
-                .map(meta -> ResponseEntity.ok(Map.of("success", true, "data", meta)))
-                .orElseGet(() -> ResponseEntity.ok(Map.of("success", false, "error", "Metadata not ready")));
+        this.projectMetadataService = projectMetadataService;
+        this.ontologyMetadataService = ontologyMetadataService;
     }
 
     @GetMapping("/classes/top-level/{projectId}")
@@ -98,6 +96,27 @@ public class OntologyQueryController {
                 queryService.classUsage(projectId, classIri)));
     }
 
+    @GetMapping("/properties/usage/{projectId}")
+    public ResponseEntity<?> propertyUsage(@PathVariable String projectId,
+                                          @RequestParam String propertyIri) {
+        return ResponseEntity.ok(Map.of("success", true, "data",
+                queryService.propertyUsage(projectId, propertyIri)));
+    }
+
+    @GetMapping("/datatypes/usage/{projectId}")
+    public ResponseEntity<?> datatypeUsage(@PathVariable String projectId,
+                                          @RequestParam String datatypeIri) {
+        return ResponseEntity.ok(Map.of("success", true, "data",
+                queryService.datatypeUsage(projectId, datatypeIri)));
+    }
+
+    @GetMapping("/individuals/usage/{projectId}")
+    public ResponseEntity<?> individualUsage(@PathVariable String projectId,
+                                            @RequestParam String individualIri) {
+        return ResponseEntity.ok(Map.of("success", true, "data",
+                queryService.individualUsage(projectId, individualIri)));
+    }
+
     @GetMapping("/classes/details/{projectId}")
     public ResponseEntity<?> classDetails(@PathVariable String projectId,
                                          @RequestParam String classIri) {
@@ -109,6 +128,31 @@ public class OntologyQueryController {
     public ResponseEntity<?> classInstances(@PathVariable String projectId,
                                            @RequestParam String classIri) {
         return ResponseEntity.ok(queryService.getClassInstances(projectId, classIri));
+    }
+
+    @GetMapping("/classes/instance-counts/{projectId}")
+    public ResponseEntity<?> classInstanceCounts(@PathVariable String projectId) {
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", queryService.getClassInstanceCounts(projectId)
+        ));
+    }
+
+    @GetMapping("/ontology/imports/{projectId}")
+    public ResponseEntity<?> ontologyImports(@PathVariable String projectId) {
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", queryService.ontologyImports(projectId)
+        ));
+    }
+
+    @GetMapping("/ontology/gci/{projectId}")
+    public ResponseEntity<?> generalClassAxioms(@PathVariable String projectId,
+                                                @RequestParam(defaultValue = "200") int limit) {
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", queryService.generalClassAxioms(projectId, limit)
+        ));
     }
 
     @GetMapping("/{projectId}/individuals/{individualIri}")

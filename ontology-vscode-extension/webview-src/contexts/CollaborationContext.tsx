@@ -106,6 +106,15 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
                     });
                     window.dispatchEvent(rollbackEvent);
                     break;
+
+                case 'shareNotification':
+                    console.log('[CollaborationContext] 📨 Share notification received:', message.notification);
+                    // Dispatch a custom event that Dashboard can listen to refresh file list
+                    const shareEvent = new CustomEvent('fileShared', {
+                        detail: message.notification
+                    });
+                    window.dispatchEvent(shareEvent);
+                    break;
             }
         };
 

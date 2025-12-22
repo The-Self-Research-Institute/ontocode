@@ -82,6 +82,43 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- ========== OWL API & Reasoners ========== -->
+        
+        <!-- OWL API -->
+        <dependency>
+            <groupId>net.sourceforge.owlapi</groupId>
+            <artifactId>owlapi-distribution</artifactId>
+            <version>5.5.0</version>
+        </dependency>
+
+        <!-- HermiT Reasoner (Hypertableau-based OWL 2 DL reasoner) -->
+        <dependency>
+            <groupId>net.sourceforge.owlapi</groupId>
+            <artifactId>org.semanticweb.hermit</artifactId>
+            <version>1.4.5.519</version>
+        </dependency>
+
+        <!-- Openllet Reasoner (Pellet - OWLAPI 5.x compatible) -->
+        <dependency>
+            <groupId>com.github.galigator.openllet</groupId>
+            <artifactId>openllet-owlapi</artifactId>
+            <version>2.6.5</version>
+        </dependency>
+
+        <!-- ELK Reasoner (Fast for EL++ profile) -->
+        <dependency>
+            <groupId>org.semanticweb.elk</groupId>
+            <artifactId>elk-owlapi</artifactId>
+            <version>0.4.3</version>
+        </dependency>
+
+        <!-- FaCT++ Reasoner (via JFact - Java port) -->
+        <dependency>
+            <groupId>net.sourceforge.owlapi</groupId>
+            <artifactId>jfact</artifactId>
+            <version>5.0.3</version>
+        </dependency>
     </dependencies>
 
     <build>
