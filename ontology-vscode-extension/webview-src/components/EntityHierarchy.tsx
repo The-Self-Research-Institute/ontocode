@@ -35,6 +35,7 @@ interface EntityHierarchyProps {
   onQuickAddNote?: (item: SelectableItem) => void;
   viewMode?: 'asserted' | 'inferred';
   onViewModeChange?: (mode: 'asserted' | 'inferred') => void;
+  isReasonerRunning?: boolean; // Indicates if reasoner is currently running
   hideToolbarActions?: boolean; // Hide add/delete buttons
   selectedProperties?: string[]; // For multi-select mode (HasKey dialog)
   multiSelectMode?: boolean; // Enable checkbox multi-select
@@ -61,6 +62,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
   onQuickAddNote,
   viewMode = 'asserted',
   onViewModeChange,
+  isReasonerRunning = false,
   hideToolbarActions = false,
   selectedProperties = [],
   multiSelectMode = false,
@@ -178,7 +180,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
 
   const renderItem = (item: SelectableItem, level = 0): React.JSX.Element => {
     const isSelected = selectedItem?.id === item.id;
-    // An item is a "TreeNode" if it's in the Classes, ObjectProperties, or DataProperties tab.
+    // An item is a "TreeNode" if it's in the Classes, ObjectProperties, DataProperties, or AnnotationProperties tab.
     // We check 'hasChildren' to know if it's expandable.
     const isTreeNode = entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties';
     const hasChildren = 'hasChildren' in item && item.hasChildren;
@@ -368,9 +370,15 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
       {!hideToolbarActions && (
       <div className="text-xs font-semibold p-1 flex items-center justify-center gap-1 flex-wrap border-b text-center" style={{ borderColor: 'var(--color-border)' }}>
         <span style={{ color: 'var(--color-text-secondary)' }}>{currentLabel} hierarchy</span>
+        {/* {viewMode === 'inferred' && isReasonerRunning && (
+          <span className="flex items-center gap-1 px-1.5 py-0.5 bg-green-50 text-green-700 rounded text-[10px] font-medium border border-green-300">
+            <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
+            Reasoner Active
+          </span>
+        )} */}
         <div className="flex items-center gap-0.5">
-          {/* Asserted/Inferred mode toggle for Classes, Properties, and Datatypes */}
-          {(entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties' || entitiesTab === 'Datatypes') && (
+          {/* Asserted/Inferred mode toggle for all entity types */}
+          {(entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties' || entitiesTab === 'Datatypes' || entitiesTab === 'AnnotationProperties' || entitiesTab === 'Individuals') && (
             <div className="flex items-center gap-0.5 bg-gray-100 rounded px-1 py-0.5">
               <button
                 onClick={() => onViewModeChange?.('asserted')}
@@ -576,9 +584,27 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
       
       {/* Tree/List View */}
       <div className="flex-1 overflow-y-auto p-1">
-        {filteredData && filteredData.length > 0 ? filteredData.map(node => renderItem(node)) : 
+        {(viewMode === 'inferred' && !isReasonerRunning) ? (
+          <div className="p-4 text-center text-gray-600">
+            <p className="mb-2 flex items-center justify-center gap-2">
+              <span className="text-2xl">🔍</span>
+              <span>No inferred {currentLabel.toLowerCase()} hierarchy available</span>
+            </p>
+            <p className="text-xs text-gray-500 mb-3">Run the reasoner to generate the inferred hierarchy</p>
+            <p className="text-xs text-gray-400">Go to the <strong>Reasoner</strong> tab and click <strong>Start</strong></p>
+          </div>
+        ) : filteredData && filteredData.length > 0 ? filteredData.map(node => renderItem(node)) : 
           (searchQuery ? (
              <div className="p-4 text-center text-gray-600">No items found for "{searchQuery}".</div>
+          ) : viewMode === 'inferred' ? (
+             <div className="p-4 text-center text-gray-600">
+               <p className="mb-2 flex items-center justify-center gap-2">
+                 <span className="text-2xl">🔍</span>
+                 <span>No inferred {currentLabel.toLowerCase()} hierarchy available</span>
+               </p>
+               <p className="text-xs text-gray-500 mb-3">Run the reasoner to generate the inferred hierarchy</p>
+               <p className="text-xs text-gray-400">Go to the <strong>Reasoner</strong> tab and click <strong>Start</strong></p>
+             </div>
           ) : (entitiesTab === 'Individuals' && !searchQuery) ? (
              <div className="p-4 text-center text-gray-600">
                <p className="mb-2">No individuals created yet.</p>

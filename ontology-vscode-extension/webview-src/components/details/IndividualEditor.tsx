@@ -284,7 +284,7 @@ const IndividualEditor: React.FC<{
         isObjectProperty ? apiClient.get<any>(`/api/ontology/individuals/${projectId}`) : Promise.resolve({ data: [] })
       ]);
 
-      const props = Array.isArray(propsRes?.data) ? propsRes.data : propsRes?.data?.properties || [];
+      const props = Array.isArray(propsRes?.data) ? propsRes.data : (propsRes?.properties || propsRes?.data?.properties || []);
       const propSuggestions = (props || []).map((p: any) => ({
         label: p.label || p.name || (typeof p === 'string' ? p.split('#').pop() : String(p)),
         value: p.id || p.iri || p.value || p.label || String(p)

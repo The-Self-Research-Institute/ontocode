@@ -199,6 +199,25 @@ public class OntologyAdminService {
         refreshMetadata(projectId);
     }
 
+    public List<String> getImports(String projectId) {
+        String query = PREFIXES + """
+            SELECT DISTINCT ?import WHERE {
+              ?ont a owl:Ontology .
+              ?ont owl:imports ?import .
+            }
+            ORDER BY ?import
+            """;
+        TupleQueryResult rs = datasetService.execSelect(projectId, query);
+        List<String> imports = new ArrayList<>();
+        while (rs.hasNext()) {
+            BindingSet sol = rs.next();
+            if (sol.hasBinding("import")) {
+                imports.add(sol.getValue("import").stringValue());
+            }
+        }
+        return imports;
+    }
+
     public Map<String, String> getPrefixes(String projectId) {
         return datasetService.getPrefixes(projectId);
     }

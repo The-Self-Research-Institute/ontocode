@@ -14,19 +14,19 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/ontology")
 @CrossOrigin
-public class DataPropertyController {
+public class ObjectPropertyController {
 
     private final OntologyQueryService queryService;
 
-    public DataPropertyController(OntologyQueryService queryService) {
+    public ObjectPropertyController(OntologyQueryService queryService) {
         this.queryService = queryService;
     }
 
-    @GetMapping("/data-properties/{projectId}")
-    public ResponseEntity<?> dataProperties(@PathVariable String projectId,
-                                            @RequestParam(defaultValue = "100") int limit,
-                                            @RequestParam(defaultValue = "0") int offset) {
+    @GetMapping("/object-properties/{projectId}")
+    public ResponseEntity<?> objectProperties(@PathVariable String projectId,
+                                              @RequestParam(defaultValue = "100") int limit,
+                                              @RequestParam(defaultValue = "0") int offset) {
         return ResponseEntity.ok(Map.of("success", true, "data",
-                queryService.properties(projectId, "data", limit, offset)));
+                queryService.properties(projectId, "object", limit, offset)));
     }
 }

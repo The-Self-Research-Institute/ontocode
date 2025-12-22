@@ -24,25 +24,6 @@ public class ReasonerService {
 
     private final Map<String, OWLReasoner> reasonerCache = new HashMap<>();
     
-    public enum ReasonerType {
-        HERMIT("HermiT"),
-        PELLET("Pellet"),
-        OPENLLET("Openllet"),
-        FACTPLUSPLUS("FaCT++"),
-        ELK("ELK"),
-        STRUCTURAL("Structural");
-
-        private final String displayName;
-
-        ReasonerType(String displayName) {
-            this.displayName = displayName;
-        }
-
-        public String getDisplayName() {
-            return displayName;
-        }
-    }
-
     /**
      * Create or get cached reasoner for an ontology
      */

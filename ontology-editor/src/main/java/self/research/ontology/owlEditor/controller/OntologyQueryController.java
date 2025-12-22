@@ -138,14 +138,6 @@ public class OntologyQueryController {
         ));
     }
 
-    @GetMapping("/ontology/imports/{projectId}")
-    public ResponseEntity<?> ontologyImports(@PathVariable String projectId) {
-        return ResponseEntity.ok(Map.of(
-                "success", true,
-                "data", queryService.ontologyImports(projectId)
-        ));
-    }
-
     @GetMapping("/ontology/gci/{projectId}")
     public ResponseEntity<?> generalClassAxioms(@PathVariable String projectId,
                                                 @RequestParam(defaultValue = "200") int limit) {

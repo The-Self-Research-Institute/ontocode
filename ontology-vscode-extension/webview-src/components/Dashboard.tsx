@@ -763,7 +763,11 @@ const TopMenuBar = ({
                         setOpenMenu(null);
                         if (onStartReasoner) await onStartReasoner();
                       }}
-                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                      className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 ${
+                        isReasonerRunning || isReasonerLoading 
+                          ? 'text-gray-400 cursor-not-allowed' 
+                          : 'hover:bg-gray-100'
+                      }`}
                       disabled={isReasonerRunning || isReasonerLoading}
                     >
                       {isReasonerLoading ? <Loader2 size={12} className="animate-spin" /> : null}
@@ -1416,6 +1420,43 @@ const Dashboard = () => {
   const readonlyMode = false; // Allow editing by default
    const [showThemeSettings, setShowThemeSettings] = useState(false);
 
+  const applyInstanceCountsToTree = useCallback((
+    nodes: TreeNode[],
+    counts: Record<string, { direct?: number; inferred?: number; total?: number }>
+  ): TreeNode[] => {
+    return nodes.map((node) => {
+      const countEntry = counts[node.id];
+      const direct = countEntry?.direct;
+      const inferred = countEntry?.inferred;
+      const total = countEntry ? (countEntry.total ?? (direct ?? 0) + (inferred ?? 0)) : undefined;
+      return {
+        ...node,
+        directInstanceCount: direct,
+        inferredInstanceCount: inferred,
+        totalInstanceCount: total,
+        children: node.children ? applyInstanceCountsToTree(node.children, counts) : node.children
+      };
+    });
+  }, []);
+
+  const countNodes = (nodes: any[]): number => {
+    let count = 0;
+    for (const node of nodes) {
+      // Don't count owl:Thing or owl:Nothing in the total class count
+      const id = node.id || node.iri;
+      if (id !== 'http://www.w3.org/2002/07/owl#Thing' && 
+          id !== 'owl:Thing' && 
+          id !== 'http://www.w3.org/2002/07/owl#Nothing' && 
+          id !== 'owl:Nothing') {
+        count++;
+      }
+      if (node.children && node.children.length > 0) {
+        count += countNodes(node.children);
+      }
+    }
+    return count;
+  };
+
   const showToast = useCallback(
     (message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') => {
       collaboration.addNotification({
@@ -1478,6 +1519,10 @@ const Dashboard = () => {
   const [entitiesTab, setEntitiesTab] = useState("Classes");
   const [selectedItem, setSelectedItem] = useState<SelectableItem | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<string[]>([]);
+  const expandedNodesRef = useRef<string[]>([]);
+  useEffect(() => {
+    expandedNodesRef.current = expandedNodes;
+  }, [expandedNodes]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOptions, setSearchOptions] = useState({
     useRegex: false,
@@ -1589,6 +1634,8 @@ const Dashboard = () => {
     Classes: 'asserted',
     ObjectProperties: 'asserted',
     DataProperties: 'asserted',
+    AnnotationProperties: 'asserted',
+    Individuals: 'asserted',
     Datatypes: 'asserted'
   });
   const [isClassIndividualAnnotationDialogOpen, setClassIndividualAnnotationDialogOpen] = useState(false);
@@ -1598,6 +1645,39 @@ const Dashboard = () => {
   const [dlQuery, setDlQuery] = useState('Pizza and hasTopping some MozzarellaTopping');
   const [dlQueryResults, setDlQueryResults] = useState<string[] | null>(null);
   const [isDlQueryLoading, setIsDlQueryLoading] = useState(false);
+
+  const [classHierarchy, setClassHierarchy] = useState<TreeNode[]>([]);
+  const [inferredClassHierarchy, setInferredClassHierarchy] = useState<TreeNode[]>([]);
+  const [objectProperties, setObjectProperties] = useState<Property[]>([]);
+  const [objectPropertyHierarchy, setObjectPropertyHierarchy] = useState<any[]>([]);
+  const [inferredObjectPropertyHierarchy, setInferredObjectPropertyHierarchy] = useState<TreeNode[]>([]);
+  const [dataProperties, setDataProperties] = useState<Property[]>([]);
+  const [dataPropertyHierarchy, setDataPropertyHierarchy] = useState<any[]>([]);
+  const [inferredDataPropertyHierarchy, setInferredDataPropertyHierarchy] = useState<TreeNode[]>([]);
+  const [annotationProperties, setAnnotationProperties] = useState<AnnotationProperty[]>([]);
+  const [inferredAnnotationPropertyHierarchy, setInferredAnnotationPropertyHierarchy] = useState<TreeNode[]>([]);
+  const [individuals, setIndividuals] = useState<Individual[]>([]);
+  const [inferredIndividuals, setInferredIndividuals] = useState<Individual[]>([]);
+  const [datatypes, setDatatypes] = useState<Datatype[]>([]);
+  const [inferredDatatypes, setInferredDatatypes] = useState<Datatype[]>([]);
+
+  const [listOfFiles, setListOfFiles] = useState<FileInfo[]>([]);
+  const [myFiles, setMyFiles] = useState<FileInfo[]>([]);
+  const [sharedFiles, setSharedFiles] = useState<FileInfo[]>([]);
+  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
+  const [shareFileId, setShareFileId] = useState<string | null>(null);
+  const [isCurrentFileShared, setIsCurrentFileShared] = useState(false);
+  const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
+  const [showCollaborationPanel, setShowCollaborationPanel] = useState(false);
+
+  const [visibleMainTabs, setVisibleMainTabs] = useState(['ActiveOntology', 'Entities', 'IndividualsByClass', 'DLQuery', 'Reasoner', 'CodeView']);
+  const [showPluginMarketplace, setShowPluginMarketplace] = useState(false);
+  const [installedPlugins, setInstalledPlugins] = useState<Set<string>>(new Set());
+  const [pluginLoadingStates, setPluginLoadingStates] = useState<Record<string, { loading: boolean; error: string | null }>>({});
+
+  const [codeViewFormat, setCodeViewFormat] = useState<'turtle' | 'rdfxml' | 'ntriples' | 'owlxml' | 'manchester' | 'functional'>('turtle');
+  const [codeViewContent, setCodeViewContent] = useState<string>('');
+  const [codeViewLoading, setCodeViewLoading] = useState(false);
 
   // Reasoner state management
   const [selectedReasoner, setSelectedReasoner] = useState<string>('HermiT');
@@ -1611,6 +1691,208 @@ const Dashboard = () => {
     { open: false, loading: false, data: null, error: null }
   );
   const [isReasonerSettingsOpen, setIsReasonerSettingsOpen] = useState(false);
+
+  const currentHierarchyViewMode = hierarchyViewModes[entitiesTab] || 'asserted';
+
+  const entitiesTabs = [
+    { 
+      id: "Classes", 
+      label: "Classes", 
+      icon: Package, 
+      count: hierarchyViewModes.Classes === 'inferred'
+        ? countNodes(inferredClassHierarchy.length > 0 ? inferredClassHierarchy : (reasonerResults?.classHierarchyTree || reasonerResults?.classHierarchy || [])) 
+        : (metadata as any)?.classCount || 0, 
+      theme: 'bg-gradient-to-b from-[#F5F0E6] to-[#E1C688] text-black border-[#D6C9AD]' 
+    },
+    { 
+      id: "ObjectProperties", 
+      label: "Object properties", 
+      icon: Share2, 
+      count: hierarchyViewModes.ObjectProperties === 'inferred'
+        ? countNodes(inferredObjectPropertyHierarchy.length > 0 ? inferredObjectPropertyHierarchy : (reasonerResults?.objectPropertyHierarchy || []))
+        : (metadata as any)?.objectPropertyCount || 0, 
+      theme: 'bg-gradient-to-b from-blue-300 to-blue-500 text-white border-blue-600' 
+    },
+    { 
+      id: "DataProperties", 
+      label: "Data properties", 
+      icon: Database, 
+      count: hierarchyViewModes.DataProperties === 'inferred'
+        ? countNodes(inferredDataPropertyHierarchy.length > 0 ? inferredDataPropertyHierarchy : (reasonerResults?.dataPropertyHierarchy || []))
+        : (metadata as any)?.dataPropertyCount || 0, 
+      theme: 'bg-gradient-to-b from-green-300 to-green-500 text-white border-green-600' 
+    },
+    { id: "AnnotationProperties", label: "Annotation properties", icon: Tag, count: annotationProperties.length, theme: 'bg-gradient-to-b from-orange-300 to-orange-500 text-white border-orange-600' },
+    { id: "Datatypes", label: "Datatypes", icon: Settings, count: datatypes.length || 0, theme: 'bg-gradient-to-b from-red-300 to-red-500 text-white border-red-600' },
+    { id: "Individuals", label: "Individuals", icon: Eye, count: (metadata as any)?.individualCount || 0, theme: 'bg-gradient-to-b from-purple-300 to-purple-500 text-white border-purple-600' },
+  ];
+  const activeTheme = entitiesTabs.find(t => t.id === entitiesTab)?.theme;
+
+  const sourceData = React.useMemo(() => {
+    switch (entitiesTab) {
+      case "Classes":
+        if (hierarchyViewModes.Classes === 'inferred') {
+          // Use inferredClassHierarchy if available, otherwise fall back to reasoner results
+          const inferred = inferredClassHierarchy.length > 0 
+            ? inferredClassHierarchy 
+            : (reasonerResults?.classHierarchyTree || reasonerResults?.classHierarchy || []);
+          
+          console.log('[Dashboard] Using inferred class hierarchy, length:', inferred.length);
+          return inferred;
+        }
+        console.log('[Dashboard] Using asserted class hierarchy, length:', classHierarchy.length);
+        return classHierarchy;
+      case "ObjectProperties":
+        console.log(inferredObjectPropertyHierarchy, '[Dashboard] Hierarchy view mode for ObjectProperties:', hierarchyViewModes.ObjectProperties);
+        return hierarchyViewModes.ObjectProperties === 'inferred'
+          ? (inferredObjectPropertyHierarchy.length > 0 ? inferredObjectPropertyHierarchy : (reasonerResults?.objectPropertyHierarchy || []))
+          : objectPropertyHierarchy;
+      case "DataProperties":
+        return hierarchyViewModes.DataProperties === 'inferred'
+          ? (inferredDataPropertyHierarchy.length > 0 ? inferredDataPropertyHierarchy : (reasonerResults?.dataPropertyHierarchy || []))
+          : dataPropertyHierarchy;
+      case "AnnotationProperties":
+        return hierarchyViewModes.AnnotationProperties === 'inferred'
+          ? (inferredAnnotationPropertyHierarchy.length > 0 ? inferredAnnotationPropertyHierarchy : annotationProperties)
+          : annotationProperties;
+      case "Individuals":
+        return hierarchyViewModes.Individuals === 'inferred'
+          ? (inferredIndividuals.length > 0 ? inferredIndividuals : individuals)
+          : individuals;
+      case "Datatypes":
+        return hierarchyViewModes.Datatypes === 'inferred'
+          ? (inferredDatatypes.length > 0 ? inferredDatatypes : datatypes)
+          : datatypes;
+      default: return [];
+    }
+  }, [
+    entitiesTab,
+    classHierarchy,
+    inferredClassHierarchy,
+    objectPropertyHierarchy,
+    dataPropertyHierarchy,
+    inferredObjectPropertyHierarchy,
+    inferredDataPropertyHierarchy,
+    inferredAnnotationPropertyHierarchy,
+    inferredIndividuals,
+    inferredDatatypes,
+    hierarchyViewModes.Classes,
+    hierarchyViewModes.ObjectProperties,
+    hierarchyViewModes.DataProperties,
+    hierarchyViewModes.AnnotationProperties,
+    hierarchyViewModes.Individuals,
+    hierarchyViewModes.Datatypes,
+    annotationProperties,
+    individuals,
+    datatypes,
+    reasonerResults
+  ]);
+
+  const filteredData = React.useMemo(() => {
+    const trimmedQuery = searchQuery.trim();
+    const lowercasedQuery = trimmedQuery.toLowerCase();
+    let regex: RegExp | null = null;
+    if (searchOptions.useRegex && trimmedQuery) {
+      try {
+        regex = new RegExp(trimmedQuery, 'i');
+      } catch (error) {
+        console.warn('[Dashboard] Invalid regex:', error);
+        regex = null;
+      }
+    }
+
+    const builtinsByTab: Record<string, Set<string>> = {
+      Classes: new Set([
+        'http://www.w3.org/2002/07/owl#Thing',
+        'http://www.w3.org/2002/07/owl#Nothing'
+      ]),
+      ObjectProperties: new Set([
+        'http://www.w3.org/2002/07/owl#topObjectProperty',
+        'http://www.w3.org/2002/07/owl#bottomObjectProperty'
+      ]),
+      DataProperties: new Set([
+        'http://www.w3.org/2002/07/owl#topDataProperty',
+        'http://www.w3.org/2002/07/owl#bottomDataProperty'
+      ]),
+      AnnotationProperties: new Set([
+        'http://www.w3.org/2000/01/rdf-schema#label',
+        'http://www.w3.org/2000/01/rdf-schema#comment',
+        'http://www.w3.org/2000/01/rdf-schema#seeAlso',
+        'http://www.w3.org/2000/01/rdf-schema#isDefinedBy',
+        'http://www.w3.org/2002/07/owl#deprecated'
+      ]),
+      Datatypes: new Set([
+        'http://www.w3.org/2000/01/rdf-schema#Literal',
+        'http://www.w3.org/1999/02/22-rdf-syntax-ns#PlainLiteral',
+        'http://www.w3.org/2001/XMLSchema#string',
+        'http://www.w3.org/2001/XMLSchema#integer',
+        'http://www.w3.org/2001/XMLSchema#decimal',
+        'http://www.w3.org/2001/XMLSchema#float',
+        'http://www.w3.org/2001/XMLSchema#double',
+        'http://www.w3.org/2001/XMLSchema#boolean',
+        'http://www.w3.org/2001/XMLSchema#date',
+        'http://www.w3.org/2001/XMLSchema#dateTime',
+        'http://www.w3.org/2001/XMLSchema#anyURI'
+      ])
+    };
+
+    const isBuiltIn = (item: SelectableItem) => {
+      if (!searchOptions.hideBuiltins) return false;
+      const builtins = builtinsByTab[entitiesTab];
+      return builtins ? builtins.has(item.id) : false;
+    };
+
+    const isDeprecated = (item: SelectableItem) => {
+      if (!searchOptions.hideDeprecated) return false;
+      const annotations = (item as any).annotations || {};
+      const deprecatedValue = annotations['http://www.w3.org/2002/07/owl#deprecated'] || annotations['owl:deprecated'];
+      if (!deprecatedValue) return false;
+      const normalized = String(deprecatedValue).toLowerCase();
+      return normalized === 'true' || normalized === '1' || normalized === 'yes';
+    };
+
+    const matchesQuery = (item: SelectableItem) => {
+      if (!trimmedQuery) return true;
+      const annotationBlob = searchOptions.searchAnnotations && (item as any).annotations
+        ? Object.entries((item as any).annotations)
+          .map(([key, value]) => `${key} ${String(value)}`)
+          .join(' ')
+        : '';
+      const haystack = `${item.label || ''} ${item.id || ''} ${annotationBlob}`;
+      if (regex) return regex.test(haystack);
+      return haystack.toLowerCase().includes(lowercasedQuery);
+    };
+
+    const filterRecursively = (items: SelectableItem[]): SelectableItem[] => {
+      const results: SelectableItem[] = [];
+      for (const item of items) {
+        if (isDeprecated(item)) {
+          continue;
+        }
+
+        const children = (item as any).children;
+        if (isBuiltIn(item) && children?.length) {
+          const childResults = filterRecursively(children);
+          results.push(...childResults);
+          continue;
+        }
+
+        let matches = matchesQuery(item);
+        if (children) {
+          const childResults = filterRecursively(children);
+          if (childResults.length > 0) {
+            results.push({ ...item, children: childResults } as any);
+            matches = true;
+          }
+        }
+        if (matches && !results.find(r => r.id === item.id)) {
+          results.push(item);
+        }
+      }
+      return results;
+    };
+    return filterRecursively(sourceData);
+  }, [searchQuery, sourceData, entitiesTab, searchOptions]);
 
   const fetchReasonerBundle = useCallback(async (reasonerType: string) => {
     if (!projectId) {
@@ -1633,6 +1915,104 @@ const Dashboard = () => {
     return combineReasonerResults(classificationResponse, statsResponse ?? undefined);
   }, [projectId]);
 
+  const loadInferredHierarchy = useCallback(async () => {
+    if (!projectId) return;
+    console.log('[Dashboard] Loading full inferred class hierarchy...');
+    try {
+      const response = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-class-hierarchy`);
+      const payload = response?.data || response;
+      const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
+      
+      if (hierarchy.length === 0) {
+        console.warn('[Dashboard] No inferred classes found. Reasoner may not have been run yet.');
+        setInferredClassHierarchy([]);
+        return;
+      }
+
+      const hierarchyWithCounts = applyInstanceCountsToTree(hierarchy, classInstanceCounts);
+      console.log('[Dashboard] Full inferred hierarchy loaded with', hierarchy.length, 'root nodes');
+      setInferredClassHierarchy(hierarchyWithCounts);
+    } catch (error) {
+      console.error('[Dashboard] Failed to load full inferred class hierarchy:', error);
+      setInferredClassHierarchy([]);
+    }
+  }, [projectId, applyInstanceCountsToTree, classInstanceCounts]);
+
+  const loadInferredObjectPropertyHierarchy = useCallback(async () => {
+    if (!projectId) return;
+    console.log('[Dashboard] Loading inferred object property hierarchy...');
+    try {
+      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-object-property-hierarchy`);
+      const payload = res?.data || res;
+      const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
+      console.log('[Dashboard] Inferred object properties loaded:', Array.isArray(hierarchy) ? hierarchy.length : 0, 'items');
+      setInferredObjectPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
+    } catch (error) {
+      console.error('[Dashboard] Failed to load inferred object property hierarchy:', error);
+      setInferredObjectPropertyHierarchy([]);
+    }
+  }, [projectId]);
+
+  const loadInferredDataPropertyHierarchy = useCallback(async () => {
+    if (!projectId) return;
+    console.log('[Dashboard] Loading inferred data property hierarchy...');
+    try {
+      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-data-property-hierarchy`);
+      const payload = res?.data || res;
+      const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
+      console.log('[Dashboard] Inferred data properties loaded:', Array.isArray(hierarchy) ? hierarchy.length : 0, 'items');
+      setInferredDataPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
+    } catch (error) {
+      console.error('[Dashboard] Failed to load inferred data property hierarchy:', error);
+      setInferredDataPropertyHierarchy([]);
+    }
+  }, [projectId]);
+
+  const loadInferredAnnotationPropertyHierarchy = useCallback(async () => {
+    if (!projectId) return;
+    console.log('[Dashboard] Loading inferred annotation property hierarchy...');
+    try {
+      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-annotation-property-hierarchy`);
+      const payload = res?.data || res;
+      const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
+      console.log('[Dashboard] Inferred annotation properties loaded:', Array.isArray(hierarchy) ? hierarchy.length : 0, 'items');
+      setInferredAnnotationPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
+    } catch (error) {
+      console.error('[Dashboard] Failed to load inferred annotation property hierarchy:', error);
+      setInferredAnnotationPropertyHierarchy([]);
+    }
+  }, [projectId]);
+
+  const loadInferredDatatypes = useCallback(async () => {
+    if (!projectId) return;
+    console.log('[Dashboard] Loading inferred datatypes...');
+    try {
+      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-datatypes`);
+      const payload = res?.data || res;
+      const datatypes = payload?.datatypes || payload?.data?.datatypes || [];
+      console.log('[Dashboard] Inferred datatypes loaded:', Array.isArray(datatypes) ? datatypes.length : 0, 'items');
+      setInferredDatatypes(Array.isArray(datatypes) ? datatypes : []);
+    } catch (error) {
+      console.error('[Dashboard] Failed to load inferred datatypes:', error);
+      setInferredDatatypes([]);
+    }
+  }, [projectId]);
+
+  const loadInferredIndividuals = useCallback(async () => {
+    if (!projectId) return;
+    console.log('[Dashboard] Loading inferred individuals...');
+    try {
+      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-individuals`);
+      const payload = res?.data || res;
+      const individuals = payload?.individuals || payload?.data?.individuals || [];
+      console.log('[Dashboard] Inferred individuals loaded:', Array.isArray(individuals) ? individuals.length : 0, 'items');
+      setInferredIndividuals(Array.isArray(individuals) ? individuals : []);
+    } catch (error) {
+      console.error('[Dashboard] Failed to load inferred individuals:', error);
+      setInferredIndividuals([]);
+    }
+  }, [projectId]);
+
   const startReasoner = useCallback(async () => {
     if (!projectId) {
       notificationService.error('No Ontology Loaded', 'Please load an ontology first');
@@ -1650,8 +2030,28 @@ const Dashboard = () => {
       const reasonerType = normalizeReasonerType(selectedReasoner);
       const results = await fetchReasonerBundle(reasonerType);
       setReasonerResults(results);
-      setMainTab('Reasoner');
-      notificationService.success('Classification Complete', `${selectedReasoner} reasoner completed successfully`);
+      
+      // After successful classification, load full recursive hierarchies from the main API
+      // This ensures we have the full depth like Desktop Protégé, not just the bundle's view
+      console.log('[Dashboard] Reasoner completed, loading full recursive hierarchies...');
+      
+      // Load full hierarchies in parallel
+      await Promise.all([
+        loadInferredHierarchy(),
+        loadInferredObjectPropertyHierarchy(),
+        loadInferredDataPropertyHierarchy(),
+        loadInferredAnnotationPropertyHierarchy(),
+        loadInferredDatatypes(),
+        loadInferredIndividuals()
+      ]);
+      
+      console.log('[Dashboard] ✅ All inferred hierarchies processed');
+      
+      // Automatically switch Classes tab to inferred mode to show the inferred hierarchy
+      setHierarchyViewModes(prev => ({ ...prev, Classes: 'inferred' }));
+      console.log('[Dashboard] ✅ Automatically switched Classes tab to inferred mode');
+      
+      notificationService.success('Classification Complete', `${selectedReasoner} reasoner completed successfully. View inferred hierarchy in Entities > Classes tab.`);
     } catch (error: any) {
       console.error('[Dashboard] Reasoner error:', error);
       notificationService.error('Classification Failed', error?.response?.data?.error || error?.message || 'Classification failed');
@@ -1659,7 +2059,18 @@ const Dashboard = () => {
     } finally {
       setIsReasonerLoading(false);
     }
-  }, [fetchReasonerBundle, isReasonerLoading, projectId, selectedReasoner]);
+  }, [
+    fetchReasonerBundle, 
+    isReasonerLoading, 
+    projectId, 
+    selectedReasoner, 
+    loadInferredHierarchy, 
+    loadInferredObjectPropertyHierarchy, 
+    loadInferredDataPropertyHierarchy, 
+    loadInferredAnnotationPropertyHierarchy, 
+    loadInferredDatatypes, 
+    loadInferredIndividuals
+  ]);
 
   const stopReasoner = useCallback(() => {
     setIsReasonerRunning(false);
@@ -1755,32 +2166,6 @@ const Dashboard = () => {
     }
   }, [projectId, selectedReasoner]);
 
-  const [classHierarchy, setClassHierarchy] = useState<TreeNode[]>([]);
-  const [objectProperties, setObjectProperties] = useState<Property[]>([]);
-  const [objectPropertyHierarchy, setObjectPropertyHierarchy] = useState<any[]>([]);
-  const [inferredObjectPropertyHierarchy, setInferredObjectPropertyHierarchy] = useState<TreeNode[]>([]);
-  const [dataProperties, setDataProperties] = useState<Property[]>([]);
-  const [dataPropertyHierarchy, setDataPropertyHierarchy] = useState<any[]>([]);
-  const [inferredDataPropertyHierarchy, setInferredDataPropertyHierarchy] = useState<TreeNode[]>([]);
-  const [annotationProperties, setAnnotationProperties] = useState<AnnotationProperty[]>([]);
-  const [individuals, setIndividuals] = useState<Individual[]>([]);
-  const [datatypes, setDatatypes] = useState<Datatype[]>([]);
-
-  const [listOfFiles, setListOfFiles] = useState<FileInfo[]>([]);
-  const [myFiles, setMyFiles] = useState<FileInfo[]>([]);
-  const [sharedFiles, setSharedFiles] = useState<FileInfo[]>([]);
-  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
-  const [shareFileId, setShareFileId] = useState<string | null>(null);
-  const [isCurrentFileShared, setIsCurrentFileShared] = useState(false);
-  const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
-  const [showCollaborationPanel, setShowCollaborationPanel] = useState(false);
-
-  // Plugin tabs (SPARQL, SWRL, Fuzzy, Changes, Graph, Reasoner) are added dynamically when plugins are installed
-  const [visibleMainTabs, setVisibleMainTabs] = useState(['ActiveOntology', 'Entities', 'IndividualsByClass', 'DLQuery', 'Reasoner', 'CodeView']);
-  const [showPluginMarketplace, setShowPluginMarketplace] = useState(false);
-  const [installedPlugins, setInstalledPlugins] = useState<Set<string>>(new Set());
-
-  const currentHierarchyViewMode = hierarchyViewModes[entitiesTab] || 'asserted';
   const setCurrentHierarchyViewMode = (mode: 'asserted' | 'inferred') => {
     setHierarchyViewModes(prev => ({ ...prev, [entitiesTab]: mode }));
   };
@@ -1799,31 +2184,6 @@ const Dashboard = () => {
     }
     return datatype;
   };
-
-  const applyInstanceCountsToTree = useCallback((
-    nodes: TreeNode[],
-    counts: Record<string, { direct?: number; inferred?: number; total?: number }>
-  ): TreeNode[] => {
-    return nodes.map((node) => {
-      const countEntry = counts[node.id];
-      const direct = countEntry?.direct;
-      const inferred = countEntry?.inferred;
-      const total = countEntry ? (countEntry.total ?? (direct ?? 0) + (inferred ?? 0)) : undefined;
-      return {
-        ...node,
-        directInstanceCount: direct,
-        inferredInstanceCount: inferred,
-        totalInstanceCount: total,
-        children: node.children ? applyInstanceCountsToTree(node.children, counts) : node.children
-      };
-    });
-  }, []);
-  const [pluginLoadingStates, setPluginLoadingStates] = useState<Record<string, { loading: boolean; error: string | null }>>({});
-  
-  // Code View states
-  const [codeViewFormat, setCodeViewFormat] = useState<'turtle' | 'rdfxml' | 'ntriples' | 'owlxml' | 'manchester' | 'functional'>('turtle');
-  const [codeViewContent, setCodeViewContent] = useState<string>('');
-  const [codeViewLoading, setCodeViewLoading] = useState(false);
 
   // Calculate active users count for current project
   const activeUsersInProject = Array.from(collaboration.state.activeUsers.values()).filter(
@@ -2748,6 +3108,18 @@ const Dashboard = () => {
     }
   }, [classHierarchy]);
 
+  useEffect(() => {
+    if (inferredClassHierarchy.length > 0 && inferredClassHierarchy[0].id === "http://www.w3.org/2002/07/owl#Thing") {
+      const owlThingId = inferredClassHierarchy[0].id;
+      const childCount = inferredClassHierarchy[0].children?.length || 0;
+      
+      if (childCount > 0 && !expandedNodes.includes(owlThingId)) {
+        console.log('[Dashboard] Auto-expanding owl:Thing in inferred hierarchy');
+        setExpandedNodes(prev => prev.includes(owlThingId) ? prev : [...prev, owlThingId]);
+      }
+    }
+  }, [inferredClassHierarchy]);
+
   // Fetch projects list on mount (but don't auto-load a file)
   // This populates the file selector dropdown when user clicks it
   useEffect(() => {
@@ -3109,60 +3481,8 @@ const Dashboard = () => {
         return n;
       });
 
-    setClassHierarchy(prevHierarchy => updateTree(prevHierarchy));
+    setInferredClassHierarchy(prevHierarchy => updateTree(prevHierarchy));
   }, [projectId, fetchInferredChildren, applyInstanceCountsToTree, classInstanceCounts, getLocalName]);
-
-  const loadInferredHierarchy = useCallback(async () => {
-    if (!projectId) return;
-    const rootId = "http://www.w3.org/2002/07/owl#Thing";
-    const inferred = await fetchInferredChildren(rootId);
-    const topLevelNodes: TreeNode[] = inferred
-      .filter((item: any) => item?.iri && item.iri !== rootId && item.iri !== 'http://www.w3.org/2002/07/owl#Nothing')
-      .map((item: any) => ({
-        id: item.iri,
-        label: item.label || getLocalName(item.iri),
-        children: [],
-        hasChildren: true,
-        subClassOfAxioms: [{ id: 'sub1', type: 'SubClassOf', definition: 'Thing' }]
-      }));
-
-    const owlThingNode: TreeNode = {
-      id: rootId,
-      label: "owl:Thing",
-      children: topLevelNodes,
-      hasChildren: topLevelNodes.length > 0,
-      annotations: {}
-    };
-
-    const hierarchyWithCounts = applyInstanceCountsToTree([owlThingNode], classInstanceCounts);
-    setClassHierarchy(hierarchyWithCounts);
-  }, [projectId, fetchInferredChildren, applyInstanceCountsToTree, classInstanceCounts, getLocalName]);
-
-  const loadInferredObjectPropertyHierarchy = useCallback(async () => {
-    if (!projectId) return;
-    try {
-      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-object-property-hierarchy`);
-      const payload = res?.data || res;
-      const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
-      setInferredObjectPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
-    } catch (error) {
-      console.error('[Dashboard] Failed to load inferred object property hierarchy:', error);
-      setInferredObjectPropertyHierarchy([]);
-    }
-  }, [projectId]);
-
-  const loadInferredDataPropertyHierarchy = useCallback(async () => {
-    if (!projectId) return;
-    try {
-      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-data-property-hierarchy`);
-      const payload = res?.data || res;
-      const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
-      setInferredDataPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
-    } catch (error) {
-      console.error('[Dashboard] Failed to load inferred data property hierarchy:', error);
-      setInferredDataPropertyHierarchy([]);
-    }
-  }, [projectId]);
 
   const updateItemInState = useCallback((updatedItem: SelectableItem, markUnsaved: boolean = true) => {
     console.log('[DEBUG] updateItemInState called for item:', updatedItem.id, 'markUnsaved:', markUnsaved);
@@ -3279,7 +3599,7 @@ const Dashboard = () => {
       
       // Re-load children for all previously expanded nodes to preserve tree state
       // We need to reload children in order (parent before child) to maintain tree structure
-      const currentExpandedNodes = expandedNodes.filter(id => id !== "http://www.w3.org/2002/07/owl#Thing");
+      const currentExpandedNodes = expandedNodesRef.current.filter(id => id !== "http://www.w3.org/2002/07/owl#Thing");
       for (const nodeId of currentExpandedNodes) {
         try {
           await loadChildren(nodeId);
@@ -3293,16 +3613,51 @@ const Dashboard = () => {
     } finally {
       classHierarchyRefreshInFlight.current = false;
     }
-  }, [projectId, expandedNodes, loadChildren, classInstanceCounts, applyInstanceCountsToTree]);
+  }, [projectId, loadChildren, classInstanceCounts, applyInstanceCountsToTree]);
 
   useEffect(() => {
     if (!projectId || mainTab !== 'Entities' || entitiesTab !== 'Classes') return;
+    
+    console.log('[Dashboard] View mode changed to:', currentHierarchyViewMode);
     if (currentHierarchyViewMode === 'inferred') {
-      loadInferredHierarchy();
+      // Always load full recursive hierarchy from API when in inferred mode
+      // to ensure we have the full depth like Desktop Protégé
+      if (inferredClassHierarchy.length === 0) {
+        console.log('[Dashboard] Loading inferred hierarchy from API...');
+        loadInferredHierarchy();
+      }
     } else {
+      console.log('[Dashboard] Refreshing asserted hierarchy...');
       refreshClassHierarchy();
     }
-  }, [projectId, mainTab, entitiesTab, currentHierarchyViewMode, loadInferredHierarchy, refreshClassHierarchy]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, mainTab, entitiesTab, currentHierarchyViewMode]);
+
+  // Load inferred object property hierarchy when switching to inferred mode
+  useEffect(() => {
+    if (!projectId || mainTab !== 'Entities' || entitiesTab !== 'ObjectProperties') return;
+    console.log('[Dashboard] ObjectProperties view mode changed to:', hierarchyViewModes.ObjectProperties);
+    if (hierarchyViewModes.ObjectProperties === 'inferred') {
+      if (inferredObjectPropertyHierarchy.length === 0) {
+        console.log('[Dashboard] Loading inferred object property hierarchy from API...');
+        loadInferredObjectPropertyHierarchy();
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, mainTab, entitiesTab, hierarchyViewModes.ObjectProperties]);
+
+  // Load inferred data property hierarchy when switching to inferred mode
+  useEffect(() => {
+    if (!projectId || mainTab !== 'Entities' || entitiesTab !== 'DataProperties') return;
+    console.log('[Dashboard] DataProperties view mode changed to:', hierarchyViewModes.DataProperties);
+    if (hierarchyViewModes.DataProperties === 'inferred') {
+      if (inferredDataPropertyHierarchy.length === 0) {
+        console.log('[Dashboard] Loading inferred data property hierarchy from API...');
+        loadInferredDataPropertyHierarchy();
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, mainTab, entitiesTab, hierarchyViewModes.DataProperties]);
 
   // Handle remote edits from collaborative users in real-time
   useEffect(() => {
@@ -3434,9 +3789,13 @@ const Dashboard = () => {
         case 'PROPERTY_DELETED':
           console.log('[Dashboard] 🔗 Refreshing properties due to property edit');
           // Trigger refresh of properties
-          apiClient.get(`/api/ontology/object-properties/${projectId}`)
+          apiClient.get(`/api/ontology/properties/${projectId}`)
             .then(response => {
-              setObjectProperties(response.data || []);
+              const allProps = Array.isArray(response.data) ? response.data : 
+                               Array.isArray(response.properties) ? response.properties : 
+                               Array.isArray(response) ? response : [];
+              const opList = allProps.filter((p: any) => p.type === "ObjectProperty");
+              setObjectProperties(opList);
               console.log('[Dashboard] ✅ Object properties refreshed');
             })
             .catch(error => console.error('[Dashboard] Failed to refresh properties:', error));
@@ -3816,144 +4175,6 @@ const Dashboard = () => {
     }
   }, []); // Empty deps - collaboration.addNotification is stable
 
-  // Memoize the source data based on active tab to avoid unnecessary re-filtering
-  const sourceData = React.useMemo(() => {
-    switch (entitiesTab) {
-      case "Classes": return classHierarchy;
-      case "ObjectProperties":
-        return hierarchyViewModes.ObjectProperties === 'inferred'
-          ? inferredObjectPropertyHierarchy
-          : objectPropertyHierarchy;
-      case "DataProperties":
-        return hierarchyViewModes.DataProperties === 'inferred'
-          ? inferredDataPropertyHierarchy
-          : dataPropertyHierarchy;
-      case "AnnotationProperties": return annotationProperties;
-      case "Individuals": return individuals;
-      case "Datatypes": return datatypes;
-      default: return [];
-    }
-  }, [
-    entitiesTab,
-    classHierarchy,
-    objectPropertyHierarchy,
-    dataPropertyHierarchy,
-    inferredObjectPropertyHierarchy,
-    inferredDataPropertyHierarchy,
-    hierarchyViewModes.ObjectProperties,
-    hierarchyViewModes.DataProperties,
-    annotationProperties,
-    individuals,
-    datatypes
-  ]);
-
-  // Filter data based on search query
-  const filteredData = React.useMemo(() => {
-    const trimmedQuery = searchQuery.trim();
-    const lowercasedQuery = trimmedQuery.toLowerCase();
-    let regex: RegExp | null = null;
-    if (searchOptions.useRegex && trimmedQuery) {
-      try {
-        regex = new RegExp(trimmedQuery, 'i');
-      } catch (error) {
-        console.warn('[Dashboard] Invalid regex:', error);
-        regex = null;
-      }
-    }
-
-    const builtinsByTab: Record<string, Set<string>> = {
-      Classes: new Set([
-        'http://www.w3.org/2002/07/owl#Thing',
-        'http://www.w3.org/2002/07/owl#Nothing'
-      ]),
-      ObjectProperties: new Set([
-        'http://www.w3.org/2002/07/owl#topObjectProperty',
-        'http://www.w3.org/2002/07/owl#bottomObjectProperty'
-      ]),
-      DataProperties: new Set([
-        'http://www.w3.org/2002/07/owl#topDataProperty',
-        'http://www.w3.org/2002/07/owl#bottomDataProperty'
-      ]),
-      AnnotationProperties: new Set([
-        'http://www.w3.org/2000/01/rdf-schema#label',
-        'http://www.w3.org/2000/01/rdf-schema#comment',
-        'http://www.w3.org/2000/01/rdf-schema#seeAlso',
-        'http://www.w3.org/2000/01/rdf-schema#isDefinedBy',
-        'http://www.w3.org/2002/07/owl#deprecated'
-      ]),
-      Datatypes: new Set([
-        'http://www.w3.org/2000/01/rdf-schema#Literal',
-        'http://www.w3.org/1999/02/22-rdf-syntax-ns#PlainLiteral',
-        'http://www.w3.org/2001/XMLSchema#string',
-        'http://www.w3.org/2001/XMLSchema#integer',
-        'http://www.w3.org/2001/XMLSchema#decimal',
-        'http://www.w3.org/2001/XMLSchema#float',
-        'http://www.w3.org/2001/XMLSchema#double',
-        'http://www.w3.org/2001/XMLSchema#boolean',
-        'http://www.w3.org/2001/XMLSchema#date',
-        'http://www.w3.org/2001/XMLSchema#dateTime',
-        'http://www.w3.org/2001/XMLSchema#anyURI'
-      ])
-    };
-
-    const isBuiltIn = (item: SelectableItem) => {
-      if (!searchOptions.hideBuiltins) return false;
-      const builtins = builtinsByTab[entitiesTab];
-      return builtins ? builtins.has(item.id) : false;
-    };
-
-    const isDeprecated = (item: SelectableItem) => {
-      if (!searchOptions.hideDeprecated) return false;
-      const annotations = (item as any).annotations || {};
-      const deprecatedValue = annotations['http://www.w3.org/2002/07/owl#deprecated'] || annotations['owl:deprecated'];
-      if (!deprecatedValue) return false;
-      const normalized = String(deprecatedValue).toLowerCase();
-      return normalized === 'true' || normalized === '1' || normalized === 'yes';
-    };
-
-    const matchesQuery = (item: SelectableItem) => {
-      if (!trimmedQuery) return true;
-      const annotationBlob = searchOptions.searchAnnotations && (item as any).annotations
-        ? Object.entries((item as any).annotations)
-          .map(([key, value]) => `${key} ${String(value)}`)
-          .join(' ')
-        : '';
-      const haystack = `${item.label || ''} ${item.id || ''} ${annotationBlob}`;
-      if (regex) return regex.test(haystack);
-      return haystack.toLowerCase().includes(lowercasedQuery);
-    };
-
-    const filterRecursively = (items: SelectableItem[]): SelectableItem[] => {
-      const results: SelectableItem[] = [];
-      for (const item of items) {
-        if (isDeprecated(item)) {
-          continue;
-        }
-
-        const children = (item as any).children;
-        if (isBuiltIn(item) && children?.length) {
-          const childResults = filterRecursively(children);
-          results.push(...childResults);
-          continue;
-        }
-
-        let matches = matchesQuery(item);
-        if (children) {
-          const childResults = filterRecursively(children);
-          if (childResults.length > 0) {
-            results.push({ ...item, children: childResults } as any);
-            matches = true;
-          }
-        }
-        if (matches && !results.find(r => r.id === item.id)) {
-          results.push(item);
-        }
-      }
-      return results;
-    };
-    return filterRecursively(sourceData);
-  }, [searchQuery, sourceData, entitiesTab, searchOptions]);
-
   useEffect(() => {
     // Load previously installed plugins from localStorage
     const loadInstalledPlugins = async () => {
@@ -4045,20 +4266,32 @@ const Dashboard = () => {
         }
         return null;
       };
-      const node = findNode(classHierarchy, nodeId);
+      const currentHierarchy = entitiesTab === 'Classes' 
+        ? (currentHierarchyViewMode === 'inferred' ? inferredClassHierarchy : classHierarchy)
+        : (entitiesTab === 'ObjectProperties' 
+            ? (hierarchyViewModes.ObjectProperties === 'inferred' ? inferredObjectPropertyHierarchy : objectPropertyHierarchy)
+            : (hierarchyViewModes.DataProperties === 'inferred' ? inferredDataPropertyHierarchy : dataPropertyHierarchy)
+          );
+
+      const node = findNode(currentHierarchy as TreeNode[], nodeId);
       
       setExpandedNodes(prev => [...prev, nodeId]);
       
       if (node && node.hasChildren && (!node.children || node.children.length === 0)) {
         console.log(`Node ${nodeId} needs children loaded`);
-        if (entitiesTab === 'Classes' && currentHierarchyViewMode === 'inferred') {
-          await loadInferredChildren(nodeId);
-        } else {
-          await loadChildren(nodeId);
+        if (entitiesTab === 'Classes') {
+          if (currentHierarchyViewMode === 'inferred') {
+            await loadInferredChildren(nodeId);
+          } else {
+            await loadChildren(nodeId);
+          }
+        } else if (entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties') {
+          // Properties usually don't have on-demand loading in this UI yet, 
+          // but we could add it here if needed.
         }
       }
     }
-  }, [expandedNodes, classHierarchy, loadChildren, loadInferredChildren, entitiesTab, currentHierarchyViewMode]);
+  }, [expandedNodes, classHierarchy, inferredClassHierarchy, objectPropertyHierarchy, dataPropertyHierarchy, hierarchyViewModes, loadChildren, loadInferredChildren, entitiesTab, currentHierarchyViewMode]);
 
   // Expose a safe global for bundles/minified code paths that still reference toggleNode
   useEffect(() => {
@@ -4600,11 +4833,8 @@ const Dashboard = () => {
       const opList = allProps.filter((p: any) => p.type === 'ObjectProperty');
       console.log('[refreshProperties] Object properties:', opList.length);
       setObjectProperties(opList);
-       const objectRes = await apiClient.get(`/api/ontology/object-properties/${projectId}`);
-    setObjectProperties(objectRes.data || []);
-    const dataRes = await apiClient.get(`/api/ontology/data-properties/${projectId}`);
-    setDataProperties(dataRes.data || []);
-    console.log('[Dashboard] ✅ Properties refreshed');
+      
+      console.log('[Dashboard] ✅ Properties refreshed');
       // Build object property hierarchy
       const opMap = new Map<string, TreeNode>();
       opList.forEach((p: any) => {
@@ -6125,7 +6355,10 @@ const Dashboard = () => {
           (stats && ((stats.unsatisfiableClasses ?? 0) > 0 || stats.isConsistent === false)) ||
           combinedUnsat.length > 0
         );
-        const classHierarchyToRender = reasonerResults?.classHierarchyTree || reasonerResults?.classHierarchy;
+        // Use inferredClassHierarchy if available, otherwise fall back to reasoner results
+        const classHierarchyToRender = inferredClassHierarchy.length > 0 
+          ? inferredClassHierarchy 
+          : (reasonerResults?.classHierarchyTree || reasonerResults?.classHierarchy);
 
         return (
           <div className="flex flex-col h-full bg-white">
@@ -7541,16 +7774,6 @@ const Dashboard = () => {
     Reasoner: { label: "Reasoner", icon: Zap },
   };
 
-  const entitiesTabs = [
-    { id: "Classes", label: "Classes", icon: Package, count: (metadata as any)?.classCount, theme: 'bg-gradient-to-b from-[#F5F0E6] to-[#E1C688] text-black border-[#D6C9AD]' },
-    { id: "ObjectProperties", label: "Object properties", icon: Share2, count: (metadata as any)?.objectPropertyCount, theme: 'bg-gradient-to-b from-blue-300 to-blue-500 text-white border-blue-600' },
-    { id: "DataProperties", label: "Data properties", icon: Database, count: (metadata as any)?.dataPropertyCount, theme: 'bg-gradient-to-b from-green-300 to-green-500 text-white border-green-600' },
-    { id: "AnnotationProperties", label: "Annotation properties", icon: Tag, count: annotationProperties.length, theme: 'bg-gradient-to-b from-orange-300 to-orange-500 text-white border-orange-600' },
-    { id: "Datatypes", label: "Datatypes", icon: Settings, count: datatypes.length || 0, theme: 'bg-gradient-to-b from-red-300 to-red-500 text-white border-red-600' },
-    { id: "Individuals", label: "Individuals", icon: Eye, count: (metadata as any)?.individualCount, theme: 'bg-gradient-to-b from-purple-300 to-purple-500 text-white border-purple-600' },
-  ];
-  const activeTheme = entitiesTabs.find(t => t.id === entitiesTab)?.theme;
-
   // Don't show welcome screen - just render empty editor if no project loaded
   // User can click the file selector in the header to browse projects
 
@@ -8225,6 +8448,7 @@ const Dashboard = () => {
                 }}
                 viewMode={currentHierarchyViewMode}
                 onViewModeChange={setCurrentHierarchyViewMode}
+                isReasonerRunning={isReasonerRunning}
               />
 
               <section className="flex-1 overflow-hidden p-2 bg-slate-200 flex flex-col">

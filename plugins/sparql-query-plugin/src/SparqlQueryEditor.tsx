@@ -574,9 +574,9 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
 
           {/* Results Tab Content */}
           {activeTab === 'results' && (
-          <div className="flex-1 min-h-0 overflow-auto p-4">
+          <div className="flex-1 min-h-0 overflow-hidden p-4 flex flex-col">
           {/* Results Panel */}
-          <div className="theme-panel rounded-lg overflow-hidden flex flex-col h-full">
+          <div className="theme-panel rounded-lg overflow-hidden flex flex-col" style={{ height: `${resultsHeight}px`, minHeight: '200px', maxHeight: '80%' }}>
 
             {/* Results Header */}
             <div className="flex items-center justify-between p-3 border-b border-default" style={{ backgroundColor: 'var(--surface-2)' }}>
@@ -699,6 +699,15 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
                 </div>
               )}
             </div>
+          </div>
+          
+          {/* Resize Handle */}
+          <div 
+            onMouseDown={handleMouseDown}
+            className="h-2 cursor-row-resize hover:bg-purple-500/20 transition-colors flex items-center justify-center"
+            style={{ borderTop: '1px solid var(--border)' }}
+          >
+            <div className="w-12 h-1 bg-gray-400 rounded-full"></div>
           </div>
           </div>
           )}

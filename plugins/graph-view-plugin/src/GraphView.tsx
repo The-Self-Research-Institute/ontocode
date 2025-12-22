@@ -93,6 +93,7 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
   const [selectedNode, setSelectedNode] = useState<OntologyNode | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
+  const [isDark, setIsDark] = useState(false);
   const [settings, setSettings] = useState<GraphSettings>({
     layout: 'force',
     showLabels: true,
@@ -147,6 +148,46 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
     } catch (error) {
       console.error('Error fetching graph data:', error);
     } finally {
+
+  // Detect dark mode
+  useEffect(() => {
+    const checkDarkMode = () => {
+      setIsDark(document.documentElement.classList.contains('dark'));
+    };
+    
+    checkDarkMode();
+    const observer = new MutationObserver(checkDarkMode);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    
+    return () => observer.disconnect();
+  }, []);
+  
+  // Fetch graph data from backend
+  const fetchGraphData = useCallback(async (forceReload: boolean = false) => {
+    setLoading(true);
+    try {
+      const url = `${(window as any).API_BASE_URL}/api/ontology/${projectId}/graph${forceReload ? '?forceReload=true' : ''}`;
+      console.log(`[GraphView] Fetching graph from: ${url} (forceReload=${forceReload})`);
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setNodes(data.nodes || []);
+        setEdges(data.edges || []);
+        console.log(`[GraphView] Loaded ${data.nodes?.length || 0} nodes and ${data.edges?.length || 0} edges`);
+      } else {
+        console.error('Failed to fetch graph data');
+      }
+    } catch (error) {
+      console.error('Error fetching graph data:', error);
+    } finally {
       setLoading(false);
     }
   }, [projectId]);
@@ -172,13 +213,27 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
       .map(node => ({
         id: node.id,
         label: settings.showLabels ? node.label : '',
-        color: node.color || (typeColors.hasOwnProperty(node.type) ? typeColors[node.type as keyof typeof typeColors] : '#cccccc'),
+        color: {
+          background: node.color || (typeColors.hasOwnProperty(node.type) ? typeColors[node.type as keyof typeof typeColors] : '#cccccc'),
+          border: isDark ? '#64748b' : '#94a3b8',
+          highlight: {
+            background: node.color || (typeColors.hasOwnProperty(node.type) ? typeColors[node.type as keyof typeof typeColors] : '#cccccc'),
+            border: isDark ? '#94a3b8' : '#64748b'
+          },
+          hover: {
+            background: node.color || (typeColors.hasOwnProperty(node.type) ? typeColors[node.type as keyof typeof typeColors] : '#cccccc'),
+            border: isDark ? '#cbd5e1' : '#475569'
+          }
+        },
         shape: node.type === 'class' ? 'box' : node.type === 'individual' ? 'ellipse' : 'diamond',
         size: settings.nodeSize,
         font: {
           size: 14,
-          color: '#333'
-        }
+          color: isDark ? '#f1f5f9' : '#1e293b',
+          background: isDark ? 'rgba(15, 23, 42, 0.8)' : 'rgba(255, 255, 255, 0.8)'
+        },
+        borderWidth: isDark ? 2 : 2,
+        borderWidthSelected: 3
       }));
 
     const visEdges: Edge[] = edges
@@ -201,16 +256,28 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
         from: edge.from,
         to: edge.to,
         label: edge.label,
-        arrows: settings.showArrows ? { to: { enabled: true } } : undefined,
+        arrows: settings.showArrows ? { 
+          to: { 
+            enabled: true,
+            scaleFactor: 0.8,
+            type: 'arrow'
+          } 
+        } : undefined,
         font: {
           size: 12,
-          color: '#666',
+          color: isDark ? '#94a3b8' : '#64748b',
+          background: isDark ? 'rgba(15, 23, 42, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+          strokeWidth: 0,
           align: 'middle'
         },
         color: {
-          color: '#999',
-          hover: '#333'
-        }
+          color: isDark ? '#64748b' : '#94a3b8',
+          highlight: isDark ? '#94a3b8' : '#64748b',
+          hover: isDark ? '#cbd5e1' : '#475569',
+          inherit: false
+        },
+        width: isDark ? 2 : 1.5,
+        selectionWidth: 3
       }));
 
     const data: Data = {
@@ -244,17 +311,39 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
         hover: true,
         zoomView: true,
         dragView: true,
-        navigationButtons: false
+        navigationButtons: false,
+        tooltipDelay: 200
       },
       nodes: {
         borderWidth: 2,
-        borderWidthSelected: 4
+        borderWidthSelected: 3,
+        shadow: isDark ? {
+          enabled: true,
+          color: 'rgba(0,0,0,0.5)',
+          size: 10,
+          x: 2,
+          y: 2
+        } : {
+          enabled: true,
+          color: 'rgba(0,0,0,0.2)',
+          size: 8,
+          x: 2,
+          y: 2
+        }
       },
       edges: {
-        width: 2,
+        width: isDark ? 2 : 1.5,
         smooth: {
-          type: 'continuous'
-        }
+          type: 'continuous',
+          roundness: 0.5
+        },
+        shadow: isDark ? {
+          enabled: true,
+          color: 'rgba(0,0,0,0.3)',
+          size: 5,
+          x: 1,
+          y: 1
+        } : false
       }
     };
 
@@ -340,13 +429,13 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
       display: 'flex', 
       flexDirection: 'column',
       position: 'relative',
-      backgroundColor: '#f5f5f5'
+      backgroundColor: isDark ? '#1e293b' : '#f5f5f5'
     }}>
       {/* Toolbar */}
       <div style={{
         padding: '10px',
-        backgroundColor: '#fff',
-        borderBottom: '1px solid #ddd',
+        backgroundColor: isDark ? '#0f172a' : '#fff',
+        borderBottom: `1px solid ${isDark ? '#334155' : '#ddd'}`,
         display: 'flex',
         gap: '10px',
         alignItems: 'center'
@@ -375,9 +464,10 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
         <button onClick={handleZoomIn} title="Zoom In" style={{
           padding: '6px',
           backgroundColor: 'transparent',
-          border: '1px solid #ddd',
+          border: `1px solid ${isDark ? '#475569' : '#ddd'}`,
           borderRadius: '4px',
-          cursor: 'pointer'
+          cursor: 'pointer',
+          color: isDark ? '#e2e8f0' : 'inherit'
         }}>
           <ZoomIn size={18} />
         </button>
@@ -385,9 +475,10 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
         <button onClick={handleZoomOut} title="Zoom Out" style={{
           padding: '6px',
           backgroundColor: 'transparent',
-          border: '1px solid #ddd',
+          border: `1px solid ${isDark ? '#475569' : '#ddd'}`,
           borderRadius: '4px',
-          cursor: 'pointer'
+          cursor: 'pointer',
+          color: isDark ? '#e2e8f0' : 'inherit'
         }}>
           <ZoomOut size={18} />
         </button>
@@ -395,9 +486,10 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
         <button onClick={handleFit} title="Fit to Screen" style={{
           padding: '6px',
           backgroundColor: 'transparent',
-          border: '1px solid #ddd',
+          border: `1px solid ${isDark ? '#475569' : '#ddd'}`,
           borderRadius: '4px',
-          cursor: 'pointer'
+          cursor: 'pointer',
+          color: isDark ? '#e2e8f0' : 'inherit'
         }}>
           <Maximize2 size={18} />
         </button>
@@ -405,8 +497,8 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
         <button onClick={() => setShowFilters(!showFilters)} title="Filters" style={{
           padding: '6px',
           backgroundColor: showFilters ? '#4A90E2' : 'transparent',
-          color: showFilters ? 'white' : 'inherit',
-          border: '1px solid #ddd',
+          color: showFilters ? 'white' : (isDark ? '#e2e8f0' : 'inherit'),
+          border: `1px solid ${isDark ? '#475569' : '#ddd'}`,
           borderRadius: '4px',
           cursor: 'pointer'
         }}>
@@ -416,8 +508,8 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
         <button onClick={() => setShowSettings(!showSettings)} title="Settings" style={{
           padding: '6px',
           backgroundColor: showSettings ? '#4A90E2' : 'transparent',
-          color: showSettings ? 'white' : 'inherit',
-          border: '1px solid #ddd',
+          color: showSettings ? 'white' : (isDark ? '#e2e8f0' : 'inherit'),
+          border: `1px solid ${isDark ? '#475569' : '#ddd'}`,
           borderRadius: '4px',
           cursor: 'pointer'
         }}>
@@ -427,9 +519,10 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
         <button onClick={handleExport} title="Export as PNG" style={{
           padding: '6px',
           backgroundColor: 'transparent',
-          border: '1px solid #ddd',
+          border: `1px solid ${isDark ? '#475569' : '#ddd'}`,
           borderRadius: '4px',
-          cursor: 'pointer'
+          cursor: 'pointer',
+          color: isDark ? '#e2e8f0' : 'inherit'
         }}>
           <Download size={18} />
         </button>
@@ -447,7 +540,7 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
           ref={containerRef} 
           style={{ 
             flex: 1,
-            backgroundColor: '#fff',
+            backgroundColor: isDark ? '#0f172a' : '#fff',
             position: 'relative'
           }}
         />
@@ -458,11 +551,12 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
             position: 'absolute',
             top: '10px',
             left: '10px',
-            backgroundColor: 'white',
-            border: '1px solid #ddd',
+            backgroundColor: isDark ? '#1e293b' : 'white',
+            color: isDark ? '#e2e8f0' : 'inherit',
+            border: `1px solid ${isDark ? '#475569' : '#ddd'}`,
             borderRadius: '6px',
             padding: '15px',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+            boxShadow: isDark ? '0 2px 8px rgba(0,0,0,0.5)' : '0 2px 8px rgba(0,0,0,0.1)',
             minWidth: '200px',
             zIndex: 10
           }}>
@@ -499,11 +593,12 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
             position: 'absolute',
             top: '10px',
             right: '10px',
-            backgroundColor: 'white',
-            border: '1px solid #ddd',
+            backgroundColor: isDark ? '#1e293b' : 'white',
+            color: isDark ? '#e2e8f0' : 'inherit',
+            border: `1px solid ${isDark ? '#475569' : '#ddd'}`,
             borderRadius: '6px',
             padding: '15px',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+            boxShadow: isDark ? '0 2px 8px rgba(0,0,0,0.5)' : '0 2px 8px rgba(0,0,0,0.1)',
             minWidth: '250px',
             zIndex: 10
           }}>
@@ -511,6 +606,22 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
               <Settings size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
               Graph Settings
             </h3>
+
+            {/* Theme Indicator */}
+            <div style={{ 
+              marginBottom: '12px', 
+              padding: '8px', 
+              backgroundColor: isDark ? '#0f172a' : '#f8fafc',
+              borderRadius: '4px',
+              border: `1px solid ${isDark ? '#475569' : '#e2e8f0'}`
+            }}>
+              <div style={{ fontSize: '11px', fontWeight: 500, color: isDark ? '#94a3b8' : '#64748b', marginBottom: '4px' }}>
+                Current Theme
+              </div>
+              <div style={{ fontSize: '13px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                {isDark ? '🌙 Dark Mode' : '☀️ Light Mode'}
+              </div>
+            </div>
 
             <div style={{ marginBottom: '12px' }}>
               <label style={{ fontSize: '13px', fontWeight: 500, display: 'block', marginBottom: '6px' }}>
@@ -522,9 +633,11 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
                 style={{
                   width: '100%',
                   padding: '6px',
+                  border: `1px solid ${isDark ? '#475569' : '#ddd'}`,
                   borderRadius: '4px',
-                  border: '1px solid #ddd',
-                  fontSize: '13px'
+                  fontSize: '13px',
+                  backgroundColor: isDark ? '#0f172a' : 'white',
+                  color: isDark ? '#e2e8f0' : 'inherit'
                 }}
               >
                 <option value="force">Force-Directed</option>
@@ -588,11 +701,12 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
             position: 'absolute',
             bottom: '10px',
             left: '10px',
-            backgroundColor: 'white',
-            border: '1px solid #ddd',
+            backgroundColor: isDark ? '#1e293b' : 'white',
+            color: isDark ? '#e2e8f0' : 'inherit',
+            border: `1px solid ${isDark ? '#475569' : '#ddd'}`,
             borderRadius: '6px',
             padding: '12px',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+            boxShadow: isDark ? '0 2px 8px rgba(0,0,0,0.5)' : '0 2px 8px rgba(0,0,0,0.1)',
             maxWidth: '300px',
             zIndex: 10
           }}>
