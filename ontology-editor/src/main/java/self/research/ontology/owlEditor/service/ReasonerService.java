@@ -4,6 +4,9 @@ import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.reasoner.*;
 import org.semanticweb.owlapi.reasoner.structural.StructuralReasonerFactory;
 import openllet.owlapi.OpenlletReasonerFactory;
+import org.semanticweb.HermiT.ReasonerFactory;
+import org.semanticweb.elk.owlapi.ElkReasonerFactory;
+import uk.ac.manchester.cs.jfact.JFactFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -12,7 +15,7 @@ import java.util.*;
 
 /**
  * Service for ontology reasoning operations.
- * Supports multiple reasoners: Openllet, Structural.
+ * Supports multiple reasoners: HermiT, Pellet (Openllet), FaCT++, ELK, and Structural.
  */
 @Service
 public class ReasonerService {
@@ -22,9 +25,12 @@ public class ReasonerService {
     private final Map<String, OWLReasoner> reasonerCache = new HashMap<>();
     
     public enum ReasonerType {
+        HERMIT("HermiT"),
+        PELLET("Pellet"),
         OPENLLET("Openllet"),
-        STRUCTURAL("Structural"),
-        PELLET("Pellet");  // Alias for Openllet
+        FACTPLUSPLUS("FaCT++"),
+        ELK("ELK"),
+        STRUCTURAL("Structural");
 
         private final String displayName;
 
@@ -67,13 +73,30 @@ public class ReasonerService {
         
         try {
             switch (type) {
-                case OPENLLET:
+                case HERMIT:
+                    // HermiT - Hypertableau-based reasoner, best for complex ontologies
+                    log.info("Using HermiT (Hypertableau) reasoner");
+                    return new ReasonerFactory().createReasoner(ontology, config);
+                    
                 case PELLET:
+                case OPENLLET:
                     // Use Openllet (OWLAPI 5.x compatible reasoner)
+                    log.info("Using Pellet/Openllet reasoner");
                     return OpenlletReasonerFactory.getInstance().createReasoner(ontology, config);
+                    
+                case FACTPLUSPLUS:
+                    // FaCT++ (via JFact - Java port)
+                    log.info("Using FaCT++ (JFact) reasoner");
+                    return new JFactFactory().createReasoner(ontology, config);
+                    
+                case ELK:
+                    // ELK - Fast for EL++ profile ontologies
+                    log.info("Using ELK reasoner (optimized for EL++)");
+                    return new ElkReasonerFactory().createReasoner(ontology, config);
                     
                 case STRUCTURAL:
                 default:
+                    log.info("Using Structural reasoner (basic)");
                     return new StructuralReasonerFactory().createReasoner(ontology, config);
             }
         } catch (Exception e) {
@@ -178,16 +201,20 @@ public class ReasonerService {
     /**
      * Get inferred subclasses for a class
      */
-    public Set<OWLClass> getInferredSubClasses(OWLOntology ontology, OWLClass owlClass, ReasonerType type) {
+    public Set<OWLClass> getInferredSubClasses(OWLOntology ontology, OWLClass owlClass, ReasonerType type, boolean direct) {
         OWLReasoner reasoner = getReasoner(ontology, type);
         
         try {
-            NodeSet<OWLClass> subClasses = reasoner.getSubClasses(owlClass, false);
+            NodeSet<OWLClass> subClasses = reasoner.getSubClasses(owlClass, direct);
             return subClasses.getFlattened();
         } catch (Exception e) {
             log.error("Error getting inferred subclasses", e);
             return Collections.emptySet();
         }
+    }
+
+    public Set<OWLClass> getInferredSubClasses(OWLOntology ontology, OWLClass owlClass, ReasonerType type) {
+        return getInferredSubClasses(ontology, owlClass, type, false);
     }
 
     /**
@@ -218,6 +245,42 @@ public class ReasonerService {
             log.error("Error getting inferred types", e);
             return Collections.emptySet();
         }
+    }
+
+    /**
+     * Get inferred sub object properties for a property
+     */
+    public Set<OWLObjectPropertyExpression> getInferredSubObjectProperties(OWLOntology ontology, OWLObjectProperty property, ReasonerType type, boolean direct) {
+        OWLReasoner reasoner = getReasoner(ontology, type);
+        try {
+            NodeSet<OWLObjectPropertyExpression> subProps = reasoner.getSubObjectProperties(property, direct);
+            return subProps.getFlattened();
+        } catch (Exception e) {
+            log.error("Error getting inferred sub object properties", e);
+            return Collections.emptySet();
+        }
+    }
+
+    public Set<OWLObjectPropertyExpression> getInferredSubObjectProperties(OWLOntology ontology, OWLObjectProperty property, ReasonerType type) {
+        return getInferredSubObjectProperties(ontology, property, type, false);
+    }
+
+    /**
+     * Get inferred sub data properties for a property
+     */
+    public Set<OWLDataPropertyExpression> getInferredSubDataProperties(OWLOntology ontology, OWLDataProperty property, ReasonerType type, boolean direct) {
+        OWLReasoner reasoner = getReasoner(ontology, type);
+        try {
+            NodeSet<OWLDataProperty> subProps = reasoner.getSubDataProperties(property, direct);
+            return new HashSet<>(subProps.getFlattened());
+        } catch (Exception e) {
+            log.error("Error getting inferred sub data properties", e);
+            return Collections.emptySet();
+        }
+    }
+
+    public Set<OWLDataPropertyExpression> getInferredSubDataProperties(OWLOntology ontology, OWLDataProperty property, ReasonerType type) {
+        return getInferredSubDataProperties(ontology, property, type, false);
     }
 
     /**
@@ -327,15 +390,51 @@ public class ReasonerService {
             stats.put("reasonerType", type.getDisplayName());
             stats.put("reasonerName", reasoner.getReasonerName());
             stats.put("reasonerVersion", reasoner.getReasonerVersion().toString());
-            stats.put("isConsistent", reasoner.isConsistent());
-            stats.put("classCount", ontology.getClassesInSignature().size());
-            stats.put("objectPropertyCount", ontology.getObjectPropertiesInSignature().size());
-            stats.put("individualCount", ontology.getIndividualsInSignature().size());
             
-            // Get unsatisfiable classes count
-            Node<OWLClass> bottomNode = reasoner.getUnsatisfiableClasses();
-            int unsatisfiableCount = bottomNode.getSize() - 1; // Exclude owl:Nothing
-            stats.put("unsatisfiableClassCount", Math.max(0, unsatisfiableCount));
+            // Consistency check
+            boolean isConsistent = reasoner.isConsistent();
+            stats.put("isConsistent", isConsistent);
+            
+            // Entity counts
+            int classCount = ontology.getClassesInSignature().size();
+            int objectPropertyCount = ontology.getObjectPropertiesInSignature().size();
+            int dataPropertyCount = ontology.getDataPropertiesInSignature().size();
+            int individualCount = ontology.getIndividualsInSignature().size();
+            
+            stats.put("classCount", classCount);
+            stats.put("objectPropertyCount", objectPropertyCount);
+            stats.put("dataPropertyCount", dataPropertyCount);
+            stats.put("propertyCount", objectPropertyCount + dataPropertyCount);
+            stats.put("individualCount", individualCount);
+            
+            // Unsatisfiable classes
+            if (isConsistent) {
+                Node<OWLClass> bottomNode = reasoner.getUnsatisfiableClasses();
+                int unsatisfiableCount = bottomNode.getSize() - 1; // Exclude owl:Nothing
+                stats.put("unsatisfiableClasses", Math.max(0, unsatisfiableCount));
+                stats.put("satisfiableClasses", classCount - Math.max(0, unsatisfiableCount));
+            } else {
+                stats.put("unsatisfiableClasses", -1);
+                stats.put("satisfiableClasses", 0);
+            }
+            
+            // Axiom counts
+            stats.put("logicalAxiomCount", ontology.getLogicalAxiomCount());
+            stats.put("totalAxiomCount", ontology.getAxiomCount());
+            
+            // Reasoner capabilities
+            // Incremental reasoning support is not directly available via OWLReasoner API
+            stats.put("supportsIncrementalReasoning", false);
+            stats.put("supportsDatatypeReasoning", type != ReasonerType.STRUCTURAL);
+            stats.put("supportsOWL2DL", type == ReasonerType.HERMIT || type == ReasonerType.PELLET);
+            
+            // Inferred axioms estimate
+            try {
+                Set<OWLAxiom> inferredAxioms = getInferredAxioms(ontology, type);
+                stats.put("inferredAxioms", inferredAxioms.size());
+            } catch (Exception e) {
+                stats.put("inferredAxioms", 0);
+            }
             
         } catch (Exception e) {
             log.error("Error getting reasoner stats", e);

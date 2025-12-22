@@ -76,6 +76,18 @@
             <artifactId>owlapi-distribution</artifactId>
         </dependency>
         
+        <dependency>
+            <groupId>net.sourceforge.owlapi</groupId>
+            <artifactId>org.semanticweb.hermit</artifactId>
+            <version>1.4.3.456</version>
+        </dependency>
+
+        <dependency>
+            <groupId>net.sourceforge.owlapi</groupId>
+            <artifactId>jfact</artifactId>
+            <version>5.0.3</version>
+        </dependency>
+
         <!-- Openllet Reasoner (OWLAPI 5.x compatible replacement for HermiT) -->
         <dependency>
             <groupId>com.github.galigator.openllet</groupId>
@@ -243,6 +255,13 @@
                     <source>${java.version}</source>
                     <target>${java.version}</target>
                     <parameters>true</parameters>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>${lombok.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
                 </configuration>
             </plugin>
         </plugins>

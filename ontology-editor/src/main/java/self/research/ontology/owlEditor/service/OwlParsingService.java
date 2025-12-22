@@ -3,6 +3,7 @@ package self.research.ontology.owlEditor.service;
 import com.mongodb.client.gridfs.model.GridFSFile;
 import org.bson.types.ObjectId;
 import org.semanticweb.owlapi.apibinding.OWLManager;
+import org.semanticweb.owlapi.formats.PrefixDocumentFormat;
 import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
 import org.semanticweb.owlapi.model.*;
 import org.slf4j.Logger;
@@ -43,6 +44,9 @@ public class OwlParsingService {
     
     @Autowired
     private SparqlProperties props;
+    
+    @Autowired
+    private GraphDBDatasetService datasetService;
     
     private final WebClient updateClient;
 
@@ -85,11 +89,19 @@ public class OwlParsingService {
                 log.info("Axiom count: {}", ontology.getAxiomCount());
                 
                 // Extract metadata for MongoDB
-                Map<String, Object> metadata = extractMetadata(ontology); //
+                Map<String, Object> metadata = extractMetadata(projectId, ontology); //
                 saveMetadataToMongo(projectId, metadata); //
                 
-                // Write to triple store
-                writeToTripleStore(projectId, ontology); //
+                // Register prefixes in GraphDB as well
+                if (metadata.containsKey("prefixes")) {
+                    Map<String, String> prefixes = (Map<String, String>) metadata.get("prefixes");
+                    log.info("Registering {} prefixes in GraphDB for project: {}", prefixes.size(), projectId);
+                    try {
+                        datasetService.setPrefixes(projectId, prefixes);
+                    } catch (Exception e) {
+                        log.warn("Failed to register prefixes in GraphDB: {}", e.getMessage());
+                    }
+                }
                 
                 // Sync to Neo4j - TODO: Implement Neo4j sync service
                 // neo4jSyncService.syncOntologyToNeo4j(projectId, ontology);
@@ -106,7 +118,7 @@ public class OwlParsingService {
         return CompletableFuture.completedFuture(null);
     }
     
-    private Map<String, Object> extractMetadata(OWLOntology ontology) {
+    private Map<String, Object> extractMetadata(String projectId, OWLOntology ontology) {
         Map<String, Object> metadata = new HashMap<>();
         
         // Basic counts
@@ -141,6 +153,55 @@ public class OwlParsingService {
                 .filter(ap -> !ap.isBuiltIn())
                 .count(); //
         metadata.put("annotationPropertyCount", (int) annPropCount);
+
+        // Extract prefixes
+        Map<String, String> prefixes = new HashMap<>();
+        OWLOntologyManager manager = ontology.getOWLOntologyManager();
+        OWLDocumentFormat format = manager.getOntologyFormat(ontology);
+        
+        if (format instanceof PrefixDocumentFormat) {
+            PrefixDocumentFormat prefixFormat = (PrefixDocumentFormat) format;
+            Map<String, String> map = prefixFormat.getPrefixName2PrefixMap();
+            log.info("Found {} prefixes in ontology format", map.size());
+            prefixes.putAll(map);
+        } else {
+            log.warn("Ontology format is not a PrefixDocumentFormat: {}", format != null ? format.getClass().getName() : "null");
+            // Try to get from the manager's default prefix mapper if available
+            // (Though usually it's in the format)
+        }
+        
+        // Normalize prefixes: ensure they end with colon
+        Map<String, String> normalizedPrefixes = new HashMap<>();
+        prefixes.forEach((k, v) -> {
+            String key = k;
+            if (!key.endsWith(":") && !key.isEmpty()) {
+                key += ":";
+            } else if (key.isEmpty()) {
+                key = ":";
+            }
+            normalizedPrefixes.put(key, v);
+        });
+        
+        // Ensure common prefixes are present if not found
+        if (!normalizedPrefixes.containsKey("rdf:")) normalizedPrefixes.put("rdf:", "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
+        if (!normalizedPrefixes.containsKey("rdfs:")) normalizedPrefixes.put("rdfs:", "http://www.w3.org/2000/01/rdf-schema#");
+        if (!normalizedPrefixes.containsKey("owl:")) normalizedPrefixes.put("owl:", "http://www.w3.org/2002/07/owl#");
+        if (!normalizedPrefixes.containsKey("xsd:")) normalizedPrefixes.put("xsd:", "http://www.w3.org/2001/XMLSchema#");
+        
+        // Add ontology IRI as default prefix if not present
+        ontology.getOntologyID().getOntologyIRI().ifPresent(iri -> {
+            String iriStr = iri.toString();
+            if (!iriStr.endsWith("/") && !iriStr.endsWith("#")) {
+                iriStr += "#";
+            }
+            if (!normalizedPrefixes.containsKey(":")) {
+                normalizedPrefixes.put(":", iriStr);
+            }
+        });
+        
+        metadata.put("prefixes", normalizedPrefixes);
+        log.info("Extracted {} prefixes for project: {}", normalizedPrefixes.size(), projectId);
+        normalizedPrefixes.forEach((k, v) -> log.debug("Prefix: {} -> {}", k, v));
         
         return metadata;
     }

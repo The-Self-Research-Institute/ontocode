@@ -13,13 +13,14 @@ import { RemoteEditApplier } from './collaboration/RemoteEditApplier';
 const TOKEN_KEY = 'ontocode.authToken';
 const GATEWAY_URL = 'http://localhost:8082'; // Gateway port
 const OWL_EDITOR_URL = 'http://localhost:8083'; // OWL Editor service (WebSocket endpoint)
+const PLUGIN_SERVICE_URL = 'http://localhost:8087'; // Plugin service port
 
 /**
  * Parse JWT token to extract user information
  * @param token JWT token string
  * @returns Decoded token payload or null if invalid
  */
-function parseJwtToken(token: string): { userId?: string; username?: string; sub?: string } | null {
+function parseJwtToken(token: string): { userId?: string; username?: string; sub?: string; email?: string } | null {
     try {
         console.log('[OntoCode] 🔍 Parsing JWT token...');
         console.log('[OntoCode] Token length:', token?.length || 0);
@@ -75,7 +76,8 @@ type WebviewMessage =
   | { type: 'presenceUpdate'; presence: any }
   | { type: 'lockUpdate'; lock: any }
   | { type: 'collaborationStatus'; connected: boolean }
-  | { type: 'importStatusUpdate'; status: any };
+  | { type: 'importStatusUpdate'; status: any }
+  | { type: 'shareNotification'; notification: any };
 
 type ExtensionMessage =
   | { type: 'error'; value: string }
@@ -85,6 +87,8 @@ type ExtensionMessage =
   // Fix: Added message types for API requests to the proxy
   | { type: 'apiGet'; requestId: string; url: string; params?: Record<string, unknown> }
   | { type: 'apiPost'; requestId: string; url: string; body?: unknown }
+  | { type: 'apiPut'; requestId: string; url: string; body?: unknown }
+  | { type: 'apiPatch'; requestId: string; url: string; body?: unknown }
   | { type: 'apiDelete'; requestId: string; url: string; params?: Record<string, unknown> }
   | { type: 'proxyRequest'; reqId: string; config: any }
   | { type: 'webviewReady' }
@@ -297,6 +301,8 @@ class OntoCodePanel {
                     // Fix: Added cases to handle API proxy requests from the webview
                     case 'apiGet':
                     case 'apiPost':
+                    case 'apiPut':
+                    case 'apiPatch':
                     case 'apiDelete':
                         this.handleApiRequest(message);
                         break;
@@ -390,7 +396,7 @@ class OntoCodePanel {
      * Fix: New method to handle API requests from the webview, acting as a proxy.
      * This centralizes API calls, attaches auth tokens, and bypasses CORS issues.
      */
-    private async handleApiRequest(message: Extract<ExtensionMessage, { type: 'apiGet' | 'apiPost' | 'apiDelete' }>) {
+    private async handleApiRequest(message: Extract<ExtensionMessage, { type: 'apiGet' | 'apiPost' | 'apiPut' | 'apiPatch' | 'apiDelete' }>) {
         const { requestId, type, url } = message;
         
         // Check if this is a public endpoint (login/signup) that doesn't require authentication
@@ -426,13 +432,25 @@ class OntoCodePanel {
 
             switch (type) {
                 case 'apiGet':
-                    response = await axios.get(fullUrl, { ...axiosConfig, params: message.params });
+                    response = await axios.get(fullUrl, { ...axiosConfig, params: (message as any).params });
                     break;
                 case 'apiPost':
-                    response = await axios.post(fullUrl, message.body, axiosConfig);
+                    response = await axios.post(fullUrl, (message as any).body, axiosConfig);
+                    break;
+                case 'apiPut':
+                    response = await axios.put(fullUrl, (message as any).body, axiosConfig);
+                    break;
+                case 'apiPatch':
+                    response = await axios.patch(fullUrl, (message as any).body, axiosConfig);
+                    break;
+                case 'apiPut':
+                    response = await axios.put(fullUrl, message.body, axiosConfig);
+                    break;
+                case 'apiPatch':
+                    response = await axios.patch(fullUrl, message.body, axiosConfig);
                     break;
                 case 'apiDelete':
-                    response = await axios.delete(fullUrl, { ...axiosConfig, params: message.params });
+                    response = await axios.delete(fullUrl, { ...axiosConfig, params: (message as any).params });
                     break;
             }
 
@@ -461,7 +479,7 @@ class OntoCodePanel {
                     responseHeaders: axiosError.response?.headers,
                     data: axiosError.response?.data,
                     message: axiosError.message,
-                    requestBody: type === 'apiPost' ? message.body : undefined
+                    requestBody: type === 'apiPost' || type === 'apiPut' || type === 'apiPatch' ? message.body : undefined
                 };
                 console.error('[Proxy] API Request Error:', JSON.stringify(errorLogPayload, null, 2));
             } else if (e instanceof Error) {
@@ -938,10 +956,10 @@ class OntoCodePanel {
             <meta http-equiv="Content-Security-Policy" content="
                 default-src 'none'; 
                 img-src ${(webview as any).cspSource} https: data: blob:; 
-                script-src 'nonce-${nonce}' https://cdn.tailwindcss.com https://unpkg.com https://aistudiocdn.com ${GATEWAY_URL} ${(webview as any).cspSource};
+                script-src 'nonce-${nonce}' https://cdn.tailwindcss.com https://unpkg.com https://aistudiocdn.com ${GATEWAY_URL} ${PLUGIN_SERVICE_URL} ${(webview as any).cspSource};
                 style-src ${(webview as any).cspSource} 'unsafe-inline' https://unpkg.com https://cdn.tailwindcss.com;
                 font-src ${(webview as any).cspSource} https://unpkg.com data:; 
-                connect-src ${GATEWAY_URL} https://unpkg.com https://aistudiocdn.com;
+                connect-src ${GATEWAY_URL} ${PLUGIN_SERVICE_URL} https://unpkg.com https://aistudiocdn.com;
             ">
             ${vscodeApiInjectionScript}`
         );
@@ -1021,22 +1039,22 @@ class OntoCodePanel {
                 return;
             }
             
-            // Extract userId and username from token
-            // JWT tokens typically have 'sub' (subject) for userId and 'username' or 'name' field
+            // Extract userId, username, and email from token
             const userId = tokenData.userId || tokenData.sub || 'unknown';
             const username = tokenData.username || tokenData.sub || 'User';
+            const userEmail = tokenData.email || '';
             
-            console.log(`[OntoCode] Extracted user info - userId: ${userId}, username: ${username}`);
+            console.log(`[OntoCode] Extracted user info - userId: ${userId}, username: ${username}, email: ${userEmail}`);
             
             // Call the main initialization method
-            await this.initializeCollaboration(projectId, userId, username);
+            await this.initializeCollaboration(projectId, userId, username, userEmail);
         } catch (error) {
             console.error('[OntoCode] Error initializing collaboration for project:', error);
             // Don't throw - collaboration is optional, file upload should still work
         }
     }
 
-    private async initializeCollaboration(projectId: string, userId: string, username: string): Promise<void> {
+    private async initializeCollaboration(projectId: string, userId: string, username: string, userEmail?: string): Promise<void> {
         try {
             console.log('[OntoCode] ========================================');
             console.log('[OntoCode] Initializing Collaboration');
@@ -1115,6 +1133,21 @@ class OntoCodePanel {
                 onError: (error) => {
                     console.error('[OntoCode] Collaboration error:', error);
                     vscode.window.showErrorMessage(`Collaboration error: ${error}`);
+                },
+
+                onShareNotification: (notification) => {
+                    console.log('[OntoCode] 📨 Share notification received:', notification);
+                    
+                    // Show a notification to the user
+                    vscode.window.showInformationMessage(
+                        `${notification.sharedByUsername} shared "${notification.fileName}" with you (${notification.permission} access)`
+                    );
+                    
+                    // Forward to webview so it can refresh the file list
+                    this.postMessage({
+                        type: 'shareNotification',
+                        notification
+                    });
                 }
             });
 
@@ -1135,6 +1168,14 @@ class OntoCodePanel {
             
             // Join the project
             await this.collaborationManager.joinProject(projectId);
+            
+            // Subscribe to share notifications if user email is available
+            if (userEmail) {
+                console.log(`[OntoCode] Subscribing to share notifications for: ${userEmail}`);
+                this.collaborationManager.subscribeToShareNotifications(userEmail);
+            } else {
+                console.warn('[OntoCode] No user email available, share notifications will not work');
+            }
             
             this.currentProjectId = projectId;
             

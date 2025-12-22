@@ -1,10 +1,11 @@
 package self.research.ontology.plugins.storage;
 
 import com.mongodb.client.gridfs.model.GridFSFile;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.slf4j.Slf4j; // Removed RequiredArgsConstructor
 import org.bson.Document;
 import org.bson.types.ObjectId;
+import org.springframework.beans.factory.annotation.Autowired; // Added Autowired
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.gridfs.GridFsResource;
@@ -21,10 +22,15 @@ import java.time.ZoneId;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class GridFSStorageService implements PluginStorageService {
 
     private final GridFsTemplate gridFsTemplate;
+
+    // MANUAL CONSTRUCTOR FIX
+    @Autowired
+    public GridFSStorageService(@Qualifier("pluginGridFsTemplate") GridFsTemplate gridFsTemplate) {
+        this.gridFsTemplate = gridFsTemplate;
+    }
 
     @Override
     public String uploadPlugin(InputStream fileStream, String fileName, String contentType, PluginMetadata metadata) {

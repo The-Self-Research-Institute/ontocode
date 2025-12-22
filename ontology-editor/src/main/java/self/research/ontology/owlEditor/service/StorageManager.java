@@ -1,13 +1,27 @@
 package self.research.ontology.owlEditor.service;
 
 import org.eclipse.rdf4j.rio.RDFFormat;
+import org.semanticweb.owlapi.apibinding.OWLManager;
+import org.semanticweb.owlapi.formats.FunctionalSyntaxDocumentFormat;
+import org.semanticweb.owlapi.formats.ManchesterSyntaxDocumentFormat;
+import org.semanticweb.owlapi.formats.OWLXMLDocumentFormat;
+import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
+import org.semanticweb.owlapi.formats.TurtleDocumentFormat;
+import org.semanticweb.owlapi.model.OWLDocumentFormat;
+import org.semanticweb.owlapi.model.OWLOntology;
+import org.semanticweb.owlapi.model.OWLOntologyCreationException;
+import org.semanticweb.owlapi.model.OWLOntologyManager;
+import org.semanticweb.owlapi.model.OWLOntologyStorageException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -46,6 +60,10 @@ public class StorageManager {
     public Path exportOntology(String projectId, String format) throws IOException {
         // Always export fresh from GraphDB to get latest changes
         log.info("Exporting ontology from GraphDB for project: {}", projectId);
+        if (requiresOwlApiFormat(format)) {
+            return exportOntologyWithOwlApi(projectId, format);
+        }
+
         RDFFormat rdfFormat = resolveLang(format);
         String extension = extensionFor(format);
         Path exportPath = projectDir(projectId).resolve("ontology.original." + extension);
@@ -78,7 +96,61 @@ public class StorageManager {
             case "nt", "ntriples" -> "nt";
             case "jsonld" -> "jsonld";
             case "rdfxml", "xml" -> "owl";
+            case "owlxml" -> "owlxml";
+            case "manchester", "manchestersyntax" -> "omn";
+            case "functional", "functionalsyntax" -> "ofn";
             default -> format.toLowerCase();
+        };
+    }
+
+    private boolean requiresOwlApiFormat(String format) {
+        if (format == null) {
+            return false;
+        }
+        String normalized = format.toLowerCase();
+        return normalized.equals("owlxml")
+                || normalized.equals("manchester")
+                || normalized.equals("manchestersyntax")
+                || normalized.equals("functional")
+                || normalized.equals("functionalsyntax");
+    }
+
+    private Path exportOntologyWithOwlApi(String projectId, String format) throws IOException {
+        String extension = extensionFor(format);
+        Path exportPath = projectDir(projectId).resolve("ontology.original." + extension);
+        Files.createDirectories(exportPath.getParent());
+
+        String rdfXmlContent = datasetService.exportDataset(projectId, RDFFormat.RDFXML);
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntology ontology;
+        try (ByteArrayInputStream input = new ByteArrayInputStream(rdfXmlContent.getBytes(StandardCharsets.UTF_8))) {
+            ontology = manager.loadOntologyFromOntologyDocument(input);
+        } catch (OWLOntologyCreationException e) {
+            throw new IOException("Failed to parse ontology for export: " + projectId, e);
+        }
+
+        OWLDocumentFormat documentFormat = resolveOwlApiFormat(format);
+        try (OutputStream outputStream = Files.newOutputStream(exportPath)) {
+            manager.saveOntology(ontology, documentFormat, outputStream);
+        } catch (OWLOntologyStorageException e) {
+            throw new IOException("Failed to export ontology in format: " + format, e);
+        }
+
+        log.info("Exported ontology to: {}", exportPath);
+        return exportPath;
+    }
+
+    private OWLDocumentFormat resolveOwlApiFormat(String format) {
+        if (format == null) {
+            return new RDFXMLDocumentFormat();
+        }
+        return switch (format.toLowerCase()) {
+            case "turtle", "ttl" -> new TurtleDocumentFormat();
+            case "owlxml" -> new OWLXMLDocumentFormat();
+            case "manchester", "manchestersyntax" -> new ManchesterSyntaxDocumentFormat();
+            case "functional", "functionalsyntax" -> new FunctionalSyntaxDocumentFormat();
+            case "rdfxml", "rdf", "xml" -> new RDFXMLDocumentFormat();
+            default -> new RDFXMLDocumentFormat();
         };
     }
 

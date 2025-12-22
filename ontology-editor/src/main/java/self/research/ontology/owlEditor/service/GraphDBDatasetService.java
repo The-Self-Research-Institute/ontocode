@@ -204,8 +204,7 @@ public class GraphDBDatasetService {
         Repository repo = getRepository();
         String graphUri = getGraphUri(projectId);
         
-        try {
-            RepositoryConnection conn = repo.getConnection();
+        try (RepositoryConnection conn = repo.getConnection()) {
             
             // Inject FROM clause if not present
             if (!sparqlQuery.toUpperCase().contains("FROM")) {
@@ -488,6 +487,15 @@ public class GraphDBDatasetService {
                     
                     parser.setRDFHandler(new AbstractRDFHandler() {
                         @Override
+                        public void handleNamespace(String prefix, String uri) {
+                            try {
+                                conn.setNamespace(prefix, uri);
+                            } catch (Exception e) {
+                                log.warn("Failed to set namespace {} -> {} in GraphDB", prefix, uri);
+                            }
+                        }
+
+                        @Override
                         public void handleStatement(Statement st) {
                             batch.add(st);
                             
@@ -621,7 +629,20 @@ public class GraphDBDatasetService {
                     // Now load from file (repeatable if connection drops)
                     long addStart = System.nanoTime();
                     try (java.io.FileInputStream fis = new java.io.FileInputStream(tempFile)) {
-                        conn.add(fis, graphUri, rdfFormat, graphIri);
+                        // Use a parser to capture namespaces while loading
+                        org.eclipse.rdf4j.rio.RDFParser parser = org.eclipse.rdf4j.rio.Rio.createParser(rdfFormat);
+                        parser.setRDFHandler(new org.eclipse.rdf4j.rio.helpers.AbstractRDFHandler() {
+                            @Override
+                            public void handleNamespace(String prefix, String uri) {
+                                conn.setNamespace(prefix, uri);
+                            }
+
+                            @Override
+                            public void handleStatement(org.eclipse.rdf4j.model.Statement st) {
+                                conn.add(st, graphIri);
+                            }
+                        });
+                        parser.parse(fis, graphUri);
                     }
                     log.info("GraphDB add() finished in {} ms", elapsedMillis(addStart));
                     
@@ -774,7 +795,14 @@ public class GraphDBDatasetService {
             
             // GraphDB typically stores prefixes in the repository namespace
             for (org.eclipse.rdf4j.model.Namespace ns : conn.getNamespaces()) {
-                prefixes.put(ns.getPrefix(), ns.getName());
+                String prefix = ns.getPrefix();
+                // Normalize: ensure it ends with a colon for consistency with OWL API
+                if (!prefix.endsWith(":") && !prefix.isEmpty()) {
+                    prefix += ":";
+                } else if (prefix.isEmpty()) {
+                    prefix = ":"; // Default prefix
+                }
+                prefixes.put(prefix, ns.getName());
             }
             
         } catch (Exception e) {
@@ -792,7 +820,14 @@ public class GraphDBDatasetService {
             
             // Add prefix mappings to repository
             for (Map.Entry<String, String> entry : prefixes.entrySet()) {
-                conn.setNamespace(entry.getKey(), entry.getValue());
+                String prefix = entry.getKey();
+                // Normalize: strip trailing colon for RDF4J
+                if (prefix.endsWith(":")) {
+                    prefix = prefix.substring(0, prefix.length() - 1);
+                } else if (prefix.equals(":")) {
+                    prefix = ""; // Default prefix
+                }
+                conn.setNamespace(prefix, entry.getValue());
             }
             
             log.debug("Set {} prefixes for project: {}", prefixes.size(), projectId);
@@ -800,6 +835,44 @@ public class GraphDBDatasetService {
         } catch (Exception e) {
             log.error("Failed to set prefixes for project: {}", projectId, e);
             throw new RuntimeException("Failed to set prefixes", e);
+        }
+    }
+
+    /**
+     * Update a single prefix mapping
+     */
+    public void updatePrefix(String projectId, String prefix, String iri) {
+        try (RepositoryConnection conn = getRepository().getConnection()) {
+            String normalizedPrefix = prefix;
+            if (normalizedPrefix.endsWith(":")) {
+                normalizedPrefix = normalizedPrefix.substring(0, normalizedPrefix.length() - 1);
+            } else if (normalizedPrefix.equals(":")) {
+                normalizedPrefix = "";
+            }
+            conn.setNamespace(normalizedPrefix, iri);
+            log.debug("Updated prefix '{}' to '{}' for project: {}", prefix, iri, projectId);
+        } catch (Exception e) {
+            log.error("Failed to update prefix '{}' for project: {}", prefix, projectId, e);
+            throw new RuntimeException("Failed to update prefix", e);
+        }
+    }
+
+    /**
+     * Remove a prefix mapping from the dataset
+     */
+    public void removePrefix(String projectId, String prefix) {
+        try (RepositoryConnection conn = getRepository().getConnection()) {
+            String normalizedPrefix = prefix;
+            if (normalizedPrefix.endsWith(":")) {
+                normalizedPrefix = normalizedPrefix.substring(0, normalizedPrefix.length() - 1);
+            } else if (normalizedPrefix.equals(":")) {
+                normalizedPrefix = "";
+            }
+            conn.removeNamespace(normalizedPrefix);
+            log.debug("Removed prefix '{}' for project: {}", prefix, projectId);
+        } catch (Exception e) {
+            log.error("Failed to remove prefix '{}' for project: {}", prefix, projectId, e);
+            throw new RuntimeException("Failed to remove prefix", e);
         }
     }
     

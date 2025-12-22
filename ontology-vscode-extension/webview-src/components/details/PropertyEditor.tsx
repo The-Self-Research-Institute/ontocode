@@ -1,9 +1,134 @@
-import React, { useState } from 'react';
-import { Plus, Trash2, CheckSquare, Square, Edit3 } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Plus, Trash2, CheckSquare, Square, Edit3, Search } from 'lucide-react';
 import { Panel, AnnotationsDisplay, MultiSelectSection } from './common';
 import { ManchesterSyntaxEditor, PropertyChainDialog } from '../dialogs';
+import apiClient from '../../services/apiClient';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import type { Property } from '../../types';
+
+type PropertyUsageItem = {
+  type: string;
+  subject?: string;
+  subjectLabel?: string;
+  target?: string;
+  targetLabel?: string;
+  value?: string;
+};
+
+const PropertyUsageTab: React.FC<{ projectId: string; propertyIri: string; label: string }> = ({
+  projectId,
+  propertyIri,
+  label
+}) => {
+  const [usageItems, setUsageItems] = useState<PropertyUsageItem[]>([]);
+  const [query, setQuery] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const loadUsage = async () => {
+      if (!projectId || !propertyIri) return;
+      setLoading(true);
+      try {
+        const res = await apiClient.get<any>(`/api/ontology/properties/usage/${projectId}`, { propertyIri });
+        const payload = res?.data || res;
+        const items = payload?.data || payload || [];
+        setUsageItems(Array.isArray(items) ? items : []);
+      } catch (error) {
+        console.error('[PropertyUsageTab] Failed to load usage:', error);
+        setUsageItems([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadUsage();
+  }, [projectId, propertyIri]);
+
+  const lowerQuery = query.trim().toLowerCase();
+  const filtered = lowerQuery
+    ? usageItems.filter(item => {
+        const haystack = [
+          item.type,
+          item.subjectLabel,
+          item.subject,
+          item.targetLabel,
+          item.target,
+          item.value
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return haystack.includes(lowerQuery);
+      })
+    : usageItems;
+
+  const grouped = filtered.reduce<Record<string, PropertyUsageItem[]>>((acc, item) => {
+    acc[item.type] = acc[item.type] || [];
+    acc[item.type].push(item);
+    return acc;
+  }, {});
+
+  const sections: Array<{ key: string; label: string }> = [
+    { key: 'assertion_object', label: 'Object assertions' },
+    { key: 'assertion_data', label: 'Data assertions' },
+    { key: 'domain', label: 'Domain' },
+    { key: 'range', label: 'Range' },
+    { key: 'superProperty', label: 'Super properties' },
+    { key: 'subProperty', label: 'Sub properties' },
+    { key: 'inverse', label: 'Inverse properties' },
+    { key: 'equivalent', label: 'Equivalent properties' },
+    { key: 'disjoint', label: 'Disjoint properties' },
+    { key: 'propertyChain', label: 'Property chains' }
+  ];
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-sm">
+      <div className="px-3 py-2 border-b border-gray-200 flex items-center justify-between">
+        <div className="text-xs font-semibold text-gray-700">Usage: {label}</div>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Filter usage..."
+          className="px-2 py-1 text-[11px] border rounded"
+        />
+      </div>
+      {loading ? (
+        <div className="p-4 text-xs text-gray-500 italic">Loading usage…</div>
+      ) : sections.every(section => !grouped[section.key]?.length) ? (
+        <div className="p-4 text-xs text-gray-500 italic">No usage found.</div>
+      ) : (
+        <div className="p-3 space-y-3 text-xs">
+          {sections.map(section => {
+            const items = grouped[section.key];
+            if (!items?.length) return null;
+            return (
+              <div key={section.key} className="space-y-1">
+                <div className="font-semibold text-gray-700">
+                  {section.label} ({items.length})
+                </div>
+                <div className="space-y-1">
+                  {items.map((item, idx) => (
+                    <div key={`${section.key}-${idx}`} className="text-[11px] text-gray-600">
+                      {item.subjectLabel || item.subject ? (
+                        <span className="font-semibold">{item.subjectLabel || item.subject}</span>
+                      ) : null}
+                      {item.targetLabel || item.target ? (
+                        <span>
+                          {item.subjectLabel || item.subject ? ' → ' : ''}
+                          {item.targetLabel || item.target}
+                        </span>
+                      ) : null}
+                      {item.value ? <span className="font-mono">{item.value}</span> : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
 
 
 const PropertyEditor: React.FC<{
@@ -37,7 +162,7 @@ const PropertyEditor: React.FC<{
     onAddEquivalentClick,
     objectProperties = []
 }) => {
-    const [activeTab, setActiveTab] = useState<'annotations' | 'description'>('annotations');
+    const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('annotations');
     const [isEditorOpen, setIsEditorOpen] = useState(false);
     const [editorTitle, setEditorTitle] = useState("");
     const [editorAction, setEditorAction] = useState<((val: string) => void) | null>(null);
@@ -229,6 +354,17 @@ const PropertyEditor: React.FC<{
                     Annotations ({annotationCount})
                 </button>
                 <button 
+                    onClick={() => setActiveTab('usage')}
+                    className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors ${
+                        activeTab === 'usage' 
+                            ? `border-${themeColor}-600 text-${themeColor}-700 bg-white` 
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                    }`}
+                    style={activeTab === 'usage' ? { borderColor: isObjectProperty ? '#2563eb' : isDataProperty ? '#16a34a' : '#ea580c' } : {}}
+                >
+                    Usage
+                </button>
+                <button 
                     onClick={() => setActiveTab('description')}
                     className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors ${
                         activeTab === 'description' 
@@ -238,6 +374,17 @@ const PropertyEditor: React.FC<{
                     style={activeTab === 'description' ? { borderColor: isObjectProperty ? '#2563eb' : isDataProperty ? '#16a34a' : '#ea580c' } : {}}
                 >
                     Description
+                </button>
+                <button 
+                    onClick={() => setActiveTab('usage')}
+                    className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors ${
+                        activeTab === 'usage' 
+                            ? `border-${themeColor}-600 text-${themeColor}-700 bg-white` 
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                    }`}
+                    style={activeTab === 'usage' ? { borderColor: isObjectProperty ? '#2563eb' : isDataProperty ? '#16a34a' : '#ea580c' } : {}}
+                >
+                    Usage
                 </button>
             </div>
 
@@ -259,6 +406,13 @@ const PropertyEditor: React.FC<{
                             <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} />
                         </div>
                     </div>
+                )}
+                {activeTab === 'usage' && (
+                    <PropertyUsageTab
+                        projectId={projectId}
+                        propertyIri={item.id}
+                        label={item.label}
+                    />
                 )}
 
                 {activeTab === 'description' && (
