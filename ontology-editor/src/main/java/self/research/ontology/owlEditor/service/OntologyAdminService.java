@@ -226,14 +226,26 @@ public class OntologyAdminService {
         try (RepositoryConnection conn = datasetService.getConnection()) {
             // Remove prefixes that were explicitly set to empty
             for (Map.Entry<String, String> entry : prefixes.entrySet()) {
+                String prefix = entry.getKey();
+                if (prefix != null && prefix.endsWith(":")) {
+                    prefix = prefix.substring(0, prefix.length() - 1);
+                }
+                
                 if (entry.getValue() == null || entry.getValue().isBlank()) {
-                    conn.removeNamespace(entry.getKey());
+                    if (prefix != null) {
+                        conn.removeNamespace(prefix);
+                    }
                 }
             }
             // Set/update prefixes with values
             for (Map.Entry<String, String> entry : prefixes.entrySet()) {
+                String prefix = entry.getKey();
+                if (prefix != null && prefix.endsWith(":")) {
+                    prefix = prefix.substring(0, prefix.length() - 1);
+                }
+
                 if (entry.getValue() != null && !entry.getValue().isBlank()) {
-                    conn.setNamespace(entry.getKey(), entry.getValue());
+                    conn.setNamespace(prefix, entry.getValue());
                 }
             }
         }
