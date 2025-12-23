@@ -79,7 +79,7 @@ services:
     container_name: ontocode-gateway
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "80:80"
     environment:
       SPRING_PROFILES_ACTIVE: production
       JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-this}
@@ -92,7 +92,7 @@ services:
     networks:
       - ontology-net
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:80/actuator/health"]
       interval: 30s
       timeout: 10s
       retries: 3
