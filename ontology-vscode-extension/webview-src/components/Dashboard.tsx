@@ -1670,7 +1670,7 @@ const Dashboard = () => {
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
   const [showCollaborationPanel, setShowCollaborationPanel] = useState(false);
 
-  const [visibleMainTabs, setVisibleMainTabs] = useState(['ActiveOntology', 'Entities', 'IndividualsByClass', 'DLQuery', 'Reasoner', 'CodeView']);
+  const [visibleMainTabs, setVisibleMainTabs] = useState(['ActiveOntology', 'Entities', 'IndividualsByClass', 'DLQuery', 'CodeView']);
   const [showPluginMarketplace, setShowPluginMarketplace] = useState(false);
   const [installedPlugins, setInstalledPlugins] = useState<Set<string>>(new Set());
   const [pluginLoadingStates, setPluginLoadingStates] = useState<Record<string, { loading: boolean; error: string | null }>>({});
@@ -1919,7 +1919,9 @@ const Dashboard = () => {
     if (!projectId) return;
     console.log('[Dashboard] Loading full inferred class hierarchy...');
     try {
-      const response = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-class-hierarchy`);
+      const response = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-class-hierarchy`, {
+        params: { reasonerType: selectedReasoner }
+      });
       const payload = response?.data || response;
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
       
@@ -1936,13 +1938,15 @@ const Dashboard = () => {
       console.error('[Dashboard] Failed to load full inferred class hierarchy:', error);
       setInferredClassHierarchy([]);
     }
-  }, [projectId, applyInstanceCountsToTree, classInstanceCounts]);
+  }, [projectId, applyInstanceCountsToTree, classInstanceCounts, selectedReasoner]);
 
   const loadInferredObjectPropertyHierarchy = useCallback(async () => {
     if (!projectId) return;
     console.log('[Dashboard] Loading inferred object property hierarchy...');
     try {
-      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-object-property-hierarchy`);
+      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-object-property-hierarchy`, {
+        params: { reasonerType: selectedReasoner }
+      });
       const payload = res?.data || res;
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
       console.log('[Dashboard] Inferred object properties loaded:', Array.isArray(hierarchy) ? hierarchy.length : 0, 'items');
@@ -1951,28 +1955,33 @@ const Dashboard = () => {
       console.error('[Dashboard] Failed to load inferred object property hierarchy:', error);
       setInferredObjectPropertyHierarchy([]);
     }
-  }, [projectId]);
+  }, [projectId, selectedReasoner]);
 
   const loadInferredDataPropertyHierarchy = useCallback(async () => {
     if (!projectId) return;
     console.log('[Dashboard] Loading inferred data property hierarchy...');
     try {
-      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-data-property-hierarchy`);
+      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-data-property-hierarchy`, {
+        params: { reasonerType: selectedReasoner }
+      });
       const payload = res?.data || res;
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
+      console.log('[Dashboard] Inferred data properties response:', payload);
       console.log('[Dashboard] Inferred data properties loaded:', Array.isArray(hierarchy) ? hierarchy.length : 0, 'items');
       setInferredDataPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
     } catch (error) {
       console.error('[Dashboard] Failed to load inferred data property hierarchy:', error);
       setInferredDataPropertyHierarchy([]);
     }
-  }, [projectId]);
+  }, [projectId, selectedReasoner]);
 
   const loadInferredAnnotationPropertyHierarchy = useCallback(async () => {
     if (!projectId) return;
     console.log('[Dashboard] Loading inferred annotation property hierarchy...');
     try {
-      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-annotation-property-hierarchy`);
+      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-annotation-property-hierarchy`, {
+        params: { reasonerType: selectedReasoner }
+      });
       const payload = res?.data || res;
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
       console.log('[Dashboard] Inferred annotation properties loaded:', Array.isArray(hierarchy) ? hierarchy.length : 0, 'items');
@@ -1981,13 +1990,15 @@ const Dashboard = () => {
       console.error('[Dashboard] Failed to load inferred annotation property hierarchy:', error);
       setInferredAnnotationPropertyHierarchy([]);
     }
-  }, [projectId]);
+  }, [projectId, selectedReasoner]);
 
   const loadInferredDatatypes = useCallback(async () => {
     if (!projectId) return;
     console.log('[Dashboard] Loading inferred datatypes...');
     try {
-      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-datatypes`);
+      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-datatypes`, {
+        params: { reasonerType: selectedReasoner }
+      });
       const payload = res?.data || res;
       const datatypes = payload?.datatypes || payload?.data?.datatypes || [];
       console.log('[Dashboard] Inferred datatypes loaded:', Array.isArray(datatypes) ? datatypes.length : 0, 'items');
@@ -1996,13 +2007,15 @@ const Dashboard = () => {
       console.error('[Dashboard] Failed to load inferred datatypes:', error);
       setInferredDatatypes([]);
     }
-  }, [projectId]);
+  }, [projectId, selectedReasoner]);
 
   const loadInferredIndividuals = useCallback(async () => {
     if (!projectId) return;
     console.log('[Dashboard] Loading inferred individuals...');
     try {
-      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-individuals`);
+      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-individuals`, {
+        params: { reasonerType: selectedReasoner }
+      });
       const payload = res?.data || res;
       const individuals = payload?.individuals || payload?.data?.individuals || [];
       console.log('[Dashboard] Inferred individuals loaded:', Array.isArray(individuals) ? individuals.length : 0, 'items');
@@ -2011,7 +2024,7 @@ const Dashboard = () => {
       console.error('[Dashboard] Failed to load inferred individuals:', error);
       setInferredIndividuals([]);
     }
-  }, [projectId]);
+  }, [projectId, selectedReasoner]);
 
   const startReasoner = useCallback(async () => {
     if (!projectId) {
@@ -2213,7 +2226,7 @@ const Dashboard = () => {
         'fuzzy-ontology-plugin': 'Fuzzy',
         'change-assistant-plugin': 'Changes',
         'sparql-query-plugin': 'SPARQL',
-        'Reasoner-plugin' : 'Reasoner'
+        'reasoner-plugin': 'Reasoner'
       };
       
       const tabId = pluginToTabMap[pluginId];
@@ -2456,7 +2469,9 @@ const Dashboard = () => {
       const prefixesPayload = prefixesRes?.data || prefixesRes;
       const prefixesData = prefixesPayload?.data || prefixesPayload || {};
       const prefixList = Object.entries(prefixesData).map(([prefix, namespace]) => ({
-        prefix,
+        // Ensure prefix has a colon for display if it's not empty
+        // If it's empty, it's the default namespace, show as ":"
+        prefix: prefix ? (prefix.endsWith(':') ? prefix : `${prefix}:`) : ':',
         namespace: String(namespace)
       }));
       setPrefixMappings(prefixList);
@@ -2830,7 +2845,9 @@ const Dashboard = () => {
       const payload = response?.data || response;
       const data = payload?.data || payload || {};
       const list = Object.entries(data).map(([prefix, namespace]) => ({
-        prefix,
+        // Ensure prefix has a colon for display if it's not empty
+        // If it's empty, it's the default namespace, show as ":"
+        prefix: prefix ? (prefix.endsWith(':') ? prefix : `${prefix}:`) : ':',
         namespace: String(namespace)
       }));
       setPrefixMappings(list);
@@ -2937,7 +2954,13 @@ const Dashboard = () => {
   const handleSavePrefixes = async () => {
     if (!projectId) return;
     try {
-      await apiClient.put(`/api/ontology/ontology/prefixes/${projectId}`, prefixMappings);
+      // Clean up prefixes by removing trailing colons before sending to backend
+      const cleanedPrefixes = prefixMappings.map(p => ({
+        ...p,
+        prefix: p.prefix.endsWith(':') ? p.prefix.slice(0, -1) : p.prefix
+      }));
+      
+      await apiClient.put(`/api/ontology/ontology/prefixes/${projectId}`, cleanedPrefixes);
       setIsPrefixEditing(false);
       await refreshPrefixes();
     } catch (error) {
@@ -3441,7 +3464,13 @@ const Dashboard = () => {
     try {
       const response = await apiClient.get<any>(
         `/api/ontology/${projectId}/reasoner/inferred-subclasses`,
-        { classIri: nodeId, direct: true }
+        { 
+          params: { 
+            classIri: nodeId, 
+            direct: true,
+            reasonerType: selectedReasoner
+          } 
+        }
       );
       const payload = response?.data || response;
       const items = payload?.inferredSubClasses || payload?.data?.inferredSubClasses || [];
@@ -3450,7 +3479,7 @@ const Dashboard = () => {
       console.error('[Dashboard] Failed to load inferred subclasses:', error);
       return [];
     }
-  }, [projectId]);
+  }, [projectId, selectedReasoner]);
 
   const loadInferredChildren = useCallback(async (nodeId: string) => {
     if (!projectId) return;
@@ -6343,351 +6372,38 @@ const Dashboard = () => {
         );
       }
       case 'Reasoner': {
-        const stats = reasonerResults?.stats || null;
-        const unsatList = reasonerResults?.unsatisfiableClasses || [];
-        const equivalentGroups = reasonerResults?.equivalentClasses || [];
-        const consistencyData = consistencyResult || null;
-        const consistencyUnsat = consistencyData?.unsatisfiableClasses || [];
-        const combinedUnsat = unsatList.length > 0 ? unsatList : consistencyUnsat;
-        const consistentFlag = (stats?.isConsistent ?? consistencyData?.consistent ?? consistencyData?.isConsistent);
-        const unsatRaw = stats?.unsatisfiableClassesRaw;
-        const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1 || !!(
-          (stats && ((stats.unsatisfiableClasses ?? 0) > 0 || stats.isConsistent === false)) ||
-          combinedUnsat.length > 0
-        );
-        // Use inferredClassHierarchy if available, otherwise fall back to reasoner results
-        const classHierarchyToRender = inferredClassHierarchy.length > 0 
-          ? inferredClassHierarchy 
-          : (reasonerResults?.classHierarchyTree || reasonerResults?.classHierarchy);
-
+        const plugin = pluginLoader.getInstalledPlugins().find(p => p.id === 'reasoner-plugin');
+        const loadingState = pluginLoadingStates['reasoner-plugin'];
+        
+        if (plugin?.component) {
+          const PluginComponent = plugin.component;
+          return (
+            <PluginComponent 
+              projectId={projectId || ''} 
+              apiBaseUrl={(window as any).API_BASE_URL || 'http://localhost:8082'}
+              selectedReasoner={selectedReasoner}
+              isReasonerRunning={isReasonerRunning}
+              isReasonerLoading={isReasonerLoading}
+              reasonerResults={reasonerResults}
+              consistencyResult={consistencyResult}
+              inferredClassHierarchy={inferredClassHierarchy}
+              inferredObjectPropertyHierarchy={inferredObjectPropertyHierarchy}
+              inferredDataPropertyHierarchy={inferredDataPropertyHierarchy}
+              onStartReasoner={startReasoner}
+              onStopReasoner={stopReasoner}
+              onSelectReasoner={handleSelectReasoner}
+              onToggleSync={toggleReasonerSync}
+              isReasonerSynced={isReasonerSynced}
+            />
+          );
+        }
+        
         return (
-          <div className="flex flex-col h-full bg-white">
-            {/* Protégé-style Toolbar */}
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-300 bg-gray-50 flex-shrink-0">
-              {/* Start Button */}
-              <button
-                onClick={startReasoner}
-                disabled={isReasonerLoading || !projectId || isReasonerRunning}
-                className="px-3 py-1.5 text-xs font-medium bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
-                title="Start reasoner"
-              >
-                {isReasonerLoading ? (
-                  <>
-                    <Loader2 size={14} className="animate-spin" />
-                    Starting...
-                  </>
-                ) : (
-                  <>
-                    <Play size={14} />
-                    Start
-                  </>
-                )}
-              </button>
-
-              {/* Stop Button */}
-              <button
-                onClick={stopReasoner}
-                disabled={!isReasonerRunning || isReasonerLoading}
-                className="px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
-                title="Stop reasoner"
-              >
-                <Square size={14} />
-                Stop
-              </button>
-
-              <div className="w-px h-6 bg-gray-300 mx-1" />
-
-              {/* Reasoner Selector Dropdown */}
-              <div className="relative group">
-                <button className="px-3 py-1.5 text-xs font-medium bg-white border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-2 min-w-[140px]">
-                  <Brain size={14} className="text-purple-600" />
-                  <span>{selectedReasoner}</span>
-                  <ChevronDown size={12} className="ml-auto" />
-                </button>
-                <div className="hidden group-hover:block absolute top-full left-0 mt-1 bg-white border border-gray-300 rounded shadow-lg z-10 min-w-[240px]">
-                  {[
-                    { name: 'HermiT', desc: 'Full OWL 2 DL - Best for complex ontologies' },
-                    { name: 'ELK', desc: 'EL++ optimized - Fast for large taxonomies' },
-                    { name: 'Pellet', desc: 'Complete OWL DL with SWRL support' },
-                    { name: 'Openllet', desc: 'Modern Pellet fork - Improved performance' },
-                    { name: 'Structural', desc: 'Lightweight - Fast but limited' }
-                  ].map(reasoner => (
-                    <button
-                      key={reasoner.name}
-                      onClick={() => handleSelectReasoner(reasoner.name)}
-                      className={`w-full text-left px-3 py-2 text-xs hover:bg-blue-50 ${
-                        selectedReasoner === reasoner.name ? 'bg-blue-50 font-semibold text-blue-700' : 'text-gray-700'
-                      }`}
-                      title={reasoner.desc}
-                    >
-                      <div className="flex items-center gap-2">
-                        {selectedReasoner === reasoner.name && <Check size={12} className="text-blue-700 flex-shrink-0" />}
-                        <div className={selectedReasoner === reasoner.name ? '' : 'ml-5'}>
-                          <div className="font-medium">{reasoner.name}</div>
-                          <div className="text-[10px] text-gray-500 mt-0.5">{reasoner.desc}</div>
-                        </div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="w-px h-6 bg-gray-300 mx-1" />
-
-              {/* Synchronize Checkbox */}
-              <label className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium cursor-pointer hover:bg-gray-100 rounded">
-                <input
-                  type="checkbox"
-                  checked={isReasonerSynced}
-                  onChange={toggleReasonerSync}
-                  className="w-3.5 h-3.5"
-                />
-                <span>Synchronize reasoner</span>
-              </label>
-
-              {/* Status Indicator */}
-              <div className="ml-auto flex items-center gap-2 px-3 py-1.5 text-xs">
-                <span className={`w-2 h-2 rounded-full ${isReasonerRunning ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
-                <span className="text-gray-600">
-                  {isReasonerRunning ? 'Active' : 'Stopped'}
-                </span>
-              </div>
-
-              {/* Configure Button */}
-              <button
-                className="px-3 py-1.5 text-xs font-medium bg-white border border-gray-300 rounded hover:bg-gray-50"
-                title="Configure reasoner"
-              >
-                <Settings size={14} />
-              </button>
-            </div>
-
-            {/* Main Content Area */}
-            <div className="flex-1 flex overflow-hidden">
-              {!reasonerResults && !isReasonerLoading ? (
-                /* Empty State - Before Starting Reasoner */
-                <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center p-8 bg-gray-50">
-                  <Brain size={64} className="text-gray-300" />
-                  <div className="space-y-2">
-                    <h3 className="text-lg font-semibold text-gray-700">No Reasoner Running</h3>
-                    <p className="text-sm text-gray-500 max-w-md">
-                      Click <strong>Start</strong> to begin reasoning over the ontology.<br />
-                      Select a reasoner from the dropdown menu above.
-                    </p>
-                  </div>
-                  {consistencyResult && !isConsistencyLoading && (
-                    <div className={`mt-4 px-4 py-2 rounded-md text-sm ${
-                      (consistencyResult.consistent === false || consistencyResult.isConsistent === false)
-                        ? 'bg-red-50 border border-red-200 text-red-700'
-                        : 'bg-green-50 border border-green-200 text-green-700'
-                    }`}>
-                      {(consistencyResult.consistent === false || consistencyResult.isConsistent === false)
-                        ? '⚠ Ontology is inconsistent'
-                        : '✓ Ontology is consistent'}
-                    </div>
-                  )}
-                </div>
-              ) : isReasonerLoading ? (
-                /* Loading State */
-                <div className="flex-1 flex flex-col items-center justify-center gap-4 bg-gray-50">
-                  <Loader2 size={48} className="animate-spin text-purple-600" />
-                  <div className="text-center">
-                    <p className="text-sm font-medium text-gray-700">Running {selectedReasoner} Reasoner...</p>
-                    <p className="text-xs text-gray-500 mt-1">This may take a moment for large ontologies</p>
-                  </div>
-                </div>
-              ) : (
-                /* Results View - Protégé Style Layout */
-                <>
-                  {/* Left Panel - Consistency & Stats */}
-                  <div className="w-80 border-r border-gray-300 flex flex-col overflow-hidden bg-white">
-                    {/* Consistency Status */}
-                    <div className={`px-4 py-3 border-b border-gray-300 ${
-                      isOntologyInconsistent ? 'bg-red-50' : 'bg-green-50'
-                    }`}>
-                      <div className="flex items-center gap-2 mb-1">
-                        <AlertCircle size={16} className={isOntologyInconsistent ? 'text-red-600' : 'text-green-600'} />
-                        <span className="text-sm font-semibold text-gray-900">Consistency</span>
-                      </div>
-                      <div className={`text-xs font-medium ${
-                        isOntologyInconsistent ? 'text-red-700' : 'text-green-700'
-                      }`}>
-                        {isOntologyInconsistent ? '✗ Ontology is inconsistent' : '✓ Ontology is consistent'}
-                      </div>
-                      {stats && (
-                        <div className="text-[11px] text-gray-600 mt-1">
-                          {(stats.satisfiableClasses ?? 'N/A')} satisfiable · {' '}
-                          {(stats.unsatisfiableClassesRaw === -1 ? 'N/A' : (stats.unsatisfiableClasses ?? 0))} unsatisfiable
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Reasoner Info */}
-                    <div className="px-4 py-3 border-b border-gray-300 bg-gray-50">
-                      <div className="text-xs font-semibold text-gray-700 mb-2">Reasoner Information</div>
-                      <div className="space-y-1 text-[11px] text-gray-600">
-                        <div className="flex justify-between">
-                          <span>Name:</span>
-                          <span className="font-medium text-gray-900">{selectedReasoner}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Version:</span>
-                          <span className="font-medium text-gray-900">
-                            {selectedReasoner === 'HermiT' ? '1.4.5.519' : 
-                             selectedReasoner === 'ELK' ? '0.4.3' :
-                             selectedReasoner === 'Openllet' ? '2.6.5' : 
-                             selectedReasoner === 'Pellet' ? '2.3.1' : 
-                             '1.0.0'}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Status:</span>
-                          <span className={`font-medium ${isReasonerRunning ? 'text-green-600' : 'text-gray-500'}`}>
-                            {isReasonerRunning ? 'Running' : 'Stopped'}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Entity Counts */}
-                    <div className="px-4 py-3 border-b border-gray-300">
-                      <div className="text-xs font-semibold text-gray-700 mb-2">Entity Counts</div>
-                      <div className="space-y-1.5">
-                        {[
-                          { label: 'Classes', value: stats?.classHierarchyNodes ?? reasonerResults?.totalClasses ?? 0, icon: '🔷' },
-                          { label: 'Object Properties', value: stats?.objectPropertyNodes ?? reasonerResults?.totalObjectProperties ?? 0, icon: '🔗' },
-                          { label: 'Data Properties', value: stats?.dataPropertyNodes ?? reasonerResults?.totalDataProperties ?? 0, icon: '📊' },
-                          { label: 'Individuals', value: stats?.individuals ?? reasonerResults?.totalIndividuals ?? 0, icon: '👤' }
-                        ].map((item) => (
-                          <div key={item.label} className="flex items-center justify-between text-xs">
-                            <span className="text-gray-600">
-                              <span className="mr-1.5">{item.icon}</span>
-                              {item.label}
-                            </span>
-                            <span className="font-semibold text-gray-900 bg-gray-100 px-2 py-0.5 rounded">
-                              {item.value}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Unsatisfiable Classes */}
-                    {combinedUnsat.length > 0 && (
-                      <div className="px-4 py-3 border-b border-gray-300 bg-red-50 flex-1 overflow-hidden flex flex-col">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="text-xs font-semibold text-red-700">
-                            ⚠ Unsatisfiable Classes ({combinedUnsat.length})
-                          </div>
-                          <button
-                            onClick={explainInconsistency}
-                            className="text-[10px] px-2 py-0.5 bg-red-600 text-white rounded hover:bg-red-700"
-                            disabled={isReasonerLoading}
-                          >
-                            Explain
-                          </button>
-                        </div>
-                        <div className="flex-1 overflow-y-auto space-y-1">
-                          {combinedUnsat.map((cls: any, idx: number) => {
-                            const clsData = typeof cls === 'string'
-                              ? { iri: cls, label: cls.split('#').pop() || cls.split('/').pop() || cls }
-                              : cls;
-                            return (
-                              <div key={idx} className="bg-white border border-red-200 rounded px-2 py-1.5 text-[11px]">
-                                <div className="font-semibold text-red-900">{clsData.label}</div>
-                                <div className="text-[10px] text-red-600 truncate" title={clsData.iri}>
-                                  {clsData.iri}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Equivalent Classes */}
-                                        {/* Equivalent Classes */}
-                    {equivalentGroups.length > 0 && (
-                      <div className="px-4 py-3 border-b border-gray-300 bg-blue-50">
-                        <div className="text-xs font-semibold text-blue-700 mb-2 flex items-center gap-1.5">
-                          <GitMerge size={14} />
-                          Equivalent Classes ({equivalentGroups.length})
-                        </div>
-                        <div className="space-y-1 max-h-32 overflow-y-auto">
-                          {equivalentGroups.map((group: any, idx: number) => {
-                            // Handle both array and object formats
-                            const groupArray = Array.isArray(group) ? group : (group.classes || [group]);
-                            const displayText = groupArray.length > 0 
-                              ? groupArray.map((item: any) => typeof item === 'string' ? item : (item.label || item.iri || String(item))).join(' ≡ ')
-                              : 'Unknown';
-                            
-                            return (
-                              <div key={idx} className="bg-white border border-blue-200 rounded px-2 py-1 text-[11px] text-blue-800">
-                                {displayText}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Actions */}
-                    <div className="px-4 py-3 border-t border-gray-300 mt-auto bg-gray-50">
-                      <div className="space-y-2">
-                        <button
-                          onClick={explainInconsistency}
-                          disabled={!isOntologyInconsistent || isReasonerLoading}
-                          className="w-full px-3 py-2 text-xs font-medium bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                        >
-                          <AlertCircle size={14} />
-                          Explain Inconsistency
-                        </button>
-                        <button
-                          onClick={startReasoner}
-                          disabled={isReasonerLoading || !projectId}
-                          className="w-full px-3 py-2 text-xs font-medium bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50 flex items-center justify-center gap-2"
-                        >
-                          <RefreshCw size={14} />
-                          Re-classify
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Right Panel - Inferred Class Hierarchy */}
-                  <div className="flex-1 flex flex-col overflow-hidden bg-white">
-                    <div className="px-4 py-3 border-b border-gray-300 bg-gray-50">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Network size={16} className="text-purple-600" />
-                          <span className="text-sm font-semibold text-gray-900">Inferred Class Hierarchy</span>
-                        </div>
-                        <button
-                          onClick={startReasoner}
-                          disabled={isReasonerLoading || !projectId}
-                          className="px-3 py-1.5 text-xs font-medium bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 flex items-center gap-1.5"
-                        >
-                          <RefreshCw size={12} />
-                          Refresh
-                        </button>
-                      </div>
-                    </div>
-                    <div className="flex-1 overflow-y-auto px-4 py-3">
-                      {classHierarchyToRender && classHierarchyToRender.length > 0 ? (
-                        <div className="space-y-0.5 text-sm">
-                          {renderClassHierarchy(classHierarchyToRender)}
-                        </div>
-                      ) : (
-                        <div className="flex items-center justify-center h-full text-sm text-gray-500 italic">
-                          No inferred hierarchy available. Run the reasoner to generate results.
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
+          <PluginPlaceholder 
+            pluginId="reasoner-plugin" 
+            isLoading={loadingState?.loading || false}
+            error={loadingState?.error}
+          />
         );
       }
       case 'ActiveOntology':
@@ -7759,6 +7475,9 @@ const Dashboard = () => {
   // #endregion
 
   // #region Main Render
+  // Define apiBaseUrl for plugin usage
+  const apiBaseUrl = (window as any).API_BASE_URL || 'http://localhost:8082';
+
   const ALL_MAIN_TABS: Record<string, { label: string, icon: React.ElementType }> = {
     ActiveOntology: { label: "Active ontology", icon: FileText },
     Entities: { label: "Entities", icon: List },

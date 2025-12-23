@@ -209,6 +209,8 @@ public class ReasonerController {
             
             // Add classification details
             result.put("classHierarchy", classificationData.get("classHierarchy"));
+            result.put("objectPropertyHierarchy", classificationData.get("objectPropertyHierarchy"));
+            result.put("dataPropertyHierarchy", classificationData.get("dataPropertyHierarchy"));
             result.put("equivalentClasses", classificationData.get("equivalentClasses"));
             result.put("unsatisfiableClasses", classificationData.get("unsatisfiableClasses"));
             result.put("totalClasses", classificationData.get("totalClasses"));
