@@ -19,7 +19,7 @@ services:
     networks:
       - ontology-net
     healthcheck:
-      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      test: echo 'db.runCommand("ping").ok' | mongosh "mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@localhost:27017/admin" --quiet
       interval: 10s
       timeout: 5s
       retries: 5
