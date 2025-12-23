@@ -18,6 +18,7 @@ A **microservices-based ontology editing platform** with a **VS Code extension**
 - [Features](#features)
 - [Dependencies](#dependencies)
 - [Contributing](#contributing)
+- [Citation](#citation)
 - [License](#license)
 
 ---
@@ -218,6 +219,24 @@ Please fork the repository, create a feature branch, and submit a pull request.
 
 ---
 
-## 📄 License
+## � Citation
+
+If you use this software in your research, please cite it using the following metadata:
+
+```bibtex
+@software{ontology_platform_2025,
+  author = {YourName},
+  title = {Ontology Platform},
+  version = {1.0.0},
+  date = {2025-12-23},
+  url = {https://github.com/yourusername/ontocode}
+}
+```
+
+You can also use the [CITATION.cff](CITATION.cff) file provided in this repository.
+
+---
+
+## �📄 License
 
 [MIT License](LICENSE)
