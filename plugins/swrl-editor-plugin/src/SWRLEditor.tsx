@@ -348,6 +348,7 @@ interface QuickInsertProps {
 const QuickInsertPanel: React.FC<QuickInsertProps> = ({ onInsert, disabled, dynamicTemplates = [] }) => {
   const [expanded, setExpanded] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
+  const [showGeneralTemplates, setShowGeneralTemplates] = useState(false);
   
   // Combine static and dynamic templates
   const allTemplates = [...dynamicTemplates, ...RULE_TEMPLATES];
@@ -387,10 +388,13 @@ const QuickInsertPanel: React.FC<QuickInsertProps> = ({ onInsert, disabled, dyna
       {/* Templates */}
       {showTemplates && (
         <div className="p-2 pt-0 space-y-2 max-h-80 overflow-y-auto">
-          {dynamicTemplates.length > 0 && (
+          {dynamicTemplates.length > 0 ? (
             <div>
-              <div className="text-[10px] font-semibold text-green-700 uppercase tracking-wide px-2 py-1 bg-green-50 rounded flex items-center gap-1">
-                <Sparkles size={10} /> Ontology-Specific Templates ({dynamicTemplates.length})
+              <div className="text-[10px] font-semibold text-green-700 uppercase tracking-wide px-2 py-1 bg-green-50 rounded flex items-center justify-between">
+                <div className="flex items-center gap-1">
+                  <Sparkles size={10} /> Ontology-Based Templates ({dynamicTemplates.length})
+                </div>
+                <span className="text-[9px] text-green-600 normal-case">From your OWL file</span>
               </div>
               <div className="grid grid-cols-1 gap-1 mt-1">
                 {dynamicTemplates.map((t, i) => (
@@ -398,34 +402,60 @@ const QuickInsertPanel: React.FC<QuickInsertProps> = ({ onInsert, disabled, dyna
                     key={`dyn-${i}`}
                     onClick={() => { onInsert(t.template); setShowTemplates(false); }}
                     disabled={disabled}
-                    className="text-left px-3 py-2 text-xs bg-green-50 border border-green-200 rounded hover:bg-green-100 hover:border-green-300 disabled:opacity-50 group"
+                    className="text-left px-3 py-2 text-xs bg-green-50 border border-green-200 rounded hover:bg-green-100 hover:border-green-300 disabled:opacity-50 group transition-colors"
                   >
                     <div className="font-medium text-green-800 group-hover:text-green-900">{t.name}</div>
                     <div className="text-[10px] text-green-600 truncate">{t.description}</div>
                   </button>
                 ))}
               </div>
+              
+              {/* Collapsible general templates */}
+              <div className="mt-3">
+                <button
+                  onClick={() => setShowGeneralTemplates(!showGeneralTemplates)}
+                  className="w-full text-[10px] font-semibold text-purple-700 uppercase tracking-wide px-2 py-1 bg-purple-50 rounded flex items-center justify-between hover:bg-purple-100 transition-colors"
+                >
+                  <span>General Templates ({RULE_TEMPLATES.length})</span>
+                  {showGeneralTemplates ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                </button>
+                {showGeneralTemplates && (
+                  <div className="grid grid-cols-1 gap-1 mt-1">
+                    {RULE_TEMPLATES.map((t, i) => (
+                      <button
+                        key={i}
+                        onClick={() => { onInsert(t.template); setShowTemplates(false); }}
+                        disabled={disabled}
+                        className="text-left px-3 py-2 text-xs bg-white border border-gray-200 rounded hover:bg-purple-50 hover:border-purple-300 disabled:opacity-50 group transition-colors"
+                      >
+                        <div className="font-medium text-gray-700 group-hover:text-purple-700">{t.name}</div>
+                        <div className="text-[10px] text-gray-500 truncate">{t.description}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div className="text-[10px] font-semibold text-purple-700 uppercase tracking-wide px-2 py-1 bg-purple-50 rounded">
+                General Templates ({RULE_TEMPLATES.length})
+              </div>
+              <div className="grid grid-cols-1 gap-1 mt-1">
+                {RULE_TEMPLATES.map((t, i) => (
+                  <button
+                    key={i}
+                    onClick={() => { onInsert(t.template); setShowTemplates(false); }}
+                    disabled={disabled}
+                    className="text-left px-3 py-2 text-xs bg-white border border-gray-200 rounded hover:bg-purple-50 hover:border-purple-300 disabled:opacity-50 group transition-colors"
+                  >
+                    <div className="font-medium text-gray-700 group-hover:text-purple-700">{t.name}</div>
+                    <div className="text-[10px] text-gray-500 truncate">{t.description}</div>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
-          
-          <div>
-            <div className="text-[10px] font-semibold text-purple-700 uppercase tracking-wide px-2 py-1 bg-purple-50 rounded">
-              General Templates ({RULE_TEMPLATES.length})
-            </div>
-            <div className="grid grid-cols-1 gap-1 mt-1">
-          {RULE_TEMPLATES.map((t, i) => (
-            <button
-              key={i}
-              onClick={() => { onInsert(t.template); setShowTemplates(false); }}
-              disabled={disabled}
-              className="text-left px-3 py-2 text-xs bg-white border border-gray-200 rounded hover:bg-purple-50 hover:border-purple-300 disabled:opacity-50 group"
-            >
-              <div className="font-medium text-gray-700 group-hover:text-purple-700">{t.name}</div>
-              <div className="text-[10px] text-gray-500 truncate">{t.description}</div>
-            </button>
-          ))}
-        </div>
-          </div>
         </div>
       )}
 
@@ -1394,80 +1424,130 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
       
       const generated: typeof RULE_TEMPLATES = [];
       
-      // Class membership rule (if we have classes and data properties)
-      if (classes.length > 0 && dataProps.length > 0) {
-        const cls1 = classes[0];
-        const cls2 = classes.length > 1 ? classes[1] : `${cls1}Premium`;
-        const dataProp = dataProps[0];
-        generated.push({
-          name: `${cls1} Classification`,
-          template: `${cls1}(?x) ^ ${dataProp}(?x, ?val) ^ swrlb:greaterThan(?val, 100) -> ${cls2}(?x)`,
-          description: `Classify ${cls1} into ${cls2} based on ${dataProp} value`
-        });
+      // Generate templates for each class
+      classes.forEach((cls, idx) => {
+        // Class classification based on data property value
+        if (dataProps.length > 0) {
+          const dataProp = dataProps[0];
+          const targetCls = classes[idx + 1] || `${cls}Classified`;
+          generated.push({
+            name: `${cls} Classification`,
+            template: `${cls}(?x) ^ ${dataProp}(?x, ?val) ^ swrlb:greaterThan(?val, 100) -> ${targetCls}(?x)`,
+            description: `Classify ${cls} into ${targetCls} when ${dataProp} > 100`
+          });
+        }
+        
+        // Class membership based on string property
+        if (dataProps.length > 0) {
+          const dataProp = dataProps[0];
+          generated.push({
+            name: `${cls} String Match`,
+            template: `${cls}(?x) ^ ${dataProp}(?x, ?str) ^ swrlb:contains(?str, "value") -> ${cls}Matched(?x)`,
+            description: `Classify ${cls} based on ${dataProp} containing specific text`
+          });
+        }
+        
+        // SQWRL query for class
+        if (dataProps.length > 0) {
+          const dataProp = dataProps[0];
+          generated.push({
+            name: `Query All ${cls}`,
+            template: `${cls}(?x) ^ ${dataProp}(?x, ?val) -> sqwrl:select(?x, ?val) ^ sqwrl:orderBy(?val)`,
+            description: `List all ${cls} instances ordered by ${dataProp}`
+          });
+        }
+      });
+      
+      // Generate templates for object property chains (2-level)
+      for (let i = 0; i < Math.min(objProps.length, 3); i++) {
+        for (let j = 0; j < Math.min(objProps.length, 3); j++) {
+          if (i !== j && classes.length > 0) {
+            const prop1 = objProps[i];
+            const prop2 = objProps[j];
+            const inferredProp = `${prop1}${prop2}Chain`;
+            generated.push({
+              name: `${prop1} → ${prop2} Chain`,
+              template: `${prop1}(?x, ?y) ^ ${prop2}(?y, ?z) -> ${inferredProp}(?x, ?z)`,
+              description: `Infer ${inferredProp} through ${prop1} and ${prop2} property chain`
+            });
+          }
+        }
       }
       
-      // Property chain (if we have object properties)
-      if (classes.length > 0 && objProps.length >= 2) {
-        const cls = classes[0];
-        const prop1 = objProps[0];
-        const prop2 = objProps[1];
-        const inferredProp = objProps.length > 2 ? objProps[2] : `inferred${prop1}`;
-        generated.push({
-          name: `${prop1} Chain`,
-          template: `${cls}(?x) ^ ${prop1}(?x, ?y) ^ ${prop2}(?y, ?z) -> ${inferredProp}(?x, ?z)`,
-          description: `Infer ${inferredProp} through ${prop1} and ${prop2} chain`
-        });
-      }
-      
-      // Math calculation (if we have data properties)
-      if (classes.length > 0 && dataProps.length >= 2) {
+      // Generate templates for data property calculations
+      if (dataProps.length >= 2 && classes.length > 0) {
         const cls = classes[0];
         const prop1 = dataProps[0];
-        const prop2 = dataProps.length > 1 ? dataProps[1] : `calculated${prop1}`;
+        const prop2 = dataProps[1];
+        
+        // Addition
         generated.push({
-          name: `Calculate ${prop2}`,
-          template: `${cls}(?x) ^ ${prop1}(?x, ?val) ^ swrlb:multiply(?result, ?val, 1.1) -> ${prop2}(?x, ?result)`,
-          description: `Calculate ${prop2} from ${prop1} using math operations`
+          name: `${cls} Sum ${prop1}+${prop2}`,
+          template: `${cls}(?x) ^ ${prop1}(?x, ?v1) ^ ${prop2}(?x, ?v2) ^ swrlb:add(?sum, ?v1, ?v2) -> has${prop1}${prop2}Sum(?x, ?sum)`,
+          description: `Calculate sum of ${prop1} and ${prop2} for ${cls}`
+        });
+        
+        // Multiplication
+        generated.push({
+          name: `${cls} ${prop1} × ${prop2}`,
+          template: `${cls}(?x) ^ ${prop1}(?x, ?v1) ^ ${prop2}(?x, ?v2) ^ swrlb:multiply(?product, ?v1, ?v2) -> has${prop1}${prop2}Product(?x, ?product)`,
+          description: `Calculate product of ${prop1} and ${prop2} for ${cls}`
+        });
+        
+        // Comparison
+        generated.push({
+          name: `${cls} ${prop1} > ${prop2}`,
+          template: `${cls}(?x) ^ ${prop1}(?x, ?v1) ^ ${prop2}(?x, ?v2) ^ swrlb:greaterThan(?v1, ?v2) -> has${prop1}Greater(?x, true)`,
+          description: `Check if ${prop1} exceeds ${prop2} for ${cls}`
         });
       }
       
-      // String matching (if we have string properties)
-      if (classes.length >= 2 && dataProps.length > 0) {
-        const cls1 = classes[0];
-        const cls2 = classes[1];
-        const prop = dataProps[0];
+      // Generate templates for same-value relationships
+      if (classes.length > 0 && objProps.length > 0) {
+        const cls = classes[0];
+        const objProp = objProps[0];
         generated.push({
-          name: `${cls2} from ${prop}`,
-          template: `${cls1}(?x) ^ ${prop}(?x, ?str) ^ swrlb:contains(?str, "special") -> ${cls2}(?x)`,
-          description: `Classify as ${cls2} based on ${prop} content`
+          name: `${cls} Shared ${objProp}`,
+          template: `${cls}(?x) ^ ${cls}(?y) ^ ${objProp}(?x, ?ref) ^ ${objProp}(?y, ?ref) ^ swrlb:notEqual(?x, ?y) -> related${objProp}(?x, ?y)`,
+          description: `Find ${cls} instances sharing the same ${objProp}`
         });
       }
       
-      // Property equality check - infer relationship property
-      if (classes.length > 0 && objProps.length >= 2) {
-        const cls1 = classes[0];
-        const prop1 = objProps[0];
-        const prop2 = objProps[1];
-        const inferredProp = objProps.length > 2 ? objProps[2] : `relatedBy${prop1}`;
-        generated.push({
-          name: `Same ${prop1} ${prop2}`,
-          template: `${cls1}(?x) ^ ${cls1}(?y) ^ ${prop1}(?x, ?ref) ^ ${prop2}(?y, ?ref) ^ swrlb:notEqual(?x, ?y) -> ${inferredProp}(?x, ?y)`,
-          description: `Infer ${inferredProp} relationship between ${cls1} instances sharing ${prop1}/${prop2} value`
-        });
-      }
-      
-      // SQWRL query template
+      // Generate templates for aggregate SQWRL queries
       if (classes.length > 0 && dataProps.length > 0) {
         const cls = classes[0];
         const prop = dataProps[0];
+        
+        // Count
         generated.push({
-          name: `Query ${cls} by ${prop}`,
-          template: `${cls}(?x) ^ ${prop}(?x, ?val) -> sqwrl:select(?x, ?val) ^ sqwrl:orderBy(?val)`,
-          description: `Query and sort ${cls} instances by ${prop}`
+          name: `Count ${cls}`,
+          template: `${cls}(?x) -> sqwrl:select(?x) ^ sqwrl:count(?x)`,
+          description: `Count total number of ${cls} instances`
+        });
+        
+        // Min/Max
+        generated.push({
+          name: `${cls} Min ${prop}`,
+          template: `${cls}(?x) ^ ${prop}(?x, ?val) -> sqwrl:select(?val) ^ sqwrl:min(?val)`,
+          description: `Find minimum ${prop} value in ${cls}`
+        });
+        
+        generated.push({
+          name: `${cls} Max ${prop}`,
+          template: `${cls}(?x) ^ ${prop}(?x, ?val) -> sqwrl:select(?val) ^ sqwrl:max(?val)`,
+          description: `Find maximum ${prop} value in ${cls}`
+        });
+        
+        // Average
+        generated.push({
+          name: `${cls} Avg ${prop}`,
+          template: `${cls}(?x) ^ ${prop}(?x, ?val) -> sqwrl:select(?x) ^ sqwrl:avg(?val)`,
+          description: `Calculate average ${prop} for all ${cls}`
         });
       }
       
-      setDynamicTemplates(generated);
+      // Limit templates to avoid overwhelming UI
+      setDynamicTemplates(generated.slice(0, 20));
     } catch (e) {
       console.error('Failed to load ontology schema:', e);
       setDynamicTemplates([]);
@@ -2001,15 +2081,35 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                           <BookOpen size={12} /> Templates
                           <ChevronDown size={12} />
                         </button>
-                        <div className="absolute right-0 top-full mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-xl z-50 hidden group-hover:block">
+                        <div className="absolute right-0 top-full mt-1 w-80 max-h-96 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-xl z-50 hidden group-hover:block">
+                          {dynamicTemplates.length > 0 && (
+                            <div>
+                              <div className="sticky top-0 px-3 py-2 text-[10px] font-semibold text-green-700 bg-green-50 border-b border-green-200 flex items-center gap-1">
+                                <Sparkles size={10} /> Ontology-Based Templates ({dynamicTemplates.length})
+                              </div>
+                              {dynamicTemplates.map((t, i) => (
+                                <button
+                                  key={`dyn-${i}`}
+                                  onClick={() => setEditForm(prev => ({ ...prev, ruleText: t.template }))}
+                                  className="w-full text-left px-3 py-2 text-xs hover:bg-green-50 border-b border-gray-100"
+                                >
+                                  <div className="font-medium text-green-800">{t.name}</div>
+                                  <div className="text-[10px] text-green-600 truncate">{t.description}</div>
+                                </button>
+                              ))}
+                              <div className="px-3 py-2 text-[10px] font-semibold text-purple-700 bg-purple-50 border-b border-purple-200">
+                                General Templates
+                              </div>
+                            </div>
+                          )}
                           {RULE_TEMPLATES.map((t, i) => (
                             <button
                               key={i}
                               onClick={() => setEditForm(prev => ({ ...prev, ruleText: t.template }))}
-                              className="w-full text-left px-3 py-2 text-sm hover:bg-purple-50 border-b border-gray-100 last:border-0"
+                              className="w-full text-left px-3 py-2 text-xs hover:bg-purple-50 border-b border-gray-100 last:border-0"
                             >
                               <div className="font-medium text-gray-800">{t.name}</div>
-                              <div className="text-xs text-gray-500 truncate">{t.template}</div>
+                              <div className="text-[10px] text-gray-500 truncate">{t.description}</div>
                             </button>
                           ))}
                         </div>

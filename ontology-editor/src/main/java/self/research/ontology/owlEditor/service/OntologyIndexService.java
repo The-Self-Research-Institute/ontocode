@@ -257,7 +257,7 @@ public class OntologyIndexService {
         meta.put("annotationPropertyCount", counts.getOrDefault("annotationProperties", 0));
         meta.put("datatypeCount", datatypeCount);
         meta.put("importsCount", importsCount);
-        meta.put("prefixCount", meta.containsKey("prefixes") ? ((List<?>) meta.get("prefixes")).size() : 0);
+        meta.put("prefixCount", meta.containsKey("prefixes") ? ((Map<?, ?>) meta.get("prefixes")).size() : 0);
         meta.put("subClassOfAxiomCount", axiomCounts.get("subClassOf"));
         meta.put("equivalentClassesAxiomCount", axiomCounts.get("equivalentClasses"));
         meta.put("disjointClassesAxiomCount", axiomCounts.get("disjointClasses"));

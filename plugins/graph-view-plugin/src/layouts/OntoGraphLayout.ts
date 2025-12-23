@@ -21,10 +21,10 @@ interface LayoutNode {
  * OntoGraph Layout - Protégé Style
  * Organized hierarchical layout similar to Protégé OntoGraf
  * Features:
- * - Root node on the left
- * - Children expand to the right in vertical columns
- * - Hierarchical levels organized horizontally (left to right)
- * - Siblings organized vertically at same level
+ * - Root node at the top
+ * - Children expand downwards in horizontal rows
+ * - Hierarchical levels organized vertically (top to bottom)
+ * - Siblings organized horizontally at same level
  * - Clean, non-overlapping positioning
  */
 export function applyOntoGraphLayout(
@@ -35,8 +35,8 @@ export function applyOntoGraphLayout(
   const {
     width,
     height,
-    horizontalSpacing = 200, // Increased for left-to-right layout
-    verticalSpacing = 80,    // Spacing between siblings
+    horizontalSpacing = 180, // Spacing between siblings (horizontal)
+    verticalSpacing = 150,   // Spacing between levels (vertical)
     centerX = width / 2,
     centerY = height / 2
   } = options;
@@ -84,18 +84,18 @@ export function applyOntoGraphLayout(
     }
   }
 
-  // Assign levels to each node (BFS from roots) - levels go LEFT to RIGHT
+  // Assign levels to each node (BFS from roots) - levels go TOP to BOTTOM
   const nodeLevels = new Map<string, number>();
   const visited = new Set<string>();
   const queue: Array<{ nodeId: string; level: number }> = [];
 
-  // Initialize with root nodes at level 0 (leftmost)
+  // Initialize with root nodes at level 0 (topmost)
   rootNodes.forEach(root => {
     queue.push({ nodeId: root.id, level: 0 });
     nodeLevels.set(root.id, 0);
   });
 
-  // BFS to assign levels (deeper levels go to the right)
+  // BFS to assign levels (deeper levels go downwards)
   while (queue.length > 0) {
     const { nodeId, level } = queue.shift()!;
     
@@ -120,7 +120,7 @@ export function applyOntoGraphLayout(
     }
   });
 
-  // Group nodes by level (column in left-to-right layout)
+  // Group nodes by level (row in top-to-bottom layout)
   const levelGroups = new Map<number, OntologyNode[]>();
   nodes.forEach(node => {
     const level = nodeLevels.get(node.id) || 0;
@@ -130,30 +130,23 @@ export function applyOntoGraphLayout(
     levelGroups.get(level)!.push(node);
   });
 
-  // Calculate positions for each level (left to right)
+  // Calculate positions for each level (top to bottom)
   const maxLevel = Math.max(...Array.from(nodeLevels.values()));
-  const startX = 100; // Start from left margin
+  const startY = 100; // Start from top margin
 
-  // First pass: calculate vertical positions for each level
-  const levelHeights = new Map<number, number>();
-  Array.from(levelGroups.entries()).forEach(([level, levelNodes]) => {
-    const totalHeight = (levelNodes.length - 1) * verticalSpacing;
-    levelHeights.set(level, totalHeight);
-  });
-
-  // Position nodes: X by level (left to right), Y by index within level (top to bottom)
+  // Position nodes: Y by level (top to bottom), X by index within level (left to right)
   Array.from(levelGroups.entries())
     .sort(([a], [b]) => a - b)
     .forEach(([level, levelNodes]) => {
-      const x = startX + level * horizontalSpacing;
-      const totalHeight = (levelNodes.length - 1) * verticalSpacing;
-      const startY = Math.max(80, (height - totalHeight) / 2);
+      const y = startY + level * verticalSpacing;
+      const totalWidth = (levelNodes.length - 1) * horizontalSpacing;
+      const startX = Math.max(100, (width - totalWidth) / 2);
 
       // Sort nodes within level by parent connections for better organization
       const sortedNodes = sortNodesByParent(levelNodes, childToParents, parentToChildren);
 
       sortedNodes.forEach((node, index) => {
-        const y = startY + index * verticalSpacing;
+        const x = startX + index * horizontalSpacing;
         positionMap.set(node.id, { x, y });
       });
     });
