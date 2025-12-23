@@ -98,7 +98,7 @@ services:
     container_name: ontocode-gateway
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "80:80"
     environment:
       SPRING_PROFILES_ACTIVE: docker
       JWT_SECRET: ${JWT_SECRET:-b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==}
