@@ -54,7 +54,7 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .csrf(AbstractHttpConfigurer::disable) // Disable CSRF for stateless API
-                .cors(cors -> cors.configurationSource(corsConfigurationSource())) // Enable CORS
+                .cors(AbstractHttpConfigurer::disable) // Disable CORS - handled by gateway
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll() // Always allow preflight
                         .requestMatchers("/api/auth/**").permitAll() // Allow public access to auth endpoints
@@ -80,8 +80,10 @@ public class SecurityConfig {
             "http://127.0.0.1:*",             // Local development (loopback)
             "https://localhost:*",            // Local development over HTTPS
             "vscode-webview://*",             // VS Code webview
-            "vscode-webview-resource://*", 
-            "null"                            // Some sandboxed/webview contexts
+            "vscode-webview-resource://*",
+            "https://*.vscode-cdn.net",       // VS Code CDN
+            "https://*.vscode-unpkg.net",     // VS Code unpkg CDN
+            "*"                               // Allow all origins (for development)
         ));
         
         // Allow all HTTP methods
@@ -91,7 +93,7 @@ public class SecurityConfig {
         configuration.setAllowedHeaders(Arrays.asList("*"));
         
         // Allow credentials (cookies, authorization headers)
-        configuration.setAllowCredentials(true);
+        configuration.setAllowCredentials(false); // Changed to false for wildcard origin
         
         // Cache preflight response for 1 hour
         configuration.setMaxAge(3600L);

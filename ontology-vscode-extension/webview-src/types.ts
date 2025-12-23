@@ -14,6 +14,8 @@ export interface TreeNode {
   totalInstanceCount?: number;
   annotations?: Record<string, string>;
   equivalentClassesAxioms?: Axiom[];
+  equivalentClasses?: { iri: string; label: string }[];
+  isUnsatisfiable?: boolean;
   subClassOfAxioms?: Axiom[];
   disjointClassesAxioms?: Axiom[];
   disjointUnionAxioms?: Axiom[];
@@ -31,7 +33,7 @@ export interface Property {
   superProperties?: string[];
   inverseProperties?: string[];
   disjointProperties?: string[];
-  equivalentProperties?: string[];
+  equivalentProperties?: string[] | { iri: string; label: string }[];
   propertyChains?: string[];
   characteristics?: string[];
   annotations?: Record<string, string>;
