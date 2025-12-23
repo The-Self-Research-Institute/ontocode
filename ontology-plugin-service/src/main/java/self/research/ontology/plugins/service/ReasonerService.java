@@ -147,7 +147,11 @@ public class ReasonerService {
                 // Continue anyway - some reasoners can still provide partial results
             }
             
-            reasoner.precomputeInferences(InferenceType.CLASS_HIERARCHY);
+            reasoner.precomputeInferences(
+                InferenceType.CLASS_HIERARCHY,
+                InferenceType.OBJECT_PROPERTY_HIERARCHY,
+                InferenceType.DATA_PROPERTY_HIERARCHY
+            );
             
             long duration = System.currentTimeMillis() - startTime;
             log.info("Classification completed in {} ms", duration);
@@ -245,11 +249,62 @@ public class ReasonerService {
             }
             results.put("unsatisfiableClasses", unsatisfiableList);
             
+            // Build property hierarchies
+            List<Map<String, Object>> objectPropertyHierarchy = new ArrayList<>();
+            try {
+                OWLObjectProperty topObjectProp = df.getOWLTopObjectProperty();
+                Set<OWLObjectProperty> processedObjProps = new HashSet<>();
+                buildObjectPropertyHierarchy(reasoner, ontology, topObjectProp, objectPropertyHierarchy, processedObjProps, 0);
+                
+                // Fallback to asserted properties if inferred hierarchy is empty
+                if (objectPropertyHierarchy.isEmpty()) {
+                    log.info("Inferred object property hierarchy empty, falling back to asserted properties");
+                    for (OWLObjectProperty prop : ontology.getObjectPropertiesInSignature()) {
+                        if (!prop.isOWLTopObjectProperty() && !prop.isOWLBottomObjectProperty()) {
+                            Map<String, Object> node = new HashMap<>();
+                            node.put("iri", prop.getIRI().toString());
+                            node.put("label", getLabel(prop, ontology));
+                            node.put("depth", 0);
+                            node.put("childrenCount", 0);
+                            objectPropertyHierarchy.add(node);
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                log.error("Error building object property hierarchy", e);
+            }
+            results.put("objectPropertyHierarchy", objectPropertyHierarchy);
+
+            List<Map<String, Object>> dataPropertyHierarchy = new ArrayList<>();
+            try {
+                OWLDataProperty topDataProp = df.getOWLTopDataProperty();
+                Set<OWLDataProperty> processedDataProps = new HashSet<>();
+                buildDataPropertyHierarchy(reasoner, ontology, topDataProp, dataPropertyHierarchy, processedDataProps, 0);
+                
+                // Fallback to asserted properties if inferred hierarchy is empty
+                if (dataPropertyHierarchy.isEmpty()) {
+                    log.info("Inferred data property hierarchy empty, falling back to asserted properties");
+                    for (OWLDataProperty prop : ontology.getDataPropertiesInSignature()) {
+                        if (!prop.isOWLTopDataProperty() && !prop.isOWLBottomDataProperty()) {
+                            Map<String, Object> node = new HashMap<>();
+                            node.put("iri", prop.getIRI().toString());
+                            node.put("label", getLabel(prop, ontology));
+                            node.put("depth", 0);
+                            node.put("childrenCount", 0);
+                            dataPropertyHierarchy.add(node);
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                log.error("Error building data property hierarchy", e);
+            }
+            results.put("dataPropertyHierarchy", dataPropertyHierarchy);
+            
             // Total counts
             results.put("totalClasses", ontology.getClassesInSignature().size());
             
-            log.info("Classification results: {} hierarchy nodes, {} equivalent class groups, {} unsatisfiable classes",
-                classHierarchy.size(), equivalentClasses.size(), unsatisfiableList.size());
+            log.info("Classification results: {} class nodes, {} object prop nodes, {} data prop nodes",
+                classHierarchy.size(), objectPropertyHierarchy.size(), dataPropertyHierarchy.size());
             
             return results;
             
@@ -299,6 +354,79 @@ public class ReasonerService {
                 // Recursively process children (limit depth to avoid huge hierarchies)
                 if (depth < 5 && childrenCount > 0) {
                     buildClassHierarchy(reasoner, ontology, subClass, hierarchy, processedClasses, depth + 1);
+                }
+            }
+        }
+    }
+
+    /**
+     * Recursively build object property hierarchy
+     */
+    private void buildObjectPropertyHierarchy(OWLReasoner reasoner, OWLOntology ontology, OWLObjectProperty parentProp,
+                                             List<Map<String, Object>> hierarchy, Set<OWLObjectProperty> processedProps, int depth) {
+        if (processedProps.contains(parentProp) || depth > 10) {
+            return;
+        }
+        processedProps.add(parentProp);
+        
+        for (Node<OWLObjectPropertyExpression> node : reasoner.getSubObjectProperties(parentProp, true)) {
+            for (OWLObjectPropertyExpression subPropExpr : node.getEntities()) {
+                if (subPropExpr.isAnonymous() || subPropExpr.asOWLObjectProperty().isOWLBottomObjectProperty()) {
+                    continue;
+                }
+                
+                OWLObjectProperty subProp = subPropExpr.asOWLObjectProperty();
+                Map<String, Object> propNode = new HashMap<>();
+                propNode.put("iri", subProp.getIRI().toString());
+                propNode.put("label", getLabel(subProp, ontology));
+                propNode.put("depth", depth);
+                
+                int childrenCount = (int) reasoner.getSubObjectProperties(subProp, true)
+                    .entities()
+                    .filter(p -> !p.isAnonymous() && !p.asOWLObjectProperty().isOWLBottomObjectProperty())
+                    .count();
+                propNode.put("childrenCount", childrenCount);
+                
+                hierarchy.add(propNode);
+                
+                if (depth < 5 && childrenCount > 0) {
+                    buildObjectPropertyHierarchy(reasoner, ontology, subProp, hierarchy, processedProps, depth + 1);
+                }
+            }
+        }
+    }
+
+    /**
+     * Recursively build data property hierarchy
+     */
+    private void buildDataPropertyHierarchy(OWLReasoner reasoner, OWLOntology ontology, OWLDataProperty parentProp,
+                                           List<Map<String, Object>> hierarchy, Set<OWLDataProperty> processedProps, int depth) {
+        if (processedProps.contains(parentProp) || depth > 10) {
+            return;
+        }
+        processedProps.add(parentProp);
+        
+        for (Node<OWLDataProperty> node : reasoner.getSubDataProperties(parentProp, true)) {
+            for (OWLDataProperty subProp : node.getEntities()) {
+                if (subProp.isOWLBottomDataProperty()) {
+                    continue;
+                }
+                
+                Map<String, Object> propNode = new HashMap<>();
+                propNode.put("iri", subProp.getIRI().toString());
+                propNode.put("label", getLabel(subProp, ontology));
+                propNode.put("depth", depth);
+                
+                int childrenCount = (int) reasoner.getSubDataProperties(subProp, true)
+                    .entities()
+                    .filter(p -> !p.isOWLBottomDataProperty())
+                    .count();
+                propNode.put("childrenCount", childrenCount);
+                
+                hierarchy.add(propNode);
+                
+                if (depth < 5 && childrenCount > 0) {
+                    buildDataPropertyHierarchy(reasoner, ontology, subProp, hierarchy, processedProps, depth + 1);
                 }
             }
         }

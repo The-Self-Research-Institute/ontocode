@@ -79,6 +79,8 @@ public class SecurityConfig {
             "http://localhost:*",              // Local development (any port)
             "http://127.0.0.1:*",             // Local development (loopback)
             "https://localhost:*",            // Local development over HTTPS
+            "http://ec2-13-218-153-101.compute-1.amazonaws.com:*",
+            "https://ec2-13-218-153-101.compute-1.amazonaws.com:*",
             "vscode-webview://*",             // VS Code webview
             "vscode-webview-resource://*", 
             "null"                            // Some sandboxed/webview contexts

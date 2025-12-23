@@ -38,11 +38,11 @@ RUN chown -R appuser:appuser /app
 USER appuser
 
 # Expose gateway port
-EXPOSE 8082
+EXPOSE 8000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8082/actuator/health || exit 1
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8000/actuator/health || exit 1
 
 # Run the application
 ENTRYPOINT ["java", "-jar", "app.jar"]

@@ -45,8 +45,8 @@ const { execSync } = require('child_process');
 
 const MONGO_URL = process.env.MONGODB_URI || 'mongodb://localhost:27017';
 const DB_NAME = process.env.MONGODB_DATABASE || 'ontology';
-// HARDCODED FIX: In Docker container, plugins are always at /app/plugins
-const PLUGINS_DIR = '/app/plugins';
+// Use /app/plugins in Docker, otherwise use local path
+const PLUGINS_DIR = fs.existsSync('/app/plugins') ? '/app/plugins' : path.resolve(__dirname, '..', 'plugins');
 
 // =============================================================================
 // PLUGIN DEFINITIONS - Single source of truth
@@ -101,6 +101,16 @@ const PLUGINS = [
     version: '1.0.0',
     category: 'Query',
     keywords: ['sparql', 'query', 'graphdb', 'rdf', 'triplestore', 'database'],
+    featured: true
+  },
+  {
+    pluginId: 'reasoner-plugin',
+    name: 'Protégé Reasoner',
+    shortDescription: 'Advanced OWL 2 reasoning with HermiT, ELK, and Pellet',
+    description: 'Advanced OWL 2 reasoning plugin providing Protégé-style interface. Supports HermiT, ELK, Pellet, and Openllet reasoners. Features include consistency checking, classification, inferred hierarchy visualization, unsatisfiable class detection with explanations, and real-time synchronization with the ontology editor.',
+    version: '1.0.0',
+    category: 'Reasoning',
+    keywords: ['reasoner', 'owl', 'hermit', 'elk', 'pellet', 'inference', 'consistency', 'classification'],
     featured: true
   }
 ];
