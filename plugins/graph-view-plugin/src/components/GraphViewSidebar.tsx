@@ -93,6 +93,20 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [sidebarWidth, setSidebarWidth] = useState(340);
   const [isResizing, setIsResizing] = useState(false);
+  
+  // Local state for sliders to prevent frequent graph movement
+  const [localClassDistance, setLocalClassDistance] = useState(classDistance);
+  const [localDatatypeDistance, setLocalDatatypeDistance] = useState(datatypeDistance);
+
+  // Sync local state with props when props change
+  React.useEffect(() => {
+    setLocalClassDistance(classDistance);
+  }, [classDistance]);
+
+  React.useEffect(() => {
+    setLocalDatatypeDistance(datatypeDistance);
+  }, [datatypeDistance]);
+
   const [expandedSections, setExpandedSections] = useState({
     filters: true,
     search: true,
@@ -611,6 +625,45 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                     ({edges.filter(e => e.type === 'subClassOf').length})
                   </span>
                 </label>
+                <label style={styles.topFilterLabel}>
+                  <input
+                    type="checkbox"
+                    checked={vowlFilters?.showFunctionalProperties ?? true}
+                    onChange={(e) => vowlFilters && onVowlFilterChange?.({ ...vowlFilters, showFunctionalProperties: e.target.checked })}
+                    style={styles.topFilterCheckbox}
+                  />
+                  <span>Functional Properties</span>
+                </label>
+                <div style={{ ...styles.filterCategoryTitle, marginTop: '12px' }}>
+                  Class Visibility
+                </div>
+                <label style={styles.topFilterLabel}>
+                  <input
+                    type="checkbox"
+                    checked={vowlFilters?.showInternalClasses ?? true}
+                    onChange={(e) => vowlFilters && onVowlFilterChange?.({ ...vowlFilters, showInternalClasses: e.target.checked })}
+                    style={styles.topFilterCheckbox}
+                  />
+                  <span>Internal Classes</span>
+                </label>
+                <label style={styles.topFilterLabel}>
+                  <input
+                    type="checkbox"
+                    checked={vowlFilters?.showExternalClasses ?? true}
+                    onChange={(e) => vowlFilters && onVowlFilterChange?.({ ...vowlFilters, showExternalClasses: e.target.checked })}
+                    style={styles.topFilterCheckbox}
+                  />
+                  <span>External Classes</span>
+                </label>
+                <label style={styles.topFilterLabel}>
+                  <input
+                    type="checkbox"
+                    checked={vowlFilters?.showDatatypes ?? true}
+                    onChange={(e) => vowlFilters && onVowlFilterChange?.({ ...vowlFilters, showDatatypes: e.target.checked })}
+                    style={styles.topFilterCheckbox}
+                  />
+                  <span>Datatypes</span>
+                </label>
               </div>
             )}
           </div>
@@ -1068,15 +1121,35 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                         flexShrink: 0
                       }} />
                     ) : viewMode === 'ontograph' ? (
-                      // OntoGraph mode: Rectangle with rounded corners
+                      // OntoGraph mode: Rectangle with rounded corners and 'C' icon
                       <div style={{
-                        width: '26px',
-                        height: '14px',
+                        width: '32px',
+                        height: '18px',
                         borderRadius: '3px',
-                        backgroundColor: item.color || '#E8EAF6',
-                        border: '2px solid #5E35B1',
-                        flexShrink: 0
-                      }} />
+                        backgroundColor: item.color || '#FFF9C4',
+                        border: '1px solid #9E9E9E',
+                        flexShrink: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        position: 'relative',
+                        overflow: 'hidden'
+                      }}>
+                        <div style={{
+                          position: 'absolute',
+                          left: 0,
+                          top: 0,
+                          bottom: 0,
+                          width: '10px',
+                          backgroundColor: '#5E35B1',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '8px',
+                          fontWeight: 'bold',
+                          color: '#fff'
+                        }}>C</div>
+                      </div>
                     ) : (
                       // VOWL mode: Circle (solid border for normal classes, dashed for Thing)
                       <div style={{
@@ -1110,14 +1183,45 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                     }} />
                   ) : item.nodeType === 'individual' ? (
                     // Individuals: Rectangle (all modes)
-                    <div style={{
-                      width: viewMode === 'force' ? '32px' : '28px',
-                      height: '16px',
-                      backgroundColor: item.color || (viewMode === 'force' ? '#a78bfa' : '#E74C3C'),
-                      border: viewMode === 'force' ? '2px solid #000000' : '2px solid #1f2937',
-                      flexShrink: 0,
-                      borderRadius: '4px'
-                    }} />
+                    viewMode === 'ontograph' ? (
+                      <div style={{
+                        width: '32px',
+                        height: '18px',
+                        borderRadius: '3px',
+                        backgroundColor: item.color || '#E1F5FE',
+                        border: '1px solid #9E9E9E',
+                        flexShrink: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        position: 'relative',
+                        overflow: 'hidden'
+                      }}>
+                        <div style={{
+                          position: 'absolute',
+                          left: 0,
+                          top: 0,
+                          bottom: 0,
+                          width: '10px',
+                          backgroundColor: '#0288D1',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '8px',
+                          fontWeight: 'bold',
+                          color: '#fff'
+                        }}>I</div>
+                      </div>
+                    ) : (
+                      <div style={{
+                        width: viewMode === 'force' ? '32px' : '28px',
+                        height: '16px',
+                        backgroundColor: item.color || (viewMode === 'force' ? '#a78bfa' : '#E74C3C'),
+                        border: viewMode === 'force' ? '2px solid #000000' : '2px solid #1f2937',
+                        flexShrink: 0,
+                        borderRadius: '4px'
+                      }} />
+                    )
                   ) : item.nodeType === 'datatype' ? (
                     // Datatypes: Rounded Rectangle - white for force mode, dashed for VOWL
                     <div style={{
@@ -1264,6 +1368,71 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
           </div>
           {expandedSections.vowlControls && (
             <div style={styles.vowlControlsSection}>
+              {/* VOWL Specific Filters */}
+              {(viewMode === 'vowl' || viewMode === 'ontograph') && (
+                <div style={{ marginBottom: '16px', borderBottom: '1px solid #eee', paddingBottom: '12px' }}>
+                  <div style={{ ...styles.controlLabel, fontWeight: 'bold', marginBottom: '8px' }}>VOWL Filters</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={vowlFilters?.showInternalClasses ?? true}
+                        onChange={(e) => vowlFilters && onVowlFilterChange?.({ ...vowlFilters, showInternalClasses: e.target.checked })}
+                      />
+                      Internal Classes
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={vowlFilters?.showExternalClasses ?? true}
+                        onChange={(e) => vowlFilters && onVowlFilterChange?.({ ...vowlFilters, showExternalClasses: e.target.checked })}
+                      />
+                      External Classes
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={vowlFilters?.showDatatypes ?? true}
+                        onChange={(e) => vowlFilters && onVowlFilterChange?.({ ...vowlFilters, showDatatypes: e.target.checked })}
+                      />
+                      Datatypes
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={vowlFilters?.showObjectProperties ?? true}
+                        onChange={(e) => vowlFilters && onVowlFilterChange?.({ ...vowlFilters, showObjectProperties: e.target.checked })}
+                      />
+                      Object Properties
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={vowlFilters?.showDataProperties ?? true}
+                        onChange={(e) => vowlFilters && onVowlFilterChange?.({ ...vowlFilters, showDataProperties: e.target.checked })}
+                      />
+                      Data Properties
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={vowlFilters?.showSubClassOf ?? true}
+                        onChange={(e) => vowlFilters && onVowlFilterChange?.({ ...vowlFilters, showSubClassOf: e.target.checked })}
+                      />
+                      SubClass Relationships
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={vowlFilters?.showFunctionalProperties ?? true}
+                        onChange={(e) => vowlFilters && onVowlFilterChange?.({ ...vowlFilters, showFunctionalProperties: e.target.checked })}
+                      />
+                      Functional Properties
+                    </label>
+                  </div>
+                </div>
+              )}
+
               {/* Class Distance Slider */}
               <div style={styles.controlGroup}>
                 <label style={styles.controlLabel}>Class Distance:</label>
@@ -1271,11 +1440,13 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                   type="range"
                   min="10"
                   max="200"
-                  value={classDistance}
-                  onChange={(e) => onClassDistanceChange?.(parseInt(e.target.value))}
+                  value={localClassDistance}
+                  onChange={(e) => setLocalClassDistance(parseInt(e.target.value))}
+                  onMouseUp={() => onClassDistanceChange?.(localClassDistance)}
+                  onKeyUp={(e) => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') onClassDistanceChange?.(localClassDistance); }}
                   style={styles.slider}
                 />
-                <span style={styles.sliderValue}>{classDistance}</span>
+                <span style={styles.sliderValue}>{localClassDistance}</span>
               </div>
 
               {/* Datatype Distance Slider */}
@@ -1285,11 +1456,13 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                   type="range"
                   min="5"
                   max="150"
-                  value={datatypeDistance}
-                  onChange={(e) => onDatatypeDistanceChange?.(parseInt(e.target.value))}
+                  value={localDatatypeDistance}
+                  onChange={(e) => setLocalDatatypeDistance(parseInt(e.target.value))}
+                  onMouseUp={() => onDatatypeDistanceChange?.(localDatatypeDistance)}
+                  onKeyUp={(e) => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') onDatatypeDistanceChange?.(localDatatypeDistance); }}
                   style={styles.slider}
                 />
-                <span style={styles.sliderValue}>{datatypeDistance}</span>
+                <span style={styles.sliderValue}>{localDatatypeDistance}</span>
               </div>
 
               {/* Layout Controls */}

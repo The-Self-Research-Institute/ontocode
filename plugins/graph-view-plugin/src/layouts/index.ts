@@ -4,6 +4,7 @@ export { applyCircularLayout, applyMultiRingLayout } from './CircularLayout';
 export { applyRadialLayout } from './RadialLayout';
 export { applyLayeredLayout } from './LayeredLayout';
 export { applyTreeLayout } from './TreeLayout';
+export { applyGridLayout } from './GridLayout';
 export { prepareMatrixData, generateMatrixVisualization } from './MatrixLayout';
 export { applyOntoGraphLayout, refineOntoGraphLayout } from './OntoGraphLayout';
 

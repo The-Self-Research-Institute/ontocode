@@ -510,13 +510,41 @@ public class SwrlEngineService {
 
     /**
      * ✅ FIXED: Track access time for cleanup
+     * ✅ ENHANCED: Set up prefix mappings for better SWRL parsing
      */
     private SWRLRuleEngine getOrCreateEngine(String projectId, OWLOntology ontology) {
         engineLastAccess.put(projectId, System.currentTimeMillis());
         
         return engineCache.computeIfAbsent(projectId, id -> {
             logger.info("Creating new SWRL engine for project: {}", projectId);
-            return SWRLAPIFactory.createSWRLRuleEngine(ontology);
+            SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
+            
+            // Set up default prefix mappings
+            try {
+                // Get ontology IRI and log it for debugging
+                com.google.common.base.Optional<IRI> ontologyIRIOptional = ontology.getOntologyID().getOntologyIRI();
+                if (ontologyIRIOptional.isPresent()) {
+                    IRI ontologyIRI = ontologyIRIOptional.get();
+                    String baseIRI = ontologyIRI.toString();
+                    if (!baseIRI.endsWith("#") && !baseIRI.endsWith("/")) {
+                        baseIRI = baseIRI + "#";
+                    }
+                    
+                    logger.info("Ontology base IRI for project {}: {}", projectId, baseIRI);
+                    logger.info("Classes in ontology: {}", 
+                        ontology.getClassesInSignature().stream()
+                            .map(c -> c.getIRI().getShortForm())
+                            .limit(10)
+                            .collect(Collectors.joining(", ")));
+                } else {
+                    logger.warn("No ontology IRI found for project: {}", projectId);
+                }
+                
+            } catch (Exception e) {
+                logger.warn("Failed to log ontology info for project {}: {}", projectId, e.getMessage());
+            }
+            
+            return engine;
         });
     }
 
@@ -540,6 +568,15 @@ public class SwrlEngineService {
     private List<String> generateEnhancedSuggestions(String ruleText, SWRLParseException e) {
         List<String> suggestions = new ArrayList<>();
         String errorMsg = e.getMessage().toLowerCase();
+        
+        // Invalid predicate error
+        if (errorMsg.contains("invalid") && errorMsg.contains("predicate")) {
+            suggestions.add("The class, property, or individual does not exist in your ontology");
+            suggestions.add("Check that the entity name exactly matches what's in your OWL file");
+            suggestions.add("Ensure proper capitalization (classes usually start with uppercase)");
+            suggestions.add("If using a different namespace, you may need to use full IRIs");
+            suggestions.add("Example with full IRI: <http://example.org/ontology#BloodPressure>(?x)");
+        }
         
         // Missing conjunction
         if (ruleText.contains("->") && !ruleText.contains("^")) {

@@ -68,18 +68,7 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: any } | null>(null);
   const [showClassTree, setShowClassTree] = useState(true);
   const [expandedClasses, setExpandedClasses] = useState<Set<string>>(new Set(['owl:Thing']));
-  
-  const [layoutType, setLayoutType] = useState<'hierarchical' | 'force' | 'circular' | 'radial'>('hierarchical');
-  const [assertionView, setAssertionView] = useState<'asserted' | 'inferred' | 'all'>('asserted');
-  const [showInferences, setShowInferences] = useState(false);
-  
-  // Fetch ontology data
-  const fetchGraphData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const response = await fetch(
-        `${(window as any).API_BASE_URL}/api/ontology/${projectId}/graph`,
-        {
+  const [isDark, setIsDark] = useState(false);
           headers: {
             'Authorization': `Bearer ${localStorage.getItem('authToken')}`
           }
@@ -100,6 +89,19 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
       setLoading(false);
     }
   }, [projectId]);
+
+  // Detect dark mode
+  useEffect(() => {
+    const checkDarkMode = () => {
+      setIsDark(document.documentElement.classList.contains('dark'));
+    };
+    
+    checkDarkMode();
+    const observer = new MutationObserver(checkDarkMode);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     fetchGraphData();
@@ -170,20 +172,27 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
     };
 
     const getEdgeStyle = (type: string) => {
+      const baseColor = isDark ? '#94a3b8' : '#64748b';
+      const subClassColor = isDark ? '#e2e8f0' : '#000000';
+      const propertyColor = isDark ? '#60a5fa' : '#4169E1';
+      const equivalentColor = isDark ? '#fca5a5' : '#FF6347';
+      const disjointColor = isDark ? '#f87171' : '#FF0000';
+      const instanceColor = isDark ? '#a3a3a3' : '#666666';
+      
       switch (type) {
         case 'subClassOf':
-          return { dashes: false, color: '#000000', arrows: { to: { enabled: true, type: 'arrow' } } };
+          return { dashes: false, color: subClassColor, arrows: { to: { enabled: true, type: 'arrow' } } };
         case 'type':
         case 'instanceOf':
-          return { dashes: [5, 5], color: '#666666', arrows: { to: { enabled: true, type: 'arrow' } } };
+          return { dashes: [5, 5], color: instanceColor, arrows: { to: { enabled: true, type: 'arrow' } } };
         case 'property':
-          return { dashes: false, color: '#4169E1', arrows: { to: { enabled: true, type: 'arrow' } } };
+          return { dashes: false, color: propertyColor, arrows: { to: { enabled: true, type: 'arrow' } } };
         case 'equivalentClass':
-          return { dashes: [2, 2], color: '#FF6347', arrows: { to: { enabled: false } } };
+          return { dashes: [2, 2], color: equivalentColor, arrows: { to: { enabled: false } } };
         case 'disjointWith':
-          return { dashes: [10, 5], color: '#FF0000', arrows: { to: { enabled: false } } };
+          return { dashes: [10, 5], color: disjointColor, arrows: { to: { enabled: false } } };
         default:
-          return { dashes: false, color: '#999999', arrows: { to: { enabled: true, type: 'arrow' } } };
+          return { dashes: false, color: baseColor, arrows: { to: { enabled: true, type: 'arrow' } } };
       }
     };
 
@@ -192,26 +201,40 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
       label: node.label || node.id.split('#').pop() || node.id.split('/').pop() || node.id,
       color: {
         background: getNodeColor(node.type),
-        border: '#000000',
+        border: isDark ? '#64748b' : '#1e293b',
         highlight: {
           background: getNodeColor(node.type),
-          border: '#00FF00' // Green border on selection like Protégé
+          border: isDark ? '#22c55e' : '#16a34a' // Green border on selection like Protégé
         },
         hover: {
           background: getNodeColor(node.type),
-          border: '#0000FF'
+          border: isDark ? '#60a5fa' : '#3b82f6'
         }
       },
       shape: getNodeShape(node.type),
       size: 25,
       font: {
         size: 14,
-        color: '#000000',
-        bold: { color: '#000000' },
-        face: 'Arial'
+        color: isDark ? '#1e293b' : '#000000',
+        bold: { color: isDark ? '#1e293b' : '#000000' },
+        face: 'Arial',
+        background: isDark ? 'rgba(30, 41, 59, 0.1)' : 'rgba(255, 255, 255, 0.1)'
       },
       borderWidth: 2,
       borderWidthSelected: 3,
+      shadow: isDark ? {
+        enabled: true,
+        color: 'rgba(0,0,0,0.6)',
+        size: 10,
+        x: 2,
+        y: 2
+      } : {
+        enabled: true,
+        color: 'rgba(0,0,0,0.2)',
+        size: 8,
+        x: 2,
+        y: 2
+      },
       title: createNodeTooltip(node)
     }));
 
@@ -225,9 +248,9 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
         ...style,
         font: {
           size: 11,
-          color: '#333333',
+          color: isDark ? '#e2e8f0' : '#333333',
           align: 'middle',
-          background: 'white'
+          background: isDark ? '#1e293b' : 'white'
         },
         width: 2,
         smooth: {

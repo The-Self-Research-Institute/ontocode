@@ -14,7 +14,7 @@ import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.plugins.service.ReasonerService;
-import self.research.ontology.plugins.service.ReasonerService.ReasonerType;
+import self.research.ontology.plugins.service.ReasonerType;
 
 import java.io.InputStream;
 import java.nio.file.Files;

@@ -67,9 +67,14 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
   const [isRunning, setIsRunning] = useState(false);
   const [isConsistent, setIsConsistent] = useState<boolean | null>(null);
   const [classHierarchy, setClassHierarchy] = useState<ClassNode[]>([]);
+  const [objectPropertyHierarchy, setObjectPropertyHierarchy] = useState<any[]>([]);
+  const [dataPropertyHierarchy, setDataPropertyHierarchy] = useState<any[]>([]);
   const [equivalentClasses, setEquivalentClasses] = useState<any[]>([]);
   const [unsatisfiableClasses, setUnsatisfiableClasses] = useState<any[]>([]);
   const [expandedClasses, setExpandedClasses] = useState<Set<string>>(new Set());
+  const [expandedObjectProperties, setExpandedObjectProperties] = useState<Set<string>>(new Set());
+  const [expandedDataProperties, setExpandedDataProperties] = useState<Set<string>>(new Set());
+  const [activeTab, setActiveTab] = useState<'classes' | 'objectProperties' | 'dataProperties'>('classes');
   const [hoveredClass, setHoveredClass] = useState<string | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | null>(null);
   const [explanations, setExplanations] = useState<Map<string, ExplanationData>>(new Map());
@@ -84,6 +89,26 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
   const tooltipRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const classRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+
+  // Theme detection
+  const [isDark, setIsDark] = useState(false);
+
+  useEffect(() => {
+    const checkTheme = () => {
+      const isDarkMode = document.documentElement.classList.contains('dark');
+      setIsDark(isDarkMode);
+    };
+
+    checkTheme();
+
+    const observer = new MutationObserver(checkTheme);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    });
+
+    return () => observer.disconnect();
+  }, []);
 
   // Handle click outside to close menu
   useEffect(() => {
@@ -168,6 +193,8 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
         }
         
         setClassHierarchy(result.classHierarchy || []);
+        setObjectPropertyHierarchy(result.objectPropertyHierarchy || []);
+        setDataPropertyHierarchy(result.dataPropertyHierarchy || []);
         setEquivalentClasses(result.equivalentClasses || []);
         setUnsatisfiableClasses(result.unsatisfiableClasses || []);
         
@@ -322,7 +349,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
       if (element) {
         element.scrollIntoView({ behavior: 'smooth', block: 'center' });
         // Highlight briefly
-        element.style.backgroundColor = '#fef3c7';
+        element.style.backgroundColor = isDark ? '#78350f' : '#fef3c7';
         setTimeout(() => {
           element.style.backgroundColor = '';
         }, 2000);
@@ -362,9 +389,15 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
             alignItems: 'center',
             padding: '4px 8px',
             cursor: 'pointer',
-            backgroundColor: isSelected ? '#fef3c7' : (hoveredClass === node.iri ? '#f0f0f0' : 'transparent'),
+            backgroundColor: isSelected 
+              ? (isDark ? '#78350f' : '#fef3c7')
+              : (hoveredClass === node.iri 
+                  ? (isDark ? '#374151' : '#f0f0f0')
+                  : 'transparent'),
             borderLeft: isUnsatisfiable ? '3px solid #ef4444' : (isSelected ? '3px solid #f59e0b' : 'none'),
-            color: isUnsatisfiable ? '#ef4444' : 'inherit',
+            color: isUnsatisfiable 
+              ? '#ef4444' 
+              : (isDark ? '#e5e7eb' : 'inherit'),
             transition: 'background-color 0.3s ease'
           }}
           onMouseEnter={(e) => handleClassHover(node.iri, e)}
@@ -404,6 +437,76 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
       </div>
     );
   };
+
+  const renderPropertyNode = (node: ClassNode, type: 'object' | 'data') => {
+    const expandedSet = type === 'object' ? expandedObjectProperties : expandedDataProperties;
+    const toggleExpansion = type === 'object' 
+      ? (iri: string) => setExpandedObjectProperties(prev => {
+          const newSet = new Set(prev);
+          if (newSet.has(iri)) newSet.delete(iri); else newSet.add(iri);
+          return newSet;
+        })
+      : (iri: string) => setExpandedDataProperties(prev => {
+          const newSet = new Set(prev);
+          if (newSet.has(iri)) newSet.delete(iri); else newSet.add(iri);
+          return newSet;
+        });
+
+    const isExpanded = expandedSet.has(node.iri);
+    const hasChildren = node.childrenCount > 0;
+    const isSelected = selectedClassIri === node.iri;
+    const iconColor = type === 'object' ? '#10b981' : '#f59e0b';
+
+    return (
+      <div key={node.iri} style={{ marginLeft: `${node.depth * 20}px` }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            padding: '4px 8px',
+            cursor: 'pointer',
+            backgroundColor: isSelected ? '#fef3c7' : (hoveredClass === node.iri ? '#f0f0f0' : 'transparent'),
+            borderLeft: isSelected ? '3px solid ' + iconColor : 'none',
+            transition: 'background-color 0.3s ease'
+          }}
+          onMouseEnter={(e) => handleClassHover(node.iri, e)}
+          onMouseLeave={handleClassLeave}
+          onClick={() => navigateToClass(node.iri)}
+        >
+          {hasChildren && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleExpansion(node.iri);
+              }}
+              style={{
+                border: 'none',
+                background: 'none',
+                padding: '2px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center'
+              }}
+            >
+              {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </button>
+          )}
+          {!hasChildren && <span style={{ width: '18px' }} />}
+          
+          <Circle
+            size={10}
+            fill={node.isEquivalent ? iconColor : iconColor}
+            stroke="none"
+            style={{ marginRight: '6px', opacity: node.isEquivalent ? 1 : 0.7 }}
+          />
+          
+          <span style={{ fontSize: '13px', flex: 1 }}>{node.label}</span>
+        </div>
+      </div>
+    );
+  };
+
+  const styles = getStyles(isDark);
 
   return (
     <div style={styles.container}>
@@ -939,25 +1042,78 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
           </div>
         )}
 
-        {/* Class Hierarchy */}
-        {classHierarchy.length > 0 && (
+        {/* Tabbed Hierarchy View */}
+        {(classHierarchy.length > 0 || objectPropertyHierarchy.length > 0 || dataPropertyHierarchy.length > 0) && (
           <div style={styles.section}>
             <div style={styles.sectionHeader}>
               <GitBranch size={16} style={{ color: '#3b82f6' }} />
-              <span style={styles.sectionTitle}>Inferred Class Hierarchy ({classHierarchy.length})</span>
+              <span style={styles.sectionTitle}>Inferred Hierarchies</span>
               <span style={styles.helpText}>
                 <HelpCircle size={12} style={{ marginRight: '4px' }} />
-                Hover over classes to see explanations
+                Hover over items to see explanations
               </span>
             </div>
+            
+            {/* Tabs */}
+            <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: '12px' }}>
+              <button
+                onClick={() => setActiveTab('classes')}
+                style={{
+                  padding: '8px 16px',
+                  fontSize: '13px',
+                  fontWeight: activeTab === 'classes' ? 600 : 400,
+                  color: activeTab === 'classes' ? '#8b5cf6' : 'var(--text-primary)',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  borderBottom: activeTab === 'classes' ? '2px solid #8b5cf6' : '2px solid transparent',
+                  cursor: 'pointer'
+                }}
+              >
+                Classes ({classHierarchy.length})
+              </button>
+              <button
+                onClick={() => setActiveTab('objectProperties')}
+                style={{
+                  padding: '8px 16px',
+                  fontSize: '13px',
+                  fontWeight: activeTab === 'objectProperties' ? 600 : 400,
+                  color: activeTab === 'objectProperties' ? '#8b5cf6' : 'var(--text-primary)',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  borderBottom: activeTab === 'objectProperties' ? '2px solid #8b5cf6' : '2px solid transparent',
+                  cursor: 'pointer'
+                }}
+              >
+                Object Properties ({objectPropertyHierarchy.length})
+              </button>
+              <button
+                onClick={() => setActiveTab('dataProperties')}
+                style={{
+                  padding: '8px 16px',
+                  fontSize: '13px',
+                  fontWeight: activeTab === 'dataProperties' ? 600 : 400,
+                  color: activeTab === 'dataProperties' ? '#8b5cf6' : 'var(--text-primary)',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  borderBottom: activeTab === 'dataProperties' ? '2px solid #8b5cf6' : '2px solid transparent',
+                  cursor: 'pointer'
+                }}
+              >
+                Data Properties ({dataPropertyHierarchy.length})
+              </button>
+            </div>
+            
+            {/* Tab Content */}
             <div style={styles.hierarchyContainer}>
-              {classHierarchy.map(node => renderClassNode(node))}
+              {activeTab === 'classes' && classHierarchy.map(node => renderClassNode(node))}
+              {activeTab === 'objectProperties' && objectPropertyHierarchy.map(node => renderPropertyNode(node, 'object'))}
+              {activeTab === 'dataProperties' && dataPropertyHierarchy.map(node => renderPropertyNode(node, 'data'))}
             </div>
           </div>
         )}
 
         {/* Empty State */}
-        {isConsistent === null && classHierarchy.length === 0 && unsatisfiableClasses.length === 0 && (
+        {isConsistent === null && classHierarchy.length === 0 && objectPropertyHierarchy.length === 0 && dataPropertyHierarchy.length === 0 && unsatisfiableClasses.length === 0 && (
           <div style={styles.emptyState}>
             <Lightbulb size={48} style={{ color: '#d1d5db' }} />
             <div style={styles.emptyTitle}>No reasoning results yet</div>
@@ -1014,13 +1170,13 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
   );
 };
 
-const styles: { [key: string]: React.CSSProperties } = {
+const getStyles = (isDark: boolean): { [key: string]: React.CSSProperties } => ({
   container: {
     width: '100%',
     height: '100%',
     display: 'flex',
     flexDirection: 'column',
-    backgroundColor: '#ffffff',
+    backgroundColor: isDark ? '#1a1a1a' : '#ffffff',
     fontFamily: 'Arial, sans-serif'
   },
   header: {
@@ -1028,8 +1184,8 @@ const styles: { [key: string]: React.CSSProperties } = {
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: '8px 16px',
-    borderBottom: '1px solid #e5e7eb',
-    backgroundColor: '#f9fafb'
+    borderBottom: isDark ? '1px solid #374151' : '1px solid #e5e7eb',
+    backgroundColor: isDark ? '#262626' : '#f9fafb'
   },
   headerLeft: {
     display: 'flex',
@@ -1046,16 +1202,16 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
     fontSize: '13px',
     fontWeight: 500,
-    color: '#374151'
+    color: isDark ? '#e5e7eb' : '#374151'
   },
   dropdownMenu: {
     position: 'absolute',
     top: '100%',
     left: 0,
-    backgroundColor: 'white',
-    border: '1px solid #d1d5db',
+    backgroundColor: isDark ? '#262626' : 'white',
+    border: isDark ? '1px solid #374151' : '1px solid #d1d5db',
     borderRadius: '4px',
-    boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+    boxShadow: '0 4px 6px rgba(0,0,0,0.3)',
     minWidth: '220px',
     zIndex: 1000,
     marginTop: '4px'
@@ -1074,7 +1230,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: '#9ca3af',
     fontWeight: 600,
     textTransform: 'uppercase',
-    backgroundColor: '#f9fafb'
+    backgroundColor: isDark ? '#1a1a1a' : '#f9fafb'
   },
   menuItemDisabled: {
     color: '#9ca3af',
@@ -1082,36 +1238,37 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   menuDivider: {
     height: '1px',
-    backgroundColor: '#e5e7eb',
+    backgroundColor: isDark ? '#374151' : '#e5e7eb',
     margin: '4px 0'
   },
   title: {
     fontSize: '14px',
     fontWeight: 600,
-    color: '#111827'
+    color: isDark ? '#e5e7eb' : '#111827'
   },
   iconButton: {
     padding: '6px',
-    border: '1px solid #d1d5db',
+    border: isDark ? '1px solid #374151' : '1px solid #d1d5db',
     borderRadius: '4px',
-    backgroundColor: 'white',
+    backgroundColor: isDark ? '#262626' : 'white',
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center'
   },
   quickActions: {
     padding: '12px 16px',
-    borderBottom: '1px solid #e5e7eb',
+    borderBottom: isDark ? '1px solid #374151' : '1px solid #e5e7eb',
     display: 'flex',
     gap: '8px',
     flexWrap: 'wrap',
-    backgroundColor: '#fafafa'
+    backgroundColor: isDark ? '#1f1f1f' : '#fafafa'
   },
   button: {
     padding: '6px 12px',
-    border: '1px solid #d1d5db',
+    border: isDark ? '1px solid #374151' : '1px solid #d1d5db',
     borderRadius: '4px',
-    backgroundColor: 'white',
+    backgroundColor: isDark ? '#262626' : 'white',
+    color: isDark ? '#e5e7eb' : 'inherit',
     cursor: 'pointer',
     fontSize: '13px',
     display: 'flex',
@@ -1176,7 +1333,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     gap: '8px',
     justifyContent: 'flex-end',
     padding: '16px 20px',
-    borderTop: '1px solid #e5e7eb'
+    borderTop: isDark ? '1px solid #374151' : '1px solid #e5e7eb'
   },
   settingRow: {
     display: 'flex',
@@ -1189,35 +1346,41 @@ const styles: { [key: string]: React.CSSProperties } = {
     alignItems: 'center',
     gap: '8px',
     fontSize: '13px',
+    color: isDark ? '#e5e7eb' : 'inherit',
     cursor: 'pointer'
   },
   settingLabel: {
     fontSize: '13px',
     fontWeight: 500,
+    color: isDark ? '#e5e7eb' : 'inherit',
     minWidth: '150px'
   },
   select: {
     padding: '6px 8px',
-    border: '1px solid #d1d5db',
+    border: isDark ? '1px solid #374151' : '1px solid #d1d5db',
     borderRadius: '4px',
     fontSize: '13px',
-    backgroundColor: 'white',
+    backgroundColor: isDark ? '#262626' : 'white',
+    color: isDark ? '#e5e7eb' : 'inherit',
     flex: 1
   },
   input: {
     padding: '6px 8px',
-    border: '1px solid #d1d5db',
+    border: isDark ? '1px solid #374151' : '1px solid #d1d5db',
     borderRadius: '4px',
     fontSize: '13px',
+    backgroundColor: isDark ? '#262626' : 'white',
+    color: isDark ? '#e5e7eb' : 'inherit',
     flex: 1
   },
   statusBar: {
     padding: '8px 16px',
-    borderBottom: '1px solid #e5e7eb',
+    borderBottom: isDark ? '1px solid #374151' : '1px solid #e5e7eb',
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
-    fontSize: '13px'
+    fontSize: '13px',
+    color: isDark ? '#e5e7eb' : 'inherit'
   },
   content: {
     flex: 1,
@@ -1278,21 +1441,21 @@ const styles: { [key: string]: React.CSSProperties } = {
     alignItems: 'center',
     gap: '6px',
     padding: '4px 8px',
-    backgroundColor: 'white',
+    backgroundColor: isDark ? '#262626' : 'white',
     borderRadius: '4px',
     fontSize: '12px',
     cursor: 'pointer'
   },
   section: {
     marginBottom: '16px',
-    border: '1px solid #e5e7eb',
+    border: isDark ? '1px solid #374151' : '1px solid #e5e7eb',
     borderRadius: '6px',
     overflow: 'hidden'
   },
   sectionHeader: {
     padding: '10px 12px',
-    backgroundColor: '#f9fafb',
-    borderBottom: '1px solid #e5e7eb',
+    backgroundColor: isDark ? '#262626' : '#f9fafb',
+    borderBottom: isDark ? '1px solid #374151' : '1px solid #e5e7eb',
     display: 'flex',
     alignItems: 'center',
     gap: '8px'
@@ -1300,7 +1463,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   sectionTitle: {
     fontSize: '14px',
     fontWeight: 600,
-    color: '#111827',
+    color: isDark ? '#e5e7eb' : '#111827',
     flex: 1
   },
   helpText: {
@@ -1316,14 +1479,14 @@ const styles: { [key: string]: React.CSSProperties } = {
     display: 'flex',
     alignItems: 'center',
     padding: '8px',
-    backgroundColor: '#fef3c7',
+    backgroundColor: isDark ? '#78350f' : '#fef3c7',
     borderRadius: '4px',
     marginBottom: '8px',
     flexWrap: 'wrap'
   },
   equivalentClass: {
     fontSize: '13px',
-    color: '#92400e',
+    color: isDark ? '#fef3c7' : '#92400e',
     cursor: 'pointer',
     fontWeight: 500
   },
@@ -1343,7 +1506,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   emptyTitle: {
     fontSize: '16px',
     fontWeight: 600,
-    color: '#374151',
+    color: isDark ? '#e5e7eb' : '#374151',
     marginTop: '16px'
   },
   emptyText: {
@@ -1406,6 +1569,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontWeight: 600,
     marginRight: '4px'
   }
-};
+});
 
 export default ProtegeReasonerPlugin;
