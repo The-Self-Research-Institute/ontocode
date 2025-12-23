@@ -3,7 +3,7 @@
  * Integrated with WebVOWL VOWL Notation Support
  */
 
-export { AdvancedGraphView as default } from './AdvancedGraphView';
+export { ProtegeStyleGraphView as default } from './ProtegeStyleGraphView';
 export * from './types';
 export { graphDataService } from './services/GraphDataService';
 export { graphMutationService } from './services/GraphMutationService';

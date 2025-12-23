@@ -4,19 +4,21 @@
  * Includes explanation tooltips, class hierarchy view, and full reasoning features
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   Play,
   Square,
   CheckCircle,
   XCircle,
   AlertTriangle,
+  AlertCircle,
   Clock,
   Info,
   ChevronDown,
   ChevronRight,
   Circle,
   Loader,
+  Loader2,
   RefreshCw,
   Settings,
   HelpCircle,
@@ -24,12 +26,33 @@ import {
   Link2,
   ArrowRight,
   GitBranch,
-  Database
+  GitMerge,
+  Database,
+  Brain,
+  Check,
+  Network,
+  Search,
+  Filter,
+  MoreVertical
 } from 'lucide-react';
 
 interface ReasonerPluginProps {
   projectId: string;
   apiBaseUrl?: string;
+  // Dashboard integration props
+  selectedReasoner?: string;
+  isReasonerRunning?: boolean;
+  isReasonerLoading?: boolean;
+  reasonerResults?: any;
+  consistencyResult?: any;
+  inferredClassHierarchy?: any[];
+  inferredObjectPropertyHierarchy?: any[];
+  inferredDataPropertyHierarchy?: any[];
+  onStartReasoner?: () => Promise<void>;
+  onStopReasoner?: () => void;
+  onSelectReasoner?: (reasoner: string) => void;
+  onToggleSync?: () => void;
+  isReasonerSynced?: boolean;
 }
 
 interface ClassNode {
@@ -51,9 +74,136 @@ interface ExplanationData {
   }[];
 }
 
+interface HierarchyNodeProps {
+  node: any;
+  level: number;
+  type: 'class' | 'objectProperty' | 'dataProperty';
+  isDark: boolean;
+  expandedSet: Set<string>;
+  onToggle: (id: string) => void;
+  onNavigate: (id: string) => void;
+}
+
+const HierarchyNode: React.FC<HierarchyNodeProps> = ({
+  node,
+  level,
+  type,
+  isDark,
+  expandedSet,
+  onToggle,
+  onNavigate
+}) => {
+  const [showTooltip, setShowTooltip] = useState(false);
+  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+
+  const id = node.iri || node.id || (typeof node === 'string' ? node : null);
+  const isExpanded = id ? expandedSet.has(id) : false;
+  const hasChildren = node.children && node.children.length > 0;
+
+  const handleToggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (id) onToggle(id);
+  };
+
+  const handleMouseEnter = (e: React.MouseEvent) => {
+    setTooltipPos({ x: e.clientX, y: e.clientY });
+    setShowTooltip(true);
+  };
+
+  const handleMouseLeave = () => {
+    setShowTooltip(false);
+  };
+
+  const getIcon = () => {
+    if (type === 'class') {
+      return <Circle size={10} fill={node.isUnsatisfiable ? '#ef4444' : node.isEquivalent ? '#f59e0b' : '#3b82f6'} stroke="none" />;
+    } else if (type === 'objectProperty') {
+      return <Link2 size={12} className="text-green-500" />;
+    } else {
+      return <Database size={12} className="text-orange-500" />;
+    }
+  };
+
+  return (
+    <div style={{ marginLeft: `${level * 12}px` }} className="relative">
+      <div
+        className={`flex items-center gap-1 py-1 px-2 rounded cursor-pointer text-xs group ${
+          isDark ? 'hover:bg-gray-800' : 'hover:bg-blue-50'
+        }`}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+        onClick={() => id && onNavigate(id)}
+      >
+        {hasChildren ? (
+          <button
+            onClick={handleToggle}
+            className={`p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-transform ${isExpanded ? 'rotate-0' : '-rotate-90'}`}
+          >
+            <ChevronDown size={12} className={isDark ? 'text-gray-500' : 'text-gray-400'} />
+          </button>
+        ) : (
+          <span className="w-4" />
+        )}
+        {getIcon()}
+        <span className={`font-mono ${isDark ? 'text-blue-400' : 'text-blue-700'}`}>
+          {node.name || node.label || (node.iri ? (node.iri.includes('#') ? node.iri.split('#').pop() : node.iri.split('/').pop()) : (typeof node === 'string' ? node : 'Unknown'))}
+        </span>
+        {node.inferred && (
+          <span className={`text-[10px] px-1 rounded ${
+            isDark ? 'bg-green-900/30 text-green-400' : 'bg-green-100 text-green-700'
+          }`}>inferred</span>
+        )}
+      </div>
+
+      {/* Explanation Tooltip */}
+      {showTooltip && (node.explanation || node.description) && (
+        <div
+          className={`fixed z-[9999] border-2 rounded-lg shadow-xl p-3 max-w-sm ${
+            isDark ? 'bg-gray-800 border-yellow-600 text-gray-200' : 'bg-yellow-50 border-yellow-400 text-gray-800'
+          }`}
+          style={{
+            left: `${tooltipPos.x + 10}px`,
+            top: `${tooltipPos.y + 10}px`,
+            pointerEvents: 'none'
+          }}
+        >
+          <div className="text-xs font-semibold mb-1">Why inferred:</div>
+          <div className="text-xs opacity-90">{node.explanation || node.description}</div>
+        </div>
+      )}
+
+      {isExpanded && hasChildren && node.children.map((child: any, idx: number) => (
+        <HierarchyNode
+          key={idx}
+          node={child}
+          level={level + 1}
+          type={type}
+          isDark={isDark}
+          expandedSet={expandedSet}
+          onToggle={onToggle}
+          onNavigate={onNavigate}
+        />
+      ))}
+    </div>
+  );
+};
+
 export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
   projectId,
-  apiBaseUrl = ''
+  apiBaseUrl = '',
+  selectedReasoner: dashboardSelectedReasoner,
+  isReasonerRunning: dashboardIsRunning,
+  isReasonerLoading: dashboardIsLoading,
+  reasonerResults: dashboardReasonerResults,
+  consistencyResult: dashboardConsistencyResult,
+  inferredClassHierarchy: dashboardInferredHierarchy,
+  inferredObjectPropertyHierarchy: dashboardInferredObjectPropertyHierarchy,
+  inferredDataPropertyHierarchy: dashboardInferredDataPropertyHierarchy,
+  onStartReasoner: dashboardStartReasoner,
+  onStopReasoner: dashboardStopReasoner,
+  onSelectReasoner: dashboardSelectReasoner,
+  onToggleSync: dashboardToggleSync,
+  isReasonerSynced: dashboardIsReasonerSynced
 }) => {
   const resolvedApiBaseUrl =
     (apiBaseUrl && apiBaseUrl.trim().length > 0 ? apiBaseUrl.trim() : undefined) ||
@@ -61,11 +211,17 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
       ? ((window as any).API_BASE_URL as string)
       : undefined) ||
     'http://localhost:8082';
+  
+  // Use Dashboard state if provided, otherwise use local state
+  const usingDashboardState = !!dashboardStartReasoner;
+  
   // State
   const [showReasonerMenu, setShowReasonerMenu] = useState(false);
-  const [selectedReasoner, setSelectedReasoner] = useState<string>('hermit');
-  const [isRunning, setIsRunning] = useState(false);
+  const [localSelectedReasoner, setLocalSelectedReasoner] = useState<string>('hermit');
+  const [localIsRunning, setLocalIsRunning] = useState(false);
+  const [localIsLoading, setLocalIsLoading] = useState(false);
   const [isConsistent, setIsConsistent] = useState<boolean | null>(null);
+  const [localReasonerResults, setLocalReasonerResults] = useState<any>(null);
   const [classHierarchy, setClassHierarchy] = useState<ClassNode[]>([]);
   const [objectPropertyHierarchy, setObjectPropertyHierarchy] = useState<any[]>([]);
   const [dataPropertyHierarchy, setDataPropertyHierarchy] = useState<any[]>([]);
@@ -86,6 +242,12 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
   const [reasonerStatus, setReasonerStatus] = useState<string>('Not initialized');
   const [stats, setStats] = useState<any>(null);
   const [selectedClassIri, setSelectedClassIri] = useState<string | null>(null);
+  
+  // Use Dashboard values when available
+  const selectedReasoner = dashboardSelectedReasoner || localSelectedReasoner;
+  const isRunning = dashboardIsRunning ?? localIsRunning;
+  const isLoading = dashboardIsLoading ?? localIsLoading;
+  const reasonerResults = dashboardReasonerResults || localReasonerResults;
   const tooltipRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const classRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -129,7 +291,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
 
   // Start reasoning
   const startReasoner = useCallback(async (task: 'consistency' | 'classification' | 'realization') => {
-    setIsRunning(true);
+    setLocalIsRunning(true);
     setReasonerStatus(`Running ${task}...`);
 
     try {
@@ -193,8 +355,8 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
         }
         
         setClassHierarchy(result.classHierarchy || []);
-        setObjectPropertyHierarchy(result.objectPropertyHierarchy || []);
-        setDataPropertyHierarchy(result.dataPropertyHierarchy || []);
+        setObjectPropertyHierarchy(result.objectPropertyHierarchy || result.objectProperties || []);
+        setDataPropertyHierarchy(result.dataPropertyHierarchy || result.dataProperties || []);
         setEquivalentClasses(result.equivalentClasses || []);
         setUnsatisfiableClasses(result.unsatisfiableClasses || []);
         
@@ -219,7 +381,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
       console.error('[ProtegeReasonerPlugin] Reasoning error:', error);
       setReasonerStatus(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
-      setIsRunning(false);
+      setLocalIsRunning(false);
     }
   }, [projectId, apiBaseUrl, selectedReasoner]);
 
@@ -283,7 +445,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
   const fetchInconsistencyExplanation = useCallback(async () => {
     if (isConsistent !== false) return;
 
-    setIsRunning(true);
+    setLocalIsRunning(true);
     try {
       const reasonerMap: Record<string, string> = {
         'hermit': 'HERMIT',
@@ -313,7 +475,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
     } catch (error) {
       console.error('Error fetching inconsistency explanation:', error);
     } finally {
-      setIsRunning(false);
+      setLocalIsRunning(false);
     }
   }, [projectId, selectedReasoner, isConsistent, resolvedApiBaseUrl]);
 
@@ -328,24 +490,46 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
     setTooltipPosition(null);
   };
 
-  // Navigate to class in hierarchy
-  const navigateToClass = (classIri: string) => {
-    setSelectedClassIri(classIri);
-    // Expand parent classes to make it visible
-    setExpandedClasses(prev => {
-      const newSet = new Set(prev);
-      // Find and expand all parents (simplified - in production would walk hierarchy)
-      classHierarchy.forEach(node => {
-        if (node.iri === classIri && node.depth > 0) {
-          newSet.add(node.iri);
-        }
-      });
-      return newSet;
-    });
+  // Navigate to entity in hierarchy
+  const navigateToEntity = (iri: string) => {
+    setSelectedClassIri(iri);
     
-    // Scroll to the class element
+    // Expand parent nodes to make it visible
+    if (activeTab === 'classes') {
+      setExpandedClasses(prev => {
+        const newSet = new Set(prev);
+        classHierarchy.forEach(node => {
+          if (node.iri === iri && node.depth > 0) {
+            newSet.add(node.iri);
+          }
+        });
+        return newSet;
+      });
+    } else if (activeTab === 'objectProperties') {
+      setExpandedObjectProperties(prev => {
+        const newSet = new Set(prev);
+        objectPropertyHierarchy.forEach(node => {
+          if (node.iri === iri && node.depth > 0) {
+            newSet.add(node.iri);
+          }
+        });
+        return newSet;
+      });
+    } else if (activeTab === 'dataProperties') {
+      setExpandedDataProperties(prev => {
+        const newSet = new Set(prev);
+        dataPropertyHierarchy.forEach(node => {
+          if (node.iri === iri && node.depth > 0) {
+            newSet.add(node.iri);
+          }
+        });
+        return newSet;
+      });
+    }
+    
+    // Scroll to the element
     setTimeout(() => {
-      const element = classRefs.current.get(classIri);
+      const element = classRefs.current.get(iri);
       if (element) {
         element.scrollIntoView({ behavior: 'smooth', block: 'center' });
         // Highlight briefly
@@ -357,805 +541,690 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
     }, 100);
   };
 
-  // Toggle class expansion
-  const toggleClassExpansion = (classIri: string) => {
-    setExpandedClasses(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(classIri)) {
-        newSet.delete(classIri);
-      } else {
-        newSet.add(classIri);
-      }
-      return newSet;
-    });
-  };
+  // Helper function to render hierarchy
+  const renderHierarchy = (nodes: any[], type: 'class' | 'objectProperty' | 'dataProperty'): React.ReactNode => {
+    if (!nodes || nodes.length === 0) return null;
+    
+    const expandedSet = type === 'class' ? expandedClasses : (type === 'objectProperty' ? expandedObjectProperties : expandedDataProperties);
+    const setExpandedSet = type === 'class' ? setExpandedClasses : (type === 'objectProperty' ? setExpandedObjectProperties : setExpandedDataProperties);
 
-  // Render class hierarchy tree
-  const renderClassNode = (node: ClassNode) => {
-    const isExpanded = expandedClasses.has(node.iri);
-    const hasChildren = node.childrenCount > 0;
-    const explanation = explanations.get(node.iri);
-    const isUnsatisfiable = unsatisfiableClasses.some(cls => cls.iri === node.iri);
-    const isSelected = selectedClassIri === node.iri;
+    const handleToggle = (id: string) => {
+      setExpandedSet(prev => {
+        const newSet = new Set(prev);
+        if (newSet.has(id)) newSet.delete(id);
+        else newSet.add(id);
+        return newSet;
+      });
+    };
 
-    return (
-      <div key={node.iri} style={{ marginLeft: `${node.depth * 20}px` }}>
-        <div
-          ref={(el) => {
-            if (el) classRefs.current.set(node.iri, el);
-          }}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            padding: '4px 8px',
-            cursor: 'pointer',
-            backgroundColor: isSelected 
-              ? (isDark ? '#78350f' : '#fef3c7')
-              : (hoveredClass === node.iri 
-                  ? (isDark ? '#374151' : '#f0f0f0')
-                  : 'transparent'),
-            borderLeft: isUnsatisfiable ? '3px solid #ef4444' : (isSelected ? '3px solid #f59e0b' : 'none'),
-            color: isUnsatisfiable 
-              ? '#ef4444' 
-              : (isDark ? '#e5e7eb' : 'inherit'),
-            transition: 'background-color 0.3s ease'
-          }}
-          onMouseEnter={(e) => handleClassHover(node.iri, e)}
-          onMouseLeave={handleClassLeave}
-          onClick={() => navigateToClass(node.iri)}
-        >
-          {hasChildren && (
-            <button
-              onClick={() => toggleClassExpansion(node.iri)}
-              style={{
-                border: 'none',
-                background: 'none',
-                padding: '2px',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center'
-              }}
-            >
-              {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            </button>
-          )}
-          {!hasChildren && <span style={{ width: '18px' }} />}
-          
-          <Circle
-            size={10}
-            fill={isUnsatisfiable ? '#ef4444' : node.isEquivalent ? '#f59e0b' : '#3b82f6'}
-            stroke="none"
-            style={{ marginRight: '6px' }}
-          />
-          
-          <span style={{ fontSize: '13px', flex: 1 }}>{node.label}</span>
-          
-          {explanation && (
-            <HelpCircle size={14} style={{ color: '#9ca3af', marginLeft: '4px' }} />
-          )}
-        </div>
-      </div>
-    );
-  };
-
-  const renderPropertyNode = (node: ClassNode, type: 'object' | 'data') => {
-    const expandedSet = type === 'object' ? expandedObjectProperties : expandedDataProperties;
-    const toggleExpansion = type === 'object' 
-      ? (iri: string) => setExpandedObjectProperties(prev => {
-          const newSet = new Set(prev);
-          if (newSet.has(iri)) newSet.delete(iri); else newSet.add(iri);
-          return newSet;
-        })
-      : (iri: string) => setExpandedDataProperties(prev => {
-          const newSet = new Set(prev);
-          if (newSet.has(iri)) newSet.delete(iri); else newSet.add(iri);
-          return newSet;
-        });
-
-    const isExpanded = expandedSet.has(node.iri);
-    const hasChildren = node.childrenCount > 0;
-    const isSelected = selectedClassIri === node.iri;
-    const iconColor = type === 'object' ? '#10b981' : '#f59e0b';
-
-    return (
-      <div key={node.iri} style={{ marginLeft: `${node.depth * 20}px` }}>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            padding: '4px 8px',
-            cursor: 'pointer',
-            backgroundColor: isSelected ? '#fef3c7' : (hoveredClass === node.iri ? '#f0f0f0' : 'transparent'),
-            borderLeft: isSelected ? '3px solid ' + iconColor : 'none',
-            transition: 'background-color 0.3s ease'
-          }}
-          onMouseEnter={(e) => handleClassHover(node.iri, e)}
-          onMouseLeave={handleClassLeave}
-          onClick={() => navigateToClass(node.iri)}
-        >
-          {hasChildren && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleExpansion(node.iri);
-              }}
-              style={{
-                border: 'none',
-                background: 'none',
-                padding: '2px',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center'
-              }}
-            >
-              {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            </button>
-          )}
-          {!hasChildren && <span style={{ width: '18px' }} />}
-          
-          <Circle
-            size={10}
-            fill={node.isEquivalent ? iconColor : iconColor}
-            stroke="none"
-            style={{ marginRight: '6px', opacity: node.isEquivalent ? 1 : 0.7 }}
-          />
-          
-          <span style={{ fontSize: '13px', flex: 1 }}>{node.label}</span>
-        </div>
-      </div>
-    );
+    return nodes.map((node: any, idx: number) => (
+      <HierarchyNode 
+        key={idx} 
+        node={node} 
+        level={0} 
+        type={type} 
+        isDark={isDark}
+        expandedSet={expandedSet}
+        onToggle={handleToggle}
+        onNavigate={navigateToEntity}
+      />
+    ));
   };
 
   const styles = getStyles(isDark);
 
+  // Derived values for the UI
+  const displayStats = reasonerResults?.stats || stats || null;
+  const unsatList = reasonerResults?.unsatisfiableClasses || [];
+  const equivalentGroups = reasonerResults?.equivalentClasses || [];
+  const consistencyData = dashboardConsistencyResult || null;
+  const consistencyUnsat = consistencyData?.unsatisfiableClasses || [];
+  const combinedUnsat = unsatList.length > 0 ? unsatList : consistencyUnsat;
+  const consistentFlag = (displayStats?.isConsistent ?? consistencyData?.consistent ?? consistencyData?.isConsistent);
+  const unsatRaw = displayStats?.unsatisfiableClassesRaw;
+  const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1 || !!(
+    (displayStats && ((displayStats.unsatisfiableClasses ?? 0) > 0 || displayStats.isConsistent === false)) ||
+    combinedUnsat.length > 0
+  );
+  
+  // Use inferred hierarchies if available, otherwise fall back to reasoner results
+  const classHierarchyToRender = useMemo(() => {
+    const source = dashboardInferredHierarchy && dashboardInferredHierarchy.length > 0 
+      ? dashboardInferredHierarchy 
+      : (reasonerResults?.classHierarchyTree || reasonerResults?.classHierarchy || []);
+    return ensureTree(source);
+  }, [dashboardInferredHierarchy, reasonerResults]);
+
+  const objectPropertyHierarchyToRender = useMemo(() => {
+    const source = dashboardInferredObjectPropertyHierarchy && dashboardInferredObjectPropertyHierarchy.length > 0
+      ? dashboardInferredObjectPropertyHierarchy
+      : (reasonerResults?.objectPropertyHierarchy || reasonerResults?.objectPropertyHierarchyTree || reasonerResults?.objectProperties || objectPropertyHierarchy || []);
+    return ensureTree(source);
+  }, [dashboardInferredObjectPropertyHierarchy, reasonerResults, objectPropertyHierarchy]);
+
+  const dataPropertyHierarchyToRender = useMemo(() => {
+    const source = dashboardInferredDataPropertyHierarchy && dashboardInferredDataPropertyHierarchy.length > 0
+      ? dashboardInferredDataPropertyHierarchy
+      : (reasonerResults?.dataPropertyHierarchy || reasonerResults?.dataPropertyHierarchyTree || reasonerResults?.dataProperties || dataPropertyHierarchy || []);
+    console.log('[ReasonerPlugin] Data Property Hierarchy Source:', source);
+    const tree = ensureTree(source);
+    console.log('[ReasonerPlugin] Data Property Hierarchy Tree:', tree);
+    return tree;
+  }, [dashboardInferredDataPropertyHierarchy, reasonerResults, dataPropertyHierarchy]);
+
+  // Automatically expand root nodes when hierarchy changes
+  useEffect(() => {
+    if (classHierarchyToRender.length > 0) {
+      setExpandedClasses(prev => {
+        const newSet = new Set(prev);
+        let changed = false;
+        classHierarchyToRender.forEach(node => {
+          const id = node.iri || node.id;
+          if (id && !newSet.has(id)) {
+            newSet.add(id);
+            changed = true;
+          }
+        });
+        return changed ? newSet : prev;
+      });
+    }
+  }, [classHierarchyToRender]);
+
+  useEffect(() => {
+    if (objectPropertyHierarchyToRender.length > 0) {
+      setExpandedObjectProperties(prev => {
+        const newSet = new Set(prev);
+        let changed = false;
+        objectPropertyHierarchyToRender.forEach(node => {
+          const id = node.iri || node.id;
+          if (id && !newSet.has(id)) {
+            newSet.add(id);
+            changed = true;
+          }
+        });
+        return changed ? newSet : prev;
+      });
+    }
+  }, [objectPropertyHierarchyToRender]);
+
+  useEffect(() => {
+    if (dataPropertyHierarchyToRender.length > 0) {
+      setExpandedDataProperties(prev => {
+        const newSet = new Set(prev);
+        let changed = false;
+        dataPropertyHierarchyToRender.forEach(node => {
+          const id = node.iri || node.id;
+          if (id && !newSet.has(id)) {
+            newSet.add(id);
+            changed = true;
+          }
+        });
+        return changed ? newSet : prev;
+      });
+    }
+  }, [dataPropertyHierarchyToRender]);
+
+  function ensureTree(nodes: any[]): any[] {
+    if (!Array.isArray(nodes) || nodes.length === 0) return [];
+    
+    // If any node has children already, it might be a tree, but flat lists with depth 
+    // are common from the backend. If we see depth and it's a flat list, we build the tree.
+    // A simple check: if it's a flat list (no children on first few nodes) but has depth > 0 later.
+    const isFlat = nodes.length > 1 && !nodes[0].children?.length && nodes.some(n => (n.depth || 0) > 0);
+    
+    if (!isFlat && nodes[0].children?.length) return nodes;
+
+    // Sort by depth to ensure parents come before children if they are not already
+    const sortedNodes = [...nodes].sort((a, b) => (a.depth || 0) - (b.depth || 0));
+
+    const stack: any[] = [];
+    const roots: any[] = [];
+
+    sortedNodes.forEach((node) => {
+      const depth = Number((node && (node as any).depth) ?? 0);
+      const copy = { ...node, children: node.children ? [...node.children] : [] };
+
+      while (stack.length > 0 && (stack[stack.length - 1]?.depth ?? 0) >= depth) {
+        stack.pop();
+      }
+
+      if (stack.length === 0) {
+        roots.push(copy);
+      } else {
+        if (!stack[stack.length - 1].children) {
+          stack[stack.length - 1].children = [];
+        }
+        stack[stack.length - 1].children.push(copy);
+      }
+
+      stack.push(copy);
+    });
+
+    // If the only root is a top property (owl:topObjectProperty or owl:topDataProperty), 
+    // return its children instead to show properties directly at the top level.
+    if (roots.length === 1 && roots[0].children?.length > 0) {
+      const rootIri = roots[0].iri || roots[0].id || '';
+      if (rootIri.endsWith('#topObjectProperty') || rootIri.endsWith('#topDataProperty')) {
+        console.log(`[ReasonerPlugin] Flattening top property: ${rootIri}`);
+        return roots[0].children;
+      }
+    }
+
+    return roots;
+  }
+
+  const getAllIds = (nodes: any[]): string[] => {
+    let ids: string[] = [];
+    nodes.forEach(node => {
+      const id = node.iri || node.id;
+      if (id) ids.push(id);
+      if (node.children) {
+        ids = [...ids, ...getAllIds(node.children)];
+      }
+    });
+    return ids;
+  };
+
+  const expandAll = () => {
+    if (activeTab === 'classes') {
+      setExpandedClasses(new Set(getAllIds(classHierarchyToRender)));
+    } else if (activeTab === 'objectProperties') {
+      setExpandedObjectProperties(new Set(getAllIds(objectPropertyHierarchyToRender)));
+    } else if (activeTab === 'dataProperties') {
+      setExpandedDataProperties(new Set(getAllIds(dataPropertyHierarchyToRender)));
+    }
+  };
+
+  const collapseAll = () => {
+    if (activeTab === 'classes') {
+      setExpandedClasses(new Set());
+    } else if (activeTab === 'objectProperties') {
+      setExpandedObjectProperties(new Set());
+    } else if (activeTab === 'dataProperties') {
+      setExpandedDataProperties(new Set());
+    }
+  };
+
+  function stopReasoner(): void {
+    throw new Error('Function not implemented.');
+  }
+
   return (
-    <div style={styles.container}>
-      {/* Header with Reasoner Dropdown Menu */}
-      <div style={styles.header}>
-        <div style={styles.headerLeft}>
-          <div style={styles.menuContainer}>
-            <button
-              style={styles.menuButton}
-              onClick={() => setShowReasonerMenu(!showReasonerMenu)}
+    <div className={`flex flex-col h-full ${isDark ? 'bg-gray-900 text-gray-100' : 'bg-white text-gray-900'}`}>
+      {/* Protégé-style Toolbar */}
+      <div className={`flex items-center gap-2 px-3 py-2 border-b flex-shrink-0 ${
+        isDark ? 'border-gray-700 bg-gray-800' : 'border-gray-300 bg-gray-50'
+      }`}>
+        {/* Start Button */}
+        <button
+          onClick={() => dashboardStartReasoner ? dashboardStartReasoner() : startReasoner('classification')}
+          disabled={isLoading || !projectId || isRunning}
+          className="px-3 py-1.5 text-xs font-medium bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+          title="Start reasoner"
+        >
+          {isLoading ? (
+            <>
+              <Loader2 size={14} className="animate-spin" />
+              Starting...
+            </>
+          ) : (
+            <>
+              <Play size={14} />
+              Start
+            </>
+          )}
+        </button>
+
+        {/* Stop Button */}
+        <button
+          onClick={() => dashboardStopReasoner ? dashboardStopReasoner() : stopReasoner()}
+          disabled={!isRunning || isLoading}
+          className="px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+          title="Stop reasoner"
+        >
+          <Square size={14} />
+          Stop
+        </button>
+
+        <div className={`w-px h-6 mx-1 ${isDark ? 'bg-gray-700' : 'bg-gray-300'}`} />
+
+        {/* Reasoner Selector Dropdown */}
+        <div className="relative group">
+          <button 
+            className={`px-3 py-1.5 text-xs font-medium border rounded flex items-center gap-2 min-w-[140px] ${
+              isDark ? 'bg-gray-700 border-gray-600 hover:bg-gray-600' : 'bg-white border-gray-300 hover:bg-gray-50'
+            }`}
+            onClick={() => setShowReasonerMenu(!showReasonerMenu)}
+          >
+            <Brain size={14} className="text-purple-500" />
+            <span>{selectedReasoner}</span>
+            <ChevronDown size={12} className="ml-auto" />
+          </button>
+          
+          {showReasonerMenu && (
+            <div 
+              ref={menuRef}
+              className={`absolute top-full left-0 mt-1 border rounded shadow-lg z-50 min-w-[240px] ${
+                isDark ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-300'
+              }`}
             >
-              Reasoner
-            </button>
-            
-            {showReasonerMenu && (
-              <div ref={menuRef} style={styles.dropdownMenu}>
-                <div 
-                  style={styles.menuItem}
+              {[
+                { name: 'HermiT', desc: 'Full OWL 2 DL - Best for complex ontologies' },
+                { name: 'ELK', desc: 'EL++ optimized - Fast for large taxonomies' },
+                { name: 'Pellet', desc: 'Complete OWL DL with SWRL support' },
+                { name: 'Openllet', desc: 'Modern Pellet fork - Improved performance' },
+                { name: 'Structural', desc: 'Lightweight - Fast but limited' }
+              ].map(reasoner => (
+                <button
+                  key={reasoner.name}
                   onClick={() => {
-                    startReasoner('consistency');
-                    setShowReasonerMenu(false);
-                  }}
-                >
-                  Start reasoner
-                </div>
-                <div 
-                  style={styles.menuItem}
-                  onClick={() => {
-                    setAutoSync(!autoSync);
-                  }}
-                >
-                  <input 
-                    type="checkbox" 
-                    checked={autoSync} 
-                    onChange={() => {}}
-                    style={{ marginRight: '8px' }}
-                  />
-                  Synchronize reasoner
-                </div>
-                <div 
-                  style={styles.menuItem}
-                  onClick={() => {
-                    setIsConsistent(null);
-                    setClassHierarchy([]);
-                    setExplanations(new Map());
-                    setShowReasonerMenu(false);
-                  }}
-                >
-                  Stop reasoner
-                </div>
-                <div 
-                  style={{
-                    ...styles.menuItem,
-                    ...(isConsistent === false ? {} : styles.menuItemDisabled)
-                  }}
-                  onClick={async () => {
-                    if (isConsistent === false) {
-                      setShowExplainDialog(true);
-                      setShowReasonerMenu(false);
-                      // Fetch detailed explanation
-                      await fetchInconsistencyExplanation();
+                    if (dashboardSelectReasoner) {
+                      dashboardSelectReasoner(reasoner.name);
+                    } else {
+                      setLocalSelectedReasoner(reasoner.name);
                     }
-                  }}
-                >
-                  Explain inconsistent ontology
-                </div>
-                <div style={styles.menuDivider} />
-                <div 
-                  style={styles.menuItem}
-                  onClick={() => {
-                    setShowConfigureDialog(true);
                     setShowReasonerMenu(false);
                   }}
+                  className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 ${
+                    isDark ? 'hover:bg-gray-700' : 'hover:bg-blue-50'
+                  } ${selectedReasoner === reasoner.name ? (isDark ? 'bg-gray-700' : 'bg-blue-50') : ''}`}
                 >
-                  Configure...
-                </div>
-                <div style={styles.menuDivider} />
-                <div style={styles.menuItemLabel}>ELK 0.6.0</div>
-                <div 
-                  style={{
-                    ...styles.menuItem,
-                    backgroundColor: selectedReasoner === 'hermit' ? '#e0e7ff' : 'transparent'
-                  }}
-                  onClick={() => {
-                    setSelectedReasoner('hermit');
-                    setShowReasonerMenu(false);
-                  }}
-                >
-                  <span style={{ marginLeft: selectedReasoner === 'hermit' ? '0' : '20px' }}>
-                    {selectedReasoner === 'hermit' && '• '}HermiT 1.4.3.456
-                  </span>
-                </div>
-                <div style={styles.menuItemLabel}>Ontop 4.2.2</div>
-                <div 
-                  style={{
-                    ...styles.menuItem,
-                    backgroundColor: selectedReasoner === 'pellet' ? '#e0e7ff' : 'transparent'
-                  }}
-                  onClick={() => {
-                    setSelectedReasoner('pellet');
-                    setShowReasonerMenu(false);
-                  }}
-                >
-                  <span style={{ marginLeft: selectedReasoner === 'pellet' ? '0' : '20px' }}>
-                    {selectedReasoner === 'pellet' && '• '}Pellet
-                  </span>
-                </div>
-                <div 
-                  style={{
-                    ...styles.menuItem,
-                    backgroundColor: selectedReasoner === 'openllet' ? '#e0e7ff' : 'transparent'
-                  }}
-                  onClick={() => {
-                    setSelectedReasoner('openllet');
-                    setShowReasonerMenu(false);
-                  }}
-                >
-                  <span style={{ marginLeft: selectedReasoner === 'openllet' ? '0' : '20px' }}>
-                    {selectedReasoner === 'openllet' && '• '}Pellet (Incremental)
-                  </span>
-                </div>
-                <div 
-                  style={{
-                    ...styles.menuItem,
-                    backgroundColor: selectedReasoner === 'jcel' ? '#e0e7ff' : 'transparent'
-                  }}
-                  onClick={() => {
-                    setSelectedReasoner('jcel');
-                    setShowReasonerMenu(false);
-                  }}
-                >
-                  <span style={{ marginLeft: selectedReasoner === 'jcel' ? '0' : '20px' }}>
-                    {selectedReasoner === 'jcel' && '• '}jcel
-                  </span>
-                </div>
-                <div 
-                  style={{
-                    ...styles.menuItem,
-                    backgroundColor: selectedReasoner === 'none' ? '#e0e7ff' : 'transparent'
-                  }}
-                  onClick={() => {
-                    setSelectedReasoner('none');
-                    setShowReasonerMenu(false);
-                  }}
-                >
-                  <span style={{ marginLeft: selectedReasoner === 'none' ? '0' : '20px' }}>
-                    {selectedReasoner === 'none' && '• '}None
-                  </span>
-                </div>
+                  {selectedReasoner === reasoner.name && <Check size={12} className="text-blue-500 flex-shrink-0" />}
+                  <div className={selectedReasoner === reasoner.name ? '' : 'ml-5'}>
+                    <div className={`font-medium ${selectedReasoner === reasoner.name ? 'text-blue-500' : ''}`}>{reasoner.name}</div>
+                    <div className={`text-[10px] mt-0.5 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>{reasoner.desc}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className={`w-px h-6 mx-1 ${isDark ? 'bg-gray-700' : 'bg-gray-300'}`} />
+
+        {/* Synchronize Checkbox */}
+        <label className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium cursor-pointer rounded ${
+          isDark ? 'hover:bg-gray-700' : 'hover:bg-gray-100'
+        }`}>
+          <input
+            type="checkbox"
+            checked={dashboardIsReasonerSynced ?? autoSync}
+            onChange={() => dashboardToggleSync ? dashboardToggleSync() : setAutoSync(!autoSync)}
+            className="w-3.5 h-3.5"
+          />
+          <span>Synchronize reasoner</span>
+        </label>
+
+        {/* Status Indicator */}
+        <div className="ml-auto flex items-center gap-2 px-3 py-1.5 text-xs">
+          <span className={`w-2 h-2 rounded-full ${isRunning ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
+          <span className={isDark ? 'text-gray-400' : 'text-gray-600'}>
+            {isRunning ? 'Active' : 'Stopped'}
+          </span>
+        </div>
+
+        {/* Configure Button */}
+        <button
+          className={`px-3 py-1.5 text-xs font-medium border rounded ${
+            isDark ? 'bg-gray-700 border-gray-600 hover:bg-gray-600' : 'bg-white border-gray-300 hover:bg-gray-50'
+          }`}
+          title="Configure reasoner"
+          onClick={() => setShowConfigureDialog(true)}
+        >
+          <Settings size={14} />
+        </button>
+      </div>
+
+      {/* Main Content Area */}
+      <div className="flex-1 flex overflow-hidden">
+        {!reasonerResults && !isLoading ? (
+          /* Empty State - Before Starting Reasoner */
+          <div className={`flex-1 flex flex-col items-center justify-center gap-4 text-center p-8 ${
+            isDark ? 'bg-gray-900' : 'bg-gray-50'
+          }`}>
+            <Brain size={64} className={isDark ? 'text-gray-700' : 'text-gray-300'} />
+            <div className="space-y-2">
+              <h3 className={`text-lg font-semibold ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>No Reasoner Running</h3>
+              <p className={`text-sm max-w-md ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>
+                Click <strong>Start</strong> to begin reasoning over the ontology.<br />
+                Select a reasoner from the dropdown menu above.
+              </p>
+            </div>
+            {consistencyData && (
+              <div className={`mt-4 px-4 py-2 rounded-md text-sm border ${
+                (consistencyData.consistent === false || consistencyData.isConsistent === false)
+                  ? (isDark ? 'bg-red-900/20 border-red-800 text-red-400' : 'bg-red-50 border-red-200 text-red-700')
+                  : (isDark ? 'bg-green-900/20 border-green-800 text-green-400' : 'bg-green-50 border-green-200 text-green-700')
+              }`}>
+                {(consistencyData.consistent === false || consistencyData.isConsistent === false)
+                  ? '⚠ Ontology is inconsistent'
+                  : '✓ Ontology is consistent'}
               </div>
             )}
           </div>
-          <Lightbulb size={20} style={{ color: '#667eea', marginLeft: '16px' }} />
-          <span style={styles.title}>Reasoner: {selectedReasoner === 'hermit' ? 'HermiT 1.4.3.456' : selectedReasoner.charAt(0).toUpperCase() + selectedReasoner.slice(1)}</span>
-        </div>
-        <button
-          onClick={() => setShowSettings(!showSettings)}
-          style={styles.iconButton}
-          title="Settings"
-        >
-          <Settings size={16} />
-        </button>
-      </div>
-
-      {/* Configure Dialog */}
-      {showConfigureDialog && (
-        <div style={styles.dialogOverlay} onClick={() => setShowConfigureDialog(false)}>
-          <div style={styles.dialog} onClick={(e) => e.stopPropagation()}>
-            <div style={styles.dialogHeader}>
-              <span style={styles.dialogTitle}>Reasoner Preferences</span>
-              <button
-                onClick={() => setShowConfigureDialog(false)}
-                style={styles.closeButton}
-              >
-                ×
-              </button>
-            </div>
-            <div style={styles.dialogContent}>
-              <div style={styles.settingRow}>
-                <label style={styles.checkboxLabel}>
-                  <input
-                    type="checkbox"
-                    checked={autoSync}
-                    onChange={(e) => setAutoSync(e.target.checked)}
-                  />
-                  <span>Synchronize reasoner automatically</span>
-                </label>
-              </div>
-              <div style={styles.settingRow}>
-                <span style={styles.settingLabel}>Explanation depth:</span>
-                <select style={styles.select}>
-                  <option>Full</option>
-                  <option>Medium</option>
-                  <option>Minimal</option>
-                </select>
-              </div>
-              <div style={styles.settingRow}>
-                <span style={styles.settingLabel}>Timeout (seconds):</span>
-                <input type="number" defaultValue="30" style={styles.input} />
-              </div>
-            </div>
-            <div style={styles.dialogFooter}>
-              <button style={styles.button} onClick={() => setShowConfigureDialog(false)}>
-                OK
-              </button>
-              <button style={styles.button} onClick={() => setShowConfigureDialog(false)}>
-                Cancel
-              </button>
+        ) : isLoading ? (
+          /* Loading State */
+          <div className={`flex-1 flex flex-col items-center justify-center gap-4 ${
+            isDark ? 'bg-gray-900' : 'bg-gray-50'
+          }`}>
+            <Loader2 size={48} className="animate-spin text-purple-500" />
+            <div className="text-center">
+              <p className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Running {selectedReasoner} Reasoner...</p>
+              <p className={`text-xs mt-1 ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>This may take a moment for large ontologies</p>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* Explain Inconsistent Ontology Dialog */}
-      {showExplainDialog && (
-        <div style={styles.dialogOverlay} onClick={() => setShowExplainDialog(false)}>
-          <div style={{...styles.dialog, maxWidth: '700px', maxHeight: '80vh', overflowY: 'auto'}} onClick={(e) => e.stopPropagation()}>
-            <div style={styles.dialogHeader}>
-              <span style={styles.dialogTitle}>🔍 Inconsistency Analysis</span>
-              <button
-                onClick={() => setShowExplainDialog(false)}
-                style={styles.closeButton}
-              >
-                ×
-              </button>
-            </div>
-            <div style={styles.dialogContent}>
-              {isRunning && !inconsistencyExplanation ? (
-                <div style={{ textAlign: 'center', padding: '24px' }}>
-                  <Loader size={32} style={{ animation: 'spin 1s linear infinite', color: '#3b82f6' }} />
-                  <p style={{ marginTop: '12px', color: '#6b7280' }}>Analyzing inconsistency...</p>
-                </div>
-              ) : inconsistencyExplanation && inconsistencyExplanation.causes ? (
-                <>
-                  {/* Show detailed causes from backend */}
-                  {inconsistencyExplanation.causes.map((cause: any, idx: number) => (
-                    <div key={idx} style={{ marginBottom: '20px' }}>
-                      {cause.type === 'UNSATISFIABLE_CLASSES' && (
-                        <div style={{ padding: '16px', backgroundColor: '#fee2e2', borderLeft: '4px solid #ef4444', borderRadius: '6px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                            <XCircle size={20} style={{ color: '#dc2626' }} />
-                            <span style={{ fontSize: '15px', fontWeight: 600, color: '#991b1b' }}>{cause.title}</span>
-                          </div>
-                          <p style={{ fontSize: '13px', color: '#7f1d1d', marginBottom: '12px' }}>{cause.description}</p>
-                          <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
-                            {cause.classes?.map((cls: any, cidx: number) => (
-                              <div
-                                key={cidx}
-                                style={{
-                                  fontSize: '13px',
-                                  padding: '8px',
-                                  marginBottom: '6px',
-                                  backgroundColor: 'white',
-                                  borderRadius: '4px',
-                                  cursor: 'pointer',
-                                  border: '1px solid #fecaca'
-                                }}
-                                onClick={() => {
-                                  navigateToClass(cls.iri);
-                                  setShowExplainDialog(false);
-                                }}
-                              >
-                                <div style={{ fontWeight: 600, marginBottom: '4px' }}>{cls.label}</div>
-                                <div style={{ fontSize: '11px', color: '#6b7280' }}>{cls.reason}</div>
-                                <div style={{ fontSize: '10px', color: '#9ca3af', marginTop: '4px' }}>Click to navigate →</div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      
-                      {cause.type === 'DISJOINT_VIOLATIONS' && cause.violations?.length > 0 && (
-                        <div style={{ padding: '16px', backgroundColor: '#fef3c7', borderLeft: '4px solid #f59e0b', borderRadius: '6px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                            <AlertTriangle size={20} style={{ color: '#d97706' }} />
-                            <span style={{ fontSize: '15px', fontWeight: 600, color: '#78350f' }}>{cause.title}</span>
-                          </div>
-                          <p style={{ fontSize: '13px', color: '#78350f', marginBottom: '12px' }}>{cause.description}</p>
-                          <div>
-                            {cause.violations.map((v: any, vidx: number) => (
-                              <div key={vidx} style={{ fontSize: '12px', padding: '6px 8px', marginBottom: '4px', backgroundColor: 'white', borderRadius: '4px' }}>
-                                <strong>{v.individual}</strong> belongs to disjoint classes: {v.disjointClasses?.join(', ')}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      
-                      {cause.type === 'PROPERTY_VIOLATIONS' && cause.violations?.length > 0 && (
-                        <div style={{ padding: '16px', backgroundColor: '#dbeafe', borderLeft: '4px solid #3b82f6', borderRadius: '6px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                            <Info size={20} style={{ color: '#2563eb' }} />
-                            <span style={{ fontSize: '15px', fontWeight: 600, color: '#1e3a8a' }}>{cause.title}</span>
-                          </div>
-                          <p style={{ fontSize: '13px', color: '#1e40af', marginBottom: '12px' }}>{cause.description}</p>
-                          <div>
-                            {cause.violations.map((v: any, vidx: number) => (
-                              <div key={vidx} style={{ fontSize: '12px', padding: '6px 8px', marginBottom: '4px', backgroundColor: 'white', borderRadius: '4px' }}>
-                                <strong>{v.property}</strong> has {v.hasDomainConstraints ? 'domain' : ''}{v.hasDomainConstraints && v.hasRangeConstraints ? ' and ' : ''}{v.hasRangeConstraints ? 'range' : ''} constraints
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      
-                      {cause.type === 'RECOMMENDATIONS' && (
-                        <div style={{ padding: '16px', backgroundColor: '#e0f2fe', borderLeft: '4px solid #0ea5e9', borderRadius: '6px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                            <Lightbulb size={20} style={{ color: '#0284c7' }} />
-                            <span style={{ fontSize: '15px', fontWeight: 600, color: '#075985' }}>{cause.title}</span>
-                          </div>
-                          <ul style={{ fontSize: '13px', lineHeight: 1.8, color: '#0c4a6e', paddingLeft: '20px', margin: 0 }}>
-                            {cause.tips?.map((tip: string, tidx: number) => (
-                              <li key={tidx}>{tip}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </>
-              ) : (
-                /* Fallback to generic explanation */
-                <>
-                  <div style={{ marginBottom: '16px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                      <AlertTriangle size={20} style={{ color: '#f59e0b' }} />
-                      <span style={{ fontSize: '15px', fontWeight: 600 }}>Why is this ontology inconsistent?</span>
-                    </div>
-                    <p style={{ fontSize: '13px', lineHeight: 1.6, color: '#4b5563', marginBottom: '12px' }}>
-                      An ontology is inconsistent when it contains logical contradictions. Common causes:
-                    </p>
-                    <ul style={{ fontSize: '13px', lineHeight: 1.8, color: '#4b5563', paddingLeft: '20px' }}>
-                      <li><strong>Disjoint class violations:</strong> Conflicting class memberships</li>
-                      <li><strong>Cardinality restrictions:</strong> Conflicting min/max constraints</li>
-                      <li><strong>Property restrictions:</strong> Contradictory property values</li>
-                    </ul>
-                  </div>
-                  
-                  {unsatisfiableClasses.length > 0 && (
-                    <div style={{ marginTop: '16px', padding: '12px', backgroundColor: '#fef3c7', borderRadius: '6px' }}>
-                      <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '8px', color: '#92400e' }}>
-                        Found {unsatisfiableClasses.length} Unsatisfiable Class{unsatisfiableClasses.length > 1 ? 'es' : ''}:
-                      </div>
-                      <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
-                        {unsatisfiableClasses.map((cls: any) => (
-                          <div
-                            key={cls.iri}
-                            style={{
-                              fontSize: '13px',
-                              padding: '6px 8px',
-                              marginBottom: '4px',
-                              backgroundColor: 'white',
-                              borderRadius: '4px',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '8px'
-                            }}
-                            onClick={() => {
-                              navigateToClass(cls.iri);
-                              setShowExplainDialog(false);
-                            }}
-                          >
-                            <XCircle size={12} style={{ color: '#dc2626' }} />
-                            <span>{cls.label}</span>
-                            <span style={{ marginLeft: 'auto', fontSize: '11px', color: '#9ca3af' }}>Click to navigate →</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-            <div style={styles.dialogFooter}>
-              <button style={styles.button} onClick={() => setShowExplainDialog(false)}>
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Status Bar */}
-      <div style={{
-        ...styles.statusBar,
-        backgroundColor: isConsistent === true ? '#d1fae5' : 
-                        isConsistent === false ? '#fee2e2' : 
-                        '#f3f4f6'
-      }}>
-        {isRunning ? (
-          <>
-            <Loader size={14} style={{ animation: 'spin 1s linear infinite' }} />
-            <span>{reasonerStatus}</span>
-          </>
-        ) : isConsistent === true ? (
-          <>
-            <CheckCircle size={14} style={{ color: '#059669' }} />
-            <span style={{ color: '#059669' }}>Ontology is consistent</span>
-          </>
-        ) : isConsistent === false ? (
-          <>
-            <XCircle size={14} style={{ color: '#dc2626' }} />
-            <span style={{ color: '#dc2626' }}>Ontology is inconsistent</span>
-          </>
         ) : (
+          /* Results View - Protégé Style Layout */
           <>
-            <Info size={14} style={{ color: '#6b7280' }} />
-            <span style={{ color: '#6b7280' }}>{reasonerStatus}</span>
-          </>
-        )}
-      </div>
-
-      {/* Quick Action Buttons */}
-      <div style={styles.quickActions}>
-        <button
-          onClick={() => startReasoner('consistency')}
-          disabled={isRunning}
-          style={{...styles.button, ...styles.primaryButton}}
-          title="Check consistency"
-        >
-          <Play size={14} />
-          <span>Start reasoner</span>
-        </button>
-        
-        <button
-          onClick={() => startReasoner('classification')}
-          disabled={isRunning}
-          style={styles.button}
-          title="Classify ontology"
-        >
-          <GitBranch size={14} />
-          <span>Classify</span>
-        </button>
-        
-        <button
-          onClick={() => startReasoner('realization')}
-          disabled={isRunning}
-          style={styles.button}
-          title="Realize individuals"
-        >
-          <Database size={14} />
-          <span>Realize</span>
-        </button>
-      </div>
-
-      {/* Main Content */}
-      <div style={styles.content}>
-        {/* Statistics Panel */}
-        {stats && (
-          <div style={styles.statsPanel}>
-            <div style={styles.statItem}>
-              <span style={styles.statLabel}>Classes:</span>
-              <span style={styles.statValue}>{stats.classCount || 0}</span>
-            </div>
-            <div style={styles.statItem}>
-              <span style={styles.statLabel}>Individuals:</span>
-              <span style={styles.statValue}>{stats.individualCount || 0}</span>
-            </div>
-            <div style={styles.statItem}>
-              <span style={styles.statLabel}>Properties:</span>
-              <span style={styles.statValue}>{stats.propertyCount || 0}</span>
-            </div>
-            <div style={styles.statItem}>
-              <span style={styles.statLabel}>Satisfiable:</span>
-              <span style={{...styles.statValue, color: '#059669'}}>{stats.satisfiableClasses || 0}</span>
-            </div>
-            <div style={styles.statItem}>
-              <span style={styles.statLabel}>Unsatisfiable:</span>
-              <span style={{...styles.statValue, color: '#dc2626'}}>{stats.unsatisfiableClasses || 0}</span>
-            </div>
-          </div>
-        )}
-
-        {/* Unsatisfiable Classes Warning */}
-        {unsatisfiableClasses.length > 0 && (
-          <div style={styles.warningPanel}>
-            <AlertTriangle size={16} style={{ color: '#f59e0b' }} />
-            <div style={{ flex: 1 }}>
-              <div style={styles.warningTitle}>
-                {unsatisfiableClasses.length} Unsatisfiable Class{unsatisfiableClasses.length > 1 ? 'es' : ''}
-              </div>
-              <div style={styles.warningText}>
-                These classes are equivalent to owl:Nothing and cannot have any instances
-              </div>
-              <div style={styles.unsatisfiableList}>
-                {unsatisfiableClasses.map((cls: any) => (
-                  <div
-                    key={cls.iri}
-                    style={styles.unsatisfiableItem}
-                    onMouseEnter={(e) => handleClassHover(cls.iri, e)}
-                    onMouseLeave={handleClassLeave}
-                    onClick={() => navigateToClass(cls.iri)}
-                  >
-                    <XCircle size={12} style={{ color: '#dc2626' }} />
-                    <span>{cls.label}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Equivalent Classes */}
-        {equivalentClasses.length > 0 && (
-          <div style={styles.section}>
-            <div style={styles.sectionHeader}>
-              <Link2 size={16} style={{ color: '#f59e0b' }} />
-              <span style={styles.sectionTitle}>Equivalent Classes ({equivalentClasses.length})</span>
-            </div>
-            <div style={styles.sectionContent}>
-              {equivalentClasses.map((group: any, idx: number) => (
-                <div key={idx} style={styles.equivalentGroup}>
-                  {group.classes?.map((cls: any, cidx: number) => (
-                    <React.Fragment key={cls.iri}>
-                      <span
-                        style={styles.equivalentClass}
-                        onMouseEnter={(e) => handleClassHover(cls.iri, e)}
-                        onMouseLeave={handleClassLeave}
-                        onClick={() => navigateToClass(cls.iri)}
-                      >
-                        {cls.label}
-                      </span>
-                      {cidx < group.classes.length - 1 && (
-                        <ArrowRight size={14} style={{ margin: '0 8px', color: '#9ca3af' }} />
-                      )}
-                    </React.Fragment>
-                  ))}
+            {/* Left Panel - Consistency & Stats */}
+            <div className={`w-80 border-r flex flex-col overflow-hidden ${
+              isDark ? 'border-gray-700 bg-gray-900' : 'border-gray-300 bg-white'
+            }`}>
+              {/* Consistency Status */}
+              <div className={`px-4 py-3 border-b ${
+                isOntologyInconsistent 
+                  ? (isDark ? 'bg-red-900/20 border-red-900/30' : 'bg-red-50 border-red-100') 
+                  : (isDark ? 'bg-green-900/20 border-green-900/30' : 'bg-green-50 border-green-100')
+              }`}>
+                <div className="flex items-center gap-2 mb-1">
+                  <AlertCircle size={16} className={isOntologyInconsistent ? 'text-red-500' : 'text-green-500'} />
+                  <span className={`text-sm font-semibold ${isDark ? 'text-gray-200' : 'text-gray-900'}`}>Consistency</span>
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Tabbed Hierarchy View */}
-        {(classHierarchy.length > 0 || objectPropertyHierarchy.length > 0 || dataPropertyHierarchy.length > 0) && (
-          <div style={styles.section}>
-            <div style={styles.sectionHeader}>
-              <GitBranch size={16} style={{ color: '#3b82f6' }} />
-              <span style={styles.sectionTitle}>Inferred Hierarchies</span>
-              <span style={styles.helpText}>
-                <HelpCircle size={12} style={{ marginRight: '4px' }} />
-                Hover over items to see explanations
-              </span>
-            </div>
-            
-            {/* Tabs */}
-            <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: '12px' }}>
-              <button
-                onClick={() => setActiveTab('classes')}
-                style={{
-                  padding: '8px 16px',
-                  fontSize: '13px',
-                  fontWeight: activeTab === 'classes' ? 600 : 400,
-                  color: activeTab === 'classes' ? '#8b5cf6' : 'var(--text-primary)',
-                  backgroundColor: 'transparent',
-                  border: 'none',
-                  borderBottom: activeTab === 'classes' ? '2px solid #8b5cf6' : '2px solid transparent',
-                  cursor: 'pointer'
-                }}
-              >
-                Classes ({classHierarchy.length})
-              </button>
-              <button
-                onClick={() => setActiveTab('objectProperties')}
-                style={{
-                  padding: '8px 16px',
-                  fontSize: '13px',
-                  fontWeight: activeTab === 'objectProperties' ? 600 : 400,
-                  color: activeTab === 'objectProperties' ? '#8b5cf6' : 'var(--text-primary)',
-                  backgroundColor: 'transparent',
-                  border: 'none',
-                  borderBottom: activeTab === 'objectProperties' ? '2px solid #8b5cf6' : '2px solid transparent',
-                  cursor: 'pointer'
-                }}
-              >
-                Object Properties ({objectPropertyHierarchy.length})
-              </button>
-              <button
-                onClick={() => setActiveTab('dataProperties')}
-                style={{
-                  padding: '8px 16px',
-                  fontSize: '13px',
-                  fontWeight: activeTab === 'dataProperties' ? 600 : 400,
-                  color: activeTab === 'dataProperties' ? '#8b5cf6' : 'var(--text-primary)',
-                  backgroundColor: 'transparent',
-                  border: 'none',
-                  borderBottom: activeTab === 'dataProperties' ? '2px solid #8b5cf6' : '2px solid transparent',
-                  cursor: 'pointer'
-                }}
-              >
-                Data Properties ({dataPropertyHierarchy.length})
-              </button>
-            </div>
-            
-            {/* Tab Content */}
-            <div style={styles.hierarchyContainer}>
-              {activeTab === 'classes' && classHierarchy.map(node => renderClassNode(node))}
-              {activeTab === 'objectProperties' && objectPropertyHierarchy.map(node => renderPropertyNode(node, 'object'))}
-              {activeTab === 'dataProperties' && dataPropertyHierarchy.map(node => renderPropertyNode(node, 'data'))}
-            </div>
-          </div>
-        )}
-
-        {/* Empty State */}
-        {isConsistent === null && classHierarchy.length === 0 && objectPropertyHierarchy.length === 0 && dataPropertyHierarchy.length === 0 && unsatisfiableClasses.length === 0 && (
-          <div style={styles.emptyState}>
-            <Lightbulb size={48} style={{ color: '#d1d5db' }} />
-            <div style={styles.emptyTitle}>No reasoning results yet</div>
-            <div style={styles.emptyText}>
-              Click "Start reasoner" or "Classify" to compute the class hierarchy and check consistency
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Explanation Tooltip */}
-      {hoveredClass && tooltipPosition && explanations.has(hoveredClass) && (
-        <div
-          ref={tooltipRef}
-          style={{
-            ...styles.tooltip,
-            left: tooltipPosition.x + 10,
-            top: tooltipPosition.y + 10
-          }}
-        >
-          <div style={styles.tooltipHeader}>
-            <Lightbulb size={14} style={{ color: '#667eea' }} />
-            <span style={styles.tooltipTitle}>Explanation</span>
-          </div>
-          <div style={styles.tooltipContent}>
-            {explanations.get(hoveredClass)?.reasons.map((reason, idx) => (
-              <div key={idx} style={styles.explanationItem}>
-                <div style={styles.explanationType}>
-                  {reason.type === 'unsatisfiable' && <XCircle size={12} style={{ color: '#dc2626' }} />}
-                  {reason.type === 'equivalentTo' && <Link2 size={12} style={{ color: '#f59e0b' }} />}
-                  {reason.type === 'subClassOf' && <GitBranch size={12} style={{ color: '#3b82f6' }} />}
-                  <span>{reason.type.replace(/([A-Z])/g, ' $1').trim()}</span>
+                <div className={`text-xs font-medium ${
+                  isOntologyInconsistent ? 'text-red-500' : 'text-green-600'
+                }`}>
+                  {isOntologyInconsistent ? '✗ Ontology is inconsistent' : '✓ Ontology is consistent'}
                 </div>
-                <div style={styles.explanationText}>{reason.description}</div>
-                {reason.relatedClasses.length > 0 && (
-                  <div style={styles.relatedClasses}>
-                    <span style={styles.relatedLabel}>Related:</span>
-                    {reason.relatedClasses.join(', ')}
+                {displayStats && (
+                  <div className={`text-[11px] mt-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                    {(displayStats.satisfiableClasses ?? 'N/A')} satisfiable · {' '}
+                    {(displayStats.unsatisfiableClassesRaw === -1 ? 'N/A' : (displayStats.unsatisfiableClasses ?? 0))} unsatisfiable
                   </div>
                 )}
               </div>
-            ))}
+
+              {/* Reasoner Info */}
+              <div className={`px-4 py-3 border-b ${isDark ? 'border-gray-700 bg-gray-800/50' : 'border-gray-300 bg-gray-50'}`}>
+                <div className={`text-xs font-semibold mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Reasoner Information</div>
+                <div className={`space-y-1 text-[11px] ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                  <div className="flex justify-between">
+                    <span>Name:</span>
+                    <span className={`font-medium ${isDark ? 'text-gray-200' : 'text-gray-900'}`}>{selectedReasoner}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Version:</span>
+                    <span className={`font-medium ${isDark ? 'text-gray-200' : 'text-gray-900'}`}>
+                      {selectedReasoner === 'HermiT' ? '1.4.5.519' : 
+                       selectedReasoner === 'ELK' ? '0.4.3' :
+                       selectedReasoner === 'Openllet' ? '2.6.5' : 
+                       selectedReasoner === 'Pellet' ? '2.3.1' : 
+                       '1.0.0'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Status:</span>
+                    <span className={`font-medium ${isRunning ? 'text-green-500' : 'text-gray-500'}`}>
+                      {isRunning ? 'Running' : 'Stopped'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Entity Counts */}
+              <div className={`px-4 py-3 border-b ${isDark ? 'border-gray-700' : 'border-gray-300'}`}>
+                <div className={`text-xs font-semibold mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Entity Counts</div>
+                <div className="space-y-1.5">
+                  {[
+                    { label: 'Classes', value: displayStats?.classHierarchyNodes ?? reasonerResults?.totalClasses ?? 0, icon: '🔷' },
+                    { label: 'Object Properties', value: displayStats?.objectPropertyNodes ?? reasonerResults?.totalObjectProperties ?? 0, icon: '🔗' },
+                    { label: 'Data Properties', value: displayStats?.dataPropertyNodes ?? reasonerResults?.totalDataProperties ?? 0, icon: '📊' },
+                    { label: 'Individuals', value: displayStats?.individuals ?? reasonerResults?.totalIndividuals ?? 0, icon: '👤' }
+                  ].map((item) => (
+                    <div key={item.label} className="flex items-center justify-between text-xs">
+                      <span className={isDark ? 'text-gray-400' : 'text-gray-600'}>
+                        <span className="mr-1.5">{item.icon}</span>
+                        {item.label}
+                      </span>
+                      <span className={`font-semibold px-2 py-0.5 rounded ${
+                        isDark ? 'bg-gray-800 text-gray-200' : 'bg-gray-100 text-gray-900'
+                      }`}>
+                        {item.value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Unsatisfiable Classes */}
+              {combinedUnsat.length > 0 && (
+                <div className={`px-4 py-3 border-b flex-1 overflow-hidden flex flex-col ${
+                  isDark ? 'bg-red-900/10 border-gray-700' : 'bg-red-50 border-gray-300'
+                }`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className={`text-xs font-semibold ${isDark ? 'text-red-400' : 'text-red-700'}`}>
+                      ⚠ Unsatisfiable Classes ({combinedUnsat.length})
+                    </div>
+                    <button
+                      onClick={() => setShowExplainDialog(true)}
+                      className="text-[10px] px-2 py-0.5 bg-red-600 text-white rounded hover:bg-red-700"
+                      disabled={isLoading}
+                    >
+                      Explain
+                    </button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto space-y-1">
+                    {combinedUnsat.map((cls: any, idx: number) => {
+                      const clsData = typeof cls === 'string'
+                        ? { iri: cls, label: cls.split('#').pop() || cls.split('/').pop() || cls }
+                        : cls;
+                      return (
+                        <div 
+                          key={idx} 
+                          className={`border rounded px-2 py-1.5 text-[11px] cursor-pointer ${
+                            isDark ? 'bg-gray-800 border-red-900/50 hover:bg-gray-700' : 'bg-white border-red-200 hover:bg-red-50'
+                          }`}
+                          onClick={() => navigateToEntity(clsData.iri)}
+                        >
+                          <div className={`font-semibold ${isDark ? 'text-red-400' : 'text-red-900'}`}>{clsData.label}</div>
+                          <div className={`text-[10px] truncate ${isDark ? 'text-gray-500' : 'text-red-600'}`} title={clsData.iri}>
+                            {clsData.iri}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Equivalent Classes */}
+              {equivalentGroups.length > 0 && (
+                <div className={`px-4 py-3 border-b ${isDark ? 'bg-blue-900/10 border-gray-700' : 'bg-blue-50 border-gray-300'}`}>
+                  <div className={`text-xs font-semibold mb-2 flex items-center gap-1.5 ${isDark ? 'text-blue-400' : 'text-blue-700'}`}>
+                    <GitMerge size={14} />
+                    Equivalent Classes ({equivalentGroups.length})
+                  </div>
+                  <div className="space-y-1 max-h-32 overflow-y-auto">
+                    {equivalentGroups.map((group: any, idx: number) => {
+                      const groupArray = Array.isArray(group) ? group : (group.classes || [group]);
+                      const displayText = groupArray.length > 0 
+                        ? groupArray.map((item: any) => typeof item === 'string' ? item : (item.label || item.iri || String(item))).join(' ≡ ')
+                        : 'Unknown';
+                      
+                      return (
+                        <div key={idx} className={`border rounded px-2 py-1 text-[11px] ${
+                          isDark ? 'bg-gray-800 border-blue-900/50 text-blue-300' : 'bg-white border-blue-200 text-blue-800'
+                        }`}>
+                          {displayText}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className={`px-4 py-3 border-t mt-auto ${isDark ? 'border-gray-700 bg-gray-800/50' : 'border-gray-300 bg-gray-50'}`}>
+                <div className="space-y-2">
+                  <button
+                    onClick={() => setShowExplainDialog(true)}
+                    disabled={!isOntologyInconsistent || isLoading}
+                    className={`w-full px-3 py-2 text-xs font-medium border rounded disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${
+                      isDark ? 'bg-gray-700 border-gray-600 hover:bg-gray-600 text-gray-200' : 'bg-white border-gray-300 hover:bg-gray-50 text-gray-700'
+                    }`}
+                  >
+                    <AlertCircle size={14} />
+                    Explain Inconsistency
+                  </button>
+                  <button
+                    onClick={() => dashboardStartReasoner ? dashboardStartReasoner() : startReasoner('classification')}
+                    disabled={isLoading || !projectId}
+                    className="w-full px-3 py-2 text-xs font-medium bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    <RefreshCw size={14} />
+                    Re-classify
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Right Panel - Inferred Hierarchies */}
+            <div className={`flex-1 flex flex-col overflow-hidden ${isDark ? 'bg-gray-900' : 'bg-white'}`}>
+              <div className={`px-4 py-0 border-b ${isDark ? 'border-gray-700 bg-gray-800/50' : 'border-gray-300 bg-gray-50'}`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center">
+                    {[
+                      { id: 'classes', label: 'Classes', icon: <Network size={14} /> },
+                      { id: 'objectProperties', label: 'Object Properties', icon: <Link2 size={14} /> },
+                      { id: 'dataProperties', label: 'Data Properties', icon: <Database size={14} /> }
+                    ].map((tab) => (
+                      <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id as any)}
+                        className={`px-4 py-3 text-xs font-medium flex items-center gap-2 border-b-2 transition-colors ${
+                          activeTab === tab.id
+                            ? 'border-purple-500 text-purple-500'
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                        }`}
+                      >
+                        {tab.icon}
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={expandAll}
+                      className={`p-1.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 transition-colors`}
+                      title="Expand All"
+                    >
+                      <ChevronDown size={14} />
+                    </button>
+                    <button
+                      onClick={collapseAll}
+                      className={`p-1.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 transition-colors`}
+                      title="Collapse All"
+                    >
+                      <ChevronRight size={14} />
+                    </button>
+                    <div className={`w-px h-4 mx-1 ${isDark ? 'bg-gray-700' : 'bg-gray-300'}`} />
+                    <button
+                      onClick={() => dashboardStartReasoner ? dashboardStartReasoner() : startReasoner('classification')}
+                      disabled={isLoading || !projectId}
+                      className={`px-3 py-1.5 text-xs font-medium border rounded disabled:opacity-50 flex items-center gap-1.5 ${
+                        isDark ? 'bg-gray-700 border-gray-600 hover:bg-gray-600 text-gray-200' : 'bg-white border-gray-300 hover:bg-gray-50 text-gray-700'
+                      }`}
+                    >
+                      <RefreshCw size={12} />
+                      Refresh
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto px-4 py-3">
+                {activeTab === 'classes' && (
+                  classHierarchyToRender && classHierarchyToRender.length > 0 ? (
+                    <div className="space-y-0.5 text-sm">
+                      {renderHierarchy(classHierarchyToRender, 'class')}
+                    </div>
+                  ) : (
+                    <div className={`flex items-center justify-center h-full text-sm italic ${isDark ? 'text-gray-600' : 'text-gray-500'}`}>
+                      No inferred class hierarchy available. Run the reasoner to generate results.
+                    </div>
+                  )
+                )}
+
+                {activeTab === 'objectProperties' && (
+                  objectPropertyHierarchyToRender && objectPropertyHierarchyToRender.length > 0 ? (
+                    <div className="space-y-0.5 text-sm">
+                      {renderHierarchy(objectPropertyHierarchyToRender, 'objectProperty')}
+                    </div>
+                  ) : (
+                    <div className={`flex items-center justify-center h-full text-sm italic ${isDark ? 'text-gray-600' : 'text-gray-500'}`}>
+                      No inferred object property hierarchy available. Run the reasoner to generate results.
+                    </div>
+                  )
+                )}
+
+                {activeTab === 'dataProperties' && (
+                  dataPropertyHierarchyToRender && dataPropertyHierarchyToRender.length > 0 ? (
+                    <div className="space-y-0.5 text-sm">
+                      {renderHierarchy(dataPropertyHierarchyToRender, 'dataProperty')}
+                    </div>
+                  ) : (
+                    <div className={`flex items-center justify-center h-full text-sm italic ${isDark ? 'text-gray-600' : 'text-gray-500'}`}>
+                      No inferred data property hierarchy available. Run the reasoner to generate results.
+                    </div>
+                  )
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Explanation Dialog */}
+      {showExplainDialog && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 p-4">
+          <div className={`w-full max-w-2xl rounded-lg shadow-2xl flex flex-col max-h-[80vh] ${
+            isDark ? 'bg-gray-800 text-gray-100' : 'bg-white text-gray-900'
+          }`}>
+            <div className={`flex items-center justify-between px-6 py-4 border-b ${isDark ? 'border-gray-700' : 'border-gray-200'}`}>
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <Lightbulb className="text-yellow-500" size={20} />
+                Reasoner Explanation
+              </h3>
+              <button onClick={() => setShowExplainDialog(false)} className="text-gray-500 hover:text-gray-700">
+                <XCircle size={24} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              {isOntologyInconsistent ? (
+                <div className="space-y-4">
+                  <div className={`p-4 rounded-md border ${isDark ? 'bg-red-900/20 border-red-800 text-red-400' : 'bg-red-50 border-red-200 text-red-700'}`}>
+                    <div className="font-bold mb-1">Ontology is Inconsistent</div>
+                    <div className="text-sm">The reasoner has detected logical contradictions in the ontology.</div>
+                  </div>
+                  {/* Add more detailed explanation logic here if available */}
+                  <div className="text-sm opacity-80">
+                    Detailed explanation for inconsistency is being computed...
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-8 text-gray-500 italic">
+                  No inconsistencies detected.
+                </div>
+              )}
+            </div>
+            <div className={`px-6 py-4 border-t flex justify-end ${isDark ? 'border-gray-700' : 'border-gray-200'}`}>
+              <button 
+                onClick={() => setShowExplainDialog(false)}
+                className={`px-4 py-2 text-sm font-medium rounded ${
+                  isDark ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-100 hover:bg-gray-200'
+                }`}
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1165,409 +1234,23 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
         }
+        .animate-spin {
+          animation: spin 1s linear infinite;
+        }
       `}</style>
     </div>
   );
 };
 
 const getStyles = (isDark: boolean): { [key: string]: React.CSSProperties } => ({
+  // Keep some legacy styles for internal components if needed, but most are now Tailwind-like classes
   container: {
     width: '100%',
     height: '100%',
     display: 'flex',
     flexDirection: 'column',
-    backgroundColor: isDark ? '#1a1a1a' : '#ffffff',
-    fontFamily: 'Arial, sans-serif'
-  },
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '8px 16px',
-    borderBottom: isDark ? '1px solid #374151' : '1px solid #e5e7eb',
-    backgroundColor: isDark ? '#262626' : '#f9fafb'
-  },
-  headerLeft: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px'
-  },
-  menuContainer: {
-    position: 'relative'
-  },
-  menuButton: {
-    padding: '4px 12px',
-    border: 'none',
-    backgroundColor: 'transparent',
-    cursor: 'pointer',
-    fontSize: '13px',
-    fontWeight: 500,
-    color: isDark ? '#e5e7eb' : '#374151'
-  },
-  dropdownMenu: {
-    position: 'absolute',
-    top: '100%',
-    left: 0,
-    backgroundColor: isDark ? '#262626' : 'white',
-    border: isDark ? '1px solid #374151' : '1px solid #d1d5db',
-    borderRadius: '4px',
-    boxShadow: '0 4px 6px rgba(0,0,0,0.3)',
-    minWidth: '220px',
-    zIndex: 1000,
-    marginTop: '4px'
-  },
-  menuItem: {
-    padding: '8px 16px',
-    fontSize: '13px',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    transition: 'background-color 0.2s'
-  },
-  menuItemLabel: {
-    padding: '8px 16px',
-    fontSize: '11px',
-    color: '#9ca3af',
-    fontWeight: 600,
-    textTransform: 'uppercase',
-    backgroundColor: isDark ? '#1a1a1a' : '#f9fafb'
-  },
-  menuItemDisabled: {
-    color: '#9ca3af',
-    cursor: 'not-allowed'
-  },
-  menuDivider: {
-    height: '1px',
-    backgroundColor: isDark ? '#374151' : '#e5e7eb',
-    margin: '4px 0'
-  },
-  title: {
-    fontSize: '14px',
-    fontWeight: 600,
-    color: isDark ? '#e5e7eb' : '#111827'
-  },
-  iconButton: {
-    padding: '6px',
-    border: isDark ? '1px solid #374151' : '1px solid #d1d5db',
-    borderRadius: '4px',
-    backgroundColor: isDark ? '#262626' : 'white',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center'
-  },
-  quickActions: {
-    padding: '12px 16px',
-    borderBottom: isDark ? '1px solid #374151' : '1px solid #e5e7eb',
-    display: 'flex',
-    gap: '8px',
-    flexWrap: 'wrap',
-    backgroundColor: isDark ? '#1f1f1f' : '#fafafa'
-  },
-  button: {
-    padding: '6px 12px',
-    border: isDark ? '1px solid #374151' : '1px solid #d1d5db',
-    borderRadius: '4px',
-    backgroundColor: isDark ? '#262626' : 'white',
-    color: isDark ? '#e5e7eb' : 'inherit',
-    cursor: 'pointer',
-    fontSize: '13px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    transition: 'all 0.2s'
-  },
-  primaryButton: {
-    backgroundColor: '#667eea',
-    color: 'white',
-    border: 'none'
-  },
-  dialogOverlay: {
-    position: 'fixed',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 10000
-  },
-  dialog: {
-    backgroundColor: 'white',
-    borderRadius: '8px',
-    boxShadow: '0 20px 25px rgba(0,0,0,0.3)',
-    minWidth: '400px',
-    maxWidth: '600px'
-  },
-  dialogHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '16px 20px',
-    borderBottom: '1px solid #e5e7eb'
-  },
-  dialogTitle: {
-    fontSize: '16px',
-    fontWeight: 600,
-    color: '#111827'
-  },
-  closeButton: {
-    border: 'none',
-    background: 'none',
-    fontSize: '24px',
-    cursor: 'pointer',
-    color: '#6b7280',
-    padding: '0',
-    width: '24px',
-    height: '24px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  dialogContent: {
-    padding: '20px'
-  },
-  dialogFooter: {
-    display: 'flex',
-    gap: '8px',
-    justifyContent: 'flex-end',
-    padding: '16px 20px',
-    borderTop: isDark ? '1px solid #374151' : '1px solid #e5e7eb'
-  },
-  settingRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    marginBottom: '12px'
-  },
-  checkboxLabel: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    fontSize: '13px',
-    color: isDark ? '#e5e7eb' : 'inherit',
-    cursor: 'pointer'
-  },
-  settingLabel: {
-    fontSize: '13px',
-    fontWeight: 500,
-    color: isDark ? '#e5e7eb' : 'inherit',
-    minWidth: '150px'
-  },
-  select: {
-    padding: '6px 8px',
-    border: isDark ? '1px solid #374151' : '1px solid #d1d5db',
-    borderRadius: '4px',
-    fontSize: '13px',
-    backgroundColor: isDark ? '#262626' : 'white',
-    color: isDark ? '#e5e7eb' : 'inherit',
-    flex: 1
-  },
-  input: {
-    padding: '6px 8px',
-    border: isDark ? '1px solid #374151' : '1px solid #d1d5db',
-    borderRadius: '4px',
-    fontSize: '13px',
-    backgroundColor: isDark ? '#262626' : 'white',
-    color: isDark ? '#e5e7eb' : 'inherit',
-    flex: 1
-  },
-  statusBar: {
-    padding: '8px 16px',
-    borderBottom: isDark ? '1px solid #374151' : '1px solid #e5e7eb',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    fontSize: '13px',
-    color: isDark ? '#e5e7eb' : 'inherit'
-  },
-  content: {
-    flex: 1,
-    overflowY: 'auto',
-    padding: '16px'
-  },
-  statsPanel: {
-    display: 'flex',
-    gap: '24px',
-    padding: '12px',
-    backgroundColor: '#f9fafb',
-    borderRadius: '6px',
-    marginBottom: '16px',
-    flexWrap: 'wrap'
-  },
-  statItem: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '4px'
-  },
-  statLabel: {
-    fontSize: '11px',
-    color: '#6b7280',
-    textTransform: 'uppercase'
-  },
-  statValue: {
-    fontSize: '18px',
-    fontWeight: 600,
-    color: '#111827'
-  },
-  warningPanel: {
-    padding: '12px',
-    backgroundColor: '#fffbeb',
-    border: '1px solid #fef3c7',
-    borderRadius: '6px',
-    marginBottom: '16px',
-    display: 'flex',
-    gap: '12px'
-  },
-  warningTitle: {
-    fontSize: '14px',
-    fontWeight: 600,
-    color: '#92400e',
-    marginBottom: '4px'
-  },
-  warningText: {
-    fontSize: '12px',
-    color: '#78350f',
-    marginBottom: '8px'
-  },
-  unsatisfiableList: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '4px'
-  },
-  unsatisfiableItem: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '4px 8px',
-    backgroundColor: isDark ? '#262626' : 'white',
-    borderRadius: '4px',
-    fontSize: '12px',
-    cursor: 'pointer'
-  },
-  section: {
-    marginBottom: '16px',
-    border: isDark ? '1px solid #374151' : '1px solid #e5e7eb',
-    borderRadius: '6px',
-    overflow: 'hidden'
-  },
-  sectionHeader: {
-    padding: '10px 12px',
-    backgroundColor: isDark ? '#262626' : '#f9fafb',
-    borderBottom: isDark ? '1px solid #374151' : '1px solid #e5e7eb',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px'
-  },
-  sectionTitle: {
-    fontSize: '14px',
-    fontWeight: 600,
-    color: isDark ? '#e5e7eb' : '#111827',
-    flex: 1
-  },
-  helpText: {
-    fontSize: '11px',
-    color: '#6b7280',
-    display: 'flex',
-    alignItems: 'center'
-  },
-  sectionContent: {
-    padding: '12px'
-  },
-  equivalentGroup: {
-    display: 'flex',
-    alignItems: 'center',
-    padding: '8px',
-    backgroundColor: isDark ? '#78350f' : '#fef3c7',
-    borderRadius: '4px',
-    marginBottom: '8px',
-    flexWrap: 'wrap'
-  },
-  equivalentClass: {
-    fontSize: '13px',
-    color: isDark ? '#fef3c7' : '#92400e',
-    cursor: 'pointer',
-    fontWeight: 500
-  },
-  hierarchyContainer: {
-    padding: '8px',
-    maxHeight: '500px',
-    overflowY: 'auto'
-  },
-  emptyState: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: '48px 24px',
-    textAlign: 'center'
-  },
-  emptyTitle: {
-    fontSize: '16px',
-    fontWeight: 600,
-    color: isDark ? '#e5e7eb' : '#374151',
-    marginTop: '16px'
-  },
-  emptyText: {
-    fontSize: '13px',
-    color: '#6b7280',
-    marginTop: '8px',
-    maxWidth: '400px'
-  },
-  tooltip: {
-    position: 'fixed',
-    backgroundColor: '#1f2937',
-    color: 'white',
-    borderRadius: '6px',
-    padding: '12px',
-    maxWidth: '400px',
-    boxShadow: '0 10px 25px rgba(0,0,0,0.3)',
-    zIndex: 10000,
-    pointerEvents: 'none'
-  },
-  tooltipHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    marginBottom: '8px',
-    paddingBottom: '8px',
-    borderBottom: '1px solid #374151'
-  },
-  tooltipTitle: {
-    fontSize: '13px',
-    fontWeight: 600
-  },
-  tooltipContent: {
-    fontSize: '12px',
-    lineHeight: 1.5
-  },
-  explanationItem: {
-    marginBottom: '8px'
-  },
-  explanationType: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    fontSize: '11px',
-    fontWeight: 600,
-    textTransform: 'uppercase',
-    color: '#9ca3af',
-    marginBottom: '4px'
-  },
-  explanationText: {
-    fontSize: '12px',
-    color: '#e5e7eb',
-    marginBottom: '4px'
-  },
-  relatedClasses: {
-    fontSize: '11px',
-    color: '#9ca3af',
-    fontStyle: 'italic'
-  },
-  relatedLabel: {
-    fontWeight: 600,
-    marginRight: '4px'
+    backgroundColor: isDark ? '#111827' : '#ffffff',
+    fontFamily: 'Inter, system-ui, -apple-system, sans-serif'
   }
 });
 
