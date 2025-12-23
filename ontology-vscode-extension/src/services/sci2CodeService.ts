@@ -154,6 +154,38 @@ class Sci2CodeService {
     }
   }
 
+  convertToBibTeX(item: CitationItem): string {
+    const key = item.key.replace(/[^a-zA-Z0-9]/g, '');
+    const year = item.date ? (item.date.match(/\d{4}/)?.[0] || '2025') : '2025';
+    const authors = item.creators?.map(c => `${c.lastName}, ${c.firstName}`).join(' and ') || 'Unknown';
+    
+    let bib = `@${item.itemType === 'journalArticle' ? 'article' : 'misc'}{${key}${year},\n`;
+    bib += `  title = {${item.title}},\n`;
+    bib += `  author = {${authors}},\n`;
+    if (year) bib += `  year = {${year}},\n`;
+    if (item.publicationTitle) bib += `  journal = {${item.publicationTitle}},\n`;
+    if (item.doi) bib += `  doi = {${item.doi}},\n`;
+    if (item.url) bib += `  url = {${item.url}},\n`;
+    bib += `}\n`;
+    return bib;
+  }
+
+  convertToCFFReference(item: CitationItem): any {
+    const year = item.date ? parseInt(item.date.match(/\d{4}/)?.[0] || '2025') : 2025;
+    
+    return {
+      type: item.itemType === 'journalArticle' ? 'article' : 'generic',
+      title: item.title,
+      authors: item.creators?.map(c => ({
+        'family-names': c.lastName,
+        'given-names': c.firstName
+      })) || [],
+      year: year,
+      doi: item.doi,
+      url: item.url
+    };
+  }
+
   async formatCitationForOntology(key: string, format: 'turtle' | 'rdfxml' = 'turtle'): Promise<string | null> {
     if (!this.api) {
       await this.initialize();
@@ -169,6 +201,37 @@ class Sci2CodeService {
       console.error('Failed to format citation:', error);
       vscode.window.showErrorMessage(`Failed to format citation: ${error}`);
       return null;
+    }
+  }
+
+  formatManualCitation(item: CitationItem, format: 'turtle' | 'rdfxml' = 'turtle'): string {
+    const key = item.key.replace(/[^a-zA-Z0-9]/g, '');
+    const authors = item.creators?.map(c => `${c.firstName} ${c.lastName}`).join(', ') || 'Unknown';
+    const year = item.date ? (item.date.match(/\d{4}/)?.[0] || '') : '';
+    
+    if (format === 'turtle') {
+      let ttl = `###  Manual Citation: ${item.title}\n`;
+      ttl += `:${key} rdf:type owl:NamedIndividual ,\n`;
+      ttl += `         prov:Entity ;\n`;
+      ttl += `    dc:title "${item.title}" ;\n`;
+      ttl += `    dc:creator "${authors}" ;\n`;
+      if (year) ttl += `    dc:date "${year}"^^xsd:gYear ;\n`;
+      if (item.doi) ttl += `    dc:identifier "doi:${item.doi}" ;\n`;
+      if (item.url) ttl += `    foaf:homepage <${item.url}> ;\n`;
+      ttl += `    rdfs:comment "Manually added citation" .\n`;
+      return ttl;
+    } else {
+      let xml = `    <!-- Manual Citation: ${item.title} -->\n`;
+      xml += `    <owl:NamedIndividual rdf:about="&ont;${key}">\n`;
+      xml += `        <rdf:type rdf:resource="http://www.w3.org/ns/prov#Entity"/>\n`;
+      xml += `        <dc:title>${item.title}</dc:title>\n`;
+      xml += `        <dc:creator>${authors}</dc:creator>\n`;
+      if (year) xml += `        <dc:date rdf:datatype="&xsd;gYear">${year}</dc:date>\n`;
+      if (item.doi) xml += `        <dc:identifier>doi:${item.doi}</dc:identifier>\n`;
+      if (item.url) xml += `        <foaf:homepage rdf:resource="${item.url}"/>\n`;
+      xml += `        <rdfs:comment>Manually added citation</rdfs:comment>\n`;
+      xml += `    </owl:NamedIndividual>\n`;
+      return xml;
     }
   }
 
