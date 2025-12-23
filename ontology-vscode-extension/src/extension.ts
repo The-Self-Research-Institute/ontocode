@@ -11,7 +11,7 @@ import { EditCapture } from './collaboration/EditCapture';
 import { RemoteEditApplier } from './collaboration/RemoteEditApplier';
 
 const TOKEN_KEY = 'ontocode.authToken';
-const GATEWAY_URL = 'http://ec2-13-218-153-101.compute-1.amazonaws.com:8000'; // Gateway port
+const GATEWAY_URL = 'http://ec2-13-218-153-101.compute-1.amazonaws.com:8080'; // Gateway port
 const OWL_EDITOR_URL = 'http://ec2-13-218-153-101.compute-1.amazonaws.com:8083'; // OWL Editor service (WebSocket endpoint)
 const PLUGIN_SERVICE_URL = 'http://ec2-13-218-153-101.compute-1.amazonaws.com:8087'; // Plugin service port
 
@@ -707,7 +707,7 @@ class OntoCodePanel {
                         // Check if we already received IMPORT_COMPLETED (pendingImportProjectIdRef would be cleared)
                         // If not, check the project status and trigger fileReady if COMPLETED
                         try {
-                            const statusUrl = `http://ec2-13-218-153-101.compute-1.amazonaws.com:8000/api/ontology/status/${projectId}`;
+                            const statusUrl = `http://ec2-13-218-153-101.compute-1.amazonaws.com:8080/api/ontology/status/${projectId}`;
                             const statusResp = await axios.get(statusUrl, { headers });
                             console.log(`[OntoCode] Fallback status check for ${projectId}:`, statusResp.data);
                             
@@ -740,14 +740,14 @@ class OntoCodePanel {
                     errorMessage = responseData?.error || responseData?.message || `Server error: ${error.response.status}`;
                 } else if (error.request) {
                     console.error('[OntoCode] No response received:', error.request);
-                    errorMessage = 'No response from server. Is the gateway running on port 8000?';
+                    errorMessage = 'No response from server. Is the gateway running on port 8080?';
                 } else {
                     console.error('[OntoCode] Error setting up request:', error.message);
                     errorMessage = error.message;
                 }
                 
                 if (error.code === 'ECONNREFUSED') {
-                    errorMessage = 'Cannot connect to gateway on port 8000. Please ensure the gateway is running.';
+                    errorMessage = 'Cannot connect to gateway on port 8080. Please ensure the gateway is running.';
                 } else if (error.code === 'ETIMEDOUT') {
                     errorMessage = 'Upload timed out. The file may be too large or the server is not responding.';
                 } else if (error.message.includes('Maximum number of redirects')) {
