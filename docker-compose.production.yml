@@ -19,7 +19,7 @@ services:
     networks:
       - ontology-net
     healthcheck:
-      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      test: echo 'db.runCommand("ping").ok' | mongosh "mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@localhost:27017/admin" --quiet
       interval: 10s
       timeout: 5s
       retries: 5
@@ -79,7 +79,7 @@ services:
     container_name: ontocode-gateway
     restart: unless-stopped
     ports:
-      - "8082:8082"
+      - "80:80"
     environment:
       SPRING_PROFILES_ACTIVE: production
       JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-this}
@@ -92,7 +92,7 @@ services:
     networks:
       - ontology-net
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8082/actuator/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:80/actuator/health"]
       interval: 30s
       timeout: 10s
       retries: 3

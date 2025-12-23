@@ -6276,7 +6276,7 @@ const Dashboard = () => {
             projectId={projectId} 
             context={{ 
               projectId,
-              apiBaseUrl: (window as any).API_BASE_URL || 'http://localhost:8082',
+              apiBaseUrl: (window as any).API_BASE_URL || 'http://ec2-13-218-153-101.compute-1.amazonaws.com',
               permissions: {
                 canEdit: !readonlyMode,
                 canDelete: !readonlyMode,
