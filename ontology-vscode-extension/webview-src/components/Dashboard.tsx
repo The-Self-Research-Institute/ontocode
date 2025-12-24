@@ -1249,7 +1249,8 @@ const DetailsPanel = ({
   metadata,
   individuals,
   setIndividuals,
-  markAsUnsaved
+  markAsUnsaved,
+  viewMode = 'asserted'
 }: {
   selectedItem: SelectableItem | null;
   entitiesTab: string;
@@ -1286,6 +1287,7 @@ const DetailsPanel = ({
   individuals: Individual[];
   setIndividuals: React.Dispatch<React.SetStateAction<Individual[]>>;
   markAsUnsaved: () => void;
+  viewMode?: 'asserted' | 'inferred';
 }) => {
   if (!selectedItem) {
     return (
@@ -1327,6 +1329,7 @@ const DetailsPanel = ({
         dataPropertyHierarchy={dataPropertyHierarchy}
         objectProperties={objectProperties}
         dataProperties={dataProperties}
+        viewMode={viewMode}
         individuals={individuals}
         onAddIndividual={async (name: string, classIri: string) => {
           const id = `${metadata?.ontologyIRI || 'http://example.org/ontology'}#${name.replace(/\s+/g, '_')}`;
@@ -1372,6 +1375,7 @@ const DetailsPanel = ({
         onAddDisjointClick={onAddDisjointClick}
         onAddEquivalentClick={onAddEquivalentClick}
         objectProperties={objectProperties}
+        viewMode={viewMode}
       />;
     case 'Individuals':
       return <IndividualEditor item={selectedItem as Individual} onUpdate={onUpdate} {...sharedProps} />;
@@ -1424,17 +1428,27 @@ const Dashboard = () => {
     nodes: TreeNode[],
     counts: Record<string, { direct?: number; inferred?: number; total?: number }>
   ): TreeNode[] => {
+    if (!Array.isArray(nodes)) {
+      console.warn('[Dashboard] applyInstanceCountsToTree received non-array:', nodes);
+      return [];
+    }
+    
     return nodes.map((node) => {
       const countEntry = counts[node.id];
       const direct = countEntry?.direct;
       const inferred = countEntry?.inferred;
       const total = countEntry ? (countEntry.total ?? (direct ?? 0) + (inferred ?? 0)) : undefined;
+      
+      // Ensure children is always an array
+      const children = Array.isArray(node.children) ? node.children : [];
+      
       return {
         ...node,
         directInstanceCount: direct,
         inferredInstanceCount: inferred,
         totalInstanceCount: total,
-        children: node.children ? applyInstanceCountsToTree(node.children, counts) : node.children
+        children: children.length > 0 ? applyInstanceCountsToTree(children, counts) : [],
+        hasChildren: children.length > 0
       };
     });
   }, []);
@@ -1864,33 +1878,54 @@ const Dashboard = () => {
     };
 
     const filterRecursively = (items: SelectableItem[]): SelectableItem[] => {
+      // Safety check: ensure items is an array
+      if (!Array.isArray(items)) {
+        console.warn('[Dashboard] filterRecursively received non-array:', items);
+        return [];
+      }
+      
       const results: SelectableItem[] = [];
       for (const item of items) {
+        // Skip null/undefined items
+        if (!item || !item.id) {
+          continue;
+        }
+        
         if (isDeprecated(item)) {
           continue;
         }
 
-        const children = (item as any).children;
-        if (isBuiltIn(item) && children?.length) {
+        // Safely get children array
+        const children = Array.isArray((item as any).children) ? (item as any).children : [];
+        
+        if (isBuiltIn(item) && children.length > 0) {
           const childResults = filterRecursively(children);
           results.push(...childResults);
           continue;
         }
 
         let matches = matchesQuery(item);
-        if (children) {
+        if (children.length > 0) {
           const childResults = filterRecursively(children);
           if (childResults.length > 0) {
-            results.push({ ...item, children: childResults } as any);
+            results.push({ ...item, children: childResults, hasChildren: true } as any);
             matches = true;
           }
         }
         if (matches && !results.find(r => r.id === item.id)) {
-          results.push(item);
+          // Ensure children is always an array when adding to results
+          results.push({ ...item, children: children.length > 0 ? children : [] } as any);
         }
       }
       return results;
     };
+    
+    // Safety check on sourceData before filtering
+    if (!Array.isArray(sourceData)) {
+      console.warn('[Dashboard] sourceData is not an array:', sourceData);
+      return [];
+    }
+    
     return filterRecursively(sourceData);
   }, [searchQuery, sourceData, entitiesTab, searchOptions]);
 
@@ -1919,20 +1954,32 @@ const Dashboard = () => {
     if (!projectId) return;
     console.log('[Dashboard] Loading full inferred class hierarchy...');
     try {
-      const response = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-class-hierarchy`, {
-        params: { reasonerType: selectedReasoner }
-      });
+      const response = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-class-hierarchy?reasonerType=${selectedReasoner}`);
       const payload = response?.data || response;
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
       
-      if (hierarchy.length === 0) {
+      if (!Array.isArray(hierarchy) || hierarchy.length === 0) {
         console.warn('[Dashboard] No inferred classes found. Reasoner may not have been run yet.');
         setInferredClassHierarchy([]);
         return;
       }
 
-      const hierarchyWithCounts = applyInstanceCountsToTree(hierarchy, classInstanceCounts);
-      console.log('[Dashboard] Full inferred hierarchy loaded with', hierarchy.length, 'root nodes');
+      // Ensure each node has a children array
+      const normalizedHierarchy = hierarchy.map((node: any) => ({
+        ...node,
+        children: Array.isArray(node.children) ? node.children : [],
+        hasChildren: Array.isArray(node.children) && node.children.length > 0
+      }));
+
+      console.log('[Dashboard] Full inferred hierarchy loaded with', normalizedHierarchy.length, 'root nodes');
+      console.log('[Dashboard] First root node:', normalizedHierarchy[0]);
+      console.log('[Dashboard] First root node children count:', normalizedHierarchy[0]?.children?.length || 0);
+      if (normalizedHierarchy[0]?.children?.length > 0) {
+        console.log('[Dashboard] First few children:', normalizedHierarchy[0].children.slice(0, 3));
+      }
+      
+      const hierarchyWithCounts = applyInstanceCountsToTree(normalizedHierarchy, classInstanceCounts);
+      console.log('[Dashboard] After applying counts, hierarchy structure preserved:', hierarchyWithCounts[0]?.children?.length || 0, 'children');
       setInferredClassHierarchy(hierarchyWithCounts);
     } catch (error) {
       console.error('[Dashboard] Failed to load full inferred class hierarchy:', error);
@@ -1944,9 +1991,7 @@ const Dashboard = () => {
     if (!projectId) return;
     console.log('[Dashboard] Loading inferred object property hierarchy...');
     try {
-      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-object-property-hierarchy`, {
-        params: { reasonerType: selectedReasoner }
-      });
+      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-object-property-hierarchy?reasonerType=${selectedReasoner}`);
       const payload = res?.data || res;
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
       console.log('[Dashboard] Inferred object properties loaded:', Array.isArray(hierarchy) ? hierarchy.length : 0, 'items');
@@ -1961,9 +2006,7 @@ const Dashboard = () => {
     if (!projectId) return;
     console.log('[Dashboard] Loading inferred data property hierarchy...');
     try {
-      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-data-property-hierarchy`, {
-        params: { reasonerType: selectedReasoner }
-      });
+      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-data-property-hierarchy?reasonerType=${selectedReasoner}`);
       const payload = res?.data || res;
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
       console.log('[Dashboard] Inferred data properties response:', payload);
@@ -1979,9 +2022,7 @@ const Dashboard = () => {
     if (!projectId) return;
     console.log('[Dashboard] Loading inferred annotation property hierarchy...');
     try {
-      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-annotation-property-hierarchy`, {
-        params: { reasonerType: selectedReasoner }
-      });
+      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-annotation-property-hierarchy?reasonerType=${selectedReasoner}`);
       const payload = res?.data || res;
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
       console.log('[Dashboard] Inferred annotation properties loaded:', Array.isArray(hierarchy) ? hierarchy.length : 0, 'items');
@@ -1996,9 +2037,7 @@ const Dashboard = () => {
     if (!projectId) return;
     console.log('[Dashboard] Loading inferred datatypes...');
     try {
-      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-datatypes`, {
-        params: { reasonerType: selectedReasoner }
-      });
+      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-datatypes?reasonerType=${selectedReasoner}`);
       const payload = res?.data || res;
       const datatypes = payload?.datatypes || payload?.data?.datatypes || [];
       console.log('[Dashboard] Inferred datatypes loaded:', Array.isArray(datatypes) ? datatypes.length : 0, 'items');
@@ -2013,9 +2052,7 @@ const Dashboard = () => {
     if (!projectId) return;
     console.log('[Dashboard] Loading inferred individuals...');
     try {
-      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-individuals`, {
-        params: { reasonerType: selectedReasoner }
-      });
+      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-individuals?reasonerType=${selectedReasoner}`);
       const payload = res?.data || res;
       const individuals = payload?.individuals || payload?.data?.individuals || [];
       console.log('[Dashboard] Inferred individuals loaded:', Array.isArray(individuals) ? individuals.length : 0, 'items');
@@ -3647,14 +3684,12 @@ const Dashboard = () => {
   useEffect(() => {
     if (!projectId || mainTab !== 'Entities' || entitiesTab !== 'Classes') return;
     
-    console.log('[Dashboard] View mode changed to:', currentHierarchyViewMode);
+    console.log('[Dashboard] Classes tab active, view mode:', currentHierarchyViewMode);
     if (currentHierarchyViewMode === 'inferred') {
       // Always load full recursive hierarchy from API when in inferred mode
       // to ensure we have the full depth like Desktop Protégé
-      if (inferredClassHierarchy.length === 0) {
-        console.log('[Dashboard] Loading inferred hierarchy from API...');
-        loadInferredHierarchy();
-      }
+      console.log('[Dashboard] Loading inferred hierarchy from API...');
+      loadInferredHierarchy();
     } else {
       console.log('[Dashboard] Refreshing asserted hierarchy...');
       refreshClassHierarchy();
@@ -3665,12 +3700,11 @@ const Dashboard = () => {
   // Load inferred object property hierarchy when switching to inferred mode
   useEffect(() => {
     if (!projectId || mainTab !== 'Entities' || entitiesTab !== 'ObjectProperties') return;
-    console.log('[Dashboard] ObjectProperties view mode changed to:', hierarchyViewModes.ObjectProperties);
+    console.log('[Dashboard] ObjectProperties tab active, view mode:', hierarchyViewModes.ObjectProperties);
     if (hierarchyViewModes.ObjectProperties === 'inferred') {
-      if (inferredObjectPropertyHierarchy.length === 0) {
-        console.log('[Dashboard] Loading inferred object property hierarchy from API...');
-        loadInferredObjectPropertyHierarchy();
-      }
+      // Always reload to ensure fresh data from the reasoner
+      console.log('[Dashboard] Loading inferred object property hierarchy from API...');
+      loadInferredObjectPropertyHierarchy();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, mainTab, entitiesTab, hierarchyViewModes.ObjectProperties]);
@@ -3678,12 +3712,11 @@ const Dashboard = () => {
   // Load inferred data property hierarchy when switching to inferred mode
   useEffect(() => {
     if (!projectId || mainTab !== 'Entities' || entitiesTab !== 'DataProperties') return;
-    console.log('[Dashboard] DataProperties view mode changed to:', hierarchyViewModes.DataProperties);
+    console.log('[Dashboard] DataProperties tab active, view mode:', hierarchyViewModes.DataProperties);
     if (hierarchyViewModes.DataProperties === 'inferred') {
-      if (inferredDataPropertyHierarchy.length === 0) {
-        console.log('[Dashboard] Loading inferred data property hierarchy from API...');
-        loadInferredDataPropertyHierarchy();
-      }
+      // Always reload to ensure fresh data from the reasoner
+      console.log('[Dashboard] Loading inferred data property hierarchy from API...');
+      loadInferredDataPropertyHierarchy();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, mainTab, entitiesTab, hierarchyViewModes.DataProperties]);
@@ -6073,7 +6106,7 @@ const Dashboard = () => {
           </div>
         )}
         
-        {node.children && node.children.length > 0 && node.children.map((child: any, idx: number) => (
+        {Array.isArray(node.children) && node.children.length > 0 && node.children.map((child: any, idx: number) => (
           <ClassHierarchyNode key={idx} node={child} level={level + 1} />
         ))}
       </div>
@@ -6082,10 +6115,13 @@ const Dashboard = () => {
 
   // Helper function to render class hierarchy
   const renderClassHierarchy = (nodes: any[]): React.ReactNode => {
-    if (!nodes || nodes.length === 0) return null;
+    if (!Array.isArray(nodes) || nodes.length === 0) return null;
     
-    return nodes.map((node: any, idx: number) => (
-      <ClassHierarchyNode key={idx} node={node} level={0} />
+    // Filter out null/undefined nodes
+    const validNodes = nodes.filter(node => node && (node.iri || node.id));
+    
+    return validNodes.map((node: any, idx: number) => (
+      <ClassHierarchyNode key={node.iri || node.id || idx} node={node} level={0} />
     ));
   };
 
@@ -8177,6 +8213,7 @@ const Dashboard = () => {
                     entitiesTab={entitiesTab}
                     activeTheme={activeTheme}
                     projectId={projectId}
+                    viewMode={currentHierarchyViewMode}
                     onUpdate={updateItemInState}
                     onAddAnnotation={handleAddAnnotation}
                     onEditAnnotation={handleEditAnnotation}
