@@ -96,9 +96,12 @@ const HierarchyNode: React.FC<HierarchyNodeProps> = ({
   const [showTooltip, setShowTooltip] = useState(false);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
 
+  // Defensive null checks
+  if (!node) return null;
+
   const id = node.iri || node.id || (typeof node === 'string' ? node : null);
   const isExpanded = id ? expandedSet.has(id) : false;
-  const hasChildren = node.children && node.children.length > 0;
+  const hasChildren = Array.isArray(node.children) && node.children.length > 0;
 
   const handleToggle = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -116,7 +119,9 @@ const HierarchyNode: React.FC<HierarchyNodeProps> = ({
 
   const getIcon = () => {
     if (type === 'class') {
-      return <Circle size={10} fill={node.isUnsatisfiable ? '#ef4444' : node.isEquivalent ? '#f59e0b' : '#3b82f6'} stroke="none" />;
+      const isUnsatisfiable = node.isUnsatisfiable || node.id === 'http://www.w3.org/2002/07/owl#Nothing';
+      const hasEquivalents = (node.equivalentClasses && node.equivalentClasses.length > 0) || (node.equivalentProperties && node.equivalentProperties.length > 0);
+      return <Circle size={10} fill={isUnsatisfiable ? '#ef4444' : hasEquivalents ? '#f59e0b' : '#3b82f6'} stroke="none" />;
     } else if (type === 'objectProperty') {
       return <Link2 size={12} className="text-green-500" />;
     } else {
@@ -145,9 +150,19 @@ const HierarchyNode: React.FC<HierarchyNodeProps> = ({
           <span className="w-4" />
         )}
         {getIcon()}
-        <span className={`font-mono ${isDark ? 'text-blue-400' : 'text-blue-700'}`}>
+        <span className={`font-mono ${isDark ? 'text-blue-400' : 'text-blue-700'} ${node.isUnsatisfiable ? 'text-red-600 font-bold' : ''}`}>
           {node.name || node.label || (node.iri ? (node.iri.includes('#') ? node.iri.split('#').pop() : node.iri.split('/').pop()) : (typeof node === 'string' ? node : 'Unknown'))}
         </span>
+        {node.equivalentClasses && node.equivalentClasses.length > 0 && (
+          <span className="text-[10px] text-gray-500 italic ml-1">
+            ≡ {node.equivalentClasses.map((c: any) => c.label).join(', ')}
+          </span>
+        )}
+        {node.equivalentProperties && node.equivalentProperties.length > 0 && (
+          <span className="text-[10px] text-gray-500 italic ml-1">
+            ≡ {node.equivalentProperties.map((p: any) => typeof p === 'string' ? p : p.label).join(', ')}
+          </span>
+        )}
         {node.inferred && (
           <span className={`text-[10px] px-1 rounded ${
             isDark ? 'bg-green-900/30 text-green-400' : 'bg-green-100 text-green-700'
@@ -172,7 +187,7 @@ const HierarchyNode: React.FC<HierarchyNodeProps> = ({
         </div>
       )}
 
-      {isExpanded && hasChildren && node.children.map((child: any, idx: number) => (
+      {isExpanded && hasChildren && Array.isArray(node.children) && node.children.map((child: any, idx: number) => (
         <HierarchyNode
           key={idx}
           node={child}
@@ -543,7 +558,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
 
   // Helper function to render hierarchy
   const renderHierarchy = (nodes: any[], type: 'class' | 'objectProperty' | 'dataProperty'): React.ReactNode => {
-    if (!nodes || nodes.length === 0) return null;
+    if (!Array.isArray(nodes) || nodes.length === 0) return null;
     
     const expandedSet = type === 'class' ? expandedClasses : (type === 'objectProperty' ? expandedObjectProperties : expandedDataProperties);
     const setExpandedSet = type === 'class' ? setExpandedClasses : (type === 'objectProperty' ? setExpandedObjectProperties : setExpandedDataProperties);
@@ -557,9 +572,12 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
       });
     };
 
-    return nodes.map((node: any, idx: number) => (
+    // Filter out null/undefined nodes and ensure each node has valid structure
+    const validNodes = nodes.filter(node => node && (node.iri || node.id));
+
+    return validNodes.map((node: any, idx: number) => (
       <HierarchyNode 
-        key={idx} 
+        key={node.iri || node.id || idx} 
         node={node} 
         level={0} 
         type={type} 
@@ -667,12 +685,25 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
   function ensureTree(nodes: any[]): any[] {
     if (!Array.isArray(nodes) || nodes.length === 0) return [];
     
+    // Recursive function to ensure all nodes have children arrays
+    const normalizeNode = (node: any): any => {
+      if (!node) return null;
+      const normalized = { 
+        ...node, 
+        children: Array.isArray(node.children) ? node.children.map(normalizeNode).filter(Boolean) : []
+      };
+      return normalized;
+    };
+    
     // If any node has children already, it might be a tree, but flat lists with depth 
     // are common from the backend. If we see depth and it's a flat list, we build the tree.
     // A simple check: if it's a flat list (no children on first few nodes) but has depth > 0 later.
     const isFlat = nodes.length > 1 && !nodes[0].children?.length && nodes.some(n => (n.depth || 0) > 0);
     
-    if (!isFlat && nodes[0].children?.length) return nodes;
+    if (!isFlat && nodes[0].children?.length) {
+      // Already a tree, just normalize to ensure all children arrays exist
+      return nodes.map(normalizeNode).filter(Boolean);
+    }
 
     // Sort by depth to ensure parents come before children if they are not already
     const sortedNodes = [...nodes].sort((a, b) => (a.depth || 0) - (b.depth || 0));
@@ -682,7 +713,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
 
     sortedNodes.forEach((node) => {
       const depth = Number((node && (node as any).depth) ?? 0);
-      const copy = { ...node, children: node.children ? [...node.children] : [] };
+      const copy = { ...node, children: Array.isArray(node.children) ? [...node.children] : [] };
 
       while (stack.length > 0 && (stack[stack.length - 1]?.depth ?? 0) >= depth) {
         stack.pop();
@@ -691,7 +722,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
       if (stack.length === 0) {
         roots.push(copy);
       } else {
-        if (!stack[stack.length - 1].children) {
+        if (!Array.isArray(stack[stack.length - 1].children)) {
           stack[stack.length - 1].children = [];
         }
         stack[stack.length - 1].children.push(copy);
@@ -702,15 +733,15 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
 
     // If the only root is a top property (owl:topObjectProperty or owl:topDataProperty), 
     // return its children instead to show properties directly at the top level.
-    if (roots.length === 1 && roots[0].children?.length > 0) {
+    if (roots.length === 1 && Array.isArray(roots[0].children) && roots[0].children.length > 0) {
       const rootIri = roots[0].iri || roots[0].id || '';
       if (rootIri.endsWith('#topObjectProperty') || rootIri.endsWith('#topDataProperty')) {
         console.log(`[ReasonerPlugin] Flattening top property: ${rootIri}`);
-        return roots[0].children;
+        return roots[0].children.map(normalizeNode).filter(Boolean);
       }
     }
 
-    return roots;
+    return roots.map(normalizeNode).filter(Boolean);
   }
 
   const getAllIds = (nodes: any[]): string[] => {

@@ -738,7 +738,8 @@ export const MultiSelectItem: React.FC<{
   onDelete: (item: string) => void;
   entityType?: 'class' | 'objectProperty' | 'dataProperty' | 'datatype' | 'annotationProperty' | 'individual';
   themeColor?: 'blue' | 'green' | 'orange' | 'yellow' | 'purple';
-}> = ({ item, onDelete, entityType, themeColor = 'blue' }) => {
+  isInferred?: boolean;
+}> = ({ item, onDelete, entityType, themeColor = 'blue', isInferred = false }) => {
     // Check if this is an inverse property expression
     const inverseMatch = item.match(/^inverse\((.+)\)$/i);
     const isInverse = !!inverseMatch;
@@ -840,7 +841,7 @@ export const MultiSelectItem: React.FC<{
     const hoverBgColor = themeColor === 'green' ? 'hover:bg-green-50' : themeColor === 'orange' ? 'hover:bg-orange-50' : themeColor === 'purple' ? 'hover:bg-purple-50' : 'hover:bg-blue-50';
     
     return (
-        <div className={`group flex justify-between items-center bg-white p-1.5 border-b border-gray-100 last:border-0 ${hoverBgColor} transition-colors`}>
+        <div className={`group flex justify-between items-center p-1.5 border-b border-gray-100 last:border-0 ${isInferred ? 'bg-yellow-50' : 'bg-white'} ${hoverBgColor} transition-colors`}>
             <div className="flex items-center">
                 {/* Entity type icon */}
                 {getIcon()}
@@ -856,38 +857,43 @@ export const MultiSelectItem: React.FC<{
                 ) : (
                     <span className="text-sm font-bold text-gray-900">'{displayName}'</span>
                 )}
+                {isInferred && (
+                    <span className="ml-2 text-[10px] bg-yellow-200 text-yellow-800 px-1.5 py-0.5 rounded">Inferred</span>
+                )}
             </div>
-            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                <button 
-                  className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600"
-                  title="Help"
-                  aria-label="Help"
-                >
-                    <HelpCircle size={14} />
-                </button>
-                <button 
-                  className="p-1 rounded hover:bg-blue-100 text-gray-400 hover:text-blue-600"
-                  title="Axiom annotations"
-                  aria-label="Axiom annotations"
-                >
-                    <MessageCircle size={14} />
-                </button>
-                <button 
-                  onClick={() => onDelete(item)} 
-                  className="p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600"
-                  title={`Remove ${displayName}`}
-                  aria-label={`Remove ${displayName}`}
-                >
-                    <Trash2 size={14} />
-                </button>
-                <button 
-                  className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600"
-                  title="More options"
-                  aria-label="More options"
-                >
-                    <span className="text-xs">○</span>
-                </button>
-            </div>
+            {!isInferred && (
+                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                    <button 
+                    className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600"
+                    title="Help"
+                    aria-label="Help"
+                    >
+                        <HelpCircle size={14} />
+                    </button>
+                    <button 
+                    className="p-1 rounded hover:bg-blue-100 text-gray-400 hover:text-blue-600"
+                    title="Axiom annotations"
+                    aria-label="Axiom annotations"
+                    >
+                        <MessageCircle size={14} />
+                    </button>
+                    <button 
+                    onClick={() => onDelete(item)} 
+                    className="p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600"
+                    title={`Remove ${displayName}`}
+                    aria-label={`Remove ${displayName}`}
+                    >
+                        <Trash2 size={14} />
+                    </button>
+                    <button 
+                    className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600"
+                    title="More options"
+                    aria-label="More options"
+                    >
+                        <span className="text-xs">○</span>
+                    </button>
+                </div>
+            )}
         </div>
     );
 };
@@ -895,11 +901,12 @@ export const MultiSelectItem: React.FC<{
 export const MultiSelectSection: React.FC<{
     title: string;
     items: string[] | undefined;
+    inferredItems?: string[] | undefined;
     onAddClick?: () => void;
     onDelete: (item: string) => void;
     themeColor?: 'blue' | 'green' | 'orange' | 'yellow' | 'purple'; // For header styling
-    itemEntityType?: 'class' | 'objectProperty' | 'dataProperty' | 'datatype' | 'individual'; // For item icons
-}> = ({ title, items, onAddClick, onDelete, themeColor = 'blue', itemEntityType }) => {
+    itemEntityType?: 'class' | 'objectProperty' | 'dataProperty' | 'datatype' | 'annotationProperty' | 'individual'; // For item icons
+}> = ({ title, items, inferredItems, onAddClick, onDelete, themeColor = 'blue', itemEntityType }) => {
     const [isSelected, setIsSelected] = useState(false);
     
     // Clean minimal theme colors - Protégé-style
@@ -974,7 +981,11 @@ export const MultiSelectSection: React.FC<{
              <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm overflow-hidden">
                  {items && items.length > 0 ? (
                     items.map(item => <MultiSelectItem key={item} item={item} onDelete={onDelete} themeColor={themeColor} entityType={itemEntityType} />)
-                 ) : (
+                 ) : null}
+                 {inferredItems && inferredItems.length > 0 ? (
+                    inferredItems.map(item => <MultiSelectItem key={item} item={item} onDelete={() => {}} themeColor={themeColor} entityType={itemEntityType} isInferred={true} />)
+                 ) : null}
+                 {(!items || items.length === 0) && (!inferredItems || inferredItems.length === 0) && (
                     <div className="p-2 text-xs text-gray-400 italic">
                         {/* Empty - matches Protégé's minimal empty state */}
                     </div>

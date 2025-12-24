@@ -413,7 +413,6 @@ class OntoCodePanel {
         }
         
         const headers: any = {
-            
             'Content-Type': 'application/json'
         };
         
