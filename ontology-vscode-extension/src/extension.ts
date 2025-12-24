@@ -11,9 +11,9 @@ import { EditCapture } from './collaboration/EditCapture';
 import { RemoteEditApplier } from './collaboration/RemoteEditApplier';
 
 const TOKEN_KEY = 'ontocode.authToken';
-const GATEWAY_URL = 'http://ec2-13-218-153-101.compute-1.amazonaws.com'; // Gateway port
+const GATEWAY_URL = 'http://13.218.153.101'; // Gateway IPv4 to avoid IPv6 timeouts
 const OWL_EDITOR_URL = GATEWAY_URL; // WebSocket endpoint routed via gateway
-const PLUGIN_SERVICE_URL = 'http://ec2-13-218-153-101.compute-1.amazonaws.com:8087'; // Plugin service port
+const PLUGIN_SERVICE_URL = 'http://13.218.153.101:8087'; // Plugin service port
 
 /**
  * Parse JWT token to extract user information
@@ -478,6 +478,9 @@ class OntoCodePanel {
                     responseHeaders: axiosError.response?.headers,
                     data: axiosError.response?.data,
                     message: axiosError.message,
+                    code: (axiosError as any).code,
+                    errno: (axiosError as any).errno,
+                    cause: (axiosError as any).cause,
                     requestBody: type === 'apiPost' || type === 'apiPut' || type === 'apiPatch' ? message.body : undefined
                 };
                 console.error('[Proxy] API Request Error:', JSON.stringify(errorLogPayload, null, 2));
