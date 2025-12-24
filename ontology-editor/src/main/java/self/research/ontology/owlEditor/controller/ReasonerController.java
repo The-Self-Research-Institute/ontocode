@@ -3,6 +3,9 @@ package self.research.ontology.owlEditor.controller;
 import com.mongodb.client.gridfs.model.GridFSFile;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.*;
+import org.semanticweb.owlapi.reasoner.Node;
+import org.semanticweb.owlapi.reasoner.NodeSet;
+import org.semanticweb.owlapi.reasoner.OWLReasoner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -421,12 +424,26 @@ public class ReasonerController {
             // Ensure classification is done before building hierarchy
             log.info("Ensuring classification for project {} with {}", projectId, type);
             reasonerService.classify(ontology, type);
-
+            
+            OWLReasoner reasoner = reasonerService.getReasoner(ontology, type);
             OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
             OWLClass thing = df.getOWLThing();
+            OWLClass nothing = df.getOWLNothing();
 
             Set<String> visited = new HashSet<>();
-            Map<String, Object> root = buildClassNode(ontology, thing, type, visited);
+            Map<String, Object> root = buildClassNode(ontology, reasoner, thing, visited);
+            
+            // Handle unsatisfiable classes (under owl:Nothing)
+            Node<OWLClass> unsatisfiableNode = reasoner.getUnsatisfiableClasses();
+            List<Map<String, Object>> hierarchy = new ArrayList<>();
+            hierarchy.add(root);
+            
+            if (unsatisfiableNode.getSize() > 1 || !reasoner.getSubClasses(nothing, true).isEmpty()) {
+                // If there are unsatisfiable classes (other than owl:Nothing itself)
+                // or if owl:Nothing has subclasses (which shouldn't happen in a consistent ontology but still)
+                Map<String, Object> nothingNode = buildClassNode(ontology, reasoner, nothing, visited);
+                hierarchy.add(nothingNode);
+            }
 
             log.info("Inferred class hierarchy built for project: {}. Root node has {} children. Total visited: {}", 
                 projectId, ((List<?>)root.get("children")).size(), visited.size());
@@ -435,7 +452,7 @@ public class ReasonerController {
                     "success", true,
                     "projectId", projectId,
                     "reasonerType", type.getDisplayName(),
-                    "hierarchy", List.of(root)
+                    "hierarchy", hierarchy
             ));
         } catch (Exception e) {
             log.error("Error getting inferred class hierarchy", e);
@@ -446,26 +463,57 @@ public class ReasonerController {
         }
     }
 
-    private Map<String, Object> buildClassNode(OWLOntology ontology, OWLClass owlClass, ReasonerType type, Set<String> visited) {
+    private Map<String, Object> buildClassNode(OWLOntology ontology, OWLReasoner reasoner, OWLClass owlClass, Set<String> visited) {
         String iri = owlClass.getIRI().toString();
-        // Don't skip owl:Thing even if visited, but skip others to prevent cycles
-        if (visited.contains(iri) && !owlClass.isOWLThing()) {
+        
+        // Get equivalent classes
+        Node<OWLClass> equivalentNode = reasoner.getEquivalentClasses(owlClass);
+        List<String> equivalentClassIris = equivalentNode.getEntities().stream()
+                .filter(cls -> !cls.equals(owlClass))
+                .map(cls -> cls.getIRI().toString())
+                .collect(Collectors.toList());
+        
+        List<Map<String, String>> equivalentClasses = equivalentNode.getEntities().stream()
+                .filter(cls -> !cls.equals(owlClass))
+                .map(cls -> Map.of(
+                    "iri", cls.getIRI().toString(),
+                    "label", getLabel(cls, ontology)
+                ))
+                .collect(Collectors.toList());
+
+        // Don't skip owl:Thing or owl:Nothing even if visited, but skip others to prevent cycles
+        if (visited.contains(iri) && !owlClass.isOWLThing() && !owlClass.isOWLNothing()) {
             log.debug("Skipping already visited class: {}", iri);
-            return Map.of("id", iri, "label", getLabel(owlClass, ontology), "children", List.of(), "hasChildren", false);
+            return Map.of(
+                "id", iri, 
+                "label", getLabel(owlClass, ontology), 
+                "children", List.of(), 
+                "hasChildren", false,
+                "equivalentClasses", equivalentClasses
+            );
         }
         visited.add(iri);
 
-        // Get ALL inferred subclasses (direct=false) to ensure we don't miss any branches
-        // but then we process them one by one to build the tree structure
-        Set<OWLClass> subClasses = reasonerService.getInferredSubClasses(ontology, owlClass, type, true);
-        log.debug("Class {} has {} direct inferred subclasses", iri, subClasses.size());
+        // Get direct inferred subclasses
+        NodeSet<OWLClass> subClassesNodeSet = reasoner.getSubClasses(owlClass, true);
         
-        List<Map<String, Object>> children = subClasses.stream()
-                .filter(cls -> !cls.isOWLNothing() && !cls.equals(owlClass))
-                .map(cls -> buildClassNode(ontology, cls, type, visited))
-                .filter(Objects::nonNull)
-                .sorted(Comparator.comparing(m -> m.get("label").toString()))
-                .collect(Collectors.toList());
+        List<Map<String, Object>> children = new ArrayList<>();
+        for (Node<OWLClass> subClassNode : subClassesNodeSet) {
+            OWLClass representative = subClassNode.getRepresentativeElement();
+            if (representative.isOWLNothing() && !owlClass.isOWLThing()) {
+                continue; // owl:Nothing is handled separately or at the end
+            }
+            if (representative.equals(owlClass)) {
+                continue;
+            }
+            
+            Map<String, Object> childNode = buildClassNode(ontology, reasoner, representative, visited);
+            if (childNode != null) {
+                children.add(childNode);
+            }
+        }
+        
+        children.sort(Comparator.comparing(m -> m.get("label").toString()));
 
         Map<String, Object> node = new HashMap<>();
         node.put("id", iri);
@@ -473,6 +521,11 @@ public class ReasonerController {
         node.put("children", children);
         node.put("hasChildren", !children.isEmpty());
         node.put("type", "Class");
+        node.put("equivalentClasses", equivalentClasses);
+        
+        if (owlClass.isOWLNothing() || !reasoner.isSatisfiable(owlClass)) {
+            node.put("isUnsatisfiable", true);
+        }
         
         log.debug("Built node for {} with {} children", iri, children.size());
         return node;
@@ -497,19 +550,17 @@ public class ReasonerController {
             log.info("Project ID: {}", projectId);
             log.info("Ontology loaded - Total axioms: {}", ontology.getAxiomCount());
             log.info("Object properties in signature: {}", ontology.getObjectPropertiesInSignature().size());
-            ontology.getObjectPropertiesInSignature().forEach(prop -> 
-                log.info("  - Found property: {}", prop.getIRI().getShortForm())
-            );
 
             // Ensure classification is done before building property hierarchy
             log.info("Ensuring classification for project {} with {} (Object Properties)", projectId, type);
             reasonerService.classify(ontology, type);
 
+            OWLReasoner reasoner = reasonerService.getReasoner(ontology, type);
             OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
             OWLObjectProperty topProperty = df.getOWLTopObjectProperty();
 
             Set<String> visited = new HashSet<>();
-            Map<String, Object> root = buildObjectPropertyNode(ontology, topProperty, type, visited);
+            Map<String, Object> root = buildObjectPropertyNode(ontology, reasoner, topProperty, visited);
 
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> children = (List<Map<String, Object>>) root.get("children");
@@ -539,10 +590,6 @@ public class ReasonerController {
                 root.put("children", children);
                 log.warn("Added {} properties as fallback", children.size());
             }
-
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> finalChildren = (List<Map<String, Object>>) root.get("children");
-            log.info("========== Returning {} top-level object properties to frontend ==========", finalChildren.size());
 
             return ResponseEntity.ok(Map.of(
                     "success", true,
@@ -577,18 +624,16 @@ public class ReasonerController {
             log.info("Project ID: {}", projectId);
             log.info("Ontology loaded - Total axioms: {}", ontology.getAxiomCount());
             log.info("Data properties in signature: {}", ontology.getDataPropertiesInSignature().size());
-            ontology.getDataPropertiesInSignature().forEach(prop -> 
-                log.info("  - Found property: {}", prop.getIRI().getShortForm())
-            );
             // Ensure classification is done before building property hierarchy
             log.info("Ensuring classification for project {} with {} (Data Properties)", projectId, type);
             reasonerService.classify(ontology, type);
 
+            OWLReasoner reasoner = reasonerService.getReasoner(ontology, type);
             OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
             OWLDataProperty topProperty = df.getOWLTopDataProperty();
 
             Set<String> visited = new HashSet<>();
-            Map<String, Object> root = buildDataPropertyNode(ontology, topProperty, type, visited);
+            Map<String, Object> root = buildDataPropertyNode(ontology, reasoner, topProperty, visited);
 
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> children = (List<Map<String, Object>>) root.get("children");
@@ -630,20 +675,50 @@ public class ReasonerController {
     }
                         
 
-    private Map<String, Object> buildObjectPropertyNode(OWLOntology ontology, OWLObjectProperty property, ReasonerType type, Set<String> visited) {
+    private Map<String, Object> buildObjectPropertyNode(OWLOntology ontology, OWLReasoner reasoner, OWLObjectProperty property, Set<String> visited) {
         String iri = property.getIRI().toString();
+        
+        // Get equivalent properties
+        Node<OWLObjectPropertyExpression> equivalentNode = reasoner.getEquivalentObjectProperties(property);
+        List<Map<String, String>> equivalentProperties = equivalentNode.getEntities().stream()
+                .filter(p -> !p.equals(property) && !p.isAnonymous())
+                .map(p -> Map.of(
+                    "iri", p.asOWLObjectProperty().getIRI().toString(),
+                    "label", getLabel(p.asOWLObjectProperty(), ontology)
+                ))
+                .collect(Collectors.toList());
+
         // Don't skip top property to allow building the tree from root
         if (visited.contains(iri) && !property.isOWLTopObjectProperty()) {
-            return Map.of("id", iri, "label", getLabel(property, ontology), "children", List.of(), "hasChildren", false);
+            return Map.of(
+                "id", iri, 
+                "label", getLabel(property, ontology), 
+                "children", List.of(), 
+                "hasChildren", false,
+                "equivalentProperties", equivalentProperties
+            );
         }
         visited.add(iri);
 
-        Set<OWLObjectPropertyExpression> subProps = reasonerService.getInferredSubObjectProperties(ontology, property, type, true);
-        List<Map<String, Object>> children = subProps.stream()
-                .filter(expr -> !expr.isAnonymous() && !expr.equals(property) && !expr.asOWLObjectProperty().isOWLBottomObjectProperty())
-                .map(expr -> buildObjectPropertyNode(ontology, expr.asOWLObjectProperty(), type, visited))
-                .sorted(Comparator.comparing(m -> m.get("label").toString()))
-                .toList();
+        NodeSet<OWLObjectPropertyExpression> subPropsNodeSet = reasoner.getSubObjectProperties(property, true);
+        List<Map<String, Object>> children = new ArrayList<>();
+        
+        for (Node<OWLObjectPropertyExpression> subPropNode : subPropsNodeSet) {
+            OWLObjectPropertyExpression representative = subPropNode.getRepresentativeElement();
+            if (representative.isAnonymous()) continue;
+            
+            OWLObjectProperty subProp = representative.asOWLObjectProperty();
+            if (subProp.isOWLBottomObjectProperty() || subProp.equals(property)) {
+                continue;
+            }
+            
+            Map<String, Object> childNode = buildObjectPropertyNode(ontology, reasoner, subProp, visited);
+            if (childNode != null) {
+                children.add(childNode);
+            }
+        }
+        
+        children.sort(Comparator.comparing(m -> m.get("label").toString()));
 
         Map<String, Object> node = new HashMap<>();
         node.put("id", iri);
@@ -651,23 +726,52 @@ public class ReasonerController {
         node.put("children", children);
         node.put("hasChildren", !children.isEmpty());
         node.put("type", "ObjectProperty");
+        node.put("equivalentProperties", equivalentProperties);
+        
         return node;
     }
 
-    private Map<String, Object> buildDataPropertyNode(OWLOntology ontology, OWLDataProperty property, ReasonerType type, Set<String> visited) {
+    private Map<String, Object> buildDataPropertyNode(OWLOntology ontology, OWLReasoner reasoner, OWLDataProperty property, Set<String> visited) {
         String iri = property.getIRI().toString();
+        
+        // Get equivalent properties
+        Node<OWLDataProperty> equivalentNode = reasoner.getEquivalentDataProperties(property);
+        List<Map<String, String>> equivalentProperties = equivalentNode.getEntities().stream()
+                .filter(p -> !p.equals(property))
+                .map(p -> Map.of(
+                    "iri", p.getIRI().toString(),
+                    "label", getLabel(p, ontology)
+                ))
+                .collect(Collectors.toList());
+
         // Don't skip top property to allow building the tree from root
         if (visited.contains(iri) && !property.isOWLTopDataProperty()) {
-            return Map.of("id", iri, "label", getLabel(property, ontology), "children", List.of(), "hasChildren", false);
+            return Map.of(
+                "id", iri, 
+                "label", getLabel(property, ontology), 
+                "children", List.of(), 
+                "hasChildren", false,
+                "equivalentProperties", equivalentProperties
+            );
         }
         visited.add(iri);
 
-        Set<OWLDataPropertyExpression> subProps = reasonerService.getInferredSubDataProperties(ontology, property, type, true);
-        List<Map<String, Object>> children = subProps.stream()
-                .filter(expr -> !expr.isAnonymous() && !expr.equals(property) && !expr.asOWLDataProperty().isOWLBottomDataProperty())
-                .map(expr -> buildDataPropertyNode(ontology, expr.asOWLDataProperty(), type, visited))
-                .sorted(Comparator.comparing(m -> m.get("label").toString()))
-                .toList();
+        NodeSet<OWLDataProperty> subPropsNodeSet = reasoner.getSubDataProperties(property, true);
+        List<Map<String, Object>> children = new ArrayList<>();
+        
+        for (Node<OWLDataProperty> subPropNode : subPropsNodeSet) {
+            OWLDataProperty representative = subPropNode.getRepresentativeElement();
+            if (representative.isOWLBottomDataProperty() || representative.equals(property)) {
+                continue;
+            }
+            
+            Map<String, Object> childNode = buildDataPropertyNode(ontology, reasoner, representative, visited);
+            if (childNode != null) {
+                children.add(childNode);
+            }
+        }
+        
+        children.sort(Comparator.comparing(m -> m.get("label").toString()));
 
         Map<String, Object> node = new HashMap<>();
         node.put("id", iri);
@@ -675,6 +779,8 @@ public class ReasonerController {
         node.put("children", children);
         node.put("hasChildren", !children.isEmpty());
         node.put("type", "DatatypeProperty");
+        node.put("equivalentProperties", equivalentProperties);
+        
         return node;
     }
 
@@ -833,6 +939,143 @@ public class ReasonerController {
                     "success", false,
                     "error", e.getMessage()
             ));
+        }
+    }
+
+    /**
+     * Get inferred details for a class (superclasses, equivalent classes)
+     * GET /api/ontology/{projectId}/reasoner/inferred-class-details?classIri=...
+     */
+    @GetMapping("/{projectId}/reasoner/inferred-class-details")
+    public ResponseEntity<?> getInferredClassDetails(
+            @PathVariable String projectId,
+            @RequestParam String classIri,
+            @RequestParam(defaultValue = "OPENLLET") ReasonerType type) {
+        try {
+            OWLOntology ontology = loadOntology(projectId);
+            OWLReasoner reasoner = reasonerService.getReasoner(ontology, type);
+            
+            OWLClass owlClass = ontology.getOWLOntologyManager().getOWLDataFactory().getOWLClass(IRI.create(classIri));
+            
+            Map<String, Object> result = new HashMap<>();
+            
+            // Inferred Superclasses
+            NodeSet<OWLClass> superClasses = reasoner.getSuperClasses(owlClass, true);
+            List<Map<String, String>> inferredSuperClasses = superClasses.getNodes().stream()
+                .flatMap(node -> node.getEntities().stream())
+                .filter(cls -> !cls.isOWLThing() && !cls.equals(owlClass))
+                .map(cls -> Map.of(
+                    "id", cls.getIRI().toString(),
+                    "type", "SubClassOf",
+                    "definition", getLabel(cls, ontology)
+                ))
+                .collect(Collectors.toList());
+            result.put("inferredSubClassOfAxioms", inferredSuperClasses);
+            
+            // Inferred Equivalent Classes
+            Node<OWLClass> equivalentClasses = reasoner.getEquivalentClasses(owlClass);
+            List<Map<String, String>> inferredEquivalentClasses = equivalentClasses.getEntities().stream()
+                .filter(cls -> !cls.equals(owlClass))
+                .map(cls -> Map.of(
+                    "id", cls.getIRI().toString(),
+                    "type", "EquivalentTo",
+                    "definition", getLabel(cls, ontology)
+                ))
+                .collect(Collectors.toList());
+            result.put("inferredEquivalentClassesAxioms", inferredEquivalentClasses);
+            
+            // Check if unsatisfiable
+            result.put("isUnsatisfiable", !reasoner.isSatisfiable(owlClass));
+            
+            return ResponseEntity.ok(Map.of("success", true, "data", result));
+        } catch (Exception e) {
+            log.error("Error getting inferred class details", e);
+            return ResponseEntity.status(500).body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    /**
+     * Get inferred details for a property (superproperties, equivalent properties)
+     * GET /api/ontology/{projectId}/reasoner/inferred-property-details?propertyIri=...
+     */
+    @GetMapping("/{projectId}/reasoner/inferred-property-details")
+    public ResponseEntity<?> getInferredPropertyDetails(
+            @PathVariable String projectId,
+            @RequestParam String propertyIri,
+            @RequestParam(defaultValue = "OPENLLET") ReasonerType type) {
+        try {
+            OWLOntology ontology = loadOntology(projectId);
+            OWLReasoner reasoner = reasonerService.getReasoner(ontology, type);
+            
+            IRI iri = IRI.create(propertyIri);
+            OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
+            
+            Map<String, Object> result = new HashMap<>();
+            
+            if (ontology.containsObjectPropertyInSignature(iri)) {
+                OWLObjectProperty property = df.getOWLObjectProperty(iri);
+                
+                // Super properties
+                NodeSet<OWLObjectPropertyExpression> superProps = reasoner.getSuperObjectProperties(property, true);
+                List<Map<String, String>> inferredSuperProps = superProps.getNodes().stream()
+                    .flatMap(node -> node.getEntities().stream())
+                    .filter(p -> !p.isOWLTopObjectProperty() && !p.equals(property))
+                    .map(p -> Map.of(
+                        "id", p.asOWLObjectProperty().getIRI().toString(),
+                        "type", "SubPropertyOf",
+                        "definition", getLabel(p.asOWLObjectProperty(), ontology)
+                    ))
+                    .collect(Collectors.toList());
+                result.put("inferredSubPropertyOfAxioms", inferredSuperProps);
+                
+                // Equivalent properties
+                Node<OWLObjectPropertyExpression> equivProps = reasoner.getEquivalentObjectProperties(property);
+                List<Map<String, String>> inferredEquivProps = equivProps.getEntities().stream()
+                    .filter(p -> !p.equals(property) && !p.isAnonymous())
+                    .map(p -> {
+                        OWLObjectProperty prop = p.asOWLObjectProperty();
+                        return Map.of(
+                            "id", prop.getIRI().toString(),
+                            "type", "EquivalentTo",
+                            "definition", getLabel(prop, ontology)
+                        );
+                    })
+                    .collect(Collectors.toList());
+                result.put("inferredEquivalentPropertiesAxioms", inferredEquivProps);
+                
+            } else if (ontology.containsDataPropertyInSignature(iri)) {
+                OWLDataProperty property = df.getOWLDataProperty(iri);
+                
+                // Super properties
+                NodeSet<OWLDataProperty> superProps = reasoner.getSuperDataProperties(property, true);
+                List<Map<String, String>> inferredSuperProps = superProps.getNodes().stream()
+                    .flatMap(node -> node.getEntities().stream())
+                    .filter(p -> !p.isOWLTopDataProperty() && !p.equals(property))
+                    .map(p -> Map.of(
+                        "id", p.getIRI().toString(),
+                        "type", "SubPropertyOf",
+                        "definition", getLabel(p, ontology)
+                    ))
+                    .collect(Collectors.toList());
+                result.put("inferredSubPropertyOfAxioms", inferredSuperProps);
+                
+                // Equivalent properties
+                Node<OWLDataProperty> equivProps = reasoner.getEquivalentDataProperties(property);
+                List<Map<String, String>> inferredEquivProps = equivProps.getEntities().stream()
+                    .filter(p -> !p.equals(property))
+                    .map(p -> Map.of(
+                        "id", p.getIRI().toString(),
+                        "type", "EquivalentTo",
+                        "definition", getLabel(p, ontology)
+                    ))
+                    .collect(Collectors.toList());
+                result.put("inferredEquivalentPropertiesAxioms", inferredEquivProps);
+            }
+            
+            return ResponseEntity.ok(Map.of("success", true, "data", result));
+        } catch (Exception e) {
+            log.error("Error getting inferred property details", e);
+            return ResponseEntity.status(500).body(Map.of("success", false, "error", e.getMessage()));
         }
     }
 

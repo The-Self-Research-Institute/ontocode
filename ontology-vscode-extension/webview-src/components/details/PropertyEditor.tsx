@@ -160,13 +160,33 @@ const PropertyEditor: React.FC<{
     onAddInverseClick,
     onAddDisjointClick,
     onAddEquivalentClick,
-    objectProperties = []
+    objectProperties = [],
+    viewMode = 'asserted'
 }) => {
     const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('annotations');
     const [isEditorOpen, setIsEditorOpen] = useState(false);
     const [editorTitle, setEditorTitle] = useState("");
     const [editorAction, setEditorAction] = useState<((val: string) => void) | null>(null);
     const [isChainDialogOpen, setIsChainDialogOpen] = useState(false);
+    const [inferredDetails, setInferredDetails] = useState<any>(null);
+
+    useEffect(() => {
+        if (viewMode === 'inferred' && item.id && projectId) {
+            loadInferredDetails();
+        } else {
+            setInferredDetails(null);
+        }
+    }, [viewMode, item.id, projectId]);
+
+    const loadInferredDetails = async () => {
+        try {
+            const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-property-details?propertyIri=${encodeURIComponent(item.id)}`);
+            const data = res?.data?.data || res?.data || {};
+            setInferredDetails(data);
+        } catch (error) {
+            console.error('[PropertyEditor] Failed to load inferred details:', error);
+        }
+    };
 
     const isObjectProperty = item.type === 'ObjectProperty';
     const isDataProperty = item.type === 'DatatypeProperty';
@@ -455,6 +475,7 @@ const PropertyEditor: React.FC<{
                             <MultiSelectSection
                                 title="Equivalent To"
                                 items={item.equivalentProperties}
+                                inferredItems={inferredDetails?.inferredEquivalentPropertiesAxioms || []}
                                 onAddClick={onAddEquivalentClick}
                                 onDelete={prop => handleDeleteRelation('equivalent', prop)}
                                 themeColor={isObjectProperty ? 'blue' : 'green'}
@@ -464,6 +485,7 @@ const PropertyEditor: React.FC<{
                         <MultiSelectSection
                             title="SubProperty Of"
                             items={item.superProperties}
+                            inferredItems={inferredDetails?.inferredSubPropertyOfAxioms || []}
                             onAddClick={onAddSubPropertyClick}
                             onDelete={prop => handleDeleteRelation('subProperty', prop)}
                             themeColor={isObjectProperty ? 'blue' : 'green'}

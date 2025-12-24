@@ -189,9 +189,10 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
     const canDrag = entitiesTab === 'Classes' && viewMode === 'asserted';
     
     // Check if class is defined (has equivalent classes) vs primitive
-    const isDefined = entitiesTab === 'Classes' && 'equivalentClassesAxioms' in item && 
-                      (item as TreeNode).equivalentClassesAxioms && 
-                      (item as TreeNode).equivalentClassesAxioms!.length > 0;
+    const isDefined = entitiesTab === 'Classes' && (
+      ('equivalentClassesAxioms' in item && (item as TreeNode).equivalentClassesAxioms && (item as TreeNode).equivalentClassesAxioms!.length > 0) ||
+      ('equivalentClasses' in item && (item as TreeNode).equivalentClasses && (item as TreeNode).equivalentClasses!.length > 0)
+    );
    
     // Find users viewing this node
     const usersViewingNode = activeUsers.filter(user => 
@@ -303,13 +304,44 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
               onCancel={handleRenameCancel}
             />
           ) : (
-            <span
-              className={`text-xs select-none ${isSelected ? "font-semibold" : ""}`}
-              style={{ color: 'var(--text-primary)' }}
-              onDoubleClick={(e) => handleDoubleClick(e, item)}
-            >
-              {item.label}
-            </span>
+            <div className="flex items-center gap-1 overflow-hidden">
+              <span
+                className={`text-xs select-none truncate ${isSelected ? "font-semibold" : ""} ${
+                  (item as any).isUnsatisfiable ? "text-red-600 font-bold" : ""
+                }`}
+                style={{ color: (item as any).isUnsatisfiable ? '#dc2626' : 'var(--text-primary)' }}
+                onDoubleClick={(e) => handleDoubleClick(e, item)}
+              >
+                {item.label}
+              </span>
+              
+              {/* Equivalent classes/properties display */}
+              {viewMode === 'inferred' && (item as any).equivalentClasses && (item as any).equivalentClasses.length > 0 && (
+                <span className="text-[10px] text-gray-500 italic whitespace-nowrap">
+                  ≡ {(item as any).equivalentClasses.map((c: any) => c.label).join(', ')}
+                </span>
+              )}
+              {viewMode === 'inferred' && (item as any).equivalentProperties && (item as any).equivalentProperties.length > 0 && (
+                <span className="text-[10px] text-gray-500 italic whitespace-nowrap">
+                  ≡ {(item as any).equivalentProperties.map((p: any) => typeof p === 'string' ? p : p.label).join(', ')}
+                </span>
+              )}
+              
+              {/* Inferred types for individuals */}
+              {entitiesTab === 'Individuals' && viewMode === 'inferred' && (item as any).inferredTypes && (item as any).inferredTypes.length > 0 && (
+                <div className="flex flex-wrap gap-1 ml-1">
+                  {(item as any).inferredTypes.map((type: any) => (
+                    <span 
+                      key={type.iri} 
+                      className="text-[9px] px-1 py-0.2 rounded bg-purple-50 text-purple-700 border border-purple-100 whitespace-nowrap"
+                      title={type.iri}
+                    >
+                      {type.label}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
 
           {entitiesTab === 'Classes' && (item as TreeNode).totalInstanceCount !== undefined && (
@@ -344,7 +376,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
         </div>
         
         {/* Render Children Recursively */}
-        {isTreeNode && isExpanded && 'children' in item && (item as TreeNode).children?.map((child: TreeNode) => renderItem(child, level + 1))}
+        {isTreeNode && isExpanded && 'children' in item && Array.isArray((item as TreeNode).children) && (item as TreeNode).children!.map((child: TreeNode) => renderItem(child, level + 1))}
       </div>
     );
   };
