@@ -154,22 +154,33 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
       }
 
       // Fetch plugins list via gateway
-      const response = await fetch(`${window.API_BASE_URL}/api/plugins?size=50`, { headers });
+      const apiBaseUrl = (window as any).API_BASE_URL || 'http://localhost:8087';
+      console.log('[PluginMarketplace] Fetching from:', `${apiBaseUrl}/api/plugins?size=50`);
+      const response = await fetch(`${apiBaseUrl}/api/plugins?size=50`, { headers });
+      
+      console.log('[PluginMarketplace] Response status:', response.status);
       
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        const errorText = await response.text();
+        console.error('[PluginMarketplace] Error response:', errorText);
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
       }
 
       const data = await response.json();
+      console.log('[PluginMarketplace] Received data:', data);
+
+      // Handle both paginated and non-paginated responses
+      const pluginsList = Array.isArray(data) ? data : (data.content || []);
+      console.log('[PluginMarketplace] Processing plugins:', pluginsList.length);
 
       // Fetch real stats for each plugin
       const pluginsWithStats = await Promise.all(
-        data.content.map(async (p: any) => {
+        pluginsList.map(async (p: any) => {
           let stats: PluginStats | undefined;
           
           try {
             const statsResponse = await fetch(
-              `${window.API_BASE_URL}/api/plugins/${p.pluginId}/stats`, 
+              `${apiBaseUrl}/api/plugins/${p.pluginId}/stats`, 
               { headers }
             );
             if (statsResponse.ok) {
@@ -203,9 +214,11 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
         })
       );
 
+      console.log('[PluginMarketplace] Final plugins with stats:', pluginsWithStats);
       setPlugins(pluginsWithStats);
     } catch (error) {
-      console.error('Failed to fetch plugins:', error);
+      console.error('[PluginMarketplace] Failed to fetch plugins:', error);
+      showToast(`Failed to load plugins: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
       setPlugins([]);
     } finally {
       setLoading(false);
@@ -224,8 +237,9 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
         headers['Authorization'] = `Bearer ${token}`;
       }
 
+      const apiBaseUrl = (window as any).API_BASE_URL || 'http://localhost:8087';
       const statsResponse = await fetch(
-        `${window.API_BASE_URL}/api/plugins/${pluginId}/stats`, 
+        `${apiBaseUrl}/api/plugins/${pluginId}/stats`, 
         { headers }
       );
       

@@ -219,21 +219,43 @@ Please fork the repository, create a feature branch, and submit a pull request.
 
 ---
 
-## � Citation
+## 📜 Citation
 
 If you use this software in your research, please cite it using the following metadata:
 
 ```bibtex
-@software{ontology_platform_2025,
-  author = {YourName},
-  title = {Ontology Platform},
+@software{ontocode_2025,
+  author = {{OntoCode Team}},
+  title = {OntoCode Ontology Platform},
   version = {1.0.0},
   date = {2025-12-23},
-  url = {https://github.com/yourusername/ontocode}
+  url = {https://github.com/ontocode/ontocode}
 }
 ```
 
-You can also use the [CITATION.cff](CITATION.cff) file provided in this repository.
+You can also use the [CITATION.cff](CITATION.cff) file provided in this repository. For a full list of references and software used in this project, see [CITATIONS.md](CITATIONS.md) and [references.bib](references.bib).
+
+---
+
+## 📚 Citation Management
+
+This project supports two ways to manage citations:
+
+### 1. Zotero Integration (Sci2Code)
+Pull citations directly from your Zotero library using the **Sci2Code** extension.
+- Command: `Insert Citation`
+- Select from your Zotero library.
+
+### 2. Direct Manual Entry
+Add citations directly within OntoCode without any external plugins.
+- Command: `Insert Citation`
+- Select **Add Citation Manually...**
+- Enter the Title, Author, Year, and optional DOI/URL.
+
+### Automated Bibliography Updates
+Regardless of the method used, OntoCode automatically:
+1. Formats and inserts the citation into your OWL/Turtle file.
+2. Appends the metadata to `CITATION.cff`, `CITATIONS.md`, and `references.bib` to keep your repository's bibliography up to date.
 
 ---
 

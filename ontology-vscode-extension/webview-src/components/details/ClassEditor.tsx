@@ -207,12 +207,13 @@ const ClassEditor: React.FC<{
   dataPropertyHierarchy?: TreeNode[];
   objectProperties?: any[];
   dataProperties?: any[];
+  viewMode?: 'asserted' | 'inferred';
   // Individual-related props
   individuals?: Individual[];
   onAddIndividual?: (name: string, classIri: string) => Promise<void>;
   onDeleteIndividual?: (id: string) => Promise<void>;
   onRefreshIndividuals?: () => void;
-}> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes = [], onAddClass, onAddClassInline, onDeleteClass, onRefreshClasses, onAddObjectProperty, onAddDataProperty, onDeleteProperty, metadata, objectPropertyHierarchy: propObjectPropertyHierarchy, dataPropertyHierarchy: propDataPropertyHierarchy, objectProperties: propObjectProperties, dataProperties: propDataProperties, individuals: propIndividuals = [], onAddIndividual, onDeleteIndividual, onRefreshIndividuals }) => {
+}> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes = [], onAddClass, onAddClassInline, onDeleteClass, onRefreshClasses, onAddObjectProperty, onAddDataProperty, onDeleteProperty, metadata, objectPropertyHierarchy: propObjectPropertyHierarchy, dataPropertyHierarchy: propDataPropertyHierarchy, objectProperties: propObjectProperties, dataProperties: propDataProperties, viewMode = 'asserted', individuals: propIndividuals = [], onAddIndividual, onDeleteIndividual, onRefreshIndividuals }) => {
   // Get current user for tracking mutations
   const { user } = useAuth();
   
@@ -320,7 +321,7 @@ const ClassEditor: React.FC<{
       loadProperties();
       loadInstances();
     }
-  }, [item.id, projectId]);
+  }, [item.id, projectId, viewMode]);
 
   const loadProperties = async () => {
     try {
@@ -428,8 +429,27 @@ const ClassEditor: React.FC<{
     try {
       const response = await apiClient.get<any>(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(item.id)}`);
       // Backend returns {success: true, data: {...}}
-      const details = response?.data?.data || response?.data || response;
+      let details = response?.data?.data || response?.data || response;
       console.log('[ClassEditor] Class details loaded:', details);
+      
+      // If in inferred mode, fetch inferred details from reasoner
+      if (viewMode === 'inferred') {
+        try {
+          const inferredResponse = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-class-details?classIri=${encodeURIComponent(item.id)}`);
+          const inferredData = inferredResponse?.data?.data || inferredResponse?.data || {};
+          console.log('[ClassEditor] Inferred class details loaded:', inferredData);
+          
+          details = {
+            ...details,
+            inferredSubClassOfAxioms: inferredData.inferredSubClassOfAxioms || [],
+            inferredEquivalentClassesAxioms: inferredData.inferredEquivalentClassesAxioms || [],
+            isUnsatisfiable: inferredData.isUnsatisfiable || false
+          };
+        } catch (err) {
+          console.warn('[ClassEditor] Failed to load inferred details:', err);
+        }
+      }
+      
       setClassDetails(details);
       
       // Update the item with all loaded details (annotations, axioms, etc.)
@@ -439,7 +459,9 @@ const ClassEditor: React.FC<{
         equivalentTo: details.equivalentClassesAxioms?.length || 0,
         disjointWith: details.disjointClassesAxioms?.length || 0,
         disjointUnion: details.disjointUnionAxioms?.length || 0,
-        hasKey: details.hasKeyAxioms?.length || 0
+        hasKey: details.hasKeyAxioms?.length || 0,
+        inferredSubClassOf: details.inferredSubClassOfAxioms?.length || 0,
+        inferredEquivalentTo: details.inferredEquivalentClassesAxioms?.length || 0
       });
       
       const updatedItem: TreeNode = {
@@ -449,7 +471,10 @@ const ClassEditor: React.FC<{
         equivalentClassesAxioms: details.equivalentClassesAxioms || item.equivalentClassesAxioms,
         disjointClassesAxioms: details.disjointClassesAxioms || item.disjointClassesAxioms,
         disjointUnionAxioms: details.disjointUnionAxioms || item.disjointUnionAxioms,
-        hasKeyAxioms: details.hasKeyAxioms || item.hasKeyAxioms
+        hasKeyAxioms: details.hasKeyAxioms || item.hasKeyAxioms,
+        inferredSubClassOfAxioms: details.inferredSubClassOfAxioms,
+        inferredEquivalentClassesAxioms: details.inferredEquivalentClassesAxioms,
+        isUnsatisfiable: details.isUnsatisfiable
       };
       console.log('[ClassEditor] Updated item:', updatedItem);
       onUpdate(updatedItem);
