@@ -19,6 +19,14 @@
     "rdf",
     "knowledge graph"
   ],
+  "activationEvents": [
+    "onCommand:ontocode.edit",
+    "onCommand:ontocode.editLargeFile",
+    "onCommand:ontocode.logout",
+    "onCommand:ontocode.insertCitation",
+    "onCommand:ontocode.showCollaborationStatus",
+    "onLanguage:owl"
+  ],
   "main": "./dist/extension.js",
   "browser": "./dist/web/extension.js",
   "extensionDependencies": [
@@ -158,7 +166,6 @@
   },
   "dependencies": {
     "-": "^0.0.1",
-    "@ontocode/graph-view-plugin": "file:../plugins/graph-view-plugin",
     "@stomp/stompjs": "^7.0.0",
     "axios": "^1.10.0",
     "crypto-browserify": "^3.12.1",
