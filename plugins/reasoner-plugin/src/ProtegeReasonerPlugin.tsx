@@ -33,7 +33,12 @@ import {
   Network,
   Search,
   Filter,
-  MoreVertical
+  MoreVertical,
+  Download,
+  Copy,
+  FileJson,
+  Save,
+  Trash2
 } from 'lucide-react';
 
 interface ReasonerPluginProps {
@@ -232,6 +237,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
   
   // State
   const [showReasonerMenu, setShowReasonerMenu] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
   const [localSelectedReasoner, setLocalSelectedReasoner] = useState<string>('hermit');
   const [localIsRunning, setLocalIsRunning] = useState(false);
   const [localIsLoading, setLocalIsLoading] = useState(false);
@@ -257,6 +263,13 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
   const [reasonerStatus, setReasonerStatus] = useState<string>('Not initialized');
   const [stats, setStats] = useState<any>(null);
   const [selectedClassIri, setSelectedClassIri] = useState<string | null>(null);
+  
+  // New settings state
+  const [timeoutSeconds, setTimeoutSeconds] = useState(60);
+  const [incrementalReasoning, setIncrementalReasoning] = useState(false);
+  const [cacheResults, setCacheResults] = useState(true);
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'json' | 'csv'>('json');
   
   // Use Dashboard values when available
   const selectedReasoner = dashboardSelectedReasoner || localSelectedReasoner;
@@ -285,6 +298,22 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
     });
 
     return () => observer.disconnect();
+  }, []);
+
+  // Load saved settings from localStorage
+  useEffect(() => {
+    const savedSettings = localStorage.getItem('reasonerSettings');
+    if (savedSettings) {
+      try {
+        const settings = JSON.parse(savedSettings);
+        if (settings.timeoutSeconds !== undefined) setTimeoutSeconds(settings.timeoutSeconds);
+        if (settings.incrementalReasoning !== undefined) setIncrementalReasoning(settings.incrementalReasoning);
+        if (settings.cacheResults !== undefined) setCacheResults(settings.cacheResults);
+        if (settings.exportFormat !== undefined) setExportFormat(settings.exportFormat);
+      } catch (error) {
+        console.error('Failed to load reasoner settings:', error);
+      }
+    }
   }, []);
 
   // Handle click outside to close menu
@@ -776,6 +805,125 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
     }
   };
 
+  // Export functions
+  // Helper to count all nodes in a hierarchy tree recursively
+  const countNodesInHierarchy = (nodes: any[]): number => {
+    if (!Array.isArray(nodes) || nodes.length === 0) return 0;
+    
+    return nodes.reduce((total, node) => {
+      if (!node) return total;
+      const childCount = Array.isArray(node.children) ? countNodesInHierarchy(node.children) : 0;
+      return total + 1 + childCount;
+    }, 0);
+  };
+
+  // Compute counts from actual hierarchy data
+  const actualClassCount = countNodesInHierarchy(classHierarchyToRender);
+  const actualObjectPropertyCount = countNodesInHierarchy(objectPropertyHierarchyToRender);
+  const actualDataPropertyCount = countNodesInHierarchy(dataPropertyHierarchyToRender);
+
+  // Compute reasoningTime from stats or reasonerResults if available
+  const reasoningTime =
+    displayStats?.reasoningTime ||
+    reasonerResults?.reasoningTime ||
+    stats?.reasoningTime ||
+    null;
+
+  const exportToJSON = () => {
+    const exportData = {
+      projectId,
+      reasoner: selectedReasoner,
+      timestamp: new Date().toISOString(),
+      isConsistent,
+      classCount: actualClassCount,
+      objectPropertyCount: actualObjectPropertyCount,
+      dataPropertyCount: actualDataPropertyCount,
+      reasoningTime: reasoningTime,
+      classHierarchy: classHierarchyToRender,
+      objectPropertyHierarchy: objectPropertyHierarchyToRender,
+      dataPropertyHierarchy: dataPropertyHierarchyToRender,
+      unsatisfiableClasses,
+      equivalentClasses: reasonerResults?.equivalentClasses || []
+    };
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `reasoner-results-${projectId}-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportToCSV = () => {
+    let csv = 'Type,IRI,Label,Depth,Parent\n';
+    
+    const addNodes = (nodes: any[], type: string) => {
+      const flatten = (node: any, parent: string = ''): any[] => {
+        const row = [
+          type,
+          node.iri || node.id || '',
+          node.label || node.name || '',
+          node.depth || 0,
+          parent
+        ];
+        const children = Array.isArray(node.children) ? node.children : [];
+        return [row, ...children.flatMap((child: any) => flatten(child, node.iri || node.id || ''))];
+      };
+      return nodes.flatMap(node => flatten(node));
+    };
+
+    const rows = [
+      ...addNodes(classHierarchyToRender, 'Class'),
+      ...addNodes(objectPropertyHierarchyToRender, 'ObjectProperty'),
+      ...addNodes(dataPropertyHierarchyToRender, 'DataProperty')
+    ];
+
+    rows.forEach(row => {
+      csv += row.map((field: any) => `"${field}"`).join(',') + '\n';
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `reasoner-hierarchy-${projectId}-${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const copyToClipboard = async () => {
+    const text = JSON.stringify({
+      isConsistent,
+      classCount: actualClassCount,
+      objectPropertyCount: actualObjectPropertyCount,
+      dataPropertyCount: actualDataPropertyCount,
+      unsatisfiableClasses: unsatisfiableClasses.length,
+      reasoningTime
+    }, null, 2);
+
+    try {
+      await navigator.clipboard.writeText(text);
+      alert('Results copied to clipboard!');
+    } catch (error) {
+      console.error('Failed to copy:', error);
+    }
+  };
+
+  const clearCache = async () => {
+    try {
+      const response = await fetch(
+        `${resolvedApiBaseUrl}/plugin-service/api/reasoner/clear-cache`,
+        { method: 'POST' }
+      );
+      if (response.ok) {
+        alert('Cache cleared successfully');
+      }
+    } catch (error) {
+      console.error('Error clearing cache:', error);
+    }
+  };
+
   function stopReasoner(): void {
     throw new Error('Function not implemented.');
   }
@@ -904,6 +1052,84 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
         >
           <Settings size={14} />
         </button>
+
+        {/* Export Button with Dropdown */}
+        <div className="relative group">
+          <button
+            className={`px-3 py-1.5 text-xs font-medium border rounded flex items-center gap-1.5 ${
+              isDark ? 'bg-gray-700 border-gray-600 hover:bg-gray-600' : 'bg-white border-gray-300 hover:bg-gray-50'
+            }`}
+            onClick={() => setShowExportMenu(!showExportMenu)}
+            disabled={!reasonerResults}
+            title="Export results"
+          >
+            <Download size={14} />
+            Export
+            <ChevronDown size={12} />
+          </button>
+          
+          {showExportMenu && reasonerResults && (
+            <div
+              className={`absolute top-full right-0 mt-1 border rounded shadow-lg z-50 min-w-[180px] ${
+                isDark ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-300'
+              }`}
+            >
+              <button
+                onClick={() => { exportToJSON(); setShowExportMenu(false); }}
+                className={`w-full px-4 py-2 text-xs text-left flex items-center gap-2 ${
+                  isDark ? 'hover:bg-gray-700' : 'hover:bg-gray-100'
+                }`}
+              >
+                <FileJson size={14} />
+                Export as JSON
+              </button>
+              <button
+                onClick={() => { exportToCSV(); setShowExportMenu(false); }}
+                className={`w-full px-4 py-2 text-xs text-left flex items-center gap-2 ${
+                  isDark ? 'hover:bg-gray-700' : 'hover:bg-gray-100'
+                }`}
+              >
+                <Save size={14} />
+                Export as CSV
+              </button>
+              <button
+                onClick={() => { copyToClipboard(); setShowExportMenu(false); }}
+                className={`w-full px-4 py-2 text-xs text-left flex items-center gap-2 ${
+                  isDark ? 'hover:bg-gray-700' : 'hover:bg-gray-100'
+                }`}
+              >
+                <Copy size={14} />
+                Copy to Clipboard
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Advanced Settings Button */}
+        <button
+          className={`px-3 py-1.5 text-xs font-medium border rounded flex items-center gap-1.5 ${
+            isDark ? 'bg-gray-700 border-gray-600 hover:bg-gray-600' : 'bg-white border-gray-300 hover:bg-gray-50'
+          }`}
+          onClick={() => setShowAdvancedSettings(true)}
+          title="Advanced settings"
+        >
+          <Settings size={14} />
+          Advanced
+        </button>
+
+        {/* Cache Control */}
+        {cacheResults && (
+          <button
+            className={`px-3 py-1.5 text-xs font-medium border rounded flex items-center gap-1.5 ${
+              isDark ? 'bg-gray-700 border-gray-600 hover:bg-red-600' : 'bg-white border-gray-300 hover:bg-red-50'
+            }`}
+            onClick={clearCache}
+            title="Clear reasoner cache"
+          >
+            <Trash2 size={14} />
+            Clear Cache
+          </button>
+        )}
       </div>
 
       {/* Main Content Area */}
@@ -998,6 +1224,14 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
                       {isRunning ? 'Running' : 'Stopped'}
                     </span>
                   </div>
+                  {reasoningTime !== null && (
+                    <div className="flex justify-between">
+                      <span>Reasoning Time:</span>
+                      <span className={`font-medium ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
+                        {reasoningTime < 1000 ? `${reasoningTime}ms` : `${(reasoningTime / 1000).toFixed(2)}s`}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1254,6 +1488,130 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
                 }`}
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Advanced Settings Dialog */}
+      {showAdvancedSettings && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowAdvancedSettings(false)}>
+          <div 
+            className={`rounded-lg shadow-xl w-full max-w-md ${isDark ? 'bg-gray-800' : 'bg-white'}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={`px-6 py-4 border-b ${isDark ? 'border-gray-700' : 'border-gray-200'}`}>
+              <h2 className={`text-lg font-semibold ${isDark ? 'text-gray-100' : 'text-gray-900'}`}>
+                Advanced Reasoner Settings
+              </h2>
+            </div>
+            
+            <div className="px-6 py-4 space-y-4">
+              {/* Timeout Setting */}
+              <div>
+                <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                  Reasoning Timeout (seconds): {timeoutSeconds}
+                </label>
+                <input
+                  type="range"
+                  min="5"
+                  max="300"
+                  value={timeoutSeconds}
+                  onChange={(e) => setTimeoutSeconds(Number(e.target.value))}
+                  className="w-full"
+                />
+                <div className="flex justify-between text-xs text-gray-500 mt-1">
+                  <span>5s</span>
+                  <span>300s (5min)</span>
+                </div>
+              </div>
+
+              {/* Incremental Reasoning Toggle */}
+              <div className="flex items-center justify-between">
+                <label className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                  Incremental Reasoning
+                </label>
+                <button
+                  onClick={() => setIncrementalReasoning(!incrementalReasoning)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                    incrementalReasoning ? 'bg-blue-600' : 'bg-gray-300'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      incrementalReasoning ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+              <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-600'}`}>
+                Only recompute changed parts of the ontology
+              </p>
+
+              {/* Cache Results Toggle */}
+              <div className="flex items-center justify-between">
+                <label className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                  Cache Results
+                </label>
+                <button
+                  onClick={() => setCacheResults(!cacheResults)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                    cacheResults ? 'bg-blue-600' : 'bg-gray-300'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      cacheResults ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+              <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-600'}`}>
+                Cache reasoning results for faster subsequent queries
+              </p>
+
+              {/* Export Format Preference */}
+              <div>
+                <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                  Default Export Format
+                </label>
+                <select
+                  value={exportFormat}
+                  onChange={(e) => setExportFormat(e.target.value as 'json' | 'csv')}
+                  className={`w-full px-3 py-2 text-sm border rounded ${
+                    isDark ? 'bg-gray-700 border-gray-600 text-gray-100' : 'bg-white border-gray-300 text-gray-900'
+                  }`}
+                >
+                  <option value="json">JSON</option>
+                  <option value="csv">CSV</option>
+                </select>
+              </div>
+            </div>
+
+            <div className={`px-6 py-4 border-t flex justify-end gap-2 ${isDark ? 'border-gray-700' : 'border-gray-200'}`}>
+              <button 
+                onClick={() => setShowAdvancedSettings(false)}
+                className={`px-4 py-2 text-sm font-medium rounded ${
+                  isDark ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-100 hover:bg-gray-200'
+                }`}
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={() => {
+                  // Save settings to localStorage
+                  localStorage.setItem('reasonerSettings', JSON.stringify({
+                    timeoutSeconds,
+                    incrementalReasoning,
+                    cacheResults,
+                    exportFormat
+                  }));
+                  setShowAdvancedSettings(false);
+                }}
+                className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                Save Settings
               </button>
             </div>
           </div>
