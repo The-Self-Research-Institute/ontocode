@@ -52,7 +52,7 @@ export class CollaborationManager implements ICollaborationManager {
         return new Promise((resolve, reject) => {
             try {
                 // Convert http/https URL to ws/wss
-                const wsUrl = this.serverUrl.replace(/^http/, 'ws') + '/ws';
+                const wsUrl = new URL('/ws/websocket', this.serverUrl).toString().replace(/^http/, 'ws');
                 
                 console.log('[CollaborationManager] Connecting to WebSocket:', wsUrl);
                 
