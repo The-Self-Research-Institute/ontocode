@@ -37,7 +37,7 @@ services:
       GDB_LICENSE_PATH: /opt/graphdb
     volumes:
       - graphdb-data:/opt/graphdb/data
-      - ${GDB_LICENSE_FILE:-./CORETOPIA_GRAPHDB_FREE_v11.1.license}:/opt/graphdb/license:ro
+      - ${GDB_LICENSE_FILE:-./CORETOPIA_GRAPHDB_FREE_v11.1.license}:/opt/graphdb/home/conf/graphdb.license:ro
       - ./scripts/init-graphdb.sh:/docker-entrypoint-initdb.d/init-graphdb.sh:ro
     networks:
       - ontology-net
