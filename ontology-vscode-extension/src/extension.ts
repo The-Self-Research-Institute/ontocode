@@ -12,7 +12,7 @@ import { RemoteEditApplier } from './collaboration/RemoteEditApplier';
 
 const TOKEN_KEY = 'ontocode.authToken';
 const GATEWAY_URL = 'http://ec2-13-218-153-101.compute-1.amazonaws.com'; // Gateway port
-const OWL_EDITOR_URL = 'http://ec2-13-218-153-101.compute-1.amazonaws.com:8083'; // OWL Editor service (WebSocket endpoint)
+const OWL_EDITOR_URL = GATEWAY_URL; // WebSocket endpoint routed via gateway
 const PLUGIN_SERVICE_URL = 'http://ec2-13-218-153-101.compute-1.amazonaws.com:8087'; // Plugin service port
 
 /**
