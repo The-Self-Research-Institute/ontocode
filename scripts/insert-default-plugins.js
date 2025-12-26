@@ -16,10 +16,27 @@
  */
 
 const { MongoClient } = require('mongodb');
+const fs = require('fs');
+const path = require('path');
+
+// Load environment variables from workspace .env if available
+try {
+  const dotenvPath = path.resolve(__dirname, '..', '.env');
+  if (fs.existsSync(dotenvPath)) {
+    require('dotenv').config({ path: dotenvPath });
+  } else {
+    require('dotenv').config();
+  }
+} catch (error) {
+  console.warn('⚠ Could not load .env file:', error.message);
+}
 
 // Configuration - Use environment variable if available (for Docker), otherwise use local default
-const MONGO_URL = process.env.MONGODB_URI || 'mongodb://localhost:27017';
-const DB_NAME = process.env.MONGODB_DATABASE || 'ontology';
+const MONGO_URL = process.env.MONGODB_URI || process.env.MONGO_URL || 'mongodb://localhost:27017';
+const MONGO_USERNAME = process.env.MONGODB_USERNAME || process.env.MONGO_USERNAME || process.env.MONGO_USER || "admin";
+const MONGO_PASSWORD = process.env.MONGODB_PASSWORD || process.env.MONGO_PASSWORD || process.env.MONGO_PASS || "changeme123";
+const MONGO_AUTH_SOURCE = process.env.MONGODB_AUTH_SOURCE || process.env.MONGO_AUTH_SOURCE || 'admin';
+const DB_NAME = process.env.MONGODB_DATABASE || process.env.MONGO_DB_NAME || 'ontology';
 const PLUGINS_COLLECTION = 'plugins';
 
 // Default plugins
@@ -200,9 +217,24 @@ Perfect for users who need to:
  * Connect to MongoDB
  */
 async function connectToMongo() {
-  const client = new MongoClient(MONGO_URL);
+  const options = {};
+
+  if (MONGO_USERNAME && MONGO_PASSWORD) {
+    options.auth = {
+      username: MONGO_USERNAME,
+      password: MONGO_PASSWORD
+    };
+    options.authSource = MONGO_AUTH_SOURCE;
+  }
+
+  const client = new MongoClient(MONGO_URL, options);
   await client.connect();
   console.log('✅ Connected to MongoDB');
+  if (MONGO_USERNAME) {
+    console.log(`   • Authenticated as ${MONGO_USERNAME} (authSource: ${options.authSource})`);
+  } else {
+    console.log('   • No MongoDB credentials provided (running unauthenticated connection)');
+  }
   return client;
 }
 
@@ -299,6 +331,9 @@ async function main() {
     if (error.message.includes('ECONNREFUSED')) {
       console.error('\n⚠️  MongoDB is not running!');
       console.error('   Please start MongoDB first');
+    } else if (error.message.toLowerCase().includes('requires authentication')) {
+      console.error('\n⚠️  Authentication required. Set MONGO_USERNAME and MONGO_PASSWORD (or MONGODB_USERNAME / MONGODB_PASSWORD).');
+      console.error('   Optional: MONGO_AUTH_SOURCE (defaults to "admin"), MONGO_DB_NAME, MONGO_URL');
     }
     
     process.exit(1);

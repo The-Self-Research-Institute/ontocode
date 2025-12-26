@@ -118,7 +118,7 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
   // ===================== WebSocket Connection =====================
 
   const connectWebSocket = useCallback(() => {
-    const socket = new SockJS(`${(window as any).API_BASE_URL}/ws`);
+    const socket = new SockJS('http://localhost:8080/ws');
     const stompClient = Stomp.over(socket);
 
     stompClient.connect({}, () => {

@@ -140,6 +140,29 @@ const extractResponseData = (payload: any) => {
 };
 
 const combineReasonerResults = (classificationPayload: any, statsPayload?: any) => {
+  // Add validation to handle error responses
+  if (!classificationPayload || (classificationPayload.error && !classificationPayload.data)) {
+    console.error('[Dashboard] Invalid classification response:', classificationPayload);
+    return {
+      classHierarchy: [],
+      classHierarchyTree: [],
+      objectPropertyHierarchy: [],
+      dataPropertyHierarchy: [],
+      equivalentClasses: [],
+      unsatisfiableClasses: [],
+      totalClasses: 0,
+      stats: {
+        classHierarchyNodes: 0,
+        objectPropertyNodes: 0,
+        dataPropertyNodes: 0,
+        individuals: 0,
+        satisfiableClasses: 0,
+        unsatisfiableClasses: 0,
+        isConsistent: true
+      }
+    };
+  }
+  
   const classificationData = extractResponseData(classificationPayload);
   const statsData = statsPayload ? extractResponseData(statsPayload) : null;
   const existingStats = (classificationData as any)?.stats || {};
@@ -520,7 +543,7 @@ const PluginPlaceholder: React.FC<PluginPlaceholderProps> = ({
                 Key Features
               </h3>
               <div className="grid grid-cols-2 gap-3">
-                {features.map((feature, index) => (
+                {features?.map((feature, index) => (
                   <div key={index} className="flex items-center gap-3 p-3 rounded-lg transition-all hover-overlay" style={{ backgroundColor: 'var(--surface-2)', border: '1px solid var(--border)' }}>
                     <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center flex-shrink-0">
                       <Check size={12} className="text-white" />
@@ -1714,7 +1737,7 @@ const Dashboard = () => {
       label: "Classes", 
       icon: Package, 
       count: hierarchyViewModes.Classes === 'inferred'
-        ? countNodes(inferredClassHierarchy.length > 0 ? inferredClassHierarchy : (reasonerResults?.classHierarchyTree || reasonerResults?.classHierarchy || [])) 
+        ? countNodes(inferredClassHierarchy.length > 0 ? inferredClassHierarchy : (Array.isArray(reasonerResults?.classHierarchyTree) ? reasonerResults.classHierarchyTree : (Array.isArray(reasonerResults?.classHierarchy) ? reasonerResults.classHierarchy : []))) 
         : (metadata as any)?.classCount || 0, 
       theme: 'bg-gradient-to-b from-[#F5F0E6] to-[#E1C688] text-black border-[#D6C9AD]' 
     },
@@ -1723,7 +1746,7 @@ const Dashboard = () => {
       label: "Object properties", 
       icon: Share2, 
       count: hierarchyViewModes.ObjectProperties === 'inferred'
-        ? countNodes(inferredObjectPropertyHierarchy.length > 0 ? inferredObjectPropertyHierarchy : (reasonerResults?.objectPropertyHierarchy || []))
+        ? countNodes(inferredObjectPropertyHierarchy.length > 0 ? inferredObjectPropertyHierarchy : (Array.isArray(reasonerResults?.objectPropertyHierarchy) ? reasonerResults.objectPropertyHierarchy : []))
         : (metadata as any)?.objectPropertyCount || 0, 
       theme: 'bg-gradient-to-b from-blue-300 to-blue-500 text-white border-blue-600' 
     },
@@ -1732,7 +1755,7 @@ const Dashboard = () => {
       label: "Data properties", 
       icon: Database, 
       count: hierarchyViewModes.DataProperties === 'inferred'
-        ? countNodes(inferredDataPropertyHierarchy.length > 0 ? inferredDataPropertyHierarchy : (reasonerResults?.dataPropertyHierarchy || []))
+        ? countNodes(inferredDataPropertyHierarchy.length > 0 ? inferredDataPropertyHierarchy : (Array.isArray(reasonerResults?.dataPropertyHierarchy) ? reasonerResults.dataPropertyHierarchy : []))
         : (metadata as any)?.dataPropertyCount || 0, 
       theme: 'bg-gradient-to-b from-green-300 to-green-500 text-white border-green-600' 
     },
@@ -1749,22 +1772,24 @@ const Dashboard = () => {
           // Use inferredClassHierarchy if available, otherwise fall back to reasoner results
           const inferred = inferredClassHierarchy.length > 0 
             ? inferredClassHierarchy 
-            : (reasonerResults?.classHierarchyTree || reasonerResults?.classHierarchy || []);
+            : (Array.isArray(reasonerResults?.classHierarchyTree) ? reasonerResults.classHierarchyTree : (Array.isArray(reasonerResults?.classHierarchy) ? reasonerResults.classHierarchy : []));
           
-          console.log('[Dashboard] Using inferred class hierarchy, length:', inferred.length);
-          return inferred;
+          console.log('[Dashboard] Using inferred class hierarchy, length:', Array.isArray(inferred) ? inferred.length : 0);
+          return Array.isArray(inferred) ? inferred : [];
         }
         console.log('[Dashboard] Using asserted class hierarchy, length:', classHierarchy.length);
         return classHierarchy;
       case "ObjectProperties":
         console.log(inferredObjectPropertyHierarchy, '[Dashboard] Hierarchy view mode for ObjectProperties:', hierarchyViewModes.ObjectProperties);
-        return hierarchyViewModes.ObjectProperties === 'inferred'
-          ? (inferredObjectPropertyHierarchy.length > 0 ? inferredObjectPropertyHierarchy : (reasonerResults?.objectPropertyHierarchy || []))
+        const objPropData = hierarchyViewModes.ObjectProperties === 'inferred'
+          ? (inferredObjectPropertyHierarchy.length > 0 ? inferredObjectPropertyHierarchy : (Array.isArray(reasonerResults?.objectPropertyHierarchy) ? reasonerResults.objectPropertyHierarchy : []))
           : objectPropertyHierarchy;
+        return Array.isArray(objPropData) ? objPropData : [];
       case "DataProperties":
-        return hierarchyViewModes.DataProperties === 'inferred'
-          ? (inferredDataPropertyHierarchy.length > 0 ? inferredDataPropertyHierarchy : (reasonerResults?.dataPropertyHierarchy || []))
+        const dataPropData = hierarchyViewModes.DataProperties === 'inferred'
+          ? (inferredDataPropertyHierarchy.length > 0 ? inferredDataPropertyHierarchy : (Array.isArray(reasonerResults?.dataPropertyHierarchy) ? reasonerResults.dataPropertyHierarchy : []))
           : dataPropertyHierarchy;
+        return Array.isArray(dataPropData) ? dataPropData : [];
       case "AnnotationProperties":
         return hierarchyViewModes.AnnotationProperties === 'inferred'
           ? (inferredAnnotationPropertyHierarchy.length > 0 ? inferredAnnotationPropertyHierarchy : annotationProperties)
@@ -6416,20 +6441,7 @@ const Dashboard = () => {
           return (
             <PluginComponent 
               projectId={projectId || ''} 
-              apiBaseUrl={(window as any).API_BASE_URL || 'http://localhost:8082'}
-              selectedReasoner={selectedReasoner}
-              isReasonerRunning={isReasonerRunning}
-              isReasonerLoading={isReasonerLoading}
-              reasonerResults={reasonerResults}
-              consistencyResult={consistencyResult}
-              inferredClassHierarchy={inferredClassHierarchy}
-              inferredObjectPropertyHierarchy={inferredObjectPropertyHierarchy}
-              inferredDataPropertyHierarchy={inferredDataPropertyHierarchy}
-              onStartReasoner={startReasoner}
-              onStopReasoner={stopReasoner}
-              onSelectReasoner={handleSelectReasoner}
-              onToggleSync={toggleReasonerSync}
-              isReasonerSynced={isReasonerSynced}
+              
             />
           );
         }
@@ -6437,6 +6449,21 @@ const Dashboard = () => {
         return (
           <PluginPlaceholder 
             pluginId="reasoner-plugin" 
+            pluginName="OWL Reasoner"
+            description="Advanced OWL 2 DL reasoning with classification, consistency checking, explanations, and inferred hierarchies."
+            icon={<Zap size={32} className="text-white" />}
+            features={[
+              "HermiT, ELK, Pellet, Openllet, Structural support",
+              "Full classification with inferred hierarchy",
+              "Consistency checks with unsat explanations",
+              "Auto-sync with ontology edits",
+              "Export inferred hierarchy (JSON/CSV)",
+              "Detailed reasoner statistics"
+            ]}
+            accentColor="from-indigo-500 via-purple-500 to-pink-500"
+            onInstall={() => handleInstallPlugin('reasoner-plugin')}
+            onRetryLoad={() => handleRetryLoadPlugin('reasoner-plugin')}
+            isInstalled={installedPlugins.has('reasoner-plugin')}
             isLoading={loadingState?.loading || false}
             error={loadingState?.error}
           />
