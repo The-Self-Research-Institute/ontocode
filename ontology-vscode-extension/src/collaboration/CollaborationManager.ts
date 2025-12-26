@@ -558,4 +558,12 @@ export class CollaborationManager implements ICollaborationManager {
             }
         }, this.reconnectDelay);
     }
+
+    /**
+     * Broadcast cursor position to other users in the project (Node.js version - stub)
+     */
+    broadcastCursorPosition(projectId: string, userId: string, userName: string, position: { x: number; y: number }): void {
+        // Node.js version stub - functionality is in web version
+        console.log('[CollaborationManager] broadcastCursorPosition called (Node.js stub)');
+    }
 }

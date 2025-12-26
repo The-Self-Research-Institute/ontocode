@@ -288,11 +288,26 @@ public class OntologyMetadataService {
             ontologyIri = formatResource(ontologyIri);
         }
 
+        // Handle relative imports (starting with ./ or ../) differently
+        // Relative imports should not be wrapped in angle brackets if they don't have a scheme
+        String formattedImportIri;
+        if (importIri.startsWith("./") || importIri.startsWith("../")) {
+            // For relative imports, wrap in angle brackets to make them valid RDF IRIs
+            formattedImportIri = "<" + importIri + ">";
+        } else if (importIri.startsWith("http://") || importIri.startsWith("https://") || 
+                   importIri.startsWith("ftp://") || importIri.startsWith("file://")) {
+            // Absolute IRIs (URLs or file:// URIs)
+            formattedImportIri = "<" + importIri + ">";
+        } else {
+            // Bare filenames or other formats - treat as relative
+            formattedImportIri = "<./" + importIri + ">";
+        }
+
         String update = PREFIXES + String.format("""
             INSERT DATA {
-              %s owl:imports <%s> .
+              %s owl:imports %s .
             }
-            """, ontologyIri, importIri);
+            """, ontologyIri, formattedImportIri);
 
         datasetService.execUpdate(projectId, update);
     }
@@ -307,14 +322,25 @@ public class OntologyMetadataService {
         }
         ontologyIri = formatResource(ontologyIri);
 
+        // Handle relative imports (starting with ./ or ../) differently
+        String formattedImportIri;
+        if (importIri.startsWith("./") || importIri.startsWith("../")) {
+            formattedImportIri = "<" + importIri + ">";
+        } else if (importIri.startsWith("http://") || importIri.startsWith("https://") || 
+                   importIri.startsWith("ftp://") || importIri.startsWith("file://")) {
+            formattedImportIri = "<" + importIri + ">";
+        } else {
+            formattedImportIri = "<./" + importIri + ">";
+        }
+
         String update = PREFIXES + String.format("""
             DELETE {
-              %s owl:imports <%s> .
+              %s owl:imports %s .
             }
             WHERE {
-              %s owl:imports <%s> .
+              %s owl:imports %s .
             }
-            """, ontologyIri, importIri, ontologyIri, importIri);
+            """, ontologyIri, formattedImportIri, ontologyIri, formattedImportIri);
 
         datasetService.execUpdate(projectId, update);
     }

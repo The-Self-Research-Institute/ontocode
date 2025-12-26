@@ -77,7 +77,8 @@ type WebviewMessage =
   | { type: 'lockUpdate'; lock: any }
   | { type: 'collaborationStatus'; connected: boolean }
   | { type: 'importStatusUpdate'; status: any }
-  | { type: 'shareNotification'; notification: any };
+  | { type: 'shareNotification'; notification: any }
+  | { type: 'cursorUpdate'; userId: string; userName: string; position: { x: number; y: number }; timestamp: number };
 
 type ExtensionMessage =
   | { type: 'error'; value: string }
@@ -97,7 +98,9 @@ type ExtensionMessage =
   | { type: 'fileLoaded'; projectId: string } // File selected from menu
   | { type: 'requestCollaborationStatus' } // Request current collaboration status
   | { type: 'showNotification'; notification: { type: string; title: string; message: string; actions?: string[] } } // System notification
-  | { type: 'cursorMoved'; nodeId: string; nodeName: string }; // User moved cursor to a node
+  | { type: 'cursorMoved'; nodeId: string; nodeName: string } // User moved cursor to a node
+  | { type: 'broadcastCursor'; projectId: string; userId: string; userName: string; position: { x: number; y: number }; timestamp: number } // User cursor position
+  | { type: 'importLocalFile'; filePath: string; currentProjectId: string }; // Import local OWL file
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -356,6 +359,21 @@ class OntoCodePanel {
                                 selectedNodes
                             );
                         }
+                        break;
+                    case 'broadcastCursor':
+                        // Broadcast cursor position to all collaborators via WebSocket
+                        if (this.collaborationManager) {
+                            this.collaborationManager.broadcastCursorPosition(
+                                message.projectId,
+                                message.userId,
+                                message.userName,
+                                message.position
+                            );
+                        }
+                        break;
+                    case 'importLocalFile':
+                        // Handle local file import - upload the file to the system
+                        this.handleImportLocalFile(message.filePath, message.currentProjectId);
                         break;
                 }
             },
@@ -881,6 +899,114 @@ class OntoCodePanel {
     }
 
     /**
+     * Handle importing a local file - uploads it to the system
+     */
+    private async handleImportLocalFile(filePath: string, currentProjectId: string) {
+        try {
+            console.log('[OntoCode] === IMPORT LOCAL FILE START ===');
+            console.log('[OntoCode] Original file path:', filePath);
+            console.log('[OntoCode] Current project ID:', currentProjectId);
+            
+            // Remove file:// protocol if present
+            let normalizedPath = filePath.replace(/^file:\/\/\//, '').replace(/^file:\/\//, '');
+            
+            // Convert forward slashes to backslashes on Windows
+            if (process.platform === 'win32') {
+                normalizedPath = normalizedPath.replace(/\//g, '\\');
+            }
+            
+            console.log('[OntoCode] Normalized path:', normalizedPath);
+            console.log('[OntoCode] Platform:', process.platform);
+            
+            // Check if file exists
+            const fileUri = vscode.Uri.file(normalizedPath);
+            console.log('[OntoCode] File URI:', fileUri.toString());
+            
+            let fileExists = false;
+            try {
+                await (vscode.workspace as any).fs.stat(fileUri);
+                fileExists = true;
+                console.log('[OntoCode] ✅ File exists at path');
+            } catch (e) {
+                console.log('[OntoCode] ❌ File not found:', e);
+                vscode.window.showErrorMessage(`Could not find file at: ${normalizedPath}`);
+                return;
+            }
+            
+            console.log('[OntoCode] Reading file content...');
+            // Read file content
+            const fileData = await (vscode.workspace as any).fs.readFile(fileUri);
+            const fileName = normalizedPath.substring(normalizedPath.lastIndexOf('\\') + 1).substring(normalizedPath.lastIndexOf('/') + 1);
+            console.log('[OntoCode] File name:', fileName);
+            console.log('[OntoCode] File size:', fileData.length, 'bytes');
+            
+            // Get auth token
+            const token = await (this._context as any).secrets.get(TOKEN_KEY);
+            if (!token) {
+                console.log('[OntoCode] ❌ No auth token found');
+                vscode.window.showErrorMessage('Not authenticated. Please log in first.');
+                return;
+            }
+            console.log('[OntoCode] ✅ Auth token retrieved');
+            
+            // Generate a unique project ID for the imported file
+            const uploadProjectId = `imported-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+            console.log('[OntoCode] Generated upload project ID:', uploadProjectId);
+            
+            // Upload file to the system
+            const FormData = require('form-data');
+            const form = new FormData();
+            form.append('file', Buffer.from(fileData), {
+                filename: fileName,
+                contentType: 'application/rdf+xml'
+            });
+            
+            const uploadUrl = `${GATEWAY_URL}/api/ontology/upload/${uploadProjectId}`;
+            const axios = require('axios');
+            
+            console.log('[OntoCode] Upload URL:', uploadUrl);
+            console.log('[OntoCode] Uploading file...');
+            
+            const response = await axios.post(uploadUrl, form, {
+                headers: {
+                    ...form.getHeaders(),
+                    'Authorization': `Bearer ${token}`
+                },
+                maxContentLength: Infinity,
+                maxBodyLength: Infinity,
+                timeout: 300000
+            });
+            
+            console.log('[OntoCode] Upload response status:', response.status);
+            console.log('[OntoCode] Upload response data:', response.data);
+            
+            if (response.status === 200 || response.status === 201) {
+                console.log('[OntoCode] ✅ Import file uploaded successfully');
+                vscode.window.showInformationMessage(`Imported file "${fileName}" uploaded to your files.`);
+                
+                // Store this project ID
+                this._lastProjectId = uploadProjectId;
+                
+                // Notify webview to refresh file list
+                console.log('[OntoCode] Sending fileReady message to webview');
+                this.postMessage({ type: 'fileReady', projectId: uploadProjectId });
+                console.log('[OntoCode] === IMPORT LOCAL FILE END (SUCCESS) ===');
+            } else {
+                console.log('[OntoCode] ❌ Upload failed with status:', response.status);
+                vscode.window.showErrorMessage(`Failed to upload file. Status: ${response.status}`);
+            }
+        } catch (error) {
+            console.error('[OntoCode] === IMPORT LOCAL FILE ERROR ===');
+            console.error('[OntoCode] Import local file error:', error);
+            if (error instanceof Error) {
+                console.error('[OntoCode] Error message:', error.message);
+                console.error('[OntoCode] Error stack:', error.stack);
+            }
+            vscode.window.showErrorMessage('Failed to upload imported file. Check console for details.');
+        }
+    }
+
+    /**
      * Find the best OWL editor currently open in VSCode
      */
     private findBestOwlEditor(): vscode.TextEditor | undefined {
@@ -1149,6 +1275,19 @@ class OntoCodePanel {
                     this.postMessage({
                         type: 'shareNotification',
                         notification
+                    });
+                },
+
+                onCursorUpdate: (cursor) => {
+                    console.log('[OntoCode] 🖱️  Cursor update received:', cursor.userName);
+                    
+                    // Forward cursor position to webview
+                    this.postMessage({
+                        type: 'cursorUpdate',
+                        userId: cursor.userId,
+                        userName: cursor.userName,
+                        position: cursor.position,
+                        timestamp: cursor.timestamp
                     });
                 }
             });

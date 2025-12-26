@@ -30,6 +30,7 @@ export class CollaborationManager implements ICollaborationManager {
     private onConnectionChange?: (connected: boolean) => void;
     private onError?: (error: string) => void;
     private onShareNotification?: (notification: any) => void;
+    private onCursorUpdate?: (cursor: { userId: string; userName: string; position: { x: number; y: number }; timestamp: number }) => void;
 
     constructor(
         private serverUrl: string,
@@ -179,6 +180,7 @@ export class CollaborationManager implements ICollaborationManager {
         this.subscribeToPresence(projectId);
         this.subscribeToLocks(projectId);
         this.subscribeToImportStatus(projectId);
+        this.subscribeToCursors(projectId);
         
         // Wait a bit for subscriptions to be established
         await new Promise(resolve => setTimeout(resolve, 100));
@@ -332,6 +334,7 @@ export class CollaborationManager implements ICollaborationManager {
         onConnectionChange?: (connected: boolean) => void;
         onError?: (error: string) => void;
         onShareNotification?: (notification: any) => void;
+        onCursorUpdate?: (cursor: { userId: string; userName: string; position: { x: number; y: number }; timestamp: number }) => void;
     }): void {
         this.onEditReceived = handlers.onEditReceived;
         this.onPresenceUpdate = handlers.onPresenceUpdate;
@@ -340,6 +343,7 @@ export class CollaborationManager implements ICollaborationManager {
         this.onConnectionChange = handlers.onConnectionChange;
         this.onError = handlers.onError;
         this.onShareNotification = handlers.onShareNotification;
+        this.onCursorUpdate = handlers.onCursorUpdate;
     }
 
     /**
@@ -490,6 +494,41 @@ export class CollaborationManager implements ICollaborationManager {
     }
 
     /**
+     * Subscribe to cursor position updates for a project.
+     */
+    private subscribeToCursors(projectId: string): void {
+        if (!this.client) {
+            console.error('[CollaborationManager] ❌ Cannot subscribe to cursors - no client');
+            return;
+        }
+
+        console.log(`[CollaborationManager] 📡 Subscribing to /topic/cursor/${projectId}`);
+
+        const subscription = this.client.subscribe(
+            `/topic/cursor/${projectId}`,
+            (message: any) => {
+                try {
+                    const cursorData = JSON.parse(message.body);
+
+                    // Ignore our own cursor
+                    if (cursorData.userId === this.userId) return;
+
+                    console.log('[CollaborationManager] 🖱️  Received cursor update:', cursorData);
+
+                    if (this.onCursorUpdate) {
+                        this.onCursorUpdate(cursorData);
+                    }
+                } catch (error) {
+                    console.error('[CollaborationManager] ❌ Error parsing cursor update:', error);
+                }
+            }
+        );
+
+        this.subscriptions.set(`cursor-${projectId}`, subscription);
+        console.log(`[CollaborationManager] ✅ Subscribed to cursors for project: ${projectId}`);
+    }
+
+    /**
      * Subscribe to share notifications for the current user.
      * Receives instant notifications when files are shared with this user.
      */
@@ -562,5 +601,31 @@ export class CollaborationManager implements ICollaborationManager {
                 this.client.activate();
             }
         }, this.reconnectDelay);
+    }
+
+    /**
+     * Broadcast cursor position to other users in the project
+     */
+    broadcastCursorPosition(projectId: string, userId: string, userName: string, position: { x: number; y: number }): void {
+        if (!this.client || !this.state.connected || !this.state.projectId) {
+            console.warn('[CollaborationManager] Cannot broadcast cursor: not connected or no active project');
+            return;
+        }
+
+        if (projectId !== this.state.projectId) {
+            console.warn('[CollaborationManager] Cannot broadcast cursor: project mismatch');
+            return;
+        }
+
+        // Broadcast cursor via STOMP
+        this.client.publish({
+            destination: `/app/cursor/${projectId}`,
+            body: JSON.stringify({
+                userId,
+                userName,
+                position,
+                timestamp: Date.now()
+            })
+        });
     }
 }
