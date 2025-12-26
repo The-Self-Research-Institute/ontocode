@@ -85,6 +85,18 @@ const DEFAULT_PLUGINS = [
     keywords: ['sparql', 'query', 'ontology', 'graphdb', 'rdf', 'owl', 'semantic-web', 'triplestore'],
     icon: null,
     screenshots: []
+  },
+  {
+    pluginId: 'reasoner-plugin',
+    name: 'OWL Reasoner',
+    description: 'Advanced OWL 2 DL reasoning with HermiT, ELK, Pellet, and Openllet. Provides classification, consistency checking, explanations, and inferred hierarchies.',
+    version: '1.0.0',
+    category: 'Reasoning',
+    author: 'OntoCode Team',
+    authorEmail: 'admin@ontocode.com',
+    keywords: ['reasoner', 'hermit', 'owl', 'inference', 'classification', 'consistency', 'realization', 'entailment'],
+    icon: null,
+    screenshots: []
   }
 ];
 

@@ -39,12 +39,27 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
+// Load environment variables from root .env when available
+try {
+  const dotenvPath = path.resolve(__dirname, '..', '.env');
+  if (fs.existsSync(dotenvPath)) {
+    require('dotenv').config({ path: dotenvPath });
+  } else {
+    require('dotenv').config();
+  }
+} catch (error) {
+  console.warn('⚠ Could not load .env file:', error.message);
+}
+
 // =============================================================================
 // CONFIGURATION
 // =============================================================================
 
-const MONGO_URL = process.env.MONGODB_URI || 'mongodb://localhost:27017';
-const DB_NAME = process.env.MONGODB_DATABASE || 'ontology';
+const MONGO_URL = process.env.MONGODB_URI || process.env.MONGO_URL || 'mongodb://localhost:27017';
+const MONGO_USERNAME = process.env.MONGODB_USERNAME || process.env.MONGO_USERNAME || process.env.MONGO_USER || "admin";
+const MONGO_PASSWORD = process.env.MONGODB_PASSWORD || process.env.MONGO_PASSWORD || process.env.MONGO_PASS || "changeme123";
+const MONGO_AUTH_SOURCE = process.env.MONGODB_AUTH_SOURCE || process.env.MONGO_AUTH_SOURCE || 'admin';
+const DB_NAME = process.env.MONGODB_DATABASE || process.env.MONGO_DB_NAME || 'ontology';
 // Use /app/plugins in Docker, otherwise use local path
 const PLUGINS_DIR = fs.existsSync('/app/plugins') ? '/app/plugins' : path.resolve(__dirname, '..', 'plugins');
 
@@ -105,7 +120,7 @@ const PLUGINS = [
   },
   {
     pluginId: 'reasoner-plugin',
-    name: 'Protégé Reasoner',
+    name: 'OWL Reasoner',
     shortDescription: 'Advanced OWL 2 reasoning with HermiT, ELK, and Pellet',
     description: 'Advanced OWL 2 reasoning plugin providing Protégé-style interface. Supports HermiT, ELK, Pellet, and Openllet reasoners. Features include consistency checking, classification, inferred hierarchy visualization, unsatisfiable class detection with explanations, and real-time synchronization with the ontology editor.',
     version: '1.0.0',
@@ -234,8 +249,25 @@ async function buildAllPlugins(plugins) {
 // =============================================================================
 
 async function connectToMongo() {
-  const client = new MongoClient(MONGO_URL);
+  const options = {};
+
+  if (MONGO_USERNAME && MONGO_PASSWORD) {
+    options.auth = {
+      username: MONGO_USERNAME,
+      password: MONGO_PASSWORD
+    };
+    options.authSource = MONGO_AUTH_SOURCE;
+  }
+
+  const client = new MongoClient(MONGO_URL, options);
   await client.connect();
+
+  if (MONGO_USERNAME) {
+    log.info(`Authenticated as ${MONGO_USERNAME} (authSource: ${options.authSource})`);
+  } else {
+    log.warn('Proceeding without MongoDB credentials');
+  }
+
   return client;
 }
 
@@ -370,20 +402,29 @@ async function createVersionRecord(db, plugin, fileId, bundlePath) {
 async function installPlugin(db, bucket, plugin, force = false) {
   log.info(`Installing ${plugin.pluginId} v${plugin.version}...`);
 
-  // 1. Insert/update metadata
-  await insertPluginMetadata(db, plugin, force);
+  try {
+    // 1. Insert/update metadata
+    await insertPluginMetadata(db, plugin, force);
 
-  // 2. Upload bundle to GridFS
-  const fileId = await uploadBundleToGridFS(db, bucket, plugin);
-  if (!fileId) {
-    return false;
+    // 2. Upload bundle to GridFS
+    const fileId = await uploadBundleToGridFS(db, bucket, plugin);
+    if (!fileId) {
+      return false;
+    }
+
+    // 3. Create version record
+    const bundlePath = path.join(PLUGINS_DIR, plugin.pluginId, 'dist', 'index.js');
+    await createVersionRecord(db, plugin, fileId, bundlePath);
+
+    return true;
+  } catch (error) {
+    log.error(`Fatal error: ${error.message}`);
+    if (typeof error.message === 'string' && error.message.toLowerCase().includes('requires authentication')) {
+      log.error('MongoDB rejected the request. Provide MONGO_USERNAME/MONGO_PASSWORD (or MONGODB_USERNAME/MONGODB_PASSWORD).');
+      log.error('Optional: MONGO_AUTH_SOURCE (default "admin"), MONGO_DB_NAME, MONGO_URL');
+    }
+    throw error;
   }
-
-  // 3. Create version record
-  const bundlePath = path.join(PLUGINS_DIR, plugin.pluginId, 'dist', 'index.js');
-  await createVersionRecord(db, plugin, fileId, bundlePath);
-
-  return true;
 }
 
 async function listPlugins(db) {
@@ -478,6 +519,10 @@ ${colors.bright}${colors.magenta}╔══════════════�
       log.success('Connected to MongoDB');
     } catch (error) {
       log.error(`Failed to connect to MongoDB: ${error.message}`);
+      if (error.message && error.message.toLowerCase().includes('authentication')) {
+        log.error('Authentication required. Set MONGO_USERNAME and MONGO_PASSWORD (or MONGODB_USERNAME / MONGODB_PASSWORD).');
+        log.error('Optional: MONGO_AUTH_SOURCE (defaults to "admin"), MONGO_DB_NAME, MONGO_URL');
+      }
       process.exit(1);
     }
   }

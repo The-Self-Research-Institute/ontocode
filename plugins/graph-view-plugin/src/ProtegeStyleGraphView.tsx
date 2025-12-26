@@ -38,8 +38,7 @@ import {
   Copy,
   Scissors,
   Plus,
-  Minus,
-  Target
+  Minus
 } from 'lucide-react';
 
 interface ProtegeStyleGraphViewProps {
@@ -60,8 +59,6 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
   
   const [nodes, setNodes] = useState<any[]>([]);
   const [edges, setEdges] = useState<any[]>([]);
-  const [visibleNodes, setVisibleNodes] = useState<any[]>([]);
-  const [visibleEdges, setVisibleEdges] = useState<any[]>([]);
   const [classHierarchy, setClassHierarchy] = useState<OntologyClass[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedNode, setSelectedNode] = useState<any>(null);
@@ -71,17 +68,17 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: any } | null>(null);
   const [showClassTree, setShowClassTree] = useState(true);
   const [expandedClasses, setExpandedClasses] = useState<Set<string>>(new Set(['owl:Thing']));
-  const [isDark, setIsDark] = useState(false);
+  
   const [layoutType, setLayoutType] = useState<'hierarchical' | 'force' | 'circular' | 'radial'>('hierarchical');
   const [assertionView, setAssertionView] = useState<'asserted' | 'inferred' | 'all'>('asserted');
-  const [showInferences, setShowInferences] = useState(true);
-
+  const [showInferences, setShowInferences] = useState(false);
+  
+  // Fetch ontology data
   const fetchGraphData = useCallback(async () => {
     setLoading(true);
     try {
-      const apiBaseUrl = (window as any).API_BASE_URL || 'http://localhost:8082';
       const response = await fetch(
-        `${apiBaseUrl}/api/collab-graph/${projectId}/initial`,
+        `${(window as any).API_BASE_URL}/api/ontology/${projectId}/graph`,
         {
           headers: {
             'Authorization': `Bearer ${localStorage.getItem('authToken')}`
@@ -93,8 +90,6 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
         const data = await response.json();
         setNodes(data.nodes || []);
         setEdges(data.edges || []);
-        setVisibleNodes(data.nodes || []);
-        setVisibleEdges(data.edges || []);
         
         // Build class hierarchy
         buildClassHierarchy(data.nodes, data.edges);
@@ -105,75 +100,6 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
       setLoading(false);
     }
   }, [projectId]);
-
-  const fetchNeighborhood = async (nodeId: string) => {
-    setLoading(true);
-    try {
-      const apiBaseUrl = (window as any).API_BASE_URL || 'http://localhost:8082';
-      const response = await fetch(
-        `${apiBaseUrl}/api/collab-graph/${projectId}/expand/${encodeURIComponent(nodeId)}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-          }
-        }
-      );
-      
-      if (response.ok) {
-        const data = await response.json();
-        
-        // Merge new nodes and edges
-        setNodes(prev => {
-          const existingIds = new Set(prev.map(n => n.id));
-          const newNodes = (data.nodes || []).filter((n: any) => !existingIds.has(n.id));
-          return [...prev, ...newNodes];
-        });
-        
-        setEdges(prev => {
-          const existingIds = new Set(prev.map(e => e.id));
-          const newEdges = (data.edges || []).filter((e: any) => !existingIds.has(e.id));
-          return [...prev, ...newEdges];
-        });
-
-        setVisibleNodes(prev => {
-          const existingIds = new Set(prev.map(n => n.id));
-          const newNodes = (data.nodes || []).filter((n: any) => !existingIds.has(n.id));
-          return [...prev, ...newNodes];
-        });
-        
-        setVisibleEdges(prev => {
-          const existingIds = new Set(prev.map(e => e.id));
-          const newEdges = (data.edges || []).filter((e: any) => !existingIds.has(e.id));
-          return [...prev, ...newEdges];
-        });
-
-        // Focus on the node after it's added
-        setTimeout(() => {
-          if (networkRef.current) {
-            networkRef.current.selectNodes([nodeId]);
-            networkRef.current.focus(nodeId, { scale: 1.5, animation: { duration: 500 } });
-          }
-        }, 500);
-      }
-    } catch (error) {
-      console.error('Error fetching neighborhood:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Detect dark mode
-  useEffect(() => {
-    const checkDarkMode = () => {
-      setIsDark(document.documentElement.classList.contains('dark'));
-    };
-    
-    checkDarkMode();
-    const observer = new MutationObserver(checkDarkMode);
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-    
-    return () => observer.disconnect();
-  }, []);
 
   useEffect(() => {
     fetchGraphData();
@@ -214,25 +140,12 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
       c.superClasses.every(s => s.includes('owl#Thing'))
     );
     
-    // Expand all classes by default as requested
-    const allIris = new Set<string>();
-    hierarchy.forEach((_, iri) => allIris.add(iri));
-    setExpandedClasses(allIris);
-    
     setClassHierarchy(roots);
   };
 
   // Initialize vis-network
   useEffect(() => {
-    if (!containerRef.current) return;
-    
-    if (visibleNodes.length === 0) {
-      if (networkRef.current) {
-        networkRef.current.destroy();
-        networkRef.current = null;
-      }
-      return;
-    }
+    if (!containerRef.current || nodes.length === 0) return;
 
     const getNodeColor = (type: string) => {
       switch (type) {
@@ -257,73 +170,52 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
     };
 
     const getEdgeStyle = (type: string) => {
-      const baseColor = isDark ? '#94a3b8' : '#64748b';
-      const subClassColor = isDark ? '#e2e8f0' : '#000000';
-      const propertyColor = isDark ? '#60a5fa' : '#4169E1';
-      const equivalentColor = isDark ? '#fca5a5' : '#FF6347';
-      const disjointColor = isDark ? '#f87171' : '#FF0000';
-      const instanceColor = isDark ? '#a3a3a3' : '#666666';
-      
       switch (type) {
         case 'subClassOf':
-          return { dashes: false, color: subClassColor, arrows: { to: { enabled: true, type: 'arrow' } } };
+          return { dashes: false, color: '#000000', arrows: { to: { enabled: true, type: 'arrow' } } };
         case 'type':
         case 'instanceOf':
-          return { dashes: [5, 5], color: instanceColor, arrows: { to: { enabled: true, type: 'arrow' } } };
+          return { dashes: [5, 5], color: '#666666', arrows: { to: { enabled: true, type: 'arrow' } } };
         case 'property':
-          return { dashes: false, color: propertyColor, arrows: { to: { enabled: true, type: 'arrow' } } };
+          return { dashes: false, color: '#4169E1', arrows: { to: { enabled: true, type: 'arrow' } } };
         case 'equivalentClass':
-          return { dashes: [2, 2], color: equivalentColor, arrows: { to: { enabled: false } } };
+          return { dashes: [2, 2], color: '#FF6347', arrows: { to: { enabled: false } } };
         case 'disjointWith':
-          return { dashes: [10, 5], color: disjointColor, arrows: { to: { enabled: false } } };
+          return { dashes: [10, 5], color: '#FF0000', arrows: { to: { enabled: false } } };
         default:
-          return { dashes: false, color: baseColor, arrows: { to: { enabled: true, type: 'arrow' } } };
+          return { dashes: false, color: '#999999', arrows: { to: { enabled: true, type: 'arrow' } } };
       }
     };
 
-    const visNodes: Node[] = visibleNodes.map(node => ({
+    const visNodes: Node[] = nodes.map(node => ({
       id: node.id,
       label: node.label || node.id.split('#').pop() || node.id.split('/').pop() || node.id,
       color: {
         background: getNodeColor(node.type),
-        border: isDark ? '#64748b' : '#1e293b',
+        border: '#000000',
         highlight: {
           background: getNodeColor(node.type),
-          border: isDark ? '#22c55e' : '#16a34a' // Green border on selection like Protégé
+          border: '#00FF00' // Green border on selection like Protégé
         },
         hover: {
           background: getNodeColor(node.type),
-          border: isDark ? '#60a5fa' : '#3b82f6'
+          border: '#0000FF'
         }
       },
       shape: getNodeShape(node.type),
       size: 25,
       font: {
         size: 14,
-        color: isDark ? '#1e293b' : '#000000',
-        bold: { color: isDark ? '#1e293b' : '#000000' },
-        face: 'Arial',
-        background: isDark ? 'rgba(30, 41, 59, 0.1)' : 'rgba(255, 255, 255, 0.1)'
+        color: '#000000',
+        bold: { color: '#000000' },
+        face: 'Arial'
       },
       borderWidth: 2,
       borderWidthSelected: 3,
-      shadow: isDark ? {
-        enabled: true,
-        color: 'rgba(0,0,0,0.6)',
-        size: 10,
-        x: 2,
-        y: 2
-      } : {
-        enabled: true,
-        color: 'rgba(0,0,0,0.2)',
-        size: 8,
-        x: 2,
-        y: 2
-      },
       title: createNodeTooltip(node)
     }));
 
-    const visEdges: Edge[] = visibleEdges.map(edge => {
+    const visEdges: Edge[] = edges.map(edge => {
       const style = getEdgeStyle(edge.type || edge.label);
       return {
         id: edge.id,
@@ -333,9 +225,9 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
         ...style,
         font: {
           size: 11,
-          color: isDark ? '#e2e8f0' : '#333333',
+          color: '#333333',
           align: 'middle',
-          background: isDark ? '#1e293b' : 'white'
+          background: 'white'
         },
         width: 2,
         smooth: {
@@ -423,19 +315,6 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
     const network = new Network(containerRef.current, data, options);
     networkRef.current = network;
 
-    // Fit graph after stabilization
-    network.once('stabilizationIterationsDone', () => {
-      console.log('[ProtegeStyleGraphView] Stabilization done, fitting view');
-      network.fit({ animation: { duration: 1000 } });
-    });
-
-    // Also fit after a short delay to ensure it's visible even if stabilization is fast
-    setTimeout(() => {
-      if (networkRef.current) {
-        networkRef.current.fit({ animation: { duration: 500 } });
-      }
-    }, 500);
-
     // Event listeners
     network.on('selectNode', (params: any) => {
       const nodeId = params.nodes[0];
@@ -481,7 +360,7 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
     return () => {
       network.destroy();
     };
-  }, [visibleNodes, visibleEdges, layoutType, isDark]);
+  }, [nodes, edges, layoutType]);
 
   const createNodeTooltip = (node: any): string => {
     let tooltip = `<div style="padding: 8px; max-width: 300px;">`;
@@ -550,33 +429,10 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
   };
 
   const addNodeToGraph = (classIri: string) => {
-    const isVisible = visibleNodes.some(n => n.id === classIri);
-    
-    if (isVisible && networkRef.current) {
+    const node = nodes.find(n => n.id === classIri);
+    if (node && networkRef.current) {
       networkRef.current.selectNodes([classIri]);
       networkRef.current.focus(classIri, { scale: 1.5, animation: { duration: 500 } });
-    } else {
-      // If not visible, find it in the full nodes list and add it to visible
-      const node = nodes.find(n => n.id === classIri);
-      if (node) {
-        setVisibleNodes(prev => [...prev, node]);
-        // Also add related edges if they connect to already visible nodes
-        const relatedEdges = edges.filter(e => 
-          (e.from === classIri && visibleNodes.some(vn => vn.id === e.to)) ||
-          (e.to === classIri && visibleNodes.some(vn => vn.id === e.from))
-        );
-        setVisibleEdges(prev => [...prev, ...relatedEdges]);
-        
-        setTimeout(() => {
-          if (networkRef.current) {
-            networkRef.current.selectNodes([classIri]);
-            networkRef.current.focus(classIri, { scale: 1.5, animation: { duration: 500 } });
-          }
-        }, 100);
-      } else {
-        // If not in full nodes list, fetch from backend
-        fetchNeighborhood(classIri);
-      }
     }
   };
 
@@ -750,23 +606,6 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
           <Maximize2 size={18} />
         </button>
 
-        <button 
-          onClick={() => {
-            if (networkRef.current) {
-              networkRef.current.moveTo({
-                position: { x: 0, y: 0 },
-                offset: { x: 0, y: 0 },
-                scale: 1.0,
-                animation: { duration: 1000, easingFunction: 'easeInOutQuad' }
-              });
-            }
-          }} 
-          title="Center View" 
-          style={toolbarButtonStyle}
-        >
-          <Target size={18} />
-        </button>
-
         <button onClick={handleExport} title="Export as PNG" style={toolbarButtonStyle}>
           <Download size={18} />
         </button>
@@ -871,38 +710,9 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
               borderBottom: '1px solid #ddd',
               fontWeight: 'bold',
               fontSize: '14px',
-              backgroundColor: '#f8f8f8',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center'
+              backgroundColor: '#f8f8f8'
             }}>
-              <span>Class hierarchy</span>
-              <div style={{ display: 'flex', gap: '4px' }}>
-                <button 
-                  onClick={() => {
-                    const allIris = new Set<string>();
-                    const collect = (list: OntologyClass[]) => {
-                      list.forEach(c => {
-                        allIris.add(c.iri);
-                        if (c.subClasses) collect(c.subClasses);
-                      });
-                    };
-                    collect(classHierarchy);
-                    setExpandedClasses(allIris);
-                  }}
-                  title="Expand All"
-                  style={smallButtonStyle}
-                >
-                  <Plus size={12} />
-                </button>
-                <button 
-                  onClick={() => setExpandedClasses(new Set())}
-                  title="Collapse All"
-                  style={smallButtonStyle}
-                >
-                  <Minus size={12} />
-                </button>
-              </div>
+              Class hierarchy: HonorsStudent
             </div>
             <div style={{
               flex: 1,
@@ -1078,17 +888,6 @@ const toolbarButtonStyle: React.CSSProperties = {
   padding: '6px',
   border: '1px solid #ccc',
   borderRadius: '4px',
-  backgroundColor: 'white',
-  cursor: 'pointer',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center'
-};
-
-const smallButtonStyle: React.CSSProperties = {
-  padding: '2px',
-  border: '1px solid #ccc',
-  borderRadius: '3px',
   backgroundColor: 'white',
   cursor: 'pointer',
   display: 'flex',
