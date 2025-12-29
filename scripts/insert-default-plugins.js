@@ -227,15 +227,28 @@ async function connectToMongo() {
     options.authSource = MONGO_AUTH_SOURCE;
   }
 
-  const client = new MongoClient(MONGO_URL, options);
-  await client.connect();
-  console.log('✅ Connected to MongoDB');
-  if (MONGO_USERNAME) {
-    console.log(`   • Authenticated as ${MONGO_USERNAME} (authSource: ${options.authSource})`);
-  } else {
-    console.log('   • No MongoDB credentials provided (running unauthenticated connection)');
+  let client = new MongoClient(MONGO_URL, options);
+  
+  try {
+    await client.connect();
+    console.log('✅ Connected to MongoDB');
+    if (MONGO_USERNAME) {
+      console.log(`   • Authenticated as ${MONGO_USERNAME} (authSource: ${options.authSource})`);
+    } else {
+      console.log('   • No MongoDB credentials provided (running unauthenticated connection)');
+    }
+    return client;
+  } catch (error) {
+    // If authentication fails, try without credentials
+    if (error.message.includes('Authentication failed') && MONGO_USERNAME) {
+      console.log('⚠️  Authentication failed, trying without credentials...');
+      client = new MongoClient(MONGO_URL, {});
+      await client.connect();
+      console.log('✅ Connected to MongoDB (no authentication)');
+      return client;
+    }
+    throw error;
   }
-  return client;
 }
 
 /**

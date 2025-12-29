@@ -1222,7 +1222,12 @@ class OntoCodePanel {
                 },
 
                 onImportStatusUpdate: (status) => {
-                    console.log('[OntoCode] Import status update:', status);
+                    console.log(`[OntoCode] 📨 Import status update - Type: ${status.type}, Project: ${status.projectId}, Status: ${status.status}`);
+                    
+                    // Log errors with more detail
+                    if (status.type === 'IMPORT_FAILED') {
+                        console.error(`[OntoCode] ❌ Import failed for ${status.projectId}:`, status.statusMessage || status.metadata?.error);
+                    }
 
                     // Forward import status to webview
                     this.postMessage({

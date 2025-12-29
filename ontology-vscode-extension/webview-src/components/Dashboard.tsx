@@ -1471,7 +1471,8 @@ const Dashboard = () => {
         inferredInstanceCount: inferred,
         totalInstanceCount: total,
         children: children.length > 0 ? applyInstanceCountsToTree(children, counts) : [],
-        hasChildren: children.length > 0
+        // Preserve hasChildren from backend (for lazy loading) or fallback to children.length > 0
+        hasChildren: node.hasChildren !== undefined ? node.hasChildren : children.length > 0
       };
     });
   }, []);
@@ -1570,10 +1571,11 @@ const Dashboard = () => {
   const [mainTab, setMainTab] = useState("Entities");
   const [entitiesTab, setEntitiesTab] = useState("Classes");
   const [selectedItem, setSelectedItem] = useState<SelectableItem | null>(null);
-  const [expandedNodes, setExpandedNodes] = useState<string[]>([]);
-  const expandedNodesRef = useRef<string[]>([]);
+  const [expandedNodes, setExpandedNodes] = useState<string[]>(['http://www.w3.org/2002/07/owl#Thing']); // Pre-expand owl:Thing
+  const expandedNodesRef = useRef<string[]>(['http://www.w3.org/2002/07/owl#Thing']);
   useEffect(() => {
     expandedNodesRef.current = expandedNodes;
+    console.log('[Dashboard] 🔍 expandedNodes updated:', expandedNodes.length, 'nodes', expandedNodes.slice(0, 5));
   }, [expandedNodes]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOptions, setSearchOptions] = useState({
@@ -2398,7 +2400,7 @@ const Dashboard = () => {
   }, []);
 
   // Check status once (no polling - rely on WebSocket notifications)
-  const waitForProcessingComplete = useCallback(async (currentProjectId: string): Promise<boolean> => {
+  const waitForProcessingComplete = useCallback(async (currentProjectId: string): Promise<{ ready: boolean; error?: string; status?: string }> => {
     try {
       const statusRes = await apiClient.get<any>(`/api/ontology/status/${currentProjectId}`);
       const status = statusRes?.data?.status || statusRes?.status;
@@ -2406,20 +2408,28 @@ const Dashboard = () => {
       console.log(`[Dashboard] Project ${currentProjectId} status:`, status);
 
       if (status === 'COMPLETED') {
-        return true;
+        return { ready: true, status };
       }
 
       if (status === 'ERROR') {
         console.error('[Dashboard] Project processing failed');
-        return false;
+        const errorMessage = statusRes?.data?.errorMessage || statusRes?.data?.error || 'Import failed';
+        return { ready: false, error: errorMessage, status };
       }
 
       // If PROCESSING, WebSocket will notify when complete
-      console.log('[Dashboard] File is processing, waiting for WebSocket notification...');
-      return true; // Don't block - let WebSocket handle it
+      if (status === 'PROCESSING') {
+        console.log('[Dashboard] File is processing, waiting for WebSocket notification...');
+        return { ready: false, error: 'File is still processing. Please wait a moment and try again.', status };
+      }
+
+      // Unknown status - allow loading attempt
+      console.warn('[Dashboard] Unknown status, allowing load attempt:', status);
+      return { ready: true, status };
     } catch (error) {
       console.error('[Dashboard] Error checking project status:', error);
-      return true; // Don't block on error
+      // Don't block on error - let the load attempt happen
+      return { ready: true };
     }
   }, []);
 
@@ -2446,10 +2456,14 @@ const Dashboard = () => {
     try {
       // Wait for processing to complete before fetching data
       console.log('[Dashboard] Waiting for file processing to complete...');
-      const isReady = await waitForProcessingComplete(currentProjectId);
+      const result = await waitForProcessingComplete(currentProjectId);
       
-      if (!isReady) {
-        notificationService.error('Loading Failed', 'File is still processing. Please wait a moment and try again.');
+      if (!result.ready) {
+        const errorTitle = result.status === 'ERROR' ? 'Import Failed' : 'Loading Failed';
+        const errorMessage = result.error || 'Unable to load ontology';
+        
+        console.error(`[Dashboard] Cannot load project: ${result.status}`, result.error);
+        notificationService.error(errorTitle, errorMessage);
         setIsInitialLoading(false);
         return;
       }
@@ -3441,7 +3455,7 @@ const Dashboard = () => {
         let hasChanges = false;
         
         for (const [userId, cursor] of updated.entries()) {
-          if (now - cursor.timestamp > 3000) {
+          if (now - (cursor as { x: number; y: number; userName: string; color: string; timestamp: number }).timestamp > 3000) {
             updated.delete(userId);
             hasChanges = true;
           }
@@ -3782,10 +3796,9 @@ const Dashboard = () => {
           break;
         case "importStatusUpdate":
           // Handle import status updates from WebSocket
-          console.log('[Dashboard] Import status update:', message.status);
-          console.log('[Dashboard] Current projectId:', projectId);
-          console.log('[Dashboard] Message projectId:', message.status.projectId);
-          console.log('[Dashboard] Status type:', message.status.type);
+          console.log(`[Dashboard] 📨 Import status update for "${message.status.projectId}": ${message.status.type}`, message.status);
+          console.log(`[Dashboard] 📍 Current projectId: ${projectId} | Message projectId: ${message.status.projectId}`);
+          console.log(`[Dashboard] 🎯 Status: ${message.status.status} | Progress: ${message.status.progress}%`);
 
           // Update project-specific import status for ProjectSelector
           if (message.status.projectId) {
@@ -3871,13 +3884,50 @@ const Dashboard = () => {
             }
           }
 
-          // If import failed, close loading choice dialog
-          if (message.status.type === 'IMPORT_FAILED' && message.status.projectId === projectId) {
-            console.log('[Dashboard] Import failed');
-            setTimeout(() => {
-              setShowLoadingChoice(false);
-              setShowQueueStatus(false);
-            }, 2000);
+          // If import failed, handle it appropriately
+          if (message.status.type === 'IMPORT_FAILED') {
+            console.log('[Dashboard] ❌ IMPORT_FAILED for project:', message.status.projectId);
+            console.error('[Dashboard] Error details:', {
+              statusMessage: message.status.statusMessage,
+              error: message.status.metadata?.error,
+              status: message.status.status
+            });
+            
+            const errorMessage = message.status.statusMessage || message.status.metadata?.error || 'Import failed';
+            const projectName = message.status.projectId || 'unknown';
+            
+            // Extract more user-friendly error message
+            let displayError = errorMessage;
+            if (errorMessage.includes('UnknownHostException: graphdb') || errorMessage.includes('UnknownHostException')) {
+              displayError = 'Cannot connect to GraphDB. Please ensure GraphDB service is running and accessible.';
+              console.log('[Dashboard] 🔄 Translated error to user-friendly message (UnknownHost)');
+            } else if (errorMessage.includes('Connection refused') || errorMessage.includes('ConnectException')) {
+              displayError = 'GraphDB connection refused. Please verify GraphDB is running on the correct port.';
+              console.log('[Dashboard] 🔄 Translated error to user-friendly message (Connection refused)');
+            } else if (errorMessage.includes('HTTP error code 404')) {
+              displayError = 'Repository not found or not initialized. Please check GraphDB configuration.';
+              console.log('[Dashboard] 🔄 Translated error to user-friendly message (404)');
+            } else if (errorMessage.includes('unable to start transaction')) {
+              displayError = 'Unable to start database transaction. Please verify GraphDB is running and the repository exists.';
+              console.log('[Dashboard] 🔄 Translated error to user-friendly message (transaction)');
+            }
+            
+            console.log('[Dashboard] 📝 Display error:', displayError);
+            
+            // Show notification for all failed imports
+            notificationService.error(
+              'Import Failed', 
+              `Failed to import "${projectName}": ${displayError}`
+            );
+            
+            // Close dialogs if this is the current project
+            if (message.status.projectId === projectId) {
+              console.log('[Dashboard] Closing dialogs for current project');
+              setTimeout(() => {
+                setShowLoadingChoice(false);
+                setShowQueueStatus(false);
+              }, 2000);
+            }
           }
 
           // Show queue status when import starts
@@ -4784,10 +4834,16 @@ const Dashboard = () => {
 
 
   const toggleNode = useCallback(async (nodeId: string) => {
-    console.log('[DEBUG] toggleNode called for nodeId:', nodeId);
+    console.log('[toggleNode] 🔄 Called for nodeId:', nodeId);
+    console.log('[toggleNode] Current expandedNodes:', expandedNodes);
+    console.log('[toggleNode] entitiesTab:', entitiesTab);
+    console.log('[toggleNode] currentHierarchyViewMode:', currentHierarchyViewMode);
+    
     if (expandedNodes.includes(nodeId)) {
+      console.log('[toggleNode] ⬇️ Collapsing node:', nodeId);
       setExpandedNodes(prev => prev.filter(id => id !== nodeId));
     } else {
+      console.log('[toggleNode] ➡️ Expanding node:', nodeId);
       const findNode = (nodes: TreeNode[], id: string): TreeNode | null => {
         for (const node of nodes) {
           if (node.id === id) return node;
@@ -4807,7 +4863,10 @@ const Dashboard = () => {
 
       const node = findNode(currentHierarchy as TreeNode[], nodeId);
       
-      setExpandedNodes(prev => [...prev, nodeId]);
+      setExpandedNodes(prev => {
+        const updated = [...prev, nodeId];
+        return updated;
+      });
       
       if (node && node.hasChildren && (!node.children || node.children.length === 0)) {
         console.log(`Node ${nodeId} needs children loaded`);
@@ -4821,9 +4880,11 @@ const Dashboard = () => {
           // Properties usually don't have on-demand loading in this UI yet, 
           // but we could add it here if needed.
         }
+      } else {
+        console.log('[toggleNode] ℹ️ Node already has children or hasChildren is false');
       }
     }
-  }, [expandedNodes, classHierarchy, inferredClassHierarchy, objectPropertyHierarchy, dataPropertyHierarchy, hierarchyViewModes, loadChildren, loadInferredChildren, entitiesTab, currentHierarchyViewMode]);
+  }, [expandedNodes, classHierarchy, inferredClassHierarchy, objectPropertyHierarchy, dataPropertyHierarchy, inferredObjectPropertyHierarchy, inferredDataPropertyHierarchy, hierarchyViewModes, loadChildren, loadInferredChildren, entitiesTab, currentHierarchyViewMode]);
 
   // Expose a safe global for bundles/minified code paths that still reference toggleNode
   useEffect(() => {
