@@ -1,7 +1,7 @@
 // src/Dashboard.tsx
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
-  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, Square, DatabaseZap, Upload, FolderOpen, Sparkles, Clock, Users, Download, RefreshCw, AlertCircle, Puzzle, Zap, BookOpen, Brain, Network, GitMerge, Palette, Edit2, Plus, Globe, Link as LinkIcon, Hash
+  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, Square, DatabaseZap, Upload, FolderOpen, Sparkles, Clock, Users, Download, RefreshCw, AlertCircle, Puzzle, Zap, BookOpen, Brain, Network, GitMerge, Palette, Edit2, Plus, Globe, Link as LinkIcon, Hash, X, FileCode, Info
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
@@ -140,6 +140,29 @@ const extractResponseData = (payload: any) => {
 };
 
 const combineReasonerResults = (classificationPayload: any, statsPayload?: any) => {
+  // Add validation to handle error responses
+  if (!classificationPayload || (classificationPayload.error && !classificationPayload.data)) {
+    console.error('[Dashboard] Invalid classification response:', classificationPayload);
+    return {
+      classHierarchy: [],
+      classHierarchyTree: [],
+      objectPropertyHierarchy: [],
+      dataPropertyHierarchy: [],
+      equivalentClasses: [],
+      unsatisfiableClasses: [],
+      totalClasses: 0,
+      stats: {
+        classHierarchyNodes: 0,
+        objectPropertyNodes: 0,
+        dataPropertyNodes: 0,
+        individuals: 0,
+        satisfiableClasses: 0,
+        unsatisfiableClasses: 0,
+        isConsistent: true
+      }
+    };
+  }
+  
   const classificationData = extractResponseData(classificationPayload);
   const statsData = statsPayload ? extractResponseData(statsPayload) : null;
   const existingStats = (classificationData as any)?.stats || {};
@@ -520,7 +543,7 @@ const PluginPlaceholder: React.FC<PluginPlaceholderProps> = ({
                 Key Features
               </h3>
               <div className="grid grid-cols-2 gap-3">
-                {features.map((feature, index) => (
+                {features?.map((feature, index) => (
                   <div key={index} className="flex items-center gap-3 p-3 rounded-lg transition-all hover-overlay" style={{ backgroundColor: 'var(--surface-2)', border: '1px solid var(--border)' }}>
                     <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center flex-shrink-0">
                       <Check size={12} className="text-white" />
@@ -1448,7 +1471,8 @@ const Dashboard = () => {
         inferredInstanceCount: inferred,
         totalInstanceCount: total,
         children: children.length > 0 ? applyInstanceCountsToTree(children, counts) : [],
-        hasChildren: children.length > 0
+        // Preserve hasChildren from backend (for lazy loading) or fallback to children.length > 0
+        hasChildren: node.hasChildren !== undefined ? node.hasChildren : children.length > 0
       };
     });
   }, []);
@@ -1517,7 +1541,22 @@ const Dashboard = () => {
   const [ontologyIriDraft, setOntologyIriDraft] = useState('');
   const [versionIriDraft, setVersionIriDraft] = useState('');
   const [isPrefixEditing, setIsPrefixEditing] = useState(false);
+  const [editingPrefixIndex, setEditingPrefixIndex] = useState<number | null>(null);
   const [importDraft, setImportDraft] = useState('');
+  const [editingImportIndex, setEditingImportIndex] = useState<number | null>(null);
+  const [bottomTabsHeight, setBottomTabsHeight] = useState(200);
+  const [isResizing, setIsResizing] = useState(false);
+  const [axiomDialogOpen, setAxiomDialogOpen] = useState(false);
+  const [editingAxiomIndex, setEditingAxiomIndex] = useState<number | null>(null);
+  const [axiomDraft, setAxiomDraft] = useState({ definition: '', superClassIri: '' });
+  const [collaboratorCursors, setCollaboratorCursors] = useState<Map<string, { x: number; y: number; userName: string; color: string; timestamp: number }>>(new Map());
+  const [myLocalCursor, setMyLocalCursor] = useState({ x: 0, y: 0 });
+  const [isPrefixDialogOpen, setIsPrefixDialogOpen] = useState(false);
+  const [prefixDialogData, setPrefixDialogData] = useState({ prefix: '', namespace: '', isEdit: false, originalPrefix: '' });
+  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
+  const [importDialogData, setImportDialogData] = useState({ iri: '', isEdit: false, originalIri: '' });
+  const [showImportClosure, setShowImportClosure] = useState(false);
+  const [expandedImports, setExpandedImports] = useState<Set<string>>(new Set());
   const [isOntologyAnnotationDialogOpen, setIsOntologyAnnotationDialogOpen] = useState(false);
   const [quickEditParentItem, setQuickEditParentItem] = useState<SelectableItem | null>(null);
   const [quickEditNoteItem, setQuickEditNoteItem] = useState<SelectableItem | null>(null);
@@ -1532,10 +1571,11 @@ const Dashboard = () => {
   const [mainTab, setMainTab] = useState("Entities");
   const [entitiesTab, setEntitiesTab] = useState("Classes");
   const [selectedItem, setSelectedItem] = useState<SelectableItem | null>(null);
-  const [expandedNodes, setExpandedNodes] = useState<string[]>([]);
-  const expandedNodesRef = useRef<string[]>([]);
+  const [expandedNodes, setExpandedNodes] = useState<string[]>(['http://www.w3.org/2002/07/owl#Thing']); // Pre-expand owl:Thing
+  const expandedNodesRef = useRef<string[]>(['http://www.w3.org/2002/07/owl#Thing']);
   useEffect(() => {
     expandedNodesRef.current = expandedNodes;
+    console.log('[Dashboard] 🔍 expandedNodes updated:', expandedNodes.length, 'nodes', expandedNodes.slice(0, 5));
   }, [expandedNodes]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOptions, setSearchOptions] = useState({
@@ -1714,7 +1754,7 @@ const Dashboard = () => {
       label: "Classes", 
       icon: Package, 
       count: hierarchyViewModes.Classes === 'inferred'
-        ? countNodes(inferredClassHierarchy.length > 0 ? inferredClassHierarchy : (reasonerResults?.classHierarchyTree || reasonerResults?.classHierarchy || [])) 
+        ? countNodes(inferredClassHierarchy.length > 0 ? inferredClassHierarchy : (Array.isArray(reasonerResults?.classHierarchyTree) ? reasonerResults.classHierarchyTree : (Array.isArray(reasonerResults?.classHierarchy) ? reasonerResults.classHierarchy : []))) 
         : (metadata as any)?.classCount || 0, 
       theme: 'bg-gradient-to-b from-[#F5F0E6] to-[#E1C688] text-black border-[#D6C9AD]' 
     },
@@ -1723,7 +1763,7 @@ const Dashboard = () => {
       label: "Object properties", 
       icon: Share2, 
       count: hierarchyViewModes.ObjectProperties === 'inferred'
-        ? countNodes(inferredObjectPropertyHierarchy.length > 0 ? inferredObjectPropertyHierarchy : (reasonerResults?.objectPropertyHierarchy || []))
+        ? countNodes(inferredObjectPropertyHierarchy.length > 0 ? inferredObjectPropertyHierarchy : (Array.isArray(reasonerResults?.objectPropertyHierarchy) ? reasonerResults.objectPropertyHierarchy : []))
         : (metadata as any)?.objectPropertyCount || 0, 
       theme: 'bg-gradient-to-b from-blue-300 to-blue-500 text-white border-blue-600' 
     },
@@ -1732,7 +1772,7 @@ const Dashboard = () => {
       label: "Data properties", 
       icon: Database, 
       count: hierarchyViewModes.DataProperties === 'inferred'
-        ? countNodes(inferredDataPropertyHierarchy.length > 0 ? inferredDataPropertyHierarchy : (reasonerResults?.dataPropertyHierarchy || []))
+        ? countNodes(inferredDataPropertyHierarchy.length > 0 ? inferredDataPropertyHierarchy : (Array.isArray(reasonerResults?.dataPropertyHierarchy) ? reasonerResults.dataPropertyHierarchy : []))
         : (metadata as any)?.dataPropertyCount || 0, 
       theme: 'bg-gradient-to-b from-green-300 to-green-500 text-white border-green-600' 
     },
@@ -1749,22 +1789,24 @@ const Dashboard = () => {
           // Use inferredClassHierarchy if available, otherwise fall back to reasoner results
           const inferred = inferredClassHierarchy.length > 0 
             ? inferredClassHierarchy 
-            : (reasonerResults?.classHierarchyTree || reasonerResults?.classHierarchy || []);
+            : (Array.isArray(reasonerResults?.classHierarchyTree) ? reasonerResults.classHierarchyTree : (Array.isArray(reasonerResults?.classHierarchy) ? reasonerResults.classHierarchy : []));
           
-          console.log('[Dashboard] Using inferred class hierarchy, length:', inferred.length);
-          return inferred;
+          console.log('[Dashboard] Using inferred class hierarchy, length:', Array.isArray(inferred) ? inferred.length : 0);
+          return Array.isArray(inferred) ? inferred : [];
         }
         console.log('[Dashboard] Using asserted class hierarchy, length:', classHierarchy.length);
         return classHierarchy;
       case "ObjectProperties":
         console.log(inferredObjectPropertyHierarchy, '[Dashboard] Hierarchy view mode for ObjectProperties:', hierarchyViewModes.ObjectProperties);
-        return hierarchyViewModes.ObjectProperties === 'inferred'
-          ? (inferredObjectPropertyHierarchy.length > 0 ? inferredObjectPropertyHierarchy : (reasonerResults?.objectPropertyHierarchy || []))
+        const objPropData = hierarchyViewModes.ObjectProperties === 'inferred'
+          ? (inferredObjectPropertyHierarchy.length > 0 ? inferredObjectPropertyHierarchy : (Array.isArray(reasonerResults?.objectPropertyHierarchy) ? reasonerResults.objectPropertyHierarchy : []))
           : objectPropertyHierarchy;
+        return Array.isArray(objPropData) ? objPropData : [];
       case "DataProperties":
-        return hierarchyViewModes.DataProperties === 'inferred'
-          ? (inferredDataPropertyHierarchy.length > 0 ? inferredDataPropertyHierarchy : (reasonerResults?.dataPropertyHierarchy || []))
+        const dataPropData = hierarchyViewModes.DataProperties === 'inferred'
+          ? (inferredDataPropertyHierarchy.length > 0 ? inferredDataPropertyHierarchy : (Array.isArray(reasonerResults?.dataPropertyHierarchy) ? reasonerResults.dataPropertyHierarchy : []))
           : dataPropertyHierarchy;
+        return Array.isArray(dataPropData) ? dataPropData : [];
       case "AnnotationProperties":
         return hierarchyViewModes.AnnotationProperties === 'inferred'
           ? (inferredAnnotationPropertyHierarchy.length > 0 ? inferredAnnotationPropertyHierarchy : annotationProperties)
@@ -2358,7 +2400,7 @@ const Dashboard = () => {
   }, []);
 
   // Check status once (no polling - rely on WebSocket notifications)
-  const waitForProcessingComplete = useCallback(async (currentProjectId: string): Promise<boolean> => {
+  const waitForProcessingComplete = useCallback(async (currentProjectId: string): Promise<{ ready: boolean; error?: string; status?: string }> => {
     try {
       const statusRes = await apiClient.get<any>(`/api/ontology/status/${currentProjectId}`);
       const status = statusRes?.data?.status || statusRes?.status;
@@ -2366,20 +2408,28 @@ const Dashboard = () => {
       console.log(`[Dashboard] Project ${currentProjectId} status:`, status);
 
       if (status === 'COMPLETED') {
-        return true;
+        return { ready: true, status };
       }
 
       if (status === 'ERROR') {
         console.error('[Dashboard] Project processing failed');
-        return false;
+        const errorMessage = statusRes?.data?.errorMessage || statusRes?.data?.error || 'Import failed';
+        return { ready: false, error: errorMessage, status };
       }
 
       // If PROCESSING, WebSocket will notify when complete
-      console.log('[Dashboard] File is processing, waiting for WebSocket notification...');
-      return true; // Don't block - let WebSocket handle it
+      if (status === 'PROCESSING') {
+        console.log('[Dashboard] File is processing, waiting for WebSocket notification...');
+        return { ready: false, error: 'File is still processing. Please wait a moment and try again.', status };
+      }
+
+      // Unknown status - allow loading attempt
+      console.warn('[Dashboard] Unknown status, allowing load attempt:', status);
+      return { ready: true, status };
     } catch (error) {
       console.error('[Dashboard] Error checking project status:', error);
-      return true; // Don't block on error
+      // Don't block on error - let the load attempt happen
+      return { ready: true };
     }
   }, []);
 
@@ -2406,10 +2456,14 @@ const Dashboard = () => {
     try {
       // Wait for processing to complete before fetching data
       console.log('[Dashboard] Waiting for file processing to complete...');
-      const isReady = await waitForProcessingComplete(currentProjectId);
+      const result = await waitForProcessingComplete(currentProjectId);
       
-      if (!isReady) {
-        notificationService.error('Loading Failed', 'File is still processing. Please wait a moment and try again.');
+      if (!result.ready) {
+        const errorTitle = result.status === 'ERROR' ? 'Import Failed' : 'Loading Failed';
+        const errorMessage = result.error || 'Unable to load ontology';
+        
+        console.error(`[Dashboard] Cannot load project: ${result.status}`, result.error);
+        notificationService.error(errorTitle, errorMessage);
         setIsInitialLoading(false);
         return;
       }
@@ -2968,10 +3022,140 @@ const Dashboard = () => {
         importIri: importDraft.trim()
       });
       setImportDraft('');
+      setEditingImportIndex(null);
       await refreshOntologyImports();
     } catch (error) {
       console.error('[Dashboard] Failed to add import:', error);
       notificationService.error('Import Failed', 'Could not add import.');
+    }
+  };
+
+  const handleAddImportDialog = () => {
+    setImportDialogData({ iri: '', isEdit: false, originalIri: '' });
+    setIsImportDialogOpen(true);
+  };
+
+  const handleEditImportDialog = (iri: string) => {
+    setImportDialogData({ iri, isEdit: true, originalIri: iri });
+    setIsImportDialogOpen(true);
+  };
+
+  const handleSaveImport = async (iri: string, isEdit: boolean, originalIri: string) => {
+    if (!projectId || !iri.trim()) return;
+    try {
+      // Check if it's a URL (http/https/ftp)
+      const isUrl = iri.startsWith('http://') || iri.startsWith('https://') || iri.startsWith('ftp://');
+      
+      // Check if it's a local file import
+      const isLocalFile = !isUrl && (
+        /^[A-Za-z]:[\\\/]/.test(iri) ||  // Windows absolute path (C:\ or C:/)
+        iri.startsWith('/') ||  // Unix absolute path
+        iri.startsWith('./') || iri.startsWith('../') ||  // Relative paths with ./ or ../
+        iri.startsWith('file://') ||  // file:// protocol
+        /^[^:\/]+\.(?:owl|rdf|ttl|n3|nt|xml)$/i.test(iri)  // Simple filename like "file.owl"
+      );
+      
+      console.log('[Dashboard] Import IRI:', iri);
+      console.log('[Dashboard] Is URL:', isUrl);
+      console.log('[Dashboard] Is local file:', isLocalFile);
+      
+      // Convert local file paths to proper URIs for backend storage
+      let importIriForBackend = iri.trim();
+      
+      if (isLocalFile && !iri.startsWith('file://') && !isUrl) {
+        // Convert Windows backslashes to forward slashes
+        let normalizedPath = iri.replace(/\\/g, '/');
+        
+        if (/^[A-Za-z]:\//.test(normalizedPath)) {
+          // Windows absolute path like C:/path/file.owl -> file:///C:/path/file.owl
+          importIriForBackend = 'file:///' + normalizedPath;
+        } else if (normalizedPath.startsWith('/')) {
+          // Unix absolute path like /path/file.owl -> file:///path/file.owl
+          importIriForBackend = 'file://' + normalizedPath;
+        } else if (normalizedPath.startsWith('./') || normalizedPath.startsWith('../')) {
+          // Already has ./ or ../ prefix - keep as relative path
+          importIriForBackend = normalizedPath;
+        } else {
+          // Simple filename like "file.owl" -> "./file.owl" (relative to ontology)
+          importIriForBackend = './' + normalizedPath;
+        }
+        console.log('[Dashboard] Converted to URI:', importIriForBackend);
+      }
+      
+      if (isEdit && originalIri !== importIriForBackend) {
+        // Delete old and add new
+        await apiClient.delete(`/api/ontology/ontology/imports/${projectId}`, {
+          params: { importIri: originalIri }
+        });
+      }
+      
+      if (!isEdit || originalIri !== importIriForBackend) {
+        console.log('[Dashboard] Posting import IRI to backend:', importIriForBackend);
+        await apiClient.post(`/api/ontology/ontology/imports/${projectId}`, {
+          importIri: importIriForBackend
+        });
+        console.log('[Dashboard] ✅ Import IRI saved to backend');
+      }
+      
+      // If it's a local file WITH AN ACTUAL PATH (not just a filename), trigger upload to make it available in "My Files"
+      // Only upload files with absolute paths (C:\path or /path) or file:// URIs
+      const hasActualPath = iri.startsWith('file://') || /^[A-Za-z]:[\\\/]/.test(iri) || iri.startsWith('/');
+      if (isLocalFile && hasActualPath && window.vscode) {
+        console.log('[Dashboard] Local file with actual path detected, requesting upload:', iri);
+        window.vscode.postMessage({
+          type: 'importLocalFile',
+          filePath: iri,
+          currentProjectId: projectId
+        });
+      } else if (isLocalFile && !hasActualPath) {
+        console.log('[Dashboard] Local file is a relative reference (filename only), skipping upload:', iri);
+      }
+      
+      await refreshOntologyImports();
+      notificationService.success(
+        isEdit ? 'Import Updated' : 'Import Added',
+        isEdit ? 'Import updated successfully.' : 'Import added successfully.'
+      );
+      
+      if (isLocalFile) {
+        notificationService.info('File Upload', 'Local file is being uploaded to your files...');
+      }
+      
+      setIsImportDialogOpen(false);
+    } catch (error: any) {
+      console.error('[Dashboard] ❌ Failed to save import:', error);
+      console.error('[Dashboard] ❌ Error details:', {
+        message: error?.message,
+        response: error?.response?.data,
+        status: error?.response?.status,
+        statusText: error?.response?.statusText
+      });
+      const errorMsg = error?.response?.data?.message || error?.message || 'Could not save import.';
+      notificationService.error('Import Failed', errorMsg);
+    }
+  };
+
+  const handleEditImport = (index: number) => {
+    setEditingImportIndex(index);
+    setImportDraft(ontologyImports[index]);
+  };
+
+  const handleUpdateImport = async (oldIri: string) => {
+    if (!projectId || !importDraft.trim()) return;
+    try {
+      // Remove old and add new
+      await apiClient.delete(`/api/ontology/ontology/imports/${projectId}`, {
+        params: { importIri: oldIri }
+      });
+      await apiClient.post(`/api/ontology/ontology/imports/${projectId}`, {
+        importIri: importDraft.trim()
+      });
+      setImportDraft('');
+      setEditingImportIndex(null);
+      await refreshOntologyImports();
+    } catch (error) {
+      console.error('[Dashboard] Failed to update import:', error);
+      notificationService.error('Import Failed', 'Could not update import.');
     }
   };
 
@@ -2985,6 +3169,193 @@ const Dashboard = () => {
     } catch (error) {
       console.error('[Dashboard] Failed to remove import:', error);
       notificationService.error('Import Failed', 'Could not remove import.');
+    }
+  };
+
+  const handleEditPrefix = (index: number) => {
+    setEditingPrefixIndex(index);
+  };
+
+  const handleUpdatePrefix = async (oldPrefix: string, newPrefix: string, newNamespace: string) => {
+    if (!projectId) return;
+    try {
+      // The API expects the entire array of prefixes
+      const cleanedNewPrefix = newPrefix.endsWith(':') ? newPrefix.slice(0, -1) : newPrefix;
+      const cleanedOldPrefix = oldPrefix.endsWith(':') ? oldPrefix.slice(0, -1) : oldPrefix;
+      
+      // Create updated prefix list
+      let updatedPrefixes = [...prefixMappings];
+      
+      if (editingPrefixIndex !== null) {
+        // Update existing prefix
+        updatedPrefixes[editingPrefixIndex] = {
+          prefix: cleanedNewPrefix,
+          namespace: newNamespace
+        };
+      }
+      
+      // Send the entire array
+      await apiClient.put(`/api/ontology/ontology/prefixes/${projectId}`, updatedPrefixes);
+      setEditingPrefixIndex(null);
+      await refreshPrefixes();
+      notificationService.success('Prefix Updated', 'Prefix updated successfully.');
+    } catch (error) {
+      console.error('[Dashboard] Failed to update prefix:', error);
+      notificationService.error('Prefix Failed', 'Could not update prefix.');
+    }
+  };
+
+  const handleAddPrefixDialog = () => {
+    setPrefixDialogData({ prefix: '', namespace: '', isEdit: false, originalPrefix: '' });
+    setIsPrefixDialogOpen(true);
+  };
+
+  const handleEditPrefixDialog = (prefix: string, namespace: string) => {
+    setPrefixDialogData({ prefix, namespace, isEdit: true, originalPrefix: prefix });
+    setIsPrefixDialogOpen(true);
+  };
+
+  const handleSavePrefix = async (prefix: string, namespace: string, isEdit: boolean, originalPrefix: string) => {
+    if (!projectId) return;
+    try {
+      const cleanedPrefix = prefix.endsWith(':') ? prefix.slice(0, -1) : prefix;
+      const cleanedOriginal = originalPrefix.endsWith(':') ? originalPrefix.slice(0, -1) : originalPrefix;
+      
+      let updatedPrefixes;
+      if (isEdit) {
+        // Update existing prefix
+        updatedPrefixes = prefixMappings.map(p => 
+          p.prefix === cleanedOriginal ? { prefix: cleanedPrefix, namespace } : p
+        );
+      } else {
+        // Add new prefix
+        updatedPrefixes = [...prefixMappings, { prefix: cleanedPrefix, namespace }];
+      }
+      
+      await apiClient.put(`/api/ontology/ontology/prefixes/${projectId}`, updatedPrefixes);
+      await refreshPrefixes();
+      notificationService.success(
+        isEdit ? 'Prefix Updated' : 'Prefix Added',
+        isEdit ? 'Prefix updated successfully.' : 'Prefix added successfully.'
+      );
+      setIsPrefixDialogOpen(false);
+    } catch (error) {
+      console.error('[Dashboard] Failed to save prefix:', error);
+      notificationService.error('Prefix Failed', 'Could not save prefix.');
+    }
+  };
+
+  const handleDeletePrefix = async (prefix: string) => {
+    if (!projectId) return;
+    try {
+      // Normalize prefix by removing colon for comparison
+      const cleanedPrefix = prefix.endsWith(':') ? prefix.slice(0, -1) : prefix;
+      // Filter out the prefix, normalizing stored prefixes too
+      const updatedPrefixes = prefixMappings
+        .filter(p => {
+          const storedPrefix = p.prefix.endsWith(':') ? p.prefix.slice(0, -1) : p.prefix;
+          return storedPrefix !== cleanedPrefix;
+        })
+        .map(p => ({
+          prefix: p.prefix.endsWith(':') ? p.prefix.slice(0, -1) : p.prefix,
+          namespace: p.namespace
+        }));
+      
+      console.log('[Dashboard] Deleting prefix:', cleanedPrefix);
+      console.log('[Dashboard] Updated prefixes:', updatedPrefixes);
+      
+      await apiClient.put(`/api/ontology/ontology/prefixes/${projectId}`, updatedPrefixes);
+      
+      // Force update the local state immediately
+      setPrefixMappings(updatedPrefixes.map(p => ({
+        prefix: p.prefix.endsWith(':') ? p.prefix : `${p.prefix}:`,
+        namespace: p.namespace
+      })));
+      
+      notificationService.success('Prefix Deleted', 'Prefix deleted successfully.');
+    } catch (error) {
+      console.error('[Dashboard] Failed to delete prefix:', error);
+      notificationService.error('Prefix Failed', 'Could not delete prefix.');
+    }
+  };
+
+  const handleAddAxiom = async () => {
+    if (!projectId || !axiomDraft.definition) return;
+    try {
+      await apiClient.post(`/api/ontology/ontology/axioms/${projectId}`, {
+        definition: axiomDraft.definition,
+        superClassIri: axiomDraft.superClassIri
+      });
+      setAxiomDraft({ definition: '', superClassIri: '' });
+      setAxiomDialogOpen(false);
+      await refreshGeneralClassAxioms();
+    } catch (error) {
+      console.error('[Dashboard] Failed to add axiom:', error);
+      notificationService.error('Axiom Failed', 'Could not add general class axiom.');
+    }
+  };
+
+  const handleEditAxiom = (index: number) => {
+    const axiom = generalClassAxioms[index];
+    setEditingAxiomIndex(index);
+    setAxiomDraft({
+      definition: axiom.definition || '',
+      superClassIri: axiom.superClassIri || ''
+    });
+    setAxiomDialogOpen(true);
+  };
+
+  const handleUpdateAxiom = async () => {
+    if (!projectId || editingAxiomIndex === null) return;
+    try {
+      const oldAxiom = generalClassAxioms[editingAxiomIndex];
+      // Delete old and add new
+      await apiClient.delete(`/api/ontology/ontology/axioms/${projectId}`, {
+        params: { 
+          definition: oldAxiom.definition,
+          superClassIri: oldAxiom.superClassIri 
+        }
+      });
+      await apiClient.post(`/api/ontology/ontology/axioms/${projectId}`, {
+        definition: axiomDraft.definition,
+        superClassIri: axiomDraft.superClassIri
+      });
+      setAxiomDraft({ definition: '', superClassIri: '' });
+      setEditingAxiomIndex(null);
+      setAxiomDialogOpen(false);
+      await refreshGeneralClassAxioms();
+    } catch (error) {
+      console.error('[Dashboard] Failed to update axiom:', error);
+      notificationService.error('Axiom Failed', 'Could not update general class axiom.');
+    }
+  };
+
+  const handleDeleteAxiom = async (index: number) => {
+    if (!projectId) return;
+    try {
+      const axiom = generalClassAxioms[index];
+      await apiClient.delete(`/api/ontology/ontology/axioms/${projectId}`, {
+        params: { 
+          definition: axiom.definition,
+          superClassIri: axiom.superClassIri 
+        }
+      });
+      await refreshGeneralClassAxioms();
+    } catch (error) {
+      console.error('[Dashboard] Failed to delete axiom:', error);
+      notificationService.error('Axiom Failed', 'Could not delete general class axiom.');
+    }
+  };
+
+  const refreshGeneralClassAxioms = async () => {
+    if (!projectId) return;
+    try {
+      const response = await apiClient.get<any>(`/api/ontology/query/general-class-axioms/${projectId}`);
+      const payload = response?.data || response;
+      const data = payload?.data || payload || [];
+      setGeneralClassAxioms(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('[Dashboard] Failed to refresh general class axioms:', error);
     }
   };
 
@@ -3019,6 +3390,108 @@ const Dashboard = () => {
         setSyncMode('public');
     }
   }, [projectId, collaboration.state.activeUsers, user?.id]);
+
+  // Collaborative cursor tracking
+  useEffect(() => {
+    if (!projectId || !user) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const newCursor = { x: e.clientX, y: e.clientY };
+      setMyLocalCursor(newCursor);
+      
+      // Broadcast cursor position via vscode postMessage
+      if (window.vscode) {
+        window.vscode.postMessage({
+          type: 'broadcastCursor',
+          projectId,
+          userId: user.id,
+          userName: user.username || user.email || 'Anonymous',
+          position: newCursor,
+          timestamp: Date.now()
+        });
+      }
+    };
+
+    const throttledMouseMove = throttle(handleMouseMove, 50); // Throttle to 20fps
+    document.addEventListener('mousemove', throttledMouseMove);
+
+    return () => {
+      document.removeEventListener('mousemove', throttledMouseMove);
+    };
+  }, [projectId, user]);
+
+  // Listen for cursor updates from other users
+  useEffect(() => {
+    if (!projectId) return;
+
+    const handleMessage = (event: MessageEvent) => {
+      const message = event.data;
+      
+      if (message.type === 'cursorUpdate' && message.userId !== user?.id) {
+        // Generate consistent color for each user
+        const color = getUserColor(message.userId);
+        
+        setCollaboratorCursors(prev => {
+          const updated = new Map(prev);
+          updated.set(message.userId, {
+            x: message.position.x,
+            y: message.position.y,
+            userName: message.userName,
+            color,
+            timestamp: message.timestamp
+          });
+          return updated;
+        });
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+
+    // Clean up stale cursors every 3 seconds
+    const cleanupInterval = setInterval(() => {
+      const now = Date.now();
+      setCollaboratorCursors(prev => {
+        const updated = new Map(prev);
+        let hasChanges = false;
+        
+        for (const [userId, cursor] of updated.entries()) {
+          if (now - (cursor as { x: number; y: number; userName: string; color: string; timestamp: number }).timestamp > 3000) {
+            updated.delete(userId);
+            hasChanges = true;
+          }
+        }
+        
+        return hasChanges ? updated : prev;
+      });
+    }, 3000);
+
+    return () => {
+      window.removeEventListener('message', handleMessage);
+      clearInterval(cleanupInterval);
+    };
+  }, [projectId, user]);
+
+  // Helper function to generate consistent colors for users
+  const getUserColor = (userId: string): string => {
+    const colors = [
+      '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8',
+      '#F7DC6F', '#BB8FCE', '#85C1E2', '#F8B739', '#52C5B6'
+    ];
+    const hash = userId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    return colors[hash % colors.length];
+  };
+
+  // Throttle helper
+  const throttle = (func: Function, delay: number) => {
+    let lastCall = 0;
+    return (...args: any[]) => {
+      const now = Date.now();
+      if (now - lastCall >= delay) {
+        lastCall = now;
+        func(...args);
+      }
+    };
+  };
 
   const loadClassInstances = useCallback(async () => {
     if (!projectId || !selectedClassForIndividuals) {
@@ -3323,10 +3796,9 @@ const Dashboard = () => {
           break;
         case "importStatusUpdate":
           // Handle import status updates from WebSocket
-          console.log('[Dashboard] Import status update:', message.status);
-          console.log('[Dashboard] Current projectId:', projectId);
-          console.log('[Dashboard] Message projectId:', message.status.projectId);
-          console.log('[Dashboard] Status type:', message.status.type);
+          console.log(`[Dashboard] 📨 Import status update for "${message.status.projectId}": ${message.status.type}`, message.status);
+          console.log(`[Dashboard] 📍 Current projectId: ${projectId} | Message projectId: ${message.status.projectId}`);
+          console.log(`[Dashboard] 🎯 Status: ${message.status.status} | Progress: ${message.status.progress}%`);
 
           // Update project-specific import status for ProjectSelector
           if (message.status.projectId) {
@@ -3412,13 +3884,50 @@ const Dashboard = () => {
             }
           }
 
-          // If import failed, close loading choice dialog
-          if (message.status.type === 'IMPORT_FAILED' && message.status.projectId === projectId) {
-            console.log('[Dashboard] Import failed');
-            setTimeout(() => {
-              setShowLoadingChoice(false);
-              setShowQueueStatus(false);
-            }, 2000);
+          // If import failed, handle it appropriately
+          if (message.status.type === 'IMPORT_FAILED') {
+            console.log('[Dashboard] ❌ IMPORT_FAILED for project:', message.status.projectId);
+            console.error('[Dashboard] Error details:', {
+              statusMessage: message.status.statusMessage,
+              error: message.status.metadata?.error,
+              status: message.status.status
+            });
+            
+            const errorMessage = message.status.statusMessage || message.status.metadata?.error || 'Import failed';
+            const projectName = message.status.projectId || 'unknown';
+            
+            // Extract more user-friendly error message
+            let displayError = errorMessage;
+            if (errorMessage.includes('UnknownHostException: graphdb') || errorMessage.includes('UnknownHostException')) {
+              displayError = 'Cannot connect to GraphDB. Please ensure GraphDB service is running and accessible.';
+              console.log('[Dashboard] 🔄 Translated error to user-friendly message (UnknownHost)');
+            } else if (errorMessage.includes('Connection refused') || errorMessage.includes('ConnectException')) {
+              displayError = 'GraphDB connection refused. Please verify GraphDB is running on the correct port.';
+              console.log('[Dashboard] 🔄 Translated error to user-friendly message (Connection refused)');
+            } else if (errorMessage.includes('HTTP error code 404')) {
+              displayError = 'Repository not found or not initialized. Please check GraphDB configuration.';
+              console.log('[Dashboard] 🔄 Translated error to user-friendly message (404)');
+            } else if (errorMessage.includes('unable to start transaction')) {
+              displayError = 'Unable to start database transaction. Please verify GraphDB is running and the repository exists.';
+              console.log('[Dashboard] 🔄 Translated error to user-friendly message (transaction)');
+            }
+            
+            console.log('[Dashboard] 📝 Display error:', displayError);
+            
+            // Show notification for all failed imports
+            notificationService.error(
+              'Import Failed', 
+              `Failed to import "${projectName}": ${displayError}`
+            );
+            
+            // Close dialogs if this is the current project
+            if (message.status.projectId === projectId) {
+              console.log('[Dashboard] Closing dialogs for current project');
+              setTimeout(() => {
+                setShowLoadingChoice(false);
+                setShowQueueStatus(false);
+              }, 2000);
+            }
           }
 
           // Show queue status when import starts
@@ -3460,29 +3969,34 @@ const Dashboard = () => {
   const loadChildren = useCallback(async (nodeId: string) => {
     if (!projectId) return;
     try {
-      console.log(`Loading children for node: ${nodeId}`);
+      console.log(`[loadChildren] Loading children for node: ${nodeId}`);
       const response = await apiClient.get<any>(`/api/ontology/classes/children/${projectId}?parentIri=${encodeURIComponent(nodeId)}`);
-      console.log('Children response:', response);
+      console.log('[loadChildren] Children response:', response);
       
       // Extract array from response - handle both direct array and wrapped responses
       const children = Array.isArray(response) ? response : 
                       Array.isArray(response?.data) ? response.data : 
                       Array.isArray(response?.classes) ? response.classes : [];
-      console.log('Extracted children:', children);
+      console.log('[loadChildren] Extracted children:', children);
 
       const updateTree = (nodes: TreeNode[]): TreeNode[] =>
         nodes.map((n: TreeNode) => {
           if (n.id === nodeId) {
+            console.log(`[loadChildren] Found target node:`, n);
             const mappedChildren = children.map((c: TopLevelClass) => ({
               ...c,
-              children: c.hasChildren ? undefined : undefined, // Use undefined for consistency
+              children: c.hasChildren ? [] : undefined,
               hasChildren: c.hasChildren,
               subClassOfAxioms: [{ id: nodeId, type: 'SubClassOf', definition: n.label }]
             }));
-            return {
+            console.log('[loadChildren] Mapped children:', mappedChildren);
+            const updatedNode = {
               ...n,
-              children: applyInstanceCountsToTree(mappedChildren, classInstanceCounts)
+              children: applyInstanceCountsToTree(mappedChildren, classInstanceCounts),
+              hasChildren: mappedChildren.length > 0
             };
+            console.log('[loadChildren] Updated node:', updatedNode);
+            return updatedNode;
           }
           if (n.children) {
             return { ...n, children: updateTree(n.children) };
@@ -3490,7 +4004,13 @@ const Dashboard = () => {
           return n;
         });
 
-      setClassHierarchy(prevHierarchy => updateTree(prevHierarchy));
+      console.log('[loadChildren] Updating class hierarchy...');
+      setClassHierarchy(prevHierarchy => {
+        const updated = updateTree(prevHierarchy);
+        console.log('[loadChildren] New hierarchy:', updated);
+        return updated;
+      });
+      console.log(`[loadChildren] ✅ Loaded ${children.length} children for node: ${nodeId}`);
     } catch (error) {
       console.error(`Failed to load children for ${nodeId}`, error);
     }
@@ -4314,10 +4834,16 @@ const Dashboard = () => {
 
 
   const toggleNode = useCallback(async (nodeId: string) => {
-    console.log('[DEBUG] toggleNode called for nodeId:', nodeId);
+    console.log('[toggleNode] 🔄 Called for nodeId:', nodeId);
+    console.log('[toggleNode] Current expandedNodes:', expandedNodes);
+    console.log('[toggleNode] entitiesTab:', entitiesTab);
+    console.log('[toggleNode] currentHierarchyViewMode:', currentHierarchyViewMode);
+    
     if (expandedNodes.includes(nodeId)) {
+      console.log('[toggleNode] ⬇️ Collapsing node:', nodeId);
       setExpandedNodes(prev => prev.filter(id => id !== nodeId));
     } else {
+      console.log('[toggleNode] ➡️ Expanding node:', nodeId);
       const findNode = (nodes: TreeNode[], id: string): TreeNode | null => {
         for (const node of nodes) {
           if (node.id === id) return node;
@@ -4337,7 +4863,10 @@ const Dashboard = () => {
 
       const node = findNode(currentHierarchy as TreeNode[], nodeId);
       
-      setExpandedNodes(prev => [...prev, nodeId]);
+      setExpandedNodes(prev => {
+        const updated = [...prev, nodeId];
+        return updated;
+      });
       
       if (node && node.hasChildren && (!node.children || node.children.length === 0)) {
         console.log(`Node ${nodeId} needs children loaded`);
@@ -4351,9 +4880,11 @@ const Dashboard = () => {
           // Properties usually don't have on-demand loading in this UI yet, 
           // but we could add it here if needed.
         }
+      } else {
+        console.log('[toggleNode] ℹ️ Node already has children or hasChildren is false');
       }
     }
-  }, [expandedNodes, classHierarchy, inferredClassHierarchy, objectPropertyHierarchy, dataPropertyHierarchy, hierarchyViewModes, loadChildren, loadInferredChildren, entitiesTab, currentHierarchyViewMode]);
+  }, [expandedNodes, classHierarchy, inferredClassHierarchy, objectPropertyHierarchy, dataPropertyHierarchy, inferredObjectPropertyHierarchy, inferredDataPropertyHierarchy, hierarchyViewModes, loadChildren, loadInferredChildren, entitiesTab, currentHierarchyViewMode]);
 
   // Expose a safe global for bundles/minified code paths that still reference toggleNode
   useEffect(() => {
@@ -4790,55 +5321,6 @@ const Dashboard = () => {
         } catch (error) {
           console.error('Failed to delete GCI:', error);
           showNotification('Failed to delete GCI.', 'error');
-        }
-      }
-    });
-  }, [projectId]);
-
-  // Add this state near other useState declarations at the top of Dashboard component
-  const [editPrefixData, setEditPrefixData] = useState<{ prefix: string } | null>(null);
-  const [showPrefixDialog, setShowPrefixDialog] = useState(false);
-  
-    const handleSavePrefix = useCallback(async (prefix: string, iri: string) => {
-      if (!projectId) return;
-      try {
-        await apiClient.post(`/api/ontology/metadata/${projectId}/prefixes`, { 
-          prefix, 
-          iri,
-          oldPrefix: editPrefixData?.prefix 
-        });
-        
-        // Refresh metadata to get updated prefixes
-        const metadataRes = await apiClient.get(`/api/ontology/metadata/${projectId}`);
-        setMetadata(metadataRes.data || metadataRes);
-        
-        showNotification('Prefix updated successfully!', 'info');
-        setEditPrefixData(null);
-      } catch (error) {
-        console.error('Failed to save prefix:', error);
-        showNotification('Failed to save prefix.', 'error');
-      }
-    }, [projectId, editPrefixData]);
-
-  const handleDeletePrefix = useCallback(async (prefix: string) => {
-    if (!projectId) return;
-    
-    setConfirmDialog({
-      isOpen: true,
-      title: 'Delete Prefix',
-      message: `Are you sure you want to delete the prefix "${prefix}"?`,
-      onConfirm: async () => {
-        try {
-          await apiClient.delete(`/api/ontology/metadata/${projectId}/prefixes`, { prefix });
-          
-          // Refresh metadata
-          const metadataRes = await apiClient.get(`/api/ontology/metadata/${projectId}`);
-          setMetadata(metadataRes.data || metadataRes);
-          
-          showNotification('Prefix deleted successfully!', 'info');
-        } catch (error) {
-          console.error('Failed to delete prefix:', error);
-          showNotification('Failed to delete prefix.', 'error');
         }
       }
     });
@@ -6416,20 +6898,7 @@ const Dashboard = () => {
           return (
             <PluginComponent 
               projectId={projectId || ''} 
-              apiBaseUrl={(window as any).API_BASE_URL || 'http://localhost:8082'}
-              selectedReasoner={selectedReasoner}
-              isReasonerRunning={isReasonerRunning}
-              isReasonerLoading={isReasonerLoading}
-              reasonerResults={reasonerResults}
-              consistencyResult={consistencyResult}
-              inferredClassHierarchy={inferredClassHierarchy}
-              inferredObjectPropertyHierarchy={inferredObjectPropertyHierarchy}
-              inferredDataPropertyHierarchy={inferredDataPropertyHierarchy}
-              onStartReasoner={startReasoner}
-              onStopReasoner={stopReasoner}
-              onSelectReasoner={handleSelectReasoner}
-              onToggleSync={toggleReasonerSync}
-              isReasonerSynced={isReasonerSynced}
+              
             />
           );
         }
@@ -6437,6 +6906,21 @@ const Dashboard = () => {
         return (
           <PluginPlaceholder 
             pluginId="reasoner-plugin" 
+            pluginName="OWL Reasoner"
+            description="Advanced OWL 2 DL reasoning with classification, consistency checking, explanations, and inferred hierarchies."
+            icon={<Zap size={32} className="text-white" />}
+            features={[
+              "HermiT, ELK, Pellet, Openllet, Structural support",
+              "Full classification with inferred hierarchy",
+              "Consistency checks with unsat explanations",
+              "Auto-sync with ontology edits",
+              "Export inferred hierarchy (JSON/CSV)",
+              "Detailed reasoner statistics"
+            ]}
+            accentColor="from-indigo-500 via-purple-500 to-pink-500"
+            onInstall={() => handleInstallPlugin('reasoner-plugin')}
+            onRetryLoad={() => handleRetryLoadPlugin('reasoner-plugin')}
+            isInstalled={installedPlugins.has('reasoner-plugin')}
             isLoading={loadingState?.loading || false}
             error={loadingState?.error}
           />
@@ -6444,15 +6928,18 @@ const Dashboard = () => {
       }
       case 'ActiveOntology':
         return (
-          <div className="flex h-full bg-[#F0F0F0]">
-            <div className="flex-1 flex flex-col bg-white border-r border-gray-300 m-2 rounded shadow-sm overflow-hidden">
+          <div className="flex h-full" style={{ backgroundColor: 'var(--surface-2)' }}>
+            <div className="flex-1 flex flex-col border-r m-2 rounded shadow-sm overflow-hidden" style={{ backgroundColor: 'var(--bg)', borderColor: 'var(--border)' }}>
               {/* Ontology Header Section */}
-              <div className="p-4 border-b border-gray-200 bg-gray-50">
+              <div className="p-4 border-b" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--surface-2)' }}>
                 <div className="flex justify-between items-start mb-4">
-                  <h2 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Ontology header</h2>
+                  <h2 className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-primary)' }}>Ontology header</h2>
                   <button 
                     onClick={() => setEditOntologyIRIDialogOpen(true)}
-                    className="p-1 hover:bg-gray-200 rounded text-blue-600 transition-colors"
+                    className="p-1 rounded transition-colors"
+                    style={{ color: 'var(--accent)' }}
+                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-overlay)'}
+                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                     title="Edit Ontology IRIs"
                   >
                     <Edit2 size={14} />
@@ -6460,21 +6947,21 @@ const Dashboard = () => {
                 </div>
                 
                 <div className="grid grid-cols-1 gap-4">
-                  <div className="bg-white p-3 border border-gray-200 rounded shadow-sm">
-                    <div className="text-[10px] font-bold text-gray-400 uppercase mb-1">Ontology IRI</div>
+                  <div className="p-3 border rounded shadow-sm" style={{ backgroundColor: 'var(--bg)', borderColor: 'var(--border)' }}>
+                    <div className="text-[10px] font-bold uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>Ontology IRI</div>
                     <div className="flex items-center gap-2">
-                      <Globe size={14} className="text-blue-500 flex-shrink-0" />
-                      <a href={(metadata as any)?.ontologyIRI || "#"} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline text-xs break-all font-medium">
+                      <Globe size={14} className="flex-shrink-0" style={{ color: 'var(--accent)' }} />
+                      <a href={(metadata as any)?.ontologyIRI || "#"} target="_blank" rel="noopener noreferrer" className="text-xs break-all font-medium hover:underline" style={{ color: 'var(--accent)' }}>
                         {(metadata as any)?.ontologyIRI || "http://www.semanticweb.org/ontology"}
                       </a>
                     </div>
                   </div>
                   
-                  <div className="bg-white p-3 border border-gray-200 rounded shadow-sm">
-                    <div className="text-[10px] font-bold text-gray-400 uppercase mb-1">Ontology Version IRI</div>
+                  <div className="p-3 border rounded shadow-sm" style={{ backgroundColor: 'var(--bg)', borderColor: 'var(--border)' }}>
+                    <div className="text-[10px] font-bold uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>Ontology Version IRI</div>
                     <div className="flex items-center gap-2">
-                      <LinkIcon size={14} className="text-green-500 flex-shrink-0" />
-                      <div className="text-xs text-gray-700 break-all font-medium">
+                      <LinkIcon size={14} className="flex-shrink-0" style={{ color: 'var(--success)' }} />
+                      <div className="text-xs break-all font-medium" style={{ color: 'var(--text-primary)' }}>
                         {(metadata as any)?.versionIRI || "Not specified"}
                       </div>
                     </div>
@@ -6483,15 +6970,18 @@ const Dashboard = () => {
               </div>
 
               {/* Annotations Section */}
-              <div className="flex-1 overflow-y-auto p-4">
+              <div className="flex-1 overflow-y-auto p-4" style={{ minHeight: 0 }}>
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-xs font-semibold text-gray-700">Annotations</h3>
+                  <h3 className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>Annotations</h3>
                   <button
                     onClick={() => {
                       setOntologyAnnotationEditTarget(null);
                       setIsOntologyAnnotationDialogOpen(true);
                     }}
-                    className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+                    className="px-2 py-1 text-xs rounded transition-colors"
+                    style={{ backgroundColor: 'var(--accent)', color: 'var(--on-accent)' }}
+                    onMouseEnter={(e) => e.currentTarget.style.opacity = '0.9'}
+                    onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
                   >
                     Add
                   </button>
@@ -6503,11 +6993,11 @@ const Dashboard = () => {
                       const propertyLabel = annotation.propertyIri.includes('#') ? annotation.propertyIri.split('#').pop() :
                         annotation.propertyIri.includes('/') ? annotation.propertyIri.split('/').pop() : annotation.propertyIri;
                       return (
-                        <div key={key} className="border border-gray-200 rounded-md hover:border-blue-300 transition-colors">
-                          <div className="bg-gradient-to-r from-purple-50 to-gray-50 px-3 py-2 border-b border-gray-200 flex items-center justify-between">
+                        <div key={key} className="border rounded-md transition-colors" style={{ borderColor: 'var(--border)' }} onMouseEnter={(e) => e.currentTarget.style.borderColor = 'var(--accent)'} onMouseLeave={(e) => e.currentTarget.style.borderColor = 'var(--border)'}>
+                          <div className="px-3 py-2 border-b flex items-center justify-between" style={{ backgroundColor: 'var(--accent-tint)', borderColor: 'var(--border)' }}>
                             <div>
-                              <div className="text-xs font-semibold text-purple-900">{propertyLabel}</div>
-                              <div className="text-[10px] text-gray-400 font-mono truncate" title={annotation.propertyIri}>{annotation.propertyIri}</div>
+                              <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>{propertyLabel}</div>
+                              <div className="text-[10px] font-mono truncate" style={{ color: 'var(--text-tertiary)' }} title={annotation.propertyIri}>{annotation.propertyIri}</div>
                             </div>
                             <div className="flex gap-2">
                               <button
@@ -6519,22 +7009,28 @@ const Dashboard = () => {
                                   });
                                   setIsOntologyAnnotationDialogOpen(true);
                                 }}
-                                className="px-2 py-1 text-[10px] bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+                                className="px-2 py-1 text-[10px] rounded transition-colors"
+                                style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text-primary)' }}
+                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-overlay)'}
+                                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--surface-2)'}
                               >
                                 Edit
                               </button>
                               <button
                                 onClick={() => handleDeleteOntologyAnnotation(annotation.propertyIri, annotation.value, annotation.datatype)}
-                                className="px-2 py-1 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
+                                className="px-2 py-1 text-[10px] rounded transition-colors"
+                                style={{ backgroundColor: 'var(--error-tint)', color: 'var(--error)' }}
+                                onMouseEnter={(e) => e.currentTarget.style.opacity = '0.8'}
+                                onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
                               >
                                 Delete
                               </button>
                             </div>
                           </div>
-                          <div className="px-3 py-2 bg-white text-xs text-gray-700">
+                          <div className="px-3 py-2 text-xs" style={{ backgroundColor: 'var(--bg)', color: 'var(--text-primary)' }}>
                             <div className="break-words">{annotation.value}</div>
                             {annotation.datatype && (
-                              <div className="text-[10px] text-gray-500 mt-1">Datatype: {shortenDatatype(annotation.datatype)}</div>
+                              <div className="text-[10px] mt-1" style={{ color: 'var(--text-tertiary)' }}>Datatype: {shortenDatatype(annotation.datatype)}</div>
                             )}
                           </div>
                         </div>
@@ -6542,195 +7038,339 @@ const Dashboard = () => {
                     })}
                   </div>
                 ) : (
-                  <div className="text-xs italic p-8 text-center text-gray-400 bg-gray-50 border border-dashed border-gray-200 rounded">
+                  <div className="text-xs italic p-8 text-center border border-dashed rounded" style={{ color: 'var(--text-tertiary)', backgroundColor: 'var(--surface-2)', borderColor: 'var(--border)' }}>
                     No annotations defined for this ontology
                   </div>
                 )}
               </div>
 
+              {/* Resize Handle */}
+              <div
+                className="relative cursor-ns-resize group"
+                style={{ 
+                  height: '6px', 
+                  backgroundColor: isResizing ? 'var(--accent)' : 'var(--border)',
+                  transition: 'background-color 0.2s'
+                }}
+                onMouseDown={(e) => {
+                  setIsResizing(true);
+                  const startY = e.clientY;
+                  const startHeight = bottomTabsHeight;
+                  
+                  const handleMouseMove = (moveEvent: MouseEvent) => {
+                    const deltaY = startY - moveEvent.clientY;
+                    const newHeight = Math.max(150, Math.min(600, startHeight + deltaY));
+                    setBottomTabsHeight(newHeight);
+                  };
+                  
+                  const handleMouseUp = () => {
+                    setIsResizing(false);
+                    document.removeEventListener('mousemove', handleMouseMove);
+                    document.removeEventListener('mouseup', handleMouseUp);
+                  };
+                  
+                  document.addEventListener('mousemove', handleMouseMove);
+                  document.addEventListener('mouseup', handleMouseUp);
+                }}
+              >
+                <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-1 mx-auto w-12 rounded-full opacity-0 group-hover:opacity-100 transition-opacity" style={{ backgroundColor: 'var(--accent)' }} />
+              </div>
+
               {/* Bottom Tabs Section (Imports, GCIs, Prefixes) */}
-              <div className="border-t border-gray-300 bg-gray-50">
-                <div className="flex bg-gray-200 text-[10px] font-bold uppercase tracking-tighter border-b border-gray-300">
+              <div className="border-t flex flex-col" style={{ 
+                borderColor: 'var(--border)', 
+                backgroundColor: 'var(--surface-2)',
+                height: `${bottomTabsHeight}px`,
+                minHeight: '150px'
+              }}>
+                <div className="flex text-[10px] font-bold uppercase tracking-tighter border-b" style={{ backgroundColor: 'var(--surface-3)', borderColor: 'var(--border)' }}>
                   {[
                     { id: 'prefixes', label: 'Ontology Prefixes', icon: Hash },
                     { id: 'imports', label: 'Ontology Imports', icon: Download },
                     { id: 'axioms', label: 'General Class Axioms', icon: Code }
                   ].map(t => (
                     <button key={t.id} onClick={() => setActiveOntologySubTab(t.id)}
-                      className={`px-4 py-2 flex items-center gap-2 border-r border-gray-300 transition-all ${activeOntologySubTab === t.id ? 'bg-white text-blue-600 border-b-2 border-b-blue-500' : 'text-gray-500 hover:bg-gray-100'}`}>
+                      className="px-4 py-2 flex items-center gap-2 border-r transition-all"
+                      style={{ 
+                        borderColor: 'var(--border)',
+                        backgroundColor: activeOntologySubTab === t.id ? 'var(--bg)' : 'transparent',
+                        color: activeOntologySubTab === t.id ? 'var(--accent)' : 'var(--text-secondary)',
+                        borderBottom: activeOntologySubTab === t.id ? '2px solid var(--accent)' : 'none'
+                      }}
+                      onMouseEnter={(e) => { if (activeOntologySubTab !== t.id) e.currentTarget.style.backgroundColor = 'var(--hover-overlay)'; }}
+                      onMouseLeave={(e) => { if (activeOntologySubTab !== t.id) e.currentTarget.style.backgroundColor = 'transparent'; }}
+                    >
                       <t.icon size={12} />
                       {t.label}
                     </button>
                   ))}
                 </div>
-                <div className="p-2 min-h-24 text-sm" style={{ backgroundColor: 'var(--bg)' }}>
+                <div className="p-2 text-sm overflow-hidden flex-1 flex flex-col" style={{ backgroundColor: 'var(--bg)' }}>
                   {activeOntologySubTab === 'prefixes' && (
-                    <div className="border rounded" style={{ borderColor: 'var(--border)' }}>
-                      <div className="flex items-center justify-between px-2 py-1.5 border-b" style={{ borderColor: 'var(--border)' }}>
-                        <div className="text-[11px] text-gray-600">Prefix mappings</div>
-                        <div className="flex gap-2">
-                          {isPrefixEditing ? (
-                            <>
-                              <button
-                                onClick={handleSavePrefixes}
-                                className="px-2 py-0.5 text-[10px] bg-green-600 text-white rounded"
-                              >
-                                Save
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setIsPrefixEditing(false);
-                                  refreshPrefixes();
-                                }}
-                                className="px-2 py-0.5 text-[10px] bg-gray-200 text-gray-700 rounded"
-                              >
-                                Cancel
-                              </button>
-                            </>
-                          ) : (
-                            <button
-                              onClick={() => setIsPrefixEditing(true)}
-                              className="px-2 py-0.5 text-[10px] bg-gray-100 text-gray-700 rounded"
-                            >
-                              Edit
-                            </button>
-                          )}
-                          {isPrefixEditing && (
-                            <button
-                              onClick={() => setPrefixMappings(prev => [...prev, { prefix: '', namespace: '' }])}
-                              className="px-2 py-0.5 text-[10px] bg-blue-600 text-white rounded"
-                            >
-                              Add
-                            </button>
-                          )}
-                        </div>
+                    <div className="border rounded flex flex-col flex-1 overflow-hidden" style={{ borderColor: 'var(--border)' }}>
+                      <div className="flex items-center justify-between px-3 py-2 border-b flex-shrink-0" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--surface-2)' }}>
+                        <div className="text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>Prefix mappings</div>
+                        <button
+                          onClick={handleAddPrefixDialog}
+                          className="px-2 py-1 text-[10px] rounded flex items-center gap-1"
+                          style={{ backgroundColor: 'var(--accent)', color: 'var(--on-accent)' }}
+                        >
+                          <Plus size={12} /> Add Prefix
+                        </button>
                       </div>
-                      <div className="max-h-48 overflow-y-auto">
-                        <table className="w-full text-left text-xs">
-                          <thead className="sticky top-0" style={{ backgroundColor: 'var(--surface-1)' }}>
-                            <tr className="border-b" style={{ borderColor: 'var(--border)' }}>
-                              <th className="p-1.5 font-semibold" style={{ color: 'var(--text-primary)' }}>Prefix</th>
-                              <th className="p-1.5 font-semibold" style={{ color: 'var(--text-primary)' }}>Namespace</th>
-                              {isPrefixEditing && <th className="p-1.5" />}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {prefixMappings.map((p, idx) => (
-                              <tr key={`${p.prefix}-${idx}`} className="border-b hover:bg-gray-50" style={{ borderColor: 'var(--border)' }}>
-                                <td className="p-1.5 font-mono" style={{ color: 'var(--text-primary)' }}>
-                                  {isPrefixEditing ? (
-                                    <input
-                                      value={p.prefix}
-                                      onChange={(e) => {
-                                        const next = [...prefixMappings];
-                                        next[idx] = { ...next[idx], prefix: e.target.value };
-                                        setPrefixMappings(next);
-                                      }}
-                                      className="w-full px-1 py-0.5 text-xs border rounded"
-                                    />
-                                  ) : (
-                                    p.prefix
-                                  )}
-                                </td>
-                                <td className="p-1.5 break-all" style={{ color: 'var(--accent)' }}>
-                                  {isPrefixEditing ? (
-                                    <input
-                                      value={p.namespace}
-                                      onChange={(e) => {
-                                        const next = [...prefixMappings];
-                                        next[idx] = { ...next[idx], namespace: e.target.value };
-                                        setPrefixMappings(next);
-                                      }}
-                                      className="w-full px-1 py-0.5 text-xs border rounded"
-                                    />
-                                  ) : (
-                                    p.namespace
-                                  )}
-                                </td>
-                                {isPrefixEditing && (
-                                  <td className="p-1.5 text-right">
-                                    <button
-                                      onClick={() => setPrefixMappings(prev => prev.filter((_, rowIdx) => rowIdx !== idx))}
-                                      className="px-2 py-0.5 text-[10px] bg-red-100 text-red-700 rounded"
-                                    >
-                                      Remove
-                                    </button>
-                                  </td>
-                                )}
+                      <div className="flex-1 overflow-y-auto">
+                        {prefixMappings.length === 0 ? (
+                          <div className="p-4 text-center text-xs italic" style={{ color: 'var(--text-tertiary)' }}>
+                            No prefix mappings defined
+                          </div>
+                        ) : (
+                          <table className="w-full text-left text-xs">
+                            <thead className="sticky top-0" style={{ backgroundColor: 'var(--surface-1)' }}>
+                              <tr className="border-b" style={{ borderColor: 'var(--border)' }}>
+                                <th className="p-2 font-semibold w-1/4" style={{ color: 'var(--text-primary)' }}>Prefix</th>
+                                <th className="p-2 font-semibold" style={{ color: 'var(--text-primary)' }}>Namespace IRI</th>
+                                <th className="p-2 w-24" style={{ color: 'var(--text-primary)' }}>Actions</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {prefixMappings.map((p, idx) => (
+                                <tr 
+                                  key={`${p.prefix}-${idx}`} 
+                                  className="border-b" 
+                                  style={{ borderColor: 'var(--border)' }} 
+                                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-overlay)'}
+                                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                                >
+                                  <td className="p-2 font-mono" style={{ color: 'var(--text-primary)' }}>{p.prefix}</td>
+                                  <td className="p-2 break-all" style={{ color: 'var(--accent)' }}>{p.namespace}</td>
+                                  <td className="p-2">
+                                    <div className="flex gap-1">
+                                      <button
+                                        onClick={() => handleEditPrefixDialog(p.prefix, p.namespace)}
+                                        className="p-1 rounded text-[10px]"
+                                        style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)' }}
+                                        title="Edit"
+                                      >
+                                        <Edit2 size={12} />
+                                      </button>
+                                      <button
+                                        onClick={() => handleDeletePrefix(p.prefix)}
+                                        className="p-1 rounded text-[10px]"
+                                        style={{ backgroundColor: 'var(--error-tint)', color: 'var(--error)' }}
+                                        title="Delete"
+                                      >
+                                        <Trash2 size={12} />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
                       </div>
-                      {isPrefixEditing && (
-                        <div className="px-2 py-1 text-[10px] text-gray-500 border-t" style={{ borderColor: 'var(--border)' }}>
-                          Prefix changes apply at the repository level.
-                        </div>
-                      )}
                     </div>
                   )}
                   {activeOntologySubTab === 'imports' && (
-                    <div className="max-h-48 overflow-y-auto border rounded text-xs" style={{ borderColor: 'var(--border)' }}>
-                      <div className="p-2 border-b flex items-center gap-2" style={{ borderColor: 'var(--border)' }}>
-                        <input
-                          value={importDraft}
-                          onChange={(e) => setImportDraft(e.target.value)}
-                          placeholder="http://example.org/imported.owl"
-                          className="flex-1 px-2 py-1 text-xs border rounded"
-                        />
-                        <button
-                          onClick={handleAddImport}
-                          className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
-                        >
-                          Add
-                        </button>
+                    <div className="border rounded flex flex-col flex-1 overflow-hidden" style={{ borderColor: 'var(--border)' }}>
+                      <div className="flex items-center justify-between px-3 py-2 border-b flex-shrink-0" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--surface-2)' }}>
+                        <div className="flex items-center gap-3">
+                          <div className="text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>Ontology Imports</div>
+                          <div className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                            <span>({ontologyImports.length} {ontologyImports.length === 1 ? 'import' : 'imports'})</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <label className="flex items-center gap-1.5 text-[10px] cursor-pointer" style={{ color: 'var(--text-secondary)' }}>
+                            <input
+                              type="checkbox"
+                              checked={showImportClosure}
+                              onChange={(e) => setShowImportClosure(e.target.checked)}
+                              className="w-3 h-3"
+                            />
+                            <span>Show import closure</span>
+                          </label>
+                          <button
+                            onClick={handleAddImportDialog}
+                            className="px-2 py-1 text-[10px] rounded flex items-center gap-1"
+                            style={{ backgroundColor: 'var(--accent)', color: 'var(--on-accent)' }}
+                          >
+                            <Plus size={12} /> Add Import
+                          </button>
+                        </div>
                       </div>
-                      {ontologyImports.length === 0 ? (
-                        <div className="p-3 text-gray-400 italic">No ontology imports</div>
-                      ) : (
-                        <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                          {ontologyImports.map((iri) => (
-                            <li key={iri} className="p-2 hover:bg-gray-50 flex items-center justify-between gap-2">
-                              <div className="font-mono break-all" style={{ color: 'var(--accent)' }}>{iri}</div>
-                              <button
-                                onClick={() => handleRemoveImport(iri)}
-                                className="px-2 py-1 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
-                              >
-                                Remove
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
+                      <div className="flex-1 overflow-y-auto">
+                        {ontologyImports.length === 0 ? (
+                          <div className="p-6 text-center">
+                            <div className="mb-2" style={{ color: 'var(--text-tertiary)' }}>
+                              <Download size={32} className="mx-auto opacity-30" />
+                            </div>
+                            <div className="text-xs italic" style={{ color: 'var(--text-tertiary)' }}>No ontology imports</div>
+                            <div className="text-[10px] mt-1" style={{ color: 'var(--text-quaternary)' }}>Click "Add Import" to import an ontology</div>
+                          </div>
+                        ) : (
+                          <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                            {ontologyImports.map((iri, idx) => {
+                              const fileName = iri.substring(iri.lastIndexOf('/') + 1) || iri;
+                              const isLocal = iri.startsWith('file://') || (!iri.startsWith('http://') && !iri.startsWith('https://'));
+                              const isExpanded = expandedImports.has(iri);
+                              
+                              return (
+                                <div 
+                                  key={`${iri}-${idx}`}
+                                  className="group"
+                                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-overlay)'}
+                                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                                >
+                                  <div className="flex items-start gap-2 p-2.5">
+                                    {showImportClosure && (
+                                      <button
+                                        onClick={() => {
+                                          const newExpanded = new Set(expandedImports);
+                                          if (isExpanded) {
+                                            newExpanded.delete(iri);
+                                          } else {
+                                            newExpanded.add(iri);
+                                          }
+                                          setExpandedImports(newExpanded);
+                                        }}
+                                        className="p-0.5 rounded hover:bg-opacity-10"
+                                        style={{ color: 'var(--text-tertiary)' }}
+                                      >
+                                        {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                                      </button>
+                                    )}
+                                    <div className="flex-shrink-0 mt-0.5">
+                                      {isLocal ? (
+                                        <FileCode size={14} style={{ color: 'var(--accent)' }} />
+                                      ) : (
+                                        <Globe size={14} style={{ color: 'var(--accent)' }} />
+                                      )}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="text-[11px] font-medium truncate" style={{ color: 'var(--text-primary)' }} title={fileName}>
+                                        {fileName}
+                                      </div>
+                                      <div className="text-[10px] font-mono break-all mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+                                        {iri}
+                                      </div>
+                                      {isLocal && (
+                                        <div className="flex items-center gap-1 mt-1">
+                                          <span className="px-1.5 py-0.5 text-[9px] rounded" style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-secondary)' }}>LOCAL</span>
+                                        </div>
+                                      )}
+                                      {showImportClosure && isExpanded && (
+                                        <div className="mt-2 ml-4 pl-3 border-l-2 text-[10px]" style={{ borderColor: 'var(--border)', color: 'var(--text-tertiary)' }}>
+                                          <div className="italic">Transitive imports would appear here</div>
+                                          <div className="text-[9px] mt-1" style={{ color: 'var(--text-quaternary)' }}>(Feature requires backend support)</div>
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="flex-shrink-0 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <button
+                                        onClick={() => handleEditImportDialog(iri)}
+                                        className="p-1.5 rounded"
+                                        style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)' }}
+                                        title="Edit import"
+                                      >
+                                        <Edit2 size={11} />
+                                      </button>
+                                      <button
+                                        onClick={() => handleRemoveImport(iri)}
+                                        className="p-1.5 rounded"
+                                        style={{ backgroundColor: 'var(--error-tint)', color: 'var(--error)' }}
+                                        title="Remove import"
+                                      >
+                                        <Trash2 size={11} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                      {ontologyImports.length > 0 && (
+                        <div className="px-3 py-2 border-t text-[10px] flex items-center justify-between" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--surface-2)', color: 'var(--text-tertiary)' }}>
+                          <div className="flex items-center gap-2">
+                            <Info size={12} />
+                            <span>Direct imports only. Enable "Show import closure" to see transitive imports.</span>
+                          </div>
+                        </div>
                       )}
                     </div>
                   )}
                   {activeOntologySubTab === 'axioms' && (
-                    <div className="max-h-48 overflow-y-auto border rounded text-xs" style={{ borderColor: 'var(--border)' }}>
-                      {generalClassAxioms.length === 0 ? (
-                        <div className="p-3 text-gray-400 italic">No general class axioms detected</div>
-                      ) : (
-                        <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                          {generalClassAxioms.map((axiom, idx) => (
-                            <li key={`${axiom.subExpression}-${idx}`} className="p-2 hover:bg-gray-50 dark:hover:bg-gray-700">
-                              <div className="text-[11px] text-gray-600">General class axiom</div>
-                              <div className="font-medium text-gray-800">
-                                {axiom.definition || 'Anonymous class expression'}
-                              </div>
-                              {axiom.superClassIri && (
-                                <div className="text-[10px] font-mono text-gray-500 break-all">
-                                  {axiom.superClassIri}
+                    <div className="border rounded flex flex-col flex-1 overflow-hidden" style={{ borderColor: 'var(--border)' }}>
+                      <div className="flex items-center justify-between px-3 py-2 border-b flex-shrink-0" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--surface-2)' }}>
+                        <div className="text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>General Class Axioms</div>
+                        <button
+                          onClick={() => {
+                            setEditingAxiomIndex(null);
+                            setAxiomDraft({ definition: '', superClassIri: '' });
+                            setAxiomDialogOpen(true);
+                          }}
+                          className="px-2 py-1 text-[10px] rounded flex items-center gap-1"
+                          style={{ backgroundColor: 'var(--accent)', color: 'var(--on-accent)' }}
+                        >
+                          <Plus size={12} /> Add Axiom
+                        </button>
+                      </div>
+                      <div className="flex-1 overflow-y-auto">
+                        {generalClassAxioms.length === 0 ? (
+                          <div className="p-4 text-center italic text-xs" style={{ color: 'var(--text-tertiary)' }}>No general class axioms detected</div>
+                        ) : (
+                          <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                            {generalClassAxioms.map((axiom, idx) => (
+                              <div 
+                                key={`${axiom.subExpression}-${idx}`} 
+                                className="p-3"
+                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-overlay)'}
+                                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="flex-1">
+                                    <div className="text-[10px] font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>Axiom #{idx + 1}</div>
+                                    <div className="font-medium text-xs mb-1" style={{ color: 'var(--text-primary)' }}>
+                                      {axiom.definition || 'Anonymous class expression'}
+                                    </div>
+                                    {axiom.superClassIri && (
+                                      <div className="text-[10px] font-mono break-all" style={{ color: 'var(--text-tertiary)' }}>
+                                        SubClassOf: {axiom.superClassIri}
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="flex gap-1 flex-shrink-0">
+                                    <button
+                                      onClick={() => handleEditAxiom(idx)}
+                                      className="p-1 rounded"
+                                      style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)' }}
+                                      title="Edit axiom"
+                                    >
+                                      <Edit2 size={12} />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteAxiom(idx)}
+                                      className="p-1 rounded"
+                                      style={{ backgroundColor: 'var(--error-tint)', color: 'var(--error)' }}
+                                      title="Delete axiom"
+                                    >
+                                      <Trash2 size={12} />
+                                    </button>
+                                  </div>
                                 </div>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
               </div>
             </div>
-            <div className="w-80 bg-white p-4 overflow-y-auto space-y-4">
+            <div className="w-80 p-4 overflow-y-auto space-y-4" style={{ backgroundColor: 'var(--bg)' }}>
               {[
                 {
                   title: 'Ontology metrics', data: {
@@ -6778,12 +7418,12 @@ const Dashboard = () => {
               ].map(metricSection => (
                
                 <div key={metricSection.title}>
-                  <h3 className="font-semibold text-sm mb-2 border-b pb-1">{metricSection.title}</h3>
+                  <h3 className="font-semibold text-sm mb-2 border-b pb-1" style={{ color: 'var(--text-primary)', borderColor: 'var(--border)' }}>{metricSection.title}</h3>
                   <div className="space-y-1 text-xs">
                     {Object.entries(metricSection.data).map(([key, value]) => (value ?? null) !== null && (
                       <div key={key} className="flex justify-between items-center">
-                        <span className="text-black">{key}</span>
-                        <span className="font-bold text-black bg-gray-50 px-1.5 py-0.5 rounded">{Number(value).toLocaleString()}</span>
+                        <span style={{ color: 'var(--text-primary)' }}>{key}</span>
+                        <span className="font-bold px-1.5 py-0.5 rounded" style={{ color: 'var(--text-primary)', backgroundColor: 'var(--surface-2)' }}>{Number(value).toLocaleString()}</span>
                       </div>
                     ))}
                   </div>
@@ -7637,12 +8277,24 @@ const Dashboard = () => {
         initialOntologyIri={(metadata as any)?.ontologyIRI || ''}
         initialVersionIri={(metadata as any)?.versionIRI || ''}
       />
-      <PrefixDialog
-        isOpen={showPrefixDialog}
-        onClose={() => setShowPrefixDialog(false)}
-        onSave={handleSavePrefix}
-        initialPrefix={editPrefixData?.prefix}
-        initialIRI={editPrefixData?.namespace}
+      <GCIEditorDialog
+        isOpen={axiomDialogOpen}
+        onClose={() => {
+          setAxiomDialogOpen(false);
+          setEditingAxiomIndex(null);
+          setAxiomDraft({ definition: '', superClassIri: '' });
+        }}
+        onSave={async (subClass, superClass) => {
+          setAxiomDraft({ definition: subClass, superClassIri: superClass });
+          if (editingAxiomIndex !== null) {
+            await handleUpdateAxiom();
+          } else {
+            await handleAddAxiom();
+          }
+        }}
+        initialSubClass={axiomDraft.definition}
+        initialSuperClass={axiomDraft.superClassIri}
+        editMode={editingAxiomIndex !== null}
       />
       <AddAnnotationDialog
         isOpen={isOntologyAnnotationDialogOpen}
@@ -8598,6 +9250,249 @@ const Dashboard = () => {
           onClose={() => setIsHistoryPanelOpen(false)}
         />
       )}
+
+      {/* Prefix Dialog */}
+      {isPrefixDialogOpen && (
+        <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4" style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border)' }}>
+            <div className="px-5 py-3 border-b flex items-center justify-between" style={{ borderColor: 'var(--border)' }}>
+              <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{prefixDialogData.isEdit ? 'Edit Prefix' : 'Add Prefix'}</h3>
+              <button onClick={() => setIsPrefixDialogOpen(false)} className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Prefix</label>
+                <input
+                  type="text"
+                  value={prefixDialogData.prefix}
+                  onChange={(e) => setPrefixDialogData({ ...prefixDialogData, prefix: e.target.value })}
+                  placeholder="owl"
+                  className="w-full px-3 py-2 text-sm border rounded"
+                  style={{ backgroundColor: 'var(--bg)', color: 'var(--text-primary)', borderColor: 'var(--border)' }}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Namespace IRI</label>
+                <input
+                  type="text"
+                  value={prefixDialogData.namespace}
+                  onChange={(e) => setPrefixDialogData({ ...prefixDialogData, namespace: e.target.value })}
+                  placeholder="http://www.w3.org/2002/07/owl#"
+                  className="w-full px-3 py-2 text-sm border rounded"
+                  style={{ backgroundColor: 'var(--bg)', color: 'var(--text-primary)', borderColor: 'var(--border)' }}
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  onClick={() => setIsPrefixDialogOpen(false)}
+                  className="px-3 py-1.5 text-xs rounded"
+                  style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    if (!prefixDialogData.prefix || !prefixDialogData.namespace) {
+                      notificationService.error('Validation Error', 'Both prefix and namespace are required.');
+                      return;
+                    }
+                    handleSavePrefix(
+                      prefixDialogData.prefix,
+                      prefixDialogData.namespace,
+                      prefixDialogData.isEdit,
+                      prefixDialogData.originalPrefix
+                    );
+                  }}
+                  className="px-3 py-1.5 text-xs rounded"
+                  style={{ backgroundColor: 'var(--accent)', color: 'var(--on-accent)' }}
+                >
+                  {prefixDialogData.isEdit ? 'Update Prefix' : 'Add Prefix'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Import Dialog - Protégé Style */}
+      {isImportDialogOpen && (
+        <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4" style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border)' }}>
+            <div className="px-5 py-3 border-b flex items-center justify-between" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--surface-2)' }}>
+              <div className="flex items-center gap-2">
+                <Download size={16} style={{ color: 'var(--accent)' }} />
+                <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{importDialogData.isEdit ? 'Edit Ontology Import' : 'Import Ontology'}</h3>
+              </div>
+              <button onClick={() => setIsImportDialogOpen(false)} className="text-xs hover:opacity-70" style={{ color: 'var(--text-secondary)' }}>
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              {/* Import IRI Section */}
+              <div>
+                <label className="block text-xs font-medium mb-2" style={{ color: 'var(--text-primary)' }}>Import IRI or File Path</label>
+                <div className="text-[11px] mb-3 p-2 rounded flex items-start gap-2" style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text-secondary)' }}>
+                  <Info size={12} className="flex-shrink-0 mt-0.5" style={{ color: 'var(--accent)' }} />
+                  <span>Specify the IRI of the ontology to import. This can be a web URL (http/https) or a local file path.</span>
+                </div>
+                
+                {/* IRI Input */}
+                <div className="space-y-3">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={importDialogData.iri}
+                      onChange={(e) => setImportDialogData({ ...importDialogData, iri: e.target.value })}
+                      placeholder="Enter ontology IRI or file path (e.g., C:\\ontologies\\import.owl)"
+                      className="flex-1 px-3 py-2.5 text-sm border rounded font-mono"
+                      style={{ backgroundColor: 'var(--bg)', color: 'var(--text-primary)', borderColor: 'var(--border)' }}
+                      autoFocus
+                    />
+                  </div>
+
+                  {/* File Picker */}
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-px" style={{ backgroundColor: 'var(--border)' }}></div>
+                    <span className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>OR</span>
+                    <div className="flex-1 h-px" style={{ backgroundColor: 'var(--border)' }}></div>
+                  </div>
+
+                  <label className="flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed rounded cursor-pointer transition-all" 
+                    style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
+                    onMouseEnter={(e) => e.currentTarget.style.borderColor = 'var(--accent)'}
+                    onMouseLeave={(e) => e.currentTarget.style.borderColor = 'var(--border)'}
+                  >
+                    <FileCode size={18} />
+                    <div className="text-xs">
+                      <div className="font-medium" style={{ color: 'var(--text-primary)' }}>Browse for local ontology file</div>
+                      <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-tertiary)' }}>Supports .owl, .rdf, .ttl, .n3, .nt files</div>
+                    </div>
+                    <input
+                      type="file"
+                      accept=".owl,.rdf,.xml,.ttl,.n3,.nt"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          // Use exact file path without file:/// protocol
+                          const filePath = (file as any).path || file.name;
+                          setImportDialogData({ ...importDialogData, iri: filePath });
+                        }
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* Common Ontology IRIs */}
+              <div>
+                <div className="text-xs font-medium mb-2" style={{ color: 'var(--text-primary)' }}>Common Ontology Libraries</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { label: 'OWL', iri: 'http://www.w3.org/2002/07/owl#' },
+                    { label: 'RDFS', iri: 'http://www.w3.org/2000/01/rdf-schema#' },
+                    { label: 'Dublin Core', iri: 'http://purl.org/dc/elements/1.1/' },
+                    { label: 'FOAF', iri: 'http://xmlns.com/foaf/0.1/' },
+                    { label: 'SKOS', iri: 'http://www.w3.org/2004/02/skos/core#' },
+                    { label: 'Schema.org', iri: 'http://schema.org/' },
+                  ].map((ontology) => (
+                    <button
+                      key={ontology.iri}
+                      onClick={() => setImportDialogData({ ...importDialogData, iri: ontology.iri })}
+                      className="px-3 py-2 text-[11px] rounded text-left border transition-colors"
+                      style={{ 
+                        backgroundColor: importDialogData.iri === ontology.iri ? 'var(--accent-tint)' : 'var(--surface-2)', 
+                        color: importDialogData.iri === ontology.iri ? 'var(--accent)' : 'var(--text-primary)',
+                        borderColor: importDialogData.iri === ontology.iri ? 'var(--accent)' : 'var(--border)'
+                      }}
+                    >
+                      <div className="font-medium">{ontology.label}</div>
+                      <div className="text-[9px] font-mono mt-0.5 opacity-70 truncate">{ontology.iri}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex justify-between items-center pt-3 border-t" style={{ borderColor: 'var(--border)' }}>
+                <div className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                  <Info size={10} className="inline mr-1" />
+                  The imported ontology will be added to your imports list
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setIsImportDialogOpen(false)}
+                    className="px-4 py-2 text-xs rounded transition-colors"
+                    style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)' }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!importDialogData.iri.trim()) {
+                        notificationService.error('Validation Error', 'Import IRI is required.');
+                        return;
+                      }
+                      handleSaveImport(
+                        importDialogData.iri,
+                        importDialogData.isEdit,
+                        importDialogData.originalIri
+                      );
+                    }}
+                    className="px-4 py-2 text-xs rounded transition-colors flex items-center gap-1.5"
+                    style={{ backgroundColor: 'var(--accent)', color: 'var(--on-accent)' }}
+                  >
+                    <Download size={12} />
+                    {importDialogData.isEdit ? 'Update Import' : 'Import Ontology'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Collaborative Cursors */}
+      {Array.from(collaboratorCursors.entries()).map(([userId, cursor]) => (
+        <div
+          key={userId}
+          className="fixed pointer-events-none z-[9999] transition-transform duration-100"
+          style={{
+            left: `${cursor.x}px`,
+            top: `${cursor.y}px`,
+            transform: 'translate(-2px, -2px)'
+          }}
+        >
+          {/* Cursor SVG */}
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path
+              d="M5.65376 12.3673L15.7403 2.28069C16.0323 1.98873 16.5081 1.98873 16.8 2.28069L21.7169 7.19763C22.0089 7.48959 22.0089 7.96546 21.7169 8.25742L11.6303 18.3441C11.3384 18.636 10.8625 18.636 10.5706 18.3441L5.65376 13.4271C5.36179 13.1352 5.36179 12.6593 5.65376 12.3673Z"
+              fill={cursor.color}
+              stroke="white"
+              strokeWidth="1.5"
+            />
+            <path
+              d="M7.5 14L10 16.5"
+              stroke="white"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+            />
+          </svg>
+          
+          {/* User name label */}
+          <div
+            className="absolute left-6 top-1 px-2 py-1 rounded text-xs font-medium whitespace-nowrap shadow-lg"
+            style={{
+              backgroundColor: cursor.color,
+              color: 'white'
+            }}
+          >
+            {cursor.userName}
+          </div>
+        </div>
+      ))}
 
     </>
   );

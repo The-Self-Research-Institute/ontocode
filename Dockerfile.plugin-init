@@ -54,7 +54,17 @@ COPY plugins/sparql-query-plugin/ ./
 RUN npm run build
 
 # -----------------------------------------------------------------------------
-# Stage 6: Final runtime - Install plugins to MongoDB
+# Stage 6: Build reasoner-plugin
+# -----------------------------------------------------------------------------
+FROM node:21-alpine AS build-reasoner
+WORKDIR /build
+COPY plugins/reasoner-plugin/package*.json ./
+RUN npm install
+COPY plugins/reasoner-plugin/ ./
+RUN npm run build
+
+# -----------------------------------------------------------------------------
+# Stage 7: Final runtime - Install plugins to MongoDB
 # -----------------------------------------------------------------------------
 FROM node:21-alpine
 WORKDIR /app
@@ -75,6 +85,7 @@ COPY --from=build-fuzzy-ontology /build/dist/index.js ./plugins/fuzzy-ontology-p
 COPY --from=build-graph-view /build/dist/index.js ./plugins/graph-view-plugin/dist/index.js
 COPY --from=build-swrl-editor /build/dist/index.js ./plugins/swrl-editor-plugin/dist/index.js
 COPY --from=build-sparql-query /build/dist/index.js ./plugins/sparql-query-plugin/dist/index.js
+COPY --from=build-reasoner /build/dist/index.js ./plugins/reasoner-plugin/dist/index.js
 
 # Wait for MongoDB, then install plugins using unified script
 CMD ["sh", "-c", "echo 'Waiting for MongoDB to be ready...' && sleep 10 && echo 'Installing plugins...' && node manage-plugins.js install && echo 'Plugin initialization complete!'"]

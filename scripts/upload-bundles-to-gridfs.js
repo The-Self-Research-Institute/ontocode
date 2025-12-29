@@ -12,9 +12,24 @@ const { MongoClient, GridFSBucket } = require('mongodb');
 const fs = require('fs');
 const path = require('path');
 
+// Load environment variables from root .env if present
+try {
+  const dotenvPath = path.resolve(__dirname, '..', '.env');
+  if (fs.existsSync(dotenvPath)) {
+    require('dotenv').config({ path: dotenvPath });
+  } else {
+    require('dotenv').config();
+  }
+} catch (error) {
+  console.warn('⚠ Could not load .env file:', error.message);
+}
+
 // Configuration
-const MONGO_URL = 'mongodb://localhost:27017';
-const DB_NAME = 'ontology';
+const MONGO_URL = process.env.MONGO_URL || 'mongodb://localhost:27017';
+const MONGO_USERNAME = process.env.MONGO_USERNAME || process.env.MONGO_USER || "admin";
+const MONGO_PASSWORD = process.env.MONGO_PASSWORD || process.env.MONGO_PASS || "changeme123";
+const MONGO_AUTH_SOURCE = process.env.MONGO_AUTH_SOURCE || 'admin';
+const DB_NAME = process.env.MONGO_DB_NAME || 'ontology';
 const PLUGINS_COLLECTION = 'plugins';
 const PLUGIN_VERSIONS_COLLECTION = 'plugin_versions';
 
@@ -34,7 +49,7 @@ const PLUGIN_BUNDLES = [
   },
   {
     pluginId: 'swrl-editor-plugin',
-    version: '1.1.0',
+    version: '1.1.2',
     bundlePath: path.join(PLUGINS_DIR, 'swrl-editor-plugin', 'dist', 'index.js')
   },
   {
@@ -155,11 +170,39 @@ async function main() {
   console.log('UPLOAD PLUGIN BUNDLES TO GRIDFS');
   console.log('=============================================================================\n');
 
-  const client = new MongoClient(MONGO_URL);
+  const mongoOptions = {};
+
+  if (MONGO_USERNAME && MONGO_PASSWORD) {
+    mongoOptions.auth = {
+      username: MONGO_USERNAME,
+      password: MONGO_PASSWORD
+    };
+    mongoOptions.authSource = MONGO_AUTH_SOURCE;
+  }
+
+  let client = new MongoClient(MONGO_URL, mongoOptions);
   
   try {
     await client.connect();
     console.log('✅ Connected to MongoDB');
+    if (MONGO_USERNAME) {
+      console.log(`   • Authenticated as ${MONGO_USERNAME} (authSource: ${mongoOptions.authSource})`);
+    } else {
+      console.log('   • No MongoDB credentials provided (running unauthenticated connection)');
+    }
+  } catch (error) {
+    // If authentication fails, try without credentials
+    if (error.message.includes('Authentication failed') && MONGO_USERNAME) {
+      console.log('⚠️  Authentication failed, trying without credentials...');
+      client = new MongoClient(MONGO_URL, {});
+      await client.connect();
+      console.log('✅ Connected to MongoDB (no authentication)');
+    } else {
+      throw error;
+    }
+  }
+  
+  try {
 
     const db = client.db(DB_NAME);
     const bucket = new GridFSBucket(db, { bucketName: 'plugins' }); // Match Spring GridFsTemplate default config
@@ -199,6 +242,9 @@ async function main() {
     if (error.message.includes('ECONNREFUSED')) {
       console.error('\n⚠️  MongoDB is not running!');
       console.error('   Please start MongoDB first');
+    } else if (error.message.toLowerCase().includes('requires authentication')) {
+      console.error('\n⚠️  Authentication required. Set MONGO_USERNAME and MONGO_PASSWORD environment variables.');
+      console.error('   Optional: MONGO_AUTH_SOURCE (defaults to "admin"), MONGO_DB_NAME, MONGO_URL');
     }
     
     process.exit(1);

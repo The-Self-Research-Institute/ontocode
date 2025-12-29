@@ -28,7 +28,7 @@ REM Run the plugin initialization service
 echo [96mStarting plugin initialization service...[0m
 echo.
 
-docker compose -f docker-compose.yml run --profile init plugin-init
+docker compose -f docker-compose.yml run --rm plugin-init
 
 if %ERRORLEVEL% EQU 0 (
     echo.
