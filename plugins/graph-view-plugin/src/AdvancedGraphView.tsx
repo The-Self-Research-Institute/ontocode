@@ -464,11 +464,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const [selectedNodes, setSelectedNodes] = useState<Set<string>>(new Set());
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
-  const [showPropertyPanel, setShowPropertyPanel] = useState(true);
+  const [showPropertyPanel, setShowPropertyPanel] = useState(true); // Show sidebar by default on the right
   const [selectedNodeInfo, setSelectedNodeInfo] = useState<OntologyNode | null>(null);
   
   // Visualization Type (combines both view mode and visualization type)
-  const [visualizationType, setVisualizationType] = useState<VisualizationType>('vowl');
+  const [visualizationType, setVisualizationType] = useState<VisualizationType>('force');
   const [showLegend, setShowLegend] = useState(true);
   
   // WebVOWL Filters State (integrated into main sidebar)
@@ -3738,7 +3738,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         </div>
       </div>
 
-        {/* Graph View Sidebar - Second Column */}
+        {/* Graph View Sidebar - Second Column (Right Side) */}
         {showPropertyPanel && (
           <GraphViewSidebar
             nodes={allNodes}

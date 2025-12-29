@@ -49,7 +49,7 @@ const PLUGIN_BUNDLES = [
   },
   {
     pluginId: 'swrl-editor-plugin',
-    version: '1.1.0',
+    version: '1.1.2',
     bundlePath: path.join(PLUGINS_DIR, 'swrl-editor-plugin', 'dist', 'index.js')
   },
   {
@@ -180,7 +180,7 @@ async function main() {
     mongoOptions.authSource = MONGO_AUTH_SOURCE;
   }
 
-  const client = new MongoClient(MONGO_URL, mongoOptions);
+  let client = new MongoClient(MONGO_URL, mongoOptions);
   
   try {
     await client.connect();
@@ -190,6 +190,19 @@ async function main() {
     } else {
       console.log('   • No MongoDB credentials provided (running unauthenticated connection)');
     }
+  } catch (error) {
+    // If authentication fails, try without credentials
+    if (error.message.includes('Authentication failed') && MONGO_USERNAME) {
+      console.log('⚠️  Authentication failed, trying without credentials...');
+      client = new MongoClient(MONGO_URL, {});
+      await client.connect();
+      console.log('✅ Connected to MongoDB (no authentication)');
+    } else {
+      throw error;
+    }
+  }
+  
+  try {
 
     const db = client.db(DB_NAME);
     const bucket = new GridFSBucket(db, { bucketName: 'plugins' }); // Match Spring GridFsTemplate default config
