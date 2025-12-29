@@ -223,17 +223,15 @@ import { GraphView } from '@ontocode/graph-view-plugin';
 <GraphView projectId="my-ontology-id" />
 ```
 
-### Reasoner Console (Built-in)
+### Reasoner Plugin
 ```tsx
-import Dashboard from 'ontology-vscode-extension/webview-src/components/Dashboard';
+import { ReasonerPlugin } from '@ontocode/reasoner-plugin';
 
-<Dashboard
+<ReasonerPlugin 
   projectId="my-ontology-id"
-  initialTab="Reasoner"
-  /* reasoner controls are built-in now */
-/>;
+  apiBaseUrl="http://localhost:8080/api"
+/>
 ```
-The desktop-style reasoner controls no longer require a plugin—open the Reasoner tab inside the Dashboard to run classifications, see unsats, and inspect inferred hierarchies.
 
 ---
 
