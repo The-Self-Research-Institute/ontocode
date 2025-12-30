@@ -27,6 +27,7 @@ const ManchesterSyntaxEditor: React.FC<ManchesterSyntaxEditorProps> = ({ initial
         value={value}
         onChange={(e) => setValue(e.target.value)}
         placeholder="Enter Manchester syntax... e.g., hasTopping some MozzarellaTopping"
+        data-editing="axiom"
         autoFocus
       />
       <div className="flex justify-end gap-2 mt-2">
