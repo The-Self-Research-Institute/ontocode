@@ -6,6 +6,7 @@ export { applyLayeredLayout } from './LayeredLayout';
 export { applyTreeLayout } from './TreeLayout';
 export { prepareMatrixData, generateMatrixVisualization } from './MatrixLayout';
 export { applyOntoGraphLayout, refineOntoGraphLayout } from './OntoGraphLayout';
+export { applyGridLayout } from './GridLayout';
 
 export type {
   HierarchicalLayoutOptions,

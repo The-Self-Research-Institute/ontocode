@@ -16,8 +16,8 @@ import {
   Zap,
   FileText,
   Settings,
-  ChevronDown,
-  ChevronRight,
+  Plus,
+  Minus,
   Loader,
   RefreshCw,
   Download,
@@ -102,17 +102,18 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
       const startTime = Date.now();
       let endpoint = '';
       let method = 'POST';
+      const encodedProjectId = encodeURIComponent(projectId);
       
       // Map task to backend endpoint
       switch (task) {
         case 'consistency':
-          endpoint = `/plugin-service/api/reasoner/${projectId}/consistency`;
+          endpoint = `/plugin-service/api/reasoner/${encodedProjectId}/consistency`;
           break;
         case 'classification':
-          endpoint = `/plugin-service/api/reasoner/${projectId}/classify`;
+          endpoint = `/plugin-service/api/reasoner/${encodedProjectId}/classify`;
           break;
         case 'realization':
-          endpoint = `/plugin-service/api/reasoner/${projectId}/realize`;
+          endpoint = `/plugin-service/api/reasoner/${encodedProjectId}/realize`;
           break;
         default:
           throw new Error(`Unknown task: ${task}`);
@@ -339,7 +340,7 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
         {/* Configuration Section */}
         <div style={styles.section}>
           <div style={styles.sectionHeader} onClick={() => toggleSection('config')}>
-            {expandedSections.config ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            {expandedSections.config ? <Minus size={16} /> : <Plus size={16} />}
             <Settings size={16} />
             <span style={styles.sectionTitle}>Configuration</span>
           </div>
@@ -403,7 +404,7 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
         {/* About HermiT / Reasoner Info Section */}
         <div style={styles.section}>
           <div style={styles.sectionHeader} onClick={() => toggleSection('help')}>
-            {expandedSections.help ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            {expandedSections.help ? <Minus size={16} /> : <Plus size={16} />}
             <Info size={16} />
             <span style={styles.sectionTitle}>About OWL Reasoning</span>
           </div>
@@ -487,7 +488,7 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
         {/* Reasoning Tasks Section */}
         <div style={styles.section}>
           <div style={styles.sectionHeader} onClick={() => toggleSection('tasks')}>
-            {expandedSections.tasks ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            {expandedSections.tasks ? <Minus size={16} /> : <Plus size={16} />}
             <Play size={16} />
             <span style={styles.sectionTitle}>Reasoning Tasks</span>
           </div>
@@ -546,7 +547,7 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
         {/* Results Section */}
         <div style={styles.section}>
           <div style={styles.sectionHeader} onClick={() => toggleSection('results')}>
-            {expandedSections.results ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            {expandedSections.results ? <Minus size={16} /> : <Plus size={16} />}
             <FileText size={16} />
             <span style={styles.sectionTitle}>Results</span>
           </div>

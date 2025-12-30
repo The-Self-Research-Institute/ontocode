@@ -374,17 +374,6 @@ const PropertyEditor: React.FC<{
                     Annotations ({annotationCount})
                 </button>
                 <button 
-                    onClick={() => setActiveTab('usage')}
-                    className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors ${
-                        activeTab === 'usage' 
-                            ? `border-${themeColor}-600 text-${themeColor}-700 bg-white` 
-                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100'
-                    }`}
-                    style={activeTab === 'usage' ? { borderColor: isObjectProperty ? '#2563eb' : isDataProperty ? '#16a34a' : '#ea580c' } : {}}
-                >
-                    Usage
-                </button>
-                <button 
                     onClick={() => setActiveTab('description')}
                     className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors ${
                         activeTab === 'description' 

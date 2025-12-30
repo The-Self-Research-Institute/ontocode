@@ -24,6 +24,7 @@ import { ProjectSelector } from './ProjectSelector';
 import CollaborationPanel, { CollaborationPanelRef } from './CollaborationPanel';
 import HistoryPanel from './HistoryPanel';
 import ToastNotification from './ToastNotification';
+import { CollaborativeCursors } from './CollaborativeCursor';
 import ShareDialog from './ShareDialog';
 import ThemeSettings from './ThemeSettings';
 // ImportProgressToast removed per user request
@@ -753,12 +754,12 @@ const TopMenuBar = ({
               className={`ontocode-top-menu-button cursor-pointer disabled:cursor-not-allowed px-3 py-1 rounded-sm transition-colors ${openMenu === item ? 'is-open' : ''}`}
             >
               {item}
-              {item === 'Reasoner' && isReasonerRunning && (
+              {/* {item === 'Reasoner' && isReasonerRunning && (
                 <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
               )}
               {item === 'Reasoner' && !isReasonerRunning && (
                 <span className="text-[10px] text-gray-500">({selectedReasoner})</span>
-              )}
+              )} */}
             </button>
             {openMenu === item && (
               <div className={`ontocode-top-menu-dropdown absolute left-0 mt-1 ${item === 'File' ? 'w-[360px]' : 'w-48'} bg-theme-surface border rounded-lg shadow-xl z-20 overflow-hidden`} style={{ borderColor: 'var(--color-border)' }}>
@@ -779,134 +780,136 @@ const TopMenuBar = ({
                   <div className="py-1">
                     <div className="px-3 py-1 text-gray-400 text-xs">Appearance</div>
                   </div>
-                ) : item === "Reasoner" ? (
-                  <div className="py-1">
-                    <button
-                      onClick={async () => {
-                        setOpenMenu(null);
-                        if (onStartReasoner) await onStartReasoner();
-                      }}
-                      className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 ${
-                        isReasonerRunning || isReasonerLoading 
-                          ? 'text-gray-400 cursor-not-allowed' 
-                          : 'hover:bg-gray-100'
-                      }`}
-                      disabled={isReasonerRunning || isReasonerLoading}
-                    >
-                      {isReasonerLoading ? <Loader2 size={12} className="animate-spin" /> : null}
-                      Start reasoner
-                    </button>
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
-                        if (onCheckConsistency) onCheckConsistency();
-                      }}
-                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
-                      disabled={isReasonerLoading || isConsistencyLoading}
-                    >
-                      {isConsistencyLoading ? <Loader2 size={12} className="animate-spin" /> : null}
-                      Check consistency
-                    </button>
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
-                        if (onToggleReasonerSync) onToggleReasonerSync();
-                      }}
-                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
-                    >
-                      <input type="checkbox" checked={isReasonerSynced} readOnly className="pointer-events-none" />
-                      Synchronize reasoner
-                    </button>
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
-                        if (onStopReasoner) onStopReasoner();
-                      }}
-                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
-                      disabled={!isReasonerRunning}
-                    >
-                      Stop reasoner
-                    </button>
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
-                        if (onExplainInconsistency) onExplainInconsistency();
-                      }}
-                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
-                      disabled={isReasonerLoading}
-                    >
-                      Explain inconsistent ontology
-                    </button>
-                    <div className="border-t border-gray-200 my-1"></div>
-                    <button
-                      onClick={() => {
-                        // Configure reasoner preferences
-                        setOpenMenu(null);
-                        if (onOpenReasonerSettings) onOpenReasonerSettings();
-                      }}
-                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
-                    >
-                      Configure...
-                    </button>
-                    <div className="border-t border-gray-200 my-1"></div>
-                    <div className="px-4 py-1 text-[11px] text-gray-500 font-semibold">Select Reasoner:</div>
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
-                        if (onSelectReasoner) onSelectReasoner('HermiT');
-                      }}
-                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2 ${
-                        selectedReasoner === 'HermiT' ? 'bg-blue-50 font-semibold' : ''
-                      }`}
-                    >
-                      {selectedReasoner === 'HermiT' ? '• ' : '  '}HermiT 1.4.5.519
-                    </button>
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
-                        if (onSelectReasoner) onSelectReasoner('ELK');
-                      }}
-                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2 ${
-                        selectedReasoner === 'ELK' ? 'bg-blue-50 font-semibold' : ''
-                      }`}
-                    >
-                      {selectedReasoner === 'ELK' ? '• ' : '  '}ELK 0.4.3
-                    </button>
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
-                        if (onSelectReasoner) onSelectReasoner('Pellet');
-                      }}
-                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
-                        selectedReasoner === 'Pellet' ? 'bg-blue-50 font-semibold' : ''
-                      }`}
-                    >
-                      {selectedReasoner === 'Pellet' ? '• ' : '  '}Pellet
-                    </button>
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
-                        if (onSelectReasoner) onSelectReasoner('Openllet');
-                      }}
-                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
-                        selectedReasoner === 'Openllet' ? 'bg-blue-50 font-semibold' : ''
-                      }`}
-                    >
-                      {selectedReasoner === 'Openllet' ? '• ' : '  '}Openllet 2.6.5
-                    </button>
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
-                        if (onSelectReasoner) onSelectReasoner('Structural');
-                      }}
-                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
-                        selectedReasoner === 'Structural' ? 'bg-blue-50 font-semibold' : ''
-                      }`}
-                    >
-                      {selectedReasoner === 'Structural' ? '• ' : '  '}Structural Reasoner
-                    </button>
-                  </div>
-                ) : item === "File" ? (
+                ) 
+                // : item === "Reasoner" ? (
+                  // <div className="py-1">
+                  //   <button
+                  //     onClick={async () => {
+                  //       setOpenMenu(null);
+                  //       if (onStartReasoner) await onStartReasoner();
+                  //     }}
+                  //     className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 ${
+                  //       isReasonerRunning || isReasonerLoading 
+                  //         ? 'text-gray-400 cursor-not-allowed' 
+                  //         : 'hover:bg-gray-100'
+                  //     }`}
+                  //     disabled={isReasonerRunning || isReasonerLoading}
+                  //   >
+                  //     {isReasonerLoading ? <Loader2 size={12} className="animate-spin" /> : null}
+                  //     Start reasoner
+                  //   </button>
+                  //   <button
+                  //     onClick={() => {
+                  //       setOpenMenu(null);
+                  //       if (onCheckConsistency) onCheckConsistency();
+                  //     }}
+                  //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                  //     disabled={isReasonerLoading || isConsistencyLoading}
+                  //   >
+                  //     {isConsistencyLoading ? <Loader2 size={12} className="animate-spin" /> : null}
+                  //     Check consistency
+                  //   </button>
+                  //   <button
+                  //     onClick={() => {
+                  //       setOpenMenu(null);
+                  //       if (onToggleReasonerSync) onToggleReasonerSync();
+                  //     }}
+                  //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                  //   >
+                  //     <input type="checkbox" checked={isReasonerSynced} readOnly className="pointer-events-none" />
+                  //     Synchronize reasoner
+                  //   </button>
+                  //   <button
+                  //     onClick={() => {
+                  //       setOpenMenu(null);
+                  //       if (onStopReasoner) onStopReasoner();
+                  //     }}
+                  //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
+                  //     disabled={!isReasonerRunning}
+                  //   >
+                  //     Stop reasoner
+                  //   </button>
+                  //   <button
+                  //     onClick={() => {
+                  //       setOpenMenu(null);
+                  //       if (onExplainInconsistency) onExplainInconsistency();
+                  //     }}
+                  //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                  //     disabled={isReasonerLoading}
+                  //   >
+                  //     Explain inconsistent ontology
+                  //   </button>
+                  //   <div className="border-t border-gray-200 my-1"></div>
+                  //   <button
+                  //     onClick={() => {
+                  //       // Configure reasoner preferences
+                  //       setOpenMenu(null);
+                  //       if (onOpenReasonerSettings) onOpenReasonerSettings();
+                  //     }}
+                  //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
+                  //   >
+                  //     Configure...
+                  //   </button>
+                  //   <div className="border-t border-gray-200 my-1"></div>
+                  //   <div className="px-4 py-1 text-[11px] text-gray-500 font-semibold">Select Reasoner:</div>
+                  //   <button
+                  //     onClick={() => {
+                  //       setOpenMenu(null);
+                  //       if (onSelectReasoner) onSelectReasoner('HermiT');
+                  //     }}
+                  //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2 ${
+                  //       selectedReasoner === 'HermiT' ? 'bg-blue-50 font-semibold' : ''
+                  //     }`}
+                  //   >
+                  //     {selectedReasoner === 'HermiT' ? '• ' : '  '}HermiT 1.4.5.519
+                  //   </button>
+                  //   <button
+                  //     onClick={() => {
+                  //       setOpenMenu(null);
+                  //       if (onSelectReasoner) onSelectReasoner('ELK');
+                  //     }}
+                  //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2 ${
+                  //       selectedReasoner === 'ELK' ? 'bg-blue-50 font-semibold' : ''
+                  //     }`}
+                  //   >
+                  //     {selectedReasoner === 'ELK' ? '• ' : '  '}ELK 0.4.3
+                  //   </button>
+                  //   <button
+                  //     onClick={() => {
+                  //       setOpenMenu(null);
+                  //       if (onSelectReasoner) onSelectReasoner('Pellet');
+                  //     }}
+                  //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
+                  //       selectedReasoner === 'Pellet' ? 'bg-blue-50 font-semibold' : ''
+                  //     }`}
+                  //   >
+                  //     {selectedReasoner === 'Pellet' ? '• ' : '  '}Pellet
+                  //   </button>
+                  //   <button
+                  //     onClick={() => {
+                  //       setOpenMenu(null);
+                  //       if (onSelectReasoner) onSelectReasoner('Openllet');
+                  //     }}
+                  //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
+                  //       selectedReasoner === 'Openllet' ? 'bg-blue-50 font-semibold' : ''
+                  //     }`}
+                  //   >
+                  //     {selectedReasoner === 'Openllet' ? '• ' : '  '}Openllet 2.6.5
+                  //   </button>
+                  //   <button
+                  //     onClick={() => {
+                  //       setOpenMenu(null);
+                  //       if (onSelectReasoner) onSelectReasoner('Structural');
+                  //     }}
+                  //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
+                  //       selectedReasoner === 'Structural' ? 'bg-blue-50 font-semibold' : ''
+                  //     }`}
+                  //   >
+                  //     {selectedReasoner === 'Structural' ? '• ' : '  '}Structural Reasoner
+                  //   </button>
+                  // </div>
+                // ) 
+                : item === "File" ? (
                   <div className="flex flex-col py-1">
                     <div className="px-4 py-2 text-[11px] uppercase tracking-wide text-gray-500">File</div>
                     <button
@@ -1976,13 +1979,15 @@ const Dashboard = () => {
       throw new Error('No ontology loaded');
     }
 
+    const encodedProjectId = encodeURIComponent(projectId);
+
     const [classificationResponse, statsResponse] = await Promise.all([
       apiClient.post(
-        `/plugin-service/api/reasoner/${projectId}/classify`,
+        `/plugin-service/api/reasoner/${encodedProjectId}/classify`,
         { reasonerType }
       ),
       apiClient.get(
-        `/plugin-service/api/reasoner/${projectId}/stats?reasonerType=${reasonerType}`
+        `/plugin-service/api/reasoner/${encodedProjectId}/stats?reasonerType=${reasonerType}`
       ).catch(error => {
         console.warn('[Dashboard] Reasoner stats request failed:', error);
         return null;
@@ -2213,8 +2218,9 @@ const Dashboard = () => {
     try {
       setIsConsistencyLoading(true);
       const reasonerType = normalizeReasonerType(selectedReasoner);
+      const encodedProjectId = encodeURIComponent(projectId);
       const resp = await apiClient.post(
-        `/plugin-service/api/reasoner/${projectId}/consistency`,
+        `/plugin-service/api/reasoner/${encodedProjectId}/consistency`,
         { reasonerType }
       );
       const data = extractResponseData(resp);
@@ -2244,8 +2250,9 @@ const Dashboard = () => {
     try {
       setExplanationState({ open: true, loading: true, data: null, error: null });
       const reasonerType = normalizeReasonerType(selectedReasoner);
+      const encodedProjectId = encodeURIComponent(projectId);
       const resp = await apiClient.post(
-        `/plugin-service/api/reasoner/${projectId}/explain-inconsistency`,
+        `/plugin-service/api/reasoner/${encodedProjectId}/explain-inconsistency`,
         { reasonerType }
       );
       const data = extractResponseData(resp);
@@ -2480,9 +2487,9 @@ const Dashboard = () => {
         apiClient.get<any>(`/api/ontology/individuals/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/annotation-properties/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/datatypes/${currentProjectId}`),
-        apiClient.get<any>(`/api/ontology/ontology/imports/${currentProjectId}`),
+        apiClient.get<any>(`/api/ontology/metadata/${currentProjectId}/imports`),
         apiClient.get<any>(`/api/ontology/ontology/gci/${currentProjectId}?limit=200`),
-        apiClient.get<any>(`/api/ontology/ontology/annotations/${currentProjectId}`),
+        apiClient.get<any>(`/api/ontology/metadata/${currentProjectId}/annotations`),
         apiClient.get<any>(`/api/ontology/ontology/prefixes/${currentProjectId}`)
       ]);
       
@@ -2547,15 +2554,31 @@ const Dashboard = () => {
 
       const importsPayload = importsRes?.data || importsRes;
       const importsData = importsPayload?.data || importsPayload || [];
-      setOntologyImports(Array.isArray(importsData) ? importsData : []);
+      const validImportsData = Array.isArray(importsData) ? importsData : [];
+      console.log('[Dashboard] 📥 Initial imports loaded:', validImportsData);
+      console.log('[Dashboard] Local imports found:', validImportsData.filter((imp: string) => !imp.startsWith('http://') && !imp.startsWith('https://')));
+      setOntologyImports(validImportsData);
 
       const gciPayload = gciRes?.data || gciRes;
       const gciData = gciPayload?.data || gciPayload || [];
-      setGeneralClassAxioms(Array.isArray(gciData) ? gciData : []);
+      // Map backend fields to frontend expected structure
+      const mappedGciData = Array.isArray(gciData) ? gciData.map((axiom: any) => ({
+        value: axiom.value,
+        subClass: axiom.subClass || '',
+        superClass: axiom.superClass || '',
+        // Keep legacy field names for compatibility
+        definition: axiom.subClass || axiom.definition || '',
+        superClassIri: axiom.superClass || axiom.superClassIri || '',
+        subExpression: axiom.subClass || axiom.subExpression || ''
+      })) : [];
+      setGeneralClassAxioms(mappedGciData);
 
       const ontologyAnnotationsPayload = ontologyAnnotationsRes?.data || ontologyAnnotationsRes;
       const ontologyAnnotationsData = ontologyAnnotationsPayload?.data || ontologyAnnotationsPayload || [];
-      setOntologyAnnotations(Array.isArray(ontologyAnnotationsData) ? ontologyAnnotationsData : []);
+      // Filter out invalid annotations and ensure all have required fields
+      const validAnnotations = (Array.isArray(ontologyAnnotationsData) ? ontologyAnnotationsData : [])
+        .filter(ann => ann && ann.propertyIri && ann.value !== undefined);
+      setOntologyAnnotations(validAnnotations);
 
       const prefixesPayload = prefixesRes?.data || prefixesRes;
       const prefixesData = prefixesPayload?.data || prefixesPayload || {};
@@ -2908,10 +2931,25 @@ const Dashboard = () => {
   const refreshOntologyAnnotations = async () => {
     if (!projectId) return;
     try {
-      const response = await apiClient.get<any>(`/api/ontology/ontology/annotations/${projectId}`);
+      console.log('[Dashboard] 🔄 Refreshing ontology annotations for project:', projectId);
+      const response = await apiClient.get<any>(`/api/ontology/metadata/${projectId}/annotations`);
       const payload = response?.data || response;
       const data = payload?.data || payload || [];
-      setOntologyAnnotations(Array.isArray(data) ? data : []);
+      console.log('[Dashboard] 📥 Raw annotations data received:', data);
+      // Filter out invalid annotations - backend returns propertyIri
+      const validAnnotations = (Array.isArray(data) ? data : [])
+        .filter(ann => ann && ann.propertyIri && ann.value !== undefined);
+      console.log('[Dashboard] ✅ Valid annotations after filtering:', validAnnotations);
+      
+      // Only update if we got data, or if explicitly clearing (validAnnotations.length >= 0 always true, so always update)
+      // But if backend returns empty and we have optimistic updates, keep them for a bit
+      setOntologyAnnotations(prev => {
+        if (validAnnotations.length === 0 && prev.length > 0) {
+          console.log('[Dashboard] ⚠️ Backend returned empty annotations, keeping optimistic updates');
+          return prev;
+        }
+        return validAnnotations;
+      });
     } catch (error) {
       console.error('[Dashboard] Failed to refresh ontology annotations:', error);
     }
@@ -2920,10 +2958,21 @@ const Dashboard = () => {
   const refreshOntologyImports = async () => {
     if (!projectId) return;
     try {
-      const response = await apiClient.get<any>(`/api/ontology/ontology/imports/${projectId}`);
+      const response = await apiClient.get<any>(`/api/ontology/metadata/${projectId}/imports`);
       const payload = response?.data || response;
       const data = payload?.data || payload || [];
-      setOntologyImports(Array.isArray(data) ? data : []);
+      const validImports = Array.isArray(data) ? data : [];
+      console.log('[Dashboard] 📥 Loaded imports from backend:', validImports);
+      console.log('[Dashboard] Local imports:', validImports.filter((imp: string) => !imp.startsWith('http://') && !imp.startsWith('https://')));
+      
+      // Don't overwrite optimistic updates with empty backend response
+      setOntologyImports(prev => {
+        if (validImports.length === 0 && prev.length > 0) {
+          console.log('[Dashboard] ⚠️ Backend returned empty imports, keeping optimistic updates');
+          return prev;
+        }
+        return validImports;
+      });
     } catch (error) {
       console.error('[Dashboard] Failed to refresh ontology imports:', error);
     }
@@ -2967,31 +3016,91 @@ const Dashboard = () => {
     }
   };
 
-  const handleAddOntologyAnnotation = async (propertyIri: string, value: string, datatype?: string) => {
+  const handleAddOntologyAnnotation = async (propertyIri: string, value: string, datatype?: string, language?: string) => {
     if (!projectId) return;
     try {
-      await apiClient.post(`/api/ontology/ontology/annotations/${projectId}`, {
+      const payload: any = {
+        propertyIri,
+        value
+      };
+      
+      // Add language if provided
+      if (language && language.trim()) {
+        payload.language = language.trim();
+      }
+      // Add datatype if provided (and no language)
+      else if (datatype && datatype.trim()) {
+        // If datatype looks like a language tag, send as language
+        if (/^[a-z]{2}(-[A-Z]{2})?$/.test(datatype)) {
+          payload.language = datatype;
+        } else {
+          // Otherwise it's a datatype IRI
+          payload.datatype = datatype;
+        }
+      }
+      
+      console.log('[Dashboard] Adding annotation with payload:', payload);
+      await apiClient.post(`/api/ontology/metadata/${projectId}/annotations`, payload);
+      
+      // Immediate optimistic UI update
+      const newAnnotation: any = {
         propertyIri,
         value,
-        datatypeIri: resolveDatatypeIri(datatype)
-      });
-      await refreshOntologyAnnotations();
+        datatype: payload.datatype || datatype,
+        language: payload.language || language
+      };
+      setOntologyAnnotations(prev => [...prev, newAnnotation]);
+      console.log('[Dashboard] ✅ Annotation added, optimistically updated UI');
+      
+      // Delay refresh to allow backend to process
+      setTimeout(() => {
+        refreshOntologyAnnotations();
+      }, 300);
+      notificationService.success('Annotation Added', 'Ontology annotation added successfully.');
     } catch (error) {
       console.error('[Dashboard] Failed to add ontology annotation:', error);
       notificationService.error('Annotation Failed', 'Could not add ontology annotation.');
     }
   };
 
-  const handleUpdateOntologyAnnotation = async (propertyIri: string, oldValue: string, newValue: string, datatype?: string) => {
+  const handleUpdateOntologyAnnotation = async (propertyIri: string, oldValue: string, newValue: string, oldDatatype?: string, newDatatype?: string, newLanguage?: string) => {
     if (!projectId) return;
     try {
-      await apiClient.put(`/api/ontology/ontology/annotations/${projectId}`, {
+      const payload: any = {
         propertyIri,
         oldValue,
-        newValue,
-        datatypeIri: resolveDatatypeIri(datatype)
-      });
+        newValue
+      };
+      
+      // Add language if provided
+      if (newLanguage && newLanguage.trim()) {
+        payload.language = newLanguage.trim();
+      }
+      // Add datatype if provided (and no language)
+      else if (newDatatype) {
+        if (/^[a-z]{2}(-[A-Z]{2})?$/.test(newDatatype)) {
+          payload.language = newDatatype;
+        } else {
+          payload.datatype = newDatatype;
+        }
+      }
+      
+      console.log('[Dashboard] Updating annotation with payload:', payload);
+      await apiClient.put(`/api/ontology/metadata/${projectId}/annotations`, payload);
+      
+      // Immediate optimistic UI update
+      setOntologyAnnotations(prev => 
+        prev.map(ann => 
+          (ann.propertyIri === propertyIri && ann.value === oldValue && ann.datatype === oldDatatype)
+            ? { ...ann, value: newValue, datatype: payload.datatype || newDatatype, language: payload.language || newLanguage }
+            : ann
+        )
+      );
+      console.log('[Dashboard] ✅ Annotation updated, optimistically updated UI');
+      
+      // Then refresh from server
       await refreshOntologyAnnotations();
+      notificationService.success('Annotation Updated', 'Ontology annotation updated successfully.');
     } catch (error) {
       console.error('[Dashboard] Failed to update ontology annotation:', error);
       notificationService.error('Annotation Failed', 'Could not update ontology annotation.');
@@ -3001,24 +3110,55 @@ const Dashboard = () => {
   const handleDeleteOntologyAnnotation = async (propertyIri: string, value: string, datatype?: string) => {
     if (!projectId) return;
     try {
-      await apiClient.delete(`/api/ontology/ontology/annotations/${projectId}`, {
-        params: {
-          propertyIri,
-          value,
-          datatypeIri: resolveDatatypeIri(datatype)
+      // Build query string with URL-encoded parameters
+      let queryString = `propertyIri=${encodeURIComponent(propertyIri)}&value=${encodeURIComponent(value)}`;
+      
+      // Backend expects 'language' parameter for language tags
+      if (datatype) {
+        // If it's a language tag, send as language
+        if (/^[a-z]{2}(-[A-Z]{2})?$/.test(datatype)) {
+          queryString += `&language=${encodeURIComponent(datatype)}`;
+        } else {
+          // Otherwise send as datatype (though backend DELETE doesn't use it currently)
+          queryString += `&datatype=${encodeURIComponent(datatype)}`;
         }
-      });
-      await refreshOntologyAnnotations();
-    } catch (error) {
+      }
+      
+      await apiClient.delete(`/api/ontology/metadata/${projectId}/annotations?${queryString}`);
+      
+      // Immediate UI update
+      setOntologyAnnotations(prev => 
+        prev.filter(ann => 
+          !(ann.propertyIri === propertyIri && 
+            ann.value === value && 
+            ann.datatype === datatype)
+        )
+      );
+      
+      // Delayed refresh
+      setTimeout(() => {
+        refreshOntologyAnnotations();
+      }, 100);
+      
+      notificationService.success('Annotation Deleted', 'Ontology annotation deleted successfully.');
+    } catch (error: any) {
       console.error('[Dashboard] Failed to delete ontology annotation:', error);
-      notificationService.error('Annotation Failed', 'Could not delete ontology annotation.');
+      console.error('[Dashboard] Error details:', {
+        message: error?.message,
+        status: error?.status || error?.response?.status,
+        data: error?.data || error?.response?.data,
+        code: error?.code
+      });
+      const errorMsg = error?.data?.message || error?.response?.data?.message || error?.message || 'Could not delete ontology annotation.';
+      notificationService.error('Annotation Failed', errorMsg);
     }
   };
+
 
   const handleAddImport = async () => {
     if (!projectId || !importDraft.trim()) return;
     try {
-      await apiClient.post(`/api/ontology/ontology/imports/${projectId}`, {
+      await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, {
         importIri: importDraft.trim()
       });
       setImportDraft('');
@@ -3073,25 +3213,37 @@ const Dashboard = () => {
           // Unix absolute path like /path/file.owl -> file:///path/file.owl
           importIriForBackend = 'file://' + normalizedPath;
         } else if (normalizedPath.startsWith('./') || normalizedPath.startsWith('../')) {
-          // Already has ./ or ../ prefix - keep as relative path
-          importIriForBackend = normalizedPath;
+          // Strip relative path prefix - backend expects just the filename
+          importIriForBackend = normalizedPath.replace(/^\.\//, '').replace(/^\.\.\//, '');
         } else {
-          // Simple filename like "file.owl" -> "./file.owl" (relative to ontology)
-          importIriForBackend = './' + normalizedPath;
+          // Simple filename like "file.owl" - send as-is
+          importIriForBackend = normalizedPath;
         }
         console.log('[Dashboard] Converted to URI:', importIriForBackend);
       }
       
       if (isEdit && originalIri !== importIriForBackend) {
         // Delete old and add new
-        await apiClient.delete(`/api/ontology/ontology/imports/${projectId}`, {
-          params: { importIri: originalIri }
-        });
+        await apiClient.delete(`/api/ontology/metadata/${projectId}/imports?importIri=${encodeURIComponent(originalIri)}`);
       }
       
       if (!isEdit || originalIri !== importIriForBackend) {
         console.log('[Dashboard] Posting import IRI to backend:', importIriForBackend);
-        await apiClient.post(`/api/ontology/ontology/imports/${projectId}`, {
+        
+        // Immediate optimistic UI update BEFORE API call
+        if (isEdit && originalIri !== importIriForBackend) {
+          // Remove old import and add new one
+          setOntologyImports(prev => {
+            const filtered = prev.filter(i => i !== originalIri);
+            return [...filtered, importIriForBackend];
+          });
+        } else if (!isEdit) {
+          // Just add new import
+          setOntologyImports(prev => [...prev, importIriForBackend]);
+        }
+        console.log('[Dashboard] ⚡ Optimistically added import to UI');
+        
+        await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, {
           importIri: importIriForBackend
         });
         console.log('[Dashboard] ✅ Import IRI saved to backend');
@@ -3102,26 +3254,33 @@ const Dashboard = () => {
       const hasActualPath = iri.startsWith('file://') || /^[A-Za-z]:[\\\/]/.test(iri) || iri.startsWith('/');
       if (isLocalFile && hasActualPath && window.vscode) {
         console.log('[Dashboard] Local file with actual path detected, requesting upload:', iri);
+        // Strip file:// protocol if present for the VSCode message
+        const cleanPath = iri.startsWith('file://') ? iri.replace('file:///', '').replace('file://', '') : iri;
         window.vscode.postMessage({
           type: 'importLocalFile',
-          filePath: iri,
+          filePath: cleanPath,
           currentProjectId: projectId
         });
       } else if (isLocalFile && !hasActualPath) {
         console.log('[Dashboard] Local file is a relative reference (filename only), skipping upload:', iri);
       }
       
-      await refreshOntologyImports();
+      // Close dialog first for immediate feedback
+      setIsImportDialogOpen(false);
+      
+      // Refresh from server to get canonical data
+      setTimeout(() => {
+        refreshOntologyImports();
+      }, 100);
+      
       notificationService.success(
         isEdit ? 'Import Updated' : 'Import Added',
         isEdit ? 'Import updated successfully.' : 'Import added successfully.'
       );
       
       if (isLocalFile) {
-        notificationService.info('File Upload', 'Local file is being uploaded to your files...');
+        notificationService.info('File Upload', 'Local file reference added to imports.');
       }
-      
-      setIsImportDialogOpen(false);
     } catch (error: any) {
       console.error('[Dashboard] ❌ Failed to save import:', error);
       console.error('[Dashboard] ❌ Error details:', {
@@ -3144,10 +3303,8 @@ const Dashboard = () => {
     if (!projectId || !importDraft.trim()) return;
     try {
       // Remove old and add new
-      await apiClient.delete(`/api/ontology/ontology/imports/${projectId}`, {
-        params: { importIri: oldIri }
-      });
-      await apiClient.post(`/api/ontology/ontology/imports/${projectId}`, {
+      await apiClient.delete(`/api/ontology/metadata/${projectId}/imports?importIri=${encodeURIComponent(oldIri)}`);
+      await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, {
         importIri: importDraft.trim()
       });
       setImportDraft('');
@@ -3162,10 +3319,17 @@ const Dashboard = () => {
   const handleRemoveImport = async (iri: string) => {
     if (!projectId) return;
     try {
-      await apiClient.delete(`/api/ontology/ontology/imports/${projectId}`, {
-        params: { importIri: iri }
-      });
-      await refreshOntologyImports();
+      await apiClient.delete(`/api/ontology/metadata/${projectId}/imports?importIri=${encodeURIComponent(iri)}`);
+      
+      // Immediate UI update
+      setOntologyImports(prev => prev.filter(i => i !== iri));
+      
+      // Delayed refresh
+      setTimeout(() => {
+        refreshOntologyImports();
+      }, 100);
+      
+      notificationService.success('Import Removed', 'Import removed successfully.');
     } catch (error) {
       console.error('[Dashboard] Failed to remove import:', error);
       notificationService.error('Import Failed', 'Could not remove import.');
@@ -3174,35 +3338,6 @@ const Dashboard = () => {
 
   const handleEditPrefix = (index: number) => {
     setEditingPrefixIndex(index);
-  };
-
-  const handleUpdatePrefix = async (oldPrefix: string, newPrefix: string, newNamespace: string) => {
-    if (!projectId) return;
-    try {
-      // The API expects the entire array of prefixes
-      const cleanedNewPrefix = newPrefix.endsWith(':') ? newPrefix.slice(0, -1) : newPrefix;
-      const cleanedOldPrefix = oldPrefix.endsWith(':') ? oldPrefix.slice(0, -1) : oldPrefix;
-      
-      // Create updated prefix list
-      let updatedPrefixes = [...prefixMappings];
-      
-      if (editingPrefixIndex !== null) {
-        // Update existing prefix
-        updatedPrefixes[editingPrefixIndex] = {
-          prefix: cleanedNewPrefix,
-          namespace: newNamespace
-        };
-      }
-      
-      // Send the entire array
-      await apiClient.put(`/api/ontology/ontology/prefixes/${projectId}`, updatedPrefixes);
-      setEditingPrefixIndex(null);
-      await refreshPrefixes();
-      notificationService.success('Prefix Updated', 'Prefix updated successfully.');
-    } catch (error) {
-      console.error('[Dashboard] Failed to update prefix:', error);
-      notificationService.error('Prefix Failed', 'Could not update prefix.');
-    }
   };
 
   const handleAddPrefixDialog = () => {
@@ -3221,19 +3356,22 @@ const Dashboard = () => {
       const cleanedPrefix = prefix.endsWith(':') ? prefix.slice(0, -1) : prefix;
       const cleanedOriginal = originalPrefix.endsWith(':') ? originalPrefix.slice(0, -1) : originalPrefix;
       
-      let updatedPrefixes;
+      // Backend expects POST with { prefix, iri, oldPrefix? }
+      const payload: any = {
+        prefix: cleanedPrefix,
+        iri: namespace
+      };
+      
       if (isEdit) {
-        // Update existing prefix
-        updatedPrefixes = prefixMappings.map(p => 
-          p.prefix === cleanedOriginal ? { prefix: cleanedPrefix, namespace } : p
-        );
-      } else {
-        // Add new prefix
-        updatedPrefixes = [...prefixMappings, { prefix: cleanedPrefix, namespace }];
+        payload.oldPrefix = cleanedOriginal;
       }
       
-      await apiClient.put(`/api/ontology/ontology/prefixes/${projectId}`, updatedPrefixes);
+      console.log('[Dashboard] Saving prefix:', payload);
+      await apiClient.post(`/api/ontology/metadata/${projectId}/prefixes`, payload);
+      
+      // Refresh prefixes from server
       await refreshPrefixes();
+      
       notificationService.success(
         isEdit ? 'Prefix Updated' : 'Prefix Added',
         isEdit ? 'Prefix updated successfully.' : 'Prefix added successfully.'
@@ -3248,29 +3386,14 @@ const Dashboard = () => {
   const handleDeletePrefix = async (prefix: string) => {
     if (!projectId) return;
     try {
-      // Normalize prefix by removing colon for comparison
+      // Normalize prefix by removing colon
       const cleanedPrefix = prefix.endsWith(':') ? prefix.slice(0, -1) : prefix;
-      // Filter out the prefix, normalizing stored prefixes too
-      const updatedPrefixes = prefixMappings
-        .filter(p => {
-          const storedPrefix = p.prefix.endsWith(':') ? p.prefix.slice(0, -1) : p.prefix;
-          return storedPrefix !== cleanedPrefix;
-        })
-        .map(p => ({
-          prefix: p.prefix.endsWith(':') ? p.prefix.slice(0, -1) : p.prefix,
-          namespace: p.namespace
-        }));
       
       console.log('[Dashboard] Deleting prefix:', cleanedPrefix);
-      console.log('[Dashboard] Updated prefixes:', updatedPrefixes);
+      await apiClient.delete(`/api/ontology/metadata/${projectId}/prefixes?prefix=${encodeURIComponent(cleanedPrefix)}`);
       
-      await apiClient.put(`/api/ontology/ontology/prefixes/${projectId}`, updatedPrefixes);
-      
-      // Force update the local state immediately
-      setPrefixMappings(updatedPrefixes.map(p => ({
-        prefix: p.prefix.endsWith(':') ? p.prefix : `${p.prefix}:`,
-        namespace: p.namespace
-      })));
+      // Refresh from server
+      await refreshPrefixes();
       
       notificationService.success('Prefix Deleted', 'Prefix deleted successfully.');
     } catch (error) {
@@ -3279,19 +3402,51 @@ const Dashboard = () => {
     }
   };
 
-  const handleAddAxiom = async () => {
-    if (!projectId || !axiomDraft.definition) return;
+  const handleAddAxiom = async (definition?: string, superClassIri?: string) => {
+    if (!projectId) return;
+    
+    // Use parameters if provided, otherwise fall back to axiomDraft state
+    const axiomDefinition = definition || axiomDraft.definition;
+    const axiomSuperClass = superClassIri !== undefined ? superClassIri : axiomDraft.superClassIri;
+    
+    if (!axiomDefinition) return;
+    
     try {
-      await apiClient.post(`/api/ontology/ontology/axioms/${projectId}`, {
-        definition: axiomDraft.definition,
-        superClassIri: axiomDraft.superClassIri
+      console.log('[Dashboard] Adding general class axiom:', { projectId, subClass: axiomDefinition, superClass: axiomSuperClass });
+      await apiClient.post(`/api/ontology/metadata/${projectId}/gci`, {
+        subClass: axiomDefinition,
+        superClass: axiomSuperClass || ''
       });
+      
+      // Immediately update the UI with the new axiom
+      const newAxiom = {
+        value: `${axiomDefinition} SubClassOf ${axiomSuperClass}`,
+        subClass: axiomDefinition,
+        superClass: axiomSuperClass || '',
+        definition: axiomDefinition,
+        superClassIri: axiomSuperClass || '',
+        subExpression: axiomDefinition
+      };
+      setGeneralClassAxioms([...generalClassAxioms, newAxiom]);
+      
       setAxiomDraft({ definition: '', superClassIri: '' });
       setAxiomDialogOpen(false);
-      await refreshGeneralClassAxioms();
-    } catch (error) {
+      setEditingAxiomIndex(null);
+      
+      // Refresh from server to get complete data
+      setTimeout(() => refreshGeneralClassAxioms(), 100);
+      
+      notificationService.success('Axiom Added', 'General class axiom added successfully.');
+    } catch (error: any) {
       console.error('[Dashboard] Failed to add axiom:', error);
-      notificationService.error('Axiom Failed', 'Could not add general class axiom.');
+      console.error('[Dashboard] Error details:', {
+        message: error?.message,
+        status: error?.status || error?.response?.status,
+        data: error?.data || error?.response?.data,
+        code: error?.code
+      });
+      const errorMsg = error?.data?.message || error?.response?.data?.message || error?.message || 'Could not add general class axiom.';
+      notificationService.error('Axiom Failed', errorMsg);
     }
   };
 
@@ -3299,31 +3454,47 @@ const Dashboard = () => {
     const axiom = generalClassAxioms[index];
     setEditingAxiomIndex(index);
     setAxiomDraft({
-      definition: axiom.definition || '',
-      superClassIri: axiom.superClassIri || ''
+      definition: axiom.subClass || axiom.definition || '',
+      superClassIri: axiom.superClass || axiom.superClassIri || ''
     });
     setAxiomDialogOpen(true);
   };
 
-  const handleUpdateAxiom = async () => {
+  const handleUpdateAxiom = async (newSubClass?: string, newSuperClass?: string) => {
     if (!projectId || editingAxiomIndex === null) return;
     try {
       const oldAxiom = generalClassAxioms[editingAxiomIndex];
-      // Delete old and add new
-      await apiClient.delete(`/api/ontology/ontology/axioms/${projectId}`, {
-        params: { 
-          definition: oldAxiom.definition,
-          superClassIri: oldAxiom.superClassIri 
-        }
+      const subClass = newSubClass !== undefined ? newSubClass : axiomDraft.definition;
+      const superClass = newSuperClass !== undefined ? newSuperClass : axiomDraft.superClassIri;
+      console.log('[Dashboard] Updating general class axiom:', { projectId, oldAxiom, newAxiom: { subClass, superClass } });
+      
+      // Use PUT endpoint to update - backend expects oldValue as the full value string
+      await apiClient.put(`/api/ontology/metadata/${projectId}/gci/${editingAxiomIndex}`, {
+        oldValue: oldAxiom.value || oldAxiom.subClass || oldAxiom.definition || '',
+        subClass,
+        superClass: superClass || ''
       });
-      await apiClient.post(`/api/ontology/ontology/axioms/${projectId}`, {
-        definition: axiomDraft.definition,
-        superClassIri: axiomDraft.superClassIri
-      });
+      
+      // Immediately update UI
+      const updatedAxioms = [...generalClassAxioms];
+      updatedAxioms[editingAxiomIndex] = {
+        value: `${subClass} SubClassOf ${superClass}`,
+        subClass,
+        superClass: superClass || '',
+        definition: subClass,
+        superClassIri: superClass || '',
+        subExpression: subClass
+      };
+      setGeneralClassAxioms(updatedAxioms);
+      
       setAxiomDraft({ definition: '', superClassIri: '' });
       setEditingAxiomIndex(null);
       setAxiomDialogOpen(false);
-      await refreshGeneralClassAxioms();
+      
+      // Refresh from server
+      setTimeout(() => refreshGeneralClassAxioms(), 100);
+      
+      notificationService.success('Axiom Updated', 'General class axiom updated successfully.');
     } catch (error) {
       console.error('[Dashboard] Failed to update axiom:', error);
       notificationService.error('Axiom Failed', 'Could not update general class axiom.');
@@ -3334,13 +3505,25 @@ const Dashboard = () => {
     if (!projectId) return;
     try {
       const axiom = generalClassAxioms[index];
-      await apiClient.delete(`/api/ontology/ontology/axioms/${projectId}`, {
-        params: { 
-          definition: axiom.definition,
-          superClassIri: axiom.superClassIri 
-        }
-      });
-      await refreshGeneralClassAxioms();
+      // Backend expects the 'value' field or construct it from subClass
+      const value = axiom.value || axiom.subClass || axiom.definition || axiom.subExpression || '';
+      console.log('[Dashboard] Deleting general class axiom:', { projectId, axiom, value });
+      
+      if (!value) {
+        notificationService.error('Axiom Failed', 'Cannot delete axiom without a value.');
+        return;
+      }
+      
+      await apiClient.delete(`/api/ontology/metadata/${projectId}/gci?value=${encodeURIComponent(value)}`);
+      
+      // Immediately update UI
+      const updatedAxioms = generalClassAxioms.filter((_, idx) => idx !== index);
+      setGeneralClassAxioms(updatedAxioms);
+      
+      // Refresh from server
+      setTimeout(() => refreshGeneralClassAxioms(), 100);
+      
+      notificationService.success('Axiom Deleted', 'General class axiom deleted successfully.');
     } catch (error) {
       console.error('[Dashboard] Failed to delete axiom:', error);
       notificationService.error('Axiom Failed', 'Could not delete general class axiom.');
@@ -3350,10 +3533,19 @@ const Dashboard = () => {
   const refreshGeneralClassAxioms = async () => {
     if (!projectId) return;
     try {
-      const response = await apiClient.get<any>(`/api/ontology/query/general-class-axioms/${projectId}`);
+      const response = await apiClient.get<any>(`/api/ontology/metadata/${projectId}/gci`);
       const payload = response?.data || response;
       const data = payload?.data || payload || [];
-      setGeneralClassAxioms(Array.isArray(data) ? data : []);
+      // Map backend fields to frontend expected structure
+      const mappedData = Array.isArray(data) ? data.map((axiom: any) => ({
+        value: axiom.value,
+        subClass: axiom.subClass || '',
+        superClass: axiom.superClass || '',
+        definition: axiom.subClass || axiom.definition || '',
+        superClassIri: axiom.superClass || axiom.superClassIri || '',
+        subExpression: axiom.subClass || axiom.subExpression || ''
+      })) : [];
+      setGeneralClassAxioms(mappedData);
     } catch (error) {
       console.error('[Dashboard] Failed to refresh general class axioms:', error);
     }
@@ -3362,15 +3554,11 @@ const Dashboard = () => {
   const handleSavePrefixes = async () => {
     if (!projectId) return;
     try {
-      // Clean up prefixes by removing trailing colons before sending to backend
-      const cleanedPrefixes = prefixMappings.map(p => ({
-        ...p,
-        prefix: p.prefix.endsWith(':') ? p.prefix.slice(0, -1) : p.prefix
-      }));
-      
-      await apiClient.put(`/api/ontology/ontology/prefixes/${projectId}`, cleanedPrefixes);
+      // Individual prefix updates should be done via handleSavePrefix
+      // This bulk save is not supported by backend
       setIsPrefixEditing(false);
       await refreshPrefixes();
+      notificationService.info('Prefixes', 'Edit mode disabled. Use individual add/edit/delete operations.');
     } catch (error) {
       console.error('[Dashboard] Failed to save prefixes:', error);
       notificationService.error('Prefixes Failed', 'Could not save prefixes.');
@@ -3391,11 +3579,11 @@ const Dashboard = () => {
     }
   }, [projectId, collaboration.state.activeUsers, user?.id]);
 
-  // Collaborative cursor tracking
+  // Collaborative cursor tracking - includes clicks and mouse movement
   useEffect(() => {
     if (!projectId || !user) return;
 
-    const handleMouseMove = (e: MouseEvent) => {
+    const broadcastCursor = (e: MouseEvent | PointerEvent) => {
       const newCursor = { x: e.clientX, y: e.clientY };
       setMyLocalCursor(newCursor);
       
@@ -3412,11 +3600,23 @@ const Dashboard = () => {
       }
     };
 
+    const handleMouseMove = (e: MouseEvent) => {
+      broadcastCursor(e);
+    };
+
+    const handleClick = (e: MouseEvent) => {
+      // Immediately broadcast cursor position on click
+      broadcastCursor(e);
+    };
+
     const throttledMouseMove = throttle(handleMouseMove, 50); // Throttle to 20fps
+    
     document.addEventListener('mousemove', throttledMouseMove);
+    document.addEventListener('click', handleClick); // Track all clicks
 
     return () => {
       document.removeEventListener('mousemove', throttledMouseMove);
+      document.removeEventListener('click', handleClick);
     };
   }, [projectId, user]);
 
@@ -6897,8 +7097,21 @@ const Dashboard = () => {
           const PluginComponent = plugin.component;
           return (
             <PluginComponent 
-              projectId={projectId || ''} 
-              
+              projectId={projectId || ''}
+              apiBaseUrl={window.API_BASE_URL}
+              selectedReasoner={selectedReasoner}
+              isReasonerRunning={isReasonerRunning}
+              isReasonerLoading={isReasonerLoading}
+              reasonerResults={reasonerResults}
+              consistencyResult={consistencyResult}
+              inferredClassHierarchy={inferredClassHierarchy}
+              inferredObjectPropertyHierarchy={inferredObjectPropertyHierarchy}
+              inferredDataPropertyHierarchy={inferredDataPropertyHierarchy}
+              onStartReasoner={startReasoner}
+              onStopReasoner={stopReasoner}
+              onSelectReasoner={handleSelectReasoner}
+              onToggleSync={toggleReasonerSync}
+              isReasonerSynced={isReasonerSynced}
             />
           );
         }
@@ -6988,10 +7201,11 @@ const Dashboard = () => {
                 </div>
                 {ontologyAnnotations.length > 0 ? (
                   <div className="space-y-2">
-                    {ontologyAnnotations.map((annotation, idx) => {
-                      const key = `${annotation.propertyIri}-${annotation.value}-${idx}`;
-                      const propertyLabel = annotation.propertyIri.includes('#') ? annotation.propertyIri.split('#').pop() :
-                        annotation.propertyIri.includes('/') ? annotation.propertyIri.split('/').pop() : annotation.propertyIri;
+                    {ontologyAnnotations.filter(ann => ann && ann.propertyIri).map((annotation, idx) => {
+                      const key = `${annotation.property}-${annotation.value}-${idx}`;
+                      const propertyIri = annotation.property || '';
+                      const propertyLabel = propertyIri.includes('#') ? propertyIri.split('#').pop() :
+                        propertyIri.includes('/') ? propertyIri.split('/').pop() : propertyIri;
                       return (
                         <div key={key} className="border rounded-md transition-colors" style={{ borderColor: 'var(--border)' }} onMouseEnter={(e) => e.currentTarget.style.borderColor = 'var(--accent)'} onMouseLeave={(e) => e.currentTarget.style.borderColor = 'var(--border)'}>
                           <div className="px-3 py-2 border-b flex items-center justify-between" style={{ backgroundColor: 'var(--accent-tint)', borderColor: 'var(--border)' }}>
@@ -7333,11 +7547,11 @@ const Dashboard = () => {
                                   <div className="flex-1">
                                     <div className="text-[10px] font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>Axiom #{idx + 1}</div>
                                     <div className="font-medium text-xs mb-1" style={{ color: 'var(--text-primary)' }}>
-                                      {axiom.definition || 'Anonymous class expression'}
+                                      {axiom.subClass || axiom.definition || 'Anonymous class expression'}
                                     </div>
-                                    {axiom.superClassIri && (
+                                    {(axiom.superClass || axiom.superClassIri) && (
                                       <div className="text-[10px] font-mono break-all" style={{ color: 'var(--text-tertiary)' }}>
-                                        SubClassOf: {axiom.superClassIri}
+                                        SubClassOf: {axiom.superClass || axiom.superClassIri}
                                       </div>
                                     )}
                                   </div>
@@ -8269,6 +8483,20 @@ const Dashboard = () => {
         initialSubClass={editGCIData?.subClass}
         initialSuperClass={editGCIData?.superClass}
         editMode={!!editGCIData}
+        availableClasses={(() => {
+          const extractClasses = (nodes: TreeNode[]): Array<{ id: string; label: string }> => {
+            const classes: Array<{ id: string; label: string }> = [];
+            const traverse = (node: TreeNode) => {
+              classes.push({ id: node.id, label: node.label });
+              if (node.children) {
+                node.children.forEach(traverse);
+              }
+            };
+            nodes.forEach(traverse);
+            return classes;
+          };
+          return extractClasses(classHierarchy);
+        })()}
       />
       <EditOntologyIRIDialog
         isOpen={isEditOntologyIRIDialogOpen}
@@ -8285,16 +8513,29 @@ const Dashboard = () => {
           setAxiomDraft({ definition: '', superClassIri: '' });
         }}
         onSave={async (subClass, superClass) => {
-          setAxiomDraft({ definition: subClass, superClassIri: superClass });
           if (editingAxiomIndex !== null) {
-            await handleUpdateAxiom();
+            await handleUpdateAxiom(subClass, superClass);
           } else {
-            await handleAddAxiom();
+            await handleAddAxiom(subClass, superClass);
           }
         }}
         initialSubClass={axiomDraft.definition}
         initialSuperClass={axiomDraft.superClassIri}
         editMode={editingAxiomIndex !== null}
+        availableClasses={(() => {
+          const extractClasses = (nodes: TreeNode[]): Array<{ id: string; label: string }> => {
+            const classes: Array<{ id: string; label: string }> = [];
+            const traverse = (node: TreeNode) => {
+              classes.push({ id: node.id, label: node.label });
+              if (node.children) {
+                node.children.forEach(traverse);
+              }
+            };
+            nodes.forEach(traverse);
+            return classes;
+          };
+          return extractClasses(classHierarchy);
+        })()}
       />
       <AddAnnotationDialog
         isOpen={isOntologyAnnotationDialogOpen}
@@ -8302,16 +8543,18 @@ const Dashboard = () => {
           setIsOntologyAnnotationDialogOpen(false);
           setOntologyAnnotationEditTarget(null);
         }}
-        onAdd={(propertyIri, value, datatype) => {
+        onAdd={(propertyIri, value, datatype, lang) => {
           if (ontologyAnnotationEditTarget) {
             handleUpdateOntologyAnnotation(
               propertyIri,
               ontologyAnnotationEditTarget.value,
               value,
-              ontologyAnnotationEditTarget.datatype
+              ontologyAnnotationEditTarget.datatype,
+              datatype,
+              lang
             );
           } else {
-            handleAddOntologyAnnotation(propertyIri, value, datatype);
+            handleAddOntologyAnnotation(propertyIri, value, datatype, lang);
           }
           setIsOntologyAnnotationDialogOpen(false);
           setOntologyAnnotationEditTarget(null);
@@ -9454,45 +9697,8 @@ const Dashboard = () => {
         </div>
       )}
 
-      {/* Collaborative Cursors */}
-      {Array.from(collaboratorCursors.entries()).map(([userId, cursor]) => (
-        <div
-          key={userId}
-          className="fixed pointer-events-none z-[9999] transition-transform duration-100"
-          style={{
-            left: `${cursor.x}px`,
-            top: `${cursor.y}px`,
-            transform: 'translate(-2px, -2px)'
-          }}
-        >
-          {/* Cursor SVG */}
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path
-              d="M5.65376 12.3673L15.7403 2.28069C16.0323 1.98873 16.5081 1.98873 16.8 2.28069L21.7169 7.19763C22.0089 7.48959 22.0089 7.96546 21.7169 8.25742L11.6303 18.3441C11.3384 18.636 10.8625 18.636 10.5706 18.3441L5.65376 13.4271C5.36179 13.1352 5.36179 12.6593 5.65376 12.3673Z"
-              fill={cursor.color}
-              stroke="white"
-              strokeWidth="1.5"
-            />
-            <path
-              d="M7.5 14L10 16.5"
-              stroke="white"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-            />
-          </svg>
-          
-          {/* User name label */}
-          <div
-            className="absolute left-6 top-1 px-2 py-1 rounded text-xs font-medium whitespace-nowrap shadow-lg"
-            style={{
-              backgroundColor: cursor.color,
-              color: 'white'
-            }}
-          >
-            {cursor.userName}
-          </div>
-        </div>
-      ))}
+      {/* Collaborative Cursors - Show cursors of all active users */}
+      <CollaborativeCursors cursors={collaboratorCursors} />
 
     </>
   );
