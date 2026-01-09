@@ -6958,7 +6958,7 @@ const Dashboard = () => {
             projectId={projectId} 
             context={{ 
               projectId,
-              apiBaseUrl: (window as any).API_BASE_URL || 'http://ec2-13-218-153-101.compute-1.amazonaws.com',
+              apiBaseUrl: (window as any).API_BASE_URL || 'http://localhost',
               permissions: {
                 canEdit: !readonlyMode,
                 canDelete: !readonlyMode,
@@ -8366,7 +8366,7 @@ const Dashboard = () => {
 
   // #region Main Render
   // Define apiBaseUrl for plugin usage
-  const apiBaseUrl = (window as any).API_BASE_URL || 'http://localhost:8082';
+  const apiBaseUrl = (window as any).API_BASE_URL || 'http://localhost';
 
   const ALL_MAIN_TABS: Record<string, { label: string, icon: React.ElementType }> = {
     ActiveOntology: { label: "Active ontology", icon: FileText },

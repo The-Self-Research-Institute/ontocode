@@ -11,9 +11,73 @@ import { EditCapture } from './collaboration/EditCapture';
 import { RemoteEditApplier } from './collaboration/RemoteEditApplier';
 
 const TOKEN_KEY = 'ontocode.authToken';
-const GATEWAY_URL = 'http://13.218.153.101'; // Gateway IPv4 to avoid IPv6 timeouts
-const OWL_EDITOR_URL = GATEWAY_URL; // WebSocket endpoint routed via gateway
-const PLUGIN_SERVICE_URL = 'http://13.218.153.101:8087'; // Plugin service port
+const DEFAULT_GATEWAY_URL = 'http://localhost';
+const DEFAULT_PLUGIN_SERVICE_URL = 'http://localhost:8087';
+
+let GATEWAY_URL = DEFAULT_GATEWAY_URL;
+let OWL_EDITOR_URL = DEFAULT_GATEWAY_URL;
+let PLUGIN_SERVICE_URL = DEFAULT_PLUGIN_SERVICE_URL;
+
+const ENV_GATEWAY_KEYS = ['ONTOCODE_GATEWAY_URL', 'GATEWAY_URL'];
+const ENV_PLUGIN_KEYS = ['ONTOCODE_PLUGIN_SERVICE_URL', 'PLUGIN_SERVICE_URL'];
+
+async function loadEnvOverrides(): Promise<void> {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+        return;
+    }
+
+    const envUri = vscode.Uri.joinPath(workspaceFolder.uri, '.env');
+    try {
+        const raw = await vscode.workspace.fs.readFile(envUri);
+        const env = parseEnvFile(new TextDecoder('utf-8').decode(raw));
+        const gatewayOverride = getFirstEnvValue(env, ENV_GATEWAY_KEYS);
+        if (gatewayOverride) {
+            GATEWAY_URL = gatewayOverride;
+            OWL_EDITOR_URL = gatewayOverride;
+        }
+        const pluginOverride = getFirstEnvValue(env, ENV_PLUGIN_KEYS);
+        if (pluginOverride) {
+            PLUGIN_SERVICE_URL = pluginOverride;
+        }
+    } catch (error) {
+        // Ignore missing or unreadable .env files.
+    }
+}
+
+function parseEnvFile(content: string): Record<string, string> {
+    const env: Record<string, string> = {};
+    for (const rawLine of content.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith('#')) {
+            continue;
+        }
+        const eqIndex = line.indexOf('=');
+        if (eqIndex === -1) {
+            continue;
+        }
+        const key = line.slice(0, eqIndex).trim();
+        let value = line.slice(eqIndex + 1).trim();
+        if (
+            (value.startsWith('"') && value.endsWith('"')) ||
+            (value.startsWith("'") && value.endsWith("'"))
+        ) {
+            value = value.slice(1, -1);
+        }
+        env[key] = value;
+    }
+    return env;
+}
+
+function getFirstEnvValue(env: Record<string, string>, keys: string[]): string | undefined {
+    for (const key of keys) {
+        const value = env[key];
+        if (value) {
+            return value;
+        }
+    }
+    return undefined;
+}
 
 /**
  * Parse JWT token to extract user information
@@ -103,7 +167,8 @@ type ExtensionMessage =
   | { type: 'importLocalFile'; filePath: string; currentProjectId: string }; // Import local OWL file
 
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
+    await loadEnvOverrides();
     console.log('OntoCode extension is now active!');
 
     // Register all commands
@@ -727,7 +792,7 @@ class OntoCodePanel {
                         // Check if we already received IMPORT_COMPLETED (pendingImportProjectIdRef would be cleared)
                         // If not, check the project status and trigger fileReady if COMPLETED
                         try {
-                            const statusUrl = `http://ec2-13-218-153-101.compute-1.amazonaws.com/api/ontology/status/${projectId}`;
+                            const statusUrl = `${GATEWAY_URL}/api/ontology/status/${projectId}`;
                             const statusResp = await axios.get(statusUrl, { headers });
                             console.log(`[OntoCode] Fallback status check for ${projectId}:`, statusResp.data);
                             
@@ -760,14 +825,14 @@ class OntoCodePanel {
                     errorMessage = responseData?.error || responseData?.message || `Server error: ${error.response.status}`;
                 } else if (error.request) {
                     console.error('[OntoCode] No response received:', error.request);
-                    errorMessage = 'No response from server. Is the gateway running on port 80?';
+                    errorMessage = `No response from server. Is the gateway running at ${GATEWAY_URL}?`;
                 } else {
                     console.error('[OntoCode] Error setting up request:', error.message);
                     errorMessage = error.message;
                 }
                 
                 if (error.code === 'ECONNREFUSED') {
-                    errorMessage = 'Cannot connect to gateway on port 80. Please ensure the gateway is running.';
+                    errorMessage = `Cannot connect to gateway at ${GATEWAY_URL}. Please ensure the gateway is running.`;
                 } else if (error.code === 'ETIMEDOUT') {
                     errorMessage = 'Upload timed out. The file may be too large or the server is not responding.';
                 } else if (error.message.includes('Maximum number of redirects')) {

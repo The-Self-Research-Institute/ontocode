@@ -1,7 +1,10 @@
 // services/apiClient.ts
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from 'axios';
 
-const BASE_URL = 'http://ec2-13-218-153-101.compute-1.amazonaws.com'; // Your backend gateway
+const DEFAULT_BASE_URL = 'http://localhost';
+const BASE_URL = typeof window !== 'undefined' && window.API_BASE_URL
+  ? window.API_BASE_URL
+  : DEFAULT_BASE_URL;
 const TIMEOUT = 300_000; // Allow up to 5 minutes for heavy ontology operations
 
 // VS Code API detection

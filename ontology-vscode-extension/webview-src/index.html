@@ -5,6 +5,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>OntoCode - Ontology Editor</title>
+    <script type="module">
+      if (!window.API_BASE_URL) {
+        const viteBaseUrl = '%VITE_API_BASE_URL%';
+        const resolvedBaseUrl =
+          viteBaseUrl && !viteBaseUrl.startsWith('%') ? viteBaseUrl : 'http://localhost';
+        window.API_BASE_URL = resolvedBaseUrl;
+      }
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://unpkg.com/vis-network/styles/vis-network.min.css" type="text/css" />
     <!-- Load vis-network globally for ReasoningVisualizer component -->
