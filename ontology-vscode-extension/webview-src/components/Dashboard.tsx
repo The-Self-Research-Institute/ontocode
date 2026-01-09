@@ -1,7 +1,7 @@
 // src/Dashboard.tsx
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
-  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, Square, DatabaseZap, Upload, FolderOpen, Sparkles, Clock, Users, Download, RefreshCw, AlertCircle, Puzzle, Zap, BookOpen, Brain, Network, GitMerge, Palette, Edit2, Plus, Globe, Link as LinkIcon, Hash, X, FileCode, Info
+  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, Square, DatabaseZap, Upload, FolderOpen, Sparkles, Clock, Users, Download, RefreshCw, AlertCircle, Puzzle, Zap, BookOpen, Brain, Network, GitMerge, Palette, Edit2, Plus, Globe, Link as LinkIcon, Hash, X, FileCode, Info, Crown, Rocket
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
@@ -12,6 +12,7 @@ import type { TreeNode, Property, Individual, OntologyMetadata, SelectableItem, 
 import { useAuth } from '../custom-hook/useAuth';
 import { useCollaboration } from '../contexts/CollaborationContext';
 import { useTheme } from '../contexts/ThemeContext';
+import { useSubscription } from '../hooks/useSubscription';
 import EntityHierarchy from './EntityHierarchy';
 import ClassEditor from './details/ClassEditor';
 import PropertyEditor from './details/PropertyEditor';
@@ -27,6 +28,7 @@ import ToastNotification from './ToastNotification';
 import { CollaborativeCursors } from './CollaborativeCursor';
 import ShareDialog from './ShareDialog';
 import ThemeSettings from './ThemeSettings';
+import PlanDetailsModal from './PlanDetailsModal';
 // ImportProgressToast removed per user request
 import { QueueStatusIndicator, GlobalQueueStats } from './QueueStatusIndicator';
 import {
@@ -1442,13 +1444,37 @@ const showNotification = (message: string, type: 'info' | 'error' | 'warning' = 
   }
 };
 
-const Dashboard = () => {
+interface DashboardProps {
+  onBackToProjects?: () => void;
+  selectedFileId?: string;
+  selectedFileName?: string;
+  projectId?: string; // Renamed to initialProjectId to avoid naming conflict
+}
+
+const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId, selectedFileName, projectId: initialProjectId }) => {
   // #region State
   const { user, logout } = useAuth();
   const collaboration = useCollaboration();
   const { actualMode } = useTheme();
+  const subscription = useSubscription();
   const readonlyMode = false; // Allow editing by default
    const [showThemeSettings, setShowThemeSettings] = useState(false);
+   const [showPlanDetails, setShowPlanDetails] = useState(false);
+
+  const handleUpgradePlan = async (planId: string) => {
+    try {
+      await apiClient.patch(`/api/workspaces/${user?.workspaceId}/subscription`, {
+        plan: planId
+      });
+      
+      // Reload the page to get updated user with new plan
+      window.location.reload();
+      showToast(`Successfully upgraded to ${planId.toUpperCase()} plan!`, 'success');
+    } catch (error: any) {
+      console.error('Failed to upgrade plan:', error);
+      showToast(error?.response?.data?.error || 'Failed to upgrade plan. Please try again.', 'error');
+    }
+  };
 
   const applyInstanceCountsToTree = useCallback((
     nodes: TreeNode[],
@@ -1786,6 +1812,12 @@ const Dashboard = () => {
   const activeTheme = entitiesTabs.find(t => t.id === entitiesTab)?.theme;
 
   const sourceData = React.useMemo(() => {
+    console.log('[Dashboard sourceData] entitiesTab:', entitiesTab);
+    console.log('[Dashboard sourceData] hierarchyViewModes.Classes:', hierarchyViewModes.Classes);
+    console.log('[Dashboard sourceData] classHierarchy:', classHierarchy);
+    console.log('[Dashboard sourceData] classHierarchy length:', classHierarchy.length);
+    console.log('[Dashboard sourceData] classHierarchy first element:', classHierarchy[0]);
+    
     switch (entitiesTab) {
       case "Classes":
         if (hierarchyViewModes.Classes === 'inferred') {
@@ -1798,6 +1830,7 @@ const Dashboard = () => {
           return Array.isArray(inferred) ? inferred : [];
         }
         console.log('[Dashboard] Using asserted class hierarchy, length:', classHierarchy.length);
+        console.log('[Dashboard] Returning classHierarchy:', classHierarchy);
         return classHierarchy;
       case "ObjectProperties":
         console.log(inferredObjectPropertyHierarchy, '[Dashboard] Hierarchy view mode for ObjectProperties:', hierarchyViewModes.ObjectProperties);
@@ -2592,9 +2625,12 @@ const Dashboard = () => {
 
       // Handle classes response - backend returns {success: true, classes: [...]}
       console.log("=== CLASSES RESPONSE DEBUG ===");
-      console.log("Raw topLevelRes:", topLevelRes);
+      console.log("Raw topLevelRes:", JSON.stringify(topLevelRes, null, 2));
       console.log("topLevelRes type:", typeof topLevelRes);
       console.log("topLevelRes keys:", Object.keys(topLevelRes || {}));
+      console.log("topLevelRes?.success:", topLevelRes?.success);
+      console.log("topLevelRes?.classes:", topLevelRes?.classes);
+      console.log("Is topLevelRes.classes an array?", Array.isArray(topLevelRes?.classes));
       
       // The response structure is: topLevelRes = {success: true, classes: [...]}
       // But apiClient might wrap it in a data field, so check both
@@ -2602,21 +2638,30 @@ const Dashboard = () => {
       
       if (Array.isArray(topLevelRes?.classes)) {
         classes = topLevelRes.classes;
-        console.log("Found classes in topLevelRes.classes");
+        console.log("✅ Found classes in topLevelRes.classes, count:", classes.length);
       } else if (Array.isArray(topLevelRes?.data?.classes)) {
         classes = topLevelRes.data.classes;
-        console.log("Found classes in topLevelRes.data.classes");
+        console.log("✅ Found classes in topLevelRes.data.classes, count:", classes.length);
       } else if (Array.isArray(topLevelRes?.data)) {
         classes = topLevelRes.data;
-        console.log("Found classes in topLevelRes.data (array)");
+        console.log("✅ Found classes in topLevelRes.data (array), count:", classes.length);
       } else if (Array.isArray(topLevelRes)) {
         classes = topLevelRes;
-        console.log("topLevelRes itself is an array");
+        console.log("✅ topLevelRes itself is an array, count:", classes.length);
       } else {
-        console.error("Could not find classes array in response structure!");
+        console.error("❌ Could not find classes array in response structure!");
         console.error("Available keys:", Object.keys(topLevelRes || {}));
         if (topLevelRes?.data) {
           console.error("Data keys:", Object.keys(topLevelRes.data || {}));
+        }
+        // Fallback: try to extract classes from any nested structure
+        if (topLevelRes && typeof topLevelRes === 'object') {
+          for (const key of Object.keys(topLevelRes)) {
+            console.log(`Checking key '${key}':`, topLevelRes[key]);
+            if (Array.isArray(topLevelRes[key])) {
+              console.log(`Found array at key '${key}' with length ${topLevelRes[key].length}`);
+            }
+          }
         }
       }
       
@@ -2646,6 +2691,7 @@ const Dashboard = () => {
       };
       
       console.log("owlThingNode created with children count:", owlThingNode.children?.length);
+      console.log("owlThingNode full structure:", JSON.stringify(owlThingNode, null, 2));
       console.log("Setting classHierarchy with owl:Thing");
       console.log("=== END OWL:THING DEBUG ===");
       
@@ -2653,6 +2699,8 @@ const Dashboard = () => {
         ? instanceCountsData
         : {};
       const hierarchyWithCounts = applyInstanceCountsToTree([owlThingNode], resolvedCounts);
+      console.log("📊 Final classHierarchy being set:", JSON.stringify(hierarchyWithCounts, null, 2));
+      console.log("📊 classHierarchy root node children count:", hierarchyWithCounts[0]?.children?.length);
       setClassHierarchy(hierarchyWithCounts);
 
       // Handle properties response
@@ -3859,6 +3907,16 @@ const Dashboard = () => {
     console.log('[Dashboard] Initial mount - fetching projects list');
     fetchProjects();
   }, [fetchProjects]);
+  
+  // Auto-load selected file from Project Library
+  useEffect(() => {
+    if (selectedFileId && !projectId) {
+      console.log('[Dashboard] Auto-loading selected file:', selectedFileId, selectedFileName);
+      setHasUserSelectedFile(true); // Mark that file was selected
+      setProjectId(selectedFileId);
+      fetchData(selectedFileId);
+    }
+  }, [selectedFileId, selectedFileName, projectId, fetchData]);
   
   // Update collaboration context when projectId changes
   useEffect(() => {
@@ -6958,7 +7016,8 @@ const Dashboard = () => {
             projectId={projectId} 
             context={{ 
               projectId,
-              apiBaseUrl: (window as any).API_BASE_URL || 'http://ec2-13-218-153-101.compute-1.amazonaws.com',
+                            apiBaseUrl: (window as any).API_BASE_URL || 'http://ec2-13-218-153-101.compute-1.amazonaws.com',
+              // apiBaseUrl: (window as any).API_BASE_URL || 'http://localhost:8082',
               permissions: {
                 canEdit: !readonlyMode,
                 canDelete: !readonlyMode,
@@ -8992,19 +9051,32 @@ const Dashboard = () => {
             <div className="flex items-center gap-2 flex-shrink-0">
               {projectId && (
                 <button
-                  onClick={() => setShowCollaborationPanel(!showCollaborationPanel)}
+                  onClick={() => {
+                    if (!subscription.canAccessFeature('hasAdvancedCollaboration') && !subscription.isFree) {
+                      showToast(subscription.getUpgradeMessage('Advanced Collaboration'), 'warning');
+                      return;
+                    }
+                    setShowCollaborationPanel(!showCollaborationPanel);
+                  }}
                   className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors ${
                     showCollaborationPanel
                       ? 'bg-blue-600 text-white hover:bg-blue-700'
                       : isCurrentFileShared 
                         ? 'bg-green-100 text-green-700 hover:bg-green-200'
                         : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                  title={`Toggle Collaboration Panel${hasMultipleActiveUsers ? ` (${activeUsersInProject.length} users)` : isCurrentFileShared ? ' (Shared file)' : ' (Enable sharing to collaborate)'}`}
+                  } ${!subscription.canAccessFeature('hasAdvancedCollaboration') && !subscription.isFree ? 'opacity-60' : ''}`}
+                  title={
+                    !subscription.canAccessFeature('hasAdvancedCollaboration') && !subscription.isFree
+                      ? subscription.getUpgradeMessage('Advanced Collaboration')
+                      : `Toggle Collaboration Panel${hasMultipleActiveUsers ? ` (${activeUsersInProject.length} users)` : isCurrentFileShared ? ' (Shared file)' : ' (Enable sharing to collaborate)'}`
+                  }
                 >
                   <Users size={14} />
                   <span>Collaboration</span>
-                  {hasMultipleActiveUsers && (
+                  {!subscription.canAccessFeature('hasAdvancedCollaboration') && !subscription.isFree && (
+                    <span className="bg-amber-500 text-white text-[10px] px-1 rounded">PRO</span>
+                  )}
+                  {hasMultipleActiveUsers && subscription.canAccessFeature('hasAdvancedCollaboration') && (
                     <span className="bg-blue-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-semibold">
                       {activeUsersInProject.length}
                     </span>
@@ -9030,7 +9102,14 @@ const Dashboard = () => {
                   )}
                 </button>
               )}
-              <span className="text-xs text-gray-600">Welcome, {user?.username || 'Guest'}</span>
+              <span className="text-xs text-gray-600">
+                Welcome, {user?.username || 'Guest'}
+                {user?.workspaceName && (
+                  <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px] font-medium">
+                    {user.workspaceName}
+                  </span>
+                )}
+              </span>
               <button 
                 onClick={() => setShowThemeSettings(true)}
                 className="ontocode-icon-hover-accent cursor-pointer disabled:cursor-not-allowed flex items-center gap-1.5 text-xs p-2 rounded-md"
@@ -9038,6 +9117,29 @@ const Dashboard = () => {
               >
                 <Palette size={14} />
               </button>
+              {/* Subscription Plan Badge */}
+              <button 
+                onClick={() => setShowPlanDetails(true)}
+                className={`flex items-center gap-1.5 px-2 py-1 text-[10px] font-semibold rounded-md transition-all hover:shadow-lg cursor-pointer ${
+                  subscription.isEnterprise ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:from-amber-600 hover:to-orange-600' :
+                  subscription.isPro ? 'bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600' :
+                  'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`} 
+                title={`Current Plan: ${subscription.plan.toUpperCase()} - Click for details`}
+              >
+                {subscription.isEnterprise ? <Crown size={12} /> : subscription.isPro ? <Zap size={12} /> : <Sparkles size={12} />}
+                {subscription.plan.toUpperCase()}
+              </button>
+              {onBackToProjects && (
+                <button 
+                  onClick={onBackToProjects} 
+                  className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50 p-2 rounded-md cursor-pointer"
+                  title="Back to Projects"
+                >
+                  <GitBranch size={14} />
+                  Projects
+                </button>
+              )}
               <button onClick={logout} className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-md cursor-pointer">
                 <LogOut size={14} />
                 Logout
@@ -9483,6 +9585,13 @@ const Dashboard = () => {
       <ThemeSettings
         isOpen={showThemeSettings}
         onClose={() => setShowThemeSettings(false)}
+      />
+
+      {/* Plan Details Modal */}
+      <PlanDetailsModal
+        isOpen={showPlanDetails}
+        onClose={() => setShowPlanDetails(false)}
+        onUpgrade={handleUpgradePlan}
       />
 
       {/* History Panel */}

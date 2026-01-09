@@ -3,9 +3,14 @@ import React, { useState } from 'react';
 import { useAuth } from '../custom-hook/useAuth';
 import { Loader2, Eye, EyeOff } from 'lucide-react';
 
-const SignupForm = ({ onToggleForm }: { onToggleForm: () => void }) => {
+interface SignupFormProps {
+    onToggleForm: () => void;
+    prefillEmail?: string;
+}
+
+const SignupForm = ({ onToggleForm, prefillEmail }: SignupFormProps) => {
     const [username, setUsername] = useState('');
-    const [email, setEmail] = useState('');
+    const [email, setEmail] = useState(prefillEmail || '');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
