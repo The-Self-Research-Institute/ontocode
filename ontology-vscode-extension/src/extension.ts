@@ -11,9 +11,15 @@ import { EditCapture } from './collaboration/EditCapture';
 import { RemoteEditApplier } from './collaboration/RemoteEditApplier';
 
 const TOKEN_KEY = 'ontocode.authToken';
-const GATEWAY_URL = 'http://13.218.153.101'; // Gateway IPv4 to avoid IPv6 timeouts
+// Production endpoints (commented for local development)
+const GATEWAY_URL = 'http://13.218.153.101'; // Gateway IPv4
 const OWL_EDITOR_URL = GATEWAY_URL; // WebSocket endpoint routed via gateway
 const PLUGIN_SERVICE_URL = 'http://13.218.153.101:8087'; // Plugin service port
+
+// Local development endpoints - Gateway port 80 routes to all backend services
+// const GATEWAY_URL = 'http://localhost:80'; // Gateway port 80 (routes to auth:8086, editor:8083)
+// const OWL_EDITOR_URL = GATEWAY_URL; // OWL Editor service (WebSocket endpoint via Gateway)
+// const PLUGIN_SERVICE_URL = 'http://localhost:8087'; // Plugin service direct port
 
 /**
  * Parse JWT token to extract user information
@@ -444,8 +450,8 @@ class OntoCodePanel {
             const fullUrl = `${GATEWAY_URL}${url}`;
             console.log(`[Proxy] ${type.replace('api', '').toUpperCase()}: ${fullUrl}`, isPublicEndpoint ? '(public)' : '(authenticated)');
 
-            // Set a timeout for requests (120 seconds for large ontologies)
-            const axiosConfig = { headers, timeout: 120_000 };
+            // Set a timeout for requests (300 seconds for large ontologies and workspace operations)
+            const axiosConfig = { headers, timeout: 300_000 };
 
             switch (type) {
                 case 'apiGet':
@@ -728,6 +734,7 @@ class OntoCodePanel {
                         // If not, check the project status and trigger fileReady if COMPLETED
                         try {
                             const statusUrl = `http://ec2-13-218-153-101.compute-1.amazonaws.com/api/ontology/status/${projectId}`;
+                            // const statusUrl = `http://localhost:80/api/ontology/status/${projectId}`;
                             const statusResp = await axios.get(statusUrl, { headers });
                             console.log(`[OntoCode] Fallback status check for ${projectId}:`, statusResp.data);
                             

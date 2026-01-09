@@ -183,10 +183,15 @@ public class AuthController {
 
         auditService.logLoginSuccess(request.getUsername(), clientIp);
 
+        // Check if user is admin
+        boolean isAdmin = user.getRoles().contains("ROLE_ADMIN");
+
         return ResponseEntity.ok(Map.of(
             "jwt", jwt,
             "username", user.getUsername(),
-            "roles", user.getRoles()
+            "email", user.getEmail(),
+            "roles", user.getRoles(),
+            "isAdmin", isAdmin
         ));
     }
 
@@ -239,9 +244,15 @@ public class AuthController {
         UserDetails userDetails = userDetailsService.loadUserByUsername(request.getUsername());
         String jwt = jwtUtil.generateToken(userDetails, user.getEmail());
 
+        // Check if user is admin
+        boolean isAdmin = user.getRoles().contains("ROLE_ADMIN");
+
         return ResponseEntity.ok(Map.of(
             "jwt", jwt,
             "username", user.getUsername(),
+            "email", user.getEmail(),
+            "roles", user.getRoles(),
+            "isAdmin", isAdmin,
             "message", "Registration successful!"
         ));
     }
