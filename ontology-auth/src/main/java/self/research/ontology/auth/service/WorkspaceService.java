@@ -93,19 +93,24 @@ public class WorkspaceService {
     }
 
     /**
-     * Remove a member from workspace
+     * Remove a member from workspace (by userId or email)
      */
     @Transactional
-    public void removeMember(String workspaceId, String userId) {
+    public void removeMember(String workspaceId, String memberIdentifier) {
         Workspace workspace = workspaceRepository.findByWorkspaceId(workspaceId)
                 .orElseThrow(() -> new IllegalArgumentException("Workspace not found"));
 
         // Can't remove owner
-        if (workspace.getOwnerId().equals(userId)) {
+        if (workspace.getOwnerId().equals(memberIdentifier)) {
             throw new IllegalArgumentException("Cannot remove workspace owner");
         }
 
-        workspace.removeMember(userId);
+        // Try to remove by userId first, then by email
+        boolean removed = workspace.removeMemberByIdOrEmail(memberIdentifier);
+        if (!removed) {
+            throw new IllegalArgumentException("Member not found in workspace");
+        }
+        
         workspaceRepository.save(workspace);
     }
 
@@ -175,5 +180,17 @@ public class WorkspaceService {
         Workspace workspace = workspaceOpt.get();
         WorkspaceMember member = workspace.getMember(userId);
         return member != null ? member.getRole() : null;
+    }
+
+    /**
+     * Delete a workspace
+     */
+    @Transactional
+    public void deleteWorkspace(String workspaceId) {
+        Workspace workspace = workspaceRepository.findByWorkspaceId(workspaceId)
+                .orElseThrow(() -> new IllegalArgumentException("Workspace not found"));
+
+        workspaceRepository.delete(workspace);
+        log.info("Deleted workspace: {}", workspaceId);
     }
 }

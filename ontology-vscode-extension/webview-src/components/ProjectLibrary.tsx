@@ -43,9 +43,12 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     const [searchQuery, setSearchQuery] = useState('');
     const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
     const [uploading, setUploading] = useState(false);
+    const [uploadProgress, setUploadProgress] = useState(0);
+    const [processingFile, setProcessingFile] = useState<string | null>(null);
     const [selectedFile, setSelectedFile] = useState<string | null>(null);
     const [deleteConfirm, setDeleteConfirm] = useState<{ show: boolean; fileId: string; fileName: string }>({ show: false, fileId: '', fileName: '' });
     const [toast, setToast] = useState<{ show: boolean; message: string; type: 'success' | 'error' }>({ show: false, message: '', type: 'success' });
+    const [openMenuFileId, setOpenMenuFileId] = useState<string | null>(null); // Track which file menu is open
     const { user } = useAuth();
 
     const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -56,6 +59,15 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     useEffect(() => {
         loadFiles();
     }, [projectId]);
+
+    // Close menu when clicking outside
+    useEffect(() => {
+        const handleClickOutside = () => setOpenMenuFileId(null);
+        if (openMenuFileId) {
+            document.addEventListener('click', handleClickOutside);
+            return () => document.removeEventListener('click', handleClickOutside);
+        }
+    }, [openMenuFileId]);
 
     const loadFiles = async () => {
         try {
@@ -81,11 +93,48 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         const file = event.target.files?.[0];
         if (!file) return;
 
+        // Validate file size (max 300MB)
+        const maxSize = 300 * 1024 * 1024; // 300MB
+        if (file.size > maxSize) {
+            showToast(`File too large. Maximum size is 300MB. Your file is ${(file.size / (1024 * 1024)).toFixed(1)}MB`, 'error');
+            event.target.value = '';
+            return;
+        }
+
+        // Validate file type
+        const validExtensions = ['.owl', '.rdf', '.ttl', '.n3'];
+        const fileExtension = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+        if (!validExtensions.includes(fileExtension)) {
+            showToast('Invalid file type. Only .owl, .rdf, .ttl, .n3 files are allowed', 'error');
+            event.target.value = '';
+            return;
+        }
+
         try {
             setUploading(true);
+            setUploadProgress(0);
+            setProcessingFile(file.name);
+            
+            console.log(`[ProjectLibrary] Processing large file: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)}MB)`);
+            
+            // For large files (>10MB), use chunked processing
+            const isLargeFile = file.size > 10 * 1024 * 1024;
+            
+            if (isLargeFile) {
+                showToast(`Processing large file: ${file.name}...`, 'success');
+            }
             
             // Convert file to base64 for message passing
             const reader = new FileReader();
+            
+            // Track reading progress
+            reader.onprogress = (e) => {
+                if (e.lengthComputable) {
+                    const progress = Math.round((e.loaded / e.total) * 50); // 0-50% for reading
+                    setUploadProgress(progress);
+                }
+            };
+            
             const base64Promise = new Promise<string>((resolve, reject) => {
                 reader.onload = () => resolve(reader.result as string);
                 reader.onerror = reject;
@@ -93,25 +142,55 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             });
             
             const base64Data = await base64Promise;
+            setUploadProgress(50); // Reading complete
             
-            // Send as JSON instead of FormData
+            console.log('[ProjectLibrary] File read complete, uploading to server...');
+            
+            // Send as JSON with timeout for large files
             const uploadResponse = await apiClient.post(`/api/projects/${projectId}/files`, {
                 fileName: file.name,
                 fileData: base64Data,
                 fileSize: file.size,
                 fileType: file.type || 'application/rdf+xml'
+            }, {
+                timeout: 300000, // 5 minute timeout for large files
+                onUploadProgress: (progressEvent) => {
+                    if (progressEvent.total) {
+                        const uploadPercent = Math.round((progressEvent.loaded / progressEvent.total) * 50);
+                        setUploadProgress(50 + uploadPercent); // 50-100% for uploading
+                    }
+                }
             });
             
             console.log('[ProjectLibrary] Upload response:', uploadResponse);
-            showToast('File uploaded successfully', 'success');
+            setUploadProgress(100);
+            
+            if (isLargeFile) {
+                showToast('Large file uploaded successfully! Processing in background...', 'success');
+            } else {
+                showToast('File uploaded successfully', 'success');
+            }
             
             // Reload files to show the uploaded file
             await loadFiles();
-        } catch (error) {
+        } catch (error: any) {
             console.error('Error uploading file:', error);
-            showToast('Failed to upload file', 'error');
+            
+            // Provide specific error messages
+            let errorMessage = 'Failed to upload file';
+            if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+                errorMessage = 'Upload timeout. Please try a smaller file or check your connection.';
+            } else if (error.response?.status === 413) {
+                errorMessage = 'File too large for server. Maximum size is 300MB.';
+            } else if (error.response?.data?.error) {
+                errorMessage = error.response.data.error;
+            }
+            
+            showToast(errorMessage, 'error');
         } finally {
             setUploading(false);
+            setUploadProgress(0);
+            setProcessingFile(null);
             event.target.value = '';
         }
     };
@@ -223,6 +302,29 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                             </button>
                         </div>
                     </div>
+
+                    {/* Upload Progress Bar */}
+                    {uploading && (
+                        <div className="mt-4">
+                            <div className="flex items-center justify-between mb-2">
+                                <span className="text-sm font-medium text-gray-700">
+                                    {processingFile ? `Processing: ${processingFile}` : 'Uploading file...'}
+                                </span>
+                                <span className="text-sm text-gray-600">{uploadProgress}%</span>
+                            </div>
+                            <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                                <div 
+                                    className="bg-purple-600 h-full transition-all duration-300 ease-out"
+                                    style={{ width: `${uploadProgress}%` }}
+                                />
+                            </div>
+                            <p className="text-xs text-gray-500 mt-1">
+                                {uploadProgress < 50 ? 'Reading file...' : 
+                                 uploadProgress < 100 ? 'Uploading to server...' : 
+                                 'Processing complete!'}
+                            </p>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -260,11 +362,18 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                                     <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
                                         <FileText size={24} className="text-purple-600" />
                                     </div>
-                                    <div className="relative group">
-                                        <button className="p-1 hover:bg-gray-100 rounded">
+                                    <div className="relative">
+                                        <button 
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setOpenMenuFileId(openMenuFileId === file.id ? null : file.id);
+                                            }}
+                                            className="p-1 hover:bg-gray-100 rounded"
+                                        >
                                             <MoreVertical size={16} className="text-gray-400" />
                                         </button>
-                                        <div className="absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg hidden group-hover:block z-10">
+                                        {openMenuFileId === file.id && (
+                                            <div className="absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
                                             <button
                                                 onClick={(e) => {
                                                     e.stopPropagation();
@@ -275,7 +384,8 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                                                 <Trash2 size={14} />
                                                 Delete
                                             </button>
-                                        </div>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
 

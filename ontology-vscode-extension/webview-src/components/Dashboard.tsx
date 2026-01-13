@@ -1036,7 +1036,9 @@ const OpenFileDialog = ({
   myFiles,
   sharedFiles,
   currentProjectId,
-  onSwitchFile
+  onSwitchFile,
+  parentProjectId,
+  onLoadProjectFile
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -1044,8 +1046,14 @@ const OpenFileDialog = ({
   sharedFiles: FileInfo[];
   currentProjectId: string | null;
   onSwitchFile: (projectId: string) => void;
+  parentProjectId?: string;
+  onLoadProjectFile?: (fileId: string, fileName: string) => void;
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
+
+  console.log('[OpenFileDialog] Rendered with myFiles:', myFiles.length, 'sharedFiles:', sharedFiles.length, 'isOpen:', isOpen);
+  console.log('[OpenFileDialog] myFiles data:', myFiles);
+  console.log('[OpenFileDialog] sharedFiles data:', sharedFiles);
 
   if (!isOpen) return null;
 
@@ -1084,15 +1092,21 @@ const OpenFileDialog = ({
                 <span className="text-xs font-semibold text-purple-800">My Files ({myFiles.filter(f => !searchQuery || f.filename.toLowerCase().includes(searchQuery.toLowerCase())).length})</span>
               </div>
               <div className="space-y-0.5">
-                {myFiles.filter(f => !searchQuery || f.filename.toLowerCase().includes(searchQuery.toLowerCase())).map((file) => {
-                  const fileProjectId = file.filename.slice(0, -4);
+                {myFiles.filter(f => !searchQuery || (f.filename && f.filename.toLowerCase().includes(searchQuery.toLowerCase()))).map((file) => {
+                  const fileProjectId = file.filename ? file.filename.slice(0, -4) : file.id;
                   const isActive = fileProjectId === currentProjectId;
                   return (
                     <div
                       key={file.id}
                       onClick={() => {
                         if (!isActive) {
-                          onSwitchFile(fileProjectId);
+                          // If we have a parent project (admin flow), load the file from project
+                          if (parentProjectId && onLoadProjectFile) {
+                            onLoadProjectFile(file.id, file.filename);
+                          } else {
+                            // Normal flow - switch to existing ontology project
+                            onSwitchFile(fileProjectId);
+                          }
                         }
                         onClose();
                       }}
@@ -1126,8 +1140,8 @@ const OpenFileDialog = ({
             </div>
             {sharedFiles.length > 0 ? (
               <div className="space-y-0.5">
-                {sharedFiles.filter(f => !searchQuery || f.filename.toLowerCase().includes(searchQuery.toLowerCase())).map((file) => {
-                  const fileProjectId = file.filename.slice(0, -4);
+                {sharedFiles.filter(f => !searchQuery || (f.filename && f.filename.toLowerCase().includes(searchQuery.toLowerCase()))).map((file) => {
+                  const fileProjectId = file.filename ? file.filename.slice(0, -4) : file.id;
                   const isActive = fileProjectId === currentProjectId;
                   return (
                     <div
@@ -1548,7 +1562,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     },
     [user?.email, user?.username] // collaboration.addNotification is stable, no need to include
   );
-  const [projectId, setProjectId] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(initialProjectId || null);
   const [availableProjects, setAvailableProjects] = useState<any[]>([]);
   const [showProjectSelector, setShowProjectSelector] = useState(false);
   const [metadata, setMetadata] = useState<OntologyMetadata | null>(null);
@@ -1606,6 +1620,70 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     expandedNodesRef.current = expandedNodes;
     console.log('[Dashboard] 🔍 expandedNodes updated:', expandedNodes.length, 'nodes', expandedNodes.slice(0, 5));
   }, [expandedNodes]);
+
+  // Fetch files for the currently selected project
+  const fetchProjectFiles = useCallback(async (currentProjectId: string) => {
+    if (!currentProjectId) return;
+    
+    try {
+      console.log('[Dashboard] 📂 Fetching files for project:', currentProjectId);
+      const filesResponse = await apiClient.get<{ files: any[]; count: number }>(`/api/projects/${currentProjectId}/files`);
+      
+      console.log('[Dashboard] 📥 Raw files response:', filesResponse);
+      
+      if (filesResponse && Array.isArray(filesResponse.files)) {
+        console.log('[Dashboard] 📄 Found', filesResponse.files.length, 'files in project');
+        
+        // Map file metadata to FileInfo format
+        const projectFiles = filesResponse.files.map((file: any) => ({
+          id: file.id,
+          filename: file.name || file.fileName || file.id,
+          contentType: file.type === 'owl' ? 'application/rdf+xml' : `application/${file.type}`,
+          uploadDate: file.uploadedAt || new Date().toISOString(),
+          length: file.size || 0,
+          uploadedBy: file.uploadedBy
+        }));
+        
+        console.log('[Dashboard] 📋 Mapped project files:', projectFiles);
+        
+        setMyFiles(projectFiles);
+        setSharedFiles([]);
+        setListOfFiles(projectFiles);
+        
+        console.log('[Dashboard] ✅ File menu updated with project files');
+      } else if (filesResponse && filesResponse.files === undefined) {
+        // Maybe files are at a different level or API returned error
+        console.log('[Dashboard] ⚠️ Response has no files array:', filesResponse);
+        // Try to handle different response formats
+        if (Array.isArray(filesResponse)) {
+          const projectFiles = filesResponse.map((file: any) => ({
+            id: file.id,
+            filename: file.name || file.fileName || file.id,
+            contentType: file.type === 'owl' ? 'application/rdf+xml' : `application/${file.type}`,
+            uploadDate: file.uploadedAt || new Date().toISOString(),
+            length: file.size || 0,
+            uploadedBy: file.uploadedBy
+          }));
+          setMyFiles(projectFiles);
+          setSharedFiles([]);
+          setListOfFiles(projectFiles);
+        } else {
+          setMyFiles([]);
+          setSharedFiles([]);
+          setListOfFiles([]);
+        }
+      } else {
+        console.log('[Dashboard] ℹ️ No files found in project or empty response');
+        setMyFiles([]);
+        setSharedFiles([]);
+        setListOfFiles([]);
+      }
+    } catch (error: any) {
+      console.error('[Dashboard] ❌ Failed to fetch project files:', error);
+      console.error('[Dashboard] ❌ Error details:', error?.response?.data || error?.message || error);
+      // Don't clear the file menu on error - keep showing projects list
+    }
+  }, []);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOptions, setSearchOptions] = useState({
     useRegex: false,
@@ -2473,7 +2551,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     }
   }, []);
 
-  const fetchData = useCallback(async (currentProjectId: string, waitForCompletion = false) => {
+  const fetchData = useCallback(async (currentProjectId: string, waitForCompletion = false, parentProjectId?: string) => {
     // Don't block UI - let user continue working
     setSelectedItem(null);
     setSearchQuery("");
@@ -2483,10 +2561,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       setIsInitialLoading(true);
     }
     
+    // Determine if we're in admin flow (parentProjectId provided means files should be loaded from project library)
+    const isAdminFlow = !!parentProjectId;
+    
     // Notify user that loading has started
     console.log(`Loading ontology "${currentProjectId}"...`);
     console.log('[Dashboard] 🔄 Fetching data for project:', currentProjectId);
     console.log('[Dashboard] 📊 Collaboration status:', collaboration.state.connected);
+    console.log('[Dashboard] 📂 Admin flow:', isAdminFlow, 'Parent project:', parentProjectId);
     
     // Request collaboration status when loading a new file
     if (window.vscode) {
@@ -2828,6 +2910,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                   Array.isArray(datatypesRes?.datatypes) ? datatypesRes.datatypes : []);
       
       // Fetch files list separately (not in parallel to avoid blocking main data load)
+      // In admin flow, skip user email-based files - we'll fetch project files instead
+      if (!isAdminFlow) {
       try {
         const userEmail = user?.email || '';
         const filesRes = await apiClient.get<any>(`/api/projects?userEmail=${encodeURIComponent(userEmail)}`);
@@ -2835,60 +2919,80 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         let myProjectsList: any[] = [];
         let sharedProjectsList: any[] = [];
         
-        if (filesRes.myFiles && filesRes.sharedFiles) {
+        if (filesRes.myFiles !== undefined && filesRes.sharedFiles !== undefined) {
           // New format with separate lists
           myProjectsList = Array.isArray(filesRes.myFiles) ? filesRes.myFiles : [];
           sharedProjectsList = Array.isArray(filesRes.sharedFiles) ? filesRes.sharedFiles : [];
           
-          setMyFiles(myProjectsList.map((p: any) => ({
-            id: p.id,
-            filename: p.filename || p.name || p.id,
-            contentType: 'application/rdf+xml',
-            uploadDate: p.updatedAt || new Date().toISOString(),
-            length: 0,
-            ownerEmail: p.ownerEmail
-          })));
+          setMyFiles(myProjectsList.map((p: any) => {
+            const baseName = p.filename || p.name || p.id;
+            const filename = baseName.endsWith('.owl') ? baseName : `${baseName}.owl`;
+            return {
+              id: p.id,
+              filename: filename,
+              contentType: 'application/rdf+xml',
+              uploadDate: p.updatedAt || new Date().toISOString(),
+              length: 0,
+              ownerEmail: p.ownerEmail
+            };
+          }));
           
-          setSharedFiles(sharedProjectsList.map((p: any) => ({
-            id: p.id,
-            filename: p.filename || p.name || p.id,
-            contentType: 'application/rdf+xml',
-            uploadDate: p.updatedAt || new Date().toISOString(),
-            length: 0,
-            sharedBy: p.sharedBy,
-            ownerEmail: p.ownerEmail,
-            permission: p.permission || 'view'
-          })));
+          setSharedFiles(sharedProjectsList.map((p: any) => {
+            const baseName = p.filename || p.name || p.id;
+            const filename = baseName.endsWith('.owl') ? baseName : `${baseName}.owl`;
+            return {
+              id: p.id,
+              filename: filename,
+              contentType: 'application/rdf+xml',
+              uploadDate: p.updatedAt || new Date().toISOString(),
+              length: 0,
+              sharedBy: p.sharedBy,
+              ownerEmail: p.ownerEmail,
+              permission: p.permission || 'view'
+            };
+          }));
           
           console.log('[Dashboard] 📂 Loaded shared files:', sharedProjectsList.length);
           console.log('[Dashboard] 🤝 Collaboration features available for shared editing');
           
           // Combined list for backward compatibility
-          setListOfFiles([...myProjectsList, ...sharedProjectsList].map((p: any) => ({
-            id: p.id,
-            filename: p.filename || p.name || p.id,
-            contentType: 'application/rdf+xml',
-            uploadDate: p.updatedAt || new Date().toISOString(),
-            length: 0
-          })));
+          setListOfFiles([...myProjectsList, ...sharedProjectsList].map((p: any) => {
+            const baseName = p.filename || p.name || p.id;
+            const filename = baseName.endsWith('.owl') ? baseName : `${baseName}.owl`;
+            return {
+              id: p.id,
+              filename: filename,
+              contentType: 'application/rdf+xml',
+              uploadDate: p.updatedAt || new Date().toISOString(),
+              length: 0
+            };
+          }));
         } else {
           // Old format (backward compatibility)
           const projects = Array.isArray(filesRes?.projects) ? filesRes.projects : [];
           myProjectsList = projects;
-          setListOfFiles(projects.map((p: any) => ({
-            id: p.id,
-            filename: p.filename || p.name || p.id,
-            contentType: 'application/rdf+xml',
-            uploadDate: p.updatedAt || new Date().toISOString(),
-            length: 0
-          })));
-          setMyFiles(projects.map((p: any) => ({
-            id: p.id,
-            filename: p.filename || p.name || p.id,
-            contentType: 'application/rdf+xml',
-            uploadDate: p.updatedAt || new Date().toISOString(),
-            length: 0
-          })));
+          setListOfFiles(projects.map((p: any) => {
+            const baseName = p.filename || p.name || p.id;
+            const filename = baseName.endsWith('.owl') ? baseName : `${baseName}.owl`;
+            return {
+              id: p.id,
+              filename: filename,
+              contentType: 'application/rdf+xml',
+              uploadDate: p.updatedAt || new Date().toISOString(),
+              length: 0
+            };
+          }));
+          setMyFiles(projects.map((p: any) => {
+            const baseName = p.filename || p.name || p.id;
+            const filename = baseName.endsWith('.owl') ? baseName : `${baseName}.owl`;
+            return {
+              id: p.id,
+              filename: filename,
+              contentType: 'application/rdf+xml',
+              uploadDate: p.updatedAt || new Date().toISOString(),
+              length: 0
+            };
+          }));
           setSharedFiles([]);
         }
         
@@ -2945,9 +3049,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         setMyFiles([]);
         setSharedFiles([]);
       }
+      } // End of !isAdminFlow block
       
       // Stop any previous monitoring for this project
       syncService.stopMonitoring(currentProjectId);
+      
+      // Fetch files for the project:
+      // - In admin flow: use parentProjectId (the project folder containing the files)
+      // - In normal flow: use currentProjectId (the ontology itself)
+      const projectIdForFiles = isAdminFlow ? parentProjectId! : currentProjectId;
+      console.log('[Dashboard] 📂 Fetching files from project:', projectIdForFiles);
+      await fetchProjectFiles(projectIdForFiles);
       
       // Notify user that ontology is fully loaded
       notificationService.success(
@@ -2965,7 +3077,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     } finally {
       setIsInitialLoading(false);
     }
-  }, []); // waitForProcessingComplete doesn't depend on state/props, stable reference
+  }, [waitForProcessingComplete, applyInstanceCountsToTree, user, collaboration, fetchProjectFiles]); // Include dependencies for proper closure
 
   useEffect(() => {
     if (metadata?.ontologyIRI) {
@@ -3802,20 +3914,36 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
   }, [refreshSelectedClassIndividualDetails]);
 
   const fetchProjects = useCallback(async () => {
+    if (!user?.email) {
+      console.log('[Dashboard] fetchProjects skipped - user not available yet');
+      return;
+    }
     try {
-      const userEmail = user?.email || '';
+      const userEmail = user.email;
+      console.log('[Dashboard] fetchProjects called for user:', userEmail);
       const response = await apiClient.get<{ success: boolean; projects?: any[]; myFiles?: any[]; sharedFiles?: any[] }>(`/api/projects?userEmail=${encodeURIComponent(userEmail)}`);
       
+      console.log('[Dashboard] fetchProjects response:', JSON.stringify(response, null, 2));
       setHasFetchedProjects(true);
       
       if (response.success) {
-        // Handle new format with myFiles and sharedFiles
-        if (response.myFiles && response.sharedFiles) {
-          const allProjects = [...(response.myFiles || []), ...(response.sharedFiles || [])];
+        // Handle new format with myFiles and sharedFiles (check if properties exist, not just truthy)
+        if (response.myFiles !== undefined && response.sharedFiles !== undefined) {
+          // Ensure all files have filename property for display
+          const myFilesWithNames = (response.myFiles || []).map((p: any) => ({
+            ...p,
+            filename: p.filename || p.name || p.id
+          }));
+          const sharedFilesWithNames = (response.sharedFiles || []).map((p: any) => ({
+            ...p,
+            filename: p.filename || p.name || p.id
+          }));
+          const allProjects = [...myFilesWithNames, ...sharedFilesWithNames];
           setAvailableProjects(allProjects);
-          setMyFiles(response.myFiles || []);
-          setSharedFiles(response.sharedFiles || []);
-          console.log('[Dashboard] Fetched', response.myFiles.length, 'myFiles and', response.sharedFiles.length, 'sharedFiles');
+          setMyFiles(myFilesWithNames);
+          setSharedFiles(sharedFilesWithNames);
+          setListOfFiles(allProjects); // Update listOfFiles with combined list
+          console.log('[Dashboard] Fetched', myFilesWithNames.length, 'myFiles and', sharedFilesWithNames.length, 'sharedFiles');
           
           // Only auto-load the first file if:
           // 1. No projectId is set
@@ -3836,10 +3964,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           }
         } else if (response.projects) {
           // Backward compatibility with old format
-          setAvailableProjects(response.projects);
+          const projectsWithNames = (response.projects || []).map((p: any) => ({
+            ...p,
+            filename: p.filename || p.name || p.id
+          }));
+          setAvailableProjects(projectsWithNames);
           // Assume all projects are "myFiles" if no sharedBy field
-          setMyFiles(response.projects.filter((p: any) => !p.sharedBy));
-          setSharedFiles(response.projects.filter((p: any) => p.sharedBy));
+          const myFilesList = projectsWithNames.filter((p: any) => !p.sharedBy);
+          const sharedFilesList = projectsWithNames.filter((p: any) => p.sharedBy);
+          setMyFiles(myFilesList);
+          setSharedFiles(sharedFilesList);
+          setListOfFiles(projectsWithNames); // Set combined list
           
           const shouldAutoLoad = !projectId && !hasUserSelectedFileRef.current && !isExpectingFileReady && hasFetchedProjects;
           
@@ -3853,13 +3988,20 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
             console.log('[Dashboard] No files found, showing empty state');
             setIsInitialLoading(false);
           }
+        } else {
+          console.log('[Dashboard] No myFiles/sharedFiles or projects in response');
+          setMyFiles([]);
+          setSharedFiles([]);
+          setListOfFiles([]);
         }
+      } else {
+        console.log('[Dashboard] Response not successful:', response);
       }
     } catch (error) {
       console.error("Failed to fetch projects:", error);
       setIsInitialLoading(false);
     }
-  }, [projectId, fetchData, user, isExpectingFileReady]);
+  }, [projectId, user, isExpectingFileReady, hasFetchedProjects]); // Removed fetchData to prevent loop
 
   const handleProjectSelection = useCallback((selectedProjectId: string) => {
     setHasUserSelectedFile(true); // Mark that user has manually selected a file
@@ -3904,19 +4046,63 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
   // Fetch projects list on mount (but don't auto-load a file)
   // This populates the file selector dropdown when user clicks it
   useEffect(() => {
-    console.log('[Dashboard] Initial mount - fetching projects list');
-    fetchProjects();
-  }, [fetchProjects]);
-  
-  // Auto-load selected file from Project Library
-  useEffect(() => {
-    if (selectedFileId && !projectId) {
-      console.log('[Dashboard] Auto-loading selected file:', selectedFileId, selectedFileName);
-      setHasUserSelectedFile(true); // Mark that file was selected
-      setProjectId(selectedFileId);
-      fetchData(selectedFileId);
+    if (!user) {
+      console.log('[Dashboard] Skipping initial fetch - user not available');
+      return;
     }
-  }, [selectedFileId, selectedFileName, projectId, fetchData]);
+    console.log('[Dashboard] Initial mount - fetching projects list for user:', user.email);
+    // In admin flow, fetch files for the specific project; otherwise fetch all projects
+    if (initialProjectId && onBackToProjects) {
+      console.log('[Dashboard] Admin flow - fetching files for project:', initialProjectId);
+      fetchProjectFiles(initialProjectId);
+    } else {
+      console.log('[Dashboard] Non-admin flow - fetching all projects');
+      fetchProjects();
+    }
+  }, [initialProjectId, onBackToProjects, user]); // Added user dependency
+  
+  // Track if a file is currently being loaded to prevent duplicate loads
+  const fileLoadingRef = useRef(false);
+  const lastLoadedFileRef = useRef<string | null>(null);
+  
+  // Auto-load selected file from Project Library (admin flow)
+  useEffect(() => {
+    if (selectedFileId && selectedFileName && initialProjectId) {
+      // Prevent loading the same file multiple times or loading while another load is in progress
+      if (fileLoadingRef.current || lastLoadedFileRef.current === selectedFileId) {
+        console.log('[Dashboard] Skipping duplicate load for:', selectedFileId);
+        return;
+      }
+      
+      console.log('[Dashboard] Auto-loading selected file:', selectedFileId, selectedFileName);
+      console.log('[Dashboard] Parent project for file menu:', initialProjectId);
+      
+      // Mark as loading
+      fileLoadingRef.current = true;
+      lastLoadedFileRef.current = selectedFileId;
+      
+      // Clear any previous file state
+      console.log('[Dashboard] 🧹 Cleaning up previous file state...');
+      setIsInitialLoading(true);
+      setMainTab('Entities');
+      setEntitiesTab('Classes');
+      
+      setHasUserSelectedFile(true); // Mark that file was selected
+      
+      // Upload the file to GraphDB first, then it will auto-load
+      handleLoadProjectFile(selectedFileId, selectedFileName).finally(() => {
+        // Reset loading flag after a delay to prevent rapid re-loads
+        setTimeout(() => {
+          fileLoadingRef.current = false;
+        }, 1000);
+      });
+    }
+    
+    // Cleanup when unmounting
+    return () => {
+      console.log('[Dashboard] 🧹 Cleanup on unmount');
+    };
+  }, [selectedFileId, selectedFileName, initialProjectId]);
   
   // Update collaboration context when projectId changes
   useEffect(() => {
@@ -4116,7 +4302,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
               
               // Fetch the data
               console.log('[Dashboard] Fetching data for:', message.status.projectId);
-              fetchData(message.status.projectId, false)
+              console.log('[Dashboard] Parent project for file menu:', initialProjectId);
+              fetchData(message.status.projectId, false, initialProjectId)
                 .then(() => {
                   console.log('[Dashboard] ✅ Data loaded successfully');
                   console.log('[Dashboard] Closing dialogs...');
@@ -5311,6 +5498,114 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       }
     });
   }, [hasUnsavedChanges, draftCount, projectId, handleSave]);
+
+  // Load a file from the project (admin flow) - fetch content and upload to ontology editor
+  const handleLoadProjectFile = useCallback(async (fileId: string, fileName: string) => {
+    if (!initialProjectId) {
+      console.error('[Dashboard] Cannot load project file without parent project ID');
+      return;
+    }
+    
+    try {
+      console.log('[Dashboard] 📂 Loading file from project:', fileId, fileName);
+      notificationService.info('Loading File', `Loading ${fileName}...`);
+      
+      // Reset all entity state before loading new file
+      console.log('[Dashboard] 🔄 Resetting state for new file...');
+      setClassHierarchy([]);
+      setObjectProperties([]);
+      setDataProperties([]);
+      setAnnotationProperties([]);
+      setIndividuals([]);
+      setDatatypes([]);
+      setSelectedItem(null);
+      setExpandedNodes(['http://www.w3.org/2002/07/owl#Thing']);
+      setSearchQuery('');
+      setHasUnsavedChanges(false);
+      setDraftCount(0);
+      
+      // Fetch file content from auth service
+      const fileContent = await apiClient.get<{ id: string; name: string; content: string; type: string; size: number }>(
+        `/api/projects/${initialProjectId}/files/${fileId}/content`
+      );
+      
+      if (!fileContent || !fileContent.content) {
+        throw new Error('File content not found');
+      }
+      
+      console.log('[Dashboard] 📥 File content retrieved, uploading to ontology editor...');
+      
+      // Create a unique project ID for this file (remove extension and add timestamp)
+      const baseFileName = fileName.replace(/\.[^/.]+$/, '');
+      const ontologyProjectId = `${baseFileName}-${Date.now()}`;
+      
+      // Extract pure base64 data (remove data URL prefix if present)
+      const base64Data = fileContent.content.includes(',') 
+        ? fileContent.content.split(',')[1] 
+        : fileContent.content;
+      
+      // Set the project ID first so IMPORT_COMPLETED knows which project to load
+      setProjectId(ontologyProjectId);
+      pendingImportProjectIdRef.current = ontologyProjectId;
+      
+      // Upload to ontology editor service
+      if (window.vscode) {
+        // In VS Code, use message passing
+        window.vscode.postMessage({
+          type: 'uploadOntology',
+          projectId: ontologyProjectId,
+          fileName: fileName,
+          fileContent: base64Data,
+          ownerEmail: user?.email
+        });
+        
+        // The fileReady message will trigger fetchData via IMPORT_COMPLETED
+        setIsExpectingFileReady(true);
+        console.log('[Dashboard] ✅ Upload request sent to extension');
+        console.log('[Dashboard] Pending import project:', ontologyProjectId);
+        notificationService.info('Uploading', `Uploading ${fileName} to GraphDB...`);
+      } else {
+        // In browser, convert base64 to blob and use FormData
+        const byteCharacters = atob(base64Data);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: 'application/rdf+xml' });
+        
+        // Create FormData
+        const formData = new FormData();
+        formData.append('file', blob, fileName);
+        
+        // Upload using axios directly (apiClient doesn't support FormData)
+        const token = localStorage.getItem('authToken');
+        const uploadResponse = await fetch(`${window.API_BASE_URL || 'http://localhost:80'}/api/ontology/upload/${ontologyProjectId}?ownerEmail=${encodeURIComponent(user?.email || '')}`, {
+          method: 'POST',
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+          body: formData
+        });
+        
+        if (uploadResponse.ok) {
+          console.log('[Dashboard] ✅ File uploaded successfully');
+          setProjectId(ontologyProjectId);
+          
+          // Wait a moment for processing then fetch data with parentProjectId for file menu
+          setTimeout(() => {
+            fetchData(ontologyProjectId, false, initialProjectId);
+          }, 2000);
+          
+          notificationService.success('File Loaded', `${fileName} is ready for editing`);
+        } else {
+          const errorData = await uploadResponse.json().catch(() => ({ error: 'Upload failed' }));
+          throw new Error(errorData.error || 'Upload failed');
+        }
+      }
+    } catch (error: any) {
+      console.error('[Dashboard] ❌ Failed to load project file:', error);
+      notificationService.error('Load Failed', error?.message || 'Failed to load file');
+    }
+  }, [initialProjectId, user?.email, fetchData]);
 
   // Create Property from Class Expression Dialog
   const handleCreatePropertyFromDialog = useCallback(() => {
@@ -8948,11 +9243,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       />
       <OpenFileDialog
         isOpen={showOpenDialog}
-        onClose={() => setShowOpenDialog(false)}
+        onClose={() => {
+          console.log('[Dashboard] Closing OpenFileDialog. myFiles:', myFiles.length, 'sharedFiles:', sharedFiles.length);
+          setShowOpenDialog(false);
+        }}
         myFiles={myFiles}
         sharedFiles={sharedFiles}
         currentProjectId={projectId}
         onSwitchFile={handleSwitchFile}
+        parentProjectId={initialProjectId}
+        onLoadProjectFile={handleLoadProjectFile}
       />
       <ConfirmDialog
         isOpen={confirmDialog.isOpen}

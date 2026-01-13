@@ -31,11 +31,72 @@ public class Project {
     private List<String> tags = new ArrayList<>();
     
     // File management
-    private List<String> fileIds = new ArrayList<>(); // References to ontology files
+    private List<String> fileIds = new ArrayList<>(); // References to ontology files (deprecated - kept for backward compatibility)
+    private List<FileMetadataInfo> files = new ArrayList<>(); // File metadata stored in project
     
     // Timestamps
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+    
+    // Nested class for file metadata within project
+    public static class FileMetadataInfo {
+        private String fileId;
+        private String fileName;
+        private Long fileSize;
+        private String fileType; // MIME type
+        private String extension; // owl, rdf, ttl, n3
+        private String uploadedBy; // User ID
+        private String uploaderUsername;
+        private String uploaderEmail;
+        private LocalDateTime uploadedAt;
+        private String status; // ACTIVE, DELETED
+        
+        // Constructors
+        public FileMetadataInfo() {
+            this.uploadedAt = LocalDateTime.now();
+            this.status = "ACTIVE";
+        }
+        
+        public FileMetadataInfo(String fileId, String fileName, Long fileSize, String fileType, String extension) {
+            this();
+            this.fileId = fileId;
+            this.fileName = fileName;
+            this.fileSize = fileSize;
+            this.fileType = fileType;
+            this.extension = extension;
+        }
+        
+        // Getters and Setters
+        public String getFileId() { return fileId; }
+        public void setFileId(String fileId) { this.fileId = fileId; }
+        
+        public String getFileName() { return fileName; }
+        public void setFileName(String fileName) { this.fileName = fileName; }
+        
+        public Long getFileSize() { return fileSize; }
+        public void setFileSize(Long fileSize) { this.fileSize = fileSize; }
+        
+        public String getFileType() { return fileType; }
+        public void setFileType(String fileType) { this.fileType = fileType; }
+        
+        public String getExtension() { return extension; }
+        public void setExtension(String extension) { this.extension = extension; }
+        
+        public String getUploadedBy() { return uploadedBy; }
+        public void setUploadedBy(String uploadedBy) { this.uploadedBy = uploadedBy; }
+        
+        public String getUploaderUsername() { return uploaderUsername; }
+        public void setUploaderUsername(String uploaderUsername) { this.uploaderUsername = uploaderUsername; }
+        
+        public String getUploaderEmail() { return uploaderEmail; }
+        public void setUploaderEmail(String uploaderEmail) { this.uploaderEmail = uploaderEmail; }
+        
+        public LocalDateTime getUploadedAt() { return uploadedAt; }
+        public void setUploadedAt(LocalDateTime uploadedAt) { this.uploadedAt = uploadedAt; }
+        
+        public String getStatus() { return status; }
+        public void setStatus(String status) { this.status = status; }
+    }
     
     // Nested class for project members
     public static class ProjectMember {
@@ -110,9 +171,34 @@ public class Project {
         }
     }
     
+    public void addFileMetadata(FileMetadataInfo fileMetadata) {
+        // Also add to fileIds for backward compatibility
+        if (!this.fileIds.contains(fileMetadata.getFileId())) {
+            this.fileIds.add(fileMetadata.getFileId());
+        }
+        // Remove any existing file with same ID
+        this.files.removeIf(f -> f.getFileId().equals(fileMetadata.getFileId()));
+        this.files.add(fileMetadata);
+        this.updatedAt = LocalDateTime.now();
+    }
+    
     public void removeFile(String fileId) {
         this.fileIds.remove(fileId);
+        this.files.removeIf(f -> f.getFileId().equals(fileId));
         this.updatedAt = LocalDateTime.now();
+    }
+    
+    public FileMetadataInfo getFile(String fileId) {
+        return this.files.stream()
+            .filter(f -> f.getFileId().equals(fileId) && !"DELETED".equals(f.getStatus()))
+            .findFirst()
+            .orElse(null);
+    }
+    
+    public List<FileMetadataInfo> getActiveFiles() {
+        return this.files.stream()
+            .filter(f -> "ACTIVE".equals(f.getStatus()))
+            .toList();
     }
     
     // Getters and Setters
@@ -154,6 +240,9 @@ public class Project {
     
     public List<String> getFileIds() { return fileIds; }
     public void setFileIds(List<String> fileIds) { this.fileIds = fileIds; }
+    
+    public List<FileMetadataInfo> getFiles() { return files; }
+    public void setFiles(List<FileMetadataInfo> files) { this.files = files; }
     
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

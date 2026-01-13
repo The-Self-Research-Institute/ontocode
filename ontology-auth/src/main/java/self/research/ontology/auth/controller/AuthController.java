@@ -112,12 +112,17 @@ public class AuthController {
             ));
         }
 
-        // Check if user exists
+        // Check if user exists (support login with username or email)
         Optional<User> userOpt = userRepository.findByUsername(request.getUsername());
+        if (userOpt.isEmpty()) {
+            // Try finding by email if username not found
+            userOpt = userRepository.findByEmail(request.getUsername());
+        }
+        
         if (userOpt.isEmpty()) {
             auditService.logLoginFailure(request.getUsername(), clientIp, "User not found");
             return ResponseEntity.badRequest().body(Map.of(
-                "error", "Invalid username or password"
+                "error", "Invalid username/email or password"
             ));
         }
 
@@ -135,7 +140,7 @@ public class AuthController {
         try {
             authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(
-                    request.getUsername(),
+                    user.getUsername(), // Use actual username from DB
                     request.getPassword()
                 )
             );
@@ -220,7 +225,14 @@ public class AuthController {
         user.setUsername(request.getUsername());
         user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.setEmail(request.getEmail());
-        user.setRoles(Set.of("ROLE_USER"));
+        
+        // Set roles based on signup request
+        if ("admin".equalsIgnoreCase(request.getRole())) {
+            user.setRoles(Set.of("ROLE_USER", "ROLE_ADMIN"));
+        } else {
+            user.setRoles(Set.of("ROLE_USER"));
+        }
+        
         user.setEnabled(true); // Enable immediately for development (skip email verification)
 
         // Generate verification token (expires in 24 hours)
@@ -247,14 +259,15 @@ public class AuthController {
         // Check if user is admin
         boolean isAdmin = user.getRoles().contains("ROLE_ADMIN");
 
-        return ResponseEntity.ok(Map.of(
-            "jwt", jwt,
-            "username", user.getUsername(),
-            "email", user.getEmail(),
-            "roles", user.getRoles(),
-            "isAdmin", isAdmin,
-            "message", "Registration successful!"
-        ));
+        Map<String, Object> response = new HashMap<>();
+        response.put("jwt", jwt);
+        response.put("username", user.getUsername());
+        response.put("email", user.getEmail());
+        response.put("roles", user.getRoles());
+        response.put("isAdmin", isAdmin);
+        response.put("message", "Registration successful!");
+        
+        return ResponseEntity.ok(response);
     }
 
     /**

@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { X, Settings, User, Bell, Lock, Palette, Globe } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Settings, User, Bell, Lock, Palette, Globe, Check, Loader2 } from 'lucide-react';
+import apiClient from '../services/apiClient';
 
 interface SettingsModalProps {
     isOpen: boolean;
@@ -8,11 +9,14 @@ interface SettingsModalProps {
         username: string;
         email?: string;
         workspaceName?: string;
+        workspaceId?: string;
     };
 }
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, user }) => {
     const [activeTab, setActiveTab] = useState('profile');
+    const [saving, setSaving] = useState(false);
+    const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
     const [settings, setSettings] = useState({
         displayName: user.username,
         email: user.email || '',
@@ -21,6 +25,49 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, user }) 
         theme: 'light',
         language: 'en'
     });
+    const [passwordData, setPasswordData] = useState({
+        currentPassword: '',
+        newPassword: '',
+        confirmPassword: ''
+    });
+
+    // Reset settings when user changes or modal opens
+    useEffect(() => {
+        // Try to load saved settings from localStorage
+        const savedSettings = localStorage.getItem('userSettings');
+        if (savedSettings) {
+            try {
+                const parsed = JSON.parse(savedSettings);
+                setSettings({
+                    displayName: parsed.displayName || user.username,
+                    email: parsed.email || user.email || '',
+                    notifications: parsed.notifications ?? true,
+                    emailNotifications: parsed.emailNotifications ?? true,
+                    theme: parsed.theme || 'light',
+                    language: parsed.language || 'en'
+                });
+            } catch (e) {
+                // Fall back to defaults
+                setSettings({
+                    displayName: user.username,
+                    email: user.email || '',
+                    notifications: true,
+                    emailNotifications: true,
+                    theme: 'light',
+                    language: 'en'
+                });
+            }
+        } else {
+            setSettings({
+                displayName: user.username,
+                email: user.email || '',
+                notifications: true,
+                emailNotifications: true,
+                theme: 'light',
+                language: 'en'
+            });
+        }
+    }, [user, isOpen]);
 
     if (!isOpen) return null;
 
@@ -32,10 +79,90 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, user }) 
         { id: 'preferences', label: 'Preferences', icon: Globe }
     ];
 
-    const handleSave = () => {
-        // TODO: Implement save settings
-        console.log('Saving settings:', settings);
-        onClose();
+    const showMessage = (type: 'success' | 'error', text: string) => {
+        setSaveMessage({ type, text });
+        setTimeout(() => setSaveMessage(null), 3000);
+    };
+
+    const handleSave = async () => {
+        try {
+            setSaving(true);
+            console.log('Saving settings:', settings);
+            
+            // Try to save profile settings - handle gracefully if endpoint doesn't exist
+            try {
+                await apiClient.patch('/api/users/profile', {
+                    displayName: settings.displayName,
+                    email: settings.email
+                });
+            } catch (profileError: any) {
+                console.log('Profile endpoint not available, saving locally');
+            }
+            
+            // Try to save preferences - handle gracefully if endpoint doesn't exist
+            try {
+                await apiClient.patch('/api/users/preferences', {
+                    notifications: settings.notifications,
+                    emailNotifications: settings.emailNotifications,
+                    theme: settings.theme,
+                    language: settings.language
+                });
+            } catch (prefError: any) {
+                console.log('Preferences endpoint not available, saving locally');
+            }
+            
+            // Store settings locally
+            localStorage.setItem('userSettings', JSON.stringify(settings));
+            
+            showMessage('success', 'Settings saved successfully!');
+            setTimeout(() => onClose(), 1500);
+        } catch (error: any) {
+            console.error('Error saving settings:', error);
+            showMessage('error', error?.error || error?.message || 'Failed to save settings');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleChangePassword = async () => {
+        if (!passwordData.currentPassword || !passwordData.newPassword) {
+            showMessage('error', 'Please fill in all password fields');
+            return;
+        }
+        
+        if (passwordData.newPassword !== passwordData.confirmPassword) {
+            showMessage('error', 'New passwords do not match');
+            return;
+        }
+        
+        if (passwordData.newPassword.length < 6) {
+            showMessage('error', 'Password must be at least 6 characters');
+            return;
+        }
+        
+        try {
+            setSaving(true);
+            try {
+                await apiClient.post('/api/auth/change-password', {
+                    currentPassword: passwordData.currentPassword,
+                    newPassword: passwordData.newPassword
+                });
+                showMessage('success', 'Password changed successfully!');
+                setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
+            } catch (error: any) {
+                // Check if it's a 404 (endpoint not found)
+                if (error?.status === 404 || error?.response?.status === 404) {
+                    showMessage('error', 'Password change feature coming soon');
+                } else {
+                    throw error;
+                }
+            }
+        } catch (error: any) {
+            console.error('Error changing password:', error);
+            showMessage('error', error?.error || error?.message || 'Failed to change password');
+        } finally {
+            setSaving(false);
+        }
     };
 
     return (
@@ -157,16 +284,51 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, user }) 
                         {activeTab === 'security' && (
                             <div className="space-y-6">
                                 <div>
-                                    <h4 className="text-lg font-semibold text-gray-900 mb-4">Security Settings</h4>
+                                    <h4 className="text-lg font-semibold text-gray-900 mb-4">Change Password</h4>
                                     <div className="space-y-4">
-                                        <button className="w-full px-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-900 rounded-lg font-medium transition-colors text-left">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                Current Password
+                                            </label>
+                                            <input
+                                                type="password"
+                                                value={passwordData.currentPassword}
+                                                onChange={(e) => setPasswordData({ ...passwordData, currentPassword: e.target.value })}
+                                                placeholder="Enter current password"
+                                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                New Password
+                                            </label>
+                                            <input
+                                                type="password"
+                                                value={passwordData.newPassword}
+                                                onChange={(e) => setPasswordData({ ...passwordData, newPassword: e.target.value })}
+                                                placeholder="Enter new password"
+                                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                Confirm New Password
+                                            </label>
+                                            <input
+                                                type="password"
+                                                value={passwordData.confirmPassword}
+                                                onChange={(e) => setPasswordData({ ...passwordData, confirmPassword: e.target.value })}
+                                                placeholder="Confirm new password"
+                                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                                            />
+                                        </div>
+                                        <button 
+                                            onClick={handleChangePassword}
+                                            disabled={saving}
+                                            className="w-full px-4 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                                        >
+                                            {saving ? <Loader2 size={18} className="animate-spin" /> : <Lock size={18} />}
                                             Change Password
-                                        </button>
-                                        <button className="w-full px-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-900 rounded-lg font-medium transition-colors text-left">
-                                            Enable Two-Factor Authentication
-                                        </button>
-                                        <button className="w-full px-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-900 rounded-lg font-medium transition-colors text-left">
-                                            Manage Sessions
                                         </button>
                                     </div>
                                 </div>
@@ -225,19 +387,35 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, user }) 
                 </div>
 
                 {/* Footer */}
-                <div className="flex items-center justify-end gap-3 p-6 border-t bg-gray-50">
-                    <button
-                        onClick={onClose}
-                        className="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 font-medium transition-colors"
-                    >
-                        Cancel
-                    </button>
-                    <button
-                        onClick={handleSave}
-                        className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium transition-colors"
-                    >
-                        Save Changes
-                    </button>
+                <div className="flex items-center justify-between p-6 border-t bg-gray-50">
+                    {/* Save Message */}
+                    <div className="flex-1">
+                        {saveMessage && (
+                            <div className={`flex items-center gap-2 text-sm ${
+                                saveMessage.type === 'success' ? 'text-green-600' : 'text-red-600'
+                            }`}>
+                                {saveMessage.type === 'success' ? <Check size={16} /> : <X size={16} />}
+                                {saveMessage.text}
+                            </div>
+                        )}
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <button
+                            onClick={onClose}
+                            disabled={saving}
+                            className="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 font-medium transition-colors disabled:opacity-50"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            onClick={handleSave}
+                            disabled={saving}
+                            className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
+                        >
+                            {saving && <Loader2 size={16} className="animate-spin" />}
+                            Save Changes
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

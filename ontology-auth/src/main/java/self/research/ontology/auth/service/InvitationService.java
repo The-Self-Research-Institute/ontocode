@@ -151,4 +151,32 @@ public class InvitationService {
             invitationRepository.save(invitation);
         }
     }
+    
+    /**
+     * Find an invitation by email and workspace ID
+     * @param email The invitee email
+     * @param workspaceId The workspace ID
+     * @return Optional containing the invitation if found
+     */
+    public Optional<Invitation> findByEmailAndWorkspace(String email, String workspaceId) {
+        return invitationRepository.findByInviteeEmailAndWorkspaceId(email, workspaceId);
+    }
+    
+    /**
+     * Save/update an invitation
+     * @param invitation The invitation to save
+     * @return The saved invitation
+     */
+    public Invitation saveInvitation(Invitation invitation) {
+        return invitationRepository.save(invitation);
+    }
+    
+    /**
+     * Send invitation email wrapper
+     * @param invitation The invitation to send
+     * @param workspace The workspace details (not used, invitation contains workspace info)
+     */
+    public void sendInvitationEmail(Invitation invitation, Workspace workspace) {
+        emailService.sendInvitationEmail(invitation);
+    }
 }

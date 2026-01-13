@@ -35,7 +35,10 @@ public class EmailService {
      * Send invitation email to the invitee
      */
     public void sendInvitationEmail(self.research.ontology.auth.model.Invitation invitation) {
-        String invitationLink = baseUrl + "/invite?token=" + invitation.getInvitationToken();
+        // Generate both web and VS Code extension links
+        String webInvitationLink = baseUrl + "/invite?token=" + invitation.getInvitationToken();
+        // Use correct extension identifier: publisher.extensionName
+        String vscodeInvitationLink = "vscode://self.ontocode-extension/invite?token=" + invitation.getInvitationToken();
         
         String htmlContent = String.format("""
             <!DOCTYPE html>
@@ -66,7 +69,11 @@ public class EmailService {
                         padding: 12px 24px;
                         text-decoration: none;
                         border-radius: 6px;
-                        margin: 20px 0;
+                        margin: 10px 5px;
+                        font-weight: 600;
+                    }
+                    .button-secondary {
+                        background-color: #6366F1;
                     }
                     .footer {
                         margin-top: 20px;
@@ -82,6 +89,17 @@ public class EmailService {
                         font-size: 12px;
                         font-weight: 600;
                     }
+                    .options {
+                        text-align: center;
+                        margin: 20px 0;
+                    }
+                    .info-box {
+                        background-color: #f3f4f6;
+                        padding: 15px;
+                        border-radius: 6px;
+                        margin: 15px 0;
+                        border-left: 4px solid #8B5CF6;
+                    }
                 </style>
             </head>
             <body>
@@ -91,7 +109,25 @@ public class EmailService {
                         <p><strong>%s</strong> (%s) has invited you to join the workspace <strong>"%s"</strong> on OntoCode.</p>
                         <p>OntoCode is a collaborative ontology editor that helps teams create and manage knowledge graphs together.</p>
                         <p>Your assigned role: <span class="badge">%s</span></p>
-                        <a href="%s" class="button">Accept Invitation</a>
+                        
+                        <div class="info-box">
+                            <strong>🎯 Choose how to accept:</strong>
+                            <p style="margin: 10px 0 5px 0; font-size: 14px;">For the best experience with VS Code integration:</p>
+                        </div>
+                        
+                        <div class="options">
+                            <a href="%s" class="button" style="color: white; text-decoration: none;">🚀 Open in VS Code</a>
+                            <br>
+                            <a href="%s" class="button button-secondary" style="color: white; text-decoration: none;">🌐 Open in Browser</a>
+                        </div>
+                        
+                        <div style="background-color: #f9fafb; padding: 15px; border-radius: 6px; margin: 20px 0;">
+                            <p style="margin: 0 0 10px 0; font-size: 13px; color: #6b7280;"><strong>Note:</strong> If the button doesn't work, copy and paste this link into your browser:</p>
+                            <p style="margin: 5px 0; font-size: 12px; word-break: break-all; color: #4b5563; font-family: monospace; background: white; padding: 8px; border-radius: 4px;">%s</p>
+                            <p style="margin: 10px 0 0 0; font-size: 12px; color: #6b7280;">Or use this VS Code link (if you have VS Code installed):</p>
+                            <p style="margin: 5px 0; font-size: 12px; word-break: break-all; color: #4b5563; font-family: monospace; background: white; padding: 8px; border-radius: 4px;">%s</p>
+                        </div>
+                        
                         <p class="footer">
                             This invitation will expire on %s. If you didn't expect this invitation, you can safely ignore this email.
                         </p>
@@ -104,13 +140,17 @@ public class EmailService {
             invitation.getInvitedByEmail(),
             invitation.getWorkspaceName(),
             invitation.getRole(),
-            invitationLink,
+            vscodeInvitationLink,
+            webInvitationLink,
+            webInvitationLink,
+            vscodeInvitationLink,
             invitation.getExpiresAt().toString()
         );
 
         try {
             log.info("📧 Preparing to send invitation email to: {}", invitation.getInviteeEmail());
-            log.info("📧 Invitation link: {}", invitationLink);
+            log.info("📧 Web invitation link: {}", webInvitationLink);
+            log.info("📧 VS Code invitation link: {}", vscodeInvitationLink);
             log.info("📧 From email: {}", fromEmail);
             
             MimeMessage message = mailSender.createMimeMessage();

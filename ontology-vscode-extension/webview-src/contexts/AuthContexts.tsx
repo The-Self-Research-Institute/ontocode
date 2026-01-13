@@ -19,8 +19,9 @@ interface AuthContextType {
     loading: boolean;
     needsWorkspaceSelection: boolean;
     login: (username: string, password: string) => Promise<void>;
-    signup: (username: string, email: string, password: string) => Promise<void>;
+    signup: (username: string, email: string, password: string, role?: string) => Promise<void>;
     selectWorkspace: (workspaceData: any) => void;
+    switchWorkspace: () => void;
     updateSubscriptionPlan: (planId: string) => Promise<void>;
     logout: () => void;
     sessionExpiredMessage: string | null;
@@ -258,15 +259,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
     
-    const signup = async (username: string, email: string, password: string) => {
+    const signup = async (username: string, email: string, password: string, role: string = 'user') => {
         try {
-            console.log('[AuthContext] Attempting signup for user:', username);
+            console.log('[AuthContext] Attempting signup for user:', username, 'with role:', role);
             
             // Call actual signup endpoint through VS Code proxy
             const response = await apiClient.post('/api/auth/signup', { 
                 username, 
                 email, 
-                password 
+                password,
+                role
             });
             
             console.log('[AuthContext] Signup response:', response);
@@ -300,14 +302,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     isAdmin: isAdmin
                 });
                 
-                // Admins need workspace selection, non-admins go directly to editor
-                if (isAdmin || roles.includes('ROLE_ADMIN')) {
-                    console.log('[AuthContext]  Signup successful - Admin user (ROLE_ADMIN), needs workspace selection');
-                    setNeedsWorkspaceSelection(true);
-                } else {
-                    console.log('[AuthContext]  Signup successful - Regular user, skip workspace selection (direct to editor)');
-                    setNeedsWorkspaceSelection(false);
-                }
+                // Both admin and non-admin users need workspace selection after signup
+                // Admin users will see "Create Workspace" option
+                // Non-admin users will see workspaces they've been invited to
+                console.log('[AuthContext]  Signup successful - User role:', role, ', needs workspace selection');
+                setNeedsWorkspaceSelection(true);
                 
                 // Clear expired message on successful signup
                 setSessionExpiredMessage(null);
@@ -360,6 +359,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         console.log('[AuthContext]  Workspace selection complete');
     };
 
+    const switchWorkspace = () => {
+        console.log('[AuthContext] Switching workspace - going back to workspace selection');
+        // Clear workspace-specific data but keep the user logged in
+        if (user) {
+            setUser({
+                ...user,
+                workspaceId: undefined,
+                workspaceName: undefined,
+                workspaceRole: undefined
+            });
+        }
+        setNeedsWorkspaceSelection(true);
+    };
+
     const updateSubscriptionPlan = async (planId: string) => {
         if (!user || !user.workspaceId) {
             throw new Error('No workspace selected');
@@ -390,6 +403,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         login,
         signup,
         selectWorkspace,
+        switchWorkspace,
         updateSubscriptionPlan,
         logout: () => logout(false),
         sessionExpiredMessage,

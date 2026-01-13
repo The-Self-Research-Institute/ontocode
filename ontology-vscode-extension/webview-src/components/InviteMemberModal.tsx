@@ -19,8 +19,8 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
     const [email, setEmail] = useState('');
     const [role, setRole] = useState('MEMBER');
     const [inviting, setInviting] = useState(false);
-    const [inviteLink, setInviteLink] = useState('');
-    const [copied, setCopied] = useState(false);
+    const [invitationLinks, setInvitationLinks] = useState<{ webLink: string; vscodeLink: string } | null>(null);
+    const [copiedLink, setCopiedLink] = useState<'web' | 'vscode' | null>(null);
     const [errorMessage, setErrorMessage] = useState('');
 
     if (!isOpen) return null;
@@ -32,18 +32,26 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
         try {
             setInviting(true);
             setErrorMessage(''); // Clear any previous errors
-            await onInvite(email.trim(), role);
+            const response = await onInvite(email.trim(), role);
             
-            // Show success message
-            setInviteLink('success');
+            // Extract invitation links from response
+            if (response?.invitation) {
+                setInvitationLinks({
+                    webLink: response.invitation.webLink || response.invitation.invitationLink || '',
+                    vscodeLink: response.invitation.vscodeLink || ''
+                });
+            } else {
+                // Fallback if links not in response
+                setInvitationLinks({ webLink: '', vscodeLink: '' });
+            }
             
-            // Reset after 3 seconds
+            // Reset email after 5 seconds
             setTimeout(() => {
                 setEmail('');
-                setInviteLink('');
+                setInvitationLinks(null);
                 setErrorMessage('');
                 onClose();
-            }, 3000);
+            }, 5000);
         } catch (error: any) {
             console.error('Error inviting member:', error);
             // Extract error message from various possible error structures
@@ -57,11 +65,11 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
         }
     };
 
-    const copyInviteLink = () => {
-        if (inviteLink) {
-            navigator.clipboard.writeText(inviteLink);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
+    const copyLink = (link: string, type: 'web' | 'vscode') => {
+        if (link) {
+            navigator.clipboard.writeText(link);
+            setCopiedLink(type);
+            setTimeout(() => setCopiedLink(null), 2000);
         }
     };
 
@@ -139,8 +147,8 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
                         </div>
                     )}
 
-                    {inviteLink && (
-                        <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                    {invitationLinks && (
+                        <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-3">
                             <div className="flex items-center gap-2">
                                 <Check size={20} className="text-green-600" />
                                 <div>
@@ -148,10 +156,52 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
                                         Invitation sent successfully!
                                     </p>
                                     <p className="text-xs text-green-700 mt-1">
-                                        An email with the invitation link has been sent to {email || 'the member'}.
+                                        An email has been sent to {email}. You can also share these links directly:
                                     </p>
                                 </div>
                             </div>
+                            
+                            {invitationLinks.vscodeLink && (
+                                <div className="space-y-1">
+                                    <label className="text-xs font-medium text-green-800">VS Code Link</label>
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="text"
+                                            value={invitationLinks.vscodeLink}
+                                            readOnly
+                                            className="flex-1 px-3 py-2 text-xs bg-white border border-green-200 rounded text-gray-700 font-mono"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => copyLink(invitationLinks.vscodeLink, 'vscode')}
+                                            className="px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
+                                        >
+                                            {copiedLink === 'vscode' ? <Check size={16} /> : <Copy size={16} />}
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                            
+                            {invitationLinks.webLink && (
+                                <div className="space-y-1">
+                                    <label className="text-xs font-medium text-green-800">Web Link</label>
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="text"
+                                            value={invitationLinks.webLink}
+                                            readOnly
+                                            className="flex-1 px-3 py-2 text-xs bg-white border border-green-200 rounded text-gray-700 font-mono"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => copyLink(invitationLinks.webLink, 'web')}
+                                            className="px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
+                                        >
+                                            {copiedLink === 'web' ? <Check size={16} /> : <Copy size={16} />}
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
 
