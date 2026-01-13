@@ -72,6 +72,17 @@ public class ProjectService {
     }
 
     /**
+     * Get all projects for a user in a specific workspace
+     */
+    public List<Project> getUserProjectsInWorkspace(String userId, String workspaceId) {
+        return projectRepository.findByMembers_UserId(userId)
+            .stream()
+            .filter(p -> "ACTIVE".equals(p.getStatus()))
+            .filter(p -> workspaceId.equals(p.getWorkspaceId()))
+            .collect(Collectors.toList());
+    }
+
+    /**
      * Get a specific project
      */
     public Optional<Project> getProject(String projectId) {
@@ -288,7 +299,7 @@ public class ProjectService {
             throw new SecurityException("You don't have permission to add files to this project");
         }
         
-        // Add file to project
+        // Add file to project (backward compatibility)
         if (!project.getFileIds().contains(fileId)) {
             project.getFileIds().add(fileId);
             project.setUpdatedAt(LocalDateTime.now());
@@ -296,6 +307,22 @@ public class ProjectService {
         }
         
         return project;
+    }
+
+    /**
+     * Add file metadata to a project
+     */
+    public Project addFileMetadata(String projectId, String userId, Project.FileMetadataInfo fileMetadata) {
+        Project project = getProjectById(projectId, userId);
+        
+        // Check if user has edit permission
+        if (!hasEditPermission(project, userId)) {
+            throw new SecurityException("You don't have permission to add files to this project");
+        }
+        
+        // Add file metadata to project
+        project.addFileMetadata(fileMetadata);
+        return projectRepository.save(project);
     }
 
     /**
@@ -309,9 +336,23 @@ public class ProjectService {
             throw new SecurityException("You don't have permission to remove files from this project");
         }
         
-        // Remove file from project
+        // Mark file as deleted in project metadata
+        Project.FileMetadataInfo fileInfo = project.getFile(fileId);
+        if (fileInfo != null) {
+            fileInfo.setStatus("DELETED");
+        }
+        
+        // Remove file from project (backward compatibility)
         project.getFileIds().remove(fileId);
         project.setUpdatedAt(LocalDateTime.now());
         return projectRepository.save(project);
+    }
+    
+    /**
+     * Get file metadata from project
+     */
+    public Project.FileMetadataInfo getFileMetadata(String projectId, String userId, String fileId) {
+        Project project = getProjectById(projectId, userId);
+        return project.getFile(fileId);
     }
 }

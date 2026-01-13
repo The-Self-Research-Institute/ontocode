@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, Plus, Users, Crown, Building2, ChevronRight, Settings } from 'lucide-react';
+import { Loader2, Plus, Users, Crown, Building2, ChevronRight, Settings, Trash } from 'lucide-react';
 import apiClient from '../services/apiClient';
+import SubscriptionPlanSelection from './SubscriptionPlanSelection';
 
 interface WorkspaceMember {
     userId: string;
@@ -26,12 +27,14 @@ interface Workspace {
 
 interface WorkspaceSelectionProps {
     username: string;
+    isAdmin?: boolean;
     onWorkspaceSelected: (workspaceData: any) => void;
     onLogout: () => void;
 }
 
 const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({ 
     username, 
+    isAdmin = false,
     onWorkspaceSelected, 
     onLogout 
 }) => {
@@ -43,6 +46,11 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
     const [creating, setCreating] = useState(false);
     const [newWorkspaceName, setNewWorkspaceName] = useState('');
     const [newWorkspaceDescription, setNewWorkspaceDescription] = useState('');
+    const [selectedPlan, setSelectedPlan] = useState('free');
+    const [showPlanSelection, setShowPlanSelection] = useState(false);
+    const [deletingWorkspace, setDeletingWorkspace] = useState<string | null>(null);
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [workspaceToDelete, setWorkspaceToDelete] = useState<{ id: string; name: string } | null>(null);
 
     useEffect(() => {
         loadWorkspaces();
@@ -66,9 +74,9 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
             
             setWorkspaces(workspaceList);
             
-            // Auto-create and select default workspace if none exists
-            if (workspaceList.length === 0) {
-                console.log('[WorkspaceSelection] No workspaces found, auto-creating default workspace...');
+            // Auto-create and select default workspace if none exists and user is admin
+            if (workspaceList.length === 0 && isAdmin) {
+                console.log('[WorkspaceSelection] No workspaces found, auto-creating default workspace for admin...');
                 await createAndSelectDefaultWorkspace();
             }
         } catch (err: any) {
@@ -91,7 +99,8 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
             console.log('[WorkspaceSelection] Creating default workspace...');
             const response = await apiClient.post('/api/workspaces', {
                 name: 'My Workspace',
-                description: 'Default workspace for ontology projects'
+                description: 'Default workspace for ontology projects',
+                subscriptionPlan: 'free'
             });
             console.log('[WorkspaceSelection] Create workspace response:', response);
             
@@ -137,6 +146,23 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
         }
     };
 
+    const handlePlanSelected = (planId: string) => {
+        setSelectedPlan(planId);
+        setShowPlanSelection(false);
+        // Return to create workspace modal instead of creating immediately
+        setShowCreateDialog(true);
+    };
+
+    const handleOpenPlanSelection = () => {
+        if (!newWorkspaceName.trim()) {
+            setError('Please enter a workspace name first');
+            return;
+        }
+        // Close modal and show plan selection screen
+        setShowCreateDialog(false);
+        setShowPlanSelection(true);
+    };
+
     const handleCreateWorkspace = async (e: React.FormEvent) => {
         e.preventDefault();
         
@@ -149,9 +175,54 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
             setCreating(true);
             setError('');
             
+            // Check if workspace name already exists
+            const checkResponse = await apiClient.get(`/api/workspaces/check?name=${encodeURIComponent(newWorkspaceName.trim())}`);
+            
+            if (checkResponse?.data?.exists || checkResponse?.exists) {
+                const data = checkResponse?.data || checkResponse;
+                const shouldContinue = window.confirm(
+                    `A workspace named "${newWorkspaceName.trim()}" already exists.\n\n` +
+                    `Would you like to create a workspace with a different name instead?\n\n` +
+                    `Click OK to rename, or Cancel to abort.`
+                );
+                
+                if (!shouldContinue) {
+                    setCreating(false);
+                    return;
+                }
+                
+                // Generate unique name
+                let copyNumber = 2;
+                let uniqueName = `${newWorkspaceName.trim()} (${copyNumber})`;
+                
+                // Keep checking until we find a unique name
+                while (true) {
+                    const recheckResponse = await apiClient.get(`/api/workspaces/check?name=${encodeURIComponent(uniqueName)}`);
+                    const recheckData = recheckResponse?.data || recheckResponse;
+                    
+                    if (!recheckData.exists) {
+                        setNewWorkspaceName(uniqueName);
+                        break;
+                    }
+                    copyNumber++;
+                    uniqueName = `${newWorkspaceName.trim()} (${copyNumber})`;
+                }
+                
+                // Show the new name to user
+                const confirmNewName = window.confirm(
+                    `New workspace name will be: "${uniqueName}"\n\nClick OK to create, or Cancel to abort.`
+                );
+                
+                if (!confirmNewName) {
+                    setCreating(false);
+                    return;
+                }
+            }
+            
             const response = await apiClient.post('/api/workspaces', {
                 name: newWorkspaceName.trim(),
-                description: newWorkspaceDescription.trim()
+                description: newWorkspaceDescription.trim(),
+                subscriptionPlan: selectedPlan
             });
             console.log('[WorkspaceSelection] Create workspace response:', response);
             
@@ -161,6 +232,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                 setShowCreateDialog(false);
                 setNewWorkspaceName('');
                 setNewWorkspaceDescription('');
+                setSelectedPlan('free');
                 await loadWorkspaces();
             }
         } catch (err: any) {
@@ -169,6 +241,34 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
         } finally {
             setCreating(false);
         }
+    };
+
+    const handleDeleteWorkspace = async () => {
+        if (!workspaceToDelete) return;
+
+        try {
+            setDeletingWorkspace(workspaceToDelete.id);
+            setError('');
+            
+            await apiClient.delete(`/api/workspaces/${workspaceToDelete.id}`);
+            
+            // Refresh workspace list
+            await loadWorkspaces();
+            
+            setShowDeleteConfirm(false);
+            setWorkspaceToDelete(null);
+        } catch (err: any) {
+            console.error('Error deleting workspace:', err);
+            setError(err.response?.data?.error || err.message || 'Failed to delete workspace');
+        } finally {
+            setDeletingWorkspace(null);
+        }
+    };
+
+    const confirmDelete = (workspace: Workspace, e: React.MouseEvent) => {
+        e.stopPropagation();
+        setWorkspaceToDelete({ id: workspace.workspaceId, name: workspace.name });
+        setShowDeleteConfirm(true);
     };
 
     const getRoleIcon = (workspace: Workspace, userId: string) => {
@@ -304,10 +404,19 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                                                 </div>
                                             </div>
                                         </div>
-                                        <ChevronRight 
-                                            size={24} 
-                                            className="text-gray-400 group-hover:text-purple-400 transition-colors flex-shrink-0" 
-                                        />
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                onClick={(e) => confirmDelete(workspace, e)}
+                                                className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
+                                                title="Delete workspace"
+                                            >
+                                                <Trash size={18} />
+                                            </button>
+                                            <ChevronRight 
+                                                size={24} 
+                                                className="text-gray-400 group-hover:text-purple-400 transition-colors flex-shrink-0" 
+                                            />
+                                        </div>
                                     </div>
                                 </div>
                             ))}
@@ -315,7 +424,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                     )}
                 </div>
 
-                {workspaces.length > 0 && (
+                {workspaces.length > 0 && isAdmin && (
                     <button
                         onClick={() => setShowCreateDialog(true)}
                         className="w-full py-3 bg-white/5 border border-white/20 text-white font-medium rounded-lg hover:bg-white/10 transition-all flex items-center justify-center space-x-2"
@@ -323,6 +432,17 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                         <Plus size={20} />
                         <span>Create New Workspace</span>
                     </button>
+                )}
+                
+                {workspaces.length === 0 && !isAdmin && (
+                    <div className="text-center py-8">
+                        <p className="text-gray-400 mb-2">
+                            No workspaces available
+                        </p>
+                        <p className="text-gray-500 text-sm">
+                            Please contact an administrator to be added to a workspace
+                        </p>
+                    </div>
                 )}
             </div>
 
@@ -363,6 +483,29 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                                     placeholder="A workspace for my ontology projects..."
                                 />
                             </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-200 mb-3">
+                                    Subscription Plan *
+                                </label>
+                                <button
+                                    type="button"
+                                    onClick={handleOpenPlanSelection}
+                                    disabled={creating}
+                                    className="w-full p-4 rounded-lg border-2 border-white/20 bg-white/5 hover:border-purple-500 hover:bg-purple-500/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed group"
+                                >
+                                    <div className="flex items-center justify-between">
+                                        <div className="text-left">
+                                            <h4 className="font-semibold text-white group-hover:text-purple-400 transition-colors">
+                                                {selectedPlan === 'free' && 'Free Plan'}
+                                                {selectedPlan === 'pro' && 'Professional Plan'}
+                                                {selectedPlan === 'enterprise' && 'Enterprise Plan'}
+                                            </h4>
+                                            <p className="text-sm text-gray-400">Click to select a different plan</p>
+                                        </div>
+                                        <ChevronRight size={20} className="text-gray-400 group-hover:text-purple-400 transition-colors" />
+                                    </div>
+                                </button>
+                            </div>
                             <div className="flex space-x-3 pt-4">
                                 <button
                                     type="button"
@@ -370,6 +513,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                                         setShowCreateDialog(false);
                                         setNewWorkspaceName('');
                                         setNewWorkspaceDescription('');
+                                        setSelectedPlan('free');
                                         setError('');
                                     }}
                                     disabled={creating}
@@ -413,6 +557,76 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                         <p className="text-gray-300">
                             Please wait...
                         </p>
+                    </div>
+                </div>
+            )}
+
+            {/* Subscription Plan Selection Screen */}
+            {showPlanSelection && (
+                <div className="fixed inset-0 z-50">
+                    <SubscriptionPlanSelection
+                        username={username}
+                        workspaceId=""
+                        workspaceName={newWorkspaceName || 'New Workspace'}
+                        onPlanSelected={handlePlanSelected}
+                        onSkip={() => {
+                            setShowPlanSelection(false);
+                            setShowCreateDialog(true);
+                        }}
+                        onLogout={onLogout}
+                    />
+                </div>
+            )}
+
+            {/* Delete Confirmation Dialog */}
+            {showDeleteConfirm && workspaceToDelete && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                    <div className="bg-slate-800 border border-white/20 rounded-2xl shadow-2xl p-8 w-full max-w-md">
+                        <div className="text-center mb-6">
+                            <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <Trash size={32} className="text-red-400" />
+                            </div>
+                            <h3 className="text-2xl font-bold text-white mb-2">
+                                Delete Workspace?
+                            </h3>
+                            <p className="text-gray-300">
+                                Are you sure you want to delete <strong className="text-white">{workspaceToDelete.name}</strong>?
+                            </p>
+                            <p className="text-red-400 text-sm mt-2">
+                                This action cannot be undone.
+                            </p>
+                        </div>
+                        <div className="flex space-x-3">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setShowDeleteConfirm(false);
+                                    setWorkspaceToDelete(null);
+                                }}
+                                disabled={deletingWorkspace !== null}
+                                className="flex-1 px-4 py-3 bg-white/5 border border-white/20 text-white font-medium rounded-lg hover:bg-white/10 transition-all disabled:opacity-50"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleDeleteWorkspace}
+                                disabled={deletingWorkspace !== null}
+                                className="flex-1 px-4 py-3 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
+                            >
+                                {deletingWorkspace ? (
+                                    <>
+                                        <Loader2 size={20} className="animate-spin" />
+                                        <span>Deleting...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Trash size={20} />
+                                        <span>Delete</span>
+                                    </>
+                                )}
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}

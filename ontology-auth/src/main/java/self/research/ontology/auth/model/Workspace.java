@@ -53,10 +53,13 @@ public class Workspace {
         private String username;
         private String email;
         private WorkspaceRole role;
+        private MemberStatus status;
+        private String invitationToken; // Token for pending members
         private LocalDateTime joinedAt;
 
         public WorkspaceMember() {
             this.joinedAt = LocalDateTime.now();
+            this.status = MemberStatus.ACTIVE;
         }
 
         public WorkspaceMember(String userId, String username, String email, WorkspaceRole role) {
@@ -64,6 +67,17 @@ public class Workspace {
             this.username = username;
             this.email = email;
             this.role = role;
+            this.status = MemberStatus.ACTIVE;
+            this.joinedAt = LocalDateTime.now();
+        }
+        
+        // Constructor for pending members (from invitation)
+        public WorkspaceMember(String email, WorkspaceRole role, String invitationToken) {
+            this.email = email;
+            this.username = email.split("@")[0]; // Use email prefix as username
+            this.role = role;
+            this.status = MemberStatus.PENDING;
+            this.invitationToken = invitationToken;
             this.joinedAt = LocalDateTime.now();
         }
 
@@ -79,9 +93,21 @@ public class Workspace {
 
         public WorkspaceRole getRole() { return role; }
         public void setRole(WorkspaceRole role) { this.role = role; }
+        
+        public MemberStatus getStatus() { return status; }
+        public void setStatus(MemberStatus status) { this.status = status; }
+        
+        public String getInvitationToken() { return invitationToken; }
+        public void setInvitationToken(String invitationToken) { this.invitationToken = invitationToken; }
 
         public LocalDateTime getJoinedAt() { return joinedAt; }
         public void setJoinedAt(LocalDateTime joinedAt) { this.joinedAt = joinedAt; }
+    }
+    
+    // Member status enum
+    public enum MemberStatus {
+        PENDING,
+        ACTIVE
     }
 
     // Workspace roles
@@ -94,33 +120,127 @@ public class Workspace {
 
     // Helper methods
     public boolean isMember(String userId) {
-        return members.stream().anyMatch(m -> m.getUserId().equals(userId));
+        return members.stream().anyMatch(m -> m.getUserId() != null && m.getUserId().equals(userId));
+    }
+    
+    public boolean isMemberByEmail(String email) {
+        return members.stream().anyMatch(m -> m.getEmail() != null && m.getEmail().equalsIgnoreCase(email));
+    }
+    
+    public boolean hasPendingInvitation(String email) {
+        return members.stream().anyMatch(m -> 
+            m.getEmail() != null && 
+            m.getEmail().equalsIgnoreCase(email) && 
+            m.getStatus() == MemberStatus.PENDING
+        );
     }
 
     public WorkspaceMember getMember(String userId) {
         return members.stream()
-                .filter(m -> m.getUserId().equals(userId))
+                .filter(m -> m.getUserId() != null && m.getUserId().equals(userId))
+                .findFirst()
+                .orElse(null);
+    }
+    
+    public WorkspaceMember getMemberByEmail(String email) {
+        return members.stream()
+                .filter(m -> m.getEmail() != null && m.getEmail().equalsIgnoreCase(email))
+                .findFirst()
+                .orElse(null);
+    }
+    
+    public WorkspaceMember getPendingMemberByToken(String token) {
+        return members.stream()
+                .filter(m -> token != null && token.equals(m.getInvitationToken()) && m.getStatus() == MemberStatus.PENDING)
                 .findFirst()
                 .orElse(null);
     }
 
     public void addMember(String userId, String username, String email, WorkspaceRole role) {
+        // Check if there's a pending member with this email - activate them
+        WorkspaceMember existingMember = getMemberByEmail(email);
+        if (existingMember != null) {
+            existingMember.setUserId(userId);
+            existingMember.setUsername(username);
+            existingMember.setStatus(MemberStatus.ACTIVE);
+            existingMember.setInvitationToken(null); // Clear the token
+            existingMember.setJoinedAt(java.time.LocalDateTime.now());
+            this.updatedAt = java.time.LocalDateTime.now();
+            return;
+        }
+        
         if (!isMember(userId)) {
             members.add(new WorkspaceMember(userId, username, email, role));
-            this.updatedAt = LocalDateTime.now();
+            this.updatedAt = java.time.LocalDateTime.now();
         }
+    }
+    
+    // Add a pending member (when invitation is sent)
+    public void addPendingMember(String email, WorkspaceRole role, String invitationToken) {
+        // Remove any existing pending invitation for this email
+        members.removeIf(m -> m.getEmail() != null && 
+                              m.getEmail().equalsIgnoreCase(email) && 
+                              m.getStatus() == MemberStatus.PENDING);
+        
+        members.add(new WorkspaceMember(email, role, invitationToken));
+        this.updatedAt = java.time.LocalDateTime.now();
+    }
+    
+    // Activate a pending member (when invitation is accepted)
+    public void activatePendingMember(String email, String userId, String username) {
+        WorkspaceMember member = getMemberByEmail(email);
+        if (member != null && member.getStatus() == MemberStatus.PENDING) {
+            member.setUserId(userId);
+            member.setUsername(username);
+            member.setStatus(MemberStatus.ACTIVE);
+            member.setInvitationToken(null);
+            member.setJoinedAt(java.time.LocalDateTime.now());
+            this.updatedAt = java.time.LocalDateTime.now();
+        }
+    }
+    
+    // Cancel a pending invitation
+    public void cancelPendingMember(String invitationToken) {
+        members.removeIf(m -> invitationToken != null && 
+                              invitationToken.equals(m.getInvitationToken()) && 
+                              m.getStatus() == MemberStatus.PENDING);
+        this.updatedAt = java.time.LocalDateTime.now();
     }
 
     public void removeMember(String userId) {
-        members.removeIf(m -> m.getUserId().equals(userId));
-        this.updatedAt = LocalDateTime.now();
+        members.removeIf(m -> m.getUserId() != null && m.getUserId().equals(userId));
+        this.updatedAt = java.time.LocalDateTime.now();
+    }
+    
+    // Remove member by email (works for both active and pending members)
+    public void removeMemberByEmail(String email) {
+        members.removeIf(m -> m.getEmail() != null && m.getEmail().equalsIgnoreCase(email));
+        this.updatedAt = java.time.LocalDateTime.now();
+    }
+    
+    // Remove member by userId or email (tries both)
+    public boolean removeMemberByIdOrEmail(String identifier) {
+        // First try to remove by userId
+        boolean removed = members.removeIf(m -> m.getUserId() != null && m.getUserId().equals(identifier));
+        
+        // If not found by userId, try by email (for pending members)
+        if (!removed) {
+            // Check if identifier looks like "pending-email@example.com"
+            String email = identifier.startsWith("pending-") ? identifier.substring(8) : identifier;
+            removed = members.removeIf(m -> m.getEmail() != null && m.getEmail().equalsIgnoreCase(email));
+        }
+        
+        if (removed) {
+            this.updatedAt = java.time.LocalDateTime.now();
+        }
+        return removed;
     }
 
     public void updateMemberRole(String userId, WorkspaceRole role) {
         WorkspaceMember member = getMember(userId);
         if (member != null) {
             member.setRole(role);
-            this.updatedAt = LocalDateTime.now();
+            this.updatedAt = java.time.LocalDateTime.now();
         }
     }
 

@@ -60,9 +60,8 @@ export class CollaborationManager implements ICollaborationManager {
                         // Add authentication headers here if needed
                     },
                     
-                    debug: (str: string) => {
-                        console.log('[STOMP Debug]', str);
-                    },
+                    // Disable verbose STOMP debug logging
+                    debug: () => {},
                     
                     reconnectDelay: this.reconnectDelay,
                     

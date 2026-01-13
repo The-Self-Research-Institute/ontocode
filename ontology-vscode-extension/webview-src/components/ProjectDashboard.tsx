@@ -15,7 +15,17 @@ import {
     Edit,
     Trash2,
     Archive,
-    UserPlus
+    UserPlus,
+    AlertTriangle,
+    CheckCircle,
+    XCircle,
+    X,
+    Building2,
+    FileText,
+    Shield,
+    UserMinus,
+    Save,
+    Loader2
 } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import { useAuth } from '../custom-hook/useAuth';
@@ -23,6 +33,7 @@ import { useSubscription } from '../hooks/useSubscription';
 import InviteMemberModal from './InviteMemberModal';
 import SettingsModal from './SettingsModal';
 import CreateProjectModal from './CreateProjectModal';
+import ConfirmationModal from './ConfirmationModal';
 
 interface ProjectMember {
     userId: string;
@@ -54,6 +65,8 @@ interface TeamMember {
     email: string;
     roles: string[];
     lastLoginAt?: string;
+    status?: 'ACTIVE' | 'PENDING';
+    invitationToken?: string; // Token for pending invitations (used to cancel)
 }
 
 interface ProjectDashboardProps {
@@ -61,7 +74,7 @@ interface ProjectDashboardProps {
 }
 
 const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject }) => {
-    const { user, logout } = useAuth();
+    const { user, logout, switchWorkspace } = useAuth();
     const subscription = useSubscription();
     const [projects, setProjects] = useState<Project[]>([]);
     const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
@@ -76,10 +89,58 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject }) 
     const [newProjectName, setNewProjectName] = useState('');
     const [newProjectDescription, setNewProjectDescription] = useState('');
     const [creating, setCreating] = useState(false);
+    
+    // Project settings modal state
+    const [projectSettingsModal, setProjectSettingsModal] = useState<Project | null>(null);
+    const [editingProjectName, setEditingProjectName] = useState('');
+    const [editingProjectDescription, setEditingProjectDescription] = useState('');
+    const [savingProject, setSavingProject] = useState(false);
+    const [projectSettingsTab, setProjectSettingsTab] = useState<'general' | 'members' | 'danger'>('general');
+    
+    // Toast notification state
+    const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'warning' | 'info' } | null>(null);
+    const [openMenuProjectId, setOpenMenuProjectId] = useState<string | null>(null); // Track which project menu is open
+    
+    // Confirmation modal state
+    const [confirmModal, setConfirmModal] = useState<{
+        title: string;
+        message: string;
+        onConfirm: () => void;
+        confirmText?: string;
+        cancelText?: string;
+        type?: 'danger' | 'warning' | 'info';
+    } | null>(null);
+
+    // Helper function to show toast
+    const showToast = (message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info') => {
+        setToast({ message, type });
+        setTimeout(() => setToast(null), 4000);
+    };
+
+    // Helper function to show confirmation modal
+    const showConfirm = (options: {
+        title: string;
+        message: string;
+        onConfirm: () => void;
+        confirmText?: string;
+        cancelText?: string;
+        type?: 'danger' | 'warning' | 'info';
+    }) => {
+        setConfirmModal(options);
+    };
 
     useEffect(() => {
         loadData();
     }, []);
+
+    // Close menu when clicking outside
+    useEffect(() => {
+        const handleClickOutside = () => setOpenMenuProjectId(null);
+        if (openMenuProjectId) {
+            document.addEventListener('click', handleClickOutside);
+            return () => document.removeEventListener('click', handleClickOutside);
+        }
+    }, [openMenuProjectId]);
 
     const loadData = async () => {
         try {
@@ -90,9 +151,40 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject }) 
             const projectsData = projectsResponse?.data || projectsResponse;
             setProjects(projectsData?.projects || []);
             
-            // Load team members (placeholder - you'd implement a users endpoint)
-            // const membersResponse = await apiClient.get(`/api/users/workspace/${user?.workspaceId}`);
-            // setTeamMembers(membersResponse?.data?.members || []);
+            // Load team members from workspace (includes both active and pending members)
+            if (user?.workspaceId) {
+                try {
+                    const workspaceResponse = await apiClient.get(`/api/workspaces/${user.workspaceId}`);
+                    const workspaceData = workspaceResponse?.data || workspaceResponse;
+                    const members = workspaceData?.members || [];
+                    
+                    console.log('[ProjectDashboard] Workspace members from backend:', members);
+                    
+                    // Convert workspace members to team members format
+                    // Now includes both ACTIVE and PENDING members from the workspace
+                    const teamMembersList = members.map((member: any) => {
+                        // Determine status: if userId is null, it's a pending member
+                        const isPending = member.status === 'PENDING' || (!member.userId && member.invitationToken);
+                        return {
+                            id: member.userId || `pending-${member.email}`,
+                            username: member.username,
+                            email: member.email,
+                            roles: [member.role],
+                            lastLoginAt: member.joinedAt,
+                            status: isPending ? 'PENDING' : 'ACTIVE', // Status from backend or inferred
+                            invitationToken: member.invitationToken // Token for pending members (for cancellation)
+                        };
+                    });
+                    
+                    const activeCount = teamMembersList.filter((m: any) => m.status === 'ACTIVE').length;
+                    const pendingCount = teamMembersList.filter((m: any) => m.status === 'PENDING').length;
+                    
+                    console.log('[ProjectDashboard] Team members loaded:', activeCount, 'active +', pendingCount, 'pending');
+                    setTeamMembers(teamMembersList);
+                } catch (error) {
+                    console.error('[ProjectDashboard] Error loading team members:', error);
+                }
+            }
             
         } catch (error) {
             console.error('Error loading dashboard data:', error);
@@ -122,7 +214,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject }) 
             
         } catch (error) {
             console.error('Error creating project:', error);
-            alert('Failed to create project');
+            showToast('Failed to create project', 'error');
         } finally {
             setCreating(false);
         }
@@ -130,6 +222,42 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject }) 
 
     const handleInviteMember = async (email: string, role: string) => {
         try {
+            // Check if member already exists in workspace
+            const workspaceResponse = await apiClient.get(`/api/workspaces/${user?.workspaceId}`);
+            const workspace = workspaceResponse?.data?.workspace || workspaceResponse?.data;
+            const members = workspace?.members || [];
+            
+            // Check if user is already a member
+            const existingMember = members.find((m: any) => 
+                m.email?.toLowerCase() === email.toLowerCase()
+            );
+            
+            if (existingMember) {
+                // User already exists - show warning but allow invitation
+                showToast(`User "${email}" is already a member with role: ${existingMember.role}. Sending invitation anyway.`, 'warning');
+            }
+            
+            // Check pending invitations too
+            try {
+                const pendingResponse = await apiClient.get(`/api/invitations/workspace/${user?.workspaceId}`);
+                const pendingInvites = pendingResponse?.data || pendingResponse;
+                
+                const pendingInvite = pendingInvites.find((inv: any) => 
+                    inv.email?.toLowerCase() === email.toLowerCase() && inv.status === 'PENDING'
+                );
+                
+                if (pendingInvite) {
+                    showToast(
+                        `An invitation was already sent to "${email}" on ${new Date(pendingInvite.createdAt).toLocaleDateString()}. Please wait for them to accept.`,
+                        'warning'
+                    );
+                    throw { message: 'Invitation email already sent to this address' };
+                }
+            } catch (pendingError) {
+                // If we can't check pending invitations, continue anyway
+                console.warn('Could not check pending invitations:', pendingError);
+            }
+            
             const response = await apiClient.post('/api/invitations/send', {
                 workspaceId: user?.workspaceId || 'default',
                 email: email,
@@ -148,6 +276,73 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject }) 
         }
     };
 
+    const handleRemoveMember = async (member: TeamMember, projectId?: string) => {
+        // Prevent removing yourself
+        if (member.email === user?.email) {
+            showToast('You cannot remove yourself from the workspace. Please contact the workspace owner if you want to leave.', 'warning');
+            return;
+        }
+
+        // If member is PENDING, use cancel invitation flow
+        if (member.status === 'PENDING') {
+            handleCancelInvitation(member);
+            return;
+        }
+
+        // Show confirmation modal for active members
+        showConfirm({
+            title: 'Remove Team Member',
+            message: `Are you sure you want to remove ${member.username} (${member.email}) from this workspace? This action cannot be undone.`,
+            type: 'danger',
+            confirmText: 'Remove',
+            onConfirm: async () => {
+                try {
+                    console.log('[ProjectDashboard] Removing active member:', member.id, member.email);
+                    await apiClient.delete(`/api/workspaces/${user?.workspaceId}/members/${member.id}`);
+                    showToast(`${member.username} has been removed from the workspace successfully.`, 'success');
+                    await loadData();
+                } catch (error: any) {
+                    console.error('Error removing member:', error);
+                    const errorMessage = error?.error || error?.response?.data?.error || error?.message || 'Failed to remove member';
+                    showToast(`Failed to remove member: ${errorMessage}`, 'error');
+                }
+                setConfirmModal(null);
+            }
+        });
+    };
+
+    const handleCancelInvitation = async (member: TeamMember) => {
+        if (!member.invitationToken) {
+            showToast('Cannot cancel invitation: Token not found', 'error');
+            return;
+        }
+
+        console.log('[ProjectDashboard] Opening cancel invitation modal for:', member.email, 'token:', member.invitationToken);
+
+        // Show confirmation modal
+        showConfirm({
+            title: 'Cancel Invitation',
+            message: `Are you sure you want to cancel the invitation for ${member.email}? The invitation link will no longer work.`,
+            type: 'warning',
+            confirmText: 'Cancel Invitation',
+            onConfirm: async () => {
+                try {
+                    console.log('[ProjectDashboard] Cancelling invitation with token:', member.invitationToken);
+                    await apiClient.delete(`/api/invitations/${member.invitationToken}`);
+                    console.log('[ProjectDashboard] Invitation cancelled successfully');
+                    showToast(`Invitation for ${member.email} has been cancelled successfully.`, 'success');
+                    await loadData();
+                } catch (error: any) {
+                    console.error('[ProjectDashboard] Error cancelling invitation:', error);
+                    // Handle ApiError and other error formats
+                    const errorMessage = error?.error || error?.response?.data?.error || error?.message || 'Failed to cancel invitation';
+                    showToast(`Failed to cancel invitation: ${errorMessage}`, 'error');
+                }
+                setConfirmModal(null);
+            }
+        });
+    };
+
     const handleRenameProject = async () => {
         if (!renaming || !newName.trim()) return;
         
@@ -161,13 +356,116 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject }) 
             loadData();
         } catch (error) {
             console.error('Error renaming project:', error);
-            alert('Failed to rename project');
+            showToast('Failed to rename project', 'error');
         }
     };
 
     const startRename = (projectId: string, currentName: string) => {
         setRenaming({ projectId, currentName });
         setNewName(currentName);
+    };
+
+    // Open project settings modal
+    const openProjectSettings = (project: Project) => {
+        setProjectSettingsModal(project);
+        setEditingProjectName(project.name);
+        setEditingProjectDescription(project.description || '');
+        setProjectSettingsTab('general');
+    };
+
+    // Save project settings (name and description)
+    const handleSaveProjectSettings = async () => {
+        if (!projectSettingsModal) return;
+        
+        try {
+            setSavingProject(true);
+            
+            // Update project name if changed
+            if (editingProjectName.trim() !== projectSettingsModal.name) {
+                await apiClient.patch(`/api/projects/${projectSettingsModal.projectId}/rename`, {
+                    name: editingProjectName.trim()
+                });
+            }
+            
+            // Update project description if changed
+            if (editingProjectDescription !== (projectSettingsModal.description || '')) {
+                await apiClient.patch(`/api/projects/${projectSettingsModal.projectId}`, {
+                    description: editingProjectDescription
+                });
+            }
+            
+            showToast('Project settings saved successfully', 'success');
+            setProjectSettingsModal(null);
+            loadData();
+        } catch (error: any) {
+            console.error('Error saving project settings:', error);
+            showToast(error?.error || error?.message || 'Failed to save project settings', 'error');
+        } finally {
+            setSavingProject(false);
+        }
+    };
+
+    // Delete project
+    const handleDeleteProject = (project: Project) => {
+        showConfirm({
+            title: 'Delete Project',
+            message: `Are you sure you want to delete "${project.name}"? This will permanently delete all files and data associated with this project. This action cannot be undone.`,
+            type: 'danger',
+            confirmText: 'Delete Project',
+            onConfirm: async () => {
+                try {
+                    await apiClient.delete(`/api/projects/${project.projectId}`);
+                    showToast(`Project "${project.name}" has been deleted`, 'success');
+                    setProjectSettingsModal(null);
+                    loadData();
+                } catch (error: any) {
+                    console.error('Error deleting project:', error);
+                    showToast(error?.error || error?.message || 'Failed to delete project', 'error');
+                }
+                setConfirmModal(null);
+            }
+        });
+    };
+
+    // Remove member from project
+    const handleRemoveProjectMember = (project: Project, member: ProjectMember) => {
+        showConfirm({
+            title: 'Remove Project Member',
+            message: `Remove ${member.username} (${member.email}) from "${project.name}"? They will lose access to this project.`,
+            type: 'warning',
+            confirmText: 'Remove',
+            onConfirm: async () => {
+                try {
+                    await apiClient.delete(`/api/projects/${project.projectId}/members/${member.userId}`);
+                    showToast(`${member.username} has been removed from the project`, 'success');
+                    // Refresh project data
+                    const updatedProject = await apiClient.get(`/api/projects/${project.projectId}`);
+                    setProjectSettingsModal(updatedProject?.data || updatedProject);
+                    loadData();
+                } catch (error: any) {
+                    console.error('Error removing project member:', error);
+                    showToast(error?.error || error?.message || 'Failed to remove member', 'error');
+                }
+                setConfirmModal(null);
+            }
+        });
+    };
+
+    // Update member role in project
+    const handleUpdateProjectMemberRole = async (project: Project, member: ProjectMember, newRole: string) => {
+        try {
+            await apiClient.patch(`/api/projects/${project.projectId}/members/${member.userId}/role`, {
+                role: newRole
+            });
+            showToast(`${member.username}'s role updated to ${newRole}`, 'success');
+            // Refresh project data
+            const updatedProject = await apiClient.get(`/api/projects/${project.projectId}`);
+            setProjectSettingsModal(updatedProject?.data || updatedProject);
+            loadData();
+        } catch (error: any) {
+            console.error('Error updating member role:', error);
+            showToast(error?.error || error?.message || 'Failed to update member role', 'error');
+        }
     };
 
     const filteredProjects = projects.filter(project =>
@@ -187,9 +485,9 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject }) 
     }
 
     return (
-        <div className="min-h-screen bg-gray-50">
+        <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
             {/* Header */}
-            <header className="bg-white border-b border-gray-200">
+            <header className="bg-white border-b border-gray-200 flex-shrink-0">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="flex justify-between items-center py-4">
                         <div>
@@ -197,13 +495,26 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject }) 
                             <p className="text-sm text-gray-500">
                                 Welcome, {user?.username}
                                 {user?.workspaceName && (
-                                    <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs">
+                                    <button 
+                                        onClick={switchWorkspace}
+                                        className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs hover:bg-purple-200 transition-colors inline-flex items-center gap-1"
+                                        title="Click to switch workspace"
+                                    >
+                                        <Building2 size={12} />
                                         {user.workspaceName}
-                                    </span>
+                                    </button>
                                 )}
                             </p>
                         </div>
                         <div className="flex items-center gap-3">
+                            <button
+                                onClick={switchWorkspace}
+                                className="flex items-center gap-2 px-3 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                                title="Switch Workspace"
+                            >
+                                <Building2 size={20} />
+                                <span className="hidden sm:inline">Switch Workspace</span>
+                            </button>
                             <button
                                 onClick={() => setShowCreateProject(true)}
                                 className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
@@ -231,7 +542,8 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject }) 
             </header>
 
             {/* Main Content */}
-            <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <main className="flex-1 overflow-y-auto">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
                 {/* Search and View Controls */}
                 <div className="flex justify-between items-center mb-6">
                     <div className="flex-1 max-w-lg">
@@ -272,6 +584,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject }) 
                         </h2>
                     </div>
 
+                    <div className="pr-2 custom-scrollbar">
                     {filteredProjects.length === 0 ? (
                         <div className="text-center py-12">
                             <FolderOpen size={64} className="text-gray-300 mx-auto mb-4" />
@@ -305,25 +618,52 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject }) 
                                                 <FolderOpen size={20} className="text-purple-600" />
                                                 {project.name}
                                             </h3>
-                                            {viewMode === 'grid' && (
-                                                <div className="relative group">
-                                                    <button className="p-1 hover:bg-gray-100 rounded">
-                                                        <MoreVertical size={16} className="text-gray-400" />
-                                                    </button>
-                                                    <div className="absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg hidden group-hover:block z-10">
+                                            <div className="relative">
+                                                <button 
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setOpenMenuProjectId(openMenuProjectId === project.projectId ? null : project.projectId);
+                                                    }}
+                                                    className="p-1 hover:bg-gray-100 rounded"
+                                                >
+                                                    <MoreVertical size={16} className="text-gray-400" />
+                                                </button>
+                                                {openMenuProjectId === project.projectId && (
+                                                    <div className="absolute right-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                openProjectSettings(project);
+                                                            }}
+                                                            className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                                                        >
+                                                            <Settings size={14} />
+                                                            Project Settings
+                                                        </button>
                                                         <button
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
                                                                 startRename(project.projectId, project.name);
                                                             }}
-                                                            className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 rounded-lg flex items-center gap-2"
+                                                            className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                                                         >
                                                             <Edit size={14} />
                                                             Rename
                                                         </button>
+                                                        <div className="border-t border-gray-100 my-1"></div>
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleDeleteProject(project);
+                                                            }}
+                                                            className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                                                        >
+                                                            <Trash2 size={14} />
+                                                            Delete Project
+                                                        </button>
                                                     </div>
-                                                </div>
-                                            )}
+                                                )}
+                                            </div>
                                         </div>
                                         <p className="text-sm text-gray-600 mb-3 line-clamp-2">
                                             {project.description || 'No description'}
@@ -350,6 +690,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject }) 
                             ))}
                         </div>
                     )}
+                    </div>
                 </div>
 
                 {/* Team Members Section */}
@@ -384,6 +725,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject }) 
                         </button>
                     </div>
 
+                    <div className="pr-2 custom-scrollbar">
                     {teamMembers.length === 0 ? (
                         <div className="text-center py-8 text-gray-500">
                             No team members yet
@@ -396,11 +738,22 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject }) 
                                     className="flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:bg-gray-50"
                                 >
                                     <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center text-purple-600 font-semibold">
+                                        <div className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold ${
+                                            member.status === 'PENDING' 
+                                                ? 'bg-yellow-100 text-yellow-600' 
+                                                : 'bg-purple-100 text-purple-600'
+                                        }`}>
                                             {member.username.charAt(0).toUpperCase()}
                                         </div>
                                         <div>
-                                            <p className="font-medium text-gray-900">{member.username}</p>
+                                            <div className="flex items-center gap-2">
+                                                <p className="font-medium text-gray-900">{member.username}</p>
+                                                {member.status === 'PENDING' && (
+                                                    <span className="px-2 py-0.5 text-xs bg-yellow-100 text-yellow-700 rounded-full">
+                                                        Pending
+                                                    </span>
+                                                )}
+                                            </div>
                                             <p className="text-sm text-gray-500">{member.email}</p>
                                         </div>
                                     </div>
@@ -408,14 +761,36 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject }) 
                                         <span className="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded">
                                             {member.roles.join(', ')}
                                         </span>
-                                        <button className="p-1 hover:bg-gray-100 rounded">
-                                            <MoreVertical size={16} className="text-gray-400" />
-                                        </button>
+                                        {member.email !== user?.email && member.status !== 'PENDING' && (
+                                            <button 
+                                                onClick={() => handleRemoveMember(member)}
+                                                className="p-1.5 hover:bg-red-50 rounded text-red-600 hover:text-red-700 transition-colors"
+                                                title="Remove member"
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
+                                        )}
+                                        {member.status === 'PENDING' && (
+                                            <button 
+                                                onClick={() => handleCancelInvitation(member)}
+                                                className="p-1.5 hover:bg-red-50 rounded text-red-600 hover:text-red-700 transition-colors"
+                                                title="Cancel invitation"
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
+                                        )}
+                                        {member.email === user?.email && (
+                                            <span className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded-full">
+                                                You
+                                            </span>
+                                        )}
                                     </div>
                                 </div>
                             ))}
                         </div>
                     )}
+                    </div>
+                </div>
                 </div>
             </main>
 
@@ -479,6 +854,20 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject }) 
                 onInvite={handleInviteMember}
             />
 
+            {/* Confirmation Modal */}
+            {confirmModal && (
+                <ConfirmationModal
+                    isOpen={true}
+                    title={confirmModal.title}
+                    message={confirmModal.message}
+                    onConfirm={confirmModal.onConfirm}
+                    onCancel={() => setConfirmModal(null)}
+                    confirmText={confirmModal.confirmText}
+                    cancelText={confirmModal.cancelText}
+                    type={confirmModal.type}
+                />
+            )}
+
             {/* Settings Modal */}
             <SettingsModal
                 isOpen={showSettings}
@@ -486,9 +875,233 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject }) 
                 user={{
                     username: user?.username || '',
                     email: user?.email,
-                    workspaceName: user?.workspaceName
+                    workspaceName: user?.workspaceName,
+                    workspaceId: user?.workspaceId
                 }}
             />
+
+            {/* Project Settings Modal */}
+            {projectSettingsModal && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col">
+                        {/* Header */}
+                        <div className="flex items-center justify-between p-6 border-b">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
+                                    <FolderOpen size={20} className="text-purple-600" />
+                                </div>
+                                <div>
+                                    <h3 className="text-xl font-semibold text-gray-900">Project Settings</h3>
+                                    <p className="text-sm text-gray-500">{projectSettingsModal.name}</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setProjectSettingsModal(null)}
+                                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                            >
+                                <X size={20} className="text-gray-500" />
+                            </button>
+                        </div>
+
+                        {/* Tabs */}
+                        <div className="flex border-b">
+                            <button
+                                onClick={() => setProjectSettingsTab('general')}
+                                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                                    projectSettingsTab === 'general'
+                                        ? 'text-purple-600 border-b-2 border-purple-600 bg-purple-50'
+                                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                                }`}
+                            >
+                                <FileText size={16} />
+                                General
+                            </button>
+                            <button
+                                onClick={() => setProjectSettingsTab('members')}
+                                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                                    projectSettingsTab === 'members'
+                                        ? 'text-purple-600 border-b-2 border-purple-600 bg-purple-50'
+                                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                                }`}
+                            >
+                                <Users size={16} />
+                                Members ({projectSettingsModal.members?.length || 0})
+                            </button>
+                            <button
+                                onClick={() => setProjectSettingsTab('danger')}
+                                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                                    projectSettingsTab === 'danger'
+                                        ? 'text-red-600 border-b-2 border-red-600 bg-red-50'
+                                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                                }`}
+                            >
+                                <AlertTriangle size={16} />
+                                Danger Zone
+                            </button>
+                        </div>
+
+                        {/* Content */}
+                        <div className="flex-1 overflow-y-auto p-6">
+                            {/* General Tab */}
+                            {projectSettingsTab === 'general' && (
+                                <div className="space-y-6">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                                            Project Name
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={editingProjectName}
+                                            onChange={(e) => setEditingProjectName(e.target.value)}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                                            placeholder="Enter project name"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                                            Description
+                                        </label>
+                                        <textarea
+                                            value={editingProjectDescription}
+                                            onChange={(e) => setEditingProjectDescription(e.target.value)}
+                                            rows={4}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
+                                            placeholder="Enter project description"
+                                        />
+                                    </div>
+                                    <div className="bg-gray-50 rounded-lg p-4">
+                                        <h4 className="text-sm font-medium text-gray-700 mb-2">Project Info</h4>
+                                        <div className="grid grid-cols-2 gap-4 text-sm">
+                                            <div>
+                                                <span className="text-gray-500">Created:</span>
+                                                <span className="ml-2 text-gray-900">{new Date(projectSettingsModal.createdAt).toLocaleDateString()}</span>
+                                            </div>
+                                            <div>
+                                                <span className="text-gray-500">Last Updated:</span>
+                                                <span className="ml-2 text-gray-900">{new Date(projectSettingsModal.updatedAt).toLocaleDateString()}</span>
+                                            </div>
+                                            <div>
+                                                <span className="text-gray-500">Files:</span>
+                                                <span className="ml-2 text-gray-900">{projectSettingsModal.fileCount}</span>
+                                            </div>
+                                            <div>
+                                                <span className="text-gray-500">Members:</span>
+                                                <span className="ml-2 text-gray-900">{projectSettingsModal.memberCount}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Members Tab */}
+                            {projectSettingsTab === 'members' && (
+                                <div className="space-y-4">
+                                    <p className="text-sm text-gray-600 mb-4">
+                                        Manage who has access to this project and their permissions.
+                                    </p>
+                                    {projectSettingsModal.members && projectSettingsModal.members.length > 0 ? (
+                                        <div className="space-y-3">
+                                            {projectSettingsModal.members.map((member) => (
+                                                <div key={member.userId} className="flex items-center justify-between p-3 border border-gray-200 rounded-lg">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center font-semibold text-purple-600">
+                                                            {member.username.charAt(0).toUpperCase()}
+                                                        </div>
+                                                        <div>
+                                                            <p className="font-medium text-gray-900">{member.username}</p>
+                                                            <p className="text-sm text-gray-500">{member.email}</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <select
+                                                            value={member.role}
+                                                            onChange={(e) => handleUpdateProjectMemberRole(projectSettingsModal, member, e.target.value)}
+                                                            className="text-sm border border-gray-300 rounded-lg px-2 py-1 focus:ring-2 focus:ring-purple-500"
+                                                            disabled={member.role === 'OWNER'}
+                                                        >
+                                                            <option value="OWNER">Owner</option>
+                                                            <option value="ADMIN">Admin</option>
+                                                            <option value="EDITOR">Editor</option>
+                                                            <option value="VIEWER">Viewer</option>
+                                                        </select>
+                                                        {member.role !== 'OWNER' && (
+                                                            <button
+                                                                onClick={() => handleRemoveProjectMember(projectSettingsModal, member)}
+                                                                className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                                title="Remove member"
+                                                            >
+                                                                <UserMinus size={16} />
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="text-center py-8 text-gray-500">
+                                            <Users size={48} className="mx-auto mb-3 text-gray-300" />
+                                            <p>No members in this project yet</p>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Danger Zone Tab */}
+                            {projectSettingsTab === 'danger' && (
+                                <div className="space-y-6">
+                                    <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                                        <h4 className="text-lg font-semibold text-red-800 mb-2 flex items-center gap-2">
+                                            <AlertTriangle size={20} />
+                                            Danger Zone
+                                        </h4>
+                                        <p className="text-sm text-red-700 mb-4">
+                                            Actions in this section are irreversible. Please be certain before proceeding.
+                                        </p>
+                                        <div className="space-y-4">
+                                            <div className="flex items-center justify-between p-4 bg-white border border-red-200 rounded-lg">
+                                                <div>
+                                                    <h5 className="font-medium text-gray-900">Delete this project</h5>
+                                                    <p className="text-sm text-gray-500">
+                                                        Once deleted, all files and data will be permanently removed.
+                                                    </p>
+                                                </div>
+                                                <button
+                                                    onClick={() => handleDeleteProject(projectSettingsModal)}
+                                                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2"
+                                                >
+                                                    <Trash2 size={16} />
+                                                    Delete Project
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Footer */}
+                        {projectSettingsTab === 'general' && (
+                            <div className="flex items-center justify-end gap-3 p-6 border-t bg-gray-50">
+                                <button
+                                    onClick={() => setProjectSettingsModal(null)}
+                                    className="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 font-medium transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleSaveProjectSettings}
+                                    disabled={savingProject || !editingProjectName.trim()}
+                                    className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
+                                >
+                                    {savingProject && <Loader2 size={16} className="animate-spin" />}
+                                    <Save size={16} />
+                                    Save Changes
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

@@ -49,6 +49,20 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
         try {
             setCreating(true);
             
+            // Check if project name already exists in workspace
+            const checkResponse = await apiClient.get(`/api/projects/check?name=${encodeURIComponent(projectName.trim())}&workspaceId=${user?.workspaceId || 'default'}`);
+            
+            if (checkResponse?.data?.exists || checkResponse?.exists) {
+                const data = checkResponse?.data || checkResponse;
+                alert(
+                    `⚠️ Project Already Exists\n\n` +
+                    `A project named "${projectName.trim()}" already exists in this workspace.\n\n` +
+                    `Please try a different name.`
+                );
+                setCreating(false);
+                return;
+            }
+            
             await apiClient.post('/api/projects', {
                 workspaceId: user?.workspaceId || 'default',
                 name: projectName.trim(),

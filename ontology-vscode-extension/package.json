@@ -25,7 +25,8 @@
     "onCommand:ontocode.logout",
     "onCommand:ontocode.insertCitation",
     "onCommand:ontocode.showCollaborationStatus",
-    "onLanguage:owl"
+    "onLanguage:owl",
+    "onUri"
   ],
   "main": "./dist/extension.js",
   "browser": "./dist/web/extension.js",

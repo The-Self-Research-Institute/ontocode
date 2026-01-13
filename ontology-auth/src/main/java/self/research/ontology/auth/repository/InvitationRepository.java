@@ -18,5 +18,7 @@ public interface InvitationRepository extends MongoRepository<Invitation, String
     
     Optional<Invitation> findByInviteeEmailAndWorkspaceIdAndStatus(String inviteeEmail, String workspaceId, String status);
     
+    Optional<Invitation> findByInviteeEmailAndWorkspaceId(String inviteeEmail, String workspaceId);
+    
     boolean existsByInvitationToken(String invitationToken);
 }

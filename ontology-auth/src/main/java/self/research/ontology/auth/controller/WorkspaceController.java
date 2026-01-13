@@ -71,6 +71,49 @@ public class WorkspaceController {
     }
 
     /**
+     * Check if workspace name already exists for user
+     */
+    @GetMapping("/check")
+    public ResponseEntity<?> checkWorkspaceExists(@RequestParam String name) {
+        try {
+            String username = getCurrentUsername();
+            Optional<User> userOpt = userRepository.findByUsername(username);
+            
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            }
+
+            User user = userOpt.get();
+            List<Workspace> userWorkspaces = workspaceService.getUserWorkspaces(user.getId());
+            
+            // Check if workspace with same name exists
+            Optional<Workspace> existingWorkspace = userWorkspaces.stream()
+                    .filter(w -> w.getName().equalsIgnoreCase(name.trim()))
+                    .findFirst();
+            
+            if (existingWorkspace.isPresent()) {
+                return ResponseEntity.ok(Map.of(
+                    "exists", true,
+                    "name", name,
+                    "existingWorkspace", Map.of(
+                        "id", existingWorkspace.get().getId(),
+                        "name", existingWorkspace.get().getName(),
+                        "createdAt", existingWorkspace.get().getCreatedAt()
+                    )
+                ));
+            }
+            
+            return ResponseEntity.ok(Map.of(
+                "exists", false,
+                "name", name
+            ));
+        } catch (Exception e) {
+            log.error("Error checking workspace existence", e);
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
      * Create a new workspace
      */
     @PostMapping
@@ -84,11 +127,48 @@ public class WorkspaceController {
             }
 
             User user = userOpt.get();
+            
+            // Validate subscription plan if provided
+            String subscriptionPlan = request.subscriptionPlan;
+            if (subscriptionPlan == null || subscriptionPlan.isEmpty()) {
+                subscriptionPlan = "free"; // Default to free plan
+            } else if (!subscriptionPlan.matches("free|pro|enterprise")) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "error", "Invalid subscription plan. Must be 'free', 'pro', or 'enterprise'"
+                ));
+            }
+            
             Workspace workspace = workspaceService.createWorkspace(
                 user.getId(), 
                 request.name, 
                 request.description
             );
+            
+            // Set subscription plan and apply limits
+            workspace.setSubscriptionPlan(subscriptionPlan);
+            workspace.setSubscriptionStartDate(LocalDateTime.now());
+            
+            // Apply plan-specific limits
+            switch (subscriptionPlan) {
+                case "free":
+                    workspace.setMaxMembers(3);
+                    workspace.setMaxWorkspaces(1);
+                    workspace.setCollaborationEnabled(false);
+                    break;
+                case "pro":
+                    workspace.setMaxMembers(20);
+                    workspace.setMaxWorkspaces(5);
+                    workspace.setCollaborationEnabled(true);
+                    break;
+                case "enterprise":
+                    workspace.setMaxMembers(Integer.MAX_VALUE);
+                    workspace.setMaxWorkspaces(Integer.MAX_VALUE);
+                    workspace.setCollaborationEnabled(true);
+                    break;
+            }
+            
+            // Save updated workspace with subscription plan
+            workspace = workspaceService.updateWorkspace(workspace);
 
             return ResponseEntity.ok(Map.of(
                 "message", "Workspace created successfully",
@@ -312,6 +392,99 @@ public class WorkspaceController {
         }
     }
 
+    /**
+     * Delete a workspace
+     */
+    @DeleteMapping("/{workspaceId}")
+    public ResponseEntity<?> deleteWorkspace(@PathVariable String workspaceId) {
+        try {
+            String username = getCurrentUsername();
+            Optional<User> userOpt = userRepository.findByUsername(username);
+            
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            }
+
+            User user = userOpt.get();
+
+            // Verify user is the owner of the workspace
+            Optional<Workspace> workspaceOpt = workspaceService.getWorkspace(workspaceId);
+            if (workspaceOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Workspace not found"));
+            }
+
+            Workspace workspace = workspaceOpt.get();
+            if (!workspace.getOwnerId().equals(user.getId())) {
+                return ResponseEntity.status(403).body(Map.of(
+                    "error", "Only workspace owner can delete the workspace"
+                ));
+            }
+
+            // Delete the workspace
+            workspaceService.deleteWorkspace(workspaceId);
+
+            log.info("Workspace {} deleted by user {}", workspaceId, username);
+
+            return ResponseEntity.ok(Map.of(
+                "message", "Workspace deleted successfully"
+            ));
+        } catch (Exception e) {
+            log.error("Error deleting workspace", e);
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * Remove a member from a workspace (owner only)
+     */
+    @DeleteMapping("/{workspaceId}/members/{userId}")
+    public ResponseEntity<?> removeMember(
+            @PathVariable String workspaceId,
+            @PathVariable String userId) {
+        try {
+            String username = getCurrentUsername();
+            Optional<User> userOpt = userRepository.findByUsername(username);
+            
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            }
+
+            User user = userOpt.get();
+
+            // Verify user is the owner of the workspace
+            Optional<Workspace> workspaceOpt = workspaceService.getWorkspace(workspaceId);
+            if (workspaceOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Workspace not found"));
+            }
+
+            Workspace workspace = workspaceOpt.get();
+            if (!workspace.getOwnerId().equals(user.getId())) {
+                return ResponseEntity.status(403).body(Map.of(
+                    "error", "Only workspace owner can remove members"
+                ));
+            }
+
+            // Prevent owner from removing themselves
+            if (userId.equals(user.getId())) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "error", "Workspace owner cannot be removed. Please transfer ownership or delete the workspace."
+                ));
+            }
+
+            // Remove member from workspace
+            workspaceService.removeMember(workspaceId, userId);
+
+            log.info("Member {} removed from workspace {} by owner {}", userId, workspaceId, username);
+
+            return ResponseEntity.ok(Map.of(
+                "message", "Member removed successfully"
+            ));
+        } catch (Exception e) {
+            log.error("Error removing member from workspace", e);
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+        }
+    }
+
     // Helper methods
     private String getCurrentUsername() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
@@ -340,6 +513,8 @@ public class WorkspaceController {
                     memberDTO.put("email", m.getEmail());
                     memberDTO.put("role", m.getRole().toString());
                     memberDTO.put("joinedAt", m.getJoinedAt());
+                    memberDTO.put("status", m.getStatus() != null ? m.getStatus().toString() : "ACTIVE");
+                    memberDTO.put("invitationToken", m.getInvitationToken());
                     return memberDTO;
                 })
                 .collect(Collectors.toList());
@@ -352,5 +527,6 @@ public class WorkspaceController {
     public static class CreateWorkspaceRequest {
         public String name;
         public String description;
+        public String subscriptionPlan; // free, pro, or enterprise
     }
 }

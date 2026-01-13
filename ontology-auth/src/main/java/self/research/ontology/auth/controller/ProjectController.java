@@ -14,6 +14,8 @@ import self.research.ontology.auth.model.User;
 import self.research.ontology.auth.repository.FileMetadataRepository;
 import self.research.ontology.auth.repository.UserRepository;
 import self.research.ontology.auth.service.ProjectService;
+import self.research.ontology.auth.util.JwtUtil;
+import jakarta.servlet.http.HttpServletRequest;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -27,11 +29,13 @@ public class ProjectController {
     private final ProjectService projectService;
     private final UserRepository userRepository;
     private final FileMetadataRepository fileMetadataRepository;
+    private final JwtUtil jwtUtil;
 
-    public ProjectController(ProjectService projectService, UserRepository userRepository, FileMetadataRepository fileMetadataRepository) {
+    public ProjectController(ProjectService projectService, UserRepository userRepository, FileMetadataRepository fileMetadataRepository, JwtUtil jwtUtil) {
         this.projectService = projectService;
         this.userRepository = userRepository;
         this.fileMetadataRepository = fileMetadataRepository;
+        this.jwtUtil = jwtUtil;
     }
 
     /**
@@ -40,6 +44,23 @@ public class ProjectController {
     private String getCurrentUsername() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         return authentication.getName();
+    }
+
+    /**
+     * Extract workspaceId from JWT token
+     */
+    private String getWorkspaceIdFromToken(HttpServletRequest request) {
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            String token = authHeader.substring(7);
+            try {
+                return jwtUtil.extractClaim(token, claims -> claims.get("workspaceId", String.class));
+            } catch (Exception e) {
+                log.error("Error extracting workspaceId from token", e);
+                return null;
+            }
+        }
+        return null;
     }
 
     /**
@@ -87,6 +108,50 @@ public class ProjectController {
                 "success", false,
                 "error", e.getMessage()
             ));
+        }
+    }
+
+    /**
+     * Check if project name already exists in workspace
+     */
+    @GetMapping("/check")
+    public ResponseEntity<?> checkProjectExists(
+            @RequestParam String name,
+            @RequestParam String workspaceId) {
+        try {
+            String username = getCurrentUsername();
+            Optional<User> userOpt = userRepository.findByUsername(username);
+            
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            }
+
+            List<Project> workspaceProjects = projectService.getWorkspaceProjects(workspaceId);
+            
+            // Check if project with same name exists in workspace
+            Optional<Project> existingProject = workspaceProjects.stream()
+                    .filter(p -> p.getName().equalsIgnoreCase(name.trim()))
+                    .findFirst();
+            
+            if (existingProject.isPresent()) {
+                return ResponseEntity.ok(Map.of(
+                    "exists", true,
+                    "name", name,
+                    "existingProject", Map.of(
+                        "id", existingProject.get().getId(),
+                        "name", existingProject.get().getName(),
+                        "createdAt", existingProject.get().getCreatedAt()
+                    )
+                ));
+            }
+            
+            return ResponseEntity.ok(Map.of(
+                "exists", false,
+                "name", name
+            ));
+        } catch (Exception e) {
+            log.error("Error checking project existence", e);
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
         }
     }
 
@@ -183,10 +248,10 @@ public class ProjectController {
     }
 
     /**
-     * Get all projects for current user
+     * Get all projects in the current user's workspace
      */
     @GetMapping("/my")
-    public ResponseEntity<?> getMyProjects() {
+    public ResponseEntity<?> getMyProjects(HttpServletRequest request) {
         try {
             String username = getCurrentUsername();
             Optional<User> userOpt = userRepository.findByUsername(username);
@@ -196,7 +261,16 @@ public class ProjectController {
             }
 
             User user = userOpt.get();
-            List<Project> projects = projectService.getUserProjects(user.getId());
+            
+            // Get user's current workspace ID from JWT token
+            String workspaceId = getWorkspaceIdFromToken(request);
+            
+            if (workspaceId == null || workspaceId.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "No workspace selected"));
+            }
+            
+            // Get ALL projects in the current workspace (workspace-based, not user-based)
+            List<Project> projects = projectService.getWorkspaceProjects(workspaceId);
             
             List<Map<String, Object>> projectDTOs = projects.stream()
                     .map(this::convertToDTO)
@@ -280,6 +354,61 @@ public class ProjectController {
         } catch (Exception e) {
             log.error("Error updating project", e);
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * Check if member already exists in project
+     */
+    @GetMapping("/{projectId}/members/check")
+    public ResponseEntity<?> checkMemberExists(
+            @PathVariable String projectId,
+            @RequestParam String email) {
+        try {
+            String username = getCurrentUsername();
+            Optional<User> userOpt = userRepository.findByUsername(username);
+            
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            }
+
+            User user = userOpt.get();
+            Optional<Project> projectOpt = projectService.getProject(projectId);
+            
+            if (projectOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Project not found"));
+            }
+            
+            Project project = projectOpt.get();
+            
+            // Check if user with this email is already a member
+            boolean isMember = project.getMembers().stream()
+                    .anyMatch(m -> m.getEmail().equalsIgnoreCase(email.trim()));
+            
+            if (isMember) {
+                Optional<Project.ProjectMember> existingMember = project.getMembers().stream()
+                        .filter(m -> m.getEmail().equalsIgnoreCase(email.trim()))
+                        .findFirst();
+                        
+                return ResponseEntity.ok(Map.of(
+                    "exists", true,
+                    "email", email,
+                    "existingMember", Map.of(
+                        "userId", existingMember.get().getUserId(),
+                        "username", existingMember.get().getUsername(),
+                        "email", existingMember.get().getEmail(),
+                        "role", existingMember.get().getRole()
+                    )
+                ));
+            }
+            
+            return ResponseEntity.ok(Map.of(
+                "exists", false,
+                "email", email
+            ));
+        } catch (Exception e) {
+            log.error("Error checking member existence", e);
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
         }
     }
 
@@ -429,10 +558,11 @@ public class ProjectController {
         dto.put("memberCount", project.getMembers().size());
         dto.put("status", project.getStatus());
         dto.put("tags", project.getTags());
-        dto.put("fileCount", project.getFileIds().size());
+        dto.put("fileCount", project.getActiveFiles().size()); // Use active files from metadata
         dto.put("createdAt", project.getCreatedAt().toString());
         dto.put("updatedAt", project.getUpdatedAt().toString());
-        dto.put("fileIds", project.getFileIds());
+        dto.put("fileIds", project.getFileIds()); // Keep for backward compatibility
+        dto.put("files", project.getFiles()); // Include file metadata
         return dto;
     }
 
@@ -462,19 +592,32 @@ public class ProjectController {
                 return ResponseEntity.status(403).body(Map.of("error", "Access denied"));
             }
             
-            // Get actual file metadata from database
-            List<FileMetadata> fileMetadataList = fileMetadataRepository.findByProjectIdAndStatus(projectId, "ACTIVE");
-            
+            // Get files from project metadata (primary source)
             List<Map<String, Object>> files = new ArrayList<>();
-            for (FileMetadata fileMeta : fileMetadataList) {
-                Map<String, Object> fileInfo = new HashMap<>();
-                fileInfo.put("id", fileMeta.getFileId());
-                fileInfo.put("name", fileMeta.getFileName());
-                fileInfo.put("size", fileMeta.getFileSize());
-                fileInfo.put("uploadedBy", fileMeta.getUploaderUsername());
-                fileInfo.put("uploadedAt", fileMeta.getUploadedAt().toString());
-                fileInfo.put("type", fileMeta.getExtension());
-                files.add(fileInfo);
+            for (Project.FileMetadataInfo fileInfo : project.getActiveFiles()) {
+                Map<String, Object> fileData = new HashMap<>();
+                fileData.put("id", fileInfo.getFileId());
+                fileData.put("name", fileInfo.getFileName());
+                fileData.put("size", fileInfo.getFileSize());
+                fileData.put("uploadedBy", fileInfo.getUploaderUsername());
+                fileData.put("uploadedAt", fileInfo.getUploadedAt().toString());
+                fileData.put("type", fileInfo.getExtension());
+                files.add(fileData);
+            }
+            
+            // Fallback to separate file_metadata collection if project metadata is empty
+            if (files.isEmpty()) {
+                List<FileMetadata> fileMetadataList = fileMetadataRepository.findByProjectIdAndStatus(projectId, "ACTIVE");
+                for (FileMetadata fileMeta : fileMetadataList) {
+                    Map<String, Object> fileInfo = new HashMap<>();
+                    fileInfo.put("id", fileMeta.getFileId());
+                    fileInfo.put("name", fileMeta.getFileName());
+                    fileInfo.put("size", fileMeta.getFileSize());
+                    fileInfo.put("uploadedBy", fileMeta.getUploaderUsername());
+                    fileInfo.put("uploadedAt", fileMeta.getUploadedAt().toString());
+                    fileInfo.put("type", fileMeta.getExtension());
+                    files.add(fileInfo);
+                }
             }
 
             return ResponseEntity.ok(Map.of(
@@ -487,6 +630,107 @@ public class ProjectController {
         } catch (Exception e) {
             log.error("Error getting project files", e);
             return ResponseEntity.internalServerError().body(Map.of("error", "Failed to get project files"));
+        }
+    }
+
+    /**
+     * Get file content by file ID
+     */
+    @GetMapping("/{projectId}/files/{fileId}/content")
+    public ResponseEntity<?> getFileContent(
+            @PathVariable String projectId,
+            @PathVariable String fileId) {
+        try {
+            String username = getCurrentUsername();
+            Optional<User> userOpt = userRepository.findByUsername(username);
+            
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            }
+
+            User user = userOpt.get();
+            
+            // Verify project access
+            if (!projectService.hasAccess(projectId, user.getId())) {
+                return ResponseEntity.status(403).body(Map.of("error", "Access denied"));
+            }
+            
+            // Get file metadata
+            Optional<FileMetadata> fileMetaOpt = fileMetadataRepository.findByFileId(fileId);
+            if (fileMetaOpt.isEmpty()) {
+                return ResponseEntity.notFound().build();
+            }
+            
+            FileMetadata fileMeta = fileMetaOpt.get();
+            
+            // Verify file belongs to project
+            if (!projectId.equals(fileMeta.getProjectId())) {
+                return ResponseEntity.status(403).body(Map.of("error", "File does not belong to this project"));
+            }
+
+            return ResponseEntity.ok(Map.of(
+                "id", fileMeta.getFileId(),
+                "name", fileMeta.getFileName(),
+                "content", fileMeta.getBase64Data(),
+                "type", fileMeta.getFileType(),
+                "size", fileMeta.getFileSize()
+            ));
+        } catch (Exception e) {
+            log.error("Error getting file content", e);
+            return ResponseEntity.internalServerError().body(Map.of("error", "Failed to get file content"));
+        }
+    }
+
+    /**
+     * Check if a file with the same name already exists in the project
+     */
+    @GetMapping("/{projectId}/files/check")
+    public ResponseEntity<?> checkFileExists(
+            @PathVariable String projectId,
+            @RequestParam String fileName) {
+        try {
+            String username = getCurrentUsername();
+            Optional<User> userOpt = userRepository.findByUsername(username);
+            
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            }
+
+            // Get project
+            Optional<Project> projectOpt = projectService.getProject(projectId);
+            if (projectOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Project not found"));
+            }
+            
+            Project project = projectOpt.get();
+            
+            // Check if file with same name exists
+            boolean exists = project.getFiles().stream()
+                    .anyMatch(file -> file.getFileName().equals(fileName));
+            
+            if (exists) {
+                // Find the existing file details
+                Project.FileMetadataInfo existingFile = project.getFiles().stream()
+                        .filter(file -> file.getFileName().equals(fileName))
+                        .findFirst()
+                        .orElse(null);
+                
+                return ResponseEntity.ok(Map.of(
+                    "exists", true,
+                    "fileName", fileName,
+                    "existingFile", existingFile != null ? Map.of(
+                        "fileId", existingFile.getFileId(),
+                        "fileName", existingFile.getFileName(),
+                        "fileSize", existingFile.getFileSize(),
+                        "uploadedAt", existingFile.getUploadedAt()
+                    ) : Map.of()
+                ));
+            } else {
+                return ResponseEntity.ok(Map.of("exists", false, "fileName", fileName));
+            }
+        } catch (Exception e) {
+            log.error("Error checking file existence", e);
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
         }
     }
 
@@ -510,6 +754,7 @@ public class ProjectController {
             // Extract file data from JSON
             String fileName = (String) fileData.get("fileName");
             String base64Data = (String) fileData.get("fileData");
+            String replaceFileId = (String) fileData.get("replaceFileId"); // Optional: file ID to replace
             
             // Validate file
             if (fileName == null || fileName.isEmpty()) {
@@ -527,9 +772,6 @@ public class ProjectController {
             // Extract file extension
             String extension = fileName.substring(fileName.lastIndexOf(".") + 1);
             
-            // Generate file ID and save metadata
-            String fileId = UUID.randomUUID().toString();
-            
             // Get project to find workspaceId
             Optional<Project> projectOpt = projectService.getProject(projectId);
             if (projectOpt.isEmpty()) {
@@ -537,6 +779,21 @@ public class ProjectController {
             }
             
             Project project = projectOpt.get();
+            
+            // If replaceFileId is provided, delete the old file first
+            if (replaceFileId != null && !replaceFileId.isEmpty()) {
+                try {
+                    projectService.removeFile(projectId, user.getId(), replaceFileId);
+                    fileMetadataRepository.deleteById(replaceFileId);
+                    log.info("Replaced existing file: {} with ID: {}", fileName, replaceFileId);
+                } catch (Exception e) {
+                    log.warn("Error deleting old file during replacement: {}", e.getMessage());
+                    // Continue with upload even if deletion fails
+                }
+            }
+            
+            // Generate file ID and save metadata
+            String fileId = UUID.randomUUID().toString();
             
             // Save file metadata
             FileMetadata fileMetadata = new FileMetadata(fileId, fileName, projectId, project.getWorkspaceId());
@@ -550,8 +807,18 @@ public class ProjectController {
             
             fileMetadataRepository.save(fileMetadata);
             
-            // Add file ID to project
-            projectService.addFile(projectId, user.getId(), fileId);
+            // Add file metadata to project
+            Project.FileMetadataInfo projectFileInfo = new Project.FileMetadataInfo(
+                fileId, fileName, 
+                ((Number) fileData.getOrDefault("fileSize", 0)).longValue(),
+                (String) fileData.getOrDefault("fileType", "application/rdf+xml"),
+                extension
+            );
+            projectFileInfo.setUploadedBy(user.getId());
+            projectFileInfo.setUploaderUsername(user.getUsername());
+            projectFileInfo.setUploaderEmail(user.getEmail());
+            
+            projectService.addFileMetadata(projectId, user.getId(), projectFileInfo);
 
             return ResponseEntity.ok(Map.of(
                 "message", "File uploaded successfully",

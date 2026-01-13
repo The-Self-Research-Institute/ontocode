@@ -62,6 +62,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll() // Always allow preflight
                         .requestMatchers("/api/auth/**").permitAll() // Allow public access to auth endpoints
+                        .requestMatchers("/api/invitations/details/**").permitAll() // Allow public access to view invitation details
+                        .requestMatchers("/api/invitations/request-resend/**").permitAll() // Allow public access to request invitation resend
                         .requestMatchers("/error").permitAll()
                         .requestMatchers("/actuator/**").permitAll() // Allow actuator endpoints for health checks
                         .anyRequest().authenticated() // All other requests require authentication
