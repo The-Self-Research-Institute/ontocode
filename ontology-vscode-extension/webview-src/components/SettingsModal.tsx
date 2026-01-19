@@ -5,6 +5,7 @@ import apiClient from '../services/apiClient';
 interface SettingsModalProps {
     isOpen: boolean;
     onClose: () => void;
+    onLogout?: () => void;
     user: {
         username: string;
         email?: string;
@@ -13,7 +14,7 @@ interface SettingsModalProps {
     };
 }
 
-const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, user }) => {
+const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout, user }) => {
     const [activeTab, setActiveTab] = useState('profile');
     const [saving, setSaving] = useState(false);
     const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -142,21 +143,22 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, user }) 
         
         try {
             setSaving(true);
-            try {
-                await apiClient.post('/api/auth/change-password', {
-                    currentPassword: passwordData.currentPassword,
-                    newPassword: passwordData.newPassword
-                });
-                showMessage('success', 'Password changed successfully!');
-                setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
-            } catch (error: any) {
-                // Check if it's a 404 (endpoint not found)
-                if (error?.status === 404 || error?.response?.status === 404) {
-                    showMessage('error', 'Password change feature coming soon');
-                } else {
-                    throw error;
+            const response = await apiClient.post('/api/auth/change-password', {
+                currentPassword: passwordData.currentPassword,
+                newPassword: passwordData.newPassword
+            });
+            
+            showMessage('success', response.message || 'Password changed successfully! Logging out...');
+            setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
+            
+            // Wait 2 seconds before logging out to show the success message
+            setTimeout(() => {
+                if (onLogout) {
+                    onLogout();
+                } else if (window.vscode) {
+                    window.vscode.postMessage({ type: 'logout' });
                 }
-            }
+            }, 2000);
         } catch (error: any) {
             console.error('Error changing password:', error);
             showMessage('error', error?.error || error?.message || 'Failed to change password');
@@ -227,9 +229,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, user }) 
                                             <input
                                                 type="text"
                                                 value={settings.displayName}
-                                                onChange={(e) => setSettings({ ...settings, displayName: e.target.value })}
-                                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                                                disabled
+                                                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-600 cursor-not-allowed"
                                             />
+                                            <p className="text-xs text-gray-500 mt-1">Username cannot be changed</p>
                                         </div>
                                         <div>
                                             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -238,9 +241,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, user }) 
                                             <input
                                                 type="email"
                                                 value={settings.email}
-                                                onChange={(e) => setSettings({ ...settings, email: e.target.value })}
-                                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                                                disabled
+                                                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-600 cursor-not-allowed"
                                             />
+                                            <p className="text-xs text-gray-500 mt-1">Email address cannot be changed</p>
                                         </div>
                                     </div>
                                 </div>

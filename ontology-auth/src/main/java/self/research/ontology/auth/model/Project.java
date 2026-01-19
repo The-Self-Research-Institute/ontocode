@@ -38,6 +38,11 @@ public class Project {
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     
+    // Soft delete fields
+    private Boolean isDeleted = false;
+    private LocalDateTime deletedAt;
+    private String deletedBy; // User ID who deleted the project
+    
     // Nested class for file metadata within project
     public static class FileMetadataInfo {
         private String fileId;
@@ -249,4 +254,13 @@ public class Project {
     
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+    
+    public Boolean getIsDeleted() { return isDeleted; }
+    public void setIsDeleted(Boolean isDeleted) { this.isDeleted = isDeleted; }
+    
+    public LocalDateTime getDeletedAt() { return deletedAt; }
+    public void setDeletedAt(LocalDateTime deletedAt) { this.deletedAt = deletedAt; }
+    
+    public String getDeletedBy() { return deletedBy; }
+    public void setDeletedBy(String deletedBy) { this.deletedBy = deletedBy; }
 }

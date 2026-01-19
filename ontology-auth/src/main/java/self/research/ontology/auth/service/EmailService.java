@@ -366,4 +366,124 @@ public class EmailService {
             throw new RuntimeException("Failed to send password reset email", e);
         }
     }
+
+    /**
+     * Send password change notification email
+     */
+    public void sendPasswordChangeEmail(String to, String username) {
+        String htmlContent = String.format("""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body {
+                        font-family: Arial, sans-serif;
+                        line-height: 1.6;
+                        color: #333;
+                    }
+                    .container {
+                        max-width: 600px;
+                        margin: 0 auto;
+                        padding: 20px;
+                        background-color: #f9f9f9;
+                    }
+                    .content {
+                        background-color: white;
+                        padding: 30px;
+                        border-radius: 8px;
+                        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                    }
+                    .button {
+                        display: inline-block;
+                        background-color: #8B5CF6;
+                        color: white !important;
+                        padding: 12px 24px;
+                        text-decoration: none;
+                        border-radius: 6px;
+                        margin: 20px 0;
+                    }
+                    .footer {
+                        margin-top: 20px;
+                        font-size: 12px;
+                        color: #666;
+                    }
+                    .success {
+                        background-color: #d4edda;
+                        border-left: 4px solid #28a745;
+                        padding: 15px;
+                        margin: 20px 0;
+                        border-radius: 4px;
+                    }
+                    .warning {
+                        background-color: #fff3cd;
+                        border-left: 4px solid #ffc107;
+                        padding: 15px;
+                        margin: 20px 0;
+                        border-radius: 4px;
+                    }
+                    .icon {
+                        font-size: 48px;
+                        text-align: center;
+                        margin: 20px 0;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="content">
+                        <div class="icon">🔐</div>
+                        <h1 style="color: #8B5CF6; text-align: center;">Password Changed Successfully</h1>
+                        <div class="success">
+                            <strong>✓ Your password has been changed</strong>
+                            <p style="margin: 10px 0 0 0;">Your OntoCode account password was successfully changed.</p>
+                        </div>
+                        <p>Hello <strong>%s</strong>,</p>
+                        <p>This is a confirmation that your password for your OntoCode account has been successfully changed.</p>
+                        <p><strong>Time:</strong> %s</p>
+                        <div class="warning">
+                            <strong>⚠️ Security Notice:</strong>
+                            <p style="margin: 10px 0 0 0;">If you did not make this change, your account may be compromised. Please contact our support team immediately at <a href="mailto:support@ontocode.com">support@ontocode.com</a>.</p>
+                        </div>
+                        <h3>What happens next?</h3>
+                        <ul>
+                            <li>You will be automatically logged out from all devices for security</li>
+                            <li>You can log in again using your new password</li>
+                            <li>Your active sessions have been terminated</li>
+                        </ul>
+                        <p>If you have any questions or concerns, please don't hesitate to reach out to our support team.</p>
+                        <p class="footer">
+                            Best regards,<br>
+                            The OntoCode Team<br>
+                            <a href="mailto:support@ontocode.com">support@ontocode.com</a>
+                        </p>
+                    </div>
+                </div>
+            </body>
+            </html>
+            """, 
+            username,
+            java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("MMMM dd, yyyy 'at' hh:mm a"))
+        );
+
+        try {
+            log.info("Sending password change notification email to: {}", to);
+            
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            
+            helper.setFrom(fromEmail, "OntoCode Security");
+            helper.setTo(to);
+            helper.setSubject("OntoCode: Password Changed Successfully");
+            helper.setText(htmlContent, true);
+
+            mailSender.send(message);
+            log.info("Password change notification email sent successfully to: {}", to);
+        } catch (MessagingException e) {
+            log.error("Failed to send password change email to: {}", to, e);
+            throw new RuntimeException("Failed to send password change email", e);
+        } catch (Exception e) {
+            log.error("Failed to send password change email to: {}", to, e);
+            throw new RuntimeException("Failed to send password change email", e);
+        }
+    }
 }

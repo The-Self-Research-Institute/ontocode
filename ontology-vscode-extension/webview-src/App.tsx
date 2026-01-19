@@ -66,6 +66,9 @@ const AppContent = () => {
             } else if (message.type === 'invitationToken') {
                 console.log('[App] 📧 Received invitation token from extension:', message.token);
                 setInviteToken(message.token);
+            } else if (message.type === 'showSubscriptionPlans') {
+                console.log('[App] 📋 Showing subscription plans page');
+                setShowSubscriptionPlan(true);
             }
         };
 
@@ -250,6 +253,11 @@ const AppContent = () => {
                 username={user.username}
                 isAdmin={user.isAdmin || false}
                 onWorkspaceSelected={handleWorkspaceSelected}
+                onSkipWorkspace={() => {
+                    console.log('[App] User chose to continue without workspace');
+                    // Update auth context to skip workspace selection
+                    selectWorkspace({ skipWorkspace: true });
+                }}
                 onLogout={handleLogout}
             />
         );
@@ -273,7 +281,7 @@ const AppContent = () => {
     // Show only when no file is selected AND (no project selected OR has pending file to upload)
     if (user && user.workspaceId && !showSubscriptionPlan && !selectedFileId && (!selectedProjectId || pendingFile)) {
         console.log('[App] Routing to ProjectDashboard - isAdmin:', user.isAdmin, 'selectedFileId:', selectedFileId, 'selectedProjectId:', selectedProjectId, 'pendingFile:', !!pendingFile);
-        return <ProjectDashboard onSelectProject={handleProjectSelected} />;
+        return <ProjectDashboard onSelectProject={handleProjectSelected} pendingFile={pendingFile} />;
     }
 
     // Show Project Library when a project is selected but no file is selected
