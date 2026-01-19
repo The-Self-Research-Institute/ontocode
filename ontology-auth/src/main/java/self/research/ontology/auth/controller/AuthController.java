@@ -374,6 +374,74 @@ public class AuthController {
     }
 
     /**
+     * Change password (authenticated endpoint)
+     * Requires current password verification
+     * Sends email notification and returns success response
+     */
+    @PostMapping("/change-password")
+    public ResponseEntity<?> changePassword(
+            @Valid @RequestBody ChangePasswordRequest request,
+            @RequestHeader("Authorization") String authHeader) {
+        try {
+            // Extract username from JWT token
+            String token = authHeader.replace("Bearer ", "");
+            String username = jwtUtil.extractUsername(token);
+            
+            log.info("Change password request for user: {}", username);
+
+            Optional<User> userOpt = userRepository.findByUsername(username);
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "error", "User not found"
+                ));
+            }
+
+            User user = userOpt.get();
+
+            // Verify current password
+            if (!passwordEncoder.matches(request.getCurrentPassword(), user.getPassword())) {
+                log.warn("Invalid current password for user: {}", username);
+                return ResponseEntity.badRequest().body(Map.of(
+                    "error", "Current password is incorrect"
+                ));
+            }
+
+            // Ensure new password is different from current
+            if (passwordEncoder.matches(request.getNewPassword(), user.getPassword())) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "error", "New password must be different from current password"
+                ));
+            }
+
+            // Update password
+            user.setPassword(passwordEncoder.encode(request.getNewPassword()));
+            user.resetFailedAttempts(); // Clear any lockouts
+            userRepository.save(user);
+
+            // Send email notification
+            try {
+                emailService.sendPasswordChangeEmail(user.getEmail(), user.getUsername());
+                log.info("Password change notification email sent to: {}", user.getEmail());
+            } catch (Exception e) {
+                log.error("Failed to send password change email", e);
+                // Don't fail the password change if email fails
+            }
+
+            auditService.logPasswordChange(username);
+            log.info("Password changed successfully for user: {}", username);
+
+            return ResponseEntity.ok(Map.of(
+                "message", "Password changed successfully! You will be logged out for security."
+            ));
+        } catch (Exception e) {
+            log.error("Error changing password", e);
+            return ResponseEntity.badRequest().body(Map.of(
+                "error", "Failed to change password: " + e.getMessage()
+            ));
+        }
+    }
+
+    /**
      * Get user email by username
      * Used by other services to lookup user email
      */

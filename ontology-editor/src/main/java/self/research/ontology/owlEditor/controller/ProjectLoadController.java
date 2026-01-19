@@ -82,7 +82,10 @@ public class ProjectLoadController {
     @PostMapping("/upload/{projectId}")
     public ResponseEntity<Map<String, Object>> upload(@PathVariable String projectId,
                                                       @RequestParam("file") MultipartFile file,
-                                                      @RequestParam(required = false) String ownerEmail) {
+                                                      @RequestParam(required = false) String ownerEmail,
+                                                      @RequestParam(required = false) String action) {
+        log.info("[ProjectLoadController] Upload request - projectId: {}, filename: {}, ownerEmail: {}, action: {}", 
+            projectId, file.getOriginalFilename(), ownerEmail, action);
         try {
             // VALIDATION: Check file size (max 300MB)
             long maxSize = 300 * 1024 * 1024; // 300MB
@@ -99,7 +102,7 @@ public class ProjectLoadController {
             boolean isReplacement = false;
             String filename = file.getOriginalFilename();
             
-            // Check for duplicate filename and use existing projectId if found
+            // Check for duplicate filename and handle based on action parameter
             if (ownerEmail != null && !ownerEmail.isEmpty()) {
                 // First, check if filename conflicts with shared files
                 if (shareService.isFilenameInSharedFiles(filename, ownerEmail)) {
@@ -114,9 +117,30 @@ public class ProjectLoadController {
                 // Then check if user owns a file with this name
                 Optional<String> existingProjectId = metadataService.getExistingProjectId(filename, ownerEmail);
                 if (existingProjectId.isPresent()) {
-                    actualProjectId = existingProjectId.get();
-                    isReplacement = true;
-                    log.info("Replacing existing file: {} for user: {} with projectId: {}", filename, ownerEmail, actualProjectId);
+                    // Handle based on action parameter
+                    if ("replace".equals(action)) {
+                        // Replace existing file
+                        actualProjectId = existingProjectId.get();
+                        isReplacement = true;
+                        log.info("Replacing existing file: {} for user: {} with projectId: {}", filename, ownerEmail, actualProjectId);
+                    } else if ("create_copy".equals(action)) {
+                        // Create a copy with modified filename
+                        String copyFilename = generateCopyFilename(filename, ownerEmail);
+                        filename = copyFilename;
+                        // Use the provided projectId for the new copy
+                        log.info("Creating copy with new filename: {} for user: {} with projectId: {}", copyFilename, ownerEmail, actualProjectId);
+                    } else {
+                        // No action specified - return conflict for user decision
+                        log.warn("Duplicate file detected, awaiting user decision: {} for user: {}", filename, ownerEmail);
+                        return ResponseEntity.status(HttpStatus.CONFLICT)
+                                .body(Map.of(
+                                    "success", false,
+                                    "isDuplicate", true,
+                                    "projectId", existingProjectId.get(),
+                                    "filename", filename,
+                                    "error", "A file with the name '" + filename + "' already exists. Please choose to replace or create a copy."
+                                ));
+                    }
                 }
             }
             
@@ -142,7 +166,7 @@ public class ProjectLoadController {
             try (InputStream fileIn = Files.newInputStream(original)) {
                 gridfsFileId = gridFSFileService.storeFile(
                     actualProjectId,
-                    file.getOriginalFilename(),
+                    filename,  // Use potentially modified filename
                     file.getContentType(),
                     fileIn
                 );
@@ -156,21 +180,58 @@ public class ProjectLoadController {
             log.info("Stored file in GridFS for project {}: fileId={}", actualProjectId, gridfsFileId);
 
             // FIX: Batch metadata updates into single operation for better performance
-            ProjectStatus status = ProjectStatus.uploaded(file.getOriginalFilename());
+            // Use the potentially modified filename
+            ProjectStatus status = ProjectStatus.uploaded(filename);
             metadataService.updateProjectMetadata(actualProjectId, status, gridfsFileId, ownerEmail);
 
             importService.submitImport(actualProjectId, original, ownerEmail);
+            
+            String message = isReplacement ? "File replaced successfully, processing scheduled" : 
+                            ("create_copy".equals(action) ? "Copy created successfully with name '" + filename + "', processing scheduled" :
+                            "Upload complete, processing scheduled");
+            
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "projectId", actualProjectId,
                     "gridfsFileId", gridfsFileId,
                     "isReplacement", isReplacement,
-                    "message", isReplacement ? "File replaced successfully, processing scheduled" : "Upload complete, processing scheduled"));
+                    "filename", filename,
+                    "message", message));
         } catch (IOException e) {
             log.error("Upload failed", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("success", false, "error", e.getMessage()));
         }
+    }
+    
+    /**
+     * Generate a unique filename for a copy by adding a numeric suffix
+     * @param originalFilename The original filename
+     * @param ownerEmail The owner's email
+     * @return A unique filename with suffix (e.g., "ontology-copy-1.owl")
+     */
+    private String generateCopyFilename(String originalFilename, String ownerEmail) {
+        // Extract base name and extension
+        String baseName;
+        String extension = "";
+        int dotIndex = originalFilename.lastIndexOf('.');
+        if (dotIndex > 0) {
+            baseName = originalFilename.substring(0, dotIndex);
+            extension = originalFilename.substring(dotIndex);
+        } else {
+            baseName = originalFilename;
+        }
+        
+        // Try incrementing suffixes until we find one that doesn't exist
+        int copyNumber = 1;
+        String candidateFilename;
+        do {
+            candidateFilename = baseName + "-copy-" + copyNumber + extension;
+            copyNumber++;
+        } while (metadataService.isDuplicateFilename(candidateFilename, ownerEmail));
+        
+        log.info("Generated copy filename: {} from original: {}", candidateFilename, originalFilename);
+        return candidateFilename;
     }
 
     @GetMapping("/status/{projectId}")
@@ -373,6 +434,67 @@ public class ProjectLoadController {
                                 "error", "Failed to save ontology: " + e.getMessage()
                         ));
             }
+        }
+    }
+
+    /**
+     * Check if a file with the same name already exists for the user
+     * @param filename The filename to check
+     * @param ownerEmail The user's email
+     * @return Conflict information if duplicate exists
+     */
+    @GetMapping("/check-duplicate")
+    public ResponseEntity<Map<String, Object>> checkDuplicate(
+            @RequestParam String filename,
+            @RequestParam String ownerEmail) {
+        try {
+            log.info("[CHECK-DUPLICATE] Checking for duplicate - filename: {}, ownerEmail: {}", filename, ownerEmail);
+            
+            // Check if filename conflicts with shared files
+            if (shareService.isFilenameInSharedFiles(filename, ownerEmail)) {
+                log.warn("[CHECK-DUPLICATE] Filename conflicts with shared file: {} for user: {}", filename, ownerEmail);
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                        .body(Map.of(
+                            "success", false,
+                            "isDuplicate", true,
+                            "error", "The file '" + filename + "' is already shared with you. Please upload with a different file name or version."
+                        ));
+            }
+            
+            // Check if user owns a file with this name
+            Optional<String> existingProjectId = metadataService.getExistingProjectId(filename, ownerEmail);
+            if (existingProjectId.isPresent()) {
+                String projectId = existingProjectId.get();
+                log.info("[CHECK-DUPLICATE] Found duplicate file - projectId: {}", projectId);
+                
+                // Get file metadata
+                Optional<ProjectStatus> statusOpt = metadataService.readStatus(projectId);
+                
+                return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "isDuplicate", true,
+                    "projectId", projectId,
+                    "filename", filename,
+                    "message", "A file with the name '" + filename + "' already exists.",
+                    "status", statusOpt.map(ProjectStatus::status).orElse("UNKNOWN"),
+                    "lastUpdated", statusOpt.map(s -> s.updatedAt() != null ? s.updatedAt().toString() : "").orElse("")
+                ));
+            }
+            
+            log.info("[CHECK-DUPLICATE] No duplicate found");
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "isDuplicate", false,
+                "message", "No duplicate file found"
+            ));
+            
+        } catch (Exception e) {
+            log.error("[CHECK-DUPLICATE] Error checking duplicate", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of(
+                        "success", false,
+                        "error", "Failed to check for duplicate: " + e.getMessage()
+                    ));
         }
     }
 

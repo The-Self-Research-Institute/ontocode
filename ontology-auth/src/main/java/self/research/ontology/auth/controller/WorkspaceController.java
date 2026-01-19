@@ -7,6 +7,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
+import self.research.ontology.auth.dto.WorkspaceRequests;
+import self.research.ontology.auth.dto.WorkspaceRequests.*;
 import self.research.ontology.auth.model.User;
 import self.research.ontology.auth.model.Workspace;
 import self.research.ontology.auth.model.Workspace.WorkspaceRole;
@@ -128,20 +130,37 @@ public class WorkspaceController {
 
             User user = userOpt.get();
             
-            // Validate subscription plan if provided
-            String subscriptionPlan = request.subscriptionPlan;
+            // Get subscription plan from validated request (already validated by @Pattern)
+            String subscriptionPlan = request.getSubscriptionPlan();
             if (subscriptionPlan == null || subscriptionPlan.isEmpty()) {
-                subscriptionPlan = "free"; // Default to free plan
-            } else if (!subscriptionPlan.matches("free|pro|enterprise")) {
+                subscriptionPlan = "FREE";
+            }
+            
+            // Check workspace limit based on current subscription
+            List<Workspace> userWorkspaces = workspaceService.getUserWorkspaces(user.getId());
+            int maxWorkspaces = getMaxWorkspacesForPlan(subscriptionPlan);
+            if (userWorkspaces.size() >= maxWorkspaces) {
                 return ResponseEntity.badRequest().body(Map.of(
-                    "error", "Invalid subscription plan. Must be 'free', 'pro', or 'enterprise'"
+                    "error", "Workspace limit reached for your subscription plan",
+                    "currentCount", userWorkspaces.size(),
+                    "maxAllowed", maxWorkspaces,
+                    "plan", subscriptionPlan
+                ));
+            }
+            
+            // Check for duplicate workspace name
+            boolean nameExists = userWorkspaces.stream()
+                .anyMatch(w -> w.getName().equalsIgnoreCase(request.getName()));
+            if (nameExists) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "error", "A workspace with this name already exists"
                 ));
             }
             
             Workspace workspace = workspaceService.createWorkspace(
                 user.getId(), 
-                request.name, 
-                request.description
+                request.getName(), 
+                request.getDescription()
             );
             
             // Set subscription plan and apply limits
@@ -149,18 +168,18 @@ public class WorkspaceController {
             workspace.setSubscriptionStartDate(LocalDateTime.now());
             
             // Apply plan-specific limits
-            switch (subscriptionPlan) {
-                case "free":
-                    workspace.setMaxMembers(3);
-                    workspace.setMaxWorkspaces(1);
+            switch (subscriptionPlan.toUpperCase()) {
+                case "FREE":
+                    workspace.setMaxMembers(10);
+                    workspace.setMaxWorkspaces(3);
                     workspace.setCollaborationEnabled(false);
                     break;
-                case "pro":
-                    workspace.setMaxMembers(20);
-                    workspace.setMaxWorkspaces(5);
+                case "PRO":
+                    workspace.setMaxMembers(50);
+                    workspace.setMaxWorkspaces(10);
                     workspace.setCollaborationEnabled(true);
                     break;
-                case "enterprise":
+                case "ENTERPRISE":
                     workspace.setMaxMembers(Integer.MAX_VALUE);
                     workspace.setMaxWorkspaces(Integer.MAX_VALUE);
                     workspace.setCollaborationEnabled(true);
@@ -174,6 +193,9 @@ public class WorkspaceController {
                 "message", "Workspace created successfully",
                 "workspace", convertToDTO(workspace)
             ));
+        } catch (IllegalArgumentException e) {
+            log.error("Validation error: {}", e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         } catch (Exception e) {
             log.error("Error creating workspace", e);
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
@@ -230,7 +252,7 @@ public class WorkspaceController {
     @PatchMapping("/{workspaceId}/subscription")
     public ResponseEntity<?> updateSubscription(
             @PathVariable String workspaceId,
-            @RequestBody Map<String, String> request) {
+            @Valid @RequestBody UpdateSubscriptionRequest request) {
         try {
             String username = getCurrentUsername();
             Optional<User> userOpt = userRepository.findByUsername(username);
@@ -254,11 +276,31 @@ public class WorkspaceController {
                 ));
             }
 
-            String plan = request.get("plan");
-            if (plan == null || !plan.matches("free|pro|enterprise")) {
-                return ResponseEntity.badRequest().body(Map.of(
-                    "error", "Invalid plan. Must be 'free', 'pro', or 'enterprise'"
-                ));
+            String plan = request.getSubscriptionPlan();
+            String currentPlan = workspace.getSubscriptionPlan();
+            
+            // Validate downgrade constraints
+            if (isDowngrade(currentPlan, plan)) {
+                // Check if current workspace/member count exceeds new plan limits
+                int newMaxMembers = getMaxMembersForPlan(plan);
+                int newMaxWorkspaces = getMaxWorkspacesForPlan(plan);
+                
+                if (workspace.getMembers().size() > newMaxMembers) {
+                    return ResponseEntity.badRequest().body(Map.of(
+                        "error", "Cannot downgrade: Current member count exceeds new plan limit",
+                        "currentMembers", workspace.getMembers().size(),
+                        "newLimit", newMaxMembers
+                    ));
+                }
+                
+                List<Workspace> userWorkspaces = workspaceService.getUserWorkspaces(user.getId());
+                if (userWorkspaces.size() > newMaxWorkspaces) {
+                    return ResponseEntity.badRequest().body(Map.of(
+                        "error", "Cannot downgrade: Current workspace count exceeds new plan limit",
+                        "currentWorkspaces", userWorkspaces.size(),
+                        "newLimit", newMaxWorkspaces
+                    ));
+                }
             }
 
             // Update subscription plan
@@ -267,19 +309,19 @@ public class WorkspaceController {
             
             // Update collaboration and limits based on plan
             switch (plan) {
-                case "free":
-                    workspace.setMaxMembers(3);
-                    workspace.setMaxWorkspaces(1);
+                case "FREE":
+                    workspace.setMaxMembers(10);
+                    workspace.setMaxWorkspaces(3);
                     workspace.setCollaborationEnabled(false);
                     break;
-                case "pro":
-                    workspace.setMaxMembers(20);
-                    workspace.setMaxWorkspaces(5);
+                case "PRO":
+                    workspace.setMaxMembers(50);
+                    workspace.setMaxWorkspaces(10);
                     workspace.setCollaborationEnabled(true);
                     break;
-                case "enterprise":
-                    workspace.setMaxMembers(null); // unlimited
-                    workspace.setMaxWorkspaces(null); // unlimited
+                case "ENTERPRISE":
+                    workspace.setMaxMembers(Integer.MAX_VALUE);
+                    workspace.setMaxWorkspaces(Integer.MAX_VALUE);
                     workspace.setCollaborationEnabled(true);
                     break;
             }
@@ -341,6 +383,9 @@ public class WorkspaceController {
             claims.put("workspaceName", workspace.getName());
             claims.put("workspaceRole", role.toString());
             claims.put("userId", user.getId());
+            claims.put("email", user.getEmail());
+            claims.put("roles", user.getRoles());
+            claims.put("isAdmin", user.getRoles().contains("ROLE_ADMIN"));
             claims.put("subscriptionPlan", workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "free");
 
             String token = jwtUtil.generateToken(username, claims);
@@ -420,10 +465,10 @@ public class WorkspaceController {
                 ));
             }
 
-            // Delete the workspace
-            workspaceService.deleteWorkspace(workspaceId);
+            // Soft delete the workspace (cascade to projects and files)
+            workspaceService.deleteWorkspace(workspaceId, user.getId());
 
-            log.info("Workspace {} deleted by user {}", workspaceId, username);
+            log.info("Workspace {} soft deleted by user {}", workspaceId, username);
 
             return ResponseEntity.ok(Map.of(
                 "message", "Workspace deleted successfully"
@@ -431,6 +476,83 @@ public class WorkspaceController {
         } catch (Exception e) {
             log.error("Error deleting workspace", e);
             return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+        }
+    }
+    
+    /**
+     * Restore a soft-deleted workspace
+     */
+    @PostMapping("/{workspaceId}/restore")
+    public ResponseEntity<?> restoreWorkspace(
+            @PathVariable String workspaceId,
+            @RequestParam(defaultValue = "true") boolean restoreProjects,
+            @RequestParam(defaultValue = "true") boolean restoreFiles) {
+        try {
+            String username = getCurrentUsername();
+            Optional<User> userOpt = userRepository.findByUsername(username);
+            
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            }
+
+            User user = userOpt.get();
+
+            // Verify user is the owner of the workspace (check including deleted workspaces)
+            Optional<Workspace> workspaceOpt = workspaceService.getWorkspaceIncludingDeleted(workspaceId);
+            if (workspaceOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Workspace not found"));
+            }
+
+            Workspace workspace = workspaceOpt.get();
+            if (!workspace.getOwnerId().equals(user.getId())) {
+                return ResponseEntity.status(403).body(Map.of(
+                    "error", "Only workspace owner can restore the workspace"
+                ));
+            }
+            
+            if (!Boolean.TRUE.equals(workspace.getIsDeleted())) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Workspace is not deleted"));
+            }
+
+            // Restore the workspace
+            workspaceService.restoreWorkspace(workspaceId, restoreProjects, restoreFiles);
+
+            log.info("Workspace {} restored by user {}", workspaceId, username);
+
+            return ResponseEntity.ok(Map.of(
+                "message", "Workspace restored successfully",
+                "workspaceId", workspaceId,
+                "projectsRestored", restoreProjects,
+                "filesRestored", restoreFiles
+            ));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            log.error("Error restoring workspace: {}", e.getMessage(), e);
+            return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
+        }
+    }
+    
+    /**
+     * Get deleted workspaces for current user
+     */
+    @GetMapping("/deleted")
+    public ResponseEntity<?> getDeletedWorkspaces() {
+        try {
+            String username = getCurrentUsername();
+            Optional<User> userOpt = userRepository.findByUsername(username);
+            
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            }
+
+            User user = userOpt.get();
+            List<Workspace> deletedWorkspaces = workspaceService.getDeletedUserWorkspaces(user.getId());
+
+            return ResponseEntity.ok(deletedWorkspaces);
+        } catch (Exception e) {
+            log.error("Error getting deleted workspaces: {}", e.getMessage(), e);
+            return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
         }
     }
 
@@ -522,11 +644,39 @@ public class WorkspaceController {
 
         return dto;
     }
-
-    // DTOs
-    public static class CreateWorkspaceRequest {
-        public String name;
-        public String description;
-        public String subscriptionPlan; // free, pro, or enterprise
+    
+    // Helper methods for subscription validation
+    private int getMaxMembersForPlan(String plan) {
+        return switch (plan.toUpperCase()) {
+            case "FREE" -> 10;
+            case "PRO" -> 50;
+            case "ENTERPRISE" -> Integer.MAX_VALUE;
+            default -> 10;
+        };
+    }
+    
+    private int getMaxWorkspacesForPlan(String plan) {
+        return switch (plan.toUpperCase()) {
+            case "FREE" -> 3;
+            case "PRO" -> 10;
+            case "ENTERPRISE" -> Integer.MAX_VALUE;
+            default -> 3;
+        };
+    }
+    
+    private boolean isDowngrade(String currentPlan, String newPlan) {
+        if (currentPlan == null) return false;
+        int currentRank = getPlanRank(currentPlan);
+        int newRank = getPlanRank(newPlan);
+        return newRank < currentRank;
+    }
+    
+    private int getPlanRank(String plan) {
+        return switch (plan.toUpperCase()) {
+            case "FREE" -> 1;
+            case "PRO" -> 2;
+            case "ENTERPRISE" -> 3;
+            default -> 0;
+        };
     }
 }

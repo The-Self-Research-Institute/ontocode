@@ -2,6 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { Loader2, Plus, Users, Crown, Building2, ChevronRight, Settings, Trash } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import SubscriptionPlanSelection from './SubscriptionPlanSelection';
+import { 
+    validateWorkspaceName, 
+    validateDescription, 
+    getMaxWorkspacesForPlan 
+} from '../utils/validation';
 
 interface WorkspaceMember {
     userId: string;
@@ -29,13 +34,15 @@ interface WorkspaceSelectionProps {
     username: string;
     isAdmin?: boolean;
     onWorkspaceSelected: (workspaceData: any) => void;
+    onSkipWorkspace: () => void;
     onLogout: () => void;
 }
 
 const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({ 
     username, 
     isAdmin = false,
-    onWorkspaceSelected, 
+    onWorkspaceSelected,
+    onSkipWorkspace,
     onLogout 
 }) => {
     const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -46,7 +53,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
     const [creating, setCreating] = useState(false);
     const [newWorkspaceName, setNewWorkspaceName] = useState('');
     const [newWorkspaceDescription, setNewWorkspaceDescription] = useState('');
-    const [selectedPlan, setSelectedPlan] = useState('free');
+    const [selectedPlan, setSelectedPlan] = useState('FREE');
     const [showPlanSelection, setShowPlanSelection] = useState(false);
     const [deletingWorkspace, setDeletingWorkspace] = useState<string | null>(null);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -75,10 +82,10 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
             setWorkspaces(workspaceList);
             
             // Auto-create and select default workspace if none exists and user is admin
-            if (workspaceList.length === 0 && isAdmin) {
-                console.log('[WorkspaceSelection] No workspaces found, auto-creating default workspace for admin...');
-                await createAndSelectDefaultWorkspace();
-            }
+            // if (workspaceList.length === 0 && isAdmin) {
+            //     console.log('[WorkspaceSelection] No workspaces found, auto-creating default workspace for admin...');
+            //     await createAndSelectDefaultWorkspace();
+            // }
         } catch (err: any) {
             console.error('[WorkspaceSelection] Error loading workspaces:', err);
             console.error('[WorkspaceSelection] Error details:', JSON.stringify(err, null, 2));
@@ -100,7 +107,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
             const response = await apiClient.post('/api/workspaces', {
                 name: 'My Workspace',
                 description: 'Default workspace for ontology projects',
-                subscriptionPlan: 'free'
+                subscriptionPlan: 'FREE'
             });
             console.log('[WorkspaceSelection] Create workspace response:', response);
             
@@ -166,8 +173,26 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
     const handleCreateWorkspace = async (e: React.FormEvent) => {
         e.preventDefault();
         
-        if (!newWorkspaceName.trim()) {
-            setError('Workspace name is required');
+        // Validate workspace name
+        const nameValidation = validateWorkspaceName(newWorkspaceName);
+        if (!nameValidation.isValid) {
+            setError(nameValidation.error || 'Invalid workspace name');
+            return;
+        }
+
+        // Validate description (optional)
+        if (newWorkspaceDescription) {
+            const descValidation = validateDescription(newWorkspaceDescription);
+            if (!descValidation.isValid) {
+                setError(descValidation.error || 'Invalid description');
+                return;
+            }
+        }
+
+        // Check workspace limit before creating
+        const maxWorkspaces = getMaxWorkspacesForPlan(selectedPlan);
+        if (workspaces.length >= maxWorkspaces) {
+            setError(`Maximum workspace limit reached (${maxWorkspaces} for ${selectedPlan.toUpperCase()} plan). Please upgrade your subscription or delete existing workspaces.`);
             return;
         }
 
@@ -343,16 +368,6 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                     </div>
                 )}
 
-                {/* Debug Info */}
-                <div className="bg-blue-500/10 border border-blue-400/30 text-blue-400 px-4 py-3 rounded-lg mb-6 text-xs backdrop-blur-sm">
-                    <div className="font-mono">
-                        <div>Loading: {loading ? 'Yes' : 'No'}</div>
-                        <div>Workspaces Count: {workspaces.length}</div>
-                        <div>Error: {error || 'None'}</div>
-                        <div>Username: {username}</div>
-                    </div>
-                </div>
-
                 <div className="space-y-4 mb-6">
                     {workspaces.length === 0 ? (
                         <div className="text-center py-12">
@@ -360,13 +375,15 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                             <p className="text-gray-300 mb-6">
                                 You don't have any workspaces yet.
                             </p>
-                            <button
-                                onClick={() => setShowCreateDialog(true)}
-                                className="px-6 py-3 bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-medium rounded-lg hover:from-purple-600 hover:to-indigo-700 transition-all shadow-lg hover:shadow-purple-500/50"
-                            >
-                                <Plus size={20} className="inline mr-2" />
-                                Create Your First Workspace
-                            </button>
+                            {isAdmin && (
+                                <button
+                                    onClick={() => setShowCreateDialog(true)}
+                                    className="px-6 py-3 bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-medium rounded-lg hover:from-purple-600 hover:to-indigo-700 transition-all shadow-lg hover:shadow-purple-500/50"
+                                >
+                                    <Plus size={20} className="inline mr-2" />
+                                    Create Your First Workspace
+                                </button>
+                            )}
                         </div>
                     ) : (
                         <>
@@ -434,13 +451,21 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                     </button>
                 )}
                 
+                {/* Continue without workspace button - available for all users */}
+                <button
+                    onClick={onSkipWorkspace}
+                    className="w-full py-3 bg-transparent border-2 border-white/20 text-gray-300 font-medium rounded-lg hover:bg-white/5 hover:border-purple-400/50 hover:text-white transition-all flex items-center justify-center space-x-2 mt-3"
+                >
+                    <span>Continue without workspace</span>
+                </button>
+                
                 {workspaces.length === 0 && !isAdmin && (
                     <div className="text-center py-8">
                         <p className="text-gray-400 mb-2">
                             No workspaces available
                         </p>
                         <p className="text-gray-500 text-sm">
-                            Please contact an administrator to be added to a workspace
+                            You can continue without a workspace or contact an administrator to be added to one
                         </p>
                     </div>
                 )}
@@ -465,9 +490,13 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                                     onChange={(e) => setNewWorkspaceName(e.target.value)}
                                     required
                                     disabled={creating}
+                                    maxLength={255}
                                     className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
                                     placeholder="My Ontology Workspace"
                                 />
+                                <p className="text-xs text-gray-400 mt-1">
+                                    {newWorkspaceName.length}/255 characters
+                                </p>
                             </div>
                             <div>
                                 <label htmlFor="workspaceDescription" className="block text-sm font-medium text-gray-200 mb-2">
@@ -479,9 +508,16 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                                     onChange={(e) => setNewWorkspaceDescription(e.target.value)}
                                     disabled={creating}
                                     rows={3}
+                                    maxLength={1000}
                                     className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
                                     placeholder="A workspace for my ontology projects..."
                                 />
+                                <div className="flex justify-between text-xs text-gray-400 mt-1">
+                                    <span>Describe your workspace</span>
+                                    <span className={newWorkspaceDescription.length > 900 ? 'text-orange-400 font-medium' : ''}>
+                                        {newWorkspaceDescription.length}/1000 characters
+                                    </span>
+                                </div>
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-200 mb-3">

@@ -7,16 +7,17 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
 import self.research.ontology.auth.model.FileMetadata;
 import self.research.ontology.auth.model.Project;
 import self.research.ontology.auth.model.User;
+import self.research.ontology.auth.model.Workspace;
 import self.research.ontology.auth.repository.FileMetadataRepository;
 import self.research.ontology.auth.repository.UserRepository;
 import self.research.ontology.auth.service.ProjectService;
 import self.research.ontology.auth.util.JwtUtil;
 import jakarta.servlet.http.HttpServletRequest;
 
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -30,12 +31,16 @@ public class ProjectController {
     private final UserRepository userRepository;
     private final FileMetadataRepository fileMetadataRepository;
     private final JwtUtil jwtUtil;
+    private final self.research.ontology.auth.service.WorkspaceService workspaceService;
+    private final self.research.ontology.auth.repository.ProjectRepository projectRepository;
 
-    public ProjectController(ProjectService projectService, UserRepository userRepository, FileMetadataRepository fileMetadataRepository, JwtUtil jwtUtil) {
+    public ProjectController(ProjectService projectService, UserRepository userRepository, FileMetadataRepository fileMetadataRepository, JwtUtil jwtUtil, self.research.ontology.auth.service.WorkspaceService workspaceService, self.research.ontology.auth.repository.ProjectRepository projectRepository) {
         this.projectService = projectService;
         this.userRepository = userRepository;
         this.fileMetadataRepository = fileMetadataRepository;
         this.jwtUtil = jwtUtil;
+        this.workspaceService = workspaceService;
+        this.projectRepository = projectRepository;
     }
 
     /**
@@ -170,6 +175,16 @@ public class ProjectController {
 
             User user = userOpt.get();
             
+            // Check for duplicate project name in workspace
+            List<Project> workspaceProjects = projectService.getWorkspaceProjects(request.workspaceId);
+            boolean nameExists = workspaceProjects.stream()
+                .anyMatch(p -> p.getName().equalsIgnoreCase(request.name));
+            if (nameExists) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "error", "A project with this name already exists in the workspace"
+                ));
+            }
+            
             Project project = projectService.createProject(
                 request.workspaceId,
                 user.getId(),
@@ -246,6 +261,53 @@ public class ProjectController {
             return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
         }
     }
+    
+    /**
+     * Get deleted projects for a workspace
+     */
+    @GetMapping("/workspace/{workspaceId}/deleted")
+    public ResponseEntity<?> getDeletedProjects(@PathVariable String workspaceId) {
+        try {
+            String username = getCurrentUsername();
+            Optional<User> userOpt = userRepository.findByUsername(username);
+            
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            }
+
+            User user = userOpt.get();
+            
+            // Verify user has access to workspace
+            Optional<Workspace> workspaceOpt = workspaceService.getWorkspace(workspaceId);
+            if (workspaceOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Workspace not found"));
+            }
+            
+            Workspace workspace = workspaceOpt.get();
+            if (!workspace.isMember(user.getId())) {
+                return ResponseEntity.status(403).body(Map.of("error", "You don't have access to this workspace"));
+            }
+
+            // Get all deleted projects in workspace
+            List<Project> allProjects = projectRepository.findByWorkspaceId(workspaceId);
+            List<Project> deletedProjects = allProjects.stream()
+                    .filter(p -> Boolean.TRUE.equals(p.getIsDeleted()))
+                    .collect(Collectors.toList());
+
+            // Convert to DTOs
+            List<Map<String, Object>> projectDTOs = deletedProjects.stream()
+                    .map(this::convertToDTO)
+                    .collect(Collectors.toList());
+
+            return ResponseEntity.ok(Map.of(
+                "projects", projectDTOs,
+                "count", projectDTOs.size()
+            ));
+        } catch (Exception e) {
+            log.error("Error getting deleted projects", e);
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+        }
+    }
 
     /**
      * Get all projects in the current user's workspace
@@ -265,12 +327,21 @@ public class ProjectController {
             // Get user's current workspace ID from JWT token
             String workspaceId = getWorkspaceIdFromToken(request);
             
-            if (workspaceId == null || workspaceId.isEmpty()) {
-                return ResponseEntity.badRequest().body(Map.of("error", "No workspace selected"));
-            }
+            List<Project> projects;
             
-            // Get ALL projects in the current workspace (workspace-based, not user-based)
-            List<Project> projects = projectService.getWorkspaceProjects(workspaceId);
+            // Check if user has ROLE_USER (invited user) or no workspace - use user-based storage
+            boolean isRoleUser = user.getRoles().contains("ROLE_USER") && !user.getRoles().contains("ROLE_ADMIN");
+            boolean hasNoWorkspace = workspaceId == null || workspaceId.isEmpty();
+            
+            if (isRoleUser || hasNoWorkspace) {
+                log.info("User {} is ROLE_USER or has no workspace - fetching user-based projects", username);
+                // Get user's own projects (not workspace-based)
+                projects = projectService.getUserProjects(user.getId());
+            } else {
+                // Get ALL projects in the current workspace (workspace-based)
+                log.info("User {} has workspace {} - fetching workspace projects", username, workspaceId);
+                projects = projectService.getWorkspaceProjects(workspaceId);
+            }
             
             List<Map<String, Object>> projectDTOs = projects.stream()
                     .map(this::convertToDTO)
@@ -278,7 +349,8 @@ public class ProjectController {
 
             return ResponseEntity.ok(Map.of(
                 "projects", projectDTOs,
-                "count", projectDTOs.size()
+                "count", projectDTOs.size(),
+                "isUserBased", isRoleUser || hasNoWorkspace
             ));
         } catch (Exception e) {
             log.error("Error fetching user projects", e);
@@ -518,7 +590,7 @@ public class ProjectController {
     }
 
     /**
-     * Delete a project
+     * Soft delete a project
      */
     @DeleteMapping("/{projectId}")
     public ResponseEntity<?> deleteProject(@PathVariable String projectId) {
@@ -539,6 +611,40 @@ public class ProjectController {
             return ResponseEntity.status(403).body(Map.of("error", e.getMessage()));
         } catch (Exception e) {
             log.error("Error deleting project", e);
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+    
+    /**
+     * Restore a soft deleted project
+     */
+    @PostMapping("/{projectId}/restore")
+    public ResponseEntity<?> restoreProject(
+            @PathVariable String projectId,
+            @RequestParam(defaultValue = "true") boolean restoreFiles) {
+        try {
+            String username = getCurrentUsername();
+            Optional<User> userOpt = userRepository.findByUsername(username);
+            
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            }
+
+            User user = userOpt.get();
+            projectService.restoreProject(projectId, user.getId(), restoreFiles);
+
+            return ResponseEntity.ok(Map.of(
+                "message", "Project restored successfully",
+                "projectId", projectId,
+                "filesRestored", restoreFiles
+            ));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (SecurityException e) {
+            log.error("Security error restoring project", e);
+            return ResponseEntity.status(403).body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            log.error("Error restoring project", e);
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
@@ -820,11 +926,22 @@ public class ProjectController {
             
             projectService.addFileMetadata(projectId, user.getId(), projectFileInfo);
 
-            return ResponseEntity.ok(Map.of(
-                "message", "File uploaded successfully",
-                "fileId", fileId,
-                "filename", fileName
-            ));
+            // Check if user is admin/owner of the project
+            boolean isAdmin = project.getOwnerId().equals(user.getId());
+            
+            // Build response with project info for admin users
+            Map<String, Object> response = new HashMap<>();
+            response.put("message", "File uploaded successfully");
+            response.put("fileId", fileId);
+            response.put("filename", fileName);
+            
+            if (isAdmin) {
+                response.put("projectId", projectId);
+                response.put("projectName", project.getName());
+                response.put("workspaceId", project.getWorkspaceId());
+            }
+
+            return ResponseEntity.ok(response);
         } catch (SecurityException e) {
             log.error("Security error uploading file", e);
             return ResponseEntity.status(403).body(Map.of("error", e.getMessage()));
@@ -835,7 +952,7 @@ public class ProjectController {
     }
 
     /**
-     * Delete a file from a project
+     * Soft delete a file from a project
      */
     @DeleteMapping("/{projectId}/files/{fileId}")
     public ResponseEntity<?> deleteFile(
@@ -851,14 +968,18 @@ public class ProjectController {
 
             User user = userOpt.get();
             
-            // Mark file metadata as deleted
+            // Soft delete file metadata
             Optional<FileMetadata> fileMetaOpt = fileMetadataRepository.findByFileId(fileId);
             if (fileMetaOpt.isPresent()) {
                 FileMetadata fileMeta = fileMetaOpt.get();
+                fileMeta.setIsDeleted(true);
+                fileMeta.setDeletedAt(LocalDateTime.now());
+                fileMeta.setDeletedBy(user.getId());
                 fileMeta.setStatus("DELETED");
                 fileMetadataRepository.save(fileMeta);
             }
             
+            // Soft delete file in project
             Project project = projectService.removeFile(projectId, user.getId(), fileId);
 
             return ResponseEntity.ok(Map.of(
@@ -870,6 +991,55 @@ public class ProjectController {
         } catch (Exception e) {
             log.error("Error deleting file", e);
             return ResponseEntity.internalServerError().body(Map.of("error", "Failed to delete file"));
+        }
+    }
+    
+    /**
+     * Restore a soft deleted file in a project
+     */
+    @PostMapping("/{projectId}/files/{fileId}/restore")
+    public ResponseEntity<?> restoreFile(
+            @PathVariable String projectId,
+            @PathVariable String fileId) {
+        try {
+            String username = getCurrentUsername();
+            Optional<User> userOpt = userRepository.findByUsername(username);
+            
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            }
+
+            User user = userOpt.get();
+            
+            // Restore file metadata
+            Optional<FileMetadata> fileMetaOpt = fileMetadataRepository.findByFileId(fileId);
+            if (fileMetaOpt.isPresent()) {
+                FileMetadata fileMeta = fileMetaOpt.get();
+                if (!Boolean.TRUE.equals(fileMeta.getIsDeleted())) {
+                    return ResponseEntity.badRequest().body(Map.of("error", "File is not deleted"));
+                }
+                fileMeta.setIsDeleted(false);
+                fileMeta.setDeletedAt(null);
+                fileMeta.setDeletedBy(null);
+                fileMeta.setStatus("ACTIVE");
+                fileMetadataRepository.save(fileMeta);
+            }
+            
+            // Restore file in project
+            Project project = projectService.restoreFile(projectId, user.getId(), fileId);
+
+            return ResponseEntity.ok(Map.of(
+                "message", "File restored successfully",
+                "fileId", fileId
+            ));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (SecurityException e) {
+            log.error("Security error restoring file", e);
+            return ResponseEntity.status(403).body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            log.error("Error restoring file", e);
+            return ResponseEntity.internalServerError().body(Map.of("error", "Failed to restore file"));
         }
     }
 
