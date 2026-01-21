@@ -17,10 +17,18 @@ COPY ontology-swrl/ ./ontology-swrl/
 COPY ontology-plugin-service/ ./ontology-plugin-service/
 
 # Build shared modules first (these are dependencies for all services)
-RUN mvn clean install -pl shared/common-models,shared/common-utils -DskipTests -B -ntp
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn -Dhttp.keepAlive=false \
+        -Dmaven.wagon.http.retryHandler.count=10 \
+        -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 \
+        clean install -pl shared/common-models,shared/common-utils -DskipTests -B -ntp
 
 # Build SWRL module - package goal includes spring-boot:repackage automatically
-RUN mvn clean package -pl ontology-swrl -DskipTests -B -ntp
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn -Dhttp.keepAlive=false \
+        -Dmaven.wagon.http.retryHandler.count=10 \
+        -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 \
+        clean package -pl ontology-swrl -DskipTests -B -ntp
 
 # Runtime stage - MUST use Java 17 for SWRLAPI compatibility
 FROM eclipse-temurin:17-jre-alpine

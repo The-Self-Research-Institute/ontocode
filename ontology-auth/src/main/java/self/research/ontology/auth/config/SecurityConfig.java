@@ -1,5 +1,7 @@
 package self.research.ontology.auth.config; // Adjust package as per your project
 
+import self.research.ontology.auth.security.RateLimitingFilter;
+import self.research.ontology.auth.security.SecurityValidationFilter;
 import self.research.ontology.auth.service.CustomUserDetailsService; // Adjust package
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -14,6 +16,7 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.http.HttpMethod;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -27,9 +30,18 @@ import java.util.List;
 public class SecurityConfig {
 
     private final CustomUserDetailsService customUserDetailsService;
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final SecurityValidationFilter securityValidationFilter;
+    private final RateLimitingFilter rateLimitingFilter;
 
-    public SecurityConfig(CustomUserDetailsService customUserDetailsService) {
+    public SecurityConfig(CustomUserDetailsService customUserDetailsService, 
+                         JwtAuthenticationFilter jwtAuthenticationFilter,
+                         SecurityValidationFilter securityValidationFilter,
+                         RateLimitingFilter rateLimitingFilter) {
         this.customUserDetailsService = customUserDetailsService;
+        this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+        this.securityValidationFilter = securityValidationFilter;
+        this.rateLimitingFilter = rateLimitingFilter;
     }
 
     @Bean
@@ -58,10 +70,17 @@ public class SecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll() // Always allow preflight
                         .requestMatchers("/api/auth/**").permitAll() // Allow public access to auth endpoints
+                        .requestMatchers("/api/invitations/details/**").permitAll() // Allow public access to view invitation details
+                        .requestMatchers("/api/invitations/request-resend/**").permitAll() // Allow public access to request invitation resend
                         .requestMatchers("/error").permitAll()
-                        .anyRequest().authenticated() // All other requests require authentication (will be handled by gateway)
+                        .requestMatchers("/actuator/**").permitAll() // Allow actuator endpoints for health checks
+                        .anyRequest().authenticated() // All other requests require authentication
                 )
-                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)); // Stateless sessions
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)) // Stateless sessions
+                // Add security filters in order: Rate Limiting -> Security Validation -> JWT Authentication
+                .addFilterBefore(rateLimitingFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(securityValidationFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }

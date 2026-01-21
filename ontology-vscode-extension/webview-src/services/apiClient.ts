@@ -1,7 +1,11 @@
 // services/apiClient.ts
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from 'axios';
 
-const BASE_URL = 'http://ec2-13-218-153-101.compute-1.amazonaws.com'; // Your backend gateway
+// Production URL (commented for local development)
+const BASE_URL = 'http://ec2-13-218-153-101.compute-1.amazonaws.com'; // Backend gateway
+
+// Local development URL - Gateway routes to all services
+// const BASE_URL = 'http://localhost:80'; // Gateway port 80 (routes to auth:8086, editor:8083, etc.)
 const TIMEOUT = 300_000; // Allow up to 5 minutes for heavy ontology operations
 
 // VS Code API detection

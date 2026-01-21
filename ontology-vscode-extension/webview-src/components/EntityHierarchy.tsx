@@ -343,15 +343,6 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
               )}
             </div>
           )}
-
-          {entitiesTab === 'Classes' && (item as TreeNode).totalInstanceCount !== undefined && (
-            <span
-              className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-700 border border-gray-200"
-              title={`Instances: ${(item as TreeNode).directInstanceCount ?? 0} direct, ${(item as TreeNode).inferredInstanceCount ?? 0} inferred`}
-            >
-              {(item as TreeNode).totalInstanceCount}
-            </span>
-          )}
           
           {/* Active User Cursors */}
           {usersViewingNode.length > 0 && (

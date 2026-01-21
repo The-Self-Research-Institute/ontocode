@@ -45,6 +45,8 @@ public class AuthRequests {
         )
         private String password;
 
+        private String role; // "admin" or "user"
+
         public String getUsername() {
             return username;
         }
@@ -67,6 +69,14 @@ public class AuthRequests {
 
         public void setPassword(String password) {
             this.password = password;
+        }
+
+        public String getRole() {
+            return role;
+        }
+
+        public void setRole(String role) {
+            this.role = role;
         }
     }
 
@@ -109,6 +119,34 @@ public class AuthRequests {
 
         public void setPassword(String password) {
             this.password = password;
+        }
+    }
+
+    public static class ChangePasswordRequest {
+        @NotBlank(message = "Current password is required")
+        private String currentPassword;
+
+        @NotBlank(message = "New password is required")
+        @Pattern(
+            regexp = "^(?=.*[0-9])(?=.*[a-z])(?=.*[A-Z])(?=.*[@#$%^&+=!])(?=\\S+$).{8,}$",
+            message = "Password must be at least 8 characters with uppercase, lowercase, number, and special character"
+        )
+        private String newPassword;
+
+        public String getCurrentPassword() {
+            return currentPassword;
+        }
+
+        public void setCurrentPassword(String currentPassword) {
+            this.currentPassword = currentPassword;
+        }
+
+        public String getNewPassword() {
+            return newPassword;
+        }
+
+        public void setNewPassword(String newPassword) {
+            this.newPassword = newPassword;
         }
     }
 }

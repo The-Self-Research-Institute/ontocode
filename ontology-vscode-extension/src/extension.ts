@@ -10,17 +10,48 @@ import { ICollaborationManager } from './collaboration/types';
 import { EditCapture } from './collaboration/EditCapture';
 import { RemoteEditApplier } from './collaboration/RemoteEditApplier';
 
+/**
+ * Utility: Convert Uint8Array to base64 string (web-compatible)
+ */
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+    let binary = '';
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+}
+
+/**
+ * Utility: Convert base64 string to Uint8Array (web-compatible)
+ */
+function base64ToUint8Array(base64: string): Uint8Array {
+    const binaryString = atob(base64);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
+}
+
 const TOKEN_KEY = 'ontocode.authToken';
-const GATEWAY_URL = 'http://13.218.153.101'; // Gateway IPv4 to avoid IPv6 timeouts
+// Production endpoints (commented for local development)
+const GATEWAY_URL = 'http://13.218.153.101'; // Gateway IPv4
 const OWL_EDITOR_URL = GATEWAY_URL; // WebSocket endpoint routed via gateway
 const PLUGIN_SERVICE_URL = 'http://13.218.153.101:8087'; // Plugin service port
+
+// Local development endpoints - Gateway port 80 routes to all backend services
+// const GATEWAY_URL = 'http://localhost:80'; // Gateway port 80 (routes to auth:8086, editor:8083)
+// const OWL_EDITOR_URL = GATEWAY_URL; // OWL Editor service (WebSocket endpoint via Gateway)
+// const PLUGIN_SERVICE_URL = 'http://localhost:8087'; // Plugin service direct port
 
 /**
  * Parse JWT token to extract user information
  * @param token JWT token string
  * @returns Decoded token payload or null if invalid
  */
-function parseJwtToken(token: string): { userId?: string; username?: string; sub?: string; email?: string } | null {
+function parseJwtToken(token: string): { userId?: string; username?: string; sub?: string; email?: string; isAdmin?: boolean; workspaceId?: string } | null {
     try {
         console.log('[OntoCode] 🔍 Parsing JWT token...');
         console.log('[OntoCode] Token length:', token?.length || 0);
@@ -71,6 +102,7 @@ type WebviewMessage =
   // Fix: Added message type for API responses from the proxy
   | { type: 'apiResponse'; requestId: string; response?: any; error?: any }
   | { type: 'proxyResponse'; reqId: string; data?: any; error?: any }
+  | { type: 'invitationToken'; token: string }
   // Collaborative editing messages
   | { type: 'remoteEdit'; edit: any }
   | { type: 'presenceUpdate'; presence: any }
@@ -78,7 +110,9 @@ type WebviewMessage =
   | { type: 'collaborationStatus'; connected: boolean }
   | { type: 'importStatusUpdate'; status: any }
   | { type: 'shareNotification'; notification: any }
-  | { type: 'cursorUpdate'; userId: string; userName: string; position: { x: number; y: number }; timestamp: number };
+  | { type: 'cursorUpdate'; userId: string; userName: string; position: { x: number; y: number }; timestamp: number }
+  | { type: 'pendingFileUpload'; fileName: string; fileContent: string; fileSize: number }
+  | { type: 'showSubscriptionPlans' }; // Navigate to subscription plans page
 
 type ExtensionMessage =
   | { type: 'error'; value: string }
@@ -100,11 +134,66 @@ type ExtensionMessage =
   | { type: 'showNotification'; notification: { type: string; title: string; message: string; actions?: string[] } } // System notification
   | { type: 'cursorMoved'; nodeId: string; nodeName: string } // User moved cursor to a node
   | { type: 'broadcastCursor'; projectId: string; userId: string; userName: string; position: { x: number; y: number }; timestamp: number } // User cursor position
-  | { type: 'importLocalFile'; filePath: string; currentProjectId: string }; // Import local OWL file
+  | { type: 'importLocalFile'; filePath: string; currentProjectId: string } // Import local OWL file
+  | { type: 'uploadOntology'; projectId: string; fileName: string; fileContent: string; ownerEmail?: string } // Upload ontology from webview (admin flow)
+  | { type: 'uploadFileToProject'; projectId: string; fileName: string; fileContent: string; fileSize: number }
+  | { type: 'showSubscriptionPlans' }; // Request to show subscription plans page
 
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('OntoCode extension is now active!');
+    console.log('[OntoCode] Extension can handle URIs like: vscode://self.ontocode-extension/invite?token=xxx');
+
+    // Register URI handler for invitation links
+    const uriHandler = vscode.window.registerUriHandler({
+        handleUri: async (uri: vscode.Uri) => {
+            console.log('[OntoCode] ========== URI HANDLER TRIGGERED ==========');
+            console.log('[OntoCode] Full URI:', uri.toString());
+            console.log('[OntoCode] URI path:', uri.path);
+            console.log('[OntoCode] URI query:', uri.query);
+            
+            // Parse URI path and query
+            const path = uri.path;
+            const query = new URLSearchParams(uri.query);
+            const token = query.get('token');
+            
+            console.log('[OntoCode] Checking path:', path);
+            console.log('[OntoCode] Token present:', !!token);
+            
+            if (path === '/invite' || path === '/invitation') {
+                if (token) {
+                    console.log('[OntoCode] Processing invitation token:', token.substring(0, 20) + '...');
+                    
+                    vscode.window.showInformationMessage('Opening invitation...');
+                    
+                    // Open OntoCode webview with invitation token
+                    const panel = await OntoCodePanel.createOrShow(context.extensionUri, context, false);
+                    
+                    // Wait for webview to be ready before sending message
+                    if (panel.isWebviewReady()) {
+                        console.log('[OntoCode] Webview ready, sending token immediately');
+                        panel.postMessage({ 
+                            type: 'invitationToken', 
+                            token: token 
+                        });
+                    } else {
+                        console.log('[OntoCode] Webview not ready, storing token for later');
+                        panel._pendingInvitationToken = token;
+                    }
+                    
+                    console.log('[OntoCode] Invitation processing complete');
+                } else {
+                    console.error('[OntoCode] No token in URI!');
+                    vscode.window.showErrorMessage('Invalid invitation link: missing token');
+                }
+            } else {
+                console.log('[OntoCode] Unrecognized path:', path);
+            }
+            console.log('[OntoCode] ========== URI HANDLER COMPLETE ==========');
+        }
+    });
+    
+    context.subscriptions.push(uriHandler);
 
     // Register all commands
     context.subscriptions.push(
@@ -216,6 +305,7 @@ class OntoCodePanel {
     private _pendingFileUri: vscode.Uri | null = null;
     private _isPendingRegularUpload: boolean = false;
     private _lastProjectId: string | null = null; // Track last opened project
+    public _pendingInvitationToken: string | null = null; // Track pending invitation token
 
     // Collaborative editing
     private collaborationManager: ICollaborationManager | null = null;
@@ -230,7 +320,7 @@ class OntoCodePanel {
         if (OntoCodePanel.currentPanel) {
             OntoCodePanel.currentPanel._panel.reveal(column);
             // If we should trigger upload and webview is ready, do it now
-            if (shouldTriggerUpload && OntoCodePanel.currentPanel._isWebviewReady) {
+            if (shouldTriggerUpload && OntoCodePanel.currentPanel.isWebviewReady()) {
                 OntoCodePanel.currentPanel.triggerPendingUpload();
             }
             return OntoCodePanel.currentPanel;
@@ -274,6 +364,17 @@ class OntoCodePanel {
                     case 'webviewReady':
                         console.log('[OntoCode] Received webviewReady message.');
                         this._isWebviewReady = true;
+                        
+                        // Send pending invitation token if exists
+                        if (this._pendingInvitationToken) {
+                            console.log('[OntoCode] Sending pending invitation token to webview');
+                            this.postMessage({ 
+                                type: 'invitationToken', 
+                                token: this._pendingInvitationToken 
+                            });
+                            this._pendingInvitationToken = null;
+                        }
+                        
                         // Restore last opened project if exists
                         if (this._lastProjectId) {
                             console.log('[OntoCode] Restoring last project:', this._lastProjectId);
@@ -375,6 +476,21 @@ class OntoCodePanel {
                         // Handle local file import - upload the file to the system
                         this.handleImportLocalFile(message.filePath, message.currentProjectId);
                         break;
+                    case 'uploadOntology':
+                        // Handle ontology upload from webview (admin flow - load file from project)
+                        console.log('[OntoCode] 📤 Upload ontology request received:', message.projectId, message.fileName);
+                        this.handleUploadOntologyFromWebview(message.projectId, message.fileName, message.fileContent, message.ownerEmail);
+                        break;
+                    case 'uploadFileToProject':
+                        // Handle file upload to MongoDB project (admin flow - save to project)
+                        console.log('[OntoCode] 📤 Upload file to project request:', message.projectId, message.fileName);
+                        this.handleUploadFileToProject(message.projectId, message.fileName, message.fileContent, message.fileSize);
+                        break;
+                    case 'showSubscriptionPlans':
+                        // Navigate to subscription plans page
+                        console.log('[OntoCode] 📋 Showing subscription plans');
+                        this.postMessage({ type: 'showSubscriptionPlans' });
+                        break;
                 }
             },
             null,
@@ -417,8 +533,12 @@ class OntoCodePanel {
     private async handleApiRequest(message: Extract<ExtensionMessage, { type: 'apiGet' | 'apiPost' | 'apiPut' | 'apiPatch' | 'apiDelete' }>) {
         const { requestId, type, url } = message;
         
-        // Check if this is a public endpoint (login/signup) that doesn't require authentication
-        const isPublicEndpoint = url.includes('/api/auth/login') || url.includes('/api/auth/signup');
+        // Check if this is a public endpoint that doesn't require authentication
+        const isPublicEndpoint = 
+            url.includes('/api/auth/login') || 
+            url.includes('/api/auth/signup') ||
+            url.includes('/api/invitations/details/') ||
+            url.includes('/api/invitations/request-resend/');
         
         // Fix: Cast context to `any` to access the `secrets` property, bypassing outdated type definitions.
         const token = await (this._context as any).secrets.get(TOKEN_KEY);
@@ -444,8 +564,8 @@ class OntoCodePanel {
             const fullUrl = `${GATEWAY_URL}${url}`;
             console.log(`[Proxy] ${type.replace('api', '').toUpperCase()}: ${fullUrl}`, isPublicEndpoint ? '(public)' : '(authenticated)');
 
-            // Set a timeout for requests (120 seconds for large ontologies)
-            const axiosConfig = { headers, timeout: 120_000 };
+            // Set a timeout for requests (300 seconds for large ontologies and workspace operations)
+            const axiosConfig = { headers, timeout: 300_000 };
 
             switch (type) {
                 case 'apiGet':
@@ -472,6 +592,7 @@ class OntoCodePanel {
             }
 
             this.postMessage({ type: 'apiResponse', requestId, response: response.data });
+            console.log(`[Proxy] ${type.replace('api', '').toUpperCase()} ${fullUrl} - Success (${response.status})`);
         } catch (e: unknown) {
             const fullUrl = `${GATEWAY_URL}${url}`; // Redeclare for error logging
             // Fix: Explicitly type errorResponse to allow for optional properties like status and data.
@@ -560,7 +681,6 @@ class OntoCodePanel {
      */
     private handleNotification(notification: any) {
         const message = `${notification.title}\n${notification.message}`;
-        
         switch (notification.type) {
             case 'success':
                 vscode.window.showInformationMessage(message);
@@ -588,10 +708,38 @@ class OntoCodePanel {
         const fileName = fullPath.substring(fullPath.lastIndexOf('/') + 1);
         // Fix: Cast workspace to `any` to access the `fs` property, bypassing outdated type definitions.
         const fileData = await (vscode.workspace as any).fs.readFile(fileUri);
-        const projectId = fileName.endsWith('.owl') ? fileName.slice(0, -4) : fileName;
         
-        // Delegate to the shared upload logic
-        this._uploadOntology(projectId, fileName, fileData);
+        // Check if user is logged in
+        const token = await (this._context as any).secrets.get(TOKEN_KEY);
+        if (!token) {
+            console.log('[OntoCode] Not logged in, uploading directly to GraphDB');
+            const projectId = fileName.endsWith('.owl') ? fileName.slice(0, -4) : fileName;
+            this._uploadOntology(projectId, fileName, fileData);
+            return;
+        }
+        
+        // Check if user has workspace selected
+        const tokenData = parseJwtToken(token);
+        console.log(tokenData,"token===========================================>")
+        const hasWorkspace = tokenData?.workspaceId !== undefined && tokenData?.workspaceId !== null;
+        const isAdmin = tokenData?.isAdmin === true;
+        
+        // Admin users or workspace users should get project selection
+        if (isAdmin || hasWorkspace) {
+            console.log(`[OntoCode] ${isAdmin ? 'Admin' : 'Workspace'} user detected, sending file for project selection`);
+            // Convert to base64 for message passing (web-compatible)
+            const base64Content = uint8ArrayToBase64(fileData);
+            this.postMessage({
+                type: 'pendingFileUpload',
+                fileName: fileName,
+                fileContent: base64Content,
+                fileSize: fileData.length
+            });
+        } else {
+            console.log('[OntoCode] Non-admin user without workspace, uploading directly to GraphDB');
+            const projectId = fileName.endsWith('.owl') ? fileName.slice(0, -4) : fileName;
+            this._uploadOntology(projectId, fileName, fileData);
+        }
     }
 
     /**
@@ -624,8 +772,8 @@ class OntoCodePanel {
      * Uploads ontology file to the gateway which routes to the OWL Editor service.
      */
     // Fix: Changed fileData parameter from 'fs.ReadStream | Buffer' to 'Uint8Array'.
-    private async _uploadOntology(projectId: string, fileName: string, fileData: Uint8Array) {
-        console.log(`[OntoCode] Starting upload for project: ${projectId}, file: ${fileName}`);
+    private async _uploadOntology(projectId: string, fileName: string, fileData: Uint8Array, action?: string): Promise<void> {
+        console.log(`[OntoCode] Starting upload for project: ${projectId}, file: ${fileName}, action: ${action || 'none'}`);
         
         // 1. Check for authentication token
         // Fix: Cast context to `any` to access the `secrets` property, bypassing outdated type definitions.
@@ -636,8 +784,84 @@ class OntoCodePanel {
             this.postMessage({ type: 'showLogin' });
             return;
         }
+        
+        // 1.5 Extract user info from token for duplicate check and role detection
+        let ownerEmail = '';
+        let userRoles: string[] = [];
+        let workspaceId = '';
+        let userId = '';
+        try {
+            const tokenParts = token.split('.');
+            if (tokenParts.length === 3) {
+                const base64Payload = tokenParts[1];
+                const base64 = base64Payload.replace(/-/g, '+').replace(/_/g, '/');
+                const jsonPayload = atob(base64);
+                const payload = JSON.parse(jsonPayload);
+                ownerEmail = payload.email || '';
+                userRoles = payload.roles || [];
+                workspaceId = payload.workspaceId || '';
+                userId = payload.userId || payload.id || '';
+                console.log(`[OntoCode] User info - email: ${ownerEmail}, roles: ${userRoles.join(',')}, workspaceId: ${workspaceId}, userId: ${userId}`);
+            }
+        } catch (tokenError) {
+            console.error('[OntoCode] Could not extract user info from token:', tokenError);
+        }
+        
+        // 1.6 Check if user is ROLE_USER or has no workspace - use user-based storage
+        const isRoleUser = userRoles.includes('ROLE_USER') && !userRoles.includes('ROLE_ADMIN');
+        const hasNoWorkspace = !workspaceId || workspaceId === '';
+        const useUserStorage = isRoleUser || hasNoWorkspace;
+        
+        if (useUserStorage) {
+            console.log(`[OntoCode] 🔒 User-based storage detected - ROLE_USER: ${isRoleUser}, No Workspace: ${hasNoWorkspace}`);
+            // For user-based storage, use user-specific projectId format: user_{userId}_{filename}
+            if (userId) {
+                projectId = `user_${userId}_${fileName.replace('.owl', '')}`;
+                console.log(`[OntoCode] Using user-based projectId: ${projectId}`);
+            }
+        }
+        
+        // 2. Check for duplicate file if action not specified
+        if (!action && ownerEmail) {
+            console.log(`[OntoCode] Checking for duplicate file: ${fileName}`);
+            try {
+                const checkUrl = `${GATEWAY_URL}/api/ontology/check-duplicate?filename=${encodeURIComponent(fileName)}&ownerEmail=${encodeURIComponent(ownerEmail)}`;
+                const checkResponse = await axios.get(checkUrl, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                if (checkResponse.data.isDuplicate) {
+                    console.log(`[OntoCode] Duplicate file detected:`, checkResponse.data);
+                    
+                    // Show user choice dialog
+                    const choice = await vscode.window.showWarningMessage(
+                        `A file named "${fileName}" already exists.`,
+                        {
+                            modal: true,
+                            detail: `Status: ${checkResponse.data.status || 'Unknown'}\nLast Updated: ${checkResponse.data.lastUpdated ? new Date(checkResponse.data.lastUpdated).toLocaleString() : 'Unknown'}\n\nWhat would you like to do?`
+                        },
+                        'Replace',
+                        'Create Copy',
+                        'Cancel'
+                    );
+                    
+                    if (choice === 'Cancel' || !choice) {
+                        console.log('[OntoCode] User cancelled upload');
+                        return;
+                    }
+                    
+                    // Retry upload with user's choice
+                    const selectedAction = choice === 'Replace' ? 'replace' : 'create_copy';
+                    console.log(`[OntoCode] 🔄 User chose: ${choice} -> Calling _uploadOntology with action: ${selectedAction}`);
+                    return this._uploadOntology(projectId, fileName, fileData, selectedAction);
+                }
+            } catch (checkError: any) {
+                console.error('[OntoCode] Duplicate check failed:', checkError);
+                // Continue with upload if check fails
+            }
+        }
 
-        // 2. Initialize WebSocket connection FIRST (before upload)
+        // 3. Initialize WebSocket connection FIRST (before upload)
         // This ensures we receive the IMPORT_COMPLETED message
         console.log(`[OntoCode] Initializing WebSocket before upload...`);
         try {
@@ -664,22 +888,47 @@ class OntoCodePanel {
             const file = new File([fileBlob], fileName, { type: 'application/rdf+xml' });
             const formData = new FormData();
             formData.append('file', file);
+            
+            // Add action parameter if specified (replace or create_copy)
+            if (action) {
+                formData.append('action', action);
+                console.log(`[OntoCode] ✅ Added action parameter to FormData: ${action}`);
+            } else {
+                console.log(`[OntoCode] ⚠️ No action parameter specified, backend will check for duplicates`);
+            }
 
             // Extract user email from JWT token
-            try {
-                const tokenParts = token.split('.');
-                if (tokenParts.length === 3) {
-                    // Fix: Use atob() instead of Buffer for web compatibility
-                    const base64 = tokenParts[1].replace(/-/g, '+').replace(/_/g, '/');
-                    const jsonPayload = atob(base64);
-                    const payload = JSON.parse(jsonPayload);
-                    if (payload.email) {
-                        formData.append('ownerEmail', payload.email);
-                        console.log(`[OntoCode] Adding owner email: ${payload.email}`);
+            if (ownerEmail) {
+                formData.append('ownerEmail', ownerEmail);
+                console.log(`[OntoCode] ✅ Adding owner email: ${ownerEmail}`);
+            } else {
+                // Fallback to extracting from token if not already extracted
+                try {
+                    const tokenParts = token.split('.');
+                    console.log('[OntoCode] Token parts count:', tokenParts.length);
+                    if (tokenParts.length === 3) {
+                        // Use web-compatible base64 decoding
+                        const base64Payload = tokenParts[1];
+                        console.log('[OntoCode] Base64 payload (first 50 chars):', base64Payload.substring(0, 50));
+                        
+                        // JWT uses base64url encoding, convert to standard base64
+                        const base64 = base64Payload.replace(/-/g, '+').replace(/_/g, '/');
+                        const jsonPayload = atob(base64);
+                        
+                        console.log('[OntoCode] Decoded payload:', jsonPayload.substring(0, 100));
+                        const payload = JSON.parse(jsonPayload);
+                        console.log('[OntoCode] Parsed payload keys:', Object.keys(payload));
+                        
+                        if (payload.email) {
+                            formData.append('ownerEmail', payload.email);
+                            console.log(`[OntoCode] ✅ Adding owner email: ${payload.email}`);
+                        } else {
+                            console.warn('[OntoCode] ⚠️ No email in token payload. Available fields:', Object.keys(payload));
+                        }
                     }
+                } catch (tokenError) {
+                    console.error('[OntoCode] ❌ Could not extract email from token:', tokenError);
                 }
-            } catch (tokenError) {
-                console.warn('[OntoCode] Could not extract email from token:', tokenError);
             }
             
             const headers = {
@@ -690,6 +939,7 @@ class OntoCodePanel {
             // 4. Upload to gateway endpoint
             const uploadUrl = `${GATEWAY_URL}/api/ontology/upload/${projectId}`;
             console.log(`[OntoCode] Uploading to: ${uploadUrl}`);
+            console.log(`[OntoCode] Upload parameters - fileName: ${fileName}, action: ${action || 'none'}, projectId: ${projectId}`);
             // Fix: Updated file size logging to work with Uint8Array instead of Buffer.
             console.log(`[OntoCode] File size: ${fileData.length} bytes`);
             
@@ -713,11 +963,23 @@ class OntoCodePanel {
                 // WebSocket already initialized before upload - will receive IMPORT_COMPLETED
                 console.log(`[OntoCode] Upload successful, WebSocket listening for IMPORT_COMPLETED`);
                 
-                // Check if this was a file replacement
+                // Check if this was a file replacement or copy
                 const isReplacement = response.data?.isReplacement || false;
-                const message = isReplacement 
-                    ? `Ontology "${fileName}" replaced successfully. Processing...`
-                    : `Ontology "${fileName}" uploaded successfully. Processing...`;
+                const finalFileName = response.data?.filename || fileName;
+                
+                // Build message with project info if user is admin (backend includes projectId, projectName, workspaceId for admins)
+                let message: string;
+                const uploadAction = isReplacement ? 'replaced' : (action === 'create_copy' ? 'created as copy' : 'uploaded');
+                
+                if (response.data?.projectId && response.data?.projectName) {
+                    // Admin user - include project information
+                    message = `Ontology "${finalFileName}" ${uploadAction} successfully to project "${response.data.projectName}" (ID: ${response.data.projectId}). Processing...`;
+                    console.log(`[OntoCode] Admin upload - Project: ${response.data.projectName}, Workspace: ${response.data.workspaceId}`);
+                } else {
+                    // Regular user - basic message
+                    message = `Ontology "${finalFileName}" ${uploadAction} successfully. Processing...`;
+                }
+                
                 vscode.window.showInformationMessage(message);
                 
                 // If it's a replacement, the file might already be processed - set a fallback timeout
@@ -728,6 +990,7 @@ class OntoCodePanel {
                         // If not, check the project status and trigger fileReady if COMPLETED
                         try {
                             const statusUrl = `http://ec2-13-218-153-101.compute-1.amazonaws.com/api/ontology/status/${projectId}`;
+                            // const statusUrl = `http://localhost:80/api/ontology/status/${projectId}`;
                             const statusResp = await axios.get(statusUrl, { headers });
                             console.log(`[OntoCode] Fallback status check for ${projectId}:`, statusResp.data);
                             
@@ -782,6 +1045,191 @@ class OntoCodePanel {
             
             // 6. Notify webview of failure, including the error message
             this.postMessage({ type: 'loadingFailed', error: errorMessage });
+        }
+    }
+
+    /**
+     * Handle ontology upload from webview (admin flow - loading file from project)
+     * This receives base64 file content and uploads it to the ontology editor
+     */
+    private async handleUploadOntologyFromWebview(projectId: string, fileName: string, base64Content: string, ownerEmail?: string) {
+        console.log(`[OntoCode] 📤 Handling webview upload for project: ${projectId}, file: ${fileName}`);
+        
+        try {
+            // Convert base64 to Uint8Array (web-compatible)
+            const fileData = base64ToUint8Array(base64Content);
+            
+            console.log(`[OntoCode] 📦 Converted base64 to binary, size: ${fileData.length} bytes`);
+            
+            // Delegate to the shared upload logic
+            await this._uploadOntology(projectId, fileName, fileData);
+            
+        } catch (error: any) {
+            console.error('[OntoCode] ❌ Failed to upload from webview:', error);
+            vscode.window.showErrorMessage(`Failed to upload ${fileName}: ${error?.message || 'Unknown error'}`);
+            this.postMessage({ type: 'loadingFailed', error: error?.message || 'Upload failed' });
+        }
+    }
+
+    /**
+     * Handle file upload to MongoDB project (admin flow - save file to project)
+     * This receives base64 file content and uploads it to a project's file collection
+     */
+    private async handleUploadFileToProject(projectId: string, fileName: string, base64Content: string, fileSize: number) {
+        console.log(`[OntoCode] 📤 Uploading file to project: ${projectId}, file: ${fileName}, size: ${(fileSize / (1024 * 1024)).toFixed(2)}MB`);
+        
+        try {
+            // Get auth token
+            const token = await (this._context as any).secrets.get(TOKEN_KEY);
+            if (!token) {
+                throw new Error('Not authenticated');
+            }
+
+            // Step 1: Check if file already exists in project
+            const checkUrl = `${GATEWAY_URL}/api/projects/${projectId}/files/check?fileName=${encodeURIComponent(fileName)}`;
+            console.log(`[OntoCode] Checking for duplicate file: ${checkUrl}`);
+            
+            let replaceFileId: string | null = null;
+            let finalFileName = fileName;
+            
+            try {
+                const checkResponse = await axios.get(checkUrl, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                if (checkResponse.data.exists) {
+                    console.log(`[OntoCode] ⚠️ File "${fileName}" already exists in project`);
+                    
+                    // Show confirmation dialog with options
+                    const choice = await vscode.window.showWarningMessage(
+                        `A file named "${fileName}" already exists in this project.`,
+                        {
+                            modal: true,
+                            detail: 'What would you like to do?'
+                        },
+                        'Replace',
+                        'Create Copy',
+                        'Cancel'
+                    );
+                    
+                    if (choice === 'Replace') {
+                        // User chose to replace - store the existing file ID
+                        replaceFileId = checkResponse.data.existingFile.id;
+                        console.log(`[OntoCode] User chose to replace file. Old file ID: ${replaceFileId}`);
+                    } else if (choice === 'Create Copy') {
+                        // User chose to create a copy - append suffix to filename
+                        const namePart = fileName.substring(0, fileName.lastIndexOf('.'));
+                        const extension = fileName.substring(fileName.lastIndexOf('.'));
+                        let copyNumber = 2;
+                        
+                        // Find a unique filename
+                        while (true) {
+                            const testName = `${namePart} (${copyNumber})${extension}`;
+                            const testCheckResponse = await axios.get(
+                                `${GATEWAY_URL}/api/projects/${projectId}/files/check?fileName=${encodeURIComponent(testName)}`,
+                                { headers: { 'Authorization': `Bearer ${token}` } }
+                            );
+                            
+                            if (!testCheckResponse.data.exists) {
+                                finalFileName = testName;
+                                break;
+                            }
+                            copyNumber++;
+                        }
+                        
+                        console.log(`[OntoCode] User chose to create copy. New filename: ${finalFileName}`);
+                    } else {
+                        // User cancelled
+                        console.log('[OntoCode] User cancelled upload');
+                        return;
+                    }
+                }
+            } catch (checkError: any) {
+                // If check endpoint fails, continue with upload (backward compatibility)
+                console.warn('[OntoCode] Failed to check for duplicate file:', checkError.message);
+            }
+
+            // Check if it's a large file (>10MB)
+            const isLargeFile = fileSize > 10 * 1024 * 1024;
+            
+            if (isLargeFile) {
+                vscode.window.showInformationMessage(`Processing large file: ${finalFileName} (${(fileSize / (1024 * 1024)).toFixed(2)}MB)...`);
+            }
+
+            // Upload to project files endpoint with progress tracking
+            const uploadUrl = `${GATEWAY_URL}/api/projects/${projectId}/files`;
+            console.log(`[OntoCode] Upload URL: ${uploadUrl}`);
+            
+            const response = await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: `Uploading ${finalFileName}`,
+                cancellable: false
+            }, async (progress) => {
+                progress.report({ message: 'Preparing upload...', increment: 10 });
+                
+                const uploadPayload: any = {
+                    fileName: finalFileName,
+                    fileData: `data:application/rdf+xml;base64,${base64Content}`,
+                    fileSize: fileSize,
+                    fileType: 'owl'
+                };
+                
+                // If replacing, include the replaceFileId
+                if (replaceFileId) {
+                    uploadPayload.replaceFileId = replaceFileId;
+                }
+                
+                const uploadResponse = await axios.post(uploadUrl, uploadPayload, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 300000, // 5 minute timeout for large files
+                    onUploadProgress: (progressEvent) => {
+                        if (progressEvent.total) {
+                            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+                            progress.report({ 
+                                message: `${percentCompleted}% uploaded`,
+                                increment: percentCompleted
+                            });
+                        }
+                    }
+                });
+                
+                return uploadResponse;
+            });
+
+            if (response.status === 200 || response.status === 201) {
+                console.log('[OntoCode] ✅ File uploaded to project successfully');
+                
+                const actionTaken = replaceFileId ? 'replaced' : (finalFileName !== fileName ? 'uploaded as copy' : 'uploaded');
+                
+                if (isLargeFile) {
+                    vscode.window.showInformationMessage(`Large file "${finalFileName}" ${actionTaken} successfully! Processing in background...`);
+                } else {
+                    vscode.window.showInformationMessage(`File "${finalFileName}" ${actionTaken} successfully`);
+                }
+                
+                // Notify webview to refresh file list
+                this.postMessage({ type: 'fileReady', projectId: projectId });
+            } else {
+                throw new Error(`Upload failed with status: ${response.status}`);
+            }
+        } catch (error: any) {
+            console.error('[OntoCode] ❌ Failed to upload file to project:', error);
+            
+            let errorMessage = `Failed to upload ${fileName}`;
+            if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+                errorMessage += ': Upload timeout. Please try again or check your connection.';
+            } else if (error.response?.status === 413) {
+                errorMessage += ': File too large for server (max 300MB).';
+            } else if (error.message) {
+                errorMessage += `: ${error.message}`;
+            }
+            
+            vscode.window.showErrorMessage(errorMessage);
         }
     }
 
@@ -910,13 +1358,14 @@ class OntoCodePanel {
             // Remove file:// protocol if present
             let normalizedPath = filePath.replace(/^file:\/\/\//, '').replace(/^file:\/\//, '');
             
-            // Convert forward slashes to backslashes on Windows
-            if (process.platform === 'win32') {
+            // Convert forward slashes to backslashes on Windows (web-compatible check)
+            // Check if the path looks like a Windows path (starts with drive letter)
+            const isWindowsPath = /^[a-zA-Z]:/.test(normalizedPath);
+            if (isWindowsPath) {
                 normalizedPath = normalizedPath.replace(/\//g, '\\');
             }
             
             console.log('[OntoCode] Normalized path:', normalizedPath);
-            console.log('[OntoCode] Platform:', process.platform);
             
             // Check if file exists
             const fileUri = vscode.Uri.file(normalizedPath);
@@ -953,23 +1402,20 @@ class OntoCodePanel {
             const uploadProjectId = `imported-${Date.now()}-${Math.random().toString(36).substring(7)}`;
             console.log('[OntoCode] Generated upload project ID:', uploadProjectId);
             
-            // Upload file to the system
-            const FormData = require('form-data');
-            const form = new FormData();
-            form.append('file', Buffer.from(fileData), {
-                filename: fileName,
-                contentType: 'application/rdf+xml'
-            });
+            // Upload file to the system using web-compatible FormData
+            const formData = new FormData();
+            // Create a Blob from the Uint8Array
+            const fileBlob = new Blob([fileData], { type: 'application/rdf+xml' });
+            const file = new File([fileBlob], fileName, { type: 'application/rdf+xml' });
+            formData.append('file', file);
             
             const uploadUrl = `${GATEWAY_URL}/api/ontology/upload/${uploadProjectId}`;
-            const axios = require('axios');
             
             console.log('[OntoCode] Upload URL:', uploadUrl);
             console.log('[OntoCode] Uploading file...');
             
-            const response = await axios.post(uploadUrl, form, {
+            const response = await axios.post(uploadUrl, formData, {
                 headers: {
-                    ...form.getHeaders(),
                     'Authorization': `Bearer ${token}`
                 },
                 maxContentLength: Infinity,
@@ -1032,17 +1478,36 @@ class OntoCodePanel {
      */
     private async _getHtmlForWebview(webview: vscode.Webview): Promise<string> {
         // Path to the build directory on disk
-        const buildPath = vscode.Uri.parse(`${this._extensionUri.toString()}/webview-src/dist`);
+        const buildPath = vscode.Uri.joinPath(this._extensionUri, 'webview-src', 'dist');
         
         // Path to the index.html file
-        const indexPath = vscode.Uri.parse(`${buildPath.toString()}/index.html`);
+        const indexPath = vscode.Uri.joinPath(buildPath, 'index.html');
 
         // Get the base URI to use in the webview for resolving relative paths
-        const baseUri = (webview as any).asWebviewUri(buildPath).toString() + '/';
+        const baseUri = webview.asWebviewUri(buildPath).toString() + '/';
         
         // Read the template HTML
-        const fileBytes = await (vscode.workspace as any).fs.readFile(indexPath);
-        let htmlContent = new TextDecoder('utf-8').decode(fileBytes);
+        let htmlContent: string;
+        try {
+            const fileBytes = await vscode.workspace.fs.readFile(indexPath);
+            htmlContent = new TextDecoder('utf-8').decode(fileBytes);
+        } catch (error) {
+            console.error('[OntoCode] Failed to read index.html:', error);
+            return `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="UTF-8">
+                    <title>Error</title>
+                </head>
+                <body>
+                    <h1>Failed to load webview</h1>
+                    <p>Error: ${error}</p>
+                    <p>Tried to load: ${indexPath.toString()}</p>
+                </body>
+                </html>
+            `;
+        }
         const nonce = getNonce();
 
         // The VSCode API script that needs to be injected
@@ -1083,10 +1548,10 @@ class OntoCodePanel {
             `$1
             <meta http-equiv="Content-Security-Policy" content="
                 default-src 'none'; 
-                img-src ${(webview as any).cspSource} https: data: blob:; 
-                script-src 'nonce-${nonce}' https://cdn.tailwindcss.com https://unpkg.com https://aistudiocdn.com ${GATEWAY_URL} ${PLUGIN_SERVICE_URL} ${(webview as any).cspSource};
-                style-src ${(webview as any).cspSource} 'unsafe-inline' https://unpkg.com https://cdn.tailwindcss.com;
-                font-src ${(webview as any).cspSource} https://unpkg.com data:; 
+                img-src ${webview.cspSource} https: data: blob:; 
+                script-src 'nonce-${nonce}' https://cdn.tailwindcss.com https://unpkg.com https://aistudiocdn.com ${GATEWAY_URL} ${PLUGIN_SERVICE_URL} ${webview.cspSource};
+                style-src ${webview.cspSource} 'unsafe-inline' https://unpkg.com https://cdn.tailwindcss.com;
+                font-src ${webview.cspSource} https://unpkg.com data:; 
                 connect-src ${GATEWAY_URL} ${PLUGIN_SERVICE_URL} https://unpkg.com https://aistudiocdn.com;
             ">
             ${vscodeApiInjectionScript}`
@@ -1103,12 +1568,13 @@ class OntoCodePanel {
             if (rawPath.startsWith('https:') || rawPath.startsWith('http:') || rawPath.startsWith('data:') || rawPath.startsWith('#')) {
                 return match; 
             }
-            // Fix: Replace missing Uri.joinPath with Uri.parse and string interpolation for compatibility.
-            const resourcePath = vscode.Uri.parse(
-                `${buildPath.toString()}/${rawPath.startsWith('/') ? rawPath.substring(1) : rawPath}`
+            // Fix: Replace missing Uri.joinPath with proper Uri.joinPath method
+            const resourcePath = vscode.Uri.joinPath(
+                buildPath,
+                rawPath.startsWith('/') ? rawPath.substring(1) : rawPath
             );
-            // Fix: Cast webview to `any` to access `asWebviewUri` method, bypassing outdated type definitions.
-            const webviewUri = (webview as any).asWebviewUri(resourcePath);
+            // Fix: Use proper webview.asWebviewUri method
+            const webviewUri = webview.asWebviewUri(resourcePath);
             // Add cache buster for JS and CSS files
             if (rawPath.includes('.js') || rawPath.includes('.css')) {
                 return `${attr}="${webviewUri}?v=${cacheBuster}"`;
@@ -1149,6 +1615,13 @@ class OntoCodePanel {
      */
     public getCollaborationStatus(): boolean {
         return this.collaborationManager?.isConnected() ?? false;
+    }
+
+    /**
+     * Check if webview is ready to receive messages.
+     */
+    public isWebviewReady(): boolean {
+        return this._isWebviewReady;
     }
 
     /**
@@ -1258,9 +1731,9 @@ class OntoCodePanel {
                     
                     console.log('[OntoCode] ✅ collaborationStatus message sent to webview');
                     
-                    vscode.window.showInformationMessage(
-                        connected ? 'Connected to collaborative editing' : 'Disconnected from collaborative editing'
-                    );
+                    // vscode.window.showInformationMessage(
+                    //     connected ? 'Connected to collaborative editing' : 'Disconnected from collaborative editing'
+                    // );
                 },
                 
                 onError: (error) => {

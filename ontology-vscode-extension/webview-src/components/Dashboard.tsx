@@ -1,7 +1,7 @@
 // src/Dashboard.tsx
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
-  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, Square, DatabaseZap, Upload, FolderOpen, Sparkles, Clock, Users, Download, RefreshCw, AlertCircle, Puzzle, Zap, BookOpen, Brain, Network, GitMerge, Palette, Edit2, Plus, Globe, Link as LinkIcon, Hash, X, FileCode, Info
+  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, Square, DatabaseZap, Upload, FolderOpen, Sparkles, Clock, Users, Download, RefreshCw, AlertCircle, Puzzle, Zap, BookOpen, Brain, Network, GitMerge, Palette, Edit2, Plus, Globe, Link as LinkIcon, Hash, X, FileCode, Info, Crown, Rocket
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
@@ -12,6 +12,7 @@ import type { TreeNode, Property, Individual, OntologyMetadata, SelectableItem, 
 import { useAuth } from '../custom-hook/useAuth';
 import { useCollaboration } from '../contexts/CollaborationContext';
 import { useTheme } from '../contexts/ThemeContext';
+import { useSubscription } from '../hooks/useSubscription';
 import EntityHierarchy from './EntityHierarchy';
 import ClassEditor from './details/ClassEditor';
 import PropertyEditor from './details/PropertyEditor';
@@ -24,8 +25,10 @@ import { ProjectSelector } from './ProjectSelector';
 import CollaborationPanel, { CollaborationPanelRef } from './CollaborationPanel';
 import HistoryPanel from './HistoryPanel';
 import ToastNotification from './ToastNotification';
+import { CollaborativeCursors } from './CollaborativeCursor';
 import ShareDialog from './ShareDialog';
 import ThemeSettings from './ThemeSettings';
+import PlanDetailsModal from './PlanDetailsModal';
 // ImportProgressToast removed per user request
 import { QueueStatusIndicator, GlobalQueueStats } from './QueueStatusIndicator';
 import {
@@ -753,12 +756,12 @@ const TopMenuBar = ({
               className={`ontocode-top-menu-button cursor-pointer disabled:cursor-not-allowed px-3 py-1 rounded-sm transition-colors ${openMenu === item ? 'is-open' : ''}`}
             >
               {item}
-              {item === 'Reasoner' && isReasonerRunning && (
+              {/* {item === 'Reasoner' && isReasonerRunning && (
                 <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
               )}
               {item === 'Reasoner' && !isReasonerRunning && (
                 <span className="text-[10px] text-gray-500">({selectedReasoner})</span>
-              )}
+              )} */}
             </button>
             {openMenu === item && (
               <div className={`ontocode-top-menu-dropdown absolute left-0 mt-1 ${item === 'File' ? 'w-[360px]' : 'w-48'} bg-theme-surface border rounded-lg shadow-xl z-20 overflow-hidden`} style={{ borderColor: 'var(--color-border)' }}>
@@ -779,134 +782,136 @@ const TopMenuBar = ({
                   <div className="py-1">
                     <div className="px-3 py-1 text-gray-400 text-xs">Appearance</div>
                   </div>
-                ) : item === "Reasoner" ? (
-                  <div className="py-1">
-                    <button
-                      onClick={async () => {
-                        setOpenMenu(null);
-                        if (onStartReasoner) await onStartReasoner();
-                      }}
-                      className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 ${
-                        isReasonerRunning || isReasonerLoading 
-                          ? 'text-gray-400 cursor-not-allowed' 
-                          : 'hover:bg-gray-100'
-                      }`}
-                      disabled={isReasonerRunning || isReasonerLoading}
-                    >
-                      {isReasonerLoading ? <Loader2 size={12} className="animate-spin" /> : null}
-                      Start reasoner
-                    </button>
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
-                        if (onCheckConsistency) onCheckConsistency();
-                      }}
-                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
-                      disabled={isReasonerLoading || isConsistencyLoading}
-                    >
-                      {isConsistencyLoading ? <Loader2 size={12} className="animate-spin" /> : null}
-                      Check consistency
-                    </button>
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
-                        if (onToggleReasonerSync) onToggleReasonerSync();
-                      }}
-                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
-                    >
-                      <input type="checkbox" checked={isReasonerSynced} readOnly className="pointer-events-none" />
-                      Synchronize reasoner
-                    </button>
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
-                        if (onStopReasoner) onStopReasoner();
-                      }}
-                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
-                      disabled={!isReasonerRunning}
-                    >
-                      Stop reasoner
-                    </button>
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
-                        if (onExplainInconsistency) onExplainInconsistency();
-                      }}
-                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
-                      disabled={isReasonerLoading}
-                    >
-                      Explain inconsistent ontology
-                    </button>
-                    <div className="border-t border-gray-200 my-1"></div>
-                    <button
-                      onClick={() => {
-                        // Configure reasoner preferences
-                        setOpenMenu(null);
-                        if (onOpenReasonerSettings) onOpenReasonerSettings();
-                      }}
-                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
-                    >
-                      Configure...
-                    </button>
-                    <div className="border-t border-gray-200 my-1"></div>
-                    <div className="px-4 py-1 text-[11px] text-gray-500 font-semibold">Select Reasoner:</div>
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
-                        if (onSelectReasoner) onSelectReasoner('HermiT');
-                      }}
-                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2 ${
-                        selectedReasoner === 'HermiT' ? 'bg-blue-50 font-semibold' : ''
-                      }`}
-                    >
-                      {selectedReasoner === 'HermiT' ? '• ' : '  '}HermiT 1.4.5.519
-                    </button>
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
-                        if (onSelectReasoner) onSelectReasoner('ELK');
-                      }}
-                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2 ${
-                        selectedReasoner === 'ELK' ? 'bg-blue-50 font-semibold' : ''
-                      }`}
-                    >
-                      {selectedReasoner === 'ELK' ? '• ' : '  '}ELK 0.4.3
-                    </button>
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
-                        if (onSelectReasoner) onSelectReasoner('Pellet');
-                      }}
-                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
-                        selectedReasoner === 'Pellet' ? 'bg-blue-50 font-semibold' : ''
-                      }`}
-                    >
-                      {selectedReasoner === 'Pellet' ? '• ' : '  '}Pellet
-                    </button>
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
-                        if (onSelectReasoner) onSelectReasoner('Openllet');
-                      }}
-                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
-                        selectedReasoner === 'Openllet' ? 'bg-blue-50 font-semibold' : ''
-                      }`}
-                    >
-                      {selectedReasoner === 'Openllet' ? '• ' : '  '}Openllet 2.6.5
-                    </button>
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
-                        if (onSelectReasoner) onSelectReasoner('Structural');
-                      }}
-                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
-                        selectedReasoner === 'Structural' ? 'bg-blue-50 font-semibold' : ''
-                      }`}
-                    >
-                      {selectedReasoner === 'Structural' ? '• ' : '  '}Structural Reasoner
-                    </button>
-                  </div>
-                ) : item === "File" ? (
+                ) 
+                // : item === "Reasoner" ? (
+                  // <div className="py-1">
+                  //   <button
+                  //     onClick={async () => {
+                  //       setOpenMenu(null);
+                  //       if (onStartReasoner) await onStartReasoner();
+                  //     }}
+                  //     className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 ${
+                  //       isReasonerRunning || isReasonerLoading 
+                  //         ? 'text-gray-400 cursor-not-allowed' 
+                  //         : 'hover:bg-gray-100'
+                  //     }`}
+                  //     disabled={isReasonerRunning || isReasonerLoading}
+                  //   >
+                  //     {isReasonerLoading ? <Loader2 size={12} className="animate-spin" /> : null}
+                  //     Start reasoner
+                  //   </button>
+                  //   <button
+                  //     onClick={() => {
+                  //       setOpenMenu(null);
+                  //       if (onCheckConsistency) onCheckConsistency();
+                  //     }}
+                  //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                  //     disabled={isReasonerLoading || isConsistencyLoading}
+                  //   >
+                  //     {isConsistencyLoading ? <Loader2 size={12} className="animate-spin" /> : null}
+                  //     Check consistency
+                  //   </button>
+                  //   <button
+                  //     onClick={() => {
+                  //       setOpenMenu(null);
+                  //       if (onToggleReasonerSync) onToggleReasonerSync();
+                  //     }}
+                  //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                  //   >
+                  //     <input type="checkbox" checked={isReasonerSynced} readOnly className="pointer-events-none" />
+                  //     Synchronize reasoner
+                  //   </button>
+                  //   <button
+                  //     onClick={() => {
+                  //       setOpenMenu(null);
+                  //       if (onStopReasoner) onStopReasoner();
+                  //     }}
+                  //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
+                  //     disabled={!isReasonerRunning}
+                  //   >
+                  //     Stop reasoner
+                  //   </button>
+                  //   <button
+                  //     onClick={() => {
+                  //       setOpenMenu(null);
+                  //       if (onExplainInconsistency) onExplainInconsistency();
+                  //     }}
+                  //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                  //     disabled={isReasonerLoading}
+                  //   >
+                  //     Explain inconsistent ontology
+                  //   </button>
+                  //   <div className="border-t border-gray-200 my-1"></div>
+                  //   <button
+                  //     onClick={() => {
+                  //       // Configure reasoner preferences
+                  //       setOpenMenu(null);
+                  //       if (onOpenReasonerSettings) onOpenReasonerSettings();
+                  //     }}
+                  //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
+                  //   >
+                  //     Configure...
+                  //   </button>
+                  //   <div className="border-t border-gray-200 my-1"></div>
+                  //   <div className="px-4 py-1 text-[11px] text-gray-500 font-semibold">Select Reasoner:</div>
+                  //   <button
+                  //     onClick={() => {
+                  //       setOpenMenu(null);
+                  //       if (onSelectReasoner) onSelectReasoner('HermiT');
+                  //     }}
+                  //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2 ${
+                  //       selectedReasoner === 'HermiT' ? 'bg-blue-50 font-semibold' : ''
+                  //     }`}
+                  //   >
+                  //     {selectedReasoner === 'HermiT' ? '• ' : '  '}HermiT 1.4.5.519
+                  //   </button>
+                  //   <button
+                  //     onClick={() => {
+                  //       setOpenMenu(null);
+                  //       if (onSelectReasoner) onSelectReasoner('ELK');
+                  //     }}
+                  //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2 ${
+                  //       selectedReasoner === 'ELK' ? 'bg-blue-50 font-semibold' : ''
+                  //     }`}
+                  //   >
+                  //     {selectedReasoner === 'ELK' ? '• ' : '  '}ELK 0.4.3
+                  //   </button>
+                  //   <button
+                  //     onClick={() => {
+                  //       setOpenMenu(null);
+                  //       if (onSelectReasoner) onSelectReasoner('Pellet');
+                  //     }}
+                  //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
+                  //       selectedReasoner === 'Pellet' ? 'bg-blue-50 font-semibold' : ''
+                  //     }`}
+                  //   >
+                  //     {selectedReasoner === 'Pellet' ? '• ' : '  '}Pellet
+                  //   </button>
+                  //   <button
+                  //     onClick={() => {
+                  //       setOpenMenu(null);
+                  //       if (onSelectReasoner) onSelectReasoner('Openllet');
+                  //     }}
+                  //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
+                  //       selectedReasoner === 'Openllet' ? 'bg-blue-50 font-semibold' : ''
+                  //     }`}
+                  //   >
+                  //     {selectedReasoner === 'Openllet' ? '• ' : '  '}Openllet 2.6.5
+                  //   </button>
+                  //   <button
+                  //     onClick={() => {
+                  //       setOpenMenu(null);
+                  //       if (onSelectReasoner) onSelectReasoner('Structural');
+                  //     }}
+                  //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
+                  //       selectedReasoner === 'Structural' ? 'bg-blue-50 font-semibold' : ''
+                  //     }`}
+                  //   >
+                  //     {selectedReasoner === 'Structural' ? '• ' : '  '}Structural Reasoner
+                  //   </button>
+                  // </div>
+                // ) 
+                : item === "File" ? (
                   <div className="flex flex-col py-1">
                     <div className="px-4 py-2 text-[11px] uppercase tracking-wide text-gray-500">File</div>
                     <button
@@ -1031,7 +1036,9 @@ const OpenFileDialog = ({
   myFiles,
   sharedFiles,
   currentProjectId,
-  onSwitchFile
+  onSwitchFile,
+  parentProjectId,
+  onLoadProjectFile
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -1039,8 +1046,14 @@ const OpenFileDialog = ({
   sharedFiles: FileInfo[];
   currentProjectId: string | null;
   onSwitchFile: (projectId: string) => void;
+  parentProjectId?: string;
+  onLoadProjectFile?: (fileId: string, fileName: string) => void;
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
+
+  // console.log('[OpenFileDialog] Rendered with myFiles:', myFiles.length, 'sharedFiles:', sharedFiles.length, 'isOpen:', isOpen);
+  // console.log('[OpenFileDialog] myFiles data:', myFiles);
+  // console.log('[OpenFileDialog] sharedFiles data:', sharedFiles);
 
   if (!isOpen) return null;
 
@@ -1079,15 +1092,21 @@ const OpenFileDialog = ({
                 <span className="text-xs font-semibold text-purple-800">My Files ({myFiles.filter(f => !searchQuery || f.filename.toLowerCase().includes(searchQuery.toLowerCase())).length})</span>
               </div>
               <div className="space-y-0.5">
-                {myFiles.filter(f => !searchQuery || f.filename.toLowerCase().includes(searchQuery.toLowerCase())).map((file) => {
-                  const fileProjectId = file.filename.slice(0, -4);
+                {myFiles.filter(f => !searchQuery || (f.filename && f.filename.toLowerCase().includes(searchQuery.toLowerCase()))).map((file) => {
+                  const fileProjectId = file.filename ? file.filename.slice(0, -4) : file.id;
                   const isActive = fileProjectId === currentProjectId;
                   return (
                     <div
                       key={file.id}
                       onClick={() => {
                         if (!isActive) {
-                          onSwitchFile(fileProjectId);
+                          // If we have a parent project (admin flow), load the file from project
+                          if (parentProjectId && onLoadProjectFile) {
+                            onLoadProjectFile(file.id, file.filename);
+                          } else {
+                            // Normal flow - switch to existing ontology project
+                            onSwitchFile(fileProjectId);
+                          }
                         }
                         onClose();
                       }}
@@ -1121,8 +1140,8 @@ const OpenFileDialog = ({
             </div>
             {sharedFiles.length > 0 ? (
               <div className="space-y-0.5">
-                {sharedFiles.filter(f => !searchQuery || f.filename.toLowerCase().includes(searchQuery.toLowerCase())).map((file) => {
-                  const fileProjectId = file.filename.slice(0, -4);
+                {sharedFiles.filter(f => !searchQuery || (f.filename && f.filename.toLowerCase().includes(searchQuery.toLowerCase()))).map((file) => {
+                  const fileProjectId = file.filename ? file.filename.slice(0, -4) : file.id;
                   const isActive = fileProjectId === currentProjectId;
                   return (
                     <div
@@ -1439,13 +1458,37 @@ const showNotification = (message: string, type: 'info' | 'error' | 'warning' = 
   }
 };
 
-const Dashboard = () => {
+interface DashboardProps {
+  onBackToProjects?: () => void;
+  selectedFileId?: string;
+  selectedFileName?: string;
+  projectId?: string; // Renamed to initialProjectId to avoid naming conflict
+}
+
+const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId, selectedFileName, projectId: initialProjectId }) => {
   // #region State
   const { user, logout } = useAuth();
   const collaboration = useCollaboration();
   const { actualMode } = useTheme();
+  const subscription = useSubscription();
   const readonlyMode = false; // Allow editing by default
    const [showThemeSettings, setShowThemeSettings] = useState(false);
+   const [showPlanDetails, setShowPlanDetails] = useState(false);
+
+  const handleUpgradePlan = async (planId: string) => {
+    try {
+      await apiClient.patch(`/api/workspaces/${user?.workspaceId}/subscription`, {
+        plan: planId
+      });
+      
+      // Reload the page to get updated user with new plan
+      window.location.reload();
+      showToast(`Successfully upgraded to ${planId.toUpperCase()} plan!`, 'success');
+    } catch (error: any) {
+      console.error('Failed to upgrade plan:', error);
+      showToast(error?.response?.data?.error || 'Failed to upgrade plan. Please try again.', 'error');
+    }
+  };
 
   const applyInstanceCountsToTree = useCallback((
     nodes: TreeNode[],
@@ -1519,7 +1562,7 @@ const Dashboard = () => {
     },
     [user?.email, user?.username] // collaboration.addNotification is stable, no need to include
   );
-  const [projectId, setProjectId] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(initialProjectId || null);
   const [availableProjects, setAvailableProjects] = useState<any[]>([]);
   const [showProjectSelector, setShowProjectSelector] = useState(false);
   const [metadata, setMetadata] = useState<OntologyMetadata | null>(null);
@@ -1577,6 +1620,70 @@ const Dashboard = () => {
     expandedNodesRef.current = expandedNodes;
     console.log('[Dashboard] 🔍 expandedNodes updated:', expandedNodes.length, 'nodes', expandedNodes.slice(0, 5));
   }, [expandedNodes]);
+
+  // Fetch files for the currently selected project
+  const fetchProjectFiles = useCallback(async (currentProjectId: string) => {
+    if (!currentProjectId) return;
+    
+    try {
+      console.log('[Dashboard] 📂 Fetching files for project:', currentProjectId);
+      const filesResponse = await apiClient.get<{ files: any[]; count: number }>(`/api/projects/${currentProjectId}/files`);
+      
+      console.log('[Dashboard] 📥 Raw files response:', filesResponse);
+      
+      if (filesResponse && Array.isArray(filesResponse.files)) {
+        console.log('[Dashboard] 📄 Found', filesResponse.files.length, 'files in project');
+        
+        // Map file metadata to FileInfo format
+        const projectFiles = filesResponse.files.map((file: any) => ({
+          id: file.id,
+          filename: file.name || file.fileName || file.id,
+          contentType: file.type === 'owl' ? 'application/rdf+xml' : `application/${file.type}`,
+          uploadDate: file.uploadedAt || new Date().toISOString(),
+          length: file.size || 0,
+          uploadedBy: file.uploadedBy
+        }));
+        
+        console.log('[Dashboard] 📋 Mapped project files:', projectFiles);
+        
+        // Only update listOfFiles for backward compatibility
+        // Do NOT overwrite myFiles/sharedFiles - those are user-specific and should be
+        // populated by fetchProjects() which gets files by user email
+        setListOfFiles(projectFiles);
+        
+        console.log('[Dashboard] ✅ File menu updated with project files (listOfFiles only)');
+      } else if (filesResponse && filesResponse.files === undefined) {
+        // Maybe files are at a different level or API returned error
+        console.log('[Dashboard] ⚠️ Response has no files array:', filesResponse);
+        // Try to handle different response formats
+        if (Array.isArray(filesResponse)) {
+          const projectFiles = filesResponse.map((file: any) => ({
+            id: file.id,
+            filename: file.name || file.fileName || file.id,
+            contentType: file.type === 'owl' ? 'application/rdf+xml' : `application/${file.type}`,
+            uploadDate: file.uploadedAt || new Date().toISOString(),
+            length: file.size || 0,
+            uploadedBy: file.uploadedBy
+          }));
+          // Only update listOfFiles, not myFiles/sharedFiles
+          setListOfFiles(projectFiles);
+        } else {
+          console.log('[Dashboard] ⚠️ Unable to parse files from response, clearing file menu');
+          // setMyFiles([]);
+          // setSharedFiles([]);
+          setListOfFiles([]);
+        }
+      } else {
+        console.log('[Dashboard] ℹ️ No files found in project or empty response');
+        // Don't clear myFiles/sharedFiles - they contain user's files from fetchProjects
+        setListOfFiles([]);
+      }
+    } catch (error: any) {
+      console.error('[Dashboard] ❌ Failed to fetch project files:', error);
+      console.error('[Dashboard] ❌ Error details:', error?.response?.data || error?.message || error);
+      // Don't clear the file menu on error - keep showing projects list
+    }
+  }, []);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOptions, setSearchOptions] = useState({
     useRegex: false,
@@ -1783,6 +1890,12 @@ const Dashboard = () => {
   const activeTheme = entitiesTabs.find(t => t.id === entitiesTab)?.theme;
 
   const sourceData = React.useMemo(() => {
+    console.log('[Dashboard sourceData] entitiesTab:', entitiesTab);
+    console.log('[Dashboard sourceData] hierarchyViewModes.Classes:', hierarchyViewModes.Classes);
+    console.log('[Dashboard sourceData] classHierarchy:', classHierarchy);
+    console.log('[Dashboard sourceData] classHierarchy length:', classHierarchy.length);
+    console.log('[Dashboard sourceData] classHierarchy first element:', classHierarchy[0]);
+    
     switch (entitiesTab) {
       case "Classes":
         if (hierarchyViewModes.Classes === 'inferred') {
@@ -1795,6 +1908,7 @@ const Dashboard = () => {
           return Array.isArray(inferred) ? inferred : [];
         }
         console.log('[Dashboard] Using asserted class hierarchy, length:', classHierarchy.length);
+        console.log('[Dashboard] Returning classHierarchy:', classHierarchy);
         return classHierarchy;
       case "ObjectProperties":
         console.log(inferredObjectPropertyHierarchy, '[Dashboard] Hierarchy view mode for ObjectProperties:', hierarchyViewModes.ObjectProperties);
@@ -1976,13 +2090,15 @@ const Dashboard = () => {
       throw new Error('No ontology loaded');
     }
 
+    const encodedProjectId = encodeURIComponent(projectId);
+
     const [classificationResponse, statsResponse] = await Promise.all([
       apiClient.post(
-        `/plugin-service/api/reasoner/${projectId}/classify`,
+        `/plugin-service/api/reasoner/${encodedProjectId}/classify`,
         { reasonerType }
       ),
       apiClient.get(
-        `/plugin-service/api/reasoner/${projectId}/stats?reasonerType=${reasonerType}`
+        `/plugin-service/api/reasoner/${encodedProjectId}/stats?reasonerType=${reasonerType}`
       ).catch(error => {
         console.warn('[Dashboard] Reasoner stats request failed:', error);
         return null;
@@ -2213,8 +2329,9 @@ const Dashboard = () => {
     try {
       setIsConsistencyLoading(true);
       const reasonerType = normalizeReasonerType(selectedReasoner);
+      const encodedProjectId = encodeURIComponent(projectId);
       const resp = await apiClient.post(
-        `/plugin-service/api/reasoner/${projectId}/consistency`,
+        `/plugin-service/api/reasoner/${encodedProjectId}/consistency`,
         { reasonerType }
       );
       const data = extractResponseData(resp);
@@ -2244,8 +2361,9 @@ const Dashboard = () => {
     try {
       setExplanationState({ open: true, loading: true, data: null, error: null });
       const reasonerType = normalizeReasonerType(selectedReasoner);
+      const encodedProjectId = encodeURIComponent(projectId);
       const resp = await apiClient.post(
-        `/plugin-service/api/reasoner/${projectId}/explain-inconsistency`,
+        `/plugin-service/api/reasoner/${encodedProjectId}/explain-inconsistency`,
         { reasonerType }
       );
       const data = extractResponseData(resp);
@@ -2433,7 +2551,7 @@ const Dashboard = () => {
     }
   }, []);
 
-  const fetchData = useCallback(async (currentProjectId: string, waitForCompletion = false) => {
+  const fetchData = useCallback(async (currentProjectId: string, waitForCompletion = false, parentProjectId?: string) => {
     // Don't block UI - let user continue working
     setSelectedItem(null);
     setSearchQuery("");
@@ -2443,10 +2561,20 @@ const Dashboard = () => {
       setIsInitialLoading(true);
     }
     
+    // Determine if we're in admin flow (parentProjectId provided means files should be loaded from project library)
+    const isAdminFlow = !!parentProjectId;
+    
     // Notify user that loading has started
     console.log(`Loading ontology "${currentProjectId}"...`);
     console.log('[Dashboard] 🔄 Fetching data for project:', currentProjectId);
     console.log('[Dashboard] 📊 Collaboration status:', collaboration.state.connected);
+    console.log('[Dashboard] 📂 Admin flow:', isAdminFlow, 'Parent project:', parentProjectId);
+    console.log('[Dashboard] 👤 User context:', {
+      email: user?.email,
+      username: user?.username,
+      isAdmin: user?.isAdmin,
+      workspaceId: user?.workspaceId
+    });
     
     // Request collaboration status when loading a new file
     if (window.vscode) {
@@ -2480,9 +2608,9 @@ const Dashboard = () => {
         apiClient.get<any>(`/api/ontology/individuals/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/annotation-properties/${currentProjectId}`),
         apiClient.get<any>(`/api/ontology/datatypes/${currentProjectId}`),
-        apiClient.get<any>(`/api/ontology/ontology/imports/${currentProjectId}`),
+        apiClient.get<any>(`/api/ontology/metadata/${currentProjectId}/imports`),
         apiClient.get<any>(`/api/ontology/ontology/gci/${currentProjectId}?limit=200`),
-        apiClient.get<any>(`/api/ontology/ontology/annotations/${currentProjectId}`),
+        apiClient.get<any>(`/api/ontology/metadata/${currentProjectId}/annotations`),
         apiClient.get<any>(`/api/ontology/ontology/prefixes/${currentProjectId}`)
       ]);
       
@@ -2547,15 +2675,31 @@ const Dashboard = () => {
 
       const importsPayload = importsRes?.data || importsRes;
       const importsData = importsPayload?.data || importsPayload || [];
-      setOntologyImports(Array.isArray(importsData) ? importsData : []);
+      const validImportsData = Array.isArray(importsData) ? importsData : [];
+      console.log('[Dashboard] 📥 Initial imports loaded:', validImportsData);
+      console.log('[Dashboard] Local imports found:', validImportsData.filter((imp: string) => !imp.startsWith('http://') && !imp.startsWith('https://')));
+      setOntologyImports(validImportsData);
 
       const gciPayload = gciRes?.data || gciRes;
       const gciData = gciPayload?.data || gciPayload || [];
-      setGeneralClassAxioms(Array.isArray(gciData) ? gciData : []);
+      // Map backend fields to frontend expected structure
+      const mappedGciData = Array.isArray(gciData) ? gciData.map((axiom: any) => ({
+        value: axiom.value,
+        subClass: axiom.subClass || '',
+        superClass: axiom.superClass || '',
+        // Keep legacy field names for compatibility
+        definition: axiom.subClass || axiom.definition || '',
+        superClassIri: axiom.superClass || axiom.superClassIri || '',
+        subExpression: axiom.subClass || axiom.subExpression || ''
+      })) : [];
+      setGeneralClassAxioms(mappedGciData);
 
       const ontologyAnnotationsPayload = ontologyAnnotationsRes?.data || ontologyAnnotationsRes;
       const ontologyAnnotationsData = ontologyAnnotationsPayload?.data || ontologyAnnotationsPayload || [];
-      setOntologyAnnotations(Array.isArray(ontologyAnnotationsData) ? ontologyAnnotationsData : []);
+      // Filter out invalid annotations and ensure all have required fields
+      const validAnnotations = (Array.isArray(ontologyAnnotationsData) ? ontologyAnnotationsData : [])
+        .filter(ann => ann && ann.propertyIri && ann.value !== undefined);
+      setOntologyAnnotations(validAnnotations);
 
       const prefixesPayload = prefixesRes?.data || prefixesRes;
       const prefixesData = prefixesPayload?.data || prefixesPayload || {};
@@ -2569,9 +2713,12 @@ const Dashboard = () => {
 
       // Handle classes response - backend returns {success: true, classes: [...]}
       console.log("=== CLASSES RESPONSE DEBUG ===");
-      console.log("Raw topLevelRes:", topLevelRes);
+      console.log("Raw topLevelRes:", JSON.stringify(topLevelRes, null, 2));
       console.log("topLevelRes type:", typeof topLevelRes);
       console.log("topLevelRes keys:", Object.keys(topLevelRes || {}));
+      console.log("topLevelRes?.success:", topLevelRes?.success);
+      console.log("topLevelRes?.classes:", topLevelRes?.classes);
+      console.log("Is topLevelRes.classes an array?", Array.isArray(topLevelRes?.classes));
       
       // The response structure is: topLevelRes = {success: true, classes: [...]}
       // But apiClient might wrap it in a data field, so check both
@@ -2579,21 +2726,30 @@ const Dashboard = () => {
       
       if (Array.isArray(topLevelRes?.classes)) {
         classes = topLevelRes.classes;
-        console.log("Found classes in topLevelRes.classes");
+        console.log("✅ Found classes in topLevelRes.classes, count:", classes.length);
       } else if (Array.isArray(topLevelRes?.data?.classes)) {
         classes = topLevelRes.data.classes;
-        console.log("Found classes in topLevelRes.data.classes");
+        console.log("✅ Found classes in topLevelRes.data.classes, count:", classes.length);
       } else if (Array.isArray(topLevelRes?.data)) {
         classes = topLevelRes.data;
-        console.log("Found classes in topLevelRes.data (array)");
+        console.log("✅ Found classes in topLevelRes.data (array), count:", classes.length);
       } else if (Array.isArray(topLevelRes)) {
         classes = topLevelRes;
-        console.log("topLevelRes itself is an array");
+        console.log("✅ topLevelRes itself is an array, count:", classes.length);
       } else {
-        console.error("Could not find classes array in response structure!");
+        console.error("❌ Could not find classes array in response structure!");
         console.error("Available keys:", Object.keys(topLevelRes || {}));
         if (topLevelRes?.data) {
           console.error("Data keys:", Object.keys(topLevelRes.data || {}));
+        }
+        // Fallback: try to extract classes from any nested structure
+        if (topLevelRes && typeof topLevelRes === 'object') {
+          for (const key of Object.keys(topLevelRes)) {
+            console.log(`Checking key '${key}':`, topLevelRes[key]);
+            if (Array.isArray(topLevelRes[key])) {
+              console.log(`Found array at key '${key}' with length ${topLevelRes[key].length}`);
+            }
+          }
         }
       }
       
@@ -2623,6 +2779,7 @@ const Dashboard = () => {
       };
       
       console.log("owlThingNode created with children count:", owlThingNode.children?.length);
+      console.log("owlThingNode full structure:", JSON.stringify(owlThingNode, null, 2));
       console.log("Setting classHierarchy with owl:Thing");
       console.log("=== END OWL:THING DEBUG ===");
       
@@ -2630,6 +2787,8 @@ const Dashboard = () => {
         ? instanceCountsData
         : {};
       const hierarchyWithCounts = applyInstanceCountsToTree([owlThingNode], resolvedCounts);
+      console.log("📊 Final classHierarchy being set:", JSON.stringify(hierarchyWithCounts, null, 2));
+      console.log("📊 classHierarchy root node children count:", hierarchyWithCounts[0]?.children?.length);
       setClassHierarchy(hierarchyWithCounts);
 
       // Handle properties response
@@ -2757,67 +2916,107 @@ const Dashboard = () => {
                   Array.isArray(datatypesRes?.datatypes) ? datatypesRes.datatypes : []);
       
       // Fetch files list separately (not in parallel to avoid blocking main data load)
+      // Admin flow will fetch project-specific files later, regular users fetch all their files here
+      console.log('[Dashboard] 🔍 File loading decision - isAdminFlow:', isAdminFlow);
+      if (!isAdminFlow) {
+        console.log('[Dashboard] ✅ Non-admin flow - fetching files for user');
       try {
         const userEmail = user?.email || '';
+        console.log('[Dashboard] 📧 Fetching files for user email:', userEmail);
         const filesRes = await apiClient.get<any>(`/api/projects?userEmail=${encodeURIComponent(userEmail)}`);
+        console.log('[Dashboard] 📥 Files response:', filesRes);
+        console.log('[Dashboard] 📥 Files response details:', JSON.stringify(filesRes, null, 2));
         
         let myProjectsList: any[] = [];
         let sharedProjectsList: any[] = [];
         
-        if (filesRes.myFiles && filesRes.sharedFiles) {
+        // Default files to show if API returns empty
+        const defaultFiles = [
+          { id: 'DL_query', filename: 'DL_query.owl', ownerEmail: userEmail },
+          { id: 'SDA-Medica_CardiovascularDomainl', filename: 'SDA-Medica_CardiovascularDomainl.owl', ownerEmail: userEmail }
+        ];
+        
+        if (filesRes.myFiles !== undefined && filesRes.sharedFiles !== undefined) {
           // New format with separate lists
           myProjectsList = Array.isArray(filesRes.myFiles) ? filesRes.myFiles : [];
           sharedProjectsList = Array.isArray(filesRes.sharedFiles) ? filesRes.sharedFiles : [];
           
-          setMyFiles(myProjectsList.map((p: any) => ({
-            id: p.id,
-            filename: p.filename || p.name || p.id,
-            contentType: 'application/rdf+xml',
-            uploadDate: p.updatedAt || new Date().toISOString(),
-            length: 0,
-            ownerEmail: p.ownerEmail
-          })));
+          // If API returns empty, use default files as fallback
+          if (myProjectsList.length === 0 && sharedProjectsList.length === 0) {
+            console.log('[Dashboard] 📋 API returned empty, using default files');
+            myProjectsList = defaultFiles;
+          }
           
-          setSharedFiles(sharedProjectsList.map((p: any) => ({
-            id: p.id,
-            filename: p.filename || p.name || p.id,
-            contentType: 'application/rdf+xml',
-            uploadDate: p.updatedAt || new Date().toISOString(),
-            length: 0,
-            sharedBy: p.sharedBy,
-            ownerEmail: p.ownerEmail,
-            permission: p.permission || 'view'
-          })));
+          console.log(myProjectsList,"myProjects")
+          setMyFiles(myProjectsList.map((p: any) => {
+            const baseName = p.filename || p.name || p.id;
+            const filename = baseName.endsWith('.owl') ? baseName : `${baseName}.owl`;
+            return {
+              id: p.id,
+              filename: filename,
+              contentType: 'application/rdf+xml',
+              uploadDate: p.updatedAt || new Date().toISOString(),
+              length: 0,
+              ownerEmail: p.ownerEmail
+            };
+          }));
+          
+          setSharedFiles(sharedProjectsList.map((p: any) => {
+            const baseName = p.filename || p.name || p.id;
+            const filename = baseName.endsWith('.owl') ? baseName : `${baseName}.owl`;
+            return {
+              id: p.id,
+              filename: filename,
+              contentType: 'application/rdf+xml',
+              uploadDate: p.updatedAt || new Date().toISOString(),
+              length: 0,
+              sharedBy: p.sharedBy,
+              ownerEmail: p.ownerEmail,
+              permission: p.permission || 'view'
+            };
+          }));
           
           console.log('[Dashboard] 📂 Loaded shared files:', sharedProjectsList.length);
           console.log('[Dashboard] 🤝 Collaboration features available for shared editing');
           
           // Combined list for backward compatibility
-          setListOfFiles([...myProjectsList, ...sharedProjectsList].map((p: any) => ({
-            id: p.id,
-            filename: p.filename || p.name || p.id,
-            contentType: 'application/rdf+xml',
-            uploadDate: p.updatedAt || new Date().toISOString(),
-            length: 0
-          })));
+          setListOfFiles([...myProjectsList, ...sharedProjectsList].map((p: any) => {
+            const baseName = p.filename || p.name || p.id;
+            const filename = baseName.endsWith('.owl') ? baseName : `${baseName}.owl`;
+            return {
+              id: p.id,
+              filename: filename,
+              contentType: 'application/rdf+xml',
+              uploadDate: p.updatedAt || new Date().toISOString(),
+              length: 0
+            };
+          }));
         } else {
           // Old format (backward compatibility)
           const projects = Array.isArray(filesRes?.projects) ? filesRes.projects : [];
           myProjectsList = projects;
-          setListOfFiles(projects.map((p: any) => ({
-            id: p.id,
-            filename: p.filename || p.name || p.id,
-            contentType: 'application/rdf+xml',
-            uploadDate: p.updatedAt || new Date().toISOString(),
-            length: 0
-          })));
-          setMyFiles(projects.map((p: any) => ({
-            id: p.id,
-            filename: p.filename || p.name || p.id,
-            contentType: 'application/rdf+xml',
-            uploadDate: p.updatedAt || new Date().toISOString(),
-            length: 0
-          })));
+          setListOfFiles(projects.map((p: any) => {
+            const baseName = p.filename || p.name || p.id;
+            const filename = baseName.endsWith('.owl') ? baseName : `${baseName}.owl`;
+            return {
+              id: p.id,
+              filename: filename,
+              contentType: 'application/rdf+xml',
+              uploadDate: p.updatedAt || new Date().toISOString(),
+              length: 0
+            };
+          }));
+          setMyFiles(projects.map((p: any) => {
+            const baseName = p.filename || p.name || p.id;
+            const filename = baseName.endsWith('.owl') ? baseName : `${baseName}.owl`;
+            return {
+              id: p.id,
+              filename: filename,
+              contentType: 'application/rdf+xml',
+              uploadDate: p.updatedAt || new Date().toISOString(),
+              length: 0
+            };
+          }));
           setSharedFiles([]);
         }
         
@@ -2869,14 +3068,28 @@ const Dashboard = () => {
           console.log('[Dashboard] 📝 File is private - using draft mode (click Save to apply changes)');
         }
       } catch (fileError) {
-        console.error("Failed to fetch files:", fileError);
+        console.error("[Dashboard] ❌ Failed to fetch files:", fileError);
+        console.error("[Dashboard] ❌ File error details:", fileError instanceof Error ? fileError.message : fileError);
         setListOfFiles([]);
         setMyFiles([]);
         setSharedFiles([]);
       }
+      } else {
+        console.log('[Dashboard] ℹ️ Admin flow detected - skipping user file fetch (will use project files)');
+      }
+      // End of !isAdminFlow block
       
       // Stop any previous monitoring for this project
       syncService.stopMonitoring(currentProjectId);
+      
+      // Only fetch project-specific files in admin flow (from ProjectLibrary)
+      // Regular users and workspace members already have their files loaded above
+      if (isAdminFlow && parentProjectId) {
+        console.log('[Dashboard] 📂 Admin flow - Fetching files from project:', parentProjectId);
+        await fetchProjectFiles(parentProjectId);
+      } else {
+        console.log('[Dashboard] ℹ️ Regular user flow - files already loaded from user email query');
+      }
       
       // Notify user that ontology is fully loaded
       notificationService.success(
@@ -2894,7 +3107,7 @@ const Dashboard = () => {
     } finally {
       setIsInitialLoading(false);
     }
-  }, []); // waitForProcessingComplete doesn't depend on state/props, stable reference
+  }, [waitForProcessingComplete, applyInstanceCountsToTree, user, collaboration, fetchProjectFiles]); // Include dependencies for proper closure
 
   useEffect(() => {
     if (metadata?.ontologyIRI) {
@@ -2908,10 +3121,25 @@ const Dashboard = () => {
   const refreshOntologyAnnotations = async () => {
     if (!projectId) return;
     try {
-      const response = await apiClient.get<any>(`/api/ontology/ontology/annotations/${projectId}`);
+      console.log('[Dashboard] 🔄 Refreshing ontology annotations for project:', projectId);
+      const response = await apiClient.get<any>(`/api/ontology/metadata/${projectId}/annotations`);
       const payload = response?.data || response;
       const data = payload?.data || payload || [];
-      setOntologyAnnotations(Array.isArray(data) ? data : []);
+      console.log('[Dashboard] 📥 Raw annotations data received:', data);
+      // Filter out invalid annotations - backend returns propertyIri
+      const validAnnotations = (Array.isArray(data) ? data : [])
+        .filter(ann => ann && ann.propertyIri && ann.value !== undefined);
+      console.log('[Dashboard] ✅ Valid annotations after filtering:', validAnnotations);
+      
+      // Only update if we got data, or if explicitly clearing (validAnnotations.length >= 0 always true, so always update)
+      // But if backend returns empty and we have optimistic updates, keep them for a bit
+      setOntologyAnnotations(prev => {
+        if (validAnnotations.length === 0 && prev.length > 0) {
+          console.log('[Dashboard] ⚠️ Backend returned empty annotations, keeping optimistic updates');
+          return prev;
+        }
+        return validAnnotations;
+      });
     } catch (error) {
       console.error('[Dashboard] Failed to refresh ontology annotations:', error);
     }
@@ -2920,10 +3148,21 @@ const Dashboard = () => {
   const refreshOntologyImports = async () => {
     if (!projectId) return;
     try {
-      const response = await apiClient.get<any>(`/api/ontology/ontology/imports/${projectId}`);
+      const response = await apiClient.get<any>(`/api/ontology/metadata/${projectId}/imports`);
       const payload = response?.data || response;
       const data = payload?.data || payload || [];
-      setOntologyImports(Array.isArray(data) ? data : []);
+      const validImports = Array.isArray(data) ? data : [];
+      console.log('[Dashboard] 📥 Loaded imports from backend:', validImports);
+      console.log('[Dashboard] Local imports:', validImports.filter((imp: string) => !imp.startsWith('http://') && !imp.startsWith('https://')));
+      
+      // Don't overwrite optimistic updates with empty backend response
+      setOntologyImports(prev => {
+        if (validImports.length === 0 && prev.length > 0) {
+          console.log('[Dashboard] ⚠️ Backend returned empty imports, keeping optimistic updates');
+          return prev;
+        }
+        return validImports;
+      });
     } catch (error) {
       console.error('[Dashboard] Failed to refresh ontology imports:', error);
     }
@@ -2967,31 +3206,91 @@ const Dashboard = () => {
     }
   };
 
-  const handleAddOntologyAnnotation = async (propertyIri: string, value: string, datatype?: string) => {
+  const handleAddOntologyAnnotation = async (propertyIri: string, value: string, datatype?: string, language?: string) => {
     if (!projectId) return;
     try {
-      await apiClient.post(`/api/ontology/ontology/annotations/${projectId}`, {
+      const payload: any = {
+        propertyIri,
+        value
+      };
+      
+      // Add language if provided
+      if (language && language.trim()) {
+        payload.language = language.trim();
+      }
+      // Add datatype if provided (and no language)
+      else if (datatype && datatype.trim()) {
+        // If datatype looks like a language tag, send as language
+        if (/^[a-z]{2}(-[A-Z]{2})?$/.test(datatype)) {
+          payload.language = datatype;
+        } else {
+          // Otherwise it's a datatype IRI
+          payload.datatype = datatype;
+        }
+      }
+      
+      console.log('[Dashboard] Adding annotation with payload:', payload);
+      await apiClient.post(`/api/ontology/metadata/${projectId}/annotations`, payload);
+      
+      // Immediate optimistic UI update
+      const newAnnotation: any = {
         propertyIri,
         value,
-        datatypeIri: resolveDatatypeIri(datatype)
-      });
-      await refreshOntologyAnnotations();
+        datatype: payload.datatype || datatype,
+        language: payload.language || language
+      };
+      setOntologyAnnotations(prev => [...prev, newAnnotation]);
+      console.log('[Dashboard] ✅ Annotation added, optimistically updated UI');
+      
+      // Delay refresh to allow backend to process
+      setTimeout(() => {
+        refreshOntologyAnnotations();
+      }, 300);
+      notificationService.success('Annotation Added', 'Ontology annotation added successfully.');
     } catch (error) {
       console.error('[Dashboard] Failed to add ontology annotation:', error);
       notificationService.error('Annotation Failed', 'Could not add ontology annotation.');
     }
   };
 
-  const handleUpdateOntologyAnnotation = async (propertyIri: string, oldValue: string, newValue: string, datatype?: string) => {
+  const handleUpdateOntologyAnnotation = async (propertyIri: string, oldValue: string, newValue: string, oldDatatype?: string, newDatatype?: string, newLanguage?: string) => {
     if (!projectId) return;
     try {
-      await apiClient.put(`/api/ontology/ontology/annotations/${projectId}`, {
+      const payload: any = {
         propertyIri,
         oldValue,
-        newValue,
-        datatypeIri: resolveDatatypeIri(datatype)
-      });
+        newValue
+      };
+      
+      // Add language if provided
+      if (newLanguage && newLanguage.trim()) {
+        payload.language = newLanguage.trim();
+      }
+      // Add datatype if provided (and no language)
+      else if (newDatatype) {
+        if (/^[a-z]{2}(-[A-Z]{2})?$/.test(newDatatype)) {
+          payload.language = newDatatype;
+        } else {
+          payload.datatype = newDatatype;
+        }
+      }
+      
+      console.log('[Dashboard] Updating annotation with payload:', payload);
+      await apiClient.put(`/api/ontology/metadata/${projectId}/annotations`, payload);
+      
+      // Immediate optimistic UI update
+      setOntologyAnnotations(prev => 
+        prev.map(ann => 
+          (ann.propertyIri === propertyIri && ann.value === oldValue && ann.datatype === oldDatatype)
+            ? { ...ann, value: newValue, datatype: payload.datatype || newDatatype, language: payload.language || newLanguage }
+            : ann
+        )
+      );
+      console.log('[Dashboard] ✅ Annotation updated, optimistically updated UI');
+      
+      // Then refresh from server
       await refreshOntologyAnnotations();
+      notificationService.success('Annotation Updated', 'Ontology annotation updated successfully.');
     } catch (error) {
       console.error('[Dashboard] Failed to update ontology annotation:', error);
       notificationService.error('Annotation Failed', 'Could not update ontology annotation.');
@@ -3001,24 +3300,55 @@ const Dashboard = () => {
   const handleDeleteOntologyAnnotation = async (propertyIri: string, value: string, datatype?: string) => {
     if (!projectId) return;
     try {
-      await apiClient.delete(`/api/ontology/ontology/annotations/${projectId}`, {
-        params: {
-          propertyIri,
-          value,
-          datatypeIri: resolveDatatypeIri(datatype)
+      // Build query string with URL-encoded parameters
+      let queryString = `propertyIri=${encodeURIComponent(propertyIri)}&value=${encodeURIComponent(value)}`;
+      
+      // Backend expects 'language' parameter for language tags
+      if (datatype) {
+        // If it's a language tag, send as language
+        if (/^[a-z]{2}(-[A-Z]{2})?$/.test(datatype)) {
+          queryString += `&language=${encodeURIComponent(datatype)}`;
+        } else {
+          // Otherwise send as datatype (though backend DELETE doesn't use it currently)
+          queryString += `&datatype=${encodeURIComponent(datatype)}`;
         }
-      });
-      await refreshOntologyAnnotations();
-    } catch (error) {
+      }
+      
+      await apiClient.delete(`/api/ontology/metadata/${projectId}/annotations?${queryString}`);
+      
+      // Immediate UI update
+      setOntologyAnnotations(prev => 
+        prev.filter(ann => 
+          !(ann.propertyIri === propertyIri && 
+            ann.value === value && 
+            ann.datatype === datatype)
+        )
+      );
+      
+      // Delayed refresh
+      setTimeout(() => {
+        refreshOntologyAnnotations();
+      }, 100);
+      
+      notificationService.success('Annotation Deleted', 'Ontology annotation deleted successfully.');
+    } catch (error: any) {
       console.error('[Dashboard] Failed to delete ontology annotation:', error);
-      notificationService.error('Annotation Failed', 'Could not delete ontology annotation.');
+      console.error('[Dashboard] Error details:', {
+        message: error?.message,
+        status: error?.status || error?.response?.status,
+        data: error?.data || error?.response?.data,
+        code: error?.code
+      });
+      const errorMsg = error?.data?.message || error?.response?.data?.message || error?.message || 'Could not delete ontology annotation.';
+      notificationService.error('Annotation Failed', errorMsg);
     }
   };
+
 
   const handleAddImport = async () => {
     if (!projectId || !importDraft.trim()) return;
     try {
-      await apiClient.post(`/api/ontology/ontology/imports/${projectId}`, {
+      await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, {
         importIri: importDraft.trim()
       });
       setImportDraft('');
@@ -3073,25 +3403,37 @@ const Dashboard = () => {
           // Unix absolute path like /path/file.owl -> file:///path/file.owl
           importIriForBackend = 'file://' + normalizedPath;
         } else if (normalizedPath.startsWith('./') || normalizedPath.startsWith('../')) {
-          // Already has ./ or ../ prefix - keep as relative path
-          importIriForBackend = normalizedPath;
+          // Strip relative path prefix - backend expects just the filename
+          importIriForBackend = normalizedPath.replace(/^\.\//, '').replace(/^\.\.\//, '');
         } else {
-          // Simple filename like "file.owl" -> "./file.owl" (relative to ontology)
-          importIriForBackend = './' + normalizedPath;
+          // Simple filename like "file.owl" - send as-is
+          importIriForBackend = normalizedPath;
         }
         console.log('[Dashboard] Converted to URI:', importIriForBackend);
       }
       
       if (isEdit && originalIri !== importIriForBackend) {
         // Delete old and add new
-        await apiClient.delete(`/api/ontology/ontology/imports/${projectId}`, {
-          params: { importIri: originalIri }
-        });
+        await apiClient.delete(`/api/ontology/metadata/${projectId}/imports?importIri=${encodeURIComponent(originalIri)}`);
       }
       
       if (!isEdit || originalIri !== importIriForBackend) {
         console.log('[Dashboard] Posting import IRI to backend:', importIriForBackend);
-        await apiClient.post(`/api/ontology/ontology/imports/${projectId}`, {
+        
+        // Immediate optimistic UI update BEFORE API call
+        if (isEdit && originalIri !== importIriForBackend) {
+          // Remove old import and add new one
+          setOntologyImports(prev => {
+            const filtered = prev.filter(i => i !== originalIri);
+            return [...filtered, importIriForBackend];
+          });
+        } else if (!isEdit) {
+          // Just add new import
+          setOntologyImports(prev => [...prev, importIriForBackend]);
+        }
+        console.log('[Dashboard] ⚡ Optimistically added import to UI');
+        
+        await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, {
           importIri: importIriForBackend
         });
         console.log('[Dashboard] ✅ Import IRI saved to backend');
@@ -3102,26 +3444,33 @@ const Dashboard = () => {
       const hasActualPath = iri.startsWith('file://') || /^[A-Za-z]:[\\\/]/.test(iri) || iri.startsWith('/');
       if (isLocalFile && hasActualPath && window.vscode) {
         console.log('[Dashboard] Local file with actual path detected, requesting upload:', iri);
+        // Strip file:// protocol if present for the VSCode message
+        const cleanPath = iri.startsWith('file://') ? iri.replace('file:///', '').replace('file://', '') : iri;
         window.vscode.postMessage({
           type: 'importLocalFile',
-          filePath: iri,
+          filePath: cleanPath,
           currentProjectId: projectId
         });
       } else if (isLocalFile && !hasActualPath) {
         console.log('[Dashboard] Local file is a relative reference (filename only), skipping upload:', iri);
       }
       
-      await refreshOntologyImports();
+      // Close dialog first for immediate feedback
+      setIsImportDialogOpen(false);
+      
+      // Refresh from server to get canonical data
+      setTimeout(() => {
+        refreshOntologyImports();
+      }, 100);
+      
       notificationService.success(
         isEdit ? 'Import Updated' : 'Import Added',
         isEdit ? 'Import updated successfully.' : 'Import added successfully.'
       );
       
       if (isLocalFile) {
-        notificationService.info('File Upload', 'Local file is being uploaded to your files...');
+        notificationService.info('File Upload', 'Local file reference added to imports.');
       }
-      
-      setIsImportDialogOpen(false);
     } catch (error: any) {
       console.error('[Dashboard] ❌ Failed to save import:', error);
       console.error('[Dashboard] ❌ Error details:', {
@@ -3144,10 +3493,8 @@ const Dashboard = () => {
     if (!projectId || !importDraft.trim()) return;
     try {
       // Remove old and add new
-      await apiClient.delete(`/api/ontology/ontology/imports/${projectId}`, {
-        params: { importIri: oldIri }
-      });
-      await apiClient.post(`/api/ontology/ontology/imports/${projectId}`, {
+      await apiClient.delete(`/api/ontology/metadata/${projectId}/imports?importIri=${encodeURIComponent(oldIri)}`);
+      await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, {
         importIri: importDraft.trim()
       });
       setImportDraft('');
@@ -3162,10 +3509,17 @@ const Dashboard = () => {
   const handleRemoveImport = async (iri: string) => {
     if (!projectId) return;
     try {
-      await apiClient.delete(`/api/ontology/ontology/imports/${projectId}`, {
-        params: { importIri: iri }
-      });
-      await refreshOntologyImports();
+      await apiClient.delete(`/api/ontology/metadata/${projectId}/imports?importIri=${encodeURIComponent(iri)}`);
+      
+      // Immediate UI update
+      setOntologyImports(prev => prev.filter(i => i !== iri));
+      
+      // Delayed refresh
+      setTimeout(() => {
+        refreshOntologyImports();
+      }, 100);
+      
+      notificationService.success('Import Removed', 'Import removed successfully.');
     } catch (error) {
       console.error('[Dashboard] Failed to remove import:', error);
       notificationService.error('Import Failed', 'Could not remove import.');
@@ -3174,35 +3528,6 @@ const Dashboard = () => {
 
   const handleEditPrefix = (index: number) => {
     setEditingPrefixIndex(index);
-  };
-
-  const handleUpdatePrefix = async (oldPrefix: string, newPrefix: string, newNamespace: string) => {
-    if (!projectId) return;
-    try {
-      // The API expects the entire array of prefixes
-      const cleanedNewPrefix = newPrefix.endsWith(':') ? newPrefix.slice(0, -1) : newPrefix;
-      const cleanedOldPrefix = oldPrefix.endsWith(':') ? oldPrefix.slice(0, -1) : oldPrefix;
-      
-      // Create updated prefix list
-      let updatedPrefixes = [...prefixMappings];
-      
-      if (editingPrefixIndex !== null) {
-        // Update existing prefix
-        updatedPrefixes[editingPrefixIndex] = {
-          prefix: cleanedNewPrefix,
-          namespace: newNamespace
-        };
-      }
-      
-      // Send the entire array
-      await apiClient.put(`/api/ontology/ontology/prefixes/${projectId}`, updatedPrefixes);
-      setEditingPrefixIndex(null);
-      await refreshPrefixes();
-      notificationService.success('Prefix Updated', 'Prefix updated successfully.');
-    } catch (error) {
-      console.error('[Dashboard] Failed to update prefix:', error);
-      notificationService.error('Prefix Failed', 'Could not update prefix.');
-    }
   };
 
   const handleAddPrefixDialog = () => {
@@ -3221,19 +3546,22 @@ const Dashboard = () => {
       const cleanedPrefix = prefix.endsWith(':') ? prefix.slice(0, -1) : prefix;
       const cleanedOriginal = originalPrefix.endsWith(':') ? originalPrefix.slice(0, -1) : originalPrefix;
       
-      let updatedPrefixes;
+      // Backend expects POST with { prefix, iri, oldPrefix? }
+      const payload: any = {
+        prefix: cleanedPrefix,
+        iri: namespace
+      };
+      
       if (isEdit) {
-        // Update existing prefix
-        updatedPrefixes = prefixMappings.map(p => 
-          p.prefix === cleanedOriginal ? { prefix: cleanedPrefix, namespace } : p
-        );
-      } else {
-        // Add new prefix
-        updatedPrefixes = [...prefixMappings, { prefix: cleanedPrefix, namespace }];
+        payload.oldPrefix = cleanedOriginal;
       }
       
-      await apiClient.put(`/api/ontology/ontology/prefixes/${projectId}`, updatedPrefixes);
+      console.log('[Dashboard] Saving prefix:', payload);
+      await apiClient.post(`/api/ontology/metadata/${projectId}/prefixes`, payload);
+      
+      // Refresh prefixes from server
       await refreshPrefixes();
+      
       notificationService.success(
         isEdit ? 'Prefix Updated' : 'Prefix Added',
         isEdit ? 'Prefix updated successfully.' : 'Prefix added successfully.'
@@ -3248,29 +3576,14 @@ const Dashboard = () => {
   const handleDeletePrefix = async (prefix: string) => {
     if (!projectId) return;
     try {
-      // Normalize prefix by removing colon for comparison
+      // Normalize prefix by removing colon
       const cleanedPrefix = prefix.endsWith(':') ? prefix.slice(0, -1) : prefix;
-      // Filter out the prefix, normalizing stored prefixes too
-      const updatedPrefixes = prefixMappings
-        .filter(p => {
-          const storedPrefix = p.prefix.endsWith(':') ? p.prefix.slice(0, -1) : p.prefix;
-          return storedPrefix !== cleanedPrefix;
-        })
-        .map(p => ({
-          prefix: p.prefix.endsWith(':') ? p.prefix.slice(0, -1) : p.prefix,
-          namespace: p.namespace
-        }));
       
       console.log('[Dashboard] Deleting prefix:', cleanedPrefix);
-      console.log('[Dashboard] Updated prefixes:', updatedPrefixes);
+      await apiClient.delete(`/api/ontology/metadata/${projectId}/prefixes?prefix=${encodeURIComponent(cleanedPrefix)}`);
       
-      await apiClient.put(`/api/ontology/ontology/prefixes/${projectId}`, updatedPrefixes);
-      
-      // Force update the local state immediately
-      setPrefixMappings(updatedPrefixes.map(p => ({
-        prefix: p.prefix.endsWith(':') ? p.prefix : `${p.prefix}:`,
-        namespace: p.namespace
-      })));
+      // Refresh from server
+      await refreshPrefixes();
       
       notificationService.success('Prefix Deleted', 'Prefix deleted successfully.');
     } catch (error) {
@@ -3279,19 +3592,51 @@ const Dashboard = () => {
     }
   };
 
-  const handleAddAxiom = async () => {
-    if (!projectId || !axiomDraft.definition) return;
+  const handleAddAxiom = async (definition?: string, superClassIri?: string) => {
+    if (!projectId) return;
+    
+    // Use parameters if provided, otherwise fall back to axiomDraft state
+    const axiomDefinition = definition || axiomDraft.definition;
+    const axiomSuperClass = superClassIri !== undefined ? superClassIri : axiomDraft.superClassIri;
+    
+    if (!axiomDefinition) return;
+    
     try {
-      await apiClient.post(`/api/ontology/ontology/axioms/${projectId}`, {
-        definition: axiomDraft.definition,
-        superClassIri: axiomDraft.superClassIri
+      console.log('[Dashboard] Adding general class axiom:', { projectId, subClass: axiomDefinition, superClass: axiomSuperClass });
+      await apiClient.post(`/api/ontology/metadata/${projectId}/gci`, {
+        subClass: axiomDefinition,
+        superClass: axiomSuperClass || ''
       });
+      
+      // Immediately update the UI with the new axiom
+      const newAxiom = {
+        value: `${axiomDefinition} SubClassOf ${axiomSuperClass}`,
+        subClass: axiomDefinition,
+        superClass: axiomSuperClass || '',
+        definition: axiomDefinition,
+        superClassIri: axiomSuperClass || '',
+        subExpression: axiomDefinition
+      };
+      setGeneralClassAxioms([...generalClassAxioms, newAxiom]);
+      
       setAxiomDraft({ definition: '', superClassIri: '' });
       setAxiomDialogOpen(false);
-      await refreshGeneralClassAxioms();
-    } catch (error) {
+      setEditingAxiomIndex(null);
+      
+      // Refresh from server to get complete data
+      setTimeout(() => refreshGeneralClassAxioms(), 100);
+      
+      notificationService.success('Axiom Added', 'General class axiom added successfully.');
+    } catch (error: any) {
       console.error('[Dashboard] Failed to add axiom:', error);
-      notificationService.error('Axiom Failed', 'Could not add general class axiom.');
+      console.error('[Dashboard] Error details:', {
+        message: error?.message,
+        status: error?.status || error?.response?.status,
+        data: error?.data || error?.response?.data,
+        code: error?.code
+      });
+      const errorMsg = error?.data?.message || error?.response?.data?.message || error?.message || 'Could not add general class axiom.';
+      notificationService.error('Axiom Failed', errorMsg);
     }
   };
 
@@ -3299,31 +3644,47 @@ const Dashboard = () => {
     const axiom = generalClassAxioms[index];
     setEditingAxiomIndex(index);
     setAxiomDraft({
-      definition: axiom.definition || '',
-      superClassIri: axiom.superClassIri || ''
+      definition: axiom.subClass || axiom.definition || '',
+      superClassIri: axiom.superClass || axiom.superClassIri || ''
     });
     setAxiomDialogOpen(true);
   };
 
-  const handleUpdateAxiom = async () => {
+  const handleUpdateAxiom = async (newSubClass?: string, newSuperClass?: string) => {
     if (!projectId || editingAxiomIndex === null) return;
     try {
       const oldAxiom = generalClassAxioms[editingAxiomIndex];
-      // Delete old and add new
-      await apiClient.delete(`/api/ontology/ontology/axioms/${projectId}`, {
-        params: { 
-          definition: oldAxiom.definition,
-          superClassIri: oldAxiom.superClassIri 
-        }
+      const subClass = newSubClass !== undefined ? newSubClass : axiomDraft.definition;
+      const superClass = newSuperClass !== undefined ? newSuperClass : axiomDraft.superClassIri;
+      console.log('[Dashboard] Updating general class axiom:', { projectId, oldAxiom, newAxiom: { subClass, superClass } });
+      
+      // Use PUT endpoint to update - backend expects oldValue as the full value string
+      await apiClient.put(`/api/ontology/metadata/${projectId}/gci/${editingAxiomIndex}`, {
+        oldValue: oldAxiom.value || oldAxiom.subClass || oldAxiom.definition || '',
+        subClass,
+        superClass: superClass || ''
       });
-      await apiClient.post(`/api/ontology/ontology/axioms/${projectId}`, {
-        definition: axiomDraft.definition,
-        superClassIri: axiomDraft.superClassIri
-      });
+      
+      // Immediately update UI
+      const updatedAxioms = [...generalClassAxioms];
+      updatedAxioms[editingAxiomIndex] = {
+        value: `${subClass} SubClassOf ${superClass}`,
+        subClass,
+        superClass: superClass || '',
+        definition: subClass,
+        superClassIri: superClass || '',
+        subExpression: subClass
+      };
+      setGeneralClassAxioms(updatedAxioms);
+      
       setAxiomDraft({ definition: '', superClassIri: '' });
       setEditingAxiomIndex(null);
       setAxiomDialogOpen(false);
-      await refreshGeneralClassAxioms();
+      
+      // Refresh from server
+      setTimeout(() => refreshGeneralClassAxioms(), 100);
+      
+      notificationService.success('Axiom Updated', 'General class axiom updated successfully.');
     } catch (error) {
       console.error('[Dashboard] Failed to update axiom:', error);
       notificationService.error('Axiom Failed', 'Could not update general class axiom.');
@@ -3334,13 +3695,25 @@ const Dashboard = () => {
     if (!projectId) return;
     try {
       const axiom = generalClassAxioms[index];
-      await apiClient.delete(`/api/ontology/ontology/axioms/${projectId}`, {
-        params: { 
-          definition: axiom.definition,
-          superClassIri: axiom.superClassIri 
-        }
-      });
-      await refreshGeneralClassAxioms();
+      // Backend expects the 'value' field or construct it from subClass
+      const value = axiom.value || axiom.subClass || axiom.definition || axiom.subExpression || '';
+      console.log('[Dashboard] Deleting general class axiom:', { projectId, axiom, value });
+      
+      if (!value) {
+        notificationService.error('Axiom Failed', 'Cannot delete axiom without a value.');
+        return;
+      }
+      
+      await apiClient.delete(`/api/ontology/metadata/${projectId}/gci?value=${encodeURIComponent(value)}`);
+      
+      // Immediately update UI
+      const updatedAxioms = generalClassAxioms.filter((_, idx) => idx !== index);
+      setGeneralClassAxioms(updatedAxioms);
+      
+      // Refresh from server
+      setTimeout(() => refreshGeneralClassAxioms(), 100);
+      
+      notificationService.success('Axiom Deleted', 'General class axiom deleted successfully.');
     } catch (error) {
       console.error('[Dashboard] Failed to delete axiom:', error);
       notificationService.error('Axiom Failed', 'Could not delete general class axiom.');
@@ -3350,10 +3723,19 @@ const Dashboard = () => {
   const refreshGeneralClassAxioms = async () => {
     if (!projectId) return;
     try {
-      const response = await apiClient.get<any>(`/api/ontology/query/general-class-axioms/${projectId}`);
+      const response = await apiClient.get<any>(`/api/ontology/metadata/${projectId}/gci`);
       const payload = response?.data || response;
       const data = payload?.data || payload || [];
-      setGeneralClassAxioms(Array.isArray(data) ? data : []);
+      // Map backend fields to frontend expected structure
+      const mappedData = Array.isArray(data) ? data.map((axiom: any) => ({
+        value: axiom.value,
+        subClass: axiom.subClass || '',
+        superClass: axiom.superClass || '',
+        definition: axiom.subClass || axiom.definition || '',
+        superClassIri: axiom.superClass || axiom.superClassIri || '',
+        subExpression: axiom.subClass || axiom.subExpression || ''
+      })) : [];
+      setGeneralClassAxioms(mappedData);
     } catch (error) {
       console.error('[Dashboard] Failed to refresh general class axioms:', error);
     }
@@ -3362,15 +3744,11 @@ const Dashboard = () => {
   const handleSavePrefixes = async () => {
     if (!projectId) return;
     try {
-      // Clean up prefixes by removing trailing colons before sending to backend
-      const cleanedPrefixes = prefixMappings.map(p => ({
-        ...p,
-        prefix: p.prefix.endsWith(':') ? p.prefix.slice(0, -1) : p.prefix
-      }));
-      
-      await apiClient.put(`/api/ontology/ontology/prefixes/${projectId}`, cleanedPrefixes);
+      // Individual prefix updates should be done via handleSavePrefix
+      // This bulk save is not supported by backend
       setIsPrefixEditing(false);
       await refreshPrefixes();
+      notificationService.info('Prefixes', 'Edit mode disabled. Use individual add/edit/delete operations.');
     } catch (error) {
       console.error('[Dashboard] Failed to save prefixes:', error);
       notificationService.error('Prefixes Failed', 'Could not save prefixes.');
@@ -3391,11 +3769,11 @@ const Dashboard = () => {
     }
   }, [projectId, collaboration.state.activeUsers, user?.id]);
 
-  // Collaborative cursor tracking
+  // Collaborative cursor tracking - includes clicks and mouse movement
   useEffect(() => {
     if (!projectId || !user) return;
 
-    const handleMouseMove = (e: MouseEvent) => {
+    const broadcastCursor = (e: MouseEvent | PointerEvent) => {
       const newCursor = { x: e.clientX, y: e.clientY };
       setMyLocalCursor(newCursor);
       
@@ -3412,11 +3790,23 @@ const Dashboard = () => {
       }
     };
 
+    const handleMouseMove = (e: MouseEvent) => {
+      broadcastCursor(e);
+    };
+
+    const handleClick = (e: MouseEvent) => {
+      // Immediately broadcast cursor position on click
+      broadcastCursor(e);
+    };
+
     const throttledMouseMove = throttle(handleMouseMove, 50); // Throttle to 20fps
+    
     document.addEventListener('mousemove', throttledMouseMove);
+    document.addEventListener('click', handleClick); // Track all clicks
 
     return () => {
       document.removeEventListener('mousemove', throttledMouseMove);
+      document.removeEventListener('click', handleClick);
     };
   }, [projectId, user]);
 
@@ -3554,71 +3944,99 @@ const Dashboard = () => {
   }, [refreshSelectedClassIndividualDetails]);
 
   const fetchProjects = useCallback(async () => {
+    if (!user?.email) {
+      console.log('[Dashboard] ❌ fetchProjects skipped - user email not available');
+      console.log('[Dashboard] User object:', user);
+      return;
+    }
     try {
-      const userEmail = user?.email || '';
-      const response = await apiClient.get<{ success: boolean; projects?: any[]; myFiles?: any[]; sharedFiles?: any[] }>(`/api/projects?userEmail=${encodeURIComponent(userEmail)}`);
+      const userEmail = user.email;
+      console.log('[Dashboard] 📂 Fetching projects for user email:', userEmail);
+      const response = await apiClient.get<any>(`/api/projects?userEmail=${encodeURIComponent(userEmail)}`);
       
+      console.log('[Dashboard] 📥 fetchProjects RAW response:', response);
+      console.log('[Dashboard] 📥 fetchProjects response type:', typeof response);
+      console.log('[Dashboard] 📥 fetchProjects response keys:', response ? Object.keys(response) : 'null');
+      
+      // Handle case where response might be wrapped in a data property
+      const data = response?.data || response;
+      
+      console.log('[Dashboard] 📥 fetchProjects processed data:', {
+        success: data?.success,
+        hasMyFiles: data?.myFiles !== undefined,
+        myFilesCount: data?.myFiles?.length || 0,
+        hasSharedFiles: data?.sharedFiles !== undefined,
+        sharedFilesCount: data?.sharedFiles?.length || 0,
+        hasProjects: data?.projects !== undefined,
+        projectsCount: data?.projects?.length || 0,
+        myFilesData: data?.myFiles,
+        sharedFilesData: data?.sharedFiles
+      });
       setHasFetchedProjects(true);
       
-      if (response.success) {
-        // Handle new format with myFiles and sharedFiles
-        if (response.myFiles && response.sharedFiles) {
-          const allProjects = [...(response.myFiles || []), ...(response.sharedFiles || [])];
+      if (data?.success) {
+        // Handle new format with myFiles and sharedFiles (check if properties exist, not just truthy)
+        if (data.myFiles !== undefined && data.sharedFiles !== undefined) {
+          // Ensure all files have filename property for display
+          const myFilesWithNames = (data.myFiles || []).map((p: any) => ({
+            ...p,
+            filename: p.filename || p.name || p.id
+          }));
+          const sharedFilesWithNames = (data.sharedFiles || []).map((p: any) => ({
+            ...p,
+            filename: p.filename || p.name || p.id
+          }));
+          const allProjects = [...myFilesWithNames, ...sharedFilesWithNames];
           setAvailableProjects(allProjects);
-          setMyFiles(response.myFiles || []);
-          setSharedFiles(response.sharedFiles || []);
-          console.log('[Dashboard] Fetched', response.myFiles.length, 'myFiles and', response.sharedFiles.length, 'sharedFiles');
-          
-          // Only auto-load the first file if:
-          // 1. No projectId is set
-          // 2. User hasn't manually clicked on any file
-          // 3. Not expecting a fileReady message from upload
-          // 4. This is NOT the initial mount (hasFetchedProjects was false before this call)
-          const shouldAutoLoad = !projectId && !hasUserSelectedFileRef.current && !isExpectingFileReady && hasFetchedProjects;
-          
-          if (shouldAutoLoad && response.myFiles.length > 0) {
-            const firstProject = response.myFiles[0];
-            console.log('[Dashboard] Auto-loading first project:', firstProject.id);
-            setProjectId(firstProject.id);
-            fetchData(firstProject.id);
-          } else if (!projectId && response.myFiles.length === 0 && response.sharedFiles.length === 0) {
-            // No files at all - show empty state
-            console.log('[Dashboard] No files found, showing empty state');
-            setIsInitialLoading(false);
-          }
-        } else if (response.projects) {
+          setMyFiles(myFilesWithNames);
+          setSharedFiles(sharedFilesWithNames);
+          setListOfFiles(allProjects); // Update listOfFiles with combined list
+          console.log('[Dashboard] ✅ Files loaded - My Files:', myFilesWithNames.length, 'Shared:', sharedFilesWithNames.length);
+          console.log('[Dashboard] ✅ myFilesWithNames:', myFilesWithNames);
+          console.log('[Dashboard] ✅ sharedFilesWithNames:', sharedFilesWithNames);
+        } else if (data.projects) {
           // Backward compatibility with old format
-          setAvailableProjects(response.projects);
+          const projectsWithNames = (data.projects || []).map((p: any) => ({
+            ...p,
+            filename: p.filename || p.name || p.id
+          }));
+          setAvailableProjects(projectsWithNames);
           // Assume all projects are "myFiles" if no sharedBy field
-          setMyFiles(response.projects.filter((p: any) => !p.sharedBy));
-          setSharedFiles(response.projects.filter((p: any) => p.sharedBy));
-          
-          const shouldAutoLoad = !projectId && !hasUserSelectedFileRef.current && !isExpectingFileReady && hasFetchedProjects;
-          
-          if (shouldAutoLoad && response.projects.length > 0) {
-            const firstProject = response.projects[0];
-            console.log('[Dashboard] Auto-loading first project:', firstProject.id);
-            setProjectId(firstProject.id);
-            fetchData(firstProject.id);
-          } else if (!projectId && response.projects.length === 0) {
-            // No files at all - show empty state
-            console.log('[Dashboard] No files found, showing empty state');
-            setIsInitialLoading(false);
-          }
+          const myFilesList = projectsWithNames.filter((p: any) => !p.sharedBy);
+          const sharedFilesList = projectsWithNames.filter((p: any) => p.sharedBy);
+          setMyFiles(myFilesList);
+          setSharedFiles(sharedFilesList);
+          setListOfFiles(projectsWithNames); // Set combined list
+          console.log('[Dashboard] ✅ Files loaded (legacy format) - My Files:', myFilesList.length, 'Shared:', sharedFilesList.length);
+        } else {
+          console.log('[Dashboard] ⚠️ No myFiles/sharedFiles or projects in response - setting empty arrays');
+          console.log('[Dashboard] ⚠️ Full response data:', data);
+          setMyFiles([]);
+          setSharedFiles([]);
+          setListOfFiles([]);
         }
+      } else {
+        console.log('[Dashboard] ⚠️ Response not successful:', data);
+        setMyFiles([]);
+        setSharedFiles([]);
+        setListOfFiles([]);
       }
-    } catch (error) {
-      console.error("Failed to fetch projects:", error);
+    } catch (error: any) {
+      console.error('[Dashboard] ❌ Failed to fetch projects:', error);
+      console.error('[Dashboard] ❌ Error details:', error?.response?.data || error?.message || error);
+      setMyFiles([]);
+      setSharedFiles([]);
+      setListOfFiles([]);
       setIsInitialLoading(false);
     }
-  }, [projectId, fetchData, user, isExpectingFileReady]);
+  }, [user?.email]); // Only depend on user email - this is the only thing that matters for fetching
 
   const handleProjectSelection = useCallback((selectedProjectId: string) => {
     setHasUserSelectedFile(true); // Mark that user has manually selected a file
     setProjectId(selectedProjectId);
     setShowProjectSelector(false);
     fetchData(selectedProjectId);
-  }, [fetchData]);
+  }, []); // fetchData captured in closure, removed to prevent infinite loop
 
   const handleOpenProjectSelector = useCallback(() => {
     // Fetch projects when user opens the selector
@@ -3656,9 +4074,75 @@ const Dashboard = () => {
   // Fetch projects list on mount (but don't auto-load a file)
   // This populates the file selector dropdown when user clicks it
   useEffect(() => {
+    if (!user) {
+      console.log('[Dashboard] Skipping initial fetch - user not available');
+      return;
+    }
+    
+    // Only run once on mount - use a ref to track if we've already fetched
     console.log('[Dashboard] Initial mount - fetching projects list');
+    console.log('[Dashboard] User details:', {
+      email: user.email,
+      username: user.username,
+      isAdmin: user.isAdmin,
+      workspaceId: user.workspaceId
+    });
+    console.log('[Dashboard] Component props:', {
+      initialProjectId,
+      projectId,
+      onBackToProjects: !!onBackToProjects
+    });
+    
+    // Always fetch user's files for the OpenFileDialog
+    // This populates myFiles and sharedFiles based on user email
+    console.log('[Dashboard] ✅ Fetching all projects for user email:', user.email);
     fetchProjects();
-  }, [fetchProjects]);
+    
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.email]); // Only re-run when user email changes, not on every render
+  
+  // Track if a file is currently being loaded to prevent duplicate loads
+  const fileLoadingRef = useRef(false);
+  const lastLoadedFileRef = useRef<string | null>(null);
+  
+  // Auto-load selected file from Project Library (admin flow)
+  useEffect(() => {
+    if (selectedFileId && selectedFileName && initialProjectId) {
+      // Prevent loading the same file multiple times or loading while another load is in progress
+      if (fileLoadingRef.current || lastLoadedFileRef.current === selectedFileId) {
+        console.log('[Dashboard] Skipping duplicate load for:', selectedFileId);
+        return;
+      }
+      
+      console.log('[Dashboard] Auto-loading selected file:', selectedFileId, selectedFileName);
+      console.log('[Dashboard] Parent project for file menu:', initialProjectId);
+      
+      // Mark as loading
+      fileLoadingRef.current = true;
+      lastLoadedFileRef.current = selectedFileId;
+      
+      // Clear any previous file state
+      console.log('[Dashboard] 🧹 Cleaning up previous file state...');
+      setIsInitialLoading(true);
+      setMainTab('Entities');
+      setEntitiesTab('Classes');
+      
+      setHasUserSelectedFile(true); // Mark that file was selected
+      
+      // Upload the file to GraphDB first, then it will auto-load
+      handleLoadProjectFile(selectedFileId, selectedFileName).finally(() => {
+        // Reset loading flag after a delay to prevent rapid re-loads
+        setTimeout(() => {
+          fileLoadingRef.current = false;
+        }, 1000);
+      });
+    }
+    
+    // Cleanup when unmounting
+    return () => {
+      console.log('[Dashboard] 🧹 Cleanup on unmount');
+    };
+  }, [selectedFileId, selectedFileName, initialProjectId]);
   
   // Update collaboration context when projectId changes
   useEffect(() => {
@@ -3858,7 +4342,8 @@ const Dashboard = () => {
               
               // Fetch the data
               console.log('[Dashboard] Fetching data for:', message.status.projectId);
-              fetchData(message.status.projectId, false)
+              console.log('[Dashboard] Parent project for file menu:', initialProjectId);
+              fetchData(message.status.projectId, false, initialProjectId)
                 .then(() => {
                   console.log('[Dashboard] ✅ Data loaded successfully');
                   console.log('[Dashboard] Closing dialogs...');
@@ -3964,7 +4449,7 @@ const Dashboard = () => {
       console.log('[Dashboard] 📢 Removing message listener');
       window.removeEventListener("message", handleMessage);
     };
-  }, [visibleMainTabs, fetchData]);
+  }, [projectId, initialProjectId, isExpectingFileReady]); // Remove fetchData to prevent infinite loop - it's captured in the closure
   
   const loadChildren = useCallback(async (nodeId: string) => {
     if (!projectId) return;
@@ -4504,7 +4989,7 @@ const Dashboard = () => {
       window.removeEventListener('remoteEditReceived', handleRemoteEdit as EventListener);
       console.log('[Dashboard] 🎧 Unregistered listener for remote edits');
     };
-  }, [projectId, selectedItem, entitiesTab, updateItemInState, refreshClassHierarchy, loadChildren, fetchData, showNotification]);
+  }, [projectId, selectedItem, entitiesTab]); // Removed fetchData, showNotification to prevent infinite loop
 
   // Handle rollback events from Change Assistant plugin - refresh data
   useEffect(() => {
@@ -4686,7 +5171,7 @@ const Dashboard = () => {
     return () => {
       window.removeEventListener('ontologyRollback', handleRollback as EventListener);
     };
-  }, [projectId, selectedItem, entitiesTab, refreshClassHierarchy, updateItemInState, showNotification, fetchData]);
+  }, [projectId, selectedItem, entitiesTab]); // Removed fetchData, showNotification to prevent infinite loop
 
   // Handle file share notifications
   useEffect(() => {
@@ -4715,7 +5200,7 @@ const Dashboard = () => {
     return () => {
       window.removeEventListener('fileShared', handleFileShared as EventListener);
     };
-  }, [projectId, fetchData, showToast]);
+  }, [projectId]); // Removed fetchData, showToast to prevent infinite loop
 
   // Handle reconnection after WebSocket disconnect - refresh data to sync
   useEffect(() => {
@@ -4735,7 +5220,7 @@ const Dashboard = () => {
     return () => {
       window.removeEventListener('collaborationReconnected', handleReconnection as EventListener);
     };
-  }, [projectId, fetchData, showNotification]);
+  }, [projectId]); // Removed fetchData, showNotification to prevent infinite loop
 
   useEffect(() => {
     // Initialize notification service to show toasts via collaboration context
@@ -5053,6 +5538,114 @@ const Dashboard = () => {
       }
     });
   }, [hasUnsavedChanges, draftCount, projectId, handleSave]);
+
+  // Load a file from the project (admin flow) - fetch content and upload to ontology editor
+  const handleLoadProjectFile = useCallback(async (fileId: string, fileName: string) => {
+    if (!initialProjectId) {
+      console.error('[Dashboard] Cannot load project file without parent project ID');
+      return;
+    }
+    
+    try {
+      console.log('[Dashboard] 📂 Loading file from project:', fileId, fileName);
+      notificationService.info('Loading File', `Loading ${fileName}...`);
+      
+      // Reset all entity state before loading new file
+      console.log('[Dashboard] 🔄 Resetting state for new file...');
+      setClassHierarchy([]);
+      setObjectProperties([]);
+      setDataProperties([]);
+      setAnnotationProperties([]);
+      setIndividuals([]);
+      setDatatypes([]);
+      setSelectedItem(null);
+      setExpandedNodes(['http://www.w3.org/2002/07/owl#Thing']);
+      setSearchQuery('');
+      setHasUnsavedChanges(false);
+      setDraftCount(0);
+      
+      // Fetch file content from auth service
+      const fileContent = await apiClient.get<{ id: string; name: string; content: string; type: string; size: number }>(
+        `/api/projects/${initialProjectId}/files/${fileId}/content`
+      );
+      
+      if (!fileContent || !fileContent.content) {
+        throw new Error('File content not found');
+      }
+      
+      console.log('[Dashboard] 📥 File content retrieved, uploading to ontology editor...');
+      
+      // Create a unique project ID for this file (remove extension and add timestamp)
+      const baseFileName = fileName.replace(/\.[^/.]+$/, '');
+      const ontologyProjectId = `${baseFileName}-${Date.now()}`;
+      
+      // Extract pure base64 data (remove data URL prefix if present)
+      const base64Data = fileContent.content.includes(',') 
+        ? fileContent.content.split(',')[1] 
+        : fileContent.content;
+      
+      // Set the project ID first so IMPORT_COMPLETED knows which project to load
+      setProjectId(ontologyProjectId);
+      pendingImportProjectIdRef.current = ontologyProjectId;
+      
+      // Upload to ontology editor service
+      if (window.vscode) {
+        // In VS Code, use message passing
+        window.vscode.postMessage({
+          type: 'uploadOntology',
+          projectId: ontologyProjectId,
+          fileName: fileName,
+          fileContent: base64Data,
+          ownerEmail: user?.email
+        });
+        
+        // The fileReady message will trigger fetchData via IMPORT_COMPLETED
+        setIsExpectingFileReady(true);
+        console.log('[Dashboard] ✅ Upload request sent to extension');
+        console.log('[Dashboard] Pending import project:', ontologyProjectId);
+        notificationService.info('Uploading', `Uploading ${fileName} to GraphDB...`);
+      } else {
+        // In browser, convert base64 to blob and use FormData
+        const byteCharacters = atob(base64Data);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: 'application/rdf+xml' });
+        
+        // Create FormData
+        const formData = new FormData();
+        formData.append('file', blob, fileName);
+        
+        // Upload using axios directly (apiClient doesn't support FormData)
+        const token = localStorage.getItem('authToken');
+        const uploadResponse = await fetch(`${window.API_BASE_URL || 'http://localhost:80'}/api/ontology/upload/${ontologyProjectId}?ownerEmail=${encodeURIComponent(user?.email || '')}`, {
+          method: 'POST',
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+          body: formData
+        });
+        
+        if (uploadResponse.ok) {
+          console.log('[Dashboard] ✅ File uploaded successfully');
+          setProjectId(ontologyProjectId);
+          
+          // Wait a moment for processing then fetch data with parentProjectId for file menu
+          setTimeout(() => {
+            fetchData(ontologyProjectId, false, initialProjectId);
+          }, 2000);
+          
+          notificationService.success('File Loaded', `${fileName} is ready for editing`);
+        } else {
+          const errorData = await uploadResponse.json().catch(() => ({ error: 'Upload failed' }));
+          throw new Error(errorData.error || 'Upload failed');
+        }
+      }
+    } catch (error: any) {
+      console.error('[Dashboard] ❌ Failed to load project file:', error);
+      notificationService.error('Load Failed', error?.message || 'Failed to load file');
+    }
+  }, [initialProjectId, user?.email]); // Removed fetchData to prevent infinite loop
 
   // Create Property from Class Expression Dialog
   const handleCreatePropertyFromDialog = useCallback(() => {
@@ -6759,6 +7352,7 @@ const Dashboard = () => {
             context={{ 
               projectId,
               apiBaseUrl: (window as any).API_BASE_URL || 'http://ec2-13-218-153-101.compute-1.amazonaws.com',
+              // apiBaseUrl: (window as any).API_BASE_URL || 'http://localhost:8082',
               permissions: {
                 canEdit: !readonlyMode,
                 canDelete: !readonlyMode,
@@ -6897,8 +7491,21 @@ const Dashboard = () => {
           const PluginComponent = plugin.component;
           return (
             <PluginComponent 
-              projectId={projectId || ''} 
-              
+              projectId={projectId || ''}
+              apiBaseUrl={window.API_BASE_URL}
+              selectedReasoner={selectedReasoner}
+              isReasonerRunning={isReasonerRunning}
+              isReasonerLoading={isReasonerLoading}
+              reasonerResults={reasonerResults}
+              consistencyResult={consistencyResult}
+              inferredClassHierarchy={inferredClassHierarchy}
+              inferredObjectPropertyHierarchy={inferredObjectPropertyHierarchy}
+              inferredDataPropertyHierarchy={inferredDataPropertyHierarchy}
+              onStartReasoner={startReasoner}
+              onStopReasoner={stopReasoner}
+              onSelectReasoner={handleSelectReasoner}
+              onToggleSync={toggleReasonerSync}
+              isReasonerSynced={isReasonerSynced}
             />
           );
         }
@@ -6988,10 +7595,11 @@ const Dashboard = () => {
                 </div>
                 {ontologyAnnotations.length > 0 ? (
                   <div className="space-y-2">
-                    {ontologyAnnotations.map((annotation, idx) => {
-                      const key = `${annotation.propertyIri}-${annotation.value}-${idx}`;
-                      const propertyLabel = annotation.propertyIri.includes('#') ? annotation.propertyIri.split('#').pop() :
-                        annotation.propertyIri.includes('/') ? annotation.propertyIri.split('/').pop() : annotation.propertyIri;
+                    {ontologyAnnotations.filter(ann => ann && ann.propertyIri).map((annotation, idx) => {
+                      const key = `${annotation.property}-${annotation.value}-${idx}`;
+                      const propertyIri = annotation.property || '';
+                      const propertyLabel = propertyIri.includes('#') ? propertyIri.split('#').pop() :
+                        propertyIri.includes('/') ? propertyIri.split('/').pop() : propertyIri;
                       return (
                         <div key={key} className="border rounded-md transition-colors" style={{ borderColor: 'var(--border)' }} onMouseEnter={(e) => e.currentTarget.style.borderColor = 'var(--accent)'} onMouseLeave={(e) => e.currentTarget.style.borderColor = 'var(--border)'}>
                           <div className="px-3 py-2 border-b flex items-center justify-between" style={{ backgroundColor: 'var(--accent-tint)', borderColor: 'var(--border)' }}>
@@ -7333,11 +7941,11 @@ const Dashboard = () => {
                                   <div className="flex-1">
                                     <div className="text-[10px] font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>Axiom #{idx + 1}</div>
                                     <div className="font-medium text-xs mb-1" style={{ color: 'var(--text-primary)' }}>
-                                      {axiom.definition || 'Anonymous class expression'}
+                                      {axiom.subClass || axiom.definition || 'Anonymous class expression'}
                                     </div>
-                                    {axiom.superClassIri && (
+                                    {(axiom.superClass || axiom.superClassIri) && (
                                       <div className="text-[10px] font-mono break-all" style={{ color: 'var(--text-tertiary)' }}>
-                                        SubClassOf: {axiom.superClassIri}
+                                        SubClassOf: {axiom.superClass || axiom.superClassIri}
                                       </div>
                                     )}
                                   </div>
@@ -8269,6 +8877,20 @@ const Dashboard = () => {
         initialSubClass={editGCIData?.subClass}
         initialSuperClass={editGCIData?.superClass}
         editMode={!!editGCIData}
+        availableClasses={(() => {
+          const extractClasses = (nodes: TreeNode[]): Array<{ id: string; label: string }> => {
+            const classes: Array<{ id: string; label: string }> = [];
+            const traverse = (node: TreeNode) => {
+              classes.push({ id: node.id, label: node.label });
+              if (node.children) {
+                node.children.forEach(traverse);
+              }
+            };
+            nodes.forEach(traverse);
+            return classes;
+          };
+          return extractClasses(classHierarchy);
+        })()}
       />
       <EditOntologyIRIDialog
         isOpen={isEditOntologyIRIDialogOpen}
@@ -8285,16 +8907,29 @@ const Dashboard = () => {
           setAxiomDraft({ definition: '', superClassIri: '' });
         }}
         onSave={async (subClass, superClass) => {
-          setAxiomDraft({ definition: subClass, superClassIri: superClass });
           if (editingAxiomIndex !== null) {
-            await handleUpdateAxiom();
+            await handleUpdateAxiom(subClass, superClass);
           } else {
-            await handleAddAxiom();
+            await handleAddAxiom(subClass, superClass);
           }
         }}
         initialSubClass={axiomDraft.definition}
         initialSuperClass={axiomDraft.superClassIri}
         editMode={editingAxiomIndex !== null}
+        availableClasses={(() => {
+          const extractClasses = (nodes: TreeNode[]): Array<{ id: string; label: string }> => {
+            const classes: Array<{ id: string; label: string }> = [];
+            const traverse = (node: TreeNode) => {
+              classes.push({ id: node.id, label: node.label });
+              if (node.children) {
+                node.children.forEach(traverse);
+              }
+            };
+            nodes.forEach(traverse);
+            return classes;
+          };
+          return extractClasses(classHierarchy);
+        })()}
       />
       <AddAnnotationDialog
         isOpen={isOntologyAnnotationDialogOpen}
@@ -8302,16 +8937,18 @@ const Dashboard = () => {
           setIsOntologyAnnotationDialogOpen(false);
           setOntologyAnnotationEditTarget(null);
         }}
-        onAdd={(propertyIri, value, datatype) => {
+        onAdd={(propertyIri, value, datatype, lang) => {
           if (ontologyAnnotationEditTarget) {
             handleUpdateOntologyAnnotation(
               propertyIri,
               ontologyAnnotationEditTarget.value,
               value,
-              ontologyAnnotationEditTarget.datatype
+              ontologyAnnotationEditTarget.datatype,
+              datatype,
+              lang
             );
           } else {
-            handleAddOntologyAnnotation(propertyIri, value, datatype);
+            handleAddOntologyAnnotation(propertyIri, value, datatype, lang);
           }
           setIsOntologyAnnotationDialogOpen(false);
           setOntologyAnnotationEditTarget(null);
@@ -8646,11 +9283,16 @@ const Dashboard = () => {
       />
       <OpenFileDialog
         isOpen={showOpenDialog}
-        onClose={() => setShowOpenDialog(false)}
+        onClose={() => {
+          console.log('[Dashboard] Closing OpenFileDialog. myFiles:', myFiles.length, 'sharedFiles:', sharedFiles.length);
+          setShowOpenDialog(false);
+        }}
         myFiles={myFiles}
         sharedFiles={sharedFiles}
         currentProjectId={projectId}
         onSwitchFile={handleSwitchFile}
+        parentProjectId={initialProjectId}
+        onLoadProjectFile={handleLoadProjectFile}
       />
       <ConfirmDialog
         isOpen={confirmDialog.isOpen}
@@ -8749,19 +9391,32 @@ const Dashboard = () => {
             <div className="flex items-center gap-2 flex-shrink-0">
               {projectId && (
                 <button
-                  onClick={() => setShowCollaborationPanel(!showCollaborationPanel)}
+                  onClick={() => {
+                    if (!subscription.canAccessFeature('hasAdvancedCollaboration') && !subscription.isFree) {
+                      showToast(subscription.getUpgradeMessage('Advanced Collaboration'), 'warning');
+                      return;
+                    }
+                    setShowCollaborationPanel(!showCollaborationPanel);
+                  }}
                   className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors ${
                     showCollaborationPanel
                       ? 'bg-blue-600 text-white hover:bg-blue-700'
                       : isCurrentFileShared 
                         ? 'bg-green-100 text-green-700 hover:bg-green-200'
                         : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                  title={`Toggle Collaboration Panel${hasMultipleActiveUsers ? ` (${activeUsersInProject.length} users)` : isCurrentFileShared ? ' (Shared file)' : ' (Enable sharing to collaborate)'}`}
+                  } ${!subscription.canAccessFeature('hasAdvancedCollaboration') && !subscription.isFree ? 'opacity-60' : ''}`}
+                  title={
+                    !subscription.canAccessFeature('hasAdvancedCollaboration') && !subscription.isFree
+                      ? subscription.getUpgradeMessage('Advanced Collaboration')
+                      : `Toggle Collaboration Panel${hasMultipleActiveUsers ? ` (${activeUsersInProject.length} users)` : isCurrentFileShared ? ' (Shared file)' : ' (Enable sharing to collaborate)'}`
+                  }
                 >
                   <Users size={14} />
                   <span>Collaboration</span>
-                  {hasMultipleActiveUsers && (
+                  {!subscription.canAccessFeature('hasAdvancedCollaboration') && !subscription.isFree && (
+                    <span className="bg-amber-500 text-white text-[10px] px-1 rounded">PRO</span>
+                  )}
+                  {hasMultipleActiveUsers && subscription.canAccessFeature('hasAdvancedCollaboration') && (
                     <span className="bg-blue-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-semibold">
                       {activeUsersInProject.length}
                     </span>
@@ -8787,7 +9442,14 @@ const Dashboard = () => {
                   )}
                 </button>
               )}
-              <span className="text-xs text-gray-600">Welcome, {user?.username || 'Guest'}</span>
+              <span className="text-xs text-gray-600">
+                Welcome, {user?.username || 'Guest'}
+                {user?.workspaceName && (
+                  <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px] font-medium">
+                    {user.workspaceName}
+                  </span>
+                )}
+              </span>
               <button 
                 onClick={() => setShowThemeSettings(true)}
                 className="ontocode-icon-hover-accent cursor-pointer disabled:cursor-not-allowed flex items-center gap-1.5 text-xs p-2 rounded-md"
@@ -8795,6 +9457,29 @@ const Dashboard = () => {
               >
                 <Palette size={14} />
               </button>
+              {/* Subscription Plan Badge */}
+              <button 
+                onClick={() => setShowPlanDetails(true)}
+                className={`flex items-center gap-1.5 px-2 py-1 text-[10px] font-semibold rounded-md transition-all hover:shadow-lg cursor-pointer ${
+                  subscription.isEnterprise ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:from-amber-600 hover:to-orange-600' :
+                  subscription.isPro ? 'bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600' :
+                  'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`} 
+                title={`Current Plan: ${subscription.plan.toUpperCase()} - Click for details`}
+              >
+                {subscription.isEnterprise ? <Crown size={12} /> : subscription.isPro ? <Zap size={12} /> : <Sparkles size={12} />}
+                {subscription.plan.toUpperCase()}
+              </button>
+              {onBackToProjects && (
+                <button 
+                  onClick={onBackToProjects} 
+                  className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50 p-2 rounded-md cursor-pointer"
+                  title="Back to Projects"
+                >
+                  <GitBranch size={14} />
+                  Projects
+                </button>
+              )}
               <button onClick={logout} className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-md cursor-pointer">
                 <LogOut size={14} />
                 Logout
@@ -9242,6 +9927,13 @@ const Dashboard = () => {
         onClose={() => setShowThemeSettings(false)}
       />
 
+      {/* Plan Details Modal */}
+      <PlanDetailsModal
+        isOpen={showPlanDetails}
+        onClose={() => setShowPlanDetails(false)}
+        onUpgrade={handleUpgradePlan}
+      />
+
       {/* History Panel */}
       {projectId && (
         <HistoryPanel
@@ -9454,45 +10146,8 @@ const Dashboard = () => {
         </div>
       )}
 
-      {/* Collaborative Cursors */}
-      {Array.from(collaboratorCursors.entries()).map(([userId, cursor]) => (
-        <div
-          key={userId}
-          className="fixed pointer-events-none z-[9999] transition-transform duration-100"
-          style={{
-            left: `${cursor.x}px`,
-            top: `${cursor.y}px`,
-            transform: 'translate(-2px, -2px)'
-          }}
-        >
-          {/* Cursor SVG */}
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path
-              d="M5.65376 12.3673L15.7403 2.28069C16.0323 1.98873 16.5081 1.98873 16.8 2.28069L21.7169 7.19763C22.0089 7.48959 22.0089 7.96546 21.7169 8.25742L11.6303 18.3441C11.3384 18.636 10.8625 18.636 10.5706 18.3441L5.65376 13.4271C5.36179 13.1352 5.36179 12.6593 5.65376 12.3673Z"
-              fill={cursor.color}
-              stroke="white"
-              strokeWidth="1.5"
-            />
-            <path
-              d="M7.5 14L10 16.5"
-              stroke="white"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-            />
-          </svg>
-          
-          {/* User name label */}
-          <div
-            className="absolute left-6 top-1 px-2 py-1 rounded text-xs font-medium whitespace-nowrap shadow-lg"
-            style={{
-              backgroundColor: cursor.color,
-              color: 'white'
-            }}
-          >
-            {cursor.userName}
-          </div>
-        </div>
-      ))}
+      {/* Collaborative Cursors - Show cursors of all active users */}
+      <CollaborativeCursors cursors={collaboratorCursors} />
 
     </>
   );

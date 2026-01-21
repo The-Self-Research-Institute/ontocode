@@ -1,19 +1,29 @@
-
-
+﻿
 import React, { createContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import apiClient from '../services/apiClient';
 
 interface User {
     token: string;
+    userId?: string;
     username: string;
     email?: string;
+    roles?: string[];
+    isAdmin?: boolean;
+    workspaceId?: string;
+    workspaceName?: string;
+    workspaceRole?: string;
+    subscriptionPlan?: string; // 'free', 'pro', or 'enterprise'
 }
 
 interface AuthContextType {
     user: User | null;
     loading: boolean;
+    needsWorkspaceSelection: boolean;
     login: (username: string, password: string) => Promise<void>;
-    signup: (username: string, email: string, password: string) => Promise<void>;
+    signup: (username: string, email: string, password: string, role?: string) => Promise<void>;
+    selectWorkspace: (workspaceData: any) => void;
+    switchWorkspace: () => void;
+    updateSubscriptionPlan: (planId: string) => Promise<void>;
     logout: () => void;
     sessionExpiredMessage: string | null;
 }
@@ -38,15 +48,21 @@ const isTokenExpired = (token: string): boolean => {
 };
 
 // Decode JWT token to get user info
-const decodeToken = (token: string): { username: string; email?: string } => {
+const decodeToken = (token: string): { userId?: string; username: string; email?: string; roles?: string[]; isAdmin?: boolean; workspaceId?: string; workspaceName?: string; workspaceRole?: string } => {
     try {
         const parts = token.split('.');
         if (parts.length !== 3) return { username: 'unknown' };
         
         const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
         return {
+            userId: payload.userId || payload.id,
             username: payload.sub || 'unknown',
-            email: payload.email
+            email: payload.email,
+            roles: payload.roles || [],
+            isAdmin: payload.isAdmin || false,
+            workspaceId: payload.workspaceId,
+            workspaceName: payload.workspaceName,
+            workspaceRole: payload.workspaceRole
         };
     } catch (e) {
         console.error('[AuthContext] Error decoding token:', e);
@@ -59,18 +75,20 @@ export const AuthContext = createContext<AuthContextType | undefined>(undefined)
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
+    const [needsWorkspaceSelection, setNeedsWorkspaceSelection] = useState(false);
     const [sessionExpiredMessage, setSessionExpiredMessage] = useState<string | null>(null);
 
     const logout = useCallback((showExpiredMessage = false) => {
         console.log('[AuthContext] Logging out...');
         setUser(null);
+        setNeedsWorkspaceSelection(false);
         if (showExpiredMessage) {
             setSessionExpiredMessage('Session expired. Please login again.');
         }
         if (window.vscode) {
             window.vscode.postMessage({ type: 'logout' });
         }
-        console.log('[AuthContext] ✅ Logout successful');
+        console.log('[AuthContext]  Logout successful');
     }, []);
 
     // Register unauthorized callback with apiClient
@@ -100,14 +118,56 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     if (message.token) {
                         // Check if token is expired
                         if (isTokenExpired(message.token)) {
-                            console.log('[AuthContext] ⚠️ Stored token is expired, logging out');
+                            console.log('[AuthContext]  Stored token is expired, logging out');
                             logout(true);
                             setLoading(false);
                             return;
                         }
                         // Decode JWT to get user info
                         const userInfo = decodeToken(message.token);
-                        setUser({ token: message.token, username: userInfo.username, email: userInfo.email });
+                        
+                        // Check if user has workspace selected
+                        if (userInfo.workspaceId && userInfo.isAdmin) {
+                            // Admin with workspace selected - show ProjectDashboard
+                            setUser({ 
+                                token: message.token,
+                                userId: userInfo.userId,
+                                username: userInfo.username, 
+                                email: userInfo.email,
+                                roles: userInfo.roles,
+                                isAdmin: userInfo.isAdmin,
+                                workspaceId: userInfo.workspaceId,
+                                workspaceName: userInfo.workspaceName,
+                                workspaceRole: userInfo.workspaceRole
+                            });
+                            setNeedsWorkspaceSelection(false);
+                        } else if (userInfo.workspaceId && !userInfo.isAdmin) {
+                            // Non-admin with workspace - go directly to editor
+                            setUser({ 
+                                token: message.token,
+                                userId: userInfo.userId,
+                                username: userInfo.username, 
+                                email: userInfo.email,
+                                roles: userInfo.roles,
+                                isAdmin: userInfo.isAdmin,
+                                workspaceId: userInfo.workspaceId,
+                                workspaceName: userInfo.workspaceName,
+                                workspaceRole: userInfo.workspaceRole
+                            });
+                            setNeedsWorkspaceSelection(false);
+                        } else {
+                            // User without workspace
+                            setUser({ 
+                                token: message.token,
+                                userId: userInfo.userId,
+                                username: userInfo.username, 
+                                email: userInfo.email,
+                                roles: userInfo.roles,
+                                isAdmin: userInfo.isAdmin
+                            });
+                            // Admins need workspace selection, non-admins go directly to editor
+                            setNeedsWorkspaceSelection(userInfo.isAdmin || false);
+                        }
                         // Clear expired message on successful login
                         setSessionExpiredMessage(null);
                     }
@@ -123,7 +183,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return () => {
             window.removeEventListener('message', handleMessage);
         };
-    }, [requestTokenFromVSCode]);
+    }, [requestTokenFromVSCode, logout]);
 
     // Check token expiration every minute
     useEffect(() => {
@@ -131,7 +191,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
         const interval = setInterval(() => {
             if (isTokenExpired(user.token)) {
-                console.log('[AuthContext] ⚠️ Token expired, logging out');
+                console.log('[AuthContext]  Token expired, logging out');
                 logout(true);
             }
         }, 60000); // Check every 60 seconds
@@ -152,6 +212,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             console.log('[AuthContext] Login response:', response);
             // Backend returns 'jwt' field, not 'token'
             const token = response?.jwt || response?.token || response?.data?.jwt || response?.data?.token;
+            const responseData = response?.data || response;
+            const isAdmin = responseData?.isAdmin || false;
+            const roles = responseData?.roles || [];
+            const email = responseData?.email || '';
 
             if (!token) {
                 // Check if it's an error response
@@ -161,33 +225,56 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 throw new Error('No token received from server');
             }
 
+            console.log('[AuthContext] User isAdmin:', isAdmin);
             console.log('[AuthContext] Saving token to VS Code...');
             if (window.vscode) {
                 window.vscode.postMessage({ type: 'saveAuthToken', token });
             }
             
-            // Decode JWT to get user info
+            // Decode JWT to get user info (for workspace data if present)
             const userInfo = decodeToken(token);
-            setUser({ token, username: userInfo.username, email: userInfo.email });
+            
+            // Set user data
+            setUser({ 
+                token,
+                userId: userInfo.userId,
+                username: userInfo.username || username, 
+                email: userInfo.email || email,
+                roles: userInfo.roles || roles,
+                isAdmin: userInfo.isAdmin || isAdmin,
+                workspaceId: userInfo.workspaceId,
+                workspaceName: userInfo.workspaceName,
+                workspaceRole: userInfo.workspaceRole
+            });
+            
+            // Admins need workspace selection, non-admins skip it and go directly to editor
+            if (isAdmin || (roles && roles.includes('ROLE_ADMIN'))) {
+                console.log('[AuthContext]  Login successful - Admin user (ROLE_ADMIN), needs workspace selection');
+                setNeedsWorkspaceSelection(true);
+            } else {
+                console.log('[AuthContext]  Login successful - Regular user, skip workspace selection (direct to editor)');
+                setNeedsWorkspaceSelection(false);
+            }
+            
             // Clear expired message on successful login
             setSessionExpiredMessage(null);
-            console.log('[AuthContext] ✅ Login successful');
         } catch (error: any) {
-            console.error('[AuthContext] ❌ Login failed:', error);
+            console.error('[AuthContext]  Login failed:', error);
             const message = error?.message || error?.data?.message || error?.data?.error || 'Invalid username or password';
             throw new Error(message.includes('Login failed:') ? message : `Login failed: ${message}`);
         }
     };
     
-    const signup = async (username: string, email: string, password: string) => {
+    const signup = async (username: string, email: string, password: string, role: string = 'user') => {
         try {
-            console.log('[AuthContext] Attempting signup for user:', username);
+            console.log('[AuthContext] Attempting signup for user:', username, 'with role:', role);
             
             // Call actual signup endpoint through VS Code proxy
             const response = await apiClient.post('/api/auth/signup', { 
                 username, 
                 email, 
-                password 
+                password,
+                role
             });
             
             console.log('[AuthContext] Signup response:', response);
@@ -209,30 +296,135 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 
                 // Decode JWT to get user info
                 const userInfo = decodeToken(token);
-                setUser({ token, username: userInfo.username, email: userInfo.email });
+                const responseData = response?.data || response;
+                const isAdmin = responseData?.isAdmin || userInfo.isAdmin || false;
+                const roles = responseData?.roles || userInfo.roles || [];
+                
+                setUser({ 
+                    token,
+                    userId: userInfo.userId,
+                    username: userInfo.username || username, 
+                    email: userInfo.email || email,
+                    roles: roles,
+                    isAdmin: isAdmin
+                });
+                
+                // Only admin users need workspace selection after signup
+                // Non-admin users go directly to editor (can upload files to GraphDB)
+                if (isAdmin || (roles && roles.includes('ROLE_ADMIN'))) {
+                    console.log('[AuthContext]  Signup successful - Admin user, needs workspace selection');
+                    setNeedsWorkspaceSelection(true);
+                } else {
+                    console.log('[AuthContext]  Signup successful - Regular user, skip workspace selection (direct to editor)');
+                    setNeedsWorkspaceSelection(false);
+                }
+                
                 // Clear expired message on successful signup
                 setSessionExpiredMessage(null);
-                console.log('[AuthContext] ✅ Signup successful with immediate login');
                 return;
             }
 
             // No token means email verification required
             const message = response?.message || response?.data?.message || 'Registration successful! Please check your email to verify your account.';
-            console.log('[AuthContext] ✅ Signup successful - awaiting email verification:', message);
+            console.log('[AuthContext]  Signup successful - awaiting email verification:', message);
             // Show success message to user through a custom result
             throw { success: true, message };
         } catch (error: any) {
-            console.error('[AuthContext] ❌ Signup failed:', error);
+            console.error('[AuthContext]  Signup failed:', error);
             const message = error?.message || error?.data?.message || error?.data?.error || 'Could not create account';
             throw new Error(message);
+        }
+    };
+
+    const selectWorkspace = (workspaceData: any) => {
+        console.log('[AuthContext] Workspace selected:', workspaceData);
+        
+        // Handle skip workspace case - user continues without workspace
+        if (workspaceData.skipWorkspace) {
+            console.log('[AuthContext] User skipped workspace selection, continuing to editor');
+            setNeedsWorkspaceSelection(false);
+            // User stays logged in but without workspace context
+            return;
+        }
+        
+        if (!workspaceData.jwt) {
+            throw new Error('No token received from workspace selection');
+        }
+
+        // Save new workspace-scoped token
+        if (window.vscode) {
+            window.vscode.postMessage({ type: 'saveAuthToken', token: workspaceData.jwt });
+        }
+
+        // Decode JWT to get all user info
+        const userInfo = decodeToken(workspaceData.jwt);
+        
+        // Preserve roles and isAdmin from current user or use decoded values
+        const roles = userInfo.roles || user?.roles || [];
+        const isAdmin = userInfo.isAdmin || user?.isAdmin || roles.includes('ROLE_ADMIN');
+        
+        setUser({ 
+            token: workspaceData.jwt,
+            userId: userInfo.userId || user?.userId,
+            username: workspaceData.username || userInfo.username, 
+            email: userInfo.email || user?.email,
+            roles: roles,
+            isAdmin: isAdmin,
+            workspaceId: workspaceData.workspaceId,
+            workspaceName: workspaceData.workspaceName,
+            workspaceRole: workspaceData.role,
+            subscriptionPlan: workspaceData.subscriptionPlan || 'FREE'
+        });
+        setNeedsWorkspaceSelection(false);
+        console.log('[AuthContext]  Workspace selection complete');
+    };
+
+    const switchWorkspace = () => {
+        console.log('[AuthContext] Switching workspace - going back to workspace selection');
+        // Clear workspace-specific data but keep the user logged in
+        if (user) {
+            setUser({
+                ...user,
+                workspaceId: undefined,
+                workspaceName: undefined,
+                workspaceRole: undefined
+            });
+        }
+        setNeedsWorkspaceSelection(true);
+    };
+
+    const updateSubscriptionPlan = async (planId: string) => {
+        if (!user || !user.workspaceId) {
+            throw new Error('No workspace selected');
+        }
+
+        try {
+            const response = await apiClient.patch(`/api/workspaces/${user.workspaceId}/subscription`, {
+                plan: planId
+            });
+
+            // Update user state with new subscription plan
+            setUser({
+                ...user,
+                subscriptionPlan: planId
+            });
+
+            console.log('[AuthContext] Subscription plan updated to:', planId);
+        } catch (error: any) {
+            console.error('[AuthContext] Failed to update subscription plan:', error);
+            throw error;
         }
     };
 
     const value = {
         user,
         loading,
+        needsWorkspaceSelection,
         login,
         signup,
+        selectWorkspace,
+        switchWorkspace,
+        updateSubscriptionPlan,
         logout: () => logout(false),
         sessionExpiredMessage,
     };

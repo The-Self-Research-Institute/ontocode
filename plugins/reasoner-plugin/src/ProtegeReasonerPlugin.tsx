@@ -14,8 +14,8 @@ import {
   AlertCircle,
   Clock,
   Info,
-  ChevronDown,
-  ChevronRight,
+  Plus,
+  Minus,
   Circle,
   Loader,
   Loader2,
@@ -38,7 +38,9 @@ import {
   Copy,
   FileJson,
   Save,
-  Trash2
+  Trash2,
+  ChevronRight,
+  ChevronDown
 } from 'lucide-react';
 
 interface ReasonerPluginProps {
@@ -147,9 +149,13 @@ const HierarchyNode: React.FC<HierarchyNodeProps> = ({
         {hasChildren ? (
           <button
             onClick={handleToggle}
-            className={`p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-transform ${isExpanded ? 'rotate-0' : '-rotate-90'}`}
+            className={`p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700`}
           >
-            <ChevronDown size={12} className={isDark ? 'text-gray-500' : 'text-gray-400'} />
+            {isExpanded ? (
+              <Minus size={12} className={isDark ? 'text-gray-500' : 'text-gray-400'} />
+            ) : (
+              <Plus size={12} className={isDark ? 'text-gray-500' : 'text-gray-400'} />
+            )}
           </button>
         ) : (
           <span className="w-4" />
@@ -231,6 +237,10 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
       ? ((window as any).API_BASE_URL as string)
       : undefined) ||
     'http://localhost:8082';
+  
+  // Ensure the API base URL doesn't end with a slash
+  const normalizedApiBaseUrl = resolvedApiBaseUrl.replace(/\/$/, '');
+  console.log('[ProtegeReasonerPlugin] Using API base URL:', normalizedApiBaseUrl);
   
   // Use Dashboard state if provided, otherwise use local state
   const usingDashboardState = !!dashboardStartReasoner;
@@ -339,16 +349,17 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
     setReasonerStatus(`Running ${task}...`);
 
     try {
+      const encodedProjectId = encodeURIComponent(projectId);
       let endpoint = '';
       switch (task) {
         case 'consistency':
-          endpoint = `/plugin-service/api/reasoner/${projectId}/consistency`;
+          endpoint = `/plugin-service/api/reasoner/${encodedProjectId}/consistency`;
           break;
         case 'classification':
-          endpoint = `/plugin-service/api/reasoner/${projectId}/classify`;
+          endpoint = `/plugin-service/api/reasoner/${encodedProjectId}/classify`;
           break;
         case 'realization':
-          endpoint = `/plugin-service/api/reasoner/${projectId}/realize`;
+          endpoint = `/plugin-service/api/reasoner/${encodedProjectId}/realize`;
           break;
       }
 
@@ -366,11 +377,12 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
       console.log('[ProtegeReasonerPlugin] Starting reasoner:', {
         task,
         reasonerType,
-        endpoint: `${resolvedApiBaseUrl}${endpoint}`,
-        projectId
+        endpoint: `${normalizedApiBaseUrl}${endpoint}`,
+        projectId,
+        fullUrl: `${normalizedApiBaseUrl}${endpoint}`
       });
 
-      const response = await fetch(`${resolvedApiBaseUrl}${endpoint}`, {
+      const response = await fetch(`${normalizedApiBaseUrl}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reasonerType })
@@ -414,7 +426,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
       }
 
       // Get stats
-      const statsRes = await fetch(`${resolvedApiBaseUrl}/plugin-service/api/reasoner/${projectId}/stats?reasonerType=${reasonerType}`);
+      const statsRes = await fetch(`${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/stats?reasonerType=${reasonerType}`);
       if (statsRes.ok) {
         const statsData = await statsRes.json();
         setStats(statsData);
@@ -501,8 +513,9 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
       };
       const reasonerType = reasonerMap[selectedReasoner.toLowerCase()] || 'HERMIT';
 
+      const encodedProjectId = encodeURIComponent(projectId);
       const response = await fetch(
-        `${resolvedApiBaseUrl}/plugin-service/api/reasoner/${projectId}/explain-inconsistency`,
+        `${resolvedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/explain-inconsistency`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
