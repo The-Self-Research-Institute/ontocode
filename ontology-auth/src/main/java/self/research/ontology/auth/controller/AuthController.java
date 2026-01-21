@@ -112,12 +112,17 @@ public class AuthController {
             ));
         }
 
-        // Check if user exists
+        // Check if user exists (support login with username or email)
         Optional<User> userOpt = userRepository.findByUsername(request.getUsername());
+        if (userOpt.isEmpty()) {
+            // Try finding by email if username not found
+            userOpt = userRepository.findByEmail(request.getUsername());
+        }
+        
         if (userOpt.isEmpty()) {
             auditService.logLoginFailure(request.getUsername(), clientIp, "User not found");
             return ResponseEntity.badRequest().body(Map.of(
-                "error", "Invalid username or password"
+                "error", "Invalid username/email or password"
             ));
         }
 
@@ -135,7 +140,7 @@ public class AuthController {
         try {
             authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(
-                    request.getUsername(),
+                    user.getUsername(), // Use actual username from DB
                     request.getPassword()
                 )
             );
@@ -183,10 +188,15 @@ public class AuthController {
 
         auditService.logLoginSuccess(request.getUsername(), clientIp);
 
+        // Check if user is admin
+        boolean isAdmin = user.getRoles().contains("ROLE_ADMIN");
+
         return ResponseEntity.ok(Map.of(
             "jwt", jwt,
             "username", user.getUsername(),
-            "roles", user.getRoles()
+            "email", user.getEmail(),
+            "roles", user.getRoles(),
+            "isAdmin", isAdmin
         ));
     }
 
@@ -215,7 +225,14 @@ public class AuthController {
         user.setUsername(request.getUsername());
         user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.setEmail(request.getEmail());
-        user.setRoles(Set.of("ROLE_USER"));
+        
+        // Set roles based on signup request
+        if ("admin".equalsIgnoreCase(request.getRole())) {
+            user.setRoles(Set.of("ROLE_USER", "ROLE_ADMIN"));
+        } else {
+            user.setRoles(Set.of("ROLE_USER"));
+        }
+        
         user.setEnabled(true); // Enable immediately for development (skip email verification)
 
         // Generate verification token (expires in 24 hours)
@@ -239,11 +256,18 @@ public class AuthController {
         UserDetails userDetails = userDetailsService.loadUserByUsername(request.getUsername());
         String jwt = jwtUtil.generateToken(userDetails, user.getEmail());
 
-        return ResponseEntity.ok(Map.of(
-            "jwt", jwt,
-            "username", user.getUsername(),
-            "message", "Registration successful!"
-        ));
+        // Check if user is admin
+        boolean isAdmin = user.getRoles().contains("ROLE_ADMIN");
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("jwt", jwt);
+        response.put("username", user.getUsername());
+        response.put("email", user.getEmail());
+        response.put("roles", user.getRoles());
+        response.put("isAdmin", isAdmin);
+        response.put("message", "Registration successful!");
+        
+        return ResponseEntity.ok(response);
     }
 
     /**
@@ -347,6 +371,74 @@ public class AuthController {
         return ResponseEntity.ok(Map.of(
             "message", "Password reset successfully! You can now log in with your new password."
         ));
+    }
+
+    /**
+     * Change password (authenticated endpoint)
+     * Requires current password verification
+     * Sends email notification and returns success response
+     */
+    @PostMapping("/change-password")
+    public ResponseEntity<?> changePassword(
+            @Valid @RequestBody ChangePasswordRequest request,
+            @RequestHeader("Authorization") String authHeader) {
+        try {
+            // Extract username from JWT token
+            String token = authHeader.replace("Bearer ", "");
+            String username = jwtUtil.extractUsername(token);
+            
+            log.info("Change password request for user: {}", username);
+
+            Optional<User> userOpt = userRepository.findByUsername(username);
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "error", "User not found"
+                ));
+            }
+
+            User user = userOpt.get();
+
+            // Verify current password
+            if (!passwordEncoder.matches(request.getCurrentPassword(), user.getPassword())) {
+                log.warn("Invalid current password for user: {}", username);
+                return ResponseEntity.badRequest().body(Map.of(
+                    "error", "Current password is incorrect"
+                ));
+            }
+
+            // Ensure new password is different from current
+            if (passwordEncoder.matches(request.getNewPassword(), user.getPassword())) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "error", "New password must be different from current password"
+                ));
+            }
+
+            // Update password
+            user.setPassword(passwordEncoder.encode(request.getNewPassword()));
+            user.resetFailedAttempts(); // Clear any lockouts
+            userRepository.save(user);
+
+            // Send email notification
+            try {
+                emailService.sendPasswordChangeEmail(user.getEmail(), user.getUsername());
+                log.info("Password change notification email sent to: {}", user.getEmail());
+            } catch (Exception e) {
+                log.error("Failed to send password change email", e);
+                // Don't fail the password change if email fails
+            }
+
+            auditService.logPasswordChange(username);
+            log.info("Password changed successfully for user: {}", username);
+
+            return ResponseEntity.ok(Map.of(
+                "message", "Password changed successfully! You will be logged out for security."
+            ));
+        } catch (Exception e) {
+            log.error("Error changing password", e);
+            return ResponseEntity.badRequest().body(Map.of(
+                "error", "Failed to change password: " + e.getMessage()
+            ));
+        }
     }
 
     /**

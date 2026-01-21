@@ -8,6 +8,7 @@ interface GCIEditorDialogProps {
   initialSubClass?: string;
   initialSuperClass?: string;
   editMode?: boolean;
+  availableClasses?: Array<{ id: string; label: string }>;
 }
 
 const GCIEditorDialog: React.FC<GCIEditorDialogProps> = ({ 
@@ -16,18 +17,50 @@ const GCIEditorDialog: React.FC<GCIEditorDialogProps> = ({
   onSave, 
   initialSubClass = '', 
   initialSuperClass = '',
-  editMode = false 
+  editMode = false,
+  availableClasses = []
 }) => {
   const [subClass, setSubClass] = useState(initialSubClass);
   const [superClass, setSuperClass] = useState(initialSuperClass);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [subClassSuggestions, setSubClassSuggestions] = useState<Array<{ id: string; label: string }>>([]);
+  const [superClassSuggestions, setSuperClassSuggestions] = useState<Array<{ id: string; label: string }>>([]);
+  const [showSubClassSuggestions, setShowSubClassSuggestions] = useState(false);
+  const [showSuperClassSuggestions, setShowSuperClassSuggestions] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
       setSubClass(initialSubClass);
       setSuperClass(initialSuperClass);
+      setShowSubClassSuggestions(false);
+      setShowSuperClassSuggestions(false);
     }
   }, [isOpen, initialSubClass, initialSuperClass]);
+
+  // Filter suggestions based on input
+  useEffect(() => {
+    if (subClass && availableClasses.length > 0) {
+      const filtered = availableClasses.filter(cls => 
+        cls.label.toLowerCase().includes(subClass.toLowerCase()) ||
+        cls.id.toLowerCase().includes(subClass.toLowerCase())
+      ).slice(0, 10);
+      setSubClassSuggestions(filtered);
+    } else {
+      setSubClassSuggestions([]);
+    }
+  }, [subClass, availableClasses]);
+
+  useEffect(() => {
+    if (superClass && availableClasses.length > 0) {
+      const filtered = availableClasses.filter(cls => 
+        cls.label.toLowerCase().includes(superClass.toLowerCase()) ||
+        cls.id.toLowerCase().includes(superClass.toLowerCase())
+      ).slice(0, 10);
+      setSuperClassSuggestions(filtered);
+    } else {
+      setSuperClassSuggestions([]);
+    }
+  }, [superClass, availableClasses]);
 
   if (!isOpen) return null;
 
@@ -71,28 +104,74 @@ const GCIEditorDialog: React.FC<GCIEditorDialogProps> = ({
           </div>
 
           <div className="space-y-4">
-            <div>
+            <div className="relative">
               <label className="block text-xs font-bold text-gray-700 mb-1">SubClass Expression</label>
               <textarea
                 value={subClass}
-                onChange={e => setSubClass(e.target.value)}
-                placeholder="e.g., Pizza and hasTopping some MeatTopping"
+                onChange={e => {
+                  setSubClass(e.target.value);
+                  setShowSubClassSuggestions(true);
+                }}
+                onFocus={() => setShowSubClassSuggestions(true)}
+                onBlur={() => setTimeout(() => setShowSubClassSuggestions(false), 200)}
+                placeholder="e.g., Pizza or hasTopping some MeatTopping"
                 className="w-full px-3 py-2 border border-gray-300 rounded text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 min-h-[80px]"
               />
+              {showSubClassSuggestions && subClassSuggestions.length > 0 && (
+                <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded shadow-lg max-h-[150px] overflow-y-auto">
+                  {subClassSuggestions.map((cls, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onMouseDown={() => {
+                        setSubClass(cls.label);
+                        setShowSubClassSuggestions(false);
+                      }}
+                      className="w-full px-3 py-2 text-left text-xs hover:bg-blue-50 flex flex-col"
+                    >
+                      <span className="font-semibold text-gray-800">{cls.label}</span>
+                      <span className="text-[10px] text-gray-500 font-mono truncate">{cls.id}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="flex justify-center">
               <div className="text-xs font-bold text-gray-400 italic">SubClassOf</div>
             </div>
 
-            <div>
+            <div className="relative">
               <label className="block text-xs font-bold text-gray-700 mb-1">SuperClass Expression</label>
               <textarea
                 value={superClass}
-                onChange={e => setSuperClass(e.target.value)}
+                onChange={e => {
+                  setSuperClass(e.target.value);
+                  setShowSuperClassSuggestions(true);
+                }}
+                onFocus={() => setShowSuperClassSuggestions(true)}
+                onBlur={() => setTimeout(() => setShowSuperClassSuggestions(false), 200)}
                 placeholder="e.g., NonVegetarianPizza"
                 className="w-full px-3 py-2 border border-gray-300 rounded text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 min-h-[80px]"
               />
+              {showSuperClassSuggestions && superClassSuggestions.length > 0 && (
+                <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded shadow-lg max-h-[150px] overflow-y-auto">
+                  {superClassSuggestions.map((cls, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onMouseDown={() => {
+                        setSuperClass(cls.label);
+                        setShowSuperClassSuggestions(false);
+                      }}
+                      className="w-full px-3 py-2 text-left text-xs hover:bg-blue-50 flex flex-col"
+                    >
+                      <span className="font-semibold text-gray-800">{cls.label}</span>
+                      <span className="text-[10px] text-gray-500 font-mono truncate">{cls.id}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

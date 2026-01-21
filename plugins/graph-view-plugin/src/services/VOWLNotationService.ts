@@ -228,26 +228,51 @@ export class VOWLNotationService {
 
   /**
    * Get VOWL node color based on type (WebVOWL standard colors)
+   * These colors MUST match the actual rendering in AdvancedGraphView.tsx
+   * @param nodeType The type of the node
+   * @param isDark Whether dark mode is active
    */
-  getVOWLNodeColor(nodeType: string): string {
-    const colorMap: Record<string, string> = {
-      'owl:Class': '#acd5f2', // Light blue for classes (matching WebVOWL reference)
-      'owl:NamedIndividual': '#ffffcc', // Light yellow for individuals
-      'owl:ObjectProperty': '#acd5f2', // Light blue for object properties
-      'owl:DatatypeProperty': '#ffffcc', // Light yellow for data properties
-      'owl:AnnotationProperty': '#e8d5f2', // Light purple for annotation properties
-      'rdfs:Datatype': '#ffffcc', // Light yellow for datatypes
-      'owl:Thing': '#acd5f2', // Light blue for owl:Thing
-      'rdfs:Literal': '#ffffcc', // Light yellow for literals
-      'class': '#acd5f2', // Light blue
-      'datatype': '#ffffcc', // Light yellow
-      'individual': '#ffffcc', // Light yellow
-      'property': '#acd5f2', // Light blue
-      'objectProperty': '#acd5f2', // Light blue
-      'dataProperty': '#ffffcc', // Light yellow
-      'annotation': '#e8d5f2', // Light purple for annotations
+  getVOWLNodeColor(nodeType: string, isDark: boolean = false): string {
+    // Light mode colors
+    const lightColorMap: Record<string, string> = {
+      'owl:Class': '#acd5f2',
+      'owl:NamedIndividual': '#dcd5f7',
+      'owl:ObjectProperty': '#acd5f2',
+      'owl:DatatypeProperty': '#ffffcc',
+      'owl:AnnotationProperty': '#e8d5f2',
+      'rdfs:Datatype': '#FFD9B3',
+      'owl:Thing': '#ffffff',
+      'rdfs:Literal': '#FFD9B3',
+      'class': '#acd5f2',
+      'datatype': '#FFD9B3',
+      'individual': '#dcd5f7',
+      'property': '#acd5f2',
+      'objectProperty': '#acd5f2',
+      'dataProperty': '#ffffcc',
+      'annotation': '#e8d5f2',
     };
-    return colorMap[nodeType] || '#acd5f2'; // Light blue as default
+    
+    // Dark mode colors - adjusted for better visibility on dark backgrounds
+    const darkColorMap: Record<string, string> = {
+      'owl:Class': '#6b92c4',
+      'owl:NamedIndividual': '#fbb6ce',
+      'owl:ObjectProperty': '#6b92c4',
+      'owl:DatatypeProperty': '#fef08a',
+      'owl:AnnotationProperty': '#9333ea',
+      'rdfs:Datatype': '#d97706',
+      'owl:Thing': '#374151',
+      'rdfs:Literal': '#d97706',
+      'class': '#6b92c4',
+      'datatype': '#d97706',
+      'individual': '#fbb6ce',
+      'property': '#6b92c4',
+      'objectProperty': '#6b92c4',
+      'dataProperty': '#fef08a',
+      'annotation': '#9333ea',
+    };
+    
+    const colorMap = isDark ? darkColorMap : lightColorMap;
+    return colorMap[nodeType] || (isDark ? '#6b92c4' : '#acd5f2');
   }
 
   /**

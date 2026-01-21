@@ -50,7 +50,7 @@ export const EntityIcon: React.FC<{
 // Determine entity type from axiom properties
 const getEntityTypeFromAxiom = (axiom: Axiom, dataProperties: any[] = [], properties: any[] = []): 'class' | 'objectProperty' | 'dataProperty' | 'individual' | 'datatype' | 'mixed' => {
   // Check if this is an instance/individual
-  if (axiom.type === 'Instance') {
+  if ((axiom as any).type === 'Instance') {
     return 'individual';
   }
   
@@ -99,7 +99,40 @@ const ColorizedAxiomDefinition: React.FC<{
   
   const isRestriction = axiom.isRestriction === true || axiom.isRestriction === 'true';
   
-  // For restrictions, we can make the property name a link
+  // Helper function to extract label from IRI
+  const getLabelFromIri = (iri: string): string => {
+    if (iri.includes('#')) {
+      return iri.split('#').pop() || iri;
+    }
+    if (iri.includes('/')) {
+      return iri.split('/').pop() || iri;
+    }
+    return iri;
+  };
+  
+  // Helper function to find entity IRI by label
+  const findEntityIri = (label: string): { iri: string; type: string } | null => {
+    // Remove quotes if present
+    const cleanLabel = label.replace(/^['"]|['"]$/g, '');
+    
+    // Check in data properties
+    const dataProp = dataProperties.find(p => getLabelFromIri(p.id) === cleanLabel || p.label === cleanLabel);
+    if (dataProp) return { iri: dataProp.id, type: 'dataProperty' };
+    
+    // Check in object properties
+    const objProp = properties.find(p => getLabelFromIri(p.id) === cleanLabel || p.label === cleanLabel);
+    if (objProp) return { iri: objProp.id, type: 'objectProperty' };
+    
+    // If it's in the axiom fillerIri, use that
+    if (axiom.fillerIri && (getLabelFromIri(axiom.fillerIri) === cleanLabel)) {
+      // Determine if it's a class or individual based on context
+      return { iri: axiom.fillerIri, type: 'class' };
+    }
+    
+    return null;
+  };
+  
+  // For restrictions, we can make both property name and filler class clickable
   if (isRestriction && axiom.propertyIri) {
     const parts = definition.split(' ');
     
@@ -110,6 +143,10 @@ const ColorizedAxiomDefinition: React.FC<{
         const propertyParts = parts.slice(0, keywordIndex);
         const keyword = parts[keywordIndex];
         const fillerParts = parts.slice(keywordIndex + 1);
+        const fillerText = fillerParts.join(' ');
+        
+        // Find filler entity info
+        const fillerEntity = findEntityIri(fillerText);
         
         return (
           <span className="font-bold text-gray-900">
@@ -125,49 +162,120 @@ const ColorizedAxiomDefinition: React.FC<{
             {/* Keyword in magenta/pink - bold */}
             <span className="text-fuchsia-600 font-bold">{keyword}</span>
             {' '}
-            {/* Filler class/datatype - black text */}
-            <span className="text-gray-900">'{fillerParts.join(' ')}'</span>
+            {/* Filler class/datatype - clickable if we have the IRI */}
+            {fillerEntity && onNavigate ? (
+              <span 
+                className="text-blue-600 underline cursor-pointer hover:text-blue-800"
+                onClick={(e) => { e.stopPropagation(); onNavigate(fillerEntity.iri, fillerEntity.type); }}
+                title={fillerEntity.iri}
+              >
+                '{fillerText}'
+              </span>
+            ) : (
+              <span className="text-gray-900">'{fillerText}'</span>
+            )}
           </span>
         );
       }
     }
   }
   
-  // For all other definitions, parse and colorize keywords only
-  // Split by word boundaries while preserving structure
+  // For all other definitions (simple class names), make them clickable if we can find the entity
+  // First check if the definition itself is an IRI
+  const isIri = definition.startsWith('http://') || definition.startsWith('https://') || definition.startsWith('urn:');
+  
+  if (isIri && onNavigate) {
+    // It's a full IRI - extract label and make it clickable as a class
+    const label = getLabelFromIri(definition);
+    return (
+      <span 
+        className="text-blue-600 underline cursor-pointer hover:text-blue-800 font-bold"
+        onClick={(e) => { e.stopPropagation(); onNavigate(definition, 'class'); }}
+        title={definition}
+      >
+        {label}
+      </span>
+    );
+  }
+  
+  // Try to find entity by label
+  const entityInfo = findEntityIri(definition);
+  
+  if (entityInfo && onNavigate) {
+    // Simple class/entity reference - make it clickable
+    return (
+      <span 
+        className="text-blue-600 underline cursor-pointer hover:text-blue-800 font-bold"
+        onClick={(e) => { e.stopPropagation(); onNavigate(entityInfo.iri, entityInfo.type); }}
+        title={entityInfo.iri}
+      >
+        {definition}
+      </span>
+    );
+  }
+  
+  // For complex definitions with keywords, parse and colorize
   const result: React.ReactNode[] = [];
   let keyIndex = 0;
   
-  // Use regex to find keywords and split around them
-  const keywordRegex = new RegExp(`\\b(${MANCHESTER_KEYWORDS.join('|')})\\b`, 'gi');
+  // Use regex to find both keywords and quoted entity names
+  const keywordRegex = new RegExp(`\\b(${MANCHESTER_KEYWORDS.join('|')})\\b|'([^']+)'`, 'gi');
   let lastIndex = 0;
   let match;
   
   while ((match = keywordRegex.exec(definition)) !== null) {
-    // Add text before the keyword (black)
+    // Add text before the match (black)
     if (match.index > lastIndex) {
       const beforeText = definition.slice(lastIndex, match.index);
-      result.push(
-        <span key={`text-${keyIndex++}`} className="text-gray-900 font-bold">{beforeText}</span>
-      );
+      if (beforeText.trim()) {
+        result.push(
+          <span key={`text-${keyIndex++}`} className="text-gray-900 font-bold">{beforeText}</span>
+        );
+      }
     }
     
-    // Add the keyword (magenta/pink, bold)
-    result.push(
-      <span key={`kw-${keyIndex++}`} className="text-fuchsia-600 font-bold">{match[0]}</span>
-    );
+    if (match[1]) {
+      // It's a keyword (magenta/pink, bold)
+      result.push(
+        <span key={`kw-${keyIndex++}`} className="text-fuchsia-600 font-bold">{match[0]}</span>
+      );
+    } else if (match[2]) {
+      // It's a quoted entity name - make it clickable if we can find it
+      const entityName = match[2];
+      const entity = findEntityIri(entityName);
+      
+      if (entity && onNavigate) {
+        result.push(
+          <span 
+            key={`entity-${keyIndex++}`}
+            className="text-blue-600 underline cursor-pointer hover:text-blue-800 font-bold"
+            onClick={(e) => { e.stopPropagation(); onNavigate(entity.iri, entity.type); }}
+            title={entity.iri}
+          >
+            '{entityName}'
+          </span>
+        );
+      } else {
+        result.push(
+          <span key={`entity-${keyIndex++}`} className="text-gray-900 font-bold">'{entityName}'</span>
+        );
+      }
+    }
     
     lastIndex = keywordRegex.lastIndex;
   }
   
-  // Add remaining text after last keyword (black)
+  // Add remaining text after last match (black)
   if (lastIndex < definition.length) {
-    result.push(
-      <span key={`text-${keyIndex++}`} className="text-gray-900 font-bold">{definition.slice(lastIndex)}</span>
-    );
+    const remainingText = definition.slice(lastIndex);
+    if (remainingText.trim()) {
+      result.push(
+        <span key={`text-${keyIndex++}`} className="text-gray-900 font-bold">{remainingText}</span>
+      );
+    }
   }
   
-  // If no keywords found, just return the definition in black
+  // If no matches found, just return the definition in black
   if (result.length === 0) {
     return <span className="text-gray-900 font-bold">{definition}</span>;
   }
@@ -192,6 +300,7 @@ export const AxiomRow: React.FC<{
   const isInferred = isInferredProp || axiom.isInferred === true || axiom.isInferred === 'true';
   const [isEditing, setIsEditing] = useState(false);
   const [showAxiomAnnotations, setShowAxiomAnnotations] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
 
   const handleEdit = (newDefinition: string) => {
     if (onEdit) {
@@ -248,12 +357,55 @@ export const AxiomRow: React.FC<{
     return undefined;
   };
 
+  // Handle double-click to edit (Protégé-style)
+  const handleDoubleClick = () => {
+    if (!isInferred && (onEdit || onEditClick)) {
+      if (onEditClick) {
+        const initialTab = determineInitialTab();
+        const restrictionData = buildRestrictionData();
+        onEditClick(axiom, initialTab, restrictionData);
+      } else if (onEdit) {
+        setIsEditing(true);
+      }
+    }
+  };
+
+  // Handle keyboard shortcuts (Protégé-style)
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Only handle if this row is focused
+    if (!isFocused) return;
+    
+    if (e.key === 'Enter' && !isInferred && (onEdit || onEditClick)) {
+      e.preventDefault();
+      handleDoubleClick();
+    } else if (e.key === 'Delete' && !isInferred) {
+      e.preventDefault();
+      if (window.confirm('Delete this axiom?')) {
+        onDelete(axiom.id);
+      }
+    } else if (e.key === 'Escape' && isEditing) {
+      e.preventDefault();
+      setIsEditing(false);
+    }
+  };
+
   return (
     <div 
-      className={`group flex justify-between items-start p-1.5 border-b border-gray-100 last:border-0 hover:bg-blue-50 transition-colors ${
+      className={`group flex justify-between items-start px-3 py-2 border-b border-gray-100 last:border-0 hover:bg-blue-50 transition-colors ${
         isInferred ? 'bg-yellow-50' : 'bg-white'
-      }`}
-      title={ontologyIri ? `Defined in: ${ontologyIri}` : undefined}
+      } ${isFocused ? 'ring-2' : ''} ${!isInferred ? 'cursor-pointer' : ''}`}
+      title={ontologyIri ? `Defined in: ${ontologyIri}${!isInferred ? ' (Double-click to edit, Del to delete)' : ''}` : (!isInferred ? 'Double-click to edit, Del to delete' : undefined)}
+      data-axiom-id={axiom.id}
+      data-axiom-type={axiom.type}
+      tabIndex={0}
+      onFocus={() => setIsFocused(true)}
+      onBlur={() => setIsFocused(false)}
+      onDoubleClick={handleDoubleClick}
+      onKeyDown={handleKeyDown}
+      style={{
+        borderLeft: isInActiveOntology ? '3px solid #D97706' : 'none',
+        paddingLeft: isInActiveOntology ? '9px' : undefined
+      }}
     >
       {isEditing ? (
         <div className="flex-1">
@@ -283,18 +435,22 @@ export const AxiomRow: React.FC<{
           <div className="flex items-center gap-1 ml-2">
             {/* Explain Inference button */}
             <button 
-              className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-purple-100 text-gray-400 hover:text-purple-600 transition-all" 
+              className={`p-1 rounded hover:bg-purple-100 text-gray-400 hover:text-purple-600 transition-all ${isFocused || showAxiomAnnotations ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
               title="Explain why this axiom holds"
               aria-label="Explain inference"
+              onClick={(e) => e.stopPropagation()}
             >
               <HelpCircle size={14} />
             </button>
 
             {/* Axiom Annotations button */}
             <button 
-              onClick={() => setShowAxiomAnnotations(!showAxiomAnnotations)}
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowAxiomAnnotations(!showAxiomAnnotations);
+              }}
               className={`p-1 rounded hover:bg-blue-100 transition-all ${
-                hasAxiomAnnotations ? 'bg-yellow-100 text-blue-600' : 'opacity-0 group-hover:opacity-100 text-gray-400 hover:text-blue-600'
+                hasAxiomAnnotations ? 'bg-yellow-100 text-blue-600' : `${isFocused ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} text-gray-400 hover:text-blue-600`
               }`}
               title="View/edit axiom annotations"
               aria-label="Axiom annotations"
@@ -305,7 +461,8 @@ export const AxiomRow: React.FC<{
             {/* Edit button - only for asserted axioms */}
             {!isInferred && (onEdit || onEditClick) && (
               <button 
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
                   if (onEditClick) {
                     const initialTab = determineInitialTab();
                     const restrictionData = buildRestrictionData();
@@ -314,8 +471,8 @@ export const AxiomRow: React.FC<{
                     setIsEditing(true);
                   }
                 }}
-                className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-blue-100 text-gray-400 hover:text-blue-600 transition-all" 
-                title="Edit axiom"
+                className={`p-1 rounded hover:bg-blue-100 text-gray-400 hover:text-blue-600 transition-all ${isFocused ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                title="Edit axiom (or press Enter)"
                 aria-label="Edit"
               >
                 <Edit2 size={14} />
@@ -325,9 +482,14 @@ export const AxiomRow: React.FC<{
             {/* Delete button - only for asserted axioms */}
             {!isInferred && (
               <button 
-                onClick={() => onDelete(axiom.id)} 
-                className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600 transition-all" 
-                title="Delete axiom"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (window.confirm('Delete this axiom?')) {
+                    onDelete(axiom.id);
+                  }
+                }}
+                className={`p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600 transition-all ${isFocused ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                title="Delete axiom (or press Delete)"
                 aria-label="Delete"
               >
                 <Trash2 size={14} />
@@ -387,6 +549,11 @@ export const AxiomSubsection: React.FC<{
     if (e.key === 'Enter' && isFocused) {
       e.preventDefault();
       handleAddButtonClick();
+    } else if (e.key === 'ArrowDown' && isFocused) {
+      // Move focus to first axiom
+      e.preventDefault();
+      const firstAxiom = e.currentTarget.parentElement?.querySelector('[data-axiom-id]') as HTMLElement;
+      firstAxiom?.focus();
     }
   };
 
@@ -442,16 +609,17 @@ export const AxiomSubsection: React.FC<{
     }[themeColor || 'blue'];
 
   return (
-    <div className="mb-3 last:mb-0">
+    <div className="mb-4 last:mb-0">
       {theme ? (
-        // Clean minimal header with accent border
+        // Protégé-style header with golden/yellow accent for classes
         <button 
           onClick={handleAddButtonClick}
           onKeyDown={handleHeaderKeyDown}
-          className={`w-full flex justify-between items-center px-2 py-1.5 transition-colors ${isFocused ? '' : 'hover-overlay'} text-primary`}
+          className={`w-full flex justify-between items-center px-3 py-2 transition-colors ${isFocused ? 'ring-2 ring-amber-300' : ''} font-medium shadow-sm`}
           style={{
-            backgroundColor: isFocused ? 'var(--selected-bg)' : 'var(--surface-2)',
-            borderLeft: `2px solid ${themeBorder}`,
+            backgroundColor: isFocused ? 'var(--selected-bg)' : '#FEF3C7',
+            borderLeft: `3px solid ${themeBorder}`,
+          
           }}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
@@ -459,7 +627,7 @@ export const AxiomSubsection: React.FC<{
           <span className="text-xs font-medium">{title}</span>
           {onAddClick && (
             <span className="transition-colors hover-text-accent" style={{ color: 'var(--text-tertiary)' }}>
-              <Plus size={14}/>
+              <Plus size={16} strokeWidth={2.5} />
             </span>
           )}
         </button>

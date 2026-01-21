@@ -5,6 +5,8 @@ import react from '@vitejs/plugin-react';
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
     return {
+      // Use relative paths for VS Code webview compatibility
+      base: './',
       server: {
         port: 3000,
         host: '0.0.0.0',
@@ -20,6 +22,8 @@ export default defineConfig(({ mode }) => {
         }
       },
       build: {
+        // Disable source maps in production to reduce size
+        sourcemap: false,
         // Ensure lucide-react is not tree-shaken since plugins need it globally
         rollupOptions: {
           treeshake: {
@@ -32,6 +36,10 @@ export default defineConfig(({ mode }) => {
             }
           }
         }
-      }
+      },
+      // Explicitly disable service worker in Vite
+      workbox: false,
+      // Disable manifest generation
+      manifest: false
     };
 });

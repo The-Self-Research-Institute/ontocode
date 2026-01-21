@@ -504,13 +504,64 @@ const ClassEditor: React.FC<{
   // Navigation handler for clicking properties in axiom descriptions
   const handleNavigate = (iri: string, type: string) => {
     console.log('[ClassEditor] Navigate to:', { iri, type });
-    // Find the property in the lists
-    const property = properties.find(p => p.id === iri) || dataProperties.find(p => p.id === iri);
-    if (property) {
-      // Trigger parent navigation by updating the item - the parent Dashboard will handle the actual navigation
-      // For now, just log it - the parent component should handle this
-      console.log('[ClassEditor] Found property to navigate:', property);
-      // TODO: Implement navigation callback from parent
+    
+    if (type === 'class') {
+      // Find the class in the hierarchy
+      const findInHierarchy = (nodes: TreeNode[]): TreeNode | null => {
+        for (const node of nodes) {
+          if (node.id === iri) return node;
+          if (node.children) {
+            const found = findInHierarchy(node.children);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+      
+      const classNode = findInHierarchy(classHierarchy);
+      if (classNode) {
+        console.log('[ClassEditor] Navigating to class:', classNode);
+        // Update the current item to trigger parent re-render with new selection
+        onUpdate(classNode);
+      } else {
+        console.warn('[ClassEditor] Class not found in hierarchy:', iri);
+      }
+    } else if (type === 'property' || type === 'objectProperty' || type === 'dataProperty') {
+      // Find the property in the hierarchies
+      const findInPropertyHierarchy = (nodes: TreeNode[]): TreeNode | null => {
+        for (const node of nodes) {
+          if (node.id === iri) return node;
+          if (node.children) {
+            const found = findInPropertyHierarchy(node.children);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+      
+      // Check in object property hierarchy first
+      let propertyNode = objectPropertyHierarchy.length > 0 ? findInPropertyHierarchy(objectPropertyHierarchy) : null;
+      
+      // If not found, check in data property hierarchy
+      if (!propertyNode && dataPropertyHierarchy.length > 0) {
+        propertyNode = findInPropertyHierarchy(dataPropertyHierarchy);
+      }
+      
+      // If still not found, create a basic property node from the lists
+      if (!propertyNode) {
+        const property = properties.find(p => p.id === iri) || dataProperties.find(p => p.id === iri);
+        if (property) {
+          propertyNode = property;
+        }
+      }
+      
+      if (propertyNode) {
+        console.log('[ClassEditor] Navigating to property:', propertyNode);
+        // Navigate to the property by updating the selection
+        onUpdate(propertyNode);
+      } else {
+        console.warn('[ClassEditor] Property not found in hierarchies:', iri);
+      }
     }
   };
 
@@ -819,10 +870,11 @@ const ClassEditor: React.FC<{
     console.log('[ClassEditor] handleDeleteAxiom called:', { type, id, classIri: item.id });
     try {
       // Find the axiom object to check if it's a restriction
+      // Use classDetails if available (most recent data), otherwise fall back to item
       let axiomArrays: { EquivalentTo?: Axiom[], SubClassOf?: Axiom[], DisjointWith?: Axiom[] } = {
-        EquivalentTo: item.equivalentClassesAxioms,
-        SubClassOf: item.subClassOfAxioms,
-        DisjointWith: item.disjointClassesAxioms
+        EquivalentTo: classDetails?.equivalentClassesAxioms || item.equivalentClassesAxioms,
+        SubClassOf: classDetails?.subClassOfAxioms || item.subClassOfAxioms,
+        DisjointWith: classDetails?.disjointClassesAxioms || item.disjointClassesAxioms
       };
       const axiom = axiomArrays[type]?.find(a => a.id === id);
       console.log('[ClassEditor] Found axiom:', axiom);

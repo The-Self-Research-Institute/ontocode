@@ -13,6 +13,7 @@ import org.springframework.security.core.GrantedAuthority;
 import java.security.Key;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -50,12 +51,20 @@ public class JwtUtil {
     public String generateToken(UserDetails userDetails, String email) {
         Map<String, Object> claims = new HashMap<>();
         // Add roles to claims
-        claims.put("roles", userDetails.getAuthorities().stream()
+        List<String> roles = userDetails.getAuthorities().stream()
                 .map(GrantedAuthority::getAuthority)
-                .collect(Collectors.toList()));
+                .collect(Collectors.toList());
+        claims.put("roles", roles);
         // Add email to claims
         claims.put("email", email);
+        // Add isAdmin flag for easy frontend checking
+        claims.put("isAdmin", roles.contains("ROLE_ADMIN"));
         return createToken(claims, userDetails.getUsername());
+    }
+
+    // Overloaded method for workspace-scoped tokens
+    public String generateToken(String username, Map<String, Object> additionalClaims) {
+        return createToken(additionalClaims, username);
     }
 
     private String createToken(Map<String, Object> claims, String subject) {

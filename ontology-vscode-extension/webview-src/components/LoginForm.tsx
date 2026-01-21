@@ -1,10 +1,16 @@
 
 import React, { useState } from 'react';
 import { useAuth } from '../custom-hook/useAuth';
-import { Loader2, Eye, EyeOff } from 'lucide-react';
+import { Loader2, Eye, EyeOff, ArrowLeft } from 'lucide-react';
 
-const LoginForm = ({ onToggleForm }: { onToggleForm: () => void }) => {
-    const [username, setUsername] = useState('');
+interface LoginFormProps {
+    onToggleForm: () => void;
+    prefillEmail?: string;
+    onBackToInvitation?: () => void;
+}
+
+const LoginForm = ({ onToggleForm, prefillEmail, onBackToInvitation }: LoginFormProps) => {
+    const [username, setUsername] = useState(prefillEmail || '');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
@@ -109,13 +115,22 @@ const LoginForm = ({ onToggleForm }: { onToggleForm: () => void }) => {
                     </button>
                 </form>
                 
-                <div className="mt-8 text-center">
+                <div className="mt-8 text-center space-y-3">
                     <p className="text-gray-400 text-sm">
                         Don't have an account?{' '}
                         <button onClick={onToggleForm} className="text-purple-400 hover:text-purple-300 font-medium">
                             Sign up
                         </button>
                     </p>
+                    {onBackToInvitation && (
+                        <button 
+                            onClick={onBackToInvitation}
+                            className="flex items-center justify-center gap-2 w-full text-gray-400 hover:text-gray-300 text-sm"
+                        >
+                            <ArrowLeft size={16} />
+                            Back to Invitation
+                        </button>
+                    )}
                 </div>
             </div>
         </div>

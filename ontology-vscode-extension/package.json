@@ -25,7 +25,8 @@
     "onCommand:ontocode.logout",
     "onCommand:ontocode.insertCitation",
     "onCommand:ontocode.showCollaborationStatus",
-    "onLanguage:owl"
+    "onLanguage:owl",
+    "onUri"
   ],
   "main": "./dist/extension.js",
   "browser": "./dist/web/extension.js",
@@ -122,7 +123,7 @@
     "test": "node ./out/test/runTest.js",
     "build-webview": "cd webview-src && npm run build",
     "compile-web": "webpack --config webpack.config.js --mode development --watch",
-    "test-web": "npm run bundle:web && vscode-test-web --browserType=chromium --extensionDevelopmentPath=./",
+    "test-web": "npm run bundle:web && vscode-test-web --browserType=chromium --extensionDevelopmentPath=./ ../data/projects",
     "dev-webview": "cd webview-src && npm run dev",
     "bundle:extension": "webpack --config webpack.extension.js --mode production",
     "bundle:web": "webpack --config webpack.config.js --mode production",
@@ -143,6 +144,7 @@
     "@vscode/test-web": "^0.0.75",
     "assert": "^2.1.0",
     "buffer": "^6.0.3",
+    "copy-webpack-plugin": "^12.0.2",
     "cross-env": "^10.1.0",
     "css-loader": "^7.1.2",
     "css-minimizer-webpack-plugin": "^7.0.4",

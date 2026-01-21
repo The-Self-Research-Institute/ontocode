@@ -123,7 +123,7 @@ timeout /t 10 /nobreak >nul
 echo Checking Gateway health...
 set GATEWAY_READY=0
 for /l %%i in (1,1,30) do (
-    curl -s http://localhost:8082/actuator/health >nul 2>&1
+    curl -s http://localhost:80/actuator/health >nul 2>&1
     if !errorlevel! equ 0 (
         set GATEWAY_READY=1
         goto gateway_ready
@@ -132,7 +132,7 @@ for /l %%i in (1,1,30) do (
 )
 :gateway_ready
 if %GATEWAY_READY% equ 1 (
-    echo %GREEN%Gateway is running on port 8082%NC%
+    echo %GREEN%Gateway is running on port 80%NC%
 ) else (
     echo %YELLOW%Warning: Gateway may not be ready yet%NC%
 )
@@ -236,7 +236,7 @@ echo ========================================
 echo.
 echo %YELLOW%Service URLs:%NC%
 echo    Auth Service:    http://localhost:8086
-echo    Gateway:         http://localhost:8082
+echo    Gateway:         http://localhost:80
 echo    OWL Editor:      http://localhost:8083
 echo    SWRL Service:    http://localhost:8084
 echo    Plugin Service:  http://localhost:8087
@@ -247,7 +247,7 @@ echo    GraphDB:         http://localhost:7200
 echo    GraphDB Repo:    http://localhost:7200/repositories/ontocode
 echo.
 echo %YELLOW%API Documentation:%NC%
-echo    Gateway Swagger: http://localhost:8082/swagger-ui.html
+echo    Gateway Swagger: http://localhost:80/swagger-ui.html
 echo    OWL API Docs:    http://localhost:8083/swagger-ui.html
 echo.
 echo %YELLOW%Management:%NC%

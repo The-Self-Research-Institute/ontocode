@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.document.ProjectDocument;
@@ -17,6 +19,8 @@ import java.util.stream.Collectors;
 @CrossOrigin
 public class ProjectController {
 
+    private static final Logger log = LoggerFactory.getLogger(ProjectController.class);
+
     private final ProjectRepository projectRepository;
     private final ProjectShareService shareService;
 
@@ -28,7 +32,15 @@ public class ProjectController {
     @GetMapping
     public ResponseEntity<?> listProjects(@RequestParam(required = false) String userEmail) {
         try {
+            log.info("[ProjectController] listProjects called with userEmail: {}", userEmail);
             List<ProjectDocument> allProjects = projectRepository.findAllByOrderByUpdatedAtDesc();
+            log.info("[ProjectController] Total projects in database: {}", allProjects.size());
+            
+            // Log each project's ownerEmail for debugging
+            for (ProjectDocument doc : allProjects) {
+                log.info("[ProjectController] Project: {} | ownerEmail: {} | filename: {}", 
+                    doc.getId(), doc.getOwnerEmail(), doc.getFilename());
+            }
             
             // If no userEmail provided, return all projects (backward compatibility)
             if (userEmail == null || userEmail.isEmpty()) {
@@ -39,8 +51,24 @@ public class ProjectController {
             }
             
             // Separate into myFiles and sharedFiles
+            // Include files with matching ownerEmail OR files with null/empty ownerEmail (legacy files)
             List<Map<String, Object>> myFiles = allProjects.stream()
-                .filter(doc -> userEmail.equals(doc.getOwnerEmail()))
+                .filter(doc -> {
+                    String docOwner = doc.getOwnerEmail();
+                    // Match if owner matches user, OR if owner is null/empty (legacy files)
+                    boolean isOwner = userEmail.equals(docOwner);
+                    boolean isUnowned = (docOwner == null || docOwner.isEmpty());
+                    
+                    // If file is unowned, assign it to this user automatically
+                    if (isUnowned) {
+                        log.info("[ProjectController] Assigning unowned project {} to user {}", doc.getId(), userEmail);
+                        doc.setOwnerEmail(userEmail);
+                        projectRepository.save(doc);
+                        return true;
+                    }
+                    
+                    return isOwner;
+                })
                 .map(doc -> {
                     Map<String, Object> info = mapProjectToInfo(doc);
                     // Add sharedWith info for files owned by user
@@ -53,11 +81,15 @@ public class ProjectController {
                 })
                 .collect(Collectors.toList());
             
+            log.info("[ProjectController] myFiles count for {}: {}", userEmail, myFiles.size());
+            
             // Get projects shared with me
             List<ProjectShare> sharedWithMe = shareService.getSharedWithMe(userEmail);
             List<String> sharedProjectIds = sharedWithMe.stream()
                 .map(ProjectShare::getProjectId)
                 .collect(Collectors.toList());
+            
+            log.info("[ProjectController] sharedWithMe count: {}", sharedWithMe.size());
             
             List<Map<String, Object>> sharedFiles = allProjects.stream()
                 .filter(doc -> sharedProjectIds.contains(doc.getId()))
@@ -68,6 +100,8 @@ public class ProjectController {
                     return info;
                 })
                 .collect(Collectors.toList());
+            
+            log.info("[ProjectController] Returning myFiles: {}, sharedFiles: {}", myFiles.size(), sharedFiles.size());
 
             return ResponseEntity.ok(Map.of(
                 "success", true, 

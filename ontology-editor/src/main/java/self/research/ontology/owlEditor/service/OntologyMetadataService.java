@@ -249,7 +249,10 @@ public class OntologyMetadataService {
      */
     public List<String> getOntologyImports(String projectId) {
         String ontologyIri = getOntologyIri(projectId);
-        if (ontologyIri == null) return new ArrayList<>();
+        if (ontologyIri == null) {
+            log.warn("No ontology IRI found for project {}, returning empty imports", projectId);
+            return new ArrayList<>();
+        }
         
         String formattedOntologyIri = formatResource(ontologyIri);
         String query = PREFIXES + String.format("""
@@ -264,9 +267,18 @@ public class OntologyMetadataService {
             while (rs.hasNext()) {
                 BindingSet sol = rs.next();
                 if (sol.hasBinding("import")) {
-                    imports.add(sol.getValue("import").stringValue());
+                    String importIri = sol.getValue("import").stringValue();
+                    imports.add(importIri);
+                    // Log local imports for debugging
+                    if (!importIri.startsWith("http://") && !importIri.startsWith("https://")) {
+                        log.info("Local import found: {}", importIri);
+                    }
                 }
             }
+            log.info("Retrieved {} imports for project {} (local: {}, remote: {})", 
+                imports.size(), projectId,
+                imports.stream().filter(i -> !i.startsWith("http://") && !i.startsWith("https://")).count(),
+                imports.stream().filter(i -> i.startsWith("http://") || i.startsWith("https://")).count());
         } catch (Exception e) {
             log.error("Error fetching ontology imports for project " + projectId, e);
         }
@@ -277,6 +289,8 @@ public class OntologyMetadataService {
      * Add an ontology import
      */
     public void addOntologyImport(String projectId, String importIri) {
+        log.info("Adding import '{}' to project {}", importIri, projectId);
+        
         String ontologyIri = getOntologyIri(projectId);
         if (ontologyIri == null) {
             // If no ontology triple exists, create one using a stable IRI
@@ -284,6 +298,7 @@ public class OntologyMetadataService {
             String initUpdate = PREFIXES + String.format("INSERT DATA { <%s> a owl:Ontology . }", ontologyIri);
             datasetService.execUpdate(projectId, initUpdate);
             ontologyIri = "<" + ontologyIri + ">";
+            log.info("Created new ontology IRI: {}", ontologyIri);
         } else {
             ontologyIri = formatResource(ontologyIri);
         }
@@ -294,13 +309,20 @@ public class OntologyMetadataService {
         if (importIri.startsWith("./") || importIri.startsWith("../")) {
             // For relative imports, wrap in angle brackets to make them valid RDF IRIs
             formattedImportIri = "<" + importIri + ">";
+            log.info("Relative import detected: {}", importIri);
         } else if (importIri.startsWith("http://") || importIri.startsWith("https://") || 
                    importIri.startsWith("ftp://") || importIri.startsWith("file://")) {
             // Absolute IRIs (URLs or file:// URIs)
             formattedImportIri = "<" + importIri + ">";
+            if (importIri.startsWith("file://")) {
+                log.info("Local file import (file://) detected: {}", importIri);
+            } else {
+                log.info("Remote import detected: {}", importIri);
+            }
         } else {
             // Bare filenames or other formats - treat as relative
             formattedImportIri = "<./" + importIri + ">";
+            log.info("Bare filename detected, converting to relative: {} -> ./{}", importIri, importIri);
         }
 
         String update = PREFIXES + String.format("""
@@ -309,7 +331,9 @@ public class OntologyMetadataService {
             }
             """, ontologyIri, formattedImportIri);
 
+        log.debug("SPARQL Update: {}", update);
         datasetService.execUpdate(projectId, update);
+        log.info("✅ Successfully added import '{}' to project {}", importIri, projectId);
     }
 
     /**
