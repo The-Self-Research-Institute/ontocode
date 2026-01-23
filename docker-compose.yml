@@ -37,8 +37,8 @@ services:
       GDB_LICENSE_PATH: /opt/graphdb
     volumes:
       - graphdb-data:/opt/graphdb/data
+      # Ensure this license file exists in your root folder!
       - ${GDB_LICENSE_FILE:-./CORETOPIA_GRAPHDB_FREE_v11.1.license}:/opt/graphdb/home/conf/graphdb.license:ro
-      - ./scripts/init-graphdb.sh:/docker-entrypoint-initdb.d/init-graphdb.sh:ro
     networks:
       - ontology-net
     healthcheck:
@@ -48,7 +48,7 @@ services:
       retries: 5
       start_period: 60s
 
-  # GraphDB Repository Initializer
+  # GraphDB Repository Initializer (UPDATED FIX)
   graphdb-init:
     image: curlimages/curl:latest
     container_name: ontocode-graphdb-init
@@ -56,10 +56,11 @@ services:
       graphdb:
         condition: service_healthy
     volumes:
-      - ./scripts/init-graphdb.sh:/init-graphdb.sh:ro
+      # Points to the NEW script to bypass Windows cache issues
+      - ./scripts/init-repo.sh:/init-repo.sh:ro
     networks:
       - ontology-net
-    command: sh /init-graphdb.sh
+    command: sh /init-repo.sh
     restart: "no"
 
   # Authentication Service
