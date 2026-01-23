@@ -1,27 +1,42 @@
-#!/bin/bash
-# GraphDB Repository Initialization Script
-# This script creates the 'ontocode' repository if it doesn't exist
+#!/bin/sh
+# init-graphdb.sh
 
-GRAPHDB_URL="http://graphdb:7200"
+# 1. Set URL: Use the env var if provided, otherwise default to the Docker service name
+GRAPHDB_URL="${GRAPHDB_URL:-http://graphdb:7200}"
+REPO_ID="ontocode"
 
-echo "Waiting for GraphDB to be ready..."
-until curl -sf ${GRAPHDB_URL}/rest/repositories > /dev/null 2>&1; do
-  echo "GraphDB not ready yet, waiting..."
+echo "--- GraphDB Initialization ---"
+echo "Target URL: ${GRAPHDB_URL}"
+
+# 2. Wait Loop: Check if GraphDB is actually reachable
+# We loop until we get a valid response or timeout
+MAX_RETRIES=12
+COUNT=0
+
+echo "Checking connection to GraphDB..."
+until curl -s -f --max-time 5 "${GRAPHDB_URL}/rest/repositories" > /dev/null 2>&1; do
+  COUNT=$((COUNT+1))
+  if [ $COUNT -ge $MAX_RETRIES ]; then
+    echo "ERROR: Could not connect to GraphDB at ${GRAPHDB_URL} after 60 seconds."
+    exit 1
+  fi
+  echo "GraphDB not ready yet... waiting 5s ($COUNT/$MAX_RETRIES)"
   sleep 5
 done
 
-echo "GraphDB is ready!"
+echo "Connection established!"
 
-# Check if repository exists
-if curl -sf ${GRAPHDB_URL}/repositories/ontocode > /dev/null 2>&1; then
-  echo "Repository 'ontocode' already exists, skipping creation."
+# 3. Check for existing repository
+if curl -s -f "${GRAPHDB_URL}/repositories/${REPO_ID}" > /dev/null 2>&1; then
+  echo "Repository '${REPO_ID}' already exists. Setup complete."
   exit 0
 fi
 
-echo "Creating 'ontocode' repository..."
+echo "Repository '${REPO_ID}' not found. Attempting to create..."
 
-# Create repository configuration
-cat > /tmp/ontocode-config.ttl << 'EOF'
+# 4. Create config file
+CONFIG_FILE="/tmp/ontocode-config.ttl"
+cat > "${CONFIG_FILE}" << 'EOF'
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix rep: <http://www.openrdf.org/config/repository#> .
 @prefix sr: <http://www.openrdf.org/config/repository/sail#> .
@@ -57,20 +72,19 @@ cat > /tmp/ontocode-config.ttl << 'EOF'
     ] .
 EOF
 
-# Upload configuration to GraphDB
-curl -X POST ${GRAPHDB_URL}/rest/repositories \
-  -H "Content-Type: multipart/form-data" \
-  -F "config=@/tmp/ontocode-config.ttl" \
-  > /dev/null 2>&1
+# 5. Send Creation Request
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${GRAPHDB_URL}/rest/repositories" \
+  -F "config=@${CONFIG_FILE}")
 
-if [ $? -eq 0 ]; then
-  echo "✓ Repository 'ontocode' created successfully!"
+# 6. Verify Success or Fail
+if [ "$HTTP_CODE" -eq 201 ] || [ "$HTTP_CODE" -eq 204 ] || [ "$HTTP_CODE" -eq 200 ]; then
+  echo "✓ SUCCESS: Repository '${REPO_ID}' created."
+  rm -f "${CONFIG_FILE}"
+  exit 0
 else
-  echo "✗ Failed to create repository. Please create it manually at ${GRAPHDB_URL}"
+  echo "❌ ERROR: Failed to create repository. HTTP Status: ${HTTP_CODE}"
+  # Print the actual error message from the server for debugging
+  curl -X POST "${GRAPHDB_URL}/rest/repositories" -F "config=@${CONFIG_FILE}"
+  rm -f "${CONFIG_FILE}"
   exit 1
 fi
-
-# Cleanup
-rm -f /tmp/ontocode-config.ttl
-
-echo "GraphDB initialization complete."
