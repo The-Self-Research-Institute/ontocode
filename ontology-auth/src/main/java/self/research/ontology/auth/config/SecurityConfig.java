@@ -1,5 +1,7 @@
 package self.research.ontology.auth.config; // Adjust package as per your project
 
+import self.research.ontology.auth.security.RateLimitingFilter;
+import self.research.ontology.auth.security.SecurityValidationFilter;
 import self.research.ontology.auth.service.CustomUserDetailsService; // Adjust package
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -29,11 +31,17 @@ public class SecurityConfig {
 
     private final CustomUserDetailsService customUserDetailsService;
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final SecurityValidationFilter securityValidationFilter;
+    private final RateLimitingFilter rateLimitingFilter;
 
     public SecurityConfig(CustomUserDetailsService customUserDetailsService, 
-                         JwtAuthenticationFilter jwtAuthenticationFilter) {
+                         JwtAuthenticationFilter jwtAuthenticationFilter,
+                         SecurityValidationFilter securityValidationFilter,
+                         RateLimitingFilter rateLimitingFilter) {
         this.customUserDetailsService = customUserDetailsService;
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+        this.securityValidationFilter = securityValidationFilter;
+        this.rateLimitingFilter = rateLimitingFilter;
     }
 
     @Bean
@@ -69,7 +77,10 @@ public class SecurityConfig {
                         .anyRequest().authenticated() // All other requests require authentication
                 )
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)) // Stateless sessions
-                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class); // Add JWT filter
+                // Add security filters in order: Rate Limiting -> Security Validation -> JWT Authentication
+                .addFilterBefore(rateLimitingFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(securityValidationFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }

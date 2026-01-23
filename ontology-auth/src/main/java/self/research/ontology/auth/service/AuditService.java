@@ -97,4 +97,11 @@ public class AuditService {
     public void logPasswordResetSuccess(String username) {
         logEvent(username, "PASSWORD_RESET_SUCCESS", null, null);
     }
+
+    /**
+     * Log password change
+     */
+    public void logPasswordChange(String username) {
+        logEvent(username, "PASSWORD_CHANGED", null, null);
+    }
 }

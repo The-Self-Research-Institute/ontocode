@@ -4,6 +4,7 @@ import apiClient from '../services/apiClient';
 
 interface User {
     token: string;
+    userId?: string;
     username: string;
     email?: string;
     roles?: string[];
@@ -47,13 +48,14 @@ const isTokenExpired = (token: string): boolean => {
 };
 
 // Decode JWT token to get user info
-const decodeToken = (token: string): { username: string; email?: string; roles?: string[]; isAdmin?: boolean; workspaceId?: string; workspaceName?: string; workspaceRole?: string } => {
+const decodeToken = (token: string): { userId?: string; username: string; email?: string; roles?: string[]; isAdmin?: boolean; workspaceId?: string; workspaceName?: string; workspaceRole?: string } => {
     try {
         const parts = token.split('.');
         if (parts.length !== 3) return { username: 'unknown' };
         
         const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
         return {
+            userId: payload.userId || payload.id,
             username: payload.sub || 'unknown',
             email: payload.email,
             roles: payload.roles || [],
@@ -128,7 +130,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         if (userInfo.workspaceId && userInfo.isAdmin) {
                             // Admin with workspace selected - show ProjectDashboard
                             setUser({ 
-                                token: message.token, 
+                                token: message.token,
+                                userId: userInfo.userId,
                                 username: userInfo.username, 
                                 email: userInfo.email,
                                 roles: userInfo.roles,
@@ -141,7 +144,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         } else if (userInfo.workspaceId && !userInfo.isAdmin) {
                             // Non-admin with workspace - go directly to editor
                             setUser({ 
-                                token: message.token, 
+                                token: message.token,
+                                userId: userInfo.userId,
                                 username: userInfo.username, 
                                 email: userInfo.email,
                                 roles: userInfo.roles,
@@ -154,7 +158,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         } else {
                             // User without workspace
                             setUser({ 
-                                token: message.token, 
+                                token: message.token,
+                                userId: userInfo.userId,
                                 username: userInfo.username, 
                                 email: userInfo.email,
                                 roles: userInfo.roles,
@@ -231,7 +236,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             
             // Set user data
             setUser({ 
-                token, 
+                token,
+                userId: userInfo.userId,
                 username: userInfo.username || username, 
                 email: userInfo.email || email,
                 roles: userInfo.roles || roles,
@@ -295,18 +301,23 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 const roles = responseData?.roles || userInfo.roles || [];
                 
                 setUser({ 
-                    token, 
+                    token,
+                    userId: userInfo.userId,
                     username: userInfo.username || username, 
                     email: userInfo.email || email,
                     roles: roles,
                     isAdmin: isAdmin
                 });
                 
-                // Both admin and non-admin users need workspace selection after signup
-                // Admin users will see "Create Workspace" option
-                // Non-admin users will see workspaces they've been invited to
-                console.log('[AuthContext]  Signup successful - User role:', role, ', needs workspace selection');
-                setNeedsWorkspaceSelection(true);
+                // Only admin users need workspace selection after signup
+                // Non-admin users go directly to editor (can upload files to GraphDB)
+                if (isAdmin || (roles && roles.includes('ROLE_ADMIN'))) {
+                    console.log('[AuthContext]  Signup successful - Admin user, needs workspace selection');
+                    setNeedsWorkspaceSelection(true);
+                } else {
+                    console.log('[AuthContext]  Signup successful - Regular user, skip workspace selection (direct to editor)');
+                    setNeedsWorkspaceSelection(false);
+                }
                 
                 // Clear expired message on successful signup
                 setSessionExpiredMessage(null);
@@ -328,6 +339,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const selectWorkspace = (workspaceData: any) => {
         console.log('[AuthContext] Workspace selected:', workspaceData);
         
+        // Handle skip workspace case - user continues without workspace
+        if (workspaceData.skipWorkspace) {
+            console.log('[AuthContext] User skipped workspace selection, continuing to editor');
+            setNeedsWorkspaceSelection(false);
+            // User stays logged in but without workspace context
+            return;
+        }
+        
         if (!workspaceData.jwt) {
             throw new Error('No token received from workspace selection');
         }
@@ -345,7 +364,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const isAdmin = userInfo.isAdmin || user?.isAdmin || roles.includes('ROLE_ADMIN');
         
         setUser({ 
-            token: workspaceData.jwt, 
+            token: workspaceData.jwt,
+            userId: userInfo.userId || user?.userId,
             username: workspaceData.username || userInfo.username, 
             email: userInfo.email || user?.email,
             roles: roles,
@@ -353,7 +373,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             workspaceId: workspaceData.workspaceId,
             workspaceName: workspaceData.workspaceName,
             workspaceRole: workspaceData.role,
-            subscriptionPlan: workspaceData.subscriptionPlan || 'free'
+            subscriptionPlan: workspaceData.subscriptionPlan || 'FREE'
         });
         setNeedsWorkspaceSelection(false);
         console.log('[AuthContext]  Workspace selection complete');

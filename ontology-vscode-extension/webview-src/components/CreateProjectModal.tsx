@@ -2,6 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { X, Users, Check } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import { useAuth } from '../custom-hook/useAuth';
+import { 
+    validateProjectName, 
+    validateDescription 
+} from '../utils/validation';
 
 interface CreateProjectModalProps {
     isOpen: boolean;
@@ -23,6 +27,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
     const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMember[]>([]);
     const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
     const [creating, setCreating] = useState(false);
+    const [loadingMembers, setLoadingMembers] = useState(false);
 
     useEffect(() => {
         if (isOpen && shareWith === 'specific') {
@@ -32,19 +37,55 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
 
     const loadWorkspaceMembers = async () => {
         try {
+            setLoadingMembers(true);
             // Get workspace members from workspace endpoint
             const response = await apiClient.get(`/api/workspaces/${user?.workspaceId}`);
-            const workspace = response?.data?.workspace || response?.data;
-            setWorkspaceMembers(workspace?.members || []);
+            console.log('Workspace response:', response);
+            
+            // Backend returns workspace data directly in response.data
+            const workspaceData = response?.data || response;
+            const members = workspaceData?.members || [];
+            
+            console.log('Loaded workspace members:', members);
+            setWorkspaceMembers(members);
         } catch (error) {
             console.error('Error loading workspace members:', error);
+            setWorkspaceMembers([]);
+        } finally {
+            setLoadingMembers(false);
         }
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         
-        if (!projectName.trim()) return;
+        // Check workspace context first
+        if (!user?.workspaceId) {
+            alert('⚠️ No Workspace Selected\n\nPlease select a workspace before creating a project.');
+            return;
+        }
+
+        // Validate project name
+        const nameValidation = validateProjectName(projectName);
+        if (!nameValidation.isValid) {
+            alert(`❌ Invalid Project Name\n\n${nameValidation.error}`);
+            return;
+        }
+
+        // Validate description (optional, but if provided must be valid)
+        if (description) {
+            const descValidation = validateDescription(description);
+            if (!descValidation.isValid) {
+                alert(`❌ Invalid Description\n\n${descValidation.error}`);
+                return;
+            }
+        }
+        
+        // Validate member selection for specific sharing
+        if (shareWith === 'specific' && selectedMembers.length === 0) {
+            alert('⚠️ No Members Selected\n\nPlease select at least one member to share with, or choose a different sharing option.');
+            return;
+        }
         
         try {
             setCreating(true);
@@ -63,13 +104,22 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
                 return;
             }
             
-            await apiClient.post('/api/projects', {
+            // Prepare request payload
+            const payload: any = {
                 workspaceId: user?.workspaceId || 'default',
                 name: projectName.trim(),
                 description: description.trim(),
-                shareWith: shareWith,
-                memberUsernames: shareWith === 'specific' ? selectedMembers : undefined
-            });
+                shareWith: shareWith === 'none' ? null : shareWith
+            };
+            
+            // Add member usernames only when shareWith is 'specific' and members are selected
+            if (shareWith === 'specific' && selectedMembers.length > 0) {
+                payload.memberUsernames = selectedMembers;
+            }
+            
+            console.log('Creating project with payload:', payload);
+            
+            await apiClient.post('/api/projects', payload);
             
             setProjectName('');
             setDescription('');
@@ -119,9 +169,13 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
                             value={projectName}
                             onChange={(e) => setProjectName(e.target.value)}
                             placeholder="Enter project name"
+                            maxLength={255}
                             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                             required
                         />
+                        <p className="text-xs text-gray-500 mt-1">
+                            {projectName.length}/255 characters
+                        </p>
                     </div>
 
                     <div>
@@ -133,8 +187,15 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
                             onChange={(e) => setDescription(e.target.value)}
                             placeholder="Enter project description"
                             rows={3}
+                            maxLength={1000}
                             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
                         />
+                        <div className="flex justify-between text-xs text-gray-500 mt-1">
+                            <span>Describe your project (optional)</span>
+                            <span className={description.length > 900 ? 'text-orange-500 font-medium' : ''}>
+                                {description.length}/1000 characters
+                            </span>
+                        </div>
                     </div>
 
                     <div>
@@ -185,28 +246,45 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
                                     className="mt-0.5"
                                 />
                                 <div className="flex-1">
-                                    <div className="font-medium text-gray-900">Specific Members</div>
+                                    <div className="font-medium text-gray-900 flex items-center gap-2">
+                                        Specific Members
+                                        {shareWith === 'specific' && selectedMembers.length > 0 && (
+                                            <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded-full">
+                                                {selectedMembers.length} selected
+                                            </span>
+                                        )}
+                                    </div>
                                     <div className="text-sm text-gray-500 mb-2">Choose who can view this project</div>
                                     
                                     {shareWith === 'specific' && (
-                                        <div className="mt-3 space-y-2 max-h-48 overflow-y-auto">
-                                            {workspaceMembers.filter(m => m.userId !== user?.id).map((member) => (
-                                                <label
-                                                    key={member.userId}
-                                                    className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded cursor-pointer"
-                                                >
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={selectedMembers.includes(member.username)}
-                                                        onChange={() => toggleMember(member.username)}
-                                                        className="rounded text-purple-600"
-                                                    />
-                                                    <div className="text-sm">
-                                                        <div className="font-medium text-gray-900">{member.username}</div>
-                                                        <div className="text-gray-500 text-xs">{member.email}</div>
-                                                    </div>
-                                                </label>
-                                            ))}
+                                        <div className="mt-3 space-y-2 max-h-48 overflow-y-auto border border-gray-200 rounded p-2">
+                                            {loadingMembers ? (
+                                                <div className="text-center text-sm text-gray-500 py-4">
+                                                    Loading members...
+                                                </div>
+                                            ) : workspaceMembers.filter(m => m.userId !== user?.id).length === 0 ? (
+                                                <div className="text-center text-sm text-gray-500 py-4">
+                                                    No other members in workspace
+                                                </div>
+                                            ) : (
+                                                workspaceMembers.filter(m => m.userId !== user?.id).map((member) => (
+                                                    <label
+                                                        key={member.userId}
+                                                        className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded cursor-pointer"
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={selectedMembers.includes(member.username)}
+                                                            onChange={() => toggleMember(member.username)}
+                                                            className="rounded text-purple-600"
+                                                        />
+                                                        <div className="text-sm">
+                                                            <div className="font-medium text-gray-900">{member.username}</div>
+                                                            <div className="text-gray-500 text-xs">{member.email}</div>
+                                                        </div>
+                                                    </label>
+                                                ))
+                                            )}
                                         </div>
                                     )}
                                 </div>

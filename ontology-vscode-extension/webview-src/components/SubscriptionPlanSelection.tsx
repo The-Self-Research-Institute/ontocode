@@ -33,11 +33,11 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
     onSkip,
     onLogout
 }) => {
-    const [selectedPlan, setSelectedPlan] = useState<string>('pro');
+    const [selectedPlan, setSelectedPlan] = useState<string>('PRO');
 
     const plans: Plan[] = [
         {
-            id: 'free',
+            id: 'FREE',
             name: 'Free',
             icon: <Sparkles size={28} />,
             price: 0,
@@ -59,7 +59,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
             buttonColor: 'bg-gray-600 hover:bg-gray-700'
         },
         {
-            id: 'pro',
+            id: 'PRO',
             name: 'Professional',
             icon: <Zap size={28} />,
             price: 29,
@@ -81,7 +81,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
             buttonColor: 'bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700'
         },
         {
-            id: 'enterprise',
+            id: 'ENTERPRISE',
             name: 'Enterprise',
             icon: <Crown size={28} />,
             price: 99,

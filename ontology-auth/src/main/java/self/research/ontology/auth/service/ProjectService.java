@@ -27,6 +27,42 @@ public class ProjectService {
      * Create a new project within a workspace
      */
     public Project createProject(String workspaceId, String userId, String username, String email, String name, String description) {
+        // Validate inputs
+        if (name == null || name.isBlank()) {
+            throw new IllegalArgumentException("Project name is required");
+        }
+        
+        name = name.trim();
+        
+        if (name.length() > 255) {
+            throw new IllegalArgumentException("Project name cannot exceed 255 characters");
+        }
+        
+        // XSS Prevention
+        if (name.contains("<") || name.contains(">")) {
+            throw new IllegalArgumentException("Project name cannot contain < or > characters");
+        }
+        
+        // Path traversal prevention
+        if (name.contains("..") || name.contains("/") || name.contains("\\")) {
+            throw new IllegalArgumentException("Project name cannot contain path traversal characters");
+        }
+        
+        // Validate special characters that are filesystem-unsafe
+        if (name.matches(".*[<>/\\\\:*?\"'|].*")) {
+            throw new IllegalArgumentException("Project name contains invalid characters");
+        }
+        
+        if (description != null) {
+            description = description.trim();
+            if (description.length() > 1000) {
+                throw new IllegalArgumentException("Description cannot exceed 1000 characters");
+            }
+            if (description.contains("<") || description.contains(">")) {
+                throw new IllegalArgumentException("Description cannot contain < or > characters");
+            }
+        }
+        
         // Verify workspace exists
         Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(workspaceId);
         if (workspaceOpt.isEmpty()) {
@@ -47,6 +83,7 @@ public class ProjectService {
         project.setDescription(description);
         project.setWorkspaceId(workspaceId);
         project.setOwnerId(userId);
+        project.setStatus("ACTIVE"); // Set initial status
         
         // Add creator as owner
         project.addMember(userId, username, email, "OWNER");
@@ -86,7 +123,7 @@ public class ProjectService {
      * Get a specific project
      */
     public Optional<Project> getProject(String projectId) {
-        return projectRepository.findByProjectId(projectId);
+        return projectRepository.findActiveByProjectId(projectId);
     }
 
     /**
@@ -112,6 +149,44 @@ public class ProjectService {
             throw new SecurityException("User does not have permission to edit this project");
         }
         
+        // Validate name if provided
+        if (name != null && !name.isBlank()) {
+            name = name.trim();
+            
+            if (name.length() > 255) {
+                throw new IllegalArgumentException("Project name cannot exceed 255 characters");
+            }
+            
+            if (name.contains("<") || name.contains(">")) {
+                throw new IllegalArgumentException("Project name cannot contain < or > characters");
+            }
+            
+            if (name.contains("..") || name.contains("/") || name.contains("\\")) {
+                throw new IllegalArgumentException("Project name cannot contain path traversal characters");
+            }
+            
+            if (name.matches(".*[<>/\\\\:*?\"'|].*")) {
+                throw new IllegalArgumentException("Project name contains invalid characters");
+            }
+            
+            project.setName(name);
+        }
+        
+        // Validate description if provided
+        if (description != null) {
+            description = description.trim();
+            
+            if (description.length() > 1000) {
+                throw new IllegalArgumentException("Description cannot exceed 1000 characters");
+            }
+            
+            if (description.contains("<") || description.contains(">")) {
+                throw new IllegalArgumentException("Description cannot contain < or > characters");
+            }
+            
+            project.setDescription(description);
+        }
+        
         if (name != null) project.setName(name);
         if (description != null) project.setDescription(description);
         
@@ -129,9 +204,9 @@ public class ProjectService {
         
         Project project = projectOpt.get();
         
-        // Check permissions (only OWNER can add members)
-        if (!isOwner(project, userId)) {
-            throw new SecurityException("Only project owner can add members");
+        // Check permissions (only OWNER or WORKSPACE OWNER can add members)
+        if (!canManageProject(project, userId)) {
+            throw new SecurityException("Only project owner or workspace owner can add members");
         }
         
         if (project.hasMember(targetUserId)) {
@@ -154,8 +229,8 @@ public class ProjectService {
         Project project = projectOpt.get();
         
         // Check permissions
-        if (!isOwner(project, userId)) {
-            throw new SecurityException("Only project owner can remove members");
+        if (!canManageProject(project, userId)) {
+            throw new SecurityException("Only project owner or workspace owner can remove members");
         }
         
         // Cannot remove owner
@@ -179,8 +254,8 @@ public class ProjectService {
         Project project = projectOpt.get();
         
         // Check permissions
-        if (!isOwner(project, userId)) {
-            throw new SecurityException("Only project owner can archive the project");
+        if (!canManageProject(project, userId)) {
+            throw new SecurityException("Only project owner or workspace owner can archive the project");
         }
         
         project.setStatus("ARCHIVED");
@@ -188,7 +263,7 @@ public class ProjectService {
     }
 
     /**
-     * Delete a project
+     * Soft delete a project and cascade to all related files
      */
     public void deleteProject(String projectId, String userId) {
         Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
@@ -199,11 +274,61 @@ public class ProjectService {
         Project project = projectOpt.get();
         
         // Check permissions
-        if (!isOwner(project, userId)) {
-            throw new SecurityException("Only project owner can delete the project");
+        if (!canManageProject(project, userId)) {
+            throw new SecurityException("Only project owner or workspace owner can delete the project");
         }
         
+        // Soft delete the project
+        project.setIsDeleted(true);
+        project.setDeletedAt(LocalDateTime.now());
+        project.setDeletedBy(userId);
         project.setStatus("DELETED");
+        projectRepository.save(project);
+        
+        // Cascade soft delete to all files in this project
+        for (Project.FileMetadataInfo fileInfo : project.getFiles()) {
+            if (!"DELETED".equals(fileInfo.getStatus())) {
+                fileInfo.setStatus("DELETED");
+            }
+        }
+        projectRepository.save(project);
+    }
+    
+    /**
+     * Restore a soft deleted project and optionally restore files
+     */
+    public void restoreProject(String projectId, String userId, boolean restoreFiles) {
+        Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
+        if (projectOpt.isEmpty()) {
+            throw new IllegalArgumentException("Project not found");
+        }
+        
+        Project project = projectOpt.get();
+        
+        // Check permissions
+        if (!canManageProject(project, userId)) {
+            throw new SecurityException("Only project owner or workspace owner can restore the project");
+        }
+        
+        if (!Boolean.TRUE.equals(project.getIsDeleted())) {
+            throw new IllegalStateException("Project is not deleted");
+        }
+        
+        // Restore the project
+        project.setIsDeleted(false);
+        project.setDeletedAt(null);
+        project.setDeletedBy(null);
+        project.setStatus("ACTIVE");
+        
+        if (restoreFiles) {
+            // Restore all files in this project
+            for (Project.FileMetadataInfo fileInfo : project.getFiles()) {
+                if ("DELETED".equals(fileInfo.getStatus())) {
+                    fileInfo.setStatus("ACTIVE");
+                }
+            }
+        }
+        
         projectRepository.save(project);
     }
 
@@ -235,6 +360,21 @@ public class ProjectService {
     }
 
     /**
+     * Check if user is workspace owner
+     */
+    private boolean isWorkspaceOwner(String workspaceId, String userId) {
+        Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(workspaceId);
+        return workspaceOpt.isPresent() && workspaceOpt.get().getOwnerId().equals(userId);
+    }
+
+    /**
+     * Check if user can manage project (owner or workspace owner)
+     */
+    private boolean canManageProject(Project project, String userId) {
+        return isOwner(project, userId) || isWorkspaceOwner(project.getWorkspaceId(), userId);
+    }
+
+    /**
      * Generate unique project ID
      */
     private String generateProjectId() {
@@ -249,9 +389,9 @@ public class ProjectService {
      * Get project by ID and verify user access
      */
     private Project getProjectById(String projectId, String userId) {
-        Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
+        Optional<Project> projectOpt = projectRepository.findActiveByProjectId(projectId);
         if (projectOpt.isEmpty()) {
-            throw new IllegalArgumentException("Project not found");
+            throw new IllegalArgumentException("Project not found or has been deleted");
         }
         
         Project project = projectOpt.get();
@@ -326,7 +466,7 @@ public class ProjectService {
     }
 
     /**
-     * Remove a file from a project
+     * Soft delete a file from a project
      */
     public Project removeFile(String projectId, String userId, String fileId) {
         Project project = getProjectById(projectId, userId);
@@ -344,6 +484,37 @@ public class ProjectService {
         
         // Remove file from project (backward compatibility)
         project.getFileIds().remove(fileId);
+        project.setUpdatedAt(LocalDateTime.now());
+        return projectRepository.save(project);
+    }
+    
+    /**
+     * Restore a soft deleted file in a project
+     */
+    public Project restoreFile(String projectId, String userId, String fileId) {
+        Project project = getProjectById(projectId, userId);
+        
+        // Check if user has edit permission
+        if (!hasEditPermission(project, userId)) {
+            throw new SecurityException("You don't have permission to restore files in this project");
+        }
+        
+        // Restore file in project metadata
+        Project.FileMetadataInfo fileInfo = project.getFile(fileId);
+        if (fileInfo != null) {
+            if (!"DELETED".equals(fileInfo.getStatus())) {
+                throw new IllegalStateException("File is not deleted");
+            }
+            fileInfo.setStatus("ACTIVE");
+        } else {
+            throw new IllegalArgumentException("File not found in project");
+        }
+        
+        // Add file back to fileIds (backward compatibility)
+        if (!project.getFileIds().contains(fileId)) {
+            project.getFileIds().add(fileId);
+        }
+        
         project.setUpdatedAt(LocalDateTime.now());
         return projectRepository.save(project);
     }
