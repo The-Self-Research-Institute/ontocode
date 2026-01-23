@@ -1,5 +1,4 @@
 #!/bin/sh
-set -e
 # --- CONFIGURATION ---
 REPO_ID="ontocode"
 GRAPHDB_URL="http://graphdb:7200"
