@@ -50,16 +50,22 @@ services:
 
   # GraphDB Repository Initializer
   graphdb-init:
-    image: curlimages/curl:latest
+    image: alpine:3.19
     container_name: ontocode-graphdb-init
     depends_on:
       graphdb:
+        # 1. This ensures the script ONLY starts after GraphDB health check passes
         condition: service_healthy
     volumes:
       - ./scripts/init-graphdb.sh:/init-graphdb.sh:ro
+    environment:
+      # 2. Tell the script where GraphDB is inside the Docker network
+      - GRAPHDB_URL=http://graphdb:7200
     networks:
       - ontology-net
-    command: sh /init-graphdb.sh
+    # 3. Install dependencies and run the script
+    command: >
+      /bin/sh -c "apk add --no-cache curl && /bin/sh /init-graphdb.sh"
     restart: "no"
 
   # Authentication Service
