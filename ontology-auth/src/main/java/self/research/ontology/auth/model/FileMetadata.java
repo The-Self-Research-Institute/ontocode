@@ -35,10 +35,16 @@ public class FileMetadata {
     // Status
     private String status; // ACTIVE, DELETED
     
+    // Soft delete fields
+    private Boolean isDeleted = false;
+    private LocalDateTime deletedAt;
+    private String deletedBy; // User ID who deleted the file
+    
     // Constructors
     public FileMetadata() {
         this.uploadedAt = LocalDateTime.now();
         this.status = "ACTIVE";
+        this.isDeleted = false;
     }
     
     public FileMetadata(String fileId, String fileName, String projectId, String workspaceId) {
@@ -94,4 +100,13 @@ public class FileMetadata {
     
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    
+    public Boolean getIsDeleted() { return isDeleted; }
+    public void setIsDeleted(Boolean isDeleted) { this.isDeleted = isDeleted; }
+    
+    public LocalDateTime getDeletedAt() { return deletedAt; }
+    public void setDeletedAt(LocalDateTime deletedAt) { this.deletedAt = deletedAt; }
+    
+    public String getDeletedBy() { return deletedBy; }
+    public void setDeletedBy(String deletedBy) { this.deletedBy = deletedBy; }
 }

@@ -1,11 +1,18 @@
 import React, { useState } from 'react';
-import { X, Mail, UserPlus, Copy, Check, AlertCircle } from 'lucide-react';
+import { X, Mail, UserPlus, Copy, Check, AlertCircle, Crown, ArrowRight } from 'lucide-react';
+import { validateEmail, validateRole } from '../utils/validation';
 
 interface InviteMemberModalProps {
     isOpen: boolean;
     onClose: () => void;
     workspaceId: string;
     workspaceName: string;
+    subscriptionPlan?: string;
+    currentMemberCount?: number;
+    maxMembers?: number;
+    existingMemberEmails?: string[];
+    isWorkspaceOwner?: boolean;
+    onUpgradePlan?: () => void;
     onInvite: (email: string, role: string) => Promise<void>;
 }
 
@@ -14,6 +21,12 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
     onClose,
     workspaceId,
     workspaceName,
+    subscriptionPlan = 'FREE',
+    currentMemberCount = 0,
+    maxMembers,
+    existingMemberEmails = [],
+    isWorkspaceOwner = false,
+    onUpgradePlan,
     onInvite
 }) => {
     const [email, setEmail] = useState('');
@@ -22,12 +35,47 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
     const [invitationLinks, setInvitationLinks] = useState<{ webLink: string; vscodeLink: string } | null>(null);
     const [copiedLink, setCopiedLink] = useState<'web' | 'vscode' | null>(null);
     const [errorMessage, setErrorMessage] = useState('');
+    const [showLimitExceeded, setShowLimitExceeded] = useState(false);
+    
+    // Check if limit exceeded when modal opens
+    React.useEffect(() => {
+        if (isOpen && maxMembers && currentMemberCount >= maxMembers) {
+            setShowLimitExceeded(true);
+        } else {
+            setShowLimitExceeded(false);
+        }
+    }, [isOpen, maxMembers, currentMemberCount]);
 
     if (!isOpen) return null;
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!email.trim()) return;
+        
+        // Validate email format
+        const emailValidation = validateEmail(email);
+        if (!emailValidation.isValid) {
+            setErrorMessage(emailValidation.error || 'Invalid email format');
+            return;
+        }
+
+        // Validate role
+        const roleValidation = validateRole(role);
+        if (!roleValidation.isValid) {
+            setErrorMessage(roleValidation.error || 'Invalid role selected');
+            return;
+        }
+
+        // Check for duplicate member
+        if (existingMemberEmails.some(existingEmail => existingEmail.toLowerCase() === email.trim().toLowerCase())) {
+            setErrorMessage('This user is already a member of the workspace');
+            return;
+        }
+
+        // Check member limit if maxMembers is provided
+        if (maxMembers && currentMemberCount >= maxMembers) {
+            setErrorMessage(`Maximum member limit reached (${maxMembers} for ${subscriptionPlan} plan). Please upgrade your subscription or remove existing members.`);
+            return;
+        }
 
         try {
             setInviting(true);
@@ -96,6 +144,68 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
                 </div>
 
                 {/* Body */}
+                {showLimitExceeded ? (
+                    <div className="p-6 space-y-4">
+                        {/* Member Limit Exceeded Message */}
+                        <div className="bg-amber-50 border-2 border-amber-200 rounded-lg p-6">
+                            <div className="flex items-start gap-3">
+                                <div className="p-2 bg-amber-100 rounded-lg">
+                                    <AlertCircle size={24} className="text-amber-600" />
+                                </div>
+                                <div className="flex-1">
+                                    <h4 className="text-lg font-semibold text-amber-900 mb-2">
+                                        Member Limit Reached
+                                    </h4>
+                                    <p className="text-sm text-amber-800 mb-4">
+                                        Your current <span className="font-semibold">{subscriptionPlan}</span> plan subscription allows a maximum of <span className="font-semibold">{maxMembers} team members</span>. 
+                                        You currently have <span className="font-semibold">{currentMemberCount} members</span> added.
+                                    </p>
+                                    <p className="text-sm text-amber-800">
+                                        To add more team members, please upgrade your subscription plan or remove existing members.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Upgrade Plan Button (only for workspace owner) */}
+                        {/* {isWorkspaceOwner && onUpgradePlan && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    onClose();
+                                    onUpgradePlan();
+                                }}
+                                className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 font-medium transition-all shadow-lg hover:shadow-xl"
+                            >
+                                <Crown size={20} />
+                                Upgrade Subscription Plan
+                                <ArrowRight size={20} />
+                            </button>
+                        )} */}
+
+                        {/* Info message if not owner */}
+                        {!isWorkspaceOwner && (
+                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                                <div className="flex items-start gap-2">
+                                    <AlertCircle size={18} className="text-blue-600 flex-shrink-0 mt-0.5" />
+                                    <p className="text-sm text-blue-800">
+                                        Only the workspace owner can upgrade the subscription plan. Please contact the workspace owner to add more members.
+                                    </p>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="flex gap-3 pt-4">
+                            <button
+                                type="button"
+                                onClick={onClose}
+                                className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium transition-colors"
+                            >
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                ) : (
                 <form onSubmit={handleSubmit} className="p-6 space-y-4">
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -223,6 +333,7 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
                         </button>
                     </div>
                 </form>
+                )}
             </div>
         </div>
     );

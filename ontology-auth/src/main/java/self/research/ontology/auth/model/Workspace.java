@@ -41,10 +41,16 @@ public class Workspace {
     // Audit fields
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+    
+    // Soft delete fields
+    private Boolean isDeleted = false;
+    private LocalDateTime deletedAt;
+    private String deletedBy; // User ID who deleted the workspace
 
     public Workspace() {
         this.createdAt = LocalDateTime.now();
         this.updatedAt = LocalDateTime.now();
+        this.isDeleted = false;
     }
 
     // Inner class for workspace members
@@ -162,6 +168,7 @@ public class Workspace {
         if (existingMember != null) {
             existingMember.setUserId(userId);
             existingMember.setUsername(username);
+            existingMember.setRole(role); // FIX: Update role when activating pending member
             existingMember.setStatus(MemberStatus.ACTIVE);
             existingMember.setInvitationToken(null); // Clear the token
             existingMember.setJoinedAt(java.time.LocalDateTime.now());
@@ -298,4 +305,13 @@ public class Workspace {
 
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+    
+    public Boolean getIsDeleted() { return isDeleted; }
+    public void setIsDeleted(Boolean isDeleted) { this.isDeleted = isDeleted; }
+    
+    public LocalDateTime getDeletedAt() { return deletedAt; }
+    public void setDeletedAt(LocalDateTime deletedAt) { this.deletedAt = deletedAt; }
+    
+    public String getDeletedBy() { return deletedBy; }
+    public void setDeletedBy(String deletedBy) { this.deletedBy = deletedBy; }
 }
