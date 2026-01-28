@@ -1981,16 +1981,32 @@ class OntoCodePanel {
             }
         } catch (error: any) {
             console.error('[OntoCode] ❌ Failed to upload file to project:', error);
+            console.error('[OntoCode] Error response:', error.response);
+            console.error('[OntoCode] Error response data:', error.response?.data);
             
             let errorMessage = `Failed to upload ${fileName}`;
             if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
                 errorMessage += ': Upload timeout. Please try again or check your connection.';
-            } else if (error.response?.status === 413) {
-                errorMessage += ': File too large for server (max 300MB).';
+            } else if (error.status === 413) {
+                // Storage limit exceeded or file too large
+                const responseData = error.data;
+                console.log('[OntoCode] Storage limit response data:', responseData);
+                if (responseData?.message) {
+                    errorMessage = responseData.message;
+                } else if (responseData?.error) {
+                    errorMessage = responseData.error;
+                } else {
+                    errorMessage = 'Storage limit exceeded. Please upgrade your plan or delete existing files.';
+                }
+            } else if (error.response?.data?.message) {
+                errorMessage = error.response.data.message;
+            } else if (error.response?.data?.error) {
+                errorMessage += `: ${error.response.data.error}`;
             } else if (error.message) {
                 errorMessage += `: ${error.message}`;
             }
             
+            console.log('[OntoCode] Final error message:', errorMessage);
             vscode.window.showErrorMessage(errorMessage);
             return null;
         }
