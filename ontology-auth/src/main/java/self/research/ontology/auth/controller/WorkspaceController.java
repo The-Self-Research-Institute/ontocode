@@ -231,11 +231,16 @@ public class WorkspaceController {
 
             Workspace workspace = workspaceOpt.get();
             
+            String plan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
+            
             Map<String, Object> subscription = new HashMap<>();
-            subscription.put("plan", workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "free");
+            subscription.put("plan", plan);
             subscription.put("maxMembers", workspace.getMaxMembers());
             subscription.put("maxWorkspaces", workspace.getMaxWorkspaces());
             subscription.put("collaborationEnabled", workspace.getCollaborationEnabled());
+            subscription.put("collaborationLevel", getCollaborationLevel(plan));
+            subscription.put("hasBasicCollaboration", hasBasicCollaboration(plan));
+            subscription.put("hasAdvancedCollaboration", hasAdvancedCollaboration(plan));
             subscription.put("startDate", workspace.getSubscriptionStartDate());
             subscription.put("endDate", workspace.getSubscriptionEndDate());
 
@@ -621,8 +626,14 @@ public class WorkspaceController {
         dto.put("description", workspace.getDescription());
         dto.put("ownerId", workspace.getOwnerId());
         dto.put("memberCount", workspace.getMembers().size());
-        dto.put("subscriptionPlan", workspace.getSubscriptionPlan());
+        
+        String plan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
+        dto.put("subscriptionPlan", plan);
         dto.put("collaborationEnabled", workspace.getCollaborationEnabled());
+        dto.put("collaborationLevel", getCollaborationLevel(plan));
+        dto.put("hasBasicCollaboration", hasBasicCollaboration(plan));
+        dto.put("hasAdvancedCollaboration", hasAdvancedCollaboration(plan));
+        
         dto.put("createdAt", workspace.getCreatedAt());
         dto.put("updatedAt", workspace.getUpdatedAt());
         
@@ -648,10 +659,10 @@ public class WorkspaceController {
     // Helper methods for subscription validation
     private int getMaxMembersForPlan(String plan) {
         return switch (plan.toUpperCase()) {
-            case "FREE" -> 10;
-            case "PRO" -> 50;
+            case "FREE" -> 3;
+            case "PRO" -> 10;
             case "ENTERPRISE" -> Integer.MAX_VALUE;
-            default -> 10;
+            default -> 3;
         };
     }
     
@@ -678,5 +689,43 @@ public class WorkspaceController {
             case "ENTERPRISE" -> 3;
             default -> 0;
         };
+    }
+    
+    /**
+     * Check if a plan has basic collaboration features (file sharing & comments)
+     */
+    private boolean hasBasicCollaboration(String plan) {
+        return switch (plan.toUpperCase()) {
+            case "FREE" -> true;       // Basic collaboration: file sharing & comments
+            case "PRO" -> false;       // No collaboration
+            case "ENTERPRISE" -> true; // Basic collaboration: file sharing & comments
+            default -> false;
+        };
+    }
+    
+    /**
+     * Check if a plan has advanced real-time collaboration features
+     */
+    private boolean hasAdvancedCollaboration(String plan) {
+        return switch (plan.toUpperCase()) {
+            case "FREE" -> false;      // No real-time collaboration
+            case "PRO" -> false;       // No collaboration
+            case "ENTERPRISE" -> false; // Only basic, no real-time
+            default -> false;
+        };
+    }
+    
+    /**
+     * Get collaboration level for a plan
+     * @return "none", "basic", or "advanced"
+     */
+    public String getCollaborationLevel(String plan) {
+        if (hasAdvancedCollaboration(plan)) {
+            return "advanced";
+        } else if (hasBasicCollaboration(plan)) {
+            return "basic";
+        } else {
+            return "none";
+        }
     }
 }

@@ -4,6 +4,7 @@ import { useAuth } from '../custom-hook/useAuth';
 export interface SubscriptionLimits {
     maxTeamMembers: number;
     storageGB: number;
+    hasBasicCollaboration: boolean;
     hasAdvancedCollaboration: boolean;
     hasVersionControl: boolean;
     hasCustomPlugins: boolean;
@@ -22,7 +23,8 @@ export interface SubscriptionLimits {
 export const PLAN_LIMITS: Record<string, SubscriptionLimits> = {
     free: {
         maxTeamMembers: 3,
-        storageGB: 5,
+        storageGB: 10,
+        hasBasicCollaboration: true,
         hasAdvancedCollaboration: false,
         hasVersionControl: false,
         hasCustomPlugins: false,
@@ -35,12 +37,13 @@ export const PLAN_LIMITS: Record<string, SubscriptionLimits> = {
         hasSLAGuarantee: false,
         hasOnPremise: false,
         hasWhiteLabel: false,
-        maxWorkspaces: 1
+        maxWorkspaces: 3
     },
     pro: {
-        maxTeamMembers: 20,
-        storageGB: 50,
-        hasAdvancedCollaboration: true,
+        maxTeamMembers: 10,
+        storageGB: 100,
+        hasBasicCollaboration: false,
+        hasAdvancedCollaboration: false,
         hasVersionControl: true,
         hasCustomPlugins: true,
         hasAdvancedReasoning: true,
@@ -52,12 +55,13 @@ export const PLAN_LIMITS: Record<string, SubscriptionLimits> = {
         hasSLAGuarantee: false,
         hasOnPremise: false,
         hasWhiteLabel: false,
-        maxWorkspaces: 5
+        maxWorkspaces: 10
     },
     enterprise: {
         maxTeamMembers: Infinity,
-        storageGB: 500,
-        hasAdvancedCollaboration: true,
+        storageGB: Infinity,
+        hasBasicCollaboration: true,
+        hasAdvancedCollaboration: false,
         hasVersionControl: true,
         hasCustomPlugins: true,
         hasAdvancedReasoning: true,

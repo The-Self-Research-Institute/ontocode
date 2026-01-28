@@ -186,17 +186,34 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             await loadFiles();
         } catch (error: any) {
             console.error('Error uploading file:', error);
+            console.error('Error status:', error.status);
+            console.error('Error data:', error.data);
             
             // Provide specific error messages
+            // Note: apiClient transforms errors into ApiError with status and data properties (not response.status/response.data)
             let errorMessage = 'Failed to upload file';
             if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
                 errorMessage = 'Upload timeout. Please try a smaller file or check your connection.';
-            } else if (error.response?.status === 413) {
-                errorMessage = 'File too large for server. Maximum size is 300MB.';
-            } else if (error.response?.data?.error) {
-                errorMessage = error.response.data.error;
+            } else if (error.status === 413) {
+                // Storage limit exceeded or file too large
+                const responseData = error.data;
+                console.log('Storage limit response data:', responseData);
+                if (responseData?.message) {
+                    errorMessage = responseData.message;
+                } else if (responseData?.error) {
+                    errorMessage = responseData.error;
+                } else {
+                    errorMessage = 'Storage limit exceeded. Please upgrade your plan or delete existing files.';
+                }
+            } else if (error.data?.message) {
+                errorMessage = error.data.message;
+            } else if (error.data?.error) {
+                errorMessage = error.data.error;
+            } else if (error.message) {
+                errorMessage = `Failed to upload file: ${error.message}`;
             }
             
+            console.log('Final error message to display:', errorMessage);
             showToast(errorMessage, 'error');
         } finally {
             if (!isMountedRef.current) {
