@@ -4199,7 +4199,12 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleProjectSelection = useCallback((selectedProjectId: string) => {
     setHasUserSelectedFile(true); // Mark that user has manually selected a file
     setProjectId(selectedProjectId);
-    setActiveFileId(null); // Clear file-specific ID when switching project
+    // In free mode, use projectId as the active file identifier
+    if (!initialProjectId) {
+      setActiveFileId(selectedProjectId);
+    } else {
+      setActiveFileId(null);
+    }
     setActiveFileName(null);
     setShowProjectSelector(false);
     fetchData(selectedProjectId);
@@ -4694,11 +4699,17 @@ const Dashboard: React.FC<DashboardProps> = ({
             if (isCurrentProject || isPendingImport) {
               console.log('[Dashboard] Should auto-load:', isPendingImport ? 'pending import' : 'current project');
 
-              // Set projectId for new uploads
-              if (isPendingImport && !projectId) {
+              // For new uploads, always switch to the newly imported project
+              if (isPendingImport) {
                 console.log('[Dashboard] Setting projectId to:', message.status.projectId);
                 setProjectId(message.status.projectId);
                 setLoadingProjectName(message.status.projectId);
+                // In free mode, mark the new file as active immediately
+                if (!initialProjectId) {
+                  const nextFileName = message.status.filename || `${message.status.projectId}.owl`;
+                  setActiveFileId(message.status.projectId);
+                  setActiveFileName(nextFileName);
+                }
               }
 
               // Clear pending import tracking
