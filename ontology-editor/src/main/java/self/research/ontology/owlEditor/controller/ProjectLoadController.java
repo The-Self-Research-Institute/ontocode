@@ -10,6 +10,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -21,7 +22,9 @@ import org.springframework.web.multipart.MultipartFile;
 import self.research.ontology.owlEditor.model.DraftChange;
 import self.research.ontology.owlEditor.model.ProjectStatus;
 import self.research.ontology.owlEditor.repository.DraftChangeRepository;
+import self.research.ontology.owlEditor.repository.ProjectRepository;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
+import self.research.ontology.owlEditor.service.GraphDBDatasetService;
 import self.research.ontology.owlEditor.service.GraphDBHistoryService;
 import self.research.ontology.owlEditor.service.GridFSFileService;
 import self.research.ontology.owlEditor.service.ProjectImportService;
@@ -58,6 +61,8 @@ public class ProjectLoadController {
     private final GraphDBHistoryService historyService;
     private final DraftChangeRepository draftChangeRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final GraphDBDatasetService datasetService;
+    private final ProjectRepository projectRepository;
 
     public ProjectLoadController(StorageManager storageManager,
                                  ProjectMetadataService metadataService,
@@ -67,7 +72,9 @@ public class ProjectLoadController {
                                  DraftTrackingService draftTrackingService,
                                  GraphDBHistoryService historyService,
                                  DraftChangeRepository draftChangeRepository,
-                                 SimpMessagingTemplate messagingTemplate) {
+                                 SimpMessagingTemplate messagingTemplate,
+                                 GraphDBDatasetService datasetService,
+                                 ProjectRepository projectRepository) {
         this.storageManager = storageManager;
         this.metadataService = metadataService;
         this.importService = importService;
@@ -77,6 +84,8 @@ public class ProjectLoadController {
         this.historyService = historyService;
         this.draftChangeRepository = draftChangeRepository;
         this.messagingTemplate = messagingTemplate;
+        this.datasetService = datasetService;
+        this.projectRepository = projectRepository;
     }
 
     @PostMapping("/upload/{projectId}")
@@ -560,6 +569,93 @@ public class ProjectLoadController {
                             "success", false,
                             "error", "Failed to get timestamp: " + e.getMessage()
                     ));
+        }
+    }
+
+    /**
+     * Delete a project in free mode (legacy mode without workspace)
+     * This endpoint is routed via /api/ontology/** which goes to the editor service
+     * Performs full cleanup: GraphDB, GridFS, drafts, history, shares, and local files
+     */
+    @DeleteMapping("/project/{projectId:.+}")
+    public ResponseEntity<?> deleteProject(
+            @PathVariable String projectId,
+            @RequestParam(required = false) String ownerEmail) {
+        try {
+            log.info("[ProjectLoadController] DELETE project - projectId: {}, ownerEmail: {}", projectId, ownerEmail);
+            
+            // Check status to verify project exists
+            var statusOpt = metadataService.readStatus(projectId);
+            if (statusOpt.isEmpty()) {
+                log.warn("[ProjectLoadController] Project not found for deletion: {}", projectId);
+                return ResponseEntity.status(404).body(Map.of("success", false, "error", "Project not found"));
+            }
+            
+            // Clear GraphDB dataset (best-effort)
+            try {
+                log.info("[ProjectLoadController] Clearing GraphDB dataset for project: {}", projectId);
+                datasetService.clearDataset(projectId);
+            } catch (Exception e) {
+                log.warn("[ProjectLoadController] Failed to clear GraphDB dataset for {}: {}", projectId, e.getMessage());
+            }
+
+            // Delete GridFS file (best-effort)
+            try {
+                log.info("[ProjectLoadController] Deleting GridFS file for project: {}", projectId);
+                gridFSFileService.deleteFileByProjectId(projectId);
+            } catch (Exception e) {
+                log.warn("[ProjectLoadController] Failed to delete GridFS file for {}: {}", projectId, e.getMessage());
+            }
+
+            // Clear drafts (best-effort)
+            try {
+                log.info("[ProjectLoadController] Clearing drafts for project: {}", projectId);
+                draftTrackingService.discardDrafts(projectId);
+                draftTrackingService.clearAppliedDrafts(projectId);
+            } catch (Exception e) {
+                log.warn("[ProjectLoadController] Failed to clear drafts for {}: {}", projectId, e.getMessage());
+            }
+
+            // Delete shares (best-effort)
+            try {
+                log.info("[ProjectLoadController] Deleting share records for project: {}", projectId);
+                shareService.deleteShare(projectId);
+            } catch (Exception e) {
+                log.warn("[ProjectLoadController] Failed to delete share for {}: {}", projectId, e.getMessage());
+            }
+
+            // Delete project metadata from MongoDB
+            try {
+                log.info("[ProjectLoadController] Deleting project metadata for: {}", projectId);
+                projectRepository.deleteById(projectId);
+            } catch (Exception e) {
+                log.warn("[ProjectLoadController] Failed to delete project metadata for {}: {}", projectId, e.getMessage());
+            }
+
+            // Delete local files (best-effort)
+            try {
+                log.info("[ProjectLoadController] Deleting local files for project: {}", projectId);
+                Path projectDir = storageManager.projectDir(projectId);
+                if (java.nio.file.Files.exists(projectDir)) {
+                    java.nio.file.Files.walk(projectDir)
+                        .sorted(java.util.Comparator.reverseOrder())
+                        .forEach(path -> {
+                            try {
+                                java.nio.file.Files.deleteIfExists(path);
+                            } catch (Exception e) {
+                                log.warn("[ProjectLoadController] Failed to delete {}", path);
+                            }
+                        });
+                }
+            } catch (Exception e) {
+                log.warn("[ProjectLoadController] Failed to delete project files for {}: {}", projectId, e.getMessage());
+            }
+
+            log.info("[ProjectLoadController] ✅ Project {} deleted successfully", projectId);
+            return ResponseEntity.ok(Map.of("success", true, "message", "Project deleted successfully"));
+        } catch (Exception e) {
+            log.error("[ProjectLoadController] Delete failed for {}: {}", projectId, e.getMessage(), e);
+            return ResponseEntity.status(500).body(Map.of("success", false, "error", "Failed to delete project"));
         }
     }
 }

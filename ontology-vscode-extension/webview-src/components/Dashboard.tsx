@@ -165,11 +165,11 @@ const combineReasonerResults = (classificationPayload: any, statsPayload?: any) 
       }
     };
   }
-  
+
   const classificationData = extractResponseData(classificationPayload);
   const statsData = statsPayload ? extractResponseData(statsPayload) : null;
   const existingStats = (classificationData as any)?.stats || {};
-  
+
   // Fix: Ensure classHierarchy is an array before building tree
   const rawClassHierarchy = (classificationData as any)?.classHierarchy;
   const classHierarchyArray = Array.isArray(rawClassHierarchy) ? rawClassHierarchy : [];
@@ -223,17 +223,17 @@ const LoadingDialog = ({ isOpen, message }: { isOpen: boolean; message?: string 
   );
 };
 
-const LoadingChoiceDialog = ({ 
-  isOpen, 
-  projectName, 
+const LoadingChoiceDialog = ({
+  isOpen,
+  projectName,
   loadingStatusMessage,
-  onWait, 
-  onContinue 
-}: { 
-  isOpen: boolean; 
+  onWait,
+  onContinue
+}: {
+  isOpen: boolean;
   projectName: string;
   loadingStatusMessage?: string;
-  onWait: () => void; 
+  onWait: () => void;
   onContinue: () => void;
 }) => {
   if (!isOpen) return null;
@@ -256,7 +256,7 @@ const LoadingChoiceDialog = ({
             )}
           </div>
         </div>
-        
+
         <div className="bg-gray-50 rounded-lg p-4 mb-4">
           <p className="text-sm text-gray-700 mb-3">
             <strong>What would you like to do?</strong>
@@ -277,7 +277,7 @@ const LoadingChoiceDialog = ({
             </div>
           )}
         </div>
-        
+
         <div className="flex gap-3">
           <button
             onClick={onWait}
@@ -525,7 +525,7 @@ const PluginPlaceholder: React.FC<PluginPlaceholderProps> = ({
               <div className="absolute -right-5 -bottom-5 w-32 h-32 border-2 border-white rounded-full" />
               <div className="absolute left-1/4 top-1/2 w-20 h-20 border border-white rounded-full" />
             </div>
-            
+
             <div className="relative flex items-start gap-5">
               <div className="flex-shrink-0 w-16 h-16 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center shadow-lg">
                 {icon}
@@ -598,11 +598,10 @@ const PluginPlaceholder: React.FC<PluginPlaceholderProps> = ({
                   <button
                     onClick={onRetryLoad}
                     disabled={isLoading}
-                    className={`flex-1 px-6 py-3 rounded-xl font-semibold text-white shadow-lg transition-all flex items-center justify-center gap-2 ${
-                      isLoading 
-                        ? 'bg-gray-400 cursor-not-allowed' 
-                        : 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 hover:shadow-xl hover:-translate-y-0.5'
-                    }`}
+                    className={`flex-1 px-6 py-3 rounded-xl font-semibold text-white shadow-lg transition-all flex items-center justify-center gap-2 ${isLoading
+                      ? 'bg-gray-400 cursor-not-allowed'
+                      : 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 hover:shadow-xl hover:-translate-y-0.5'
+                      }`}
                   >
                     {isLoading ? (
                       <>
@@ -715,8 +714,8 @@ const TopMenuBar = ({
         // Build URL with proper query parameters
         const url = `/api/ontology/files?search=${encodeURIComponent(value)}&caseSensitive=true`;
         const response = await apiClient.get<{
-          data: any; files: FileInfo[] 
-}>(url);
+          data: any; files: FileInfo[]
+        }>(url);
         const files = response?.files || response?.data?.files || [];
         setFiles(files);
       } catch (error) {
@@ -767,11 +766,11 @@ const TopMenuBar = ({
               <div className={`ontocode-top-menu-dropdown absolute left-0 mt-1 ${item === 'File' ? 'w-[360px]' : 'w-48'} bg-theme-surface border rounded-lg shadow-xl z-20 overflow-hidden`} style={{ borderColor: 'var(--color-border)' }}>
                 {item === "View" ? (
                   <div className="py-1">
-                      <button
-                        onClick={() => {
-                          onOpenPluginMarketplace();
-                          setOpenMenu(null);
-                        }}
+                    <button
+                      onClick={() => {
+                        onOpenPluginMarketplace();
+                        setOpenMenu(null);
+                      }}
                       className="ontocode-top-menu-item cursor-pointer disabled:cursor-not-allowed w-full text-left px-4 py-2 text-xs flex items-center gap-2"
                     >
                       <Package size={14} />
@@ -782,8 +781,8 @@ const TopMenuBar = ({
                   <div className="py-1">
                     <div className="px-3 py-1 text-gray-400 text-xs">Appearance</div>
                   </div>
-                ) 
-                // : item === "Reasoner" ? (
+                )
+                  // : item === "Reasoner" ? (
                   // <div className="py-1">
                   //   <button
                   //     onClick={async () => {
@@ -910,75 +909,75 @@ const TopMenuBar = ({
                   //     {selectedReasoner === 'Structural' ? '• ' : '  '}Structural Reasoner
                   //   </button>
                   // </div>
-                // ) 
-                : item === "File" ? (
-                  <div className="flex flex-col py-1">
-                    <div className="px-4 py-2 text-[11px] uppercase tracking-wide text-gray-500">File</div>
-                    <button
-                      onClick={(e) => {
-                        e.preventDefault();
-                        onOpenDialog();
-                        setOpenMenu(null);
-                      }}
-                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
-                    >
-                      Open
-                    </button>
-                    <div className="border-t border-gray-100 my-1" />
-                    <button
-                      onClick={async (e) => {
-                        e.preventDefault();
-                        await onSave();
-                        setOpenMenu(null);
-                      }}
-                      disabled={!hasUnsavedChanges || isSaving || !currentProjectId}
-                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                    >
-                      Save {draftCount && draftCount > 0 ? `(${draftCount})` : ''}
-                      {hasUnsavedChanges && <span className="text-orange-600 text-lg leading-none">•</span>}
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.preventDefault();
-                        if (window.vscode && currentProjectId) {
-                          window.vscode.postMessage({
-                            type: "downloadOntology",
-                            url: `/api/ontology/export/${currentProjectId}`,
-                            filename: `${currentProjectId}.owl`
-                          });
-                        } else if (window.vscode) {
-                          window.vscode.postMessage({
-                            type: 'error',
-                            value: 'No ontology loaded. Please open a file first.'
-                          });
-                        }
-                        setOpenMenu(null);
-                      }}
-                      disabled={!currentProjectId}
-                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Download
-                    </button>
-                    <div className="border-t border-gray-100 my-1" />
-                    <button
-                      onClick={(e) => {
-                        e.preventDefault();
-                        if (currentProjectId) {
-                          onShareFile(currentProjectId);
-                        } else if (window.vscode) {
-                          window.vscode.postMessage({
-                            type: 'error',
-                            value: 'No ontology loaded. Please open a file first.'
-                          });
-                        }
-                        setOpenMenu(null);
-                      }}
-                      disabled={!currentProjectId}
-                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Share
-                    </button>
-                    {/* <button
+                  // ) 
+                  : item === "File" ? (
+                    <div className="flex flex-col py-1">
+                      <div className="px-4 py-2 text-[11px] uppercase tracking-wide text-gray-500">File</div>
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          onOpenDialog();
+                          setOpenMenu(null);
+                        }}
+                        className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
+                      >
+                        Open
+                      </button>
+                      <div className="border-t border-gray-100 my-1" />
+                      <button
+                        onClick={async (e) => {
+                          e.preventDefault();
+                          await onSave();
+                          setOpenMenu(null);
+                        }}
+                        disabled={!hasUnsavedChanges || isSaving || !currentProjectId}
+                        className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                      >
+                        Save {draftCount && draftCount > 0 ? `(${draftCount})` : ''}
+                        {hasUnsavedChanges && <span className="text-orange-600 text-lg leading-none">•</span>}
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          if (window.vscode && currentProjectId) {
+                            window.vscode.postMessage({
+                              type: "downloadOntology",
+                              url: `/api/ontology/export/${currentProjectId}`,
+                              filename: `${currentProjectId}.owl`
+                            });
+                          } else if (window.vscode) {
+                            window.vscode.postMessage({
+                              type: 'error',
+                              value: 'No ontology loaded. Please open a file first.'
+                            });
+                          }
+                          setOpenMenu(null);
+                        }}
+                        disabled={!currentProjectId}
+                        className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Download
+                      </button>
+                      <div className="border-t border-gray-100 my-1" />
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          if (currentProjectId) {
+                            onShareFile(currentProjectId);
+                          } else if (window.vscode) {
+                            window.vscode.postMessage({
+                              type: 'error',
+                              value: 'No ontology loaded. Please open a file first.'
+                            });
+                          }
+                          setOpenMenu(null);
+                        }}
+                        disabled={!currentProjectId}
+                        className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Share
+                      </button>
+                      {/* <button
                       onClick={(e) => {
                         e.preventDefault();
                         if (currentProjectId) {
@@ -997,10 +996,10 @@ const TopMenuBar = ({
                       <Clock size={14} />
                       History
                     </button> */}
-                  </div>
-                ) : (
-                  <div className="p-2 text-xs text-gray-400">No actions available</div>
-                )}
+                    </div>
+                  ) : (
+                    <div className="p-2 text-xs text-gray-400">No actions available</div>
+                  )}
               </div>
             )}
           </div>
@@ -1013,15 +1012,13 @@ const TopMenuBar = ({
         </span>
         <button
           onClick={onToggleSyncMode}
-          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 ${
-            syncMode === 'public' ? 'bg-green-500' : 'bg-gray-300'
-          }`}
+          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 ${syncMode === 'public' ? 'bg-green-500' : 'bg-gray-300'
+            }`}
           title={syncMode === 'public' ? "Switch to Private Draft Mode" : "Switch to Public Live Mode"}
         >
           <span
-            className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-              syncMode === 'public' ? 'translate-x-5' : 'translate-x-1'
-            }`}
+            className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${syncMode === 'public' ? 'translate-x-5' : 'translate-x-1'
+              }`}
           />
         </button>
       </div>
@@ -1036,20 +1033,39 @@ const OpenFileDialog = ({
   myFiles,
   sharedFiles,
   currentProjectId,
+  currentFileId,
+  currentFileName,
+  onDeleteFile,
   onSwitchFile,
   parentProjectId,
-  onLoadProjectFile
+  onLoadProjectFile,
+  projectFiles
 }: {
   isOpen: boolean;
   onClose: () => void;
   myFiles: FileInfo[];
   sharedFiles: FileInfo[];
   currentProjectId: string | null;
+  currentFileId?: string | null;
+  currentFileName?: string | null;
+  onDeleteFile?: (projectId: string, fileName: string) => void;
   onSwitchFile: (projectId: string) => void;
   parentProjectId?: string;
   onLoadProjectFile?: (fileId: string, fileName: string) => void;
+  projectFiles?: FileInfo[];
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
+  const canOpenLocalFile = typeof window !== 'undefined' && !!(window as any).vscode;
+  const usingProjectFiles = !!parentProjectId;
+  const primaryFiles = usingProjectFiles ? (projectFiles || []) : myFiles;
+  const secondaryFiles = usingProjectFiles ? [] : sharedFiles;
+  const handleOpenLocalFile = () => {
+    if (!canOpenLocalFile || !window.vscode) {
+      return;
+    }
+    window.vscode.postMessage({ type: 'openLocalFile', projectId: parentProjectId || undefined });
+    onClose();
+  };
 
   // console.log('[OpenFileDialog] Rendered with myFiles:', myFiles.length, 'sharedFiles:', sharedFiles.length, 'isOpen:', isOpen);
   // console.log('[OpenFileDialog] myFiles data:', myFiles);
@@ -1057,7 +1073,7 @@ const OpenFileDialog = ({
 
   if (!isOpen) return null;
 
-  const allFiles = [...myFiles, ...sharedFiles];
+  const allFiles = [...primaryFiles, ...secondaryFiles];
   const filteredFiles = searchQuery
     ? allFiles.filter(f => f.filename.toLowerCase().includes(searchQuery.toLowerCase()))
     : allFiles;
@@ -1075,7 +1091,7 @@ const OpenFileDialog = ({
               onChange={(e) => setSearchQuery(e.target.value)}
               autoFocus
               className="w-full pl-10 pr-3 py-2 border rounded-lg focus:ring-2 text-sm"
-              style={{ 
+              style={{
                 borderColor: 'var(--color-border)',
                 backgroundColor: 'var(--color-surface)',
                 color: 'var(--color-text)',
@@ -1085,16 +1101,26 @@ const OpenFileDialog = ({
           </div>
         </div>
         <div className="flex-1 overflow-y-auto">
-          {myFiles.length > 0 && (
+          {primaryFiles.length > 0 && (
             <div className="p-3">
               <div className="flex items-center gap-2 px-2 py-1.5 mb-2">
-                <User size={14} className="text-purple-600" />
-                <span className="text-xs font-semibold text-purple-800">My Files ({myFiles.filter(f => !searchQuery || f.filename.toLowerCase().includes(searchQuery.toLowerCase())).length})</span>
+                {usingProjectFiles ? (
+                  <FolderOpen size={14} className="text-purple-600" />
+                ) : (
+                  <User size={14} className="text-purple-600" />
+                )}
+                <span className="text-xs font-semibold text-purple-800">
+                  {usingProjectFiles ? 'Project Files' : 'My Files'} ({primaryFiles.filter(f => !searchQuery || f.filename.toLowerCase().includes(searchQuery.toLowerCase())).length})
+                </span>
               </div>
               <div className="space-y-0.5">
-                {myFiles.filter(f => !searchQuery || (f.filename && f.filename.toLowerCase().includes(searchQuery.toLowerCase()))).map((file) => {
-                  const fileProjectId = file.filename ? file.filename.slice(0, -4) : file.id;
-                  const isActive = fileProjectId === currentProjectId;
+                {primaryFiles.filter(f => !searchQuery || (f.filename && f.filename.toLowerCase().includes(searchQuery.toLowerCase()))).map((file) => {
+                  const fileProjectId = file.projectId || file.id || (file.filename ? file.filename.replace(/\.[^/.]+$/, '') : '');
+                  const isActiveById = currentFileId ? file.id === currentFileId : false;
+                  const isActiveByName = currentFileName ? file.filename === currentFileName : false;
+                  // Also check if projectId matches (for free mode where projectId IS the file identifier)
+                  const isActiveByProjectId = currentProjectId ? (fileProjectId === currentProjectId || file.filename === currentProjectId) : false;
+                  const isActive = isActiveById || isActiveByName || isActiveByProjectId;
                   return (
                     <div
                       key={file.id}
@@ -1110,11 +1136,10 @@ const OpenFileDialog = ({
                         }
                         onClose();
                       }}
-                      className={`flex items-center gap-3 p-2 px-3 rounded-md cursor-pointer transition-all ${
-                        isActive
-                          ? 'selected'
-                          : 'hover-overlay border border-transparent'
-                      }`}
+                      className={`flex items-center gap-3 p-2 px-3 rounded-md cursor-pointer transition-all ${isActive
+                        ? 'selected'
+                        : 'hover-overlay border border-transparent'
+                        }`}
                     >
                       <FileText size={18} className="text-accent" />
                       <div className="flex-1 min-w-0">
@@ -1127,75 +1152,106 @@ const OpenFileDialog = ({
                           )}
                         </div>
                       </div>
+                      {!usingProjectFiles && onDeleteFile && fileProjectId && (
+                        <button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onDeleteFile(fileProjectId, file.filename);
+                          }}
+                          className="text-red-500 hover:text-red-700 p-1 rounded hover:bg-red-50"
+                          title="Delete file"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
                     </div>
                   );
                 })}
               </div>
             </div>
           )}
-          <div className="p-3 border-t border-gray-100">
-            <div className="flex items-center gap-2 px-2 py-1.5 mb-2">
-              <Share2 size={14} className="text-blue-600" />
-              <span className="text-xs font-semibold text-blue-800">Shared With Me ({sharedFiles.filter(f => !searchQuery || f.filename.toLowerCase().includes(searchQuery.toLowerCase())).length})</span>
-            </div>
-            {sharedFiles.length > 0 ? (
-              <div className="space-y-0.5">
-                {sharedFiles.filter(f => !searchQuery || (f.filename && f.filename.toLowerCase().includes(searchQuery.toLowerCase()))).map((file) => {
-                  const fileProjectId = file.filename ? file.filename.slice(0, -4) : file.id;
-                  const isActive = fileProjectId === currentProjectId;
-                  return (
-                    <div
-                      key={file.id}
-                      onClick={() => {
-                        if (!isActive) {
-                          onSwitchFile(fileProjectId);
-                        }
-                        onClose();
-                      }}
-                      className={`flex items-center gap-3 p-2 px-3 rounded-md cursor-pointer transition-all ${
-                        isActive
+          {!usingProjectFiles && (
+            <div className="p-3 border-t border-gray-100">
+              <div className="flex items-center gap-2 px-2 py-1.5 mb-2">
+                <Share2 size={14} className="text-blue-600" />
+                <span className="text-xs font-semibold text-blue-800">Shared With Me ({sharedFiles.filter(f => !searchQuery || f.filename.toLowerCase().includes(searchQuery.toLowerCase())).length})</span>
+              </div>
+              {sharedFiles.length > 0 ? (
+                <div className="space-y-0.5">
+                  {sharedFiles.filter(f => !searchQuery || (f.filename && f.filename.toLowerCase().includes(searchQuery.toLowerCase()))).map((file) => {
+                    const fileProjectId = file.projectId || file.id || (file.filename ? file.filename.replace(/\.[^/.]+$/, '') : '');
+                    const isActiveById = currentFileId ? file.id === currentFileId : false;
+                    const isActiveByName = currentFileName ? file.filename === currentFileName : false;
+                    const isActive = isActiveById || isActiveByName || (!currentFileId && !currentFileName && fileProjectId === currentProjectId);
+                    return (
+                      <div
+                        key={file.id}
+                        onClick={() => {
+                          if (!isActive) {
+                            onSwitchFile(fileProjectId);
+                          }
+                          onClose();
+                        }}
+                        className={`flex items-center gap-3 p-2 px-3 rounded-md cursor-pointer transition-all ${isActive
                           ? 'bg-blue-50 border border-blue-300'
                           : 'hover:bg-gray-50 border border-transparent'
-                      }`}
-                    >
-                      <FileText size={18} className="text-blue-500" />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-medium text-gray-900 truncate">{file.filename}</span>
-                          {isActive && (
-                            <span className="px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-semibold rounded">
-                              ACTIVE
-                            </span>
+                          }`}
+                      >
+                        <FileText size={18} className="text-blue-500" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-medium text-gray-900 truncate">{file.filename}</span>
+                            {isActive && (
+                              <span className="px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-semibold rounded">
+                                ACTIVE
+                              </span>
+                            )}
+                          </div>
+                          {file.sharedBy && (
+                            <div className="text-[10px] text-gray-500 mt-0.5">
+                              Shared by {file.sharedBy}
+                            </div>
                           )}
                         </div>
-                        {file.sharedBy && (
-                          <div className="text-[10px] text-gray-500 mt-0.5">
-                            Shared by {file.sharedBy}
-                          </div>
-                        )}
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center py-4 text-gray-400">
-                <Share2 size={20} className="mb-1.5 opacity-50" />
-                <p className="text-[10px]">No shared files</p>
-              </div>
-            )}
-          </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-4 text-gray-400">
+                  <Share2 size={20} className="mb-1.5 opacity-50" />
+                  <p className="text-[10px]">No shared files</p>
+                </div>
+              )}
+            </div>
+          )}
           {filteredFiles.length === 0 && (
             <div className="flex flex-col items-center justify-center py-12 text-gray-400">
               <Search size={40} className="mb-3 opacity-30" />
-              <p className="text-base font-medium text-gray-600 mb-1">No ontology files found</p>
+              <p className="text-base font-medium text-gray-600 mb-1">
+                {usingProjectFiles ? 'No project files found' : 'No ontology files found'}
+              </p>
               <p className="text-xs text-gray-500 max-w-xs text-center">
-                {searchQuery 
+                {searchQuery
                   ? `No files match "${searchQuery}". Try a different search.`
-                  : 'Upload an .owl or .rdf file to get started.'}
+                  : 'Upload or open a local file to get started.'}
               </p>
             </div>
           )}
+        </div>
+        <div className="p-3 border-t" style={{ borderColor: 'var(--color-border)' }}>
+          <button
+            onClick={handleOpenLocalFile}
+            disabled={!canOpenLocalFile}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs rounded-md border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{
+              borderColor: 'var(--color-border)',
+              color: 'var(--color-text)'
+            }}
+          >
+            <FolderOpen size={14} />
+            Open Local File...
+          </button>
         </div>
       </div>
     </div>
@@ -1208,7 +1264,9 @@ const ConfirmDialog = ({
   onConfirm,
   onCancel,
   title,
-  message
+  message,
+  confirmLabel,
+  cancelLabel
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -1216,8 +1274,13 @@ const ConfirmDialog = ({
   onCancel?: () => void;
   title: string;
   message: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
 }) => {
   if (!isOpen) return null;
+
+  const cancelText = cancelLabel ?? (onCancel ? 'Discard' : 'Cancel');
+  const confirmText = confirmLabel ?? (onCancel ? 'Save' : 'Confirm');
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onClose}>
@@ -1225,25 +1288,119 @@ const ConfirmDialog = ({
         <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--color-text)' }}>{title}</h3>
         <p className="text-sm mb-6" style={{ color: 'var(--color-text-secondary)' }}>{message}</p>
         <div className="flex justify-end gap-3">
-          <button 
+          <button
             onClick={() => {
               if (onCancel) {
                 onCancel();
               }
               onClose();
-            }} 
+            }}
             className="px-4 py-2 text-sm bg-gray-200 text-black rounded-md hover:bg-gray-300"
           >
-            {onCancel ? 'Discard' : 'Cancel'}
+            {cancelText}
           </button>
-          <button 
+          <button
             onClick={() => {
               onConfirm();
               onClose();
-            }} 
+            }}
             className="px-4 py-2 text-sm bg-purple-600 text-white rounded-md hover:bg-purple-700"
           >
-            {onCancel ? 'Save' : 'Confirm'}
+            {confirmText}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const DuplicateFileDialog = ({
+  isOpen,
+  fileName,
+  detail,
+  copyName,
+  onCopyNameChange,
+  onOpenExisting,
+  onReplace,
+  onCreateCopy,
+  onCancel,
+  allowOpenExisting,
+  error,
+  isSubmitting
+}: {
+  isOpen: boolean;
+  fileName: string;
+  detail?: string;
+  copyName: string;
+  onCopyNameChange: (value: string) => void;
+  onOpenExisting: () => void;
+  onReplace: () => void;
+  onCreateCopy: () => void;
+  onCancel: () => void;
+  allowOpenExisting?: boolean;
+  error?: string | null;
+  isSubmitting?: boolean;
+}) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onCancel}>
+      <div className="bg-theme-surface rounded-lg shadow-xl p-6 max-w-lg w-full mx-4" onClick={e => e.stopPropagation()}>
+        <h3 className="text-lg font-semibold mb-2" style={{ color: 'var(--color-text)' }}>Duplicate File</h3>
+        <p className="text-sm mb-3" style={{ color: 'var(--color-text-secondary)' }}>
+          A file named "<span className="font-semibold">{fileName}</span>" already exists.
+        </p>
+        {detail && (
+          <pre className="text-xs whitespace-pre-wrap rounded-md p-3 mb-3" style={{ backgroundColor: 'var(--color-surface)', color: 'var(--color-text-secondary)' }}>
+            {detail}
+          </pre>
+        )}
+        <div className="mb-3">
+          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--color-text-secondary)' }}>Copy name</label>
+          <input
+            type="text"
+            value={copyName}
+            onChange={(e) => onCopyNameChange(e.target.value)}
+            className="w-full px-3 py-2 text-sm border rounded-md focus:ring-2"
+            style={{
+              borderColor: 'var(--color-border)',
+              backgroundColor: 'var(--color-surface)',
+              color: 'var(--color-text)',
+              '--tw-ring-color': 'var(--color-primary)'
+            } as React.CSSProperties}
+            placeholder="Enter copy name"
+          />
+        </div>
+        {error && (
+          <div className="text-xs text-red-600 mb-3">{error}</div>
+        )}
+        <div className="flex flex-wrap justify-end gap-2">
+          {allowOpenExisting && (
+            <button
+              onClick={onOpenExisting}
+              className="px-3 py-2 text-xs bg-gray-200 text-black rounded-md hover:bg-gray-300"
+            >
+              Open Existing
+            </button>
+          )}
+          <button
+            onClick={onReplace}
+            className="px-3 py-2 text-xs bg-yellow-500 text-white rounded-md hover:bg-yellow-600"
+          >
+            Replace
+          </button>
+          <button
+            onClick={onCreateCopy}
+            disabled={isSubmitting}
+            className="px-3 py-2 text-xs bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50"
+          >
+            {isSubmitting ? 'Checking...' : 'Create Copy'}
+          </button>
+          <button
+            onClick={onCancel}
+            className="px-3 py-2 text-xs bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200"
+          >
+            Cancel
           </button>
         </div>
       </div>
@@ -1256,14 +1413,14 @@ const ConfirmDialog = ({
 // #endregion
 
 // #region Details Panel
-const DetailsPanel = ({ 
-  selectedItem, 
-  entitiesTab, 
-  activeTheme, 
-  projectId, 
-  onUpdate, 
+const DetailsPanel = ({
+  selectedItem,
+  entitiesTab,
+  activeTheme,
+  projectId,
+  onUpdate,
   onAddAnnotation,
-  onEditAnnotation, 
+  onEditAnnotation,
   onDeleteAnnotation,
   onAddDomainClick,
   onAddRangeClick,
@@ -1365,7 +1522,7 @@ const DetailsPanel = ({
         onRefreshClasses={onRefreshClasses}
         onAddObjectProperty={onAddObjectProperty}
         onAddDataProperty={onAddDataProperty}
-        onDeleteProperty={() => {}}
+        onDeleteProperty={() => { }}
         metadata={metadata ?? undefined}
         objectPropertyHierarchy={objectPropertyHierarchy}
         dataPropertyHierarchy={dataPropertyHierarchy}
@@ -1396,8 +1553,8 @@ const DetailsPanel = ({
           if (projectId) {
             apiClient.get<any>(`/api/ontology/individuals/${projectId}`)
               .then(res => {
-                setIndividuals(Array.isArray(res?.data) ? res.data : 
-                              Array.isArray(res?.individuals) ? res.individuals : []);
+                setIndividuals(Array.isArray(res?.data) ? res.data :
+                  Array.isArray(res?.individuals) ? res.individuals : []);
               })
               .catch(err => console.error('Failed to refresh individuals:', err));
           }
@@ -1406,10 +1563,10 @@ const DetailsPanel = ({
       />;
     case 'ObjectProperties':
     case 'DataProperties':
-      return <PropertyEditor 
-        item={selectedItem as Property} 
-        onUpdate={onUpdate} 
-        {...sharedProps} 
+      return <PropertyEditor
+        item={selectedItem as Property}
+        onUpdate={onUpdate}
+        {...sharedProps}
         onAddDomainClick={onAddDomainClick}
         onAddRangeClick={onAddRangeClick}
         onAddSubPropertyClick={onAddSubPropertyClick}
@@ -1460,27 +1617,34 @@ const showNotification = (message: string, type: 'info' | 'error' | 'warning' = 
 
 interface DashboardProps {
   onBackToProjects?: () => void;
+  onFileSelected?: (fileId: string, fileName: string) => void;
   selectedFileId?: string;
   selectedFileName?: string;
   projectId?: string; // Renamed to initialProjectId to avoid naming conflict
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId, selectedFileName, projectId: initialProjectId }) => {
+const Dashboard: React.FC<DashboardProps> = ({
+  onBackToProjects,
+  onFileSelected,
+  selectedFileId,
+  selectedFileName,
+  projectId: initialProjectId
+}) => {
   // #region State
   const { user, logout } = useAuth();
   const collaboration = useCollaboration();
   const { actualMode } = useTheme();
   const subscription = useSubscription();
   const readonlyMode = false; // Allow editing by default
-   const [showThemeSettings, setShowThemeSettings] = useState(false);
-   const [showPlanDetails, setShowPlanDetails] = useState(false);
+  const [showThemeSettings, setShowThemeSettings] = useState(false);
+  const [showPlanDetails, setShowPlanDetails] = useState(false);
 
   const handleUpgradePlan = async (planId: string) => {
     try {
       await apiClient.patch(`/api/workspaces/${user?.workspaceId}/subscription`, {
         plan: planId
       });
-      
+
       // Reload the page to get updated user with new plan
       window.location.reload();
       showToast(`Successfully upgraded to ${planId.toUpperCase()} plan!`, 'success');
@@ -1498,16 +1662,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       console.warn('[Dashboard] applyInstanceCountsToTree received non-array:', nodes);
       return [];
     }
-    
+
     return nodes.map((node) => {
       const countEntry = counts[node.id];
       const direct = countEntry?.direct;
       const inferred = countEntry?.inferred;
       const total = countEntry ? (countEntry.total ?? (direct ?? 0) + (inferred ?? 0)) : undefined;
-      
+
       // Ensure children is always an array
       const children = Array.isArray(node.children) ? node.children : [];
-      
+
       return {
         ...node,
         directInstanceCount: direct,
@@ -1525,10 +1689,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     for (const node of nodes) {
       // Don't count owl:Thing or owl:Nothing in the total class count
       const id = node.id || node.iri;
-      if (id !== 'http://www.w3.org/2002/07/owl#Thing' && 
-          id !== 'owl:Thing' && 
-          id !== 'http://www.w3.org/2002/07/owl#Nothing' && 
-          id !== 'owl:Nothing') {
+      if (id !== 'http://www.w3.org/2002/07/owl#Thing' &&
+        id !== 'owl:Thing' &&
+        id !== 'http://www.w3.org/2002/07/owl#Nothing' &&
+        id !== 'owl:Nothing') {
         count++;
       }
       if (node.children && node.children.length > 0) {
@@ -1624,16 +1788,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
   // Fetch files for the currently selected project
   const fetchProjectFiles = useCallback(async (currentProjectId: string) => {
     if (!currentProjectId) return;
-    
+
     try {
       console.log('[Dashboard] 📂 Fetching files for project:', currentProjectId);
       const filesResponse = await apiClient.get<{ files: any[]; count: number }>(`/api/projects/${currentProjectId}/files`);
-      
+
       console.log('[Dashboard] 📥 Raw files response:', filesResponse);
-      
+
       if (filesResponse && Array.isArray(filesResponse.files)) {
         console.log('[Dashboard] 📄 Found', filesResponse.files.length, 'files in project');
-        
+
         // Map file metadata to FileInfo format
         const projectFiles = filesResponse.files.map((file: any) => ({
           id: file.id,
@@ -1643,14 +1807,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           length: file.size || 0,
           uploadedBy: file.uploadedBy
         }));
-        
+
+        console.log(`[Dashboard] 📋 Mapped ${projectFiles.length} project files`);
         console.log('[Dashboard] 📋 Mapped project files:', projectFiles);
-        
+
+        setProjectFiles(projectFiles);
+
         // Only update listOfFiles for backward compatibility
         // Do NOT overwrite myFiles/sharedFiles - those are user-specific and should be
         // populated by fetchProjects() which gets files by user email
         setListOfFiles(projectFiles);
-        
+
         console.log('[Dashboard] ✅ File menu updated with project files (listOfFiles only)');
       } else if (filesResponse && filesResponse.files === undefined) {
         // Maybe files are at a different level or API returned error
@@ -1665,17 +1832,21 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
             length: file.size || 0,
             uploadedBy: file.uploadedBy
           }));
+          setProjectFiles(projectFiles);
+
           // Only update listOfFiles, not myFiles/sharedFiles
           setListOfFiles(projectFiles);
         } else {
           console.log('[Dashboard] ⚠️ Unable to parse files from response, clearing file menu');
           // setMyFiles([]);
           // setSharedFiles([]);
+          setProjectFiles([]);
           setListOfFiles([]);
         }
       } else {
         console.log('[Dashboard] ℹ️ No files found in project or empty response');
         // Don't clear myFiles/sharedFiles - they contain user's files from fetchProjects
+        setProjectFiles([]);
         setListOfFiles([]);
       }
     } catch (error: any) {
@@ -1757,15 +1928,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
   const [isObjectPropertyExpressionDialogOpen, setIsObjectPropertyExpressionDialogOpen] = useState(false);
   const [isClassExpressionDialogOpen, setIsClassExpressionDialogOpen] = useState(false);
   const [selectorTarget, setSelectorTarget] = useState<'domain' | 'range' | 'subProperty' | 'inverse' | 'disjoint' | 'equivalent' | null>(null);
-  
+
   // Annotation Property Description Dialogs (Protégé-style)
   const [isAnnotationDomainDialogOpen, setIsAnnotationDomainDialogOpen] = useState(false);
   const [isAnnotationRangeDialogOpen, setIsAnnotationRangeDialogOpen] = useState(false);
   const [isAnnotationSuperpropertyDialogOpen, setIsAnnotationSuperpropertyDialogOpen] = useState(false);
-  
+
   // Data Property Range Dialog (Protégé-style - shows datatypes)
   const [isDataPropertyRangeDialogOpen, setIsDataPropertyRangeDialogOpen] = useState(false);
-  
+
   // Confirm dialog state
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
@@ -1777,9 +1948,36 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     isOpen: false,
     title: '',
     message: '',
-    onConfirm: () => {},
+    onConfirm: () => { },
     onCancel: undefined
   });
+
+  const [duplicatePrompt, setDuplicatePrompt] = useState<{
+    isOpen: boolean;
+    requestId: string | null;
+    fileName: string;
+    context: 'project' | 'ontology';
+    projectId?: string;
+    ownerEmail?: string;
+    defaultCopyName?: string;
+    detail?: string;
+    allowOpenExisting?: boolean;
+    error?: string;
+  }>({
+    isOpen: false,
+    requestId: null,
+    fileName: '',
+    context: 'project',
+    projectId: undefined,
+    ownerEmail: undefined,
+    defaultCopyName: undefined,
+    detail: undefined,
+    allowOpenExisting: true,
+    error: undefined
+  });
+  const [duplicateCopyName, setDuplicateCopyName] = useState('');
+  const [duplicateCopyError, setDuplicateCopyError] = useState<string | null>(null);
+  const [duplicateCopySubmitting, setDuplicateCopySubmitting] = useState(false);
 
   const [selectedClassForIndividuals, setSelectedClassForIndividuals] = useState<TreeNode | null>(null);
   const [classInstances, setClassInstances] = useState<Individual[]>([]);
@@ -1823,8 +2021,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
   const [inferredDatatypes, setInferredDatatypes] = useState<Datatype[]>([]);
 
   const [listOfFiles, setListOfFiles] = useState<FileInfo[]>([]);
+  const [projectFiles, setProjectFiles] = useState<FileInfo[]>([]);
   const [myFiles, setMyFiles] = useState<FileInfo[]>([]);
   const [sharedFiles, setSharedFiles] = useState<FileInfo[]>([]);
+  const [activeFileId, setActiveFileId] = useState<string | null>(null);
+  const [activeFileName, setActiveFileName] = useState<string | null>(null);
+  const [deleteFileDialog, setDeleteFileDialog] = useState<{ isOpen: boolean; projectId: string; fileName: string }>({
+    isOpen: false,
+    projectId: '',
+    fileName: ''
+  });
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [shareFileId, setShareFileId] = useState<string | null>(null);
   const [isCurrentFileShared, setIsCurrentFileShared] = useState(false);
@@ -1856,32 +2062,32 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
   const currentHierarchyViewMode = hierarchyViewModes[entitiesTab] || 'asserted';
 
   const entitiesTabs = [
-    { 
-      id: "Classes", 
-      label: "Classes", 
-      icon: Package, 
+    {
+      id: "Classes",
+      label: "Classes",
+      icon: Package,
       count: hierarchyViewModes.Classes === 'inferred'
-        ? countNodes(inferredClassHierarchy.length > 0 ? inferredClassHierarchy : (Array.isArray(reasonerResults?.classHierarchyTree) ? reasonerResults.classHierarchyTree : (Array.isArray(reasonerResults?.classHierarchy) ? reasonerResults.classHierarchy : []))) 
-        : (metadata as any)?.classCount || 0, 
-      theme: 'bg-gradient-to-b from-[#F5F0E6] to-[#E1C688] text-black border-[#D6C9AD]' 
+        ? countNodes(inferredClassHierarchy.length > 0 ? inferredClassHierarchy : (Array.isArray(reasonerResults?.classHierarchyTree) ? reasonerResults.classHierarchyTree : (Array.isArray(reasonerResults?.classHierarchy) ? reasonerResults.classHierarchy : [])))
+        : (metadata as any)?.classCount || 0,
+      theme: 'bg-gradient-to-b from-[#F5F0E6] to-[#E1C688] text-black border-[#D6C9AD]'
     },
-    { 
-      id: "ObjectProperties", 
-      label: "Object properties", 
-      icon: Share2, 
+    {
+      id: "ObjectProperties",
+      label: "Object properties",
+      icon: Share2,
       count: hierarchyViewModes.ObjectProperties === 'inferred'
         ? countNodes(inferredObjectPropertyHierarchy.length > 0 ? inferredObjectPropertyHierarchy : (Array.isArray(reasonerResults?.objectPropertyHierarchy) ? reasonerResults.objectPropertyHierarchy : []))
-        : (metadata as any)?.objectPropertyCount || 0, 
-      theme: 'bg-gradient-to-b from-blue-300 to-blue-500 text-white border-blue-600' 
+        : (metadata as any)?.objectPropertyCount || 0,
+      theme: 'bg-gradient-to-b from-blue-300 to-blue-500 text-white border-blue-600'
     },
-    { 
-      id: "DataProperties", 
-      label: "Data properties", 
-      icon: Database, 
+    {
+      id: "DataProperties",
+      label: "Data properties",
+      icon: Database,
       count: hierarchyViewModes.DataProperties === 'inferred'
         ? countNodes(inferredDataPropertyHierarchy.length > 0 ? inferredDataPropertyHierarchy : (Array.isArray(reasonerResults?.dataPropertyHierarchy) ? reasonerResults.dataPropertyHierarchy : []))
-        : (metadata as any)?.dataPropertyCount || 0, 
-      theme: 'bg-gradient-to-b from-green-300 to-green-500 text-white border-green-600' 
+        : (metadata as any)?.dataPropertyCount || 0,
+      theme: 'bg-gradient-to-b from-green-300 to-green-500 text-white border-green-600'
     },
     { id: "AnnotationProperties", label: "Annotation properties", icon: Tag, count: annotationProperties.length, theme: 'bg-gradient-to-b from-orange-300 to-orange-500 text-white border-orange-600' },
     { id: "Datatypes", label: "Datatypes", icon: Settings, count: datatypes.length || 0, theme: 'bg-gradient-to-b from-red-300 to-red-500 text-white border-red-600' },
@@ -1895,15 +2101,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     console.log('[Dashboard sourceData] classHierarchy:', classHierarchy);
     console.log('[Dashboard sourceData] classHierarchy length:', classHierarchy.length);
     console.log('[Dashboard sourceData] classHierarchy first element:', classHierarchy[0]);
-    
+
     switch (entitiesTab) {
       case "Classes":
         if (hierarchyViewModes.Classes === 'inferred') {
           // Use inferredClassHierarchy if available, otherwise fall back to reasoner results
-          const inferred = inferredClassHierarchy.length > 0 
-            ? inferredClassHierarchy 
+          const inferred = inferredClassHierarchy.length > 0
+            ? inferredClassHierarchy
             : (Array.isArray(reasonerResults?.classHierarchyTree) ? reasonerResults.classHierarchyTree : (Array.isArray(reasonerResults?.classHierarchy) ? reasonerResults.classHierarchy : []));
-          
+
           console.log('[Dashboard] Using inferred class hierarchy, length:', Array.isArray(inferred) ? inferred.length : 0);
           return Array.isArray(inferred) ? inferred : [];
         }
@@ -2039,21 +2245,21 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         console.warn('[Dashboard] filterRecursively received non-array:', items);
         return [];
       }
-      
+
       const results: SelectableItem[] = [];
       for (const item of items) {
         // Skip null/undefined items
         if (!item || !item.id) {
           continue;
         }
-        
+
         if (isDeprecated(item)) {
           continue;
         }
 
         // Safely get children array
         const children = Array.isArray((item as any).children) ? (item as any).children : [];
-        
+
         if (isBuiltIn(item) && children.length > 0) {
           const childResults = filterRecursively(children);
           results.push(...childResults);
@@ -2075,13 +2281,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       }
       return results;
     };
-    
+
     // Safety check on sourceData before filtering
     if (!Array.isArray(sourceData)) {
       console.warn('[Dashboard] sourceData is not an array:', sourceData);
       return [];
     }
-    
+
     return filterRecursively(sourceData);
   }, [searchQuery, sourceData, entitiesTab, searchOptions]);
 
@@ -2115,7 +2321,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       const response = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-class-hierarchy?reasonerType=${selectedReasoner}`);
       const payload = response?.data || response;
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
-      
+
       if (!Array.isArray(hierarchy) || hierarchy.length === 0) {
         console.warn('[Dashboard] No inferred classes found. Reasoner may not have been run yet.');
         setInferredClassHierarchy([]);
@@ -2135,7 +2341,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       if (normalizedHierarchy[0]?.children?.length > 0) {
         console.log('[Dashboard] First few children:', normalizedHierarchy[0].children.slice(0, 3));
       }
-      
+
       const hierarchyWithCounts = applyInstanceCountsToTree(normalizedHierarchy, classInstanceCounts);
       console.log('[Dashboard] After applying counts, hierarchy structure preserved:', hierarchyWithCounts[0]?.children?.length || 0, 'children');
       setInferredClassHierarchy(hierarchyWithCounts);
@@ -2238,11 +2444,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       const reasonerType = normalizeReasonerType(selectedReasoner);
       const results = await fetchReasonerBundle(reasonerType);
       setReasonerResults(results);
-      
+
       // After successful classification, load full recursive hierarchies from the main API
       // This ensures we have the full depth like Desktop Protégé, not just the bundle's view
       console.log('[Dashboard] Reasoner completed, loading full recursive hierarchies...');
-      
+
       // Load full hierarchies in parallel
       await Promise.all([
         loadInferredHierarchy(),
@@ -2252,13 +2458,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         loadInferredDatatypes(),
         loadInferredIndividuals()
       ]);
-      
+
       console.log('[Dashboard] ✅ All inferred hierarchies processed');
-      
+
       // Automatically switch Classes tab to inferred mode to show the inferred hierarchy
       setHierarchyViewModes(prev => ({ ...prev, Classes: 'inferred' }));
       console.log('[Dashboard] ✅ Automatically switched Classes tab to inferred mode');
-      
+
       notificationService.success('Classification Complete', `${selectedReasoner} reasoner completed successfully. View inferred hierarchy in Entities > Classes tab.`);
     } catch (error: any) {
       console.error('[Dashboard] Reasoner error:', error);
@@ -2268,15 +2474,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       setIsReasonerLoading(false);
     }
   }, [
-    fetchReasonerBundle, 
-    isReasonerLoading, 
-    projectId, 
-    selectedReasoner, 
-    loadInferredHierarchy, 
-    loadInferredObjectPropertyHierarchy, 
-    loadInferredDataPropertyHierarchy, 
-    loadInferredAnnotationPropertyHierarchy, 
-    loadInferredDatatypes, 
+    fetchReasonerBundle,
+    isReasonerLoading,
+    projectId,
+    selectedReasoner,
+    loadInferredHierarchy,
+    loadInferredObjectPropertyHierarchy,
+    loadInferredDataPropertyHierarchy,
+    loadInferredAnnotationPropertyHierarchy,
+    loadInferredDatatypes,
     loadInferredIndividuals
   ]);
 
@@ -2305,9 +2511,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       setReasonerResults(null);
       notificationService.info('Reasoner Stopped', 'Previous reasoner stopped due to type change');
     }
-    
+
     setSelectedReasoner(reasoner);
-    
+
     // Show reasoner description
     const descriptions: Record<string, string> = {
       'HermiT': 'Hypertableau-based reasoner with full OWL 2 DL support - best for complex ontologies',
@@ -2316,7 +2522,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       'Openllet': 'Modern fork of Pellet with improved performance and OWL API 5 support',
       'Structural': 'Lightweight structural reasoner - fast but limited inference'
     };
-    
+
     notificationService.info('Reasoner Selected', descriptions[reasoner] || `${reasoner} reasoner is now active`);
   }, [isReasonerRunning]);
 
@@ -2407,15 +2613,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
   const handleInstallPlugin = useCallback(async (pluginId: string) => {
     try {
       setPluginLoadingStates(prev => ({ ...prev, [pluginId]: { loading: true, error: null } }));
-      
+
       // Use pluginLoader to install and load the plugin
       await pluginLoader.installPlugin(pluginId);
       await pluginLoader.loadPlugin(pluginId);
-      
+
       // Only update state if installation and loading succeeded
       setInstalledPlugins(prev => new Set([...prev, pluginId]));
       setPluginLoadingStates(prev => ({ ...prev, [pluginId]: { loading: false, error: null } }));
-      
+
       // Map plugin IDs to their corresponding tab IDs and add to visible tabs
       const pluginToTabMap: Record<string, string> = {
         'swrl-editor-plugin': 'SWRL',
@@ -2425,7 +2631,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         'sparql-query-plugin': 'SPARQL',
         'reasoner-plugin': 'Reasoner'
       };
-      
+
       const tabId = pluginToTabMap[pluginId];
       if (tabId) {
         setVisibleMainTabs(prev => {
@@ -2435,24 +2641,24 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           return prev;
         });
       }
-      
+
       console.log(`[Dashboard] Plugin ${pluginId} installed and loaded`);
       notificationService.success('Plugin Installed', `${pluginId} has been installed successfully`);
     } catch (error) {
       console.error(`[Dashboard] Failed to install plugin ${pluginId}:`, error);
-      setPluginLoadingStates(prev => ({ 
-        ...prev, 
-        [pluginId]: { loading: false, error: error instanceof Error ? error.message : 'Unknown error' } 
+      setPluginLoadingStates(prev => ({
+        ...prev,
+        [pluginId]: { loading: false, error: error instanceof Error ? error.message : 'Unknown error' }
       }));
       notificationService.error('Plugin Installation Failed', `Failed to install ${pluginId}. ${error instanceof Error ? error.message : 'Please check console for details'}`);
-      
+
       // Make sure to uninstall if loading failed
       try {
         await pluginLoader.uninstallPlugin(pluginId);
       } catch (uninstallError) {
         console.error('Failed to cleanup after failed installation:', uninstallError);
       }
-      
+
       throw error;
     }
   }, []);
@@ -2461,9 +2667,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
   const handleRetryLoadPlugin = useCallback(async (pluginId: string) => {
     try {
       setPluginLoadingStates(prev => ({ ...prev, [pluginId]: { loading: true, error: null } }));
-      
+
       const component = await pluginLoader.loadPlugin(pluginId);
-      
+
       if (component) {
         setPluginLoadingStates(prev => ({ ...prev, [pluginId]: { loading: false, error: null } }));
         // Force re-render by updating installedPlugins
@@ -2474,9 +2680,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       }
     } catch (error) {
       console.error(`[Dashboard] Failed to load plugin ${pluginId}:`, error);
-      setPluginLoadingStates(prev => ({ 
-        ...prev, 
-        [pluginId]: { loading: false, error: error instanceof Error ? error.message : 'Unknown error' } 
+      setPluginLoadingStates(prev => ({
+        ...prev,
+        [pluginId]: { loading: false, error: error instanceof Error ? error.message : 'Unknown error' }
       }));
       notificationService.error('Plugin Load Failed', `Failed to load ${pluginId}. ${error instanceof Error ? error.message : 'Please try again'}`);
     }
@@ -2485,13 +2691,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
   const handleUninstallPlugin = useCallback(async (pluginId: string) => {
     try {
       await pluginLoader.uninstallPlugin(pluginId);
-      
+
       setInstalledPlugins(prev => {
         const newSet = new Set(prev);
         newSet.delete(pluginId);
         return newSet;
       });
-      
+
       // Map plugin IDs to internal plugin IDs and deactivate
       // Remove the corresponding tab from visible tabs
       const pluginToTabMap: Record<string, string> = {
@@ -2502,14 +2708,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         'sparql-query-plugin': 'SPARQL',
         'reasoner-plugin': 'Reasoner'
       };
-      
+
       const tabId = pluginToTabMap[pluginId];
       if (tabId) {
         setVisibleMainTabs(prev => prev.filter(t => t !== tabId));
         // Switch to Entities tab if the current tab is being removed
         setMainTab(current => current === tabId ? 'Entities' : current);
       }
-      
+
       console.log(`[Dashboard] Plugin ${pluginId} uninstalled`);
     } catch (error) {
       console.error(`[Dashboard] Failed to uninstall plugin ${pluginId}:`, error);
@@ -2551,19 +2757,25 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     }
   }, []);
 
+  const resolveUserEmail = useCallback(() => {
+    if (user?.email) return user.email;
+    const token = user?.token || (typeof localStorage !== 'undefined' ? localStorage.getItem('authToken') : null);
+    return decodeTokenEmail(token);
+  }, [user?.email, user?.token]);
+
   const fetchData = useCallback(async (currentProjectId: string, waitForCompletion = false, parentProjectId?: string) => {
     // Don't block UI - let user continue working
     setSelectedItem(null);
     setSearchQuery("");
-    
+
     // Show loading indicator if user chose to wait
     if (waitForCompletion) {
       setIsInitialLoading(true);
     }
-    
+
     // Determine if we're in admin flow (parentProjectId provided means files should be loaded from project library)
     const isAdminFlow = !!parentProjectId;
-    
+
     // Notify user that loading has started
     console.log(`Loading ontology "${currentProjectId}"...`);
     console.log('[Dashboard] 🔄 Fetching data for project:', currentProjectId);
@@ -2575,7 +2787,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       isAdmin: user?.isAdmin,
       workspaceId: user?.workspaceId
     });
-    
+
     // Request collaboration status when loading a new file
     if (window.vscode) {
       window.vscode.postMessage({ type: 'requestCollaborationStatus' });
@@ -2585,20 +2797,21 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       // Wait for processing to complete before fetching data
       console.log('[Dashboard] Waiting for file processing to complete...');
       const result = await waitForProcessingComplete(currentProjectId);
-      
+
       if (!result.ready) {
         const errorTitle = result.status === 'ERROR' ? 'Import Failed' : 'Loading Failed';
         const errorMessage = result.error || 'Unable to load ontology';
-        
+
         console.error(`[Dashboard] Cannot load project: ${result.status}`, result.error);
         notificationService.error(errorTitle, errorMessage);
         setIsInitialLoading(false);
+      return null;
         return;
       }
-      
+
       console.log('[Dashboard] File processing complete, fetching ontology data...');
       console.log('[Dashboard] 📡 Loading data from GraphDB database for:', currentProjectId);
-      
+
       // Fetch data in background
       const dataFetchPromise = Promise.all([
         apiClient.get<any>(`/api/ontology/metadata/${currentProjectId}`),
@@ -2613,14 +2826,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         apiClient.get<any>(`/api/ontology/metadata/${currentProjectId}/annotations`),
         apiClient.get<any>(`/api/ontology/ontology/prefixes/${currentProjectId}`)
       ]);
-      
+
       // Allow UI to be responsive immediately if not waiting
       if (!waitForCompletion) {
         setTimeout(() => {
           setIsInitialLoading(false);
         }, 500);
       }
-      
+
       // Continue loading in background
       const [
         metadataRes,
@@ -2635,22 +2848,26 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         ontologyAnnotationsRes,
         prefixesRes
       ] = await dataFetchPromise;
-      
+
       console.log('[Dashboard] ✅ Data loaded from GraphDB database successfully!');
       console.log('[Dashboard] 📊 This data includes all saved changes from the database');
-      
+
       // Handle metadata response - backend returns {success: true, data: {counts: {...}, prefixes: [...], ontologyIRI: "...", ...}}
       console.log("Metadata response:", metadataRes);
-      
+
       const metadataData = metadataRes?.data || metadataRes;
       const annotationsData = metadataData?.annotations || [];
       const imports = metadataData?.imports || [];
       const gciAxioms = metadataData?.axioms || [];
-      
+
+      if (metadataData?.filename) {
+        setActiveFileName(metadataData.filename);
+      }
+
       console.log("Extracted annotations data:", annotationsData);
       console.log("Extracted imports:", imports);
       console.log("Extracted GCI axioms:", gciAxioms);
-      
+
       // Keep all metadata fields from backend (axiom counts, ontologyIRI, etc.)
       const transformedMetadata = {
         ...metadataData,
@@ -2719,11 +2936,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       console.log("topLevelRes?.success:", topLevelRes?.success);
       console.log("topLevelRes?.classes:", topLevelRes?.classes);
       console.log("Is topLevelRes.classes an array?", Array.isArray(topLevelRes?.classes));
-      
+
       // The response structure is: topLevelRes = {success: true, classes: [...]}
       // But apiClient might wrap it in a data field, so check both
       let classes: any[] = [];
-      
+
       if (Array.isArray(topLevelRes?.classes)) {
         classes = topLevelRes.classes;
         console.log("✅ Found classes in topLevelRes.classes, count:", classes.length);
@@ -2752,11 +2969,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           }
         }
       }
-      
+
       console.log("Extracted classes array length:", classes.length);
       console.log("First 3 classes:", classes.slice(0, 3));
       console.log("=== END CLASSES DEBUG ===");
-      
+
       // Nest all top-level classes under owl:Thing
       const topLevelNodes: TreeNode[] = classes.map((c: TopLevelClass) => ({
         ...c,
@@ -2764,11 +2981,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         hasChildren: c.hasChildren,
         subClassOfAxioms: [{ id: 'sub1', type: 'SubClassOf', definition: 'Thing' }]
       }));
-      
+
       console.log("=== OWL:THING HIERARCHY DEBUG ===");
       console.log("topLevelNodes count:", topLevelNodes.length);
       console.log("First 3 topLevelNodes:", topLevelNodes.slice(0, 3));
-      
+
       // Always include owl:Thing at the root with pre-loaded children
       const owlThingNode: TreeNode = {
         id: "http://www.w3.org/2002/07/owl#Thing",
@@ -2777,12 +2994,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         hasChildren: topLevelNodes.length > 0,
         annotations: {}
       };
-      
+
       console.log("owlThingNode created with children count:", owlThingNode.children?.length);
       console.log("owlThingNode full structure:", JSON.stringify(owlThingNode, null, 2));
       console.log("Setting classHierarchy with owl:Thing");
       console.log("=== END OWL:THING DEBUG ===");
-      
+
       const resolvedCounts = (instanceCountsData && typeof instanceCountsData === 'object')
         ? instanceCountsData
         : {};
@@ -2794,9 +3011,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       // Handle properties response
       console.log("=== PROPERTIES RESPONSE DEBUG ===");
       console.log("Properties response:", propertiesRes);
-      const allProps = Array.isArray(propertiesRes?.data) ? propertiesRes.data : 
-                       Array.isArray(propertiesRes?.properties) ? propertiesRes.properties : 
-                       Array.isArray(propertiesRes) ? propertiesRes : [];
+      const allProps = Array.isArray(propertiesRes?.data) ? propertiesRes.data :
+        Array.isArray(propertiesRes?.properties) ? propertiesRes.properties :
+          Array.isArray(propertiesRes) ? propertiesRes : [];
       console.log("All props after extraction:", allProps);
       console.log("All props length:", allProps.length);
       const opList = allProps.filter((p: Property) => p.type === "ObjectProperty");
@@ -2820,34 +3037,34 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         hasChildren: false,
         annotations: {}
       };
-      
+
       // If topObjectProperty is not in the list (it usually isn't), we use our created one.
       // If it IS in the list, we should use that one but ensure it's the root.
       // Typically backend doesn't return built-in top properties in the list of user properties.
-      
+
       opList.forEach((p: Property) => {
         const node = opMap.get(p.id);
         if (p.superProperties && p.superProperties.length > 0) {
           let added = false;
           p.superProperties.forEach(superId => {
-             if (superId === topObjectProperty.id) {
-                 topObjectProperty.children.push(node);
-                 topObjectProperty.hasChildren = true;
-                 added = true;
-             } else if (opMap.has(superId)) {
-                 const parent = opMap.get(superId);
-                 parent.children.push(node);
-                 parent.hasChildren = true;
-                 added = true;
-             }
+            if (superId === topObjectProperty.id) {
+              topObjectProperty.children.push(node);
+              topObjectProperty.hasChildren = true;
+              added = true;
+            } else if (opMap.has(superId)) {
+              const parent = opMap.get(superId);
+              parent.children.push(node);
+              parent.hasChildren = true;
+              added = true;
+            }
           });
           // If has super properties but none found in map (e.g. external), add to top?
           // Or if it has super properties, it shouldn't be at top level unless explicitly under top.
           // If we didn't add it to any parent, and it's not explicitly under top, what to do?
           // For now, if not added to any known parent, add to topObjectProperty as fallback
           if (!added) {
-             topObjectProperty.children.push(node);
-             topObjectProperty.hasChildren = true;
+            topObjectProperty.children.push(node);
+            topObjectProperty.hasChildren = true;
           }
         } else {
           // No super properties -> child of topObjectProperty
@@ -2855,7 +3072,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           topObjectProperty.hasChildren = true;
         }
       });
-      
+
       setObjectPropertyHierarchy([topObjectProperty]);
 
       const dpList = allProps.filter((p: Property) => p.type === "DatatypeProperty");
@@ -2884,20 +3101,20 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         if (p.superProperties && p.superProperties.length > 0) {
           let added = false;
           p.superProperties.forEach(superId => {
-             if (superId === topDataProperty.id) {
-                 topDataProperty.children.push(node);
-                 topDataProperty.hasChildren = true;
-                 added = true;
-             } else if (dpMap.has(superId)) {
-                 const parent = dpMap.get(superId);
-                 parent.children.push(node);
-                 parent.hasChildren = true;
-                 added = true;
-             }
+            if (superId === topDataProperty.id) {
+              topDataProperty.children.push(node);
+              topDataProperty.hasChildren = true;
+              added = true;
+            } else if (dpMap.has(superId)) {
+              const parent = dpMap.get(superId);
+              parent.children.push(node);
+              parent.hasChildren = true;
+              added = true;
+            }
           });
           if (!added) {
-             topDataProperty.children.push(node);
-             topDataProperty.hasChildren = true;
+            topDataProperty.children.push(node);
+            topDataProperty.hasChildren = true;
           }
         } else {
           topDataProperty.children.push(node);
@@ -2908,180 +3125,93 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       setDataPropertyHierarchy([topDataProperty]);
 
       // Handle other responses with fallbacks
-      setIndividuals(Array.isArray(individualsRes?.data) ? individualsRes.data : 
-                    Array.isArray(individualsRes?.individuals) ? individualsRes.individuals : []);
+      setIndividuals(Array.isArray(individualsRes?.data) ? individualsRes.data :
+        Array.isArray(individualsRes?.individuals) ? individualsRes.individuals : []);
       setAnnotationProperties(Array.isArray(annotationPropsRes?.data) ? annotationPropsRes.data :
-                              Array.isArray(annotationPropsRes?.annotationProperties) ? annotationPropsRes.annotationProperties : []);
+        Array.isArray(annotationPropsRes?.annotationProperties) ? annotationPropsRes.annotationProperties : []);
       setDatatypes(Array.isArray(datatypesRes?.data) ? datatypesRes.data :
-                  Array.isArray(datatypesRes?.datatypes) ? datatypesRes.datatypes : []);
-      
+        Array.isArray(datatypesRes?.datatypes) ? datatypesRes.datatypes : []);
+
       // Fetch files list separately (not in parallel to avoid blocking main data load)
       // Admin flow will fetch project-specific files later, regular users fetch all their files here
       console.log('[Dashboard] 🔍 File loading decision - isAdminFlow:', isAdminFlow);
       if (!isAdminFlow) {
         console.log('[Dashboard] ✅ Non-admin flow - fetching files for user');
-      try {
-        const userEmail = user?.email || '';
-        console.log('[Dashboard] 📧 Fetching files for user email:', userEmail);
-        const filesRes = await apiClient.get<any>(`/api/projects?userEmail=${encodeURIComponent(userEmail)}`);
-        console.log('[Dashboard] 📥 Files response:', filesRes);
-        console.log('[Dashboard] 📥 Files response details:', JSON.stringify(filesRes, null, 2));
-        
-        let myProjectsList: any[] = [];
-        let sharedProjectsList: any[] = [];
-        
-        // Default files to show if API returns empty
-        const defaultFiles = [
-          { id: 'DL_query', filename: 'DL_query.owl', ownerEmail: userEmail },
-          { id: 'SDA-Medica_CardiovascularDomainl', filename: 'SDA-Medica_CardiovascularDomainl.owl', ownerEmail: userEmail }
-        ];
-        
-        if (filesRes.myFiles !== undefined && filesRes.sharedFiles !== undefined) {
-          // New format with separate lists
-          myProjectsList = Array.isArray(filesRes.myFiles) ? filesRes.myFiles : [];
-          sharedProjectsList = Array.isArray(filesRes.sharedFiles) ? filesRes.sharedFiles : [];
-          
-          // If API returns empty, use default files as fallback
-          if (myProjectsList.length === 0 && sharedProjectsList.length === 0) {
-            console.log('[Dashboard] 📋 API returned empty, using default files');
-            myProjectsList = defaultFiles;
+        try {
+          const lists = await fetchProjects();
+          if (!lists) {
+            console.warn('[Dashboard] ?? No project list available - defaulting to private mode');
+            setIsCurrentFileShared(false);
+            ontologyMutationService.setRealTimeSync(false);
+            setSyncMode('private');
+            console.log('[Dashboard] ?? File is private - using draft mode (click Save to apply changes)');
           }
-          
-          console.log(myProjectsList,"myProjects")
-          setMyFiles(myProjectsList.map((p: any) => {
-            const baseName = p.filename || p.name || p.id;
-            const filename = baseName.endsWith('.owl') ? baseName : `${baseName}.owl`;
-            return {
-              id: p.id,
-              filename: filename,
-              contentType: 'application/rdf+xml',
-              uploadDate: p.updatedAt || new Date().toISOString(),
-              length: 0,
-              ownerEmail: p.ownerEmail
+
+          const myProjectsList = Array.isArray(lists?.myFiles) ? lists.myFiles : [];
+          const sharedProjectsList = Array.isArray(lists?.sharedFiles) ? lists.sharedFiles : [];
+
+          // Check if current file is shared (for real-time collaboration)
+          // Use the freshly fetched data, not state variables
+          // A file is shared if:
+          // 1. It's in sharedFiles list (shared WITH me by someone else)
+          // 2. It's in myFiles and has sharedWith array (shared BY me with others)
+          const isSharedWithMe = sharedProjectsList.some((f: any) => f.id === currentProjectId);
+          const isSharedByMe = myProjectsList.some((f: any) => f.id === currentProjectId && f.sharedWith && f.sharedWith.length > 0);
+          const isShared = isSharedWithMe || isSharedByMe;
+          setIsCurrentFileShared(isShared);
+
+          console.log('[Dashboard] 📊 File shared status:', isShared, 'for project:', currentProjectId);
+          console.log('[Dashboard] 📥 Shared WITH me:', isSharedWithMe);
+          console.log('[Dashboard] 📤 Shared BY me:', isSharedByMe);
+          console.log('[Dashboard] 📋 Shared files list:', sharedProjectsList.map((f: any) => f.id));
+          console.log('[Dashboard] 📋 My files list:', myProjectsList.map((f: any) => f.id));
+
+          // Configure mutation service based on whether file is shared
+          ontologyMutationService.setRealTimeSync(isShared);
+          setSyncMode(isShared ? 'public' : 'private');
+
+          // Only start monitoring for shared files (real-time collaboration)
+          if (isShared) {
+            console.log('[Dashboard] 📤 File is shared - enabling real-time collaboration');
+
+            // Start monitoring for changes from other users
+            const handleDataChanged = async (changedProjectId: string) => {
+              console.log('[Dashboard] 🔄 Change detected from another user! Refreshing data...');
+              notificationService.info('New Changes Available', 'Another user saved changes. Refreshing data...');
+
+              // Refresh data and restart monitoring for another 30 seconds
+              await fetchData(changedProjectId, false);
+              console.log('[Dashboard] ✅ Refresh complete, monitoring restarted');
             };
-          }));
-          
-          setSharedFiles(sharedProjectsList.map((p: any) => {
-            const baseName = p.filename || p.name || p.id;
-            const filename = baseName.endsWith('.owl') ? baseName : `${baseName}.owl`;
-            return {
-              id: p.id,
-              filename: filename,
-              contentType: 'application/rdf+xml',
-              uploadDate: p.updatedAt || new Date().toISOString(),
-              length: 0,
-              sharedBy: p.sharedBy,
-              ownerEmail: p.ownerEmail,
-              permission: p.permission || 'view'
-            };
-          }));
-          
-          console.log('[Dashboard] 📂 Loaded shared files:', sharedProjectsList.length);
-          console.log('[Dashboard] 🤝 Collaboration features available for shared editing');
-          
-          // Combined list for backward compatibility
-          setListOfFiles([...myProjectsList, ...sharedProjectsList].map((p: any) => {
-            const baseName = p.filename || p.name || p.id;
-            const filename = baseName.endsWith('.owl') ? baseName : `${baseName}.owl`;
-            return {
-              id: p.id,
-              filename: filename,
-              contentType: 'application/rdf+xml',
-              uploadDate: p.updatedAt || new Date().toISOString(),
-              length: 0
-            };
-          }));
-        } else {
-          // Old format (backward compatibility)
-          const projects = Array.isArray(filesRes?.projects) ? filesRes.projects : [];
-          myProjectsList = projects;
-          setListOfFiles(projects.map((p: any) => {
-            const baseName = p.filename || p.name || p.id;
-            const filename = baseName.endsWith('.owl') ? baseName : `${baseName}.owl`;
-            return {
-              id: p.id,
-              filename: filename,
-              contentType: 'application/rdf+xml',
-              uploadDate: p.updatedAt || new Date().toISOString(),
-              length: 0
-            };
-          }));
-          setMyFiles(projects.map((p: any) => {
-            const baseName = p.filename || p.name || p.id;
-            const filename = baseName.endsWith('.owl') ? baseName : `${baseName}.owl`;
-            return {
-              id: p.id,
-              filename: filename,
-              contentType: 'application/rdf+xml',
-              uploadDate: p.updatedAt || new Date().toISOString(),
-              length: 0
-            };
-          }));
+
+            try {
+              const timestampData = await apiClient.get<{ updatedAt: string }>(`/api/ontology/metadata/${currentProjectId}/timestamp`);
+              if (timestampData && timestampData.updatedAt) {
+                const currentTimestamp = new Date(timestampData.updatedAt).getTime();
+                syncService.startMonitoring(currentProjectId, handleDataChanged, currentTimestamp);
+                console.log('[Dashboard] 🔍 Started monitoring for changes (30 seconds)');
+              }
+            } catch (error) {
+              console.warn('[Dashboard] Could not start change monitoring:', error);
+            }
+          } else {
+            console.log('[Dashboard] 📝 File is private - using draft mode (click Save to apply changes)');
+          }
+        } catch (fileError) {
+          console.error("[Dashboard] ❌ Failed to fetch files:", fileError);
+          console.error("[Dashboard] ❌ File error details:", fileError instanceof Error ? fileError.message : fileError);
+          setListOfFiles([]);
+          setMyFiles([]);
           setSharedFiles([]);
         }
-        
-        // Check if current file is shared (for real-time collaboration)
-        // Use the freshly fetched data, not state variables
-        // A file is shared if:
-        // 1. It's in sharedFiles list (shared WITH me by someone else)
-        // 2. It's in myFiles and has sharedWith array (shared BY me with others)
-        const isSharedWithMe = sharedProjectsList.some((f: any) => f.id === currentProjectId);
-        const isSharedByMe = myProjectsList.some((f: any) => f.id === currentProjectId && f.sharedWith && f.sharedWith.length > 0);
-        const isShared = isSharedWithMe || isSharedByMe;
-        setIsCurrentFileShared(isShared);
-        
-        console.log('[Dashboard] 📊 File shared status:', isShared, 'for project:', currentProjectId);
-        console.log('[Dashboard] 📥 Shared WITH me:', isSharedWithMe);
-        console.log('[Dashboard] 📤 Shared BY me:', isSharedByMe);
-        console.log('[Dashboard] 📋 Shared files list:', sharedProjectsList.map((f: any) => f.id));
-        console.log('[Dashboard] 📋 My files list:', myProjectsList.map((f: any) => f.id));
-        
-        // Configure mutation service based on whether file is shared
-        ontologyMutationService.setRealTimeSync(isShared);
-        setSyncMode(isShared ? 'public' : 'private');
-        
-        // Only start monitoring for shared files (real-time collaboration)
-        if (isShared) {
-          console.log('[Dashboard] 📤 File is shared - enabling real-time collaboration');
-          
-          // Start monitoring for changes from other users
-          const handleDataChanged = async (changedProjectId: string) => {
-            console.log('[Dashboard] 🔄 Change detected from another user! Refreshing data...');
-            notificationService.info('New Changes Available', 'Another user saved changes. Refreshing data...');
-            
-            // Refresh data and restart monitoring for another 30 seconds
-            await fetchData(changedProjectId, false);
-            console.log('[Dashboard] ✅ Refresh complete, monitoring restarted');
-          };
-          
-          try {
-            const timestampData = await apiClient.get<{ updatedAt: string }>(`/api/ontology/metadata/${currentProjectId}/timestamp`);
-            if (timestampData && timestampData.updatedAt) {
-              const currentTimestamp = new Date(timestampData.updatedAt).getTime();
-              syncService.startMonitoring(currentProjectId, handleDataChanged, currentTimestamp);
-              console.log('[Dashboard] 🔍 Started monitoring for changes (30 seconds)');
-            }
-          } catch (error) {
-            console.warn('[Dashboard] Could not start change monitoring:', error);
-          }
-        } else {
-          console.log('[Dashboard] 📝 File is private - using draft mode (click Save to apply changes)');
-        }
-      } catch (fileError) {
-        console.error("[Dashboard] ❌ Failed to fetch files:", fileError);
-        console.error("[Dashboard] ❌ File error details:", fileError instanceof Error ? fileError.message : fileError);
-        setListOfFiles([]);
-        setMyFiles([]);
-        setSharedFiles([]);
-      }
       } else {
         console.log('[Dashboard] ℹ️ Admin flow detected - skipping user file fetch (will use project files)');
       }
       // End of !isAdminFlow block
-      
+
       // Stop any previous monitoring for this project
       syncService.stopMonitoring(currentProjectId);
-      
+
       // Only fetch project-specific files in admin flow (from ProjectLibrary)
       // Regular users and workspace members already have their files loaded above
       if (isAdminFlow && parentProjectId) {
@@ -3090,7 +3220,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       } else {
         console.log('[Dashboard] ℹ️ Regular user flow - files already loaded from user email query');
       }
-      
+
       // Notify user that ontology is fully loaded
       notificationService.success(
         'Ontology Loaded',
@@ -3098,7 +3228,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       );
     } catch (error) {
       console.error("Failed to fetch data:", error);
-      
+
       // Notify user of the error
       notificationService.error(
         'Loading Failed',
@@ -3107,7 +3237,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     } finally {
       setIsInitialLoading(false);
     }
-  }, [waitForProcessingComplete, applyInstanceCountsToTree, user, collaboration, fetchProjectFiles]); // Include dependencies for proper closure
+  }, [waitForProcessingComplete, applyInstanceCountsToTree, user, collaboration, fetchProjectFiles, resolveUserEmail]); // Include dependencies for proper closure
 
   useEffect(() => {
     if (metadata?.ontologyIRI) {
@@ -3130,7 +3260,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       const validAnnotations = (Array.isArray(data) ? data : [])
         .filter(ann => ann && ann.propertyIri && ann.value !== undefined);
       console.log('[Dashboard] ✅ Valid annotations after filtering:', validAnnotations);
-      
+
       // Only update if we got data, or if explicitly clearing (validAnnotations.length >= 0 always true, so always update)
       // But if backend returns empty and we have optimistic updates, keep them for a bit
       setOntologyAnnotations(prev => {
@@ -3154,7 +3284,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       const validImports = Array.isArray(data) ? data : [];
       console.log('[Dashboard] 📥 Loaded imports from backend:', validImports);
       console.log('[Dashboard] Local imports:', validImports.filter((imp: string) => !imp.startsWith('http://') && !imp.startsWith('https://')));
-      
+
       // Don't overwrite optimistic updates with empty backend response
       setOntologyImports(prev => {
         if (validImports.length === 0 && prev.length > 0) {
@@ -3199,7 +3329,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           const data = res?.data || res;
           setMetadata({ ...(metadata || {}), ...data });
         })
-        .catch(() => {});
+        .catch(() => { });
     } catch (error) {
       console.error('[Dashboard] Failed to update ontology ID:', error);
       notificationService.error('Update Failed', 'Could not update ontology IRI/version.');
@@ -3213,7 +3343,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         propertyIri,
         value
       };
-      
+
       // Add language if provided
       if (language && language.trim()) {
         payload.language = language.trim();
@@ -3228,10 +3358,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           payload.datatype = datatype;
         }
       }
-      
+
       console.log('[Dashboard] Adding annotation with payload:', payload);
       await apiClient.post(`/api/ontology/metadata/${projectId}/annotations`, payload);
-      
+
       // Immediate optimistic UI update
       const newAnnotation: any = {
         propertyIri,
@@ -3241,7 +3371,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       };
       setOntologyAnnotations(prev => [...prev, newAnnotation]);
       console.log('[Dashboard] ✅ Annotation added, optimistically updated UI');
-      
+
       // Delay refresh to allow backend to process
       setTimeout(() => {
         refreshOntologyAnnotations();
@@ -3261,7 +3391,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         oldValue,
         newValue
       };
-      
+
       // Add language if provided
       if (newLanguage && newLanguage.trim()) {
         payload.language = newLanguage.trim();
@@ -3274,20 +3404,20 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           payload.datatype = newDatatype;
         }
       }
-      
+
       console.log('[Dashboard] Updating annotation with payload:', payload);
       await apiClient.put(`/api/ontology/metadata/${projectId}/annotations`, payload);
-      
+
       // Immediate optimistic UI update
-      setOntologyAnnotations(prev => 
-        prev.map(ann => 
+      setOntologyAnnotations(prev =>
+        prev.map(ann =>
           (ann.propertyIri === propertyIri && ann.value === oldValue && ann.datatype === oldDatatype)
             ? { ...ann, value: newValue, datatype: payload.datatype || newDatatype, language: payload.language || newLanguage }
             : ann
         )
       );
       console.log('[Dashboard] ✅ Annotation updated, optimistically updated UI');
-      
+
       // Then refresh from server
       await refreshOntologyAnnotations();
       notificationService.success('Annotation Updated', 'Ontology annotation updated successfully.');
@@ -3302,7 +3432,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     try {
       // Build query string with URL-encoded parameters
       let queryString = `propertyIri=${encodeURIComponent(propertyIri)}&value=${encodeURIComponent(value)}`;
-      
+
       // Backend expects 'language' parameter for language tags
       if (datatype) {
         // If it's a language tag, send as language
@@ -3313,23 +3443,23 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           queryString += `&datatype=${encodeURIComponent(datatype)}`;
         }
       }
-      
+
       await apiClient.delete(`/api/ontology/metadata/${projectId}/annotations?${queryString}`);
-      
+
       // Immediate UI update
-      setOntologyAnnotations(prev => 
-        prev.filter(ann => 
-          !(ann.propertyIri === propertyIri && 
-            ann.value === value && 
+      setOntologyAnnotations(prev =>
+        prev.filter(ann =>
+          !(ann.propertyIri === propertyIri &&
+            ann.value === value &&
             ann.datatype === datatype)
         )
       );
-      
+
       // Delayed refresh
       setTimeout(() => {
         refreshOntologyAnnotations();
       }, 100);
-      
+
       notificationService.success('Annotation Deleted', 'Ontology annotation deleted successfully.');
     } catch (error: any) {
       console.error('[Dashboard] Failed to delete ontology annotation:', error);
@@ -3375,7 +3505,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     try {
       // Check if it's a URL (http/https/ftp)
       const isUrl = iri.startsWith('http://') || iri.startsWith('https://') || iri.startsWith('ftp://');
-      
+
       // Check if it's a local file import
       const isLocalFile = !isUrl && (
         /^[A-Za-z]:[\\\/]/.test(iri) ||  // Windows absolute path (C:\ or C:/)
@@ -3384,18 +3514,18 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         iri.startsWith('file://') ||  // file:// protocol
         /^[^:\/]+\.(?:owl|rdf|ttl|n3|nt|xml)$/i.test(iri)  // Simple filename like "file.owl"
       );
-      
+
       console.log('[Dashboard] Import IRI:', iri);
       console.log('[Dashboard] Is URL:', isUrl);
       console.log('[Dashboard] Is local file:', isLocalFile);
-      
+
       // Convert local file paths to proper URIs for backend storage
       let importIriForBackend = iri.trim();
-      
+
       if (isLocalFile && !iri.startsWith('file://') && !isUrl) {
         // Convert Windows backslashes to forward slashes
         let normalizedPath = iri.replace(/\\/g, '/');
-        
+
         if (/^[A-Za-z]:\//.test(normalizedPath)) {
           // Windows absolute path like C:/path/file.owl -> file:///C:/path/file.owl
           importIriForBackend = 'file:///' + normalizedPath;
@@ -3411,15 +3541,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         }
         console.log('[Dashboard] Converted to URI:', importIriForBackend);
       }
-      
+
       if (isEdit && originalIri !== importIriForBackend) {
         // Delete old and add new
         await apiClient.delete(`/api/ontology/metadata/${projectId}/imports?importIri=${encodeURIComponent(originalIri)}`);
       }
-      
+
       if (!isEdit || originalIri !== importIriForBackend) {
         console.log('[Dashboard] Posting import IRI to backend:', importIriForBackend);
-        
+
         // Immediate optimistic UI update BEFORE API call
         if (isEdit && originalIri !== importIriForBackend) {
           // Remove old import and add new one
@@ -3432,13 +3562,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           setOntologyImports(prev => [...prev, importIriForBackend]);
         }
         console.log('[Dashboard] ⚡ Optimistically added import to UI');
-        
+
         await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, {
           importIri: importIriForBackend
         });
         console.log('[Dashboard] ✅ Import IRI saved to backend');
       }
-      
+
       // If it's a local file WITH AN ACTUAL PATH (not just a filename), trigger upload to make it available in "My Files"
       // Only upload files with absolute paths (C:\path or /path) or file:// URIs
       const hasActualPath = iri.startsWith('file://') || /^[A-Za-z]:[\\\/]/.test(iri) || iri.startsWith('/');
@@ -3454,20 +3584,20 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       } else if (isLocalFile && !hasActualPath) {
         console.log('[Dashboard] Local file is a relative reference (filename only), skipping upload:', iri);
       }
-      
+
       // Close dialog first for immediate feedback
       setIsImportDialogOpen(false);
-      
+
       // Refresh from server to get canonical data
       setTimeout(() => {
         refreshOntologyImports();
       }, 100);
-      
+
       notificationService.success(
         isEdit ? 'Import Updated' : 'Import Added',
         isEdit ? 'Import updated successfully.' : 'Import added successfully.'
       );
-      
+
       if (isLocalFile) {
         notificationService.info('File Upload', 'Local file reference added to imports.');
       }
@@ -3510,15 +3640,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     if (!projectId) return;
     try {
       await apiClient.delete(`/api/ontology/metadata/${projectId}/imports?importIri=${encodeURIComponent(iri)}`);
-      
+
       // Immediate UI update
       setOntologyImports(prev => prev.filter(i => i !== iri));
-      
+
       // Delayed refresh
       setTimeout(() => {
         refreshOntologyImports();
       }, 100);
-      
+
       notificationService.success('Import Removed', 'Import removed successfully.');
     } catch (error) {
       console.error('[Dashboard] Failed to remove import:', error);
@@ -3545,23 +3675,23 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     try {
       const cleanedPrefix = prefix.endsWith(':') ? prefix.slice(0, -1) : prefix;
       const cleanedOriginal = originalPrefix.endsWith(':') ? originalPrefix.slice(0, -1) : originalPrefix;
-      
+
       // Backend expects POST with { prefix, iri, oldPrefix? }
       const payload: any = {
         prefix: cleanedPrefix,
         iri: namespace
       };
-      
+
       if (isEdit) {
         payload.oldPrefix = cleanedOriginal;
       }
-      
+
       console.log('[Dashboard] Saving prefix:', payload);
       await apiClient.post(`/api/ontology/metadata/${projectId}/prefixes`, payload);
-      
+
       // Refresh prefixes from server
       await refreshPrefixes();
-      
+
       notificationService.success(
         isEdit ? 'Prefix Updated' : 'Prefix Added',
         isEdit ? 'Prefix updated successfully.' : 'Prefix added successfully.'
@@ -3578,13 +3708,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     try {
       // Normalize prefix by removing colon
       const cleanedPrefix = prefix.endsWith(':') ? prefix.slice(0, -1) : prefix;
-      
+
       console.log('[Dashboard] Deleting prefix:', cleanedPrefix);
       await apiClient.delete(`/api/ontology/metadata/${projectId}/prefixes?prefix=${encodeURIComponent(cleanedPrefix)}`);
-      
+
       // Refresh from server
       await refreshPrefixes();
-      
+
       notificationService.success('Prefix Deleted', 'Prefix deleted successfully.');
     } catch (error) {
       console.error('[Dashboard] Failed to delete prefix:', error);
@@ -3594,20 +3724,20 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
 
   const handleAddAxiom = async (definition?: string, superClassIri?: string) => {
     if (!projectId) return;
-    
+
     // Use parameters if provided, otherwise fall back to axiomDraft state
     const axiomDefinition = definition || axiomDraft.definition;
     const axiomSuperClass = superClassIri !== undefined ? superClassIri : axiomDraft.superClassIri;
-    
+
     if (!axiomDefinition) return;
-    
+
     try {
       console.log('[Dashboard] Adding general class axiom:', { projectId, subClass: axiomDefinition, superClass: axiomSuperClass });
       await apiClient.post(`/api/ontology/metadata/${projectId}/gci`, {
         subClass: axiomDefinition,
         superClass: axiomSuperClass || ''
       });
-      
+
       // Immediately update the UI with the new axiom
       const newAxiom = {
         value: `${axiomDefinition} SubClassOf ${axiomSuperClass}`,
@@ -3618,14 +3748,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         subExpression: axiomDefinition
       };
       setGeneralClassAxioms([...generalClassAxioms, newAxiom]);
-      
+
       setAxiomDraft({ definition: '', superClassIri: '' });
       setAxiomDialogOpen(false);
       setEditingAxiomIndex(null);
-      
+
       // Refresh from server to get complete data
       setTimeout(() => refreshGeneralClassAxioms(), 100);
-      
+
       notificationService.success('Axiom Added', 'General class axiom added successfully.');
     } catch (error: any) {
       console.error('[Dashboard] Failed to add axiom:', error);
@@ -3657,14 +3787,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       const subClass = newSubClass !== undefined ? newSubClass : axiomDraft.definition;
       const superClass = newSuperClass !== undefined ? newSuperClass : axiomDraft.superClassIri;
       console.log('[Dashboard] Updating general class axiom:', { projectId, oldAxiom, newAxiom: { subClass, superClass } });
-      
+
       // Use PUT endpoint to update - backend expects oldValue as the full value string
       await apiClient.put(`/api/ontology/metadata/${projectId}/gci/${editingAxiomIndex}`, {
         oldValue: oldAxiom.value || oldAxiom.subClass || oldAxiom.definition || '',
         subClass,
         superClass: superClass || ''
       });
-      
+
       // Immediately update UI
       const updatedAxioms = [...generalClassAxioms];
       updatedAxioms[editingAxiomIndex] = {
@@ -3676,14 +3806,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         subExpression: subClass
       };
       setGeneralClassAxioms(updatedAxioms);
-      
+
       setAxiomDraft({ definition: '', superClassIri: '' });
       setEditingAxiomIndex(null);
       setAxiomDialogOpen(false);
-      
+
       // Refresh from server
       setTimeout(() => refreshGeneralClassAxioms(), 100);
-      
+
       notificationService.success('Axiom Updated', 'General class axiom updated successfully.');
     } catch (error) {
       console.error('[Dashboard] Failed to update axiom:', error);
@@ -3698,21 +3828,21 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       // Backend expects the 'value' field or construct it from subClass
       const value = axiom.value || axiom.subClass || axiom.definition || axiom.subExpression || '';
       console.log('[Dashboard] Deleting general class axiom:', { projectId, axiom, value });
-      
+
       if (!value) {
         notificationService.error('Axiom Failed', 'Cannot delete axiom without a value.');
         return;
       }
-      
+
       await apiClient.delete(`/api/ontology/metadata/${projectId}/gci?value=${encodeURIComponent(value)}`);
-      
+
       // Immediately update UI
       const updatedAxioms = generalClassAxioms.filter((_, idx) => idx !== index);
       setGeneralClassAxioms(updatedAxioms);
-      
+
       // Refresh from server
       setTimeout(() => refreshGeneralClassAxioms(), 100);
-      
+
       notificationService.success('Axiom Deleted', 'General class axiom deleted successfully.');
     } catch (error) {
       console.error('[Dashboard] Failed to delete axiom:', error);
@@ -3758,14 +3888,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
   // Update real-time sync status based on collaboration state
   useEffect(() => {
     if (!projectId) return;
-    
+
     const activeUsersInProject = Array.from(collaboration.state.activeUsers.values())
-        .filter(u => u.projectId === projectId && u.userId !== user?.id);
-        
+      .filter(u => u.projectId === projectId && u.userId !== user?.id);
+
     if (activeUsersInProject.length > 0) {
-        console.log('[Dashboard] 👥 Collaborators detected, enabling real-time sync');
-        ontologyMutationService.setRealTimeSync(true);
-        setSyncMode('public');
+      console.log('[Dashboard] 👥 Collaborators detected, enabling real-time sync');
+      ontologyMutationService.setRealTimeSync(true);
+      setSyncMode('public');
     }
   }, [projectId, collaboration.state.activeUsers, user?.id]);
 
@@ -3776,7 +3906,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     const broadcastCursor = (e: MouseEvent | PointerEvent) => {
       const newCursor = { x: e.clientX, y: e.clientY };
       setMyLocalCursor(newCursor);
-      
+
       // Broadcast cursor position via vscode postMessage
       if (window.vscode) {
         window.vscode.postMessage({
@@ -3800,7 +3930,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     };
 
     const throttledMouseMove = throttle(handleMouseMove, 50); // Throttle to 20fps
-    
+
     document.addEventListener('mousemove', throttledMouseMove);
     document.addEventListener('click', handleClick); // Track all clicks
 
@@ -3816,11 +3946,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
 
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
-      
+
       if (message.type === 'cursorUpdate' && message.userId !== user?.id) {
         // Generate consistent color for each user
         const color = getUserColor(message.userId);
-        
+
         setCollaboratorCursors(prev => {
           const updated = new Map(prev);
           updated.set(message.userId, {
@@ -3843,14 +3973,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       setCollaboratorCursors(prev => {
         const updated = new Map(prev);
         let hasChanges = false;
-        
+
         for (const [userId, cursor] of updated.entries()) {
           if (now - (cursor as { x: number; y: number; userName: string; color: string; timestamp: number }).timestamp > 3000) {
             updated.delete(userId);
             hasChanges = true;
           }
         }
-        
+
         return hasChanges ? updated : prev;
       });
     }, 3000);
@@ -3943,24 +4073,54 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     refreshSelectedClassIndividualDetails();
   }, [refreshSelectedClassIndividualDetails]);
 
-  const fetchProjects = useCallback(async () => {
-    if (!user?.email) {
-      console.log('[Dashboard] ❌ fetchProjects skipped - user email not available');
-      console.log('[Dashboard] User object:', user);
-      return;
-    }
+
+  const decodeTokenEmail = (token?: string | null) => {
+    if (!token) return null;
     try {
-      const userEmail = user.email;
-      console.log('[Dashboard] 📂 Fetching projects for user email:', userEmail);
-      const response = await apiClient.get<any>(`/api/projects?userEmail=${encodeURIComponent(userEmail)}`);
-      
+      const parts = token.split('.');
+      if (parts.length !== 3) return null;
+      const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+      return payload.email || null;
+    } catch (error) {
+      console.warn('[Dashboard] Failed to decode token for email:', error);
+      return null;
+    }
+  };
+
+  const fetchProjects = useCallback(async (): Promise<{ myFiles: any[]; sharedFiles: any[] } | null> => {
+    try {
+      const resolvedEmail = resolveUserEmail();
+      const isWorkspaceMode = !!user?.workspaceId;
+      const primaryEndpoint = isWorkspaceMode ? '/api/projects' : '/api/ontology/projects';
+      const fallbackEndpoint = isWorkspaceMode ? '/api/ontology/projects' : '/api/projects';
+      const projectsUrl = resolvedEmail
+        ? `${primaryEndpoint}?userEmail=${encodeURIComponent(resolvedEmail)}`
+        : primaryEndpoint;
+      console.log('[Dashboard] 📂 Fetching projects for user email:', resolvedEmail || '(none)', 'workspaceMode:', isWorkspaceMode);
+      let response;
+      try {
+        response = await apiClient.get<any>(projectsUrl);
+      } catch (error: any) {
+        const status = error?.status || error?.response?.status;
+        const allowFallback = primaryEndpoint === '/api/projects';
+        if (status === 404 && fallbackEndpoint !== primaryEndpoint && allowFallback) {
+          const fallbackUrl = resolvedEmail
+            ? `${fallbackEndpoint}?userEmail=${encodeURIComponent(resolvedEmail)}`
+            : fallbackEndpoint;
+          console.warn('[Dashboard] Projects endpoint missing, falling back to:', fallbackUrl);
+          response = await apiClient.get<any>(fallbackUrl);
+        } else {
+          throw error;
+        }
+      }
+
       console.log('[Dashboard] 📥 fetchProjects RAW response:', response);
       console.log('[Dashboard] 📥 fetchProjects response type:', typeof response);
       console.log('[Dashboard] 📥 fetchProjects response keys:', response ? Object.keys(response) : 'null');
-      
+
       // Handle case where response might be wrapped in a data property
       const data = response?.data || response;
-      
+
       console.log('[Dashboard] 📥 fetchProjects processed data:', {
         success: data?.success,
         hasMyFiles: data?.myFiles !== undefined,
@@ -3973,7 +4133,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         sharedFilesData: data?.sharedFiles
       });
       setHasFetchedProjects(true);
-      
+
       if (data?.success) {
         // Handle new format with myFiles and sharedFiles (check if properties exist, not just truthy)
         if (data.myFiles !== undefined && data.sharedFiles !== undefined) {
@@ -3994,6 +4154,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           console.log('[Dashboard] ✅ Files loaded - My Files:', myFilesWithNames.length, 'Shared:', sharedFilesWithNames.length);
           console.log('[Dashboard] ✅ myFilesWithNames:', myFilesWithNames);
           console.log('[Dashboard] ✅ sharedFilesWithNames:', sharedFilesWithNames);
+          return { myFiles: myFilesWithNames, sharedFiles: sharedFilesWithNames };
         } else if (data.projects) {
           // Backward compatibility with old format
           const projectsWithNames = (data.projects || []).map((p: any) => ({
@@ -4008,18 +4169,21 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           setSharedFiles(sharedFilesList);
           setListOfFiles(projectsWithNames); // Set combined list
           console.log('[Dashboard] ✅ Files loaded (legacy format) - My Files:', myFilesList.length, 'Shared:', sharedFilesList.length);
+          return { myFiles: myFilesList, sharedFiles: sharedFilesList };
         } else {
           console.log('[Dashboard] ⚠️ No myFiles/sharedFiles or projects in response - setting empty arrays');
           console.log('[Dashboard] ⚠️ Full response data:', data);
           setMyFiles([]);
           setSharedFiles([]);
           setListOfFiles([]);
+          return { myFiles: [], sharedFiles: [] };
         }
       } else {
         console.log('[Dashboard] ⚠️ Response not successful:', data);
         setMyFiles([]);
         setSharedFiles([]);
         setListOfFiles([]);
+        return null;
       }
     } catch (error: any) {
       console.error('[Dashboard] ❌ Failed to fetch projects:', error);
@@ -4028,15 +4192,54 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       setSharedFiles([]);
       setListOfFiles([]);
       setIsInitialLoading(false);
+      return null;
     }
-  }, [user?.email]); // Only depend on user email - this is the only thing that matters for fetching
+  }, [user?.email, user?.workspaceId, resolveUserEmail]); // Track workspace mode changes + email fallback
 
   const handleProjectSelection = useCallback((selectedProjectId: string) => {
     setHasUserSelectedFile(true); // Mark that user has manually selected a file
     setProjectId(selectedProjectId);
+    setActiveFileId(null); // Clear file-specific ID when switching project
+    setActiveFileName(null);
     setShowProjectSelector(false);
     fetchData(selectedProjectId);
-  }, []); // fetchData captured in closure, removed to prevent infinite loop
+  }, []);
+  // fetchData captured in closure, removed to prevent infinite loop
+
+  const handleDeleteFile = useCallback((projectIdToDelete: string, fileName: string) => {
+    setDeleteFileDialog({ isOpen: true, projectId: projectIdToDelete, fileName });
+  }, []);
+
+  const confirmDeleteFile = useCallback(async () => {
+    const targetProjectId = deleteFileDialog.projectId;
+    const targetFileName = deleteFileDialog.fileName;
+    setDeleteFileDialog({ isOpen: false, projectId: '', fileName: '' });
+
+    if (!targetProjectId) {
+      return;
+    }
+
+    try {
+      const isWorkspaceMode = !!user?.workspaceId;
+      const resolvedEmail = resolveUserEmail();
+      const ownerEmail = !isWorkspaceMode && resolvedEmail ? `?ownerEmail=${encodeURIComponent(resolvedEmail)}` : '';
+      const deleteEndpoint = isWorkspaceMode ? '/api/projects' : '/api/ontology/projects';
+      await apiClient.delete(`${deleteEndpoint}/${encodeURIComponent(targetProjectId)}${ownerEmail}`);
+      notificationService.success('File Deleted', `"${targetFileName}" deleted successfully.`);
+      await fetchProjects();
+
+      if (projectId === targetProjectId) {
+        setProjectId(null);
+        setActiveFileId(null);
+        setActiveFileName(null);
+        setSelectedItem(null);
+        setHasUserSelectedFile(false);
+      }
+    } catch (error: any) {
+      console.error('[Dashboard] Failed to delete file:', error);
+      notificationService.error('Delete Failed', error?.message || 'Could not delete the file.');
+    }
+  }, [deleteFileDialog.projectId, deleteFileDialog.fileName, fetchProjects, projectId, user?.workspaceId, resolveUserEmail]);
 
   const handleOpenProjectSelector = useCallback(() => {
     // Fetch projects when user opens the selector
@@ -4049,7 +4252,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       const owlThingId = classHierarchy[0].id;
       const childCount = classHierarchy[0].children?.length || 0;
       console.log('[Dashboard] Class hierarchy loaded, owl:Thing has', childCount, 'top-level children');
-      
+
       // Auto-expand owl:Thing when it has children (preserve other expanded nodes)
       if (childCount > 0 && !expandedNodes.includes(owlThingId)) {
         console.log('[Dashboard] Auto-expanding owl:Thing (preserving existing expanded nodes)');
@@ -4063,7 +4266,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     if (inferredClassHierarchy.length > 0 && inferredClassHierarchy[0].id === "http://www.w3.org/2002/07/owl#Thing") {
       const owlThingId = inferredClassHierarchy[0].id;
       const childCount = inferredClassHierarchy[0].children?.length || 0;
-      
+
       if (childCount > 0 && !expandedNodes.includes(owlThingId)) {
         console.log('[Dashboard] Auto-expanding owl:Thing in inferred hierarchy');
         setExpandedNodes(prev => prev.includes(owlThingId) ? prev : [...prev, owlThingId]);
@@ -4078,11 +4281,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       console.log('[Dashboard] Skipping initial fetch - user not available');
       return;
     }
-    
+
     // Only run once on mount - use a ref to track if we've already fetched
     console.log('[Dashboard] Initial mount - fetching projects list');
+    const resolvedEmail = resolveUserEmail();
     console.log('[Dashboard] User details:', {
-      email: user.email,
+      email: resolvedEmail || user.email,
       username: user.username,
       isAdmin: user.isAdmin,
       workspaceId: user.workspaceId
@@ -4092,19 +4296,25 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       projectId,
       onBackToProjects: !!onBackToProjects
     });
-    
+
     // Always fetch user's files for the OpenFileDialog
     // This populates myFiles and sharedFiles based on user email
-    console.log('[Dashboard] ✅ Fetching all projects for user email:', user.email);
+    console.log('[Dashboard] ✅ Fetching all projects for user email:', resolvedEmail || '(none)');
     fetchProjects();
-    
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.email]); // Only re-run when user email changes, not on every render
-  
+  }, [user?.email, user?.workspaceId, resolveUserEmail]); // Only re-run when user identity changes
+
+  useEffect(() => {
+    setActiveFileId(null);
+    setActiveFileName(null);
+    setProjectFiles([]);
+  }, [initialProjectId]);
+
   // Track if a file is currently being loaded to prevent duplicate loads
   const fileLoadingRef = useRef(false);
   const lastLoadedFileRef = useRef<string | null>(null);
-  
+
   // Auto-load selected file from Project Library (admin flow)
   useEffect(() => {
     if (selectedFileId && selectedFileName && initialProjectId) {
@@ -4113,22 +4323,22 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         console.log('[Dashboard] Skipping duplicate load for:', selectedFileId);
         return;
       }
-      
+
       console.log('[Dashboard] Auto-loading selected file:', selectedFileId, selectedFileName);
       console.log('[Dashboard] Parent project for file menu:', initialProjectId);
-      
+
       // Mark as loading
       fileLoadingRef.current = true;
       lastLoadedFileRef.current = selectedFileId;
-      
+
       // Clear any previous file state
       console.log('[Dashboard] 🧹 Cleaning up previous file state...');
       setIsInitialLoading(true);
       setMainTab('Entities');
       setEntitiesTab('Classes');
-      
+
       setHasUserSelectedFile(true); // Mark that file was selected
-      
+
       // Upload the file to GraphDB first, then it will auto-load
       handleLoadProjectFile(selectedFileId, selectedFileName).finally(() => {
         // Reset loading flag after a delay to prevent rapid re-loads
@@ -4137,13 +4347,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         }, 1000);
       });
     }
-    
+
     // Cleanup when unmounting
     return () => {
       console.log('[Dashboard] 🧹 Cleanup on unmount');
     };
   }, [selectedFileId, selectedFileName, initialProjectId]);
-  
+
   // Update collaboration context when projectId changes
   useEffect(() => {
     if (collaboration?.setCurrentProject) {
@@ -4153,7 +4363,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
 
   // Track if component is mounted to prevent race conditions
   const isMountedRef = useRef(false);
-  
+
   // Send 'webviewReady' to extension when mounted
   // NOTE: This useEffect runs BEFORE the message listener is attached, 
   // but the actual webviewReady signal is sent from the message listener useEffect
@@ -4189,6 +4399,91 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     return found?.id;
   };
 
+  const buildDefaultCopyName = (fileName: string, copyIndex: number = 1) => {
+    const dotIndex = fileName.lastIndexOf('.');
+    if (dotIndex > 0) {
+      const baseName = fileName.substring(0, dotIndex);
+      const extension = fileName.substring(dotIndex);
+      return `${baseName}-copy-${copyIndex}${extension}`;
+    }
+    return `${fileName}-copy-${copyIndex}`;
+  };
+
+  const extractExtension = (fileName: string) => {
+    const dotIndex = fileName.lastIndexOf('.');
+    return dotIndex > 0 ? fileName.substring(dotIndex) : '';
+  };
+
+  const isSupportedOntologyExtension = (fileName: string) => {
+    return /\.(owl|rdf|ttl|n3|nt|jsonld)$/i.test(fileName);
+  };
+
+  const sendDuplicatePromptResponse = useCallback((action: 'open_existing' | 'replace' | 'create_copy' | 'cancel', copyName?: string) => {
+    if (!window.vscode || !duplicatePrompt.requestId) {
+      setDuplicatePrompt(prev => ({ ...prev, isOpen: false, requestId: null }));
+      return;
+    }
+    window.vscode.postMessage({
+      type: 'duplicateFilePromptResponse',
+      requestId: duplicatePrompt.requestId,
+      action,
+      copyName
+    });
+    setDuplicatePrompt(prev => ({ ...prev, isOpen: false, requestId: null }));
+    setDuplicateCopyError(null);
+    setDuplicateCopyName('');
+  }, [duplicatePrompt.requestId]);
+
+  const handleDuplicatePromptCancel = useCallback(() => {
+    sendDuplicatePromptResponse('cancel');
+  }, [sendDuplicatePromptResponse]);
+
+  const handleDuplicateCreateCopy = useCallback(async () => {
+    if (!duplicatePrompt.isOpen) {
+      return;
+    }
+    setDuplicateCopyError(null);
+    const originalExt = extractExtension(duplicatePrompt.fileName);
+    let candidateName = duplicateCopyName.trim();
+    if (!candidateName) {
+      setDuplicateCopyError('Name is required.');
+      return;
+    }
+
+    if (originalExt && !candidateName.toLowerCase().endsWith(originalExt.toLowerCase())) {
+      candidateName = `${candidateName}${originalExt}`;
+    }
+
+    if (!isSupportedOntologyExtension(candidateName)) {
+      setDuplicateCopyError('Unsupported file type.');
+      return;
+    }
+
+    try {
+      setDuplicateCopySubmitting(true);
+      if (duplicatePrompt.context === 'project' && duplicatePrompt.projectId) {
+        const checkResponse = await apiClient.get(`/api/projects/${duplicatePrompt.projectId}/files/check?fileName=${encodeURIComponent(candidateName)}`);
+        const checkData = (checkResponse as any)?.data || checkResponse;
+        if (checkData?.exists) {
+          setDuplicateCopyError(`"${candidateName}" already exists. Please choose a different name.`);
+          return;
+        }
+      } else {
+        // Some deployments don't expose /api/ontology/check-duplicate via gateway.
+        // For create-copy, it's safe to skip this check and let the backend resolve conflicts.
+        sendDuplicatePromptResponse('create_copy', candidateName);
+        return;
+      }
+
+      sendDuplicatePromptResponse('create_copy', candidateName);
+    } catch (error) {
+      console.error('[Dashboard] Copy name duplicate check failed:', error);
+      setDuplicateCopyError('Unable to validate copy name. Please try again.');
+    } finally {
+      setDuplicateCopySubmitting(false);
+    }
+  }, [duplicatePrompt, duplicateCopyName, sendDuplicatePromptResponse, resolveUserEmail]);
+
   // Handle loading choice dialog actions
   const handleWaitForLoading = useCallback(() => {
     userLoadingChoice.current = 'wait';
@@ -4211,7 +4506,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
-      
+      console.log(message, 'message')
       // CRITICAL: Always handle showLoading even before mount - this is time-sensitive
       // The extension sends showLoading right after file selection, before the webview may be fully ready
       if (message.type === 'showLoading') {
@@ -4227,23 +4522,94 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         // Don't fetch projects yet - wait for upload to complete
         return;
       }
-      
+
       // Ignore other messages until component is fully mounted
       if (!isMountedRef.current) {
         console.log('[Dashboard] Ignoring message before mount:', event.data.type);
         return;
       }
-      
+
       console.log('[Dashboard] Received message:', message.type, message);
       switch (message.type) {
+        case "duplicateFilePrompt": {
+          const defaultCopyName = message.defaultCopyName || buildDefaultCopyName(message.fileName, 1);
+          setDuplicatePrompt({
+            isOpen: true,
+            requestId: message.requestId,
+            fileName: message.fileName,
+            context: message.context || 'project',
+            projectId: message.projectId,
+            ownerEmail: message.ownerEmail,
+            defaultCopyName,
+            detail: message.detail,
+            allowOpenExisting: message.allowOpenExisting !== false,
+            error: message.error
+          });
+          setDuplicateCopyName(defaultCopyName);
+          setDuplicateCopyError(message.error || null);
+          break;
+        }
+        case "openProjectFile":
+          if (initialProjectId && message.projectId && message.projectId !== initialProjectId) {
+            console.warn('[Dashboard] openProjectFile project mismatch:', message.projectId, 'expected', initialProjectId);
+            notificationService.error('Open Failed', 'Selected file belongs to a different project.');
+            break;
+          }
+          if (message.fileId && message.fileName) {
+            setActiveFileId(message.fileId);
+            setActiveFileName(message.fileName);
+            if (onFileSelected) onFileSelected(message.fileId, message.fileName);
+            handleLoadProjectFile(message.fileId, message.fileName);
+          }
+          break;
         case "fileReady":
         case "fileLoaded":
+          if (initialProjectId && message.projectId === initialProjectId) {
+            console.log('[Dashboard] File list updated for project, skipping ontology load:', message.projectId);
+            fetchProjectFiles(initialProjectId);
+            fetchProjects();
+            break;
+          }
+          if (initialProjectId && pendingImportProjectIdRef.current && message.projectId === pendingImportProjectIdRef.current) {
+            console.log('[Dashboard] FileReady for project file import:', message.projectId);
+            setHasUserSelectedFile(true);
+            hasUserSelectedFileRef.current = true;
+            setProjectId(message.projectId);
+            setSelectedItem(null);
+            setLoadingProjectName(message.projectId);
+            userLoadingChoice.current = null;
+            setShowLoadingChoice(true);
+
+            loadingPromiseRef.current = fetchData(message.projectId, false, initialProjectId)
+              .then(() => {
+                console.log('[Dashboard] Loading completed for:', message.projectId);
+                setShowLoadingChoice(false);
+                setShowQueueStatus(false);
+                setTimeout(() => fetchProjects(), 300);
+              })
+              .catch((error) => {
+                console.error('[Dashboard] Failed to load ontology:', error);
+                notificationService.error('Load Failed', `Could not load "${message.projectId}". The file may still be processing.`);
+                setShowLoadingChoice(false);
+              });
+            break;
+          }
           // Show loading choice dialog
           console.log('[Dashboard] Loading project:', message.projectId);
           // Don't clear isExpectingFileReady here - let IMPORT_COMPLETED handler do it
           setHasUserSelectedFile(true);
           hasUserSelectedFileRef.current = true;
           setProjectId(message.projectId);
+          // In free mode, projectId IS the file identifier, so set activeFileName for ACTIVE badge
+          // Extract filename from projectId if it looks like a filename (has extension)
+          const projId = message.projectId || '';
+          console.log('[Dashboard] Setting active file name for projectId:', projId);
+          if (projId.includes('.owl') || projId.includes('.rdf') || projId.includes('.ttl')) {
+            setActiveFileName(projId);
+          } else {
+            setActiveFileName(projId + '.owl'); // Default extension
+          }
+          setActiveFileId(null); // In free mode, fileId is same as projectId
           setSelectedItem(null);
           setLoadingProjectName(message.projectId);
           userLoadingChoice.current = null; // Reset choice for new loading
@@ -4294,7 +4660,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                 progress: message.status.progress
               }
             }));
-            
+
             // Update loading status message for user feedback
             if (message.status.type === 'IMPORT_PROGRESS' && message.status.metadata?.message) {
               setLoadingStatusMessage(message.status.metadata.message);
@@ -4317,29 +4683,29 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
             console.log('[Dashboard] Current projectId:', projectId);
             console.log('[Dashboard] pendingImportProjectIdRef.current:', pendingImportProjectIdRef.current);
             console.log('[Dashboard] isExpectingFileReady:', isExpectingFileReady);
-            
+
             const isCurrentProject = message.status.projectId === projectId;
             const isPendingImport = message.status.projectId === pendingImportProjectIdRef.current;
             const userChoice = userLoadingChoice.current;
-            
+
             // Only auto-load if:
             // 1. This is the current project being viewed, OR
             // 2. This matches the pendingImportProjectId (new upload)
             if (isCurrentProject || isPendingImport) {
               console.log('[Dashboard] Should auto-load:', isPendingImport ? 'pending import' : 'current project');
-              
+
               // Set projectId for new uploads
               if (isPendingImport && !projectId) {
                 console.log('[Dashboard] Setting projectId to:', message.status.projectId);
                 setProjectId(message.status.projectId);
                 setLoadingProjectName(message.status.projectId);
               }
-              
+
               // Clear pending import tracking
               pendingImportProjectIdRef.current = null;
               console.log('[Dashboard] Cleared pendingImportProjectIdRef');
               setIsExpectingFileReady(false);
-              
+
               // Fetch the data
               console.log('[Dashboard] Fetching data for:', message.status.projectId);
               console.log('[Dashboard] Parent project for file menu:', initialProjectId);
@@ -4361,7 +4727,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                   setIsInitialLoading(false);
                   notificationService.error('Load Failed', 'Failed to load ontology data');
                 });
-              
+
               // Refresh projects list
               setTimeout(() => fetchProjects(), 500);
             } else {
@@ -4377,10 +4743,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
               error: message.status.metadata?.error,
               status: message.status.status
             });
-            
+
             const errorMessage = message.status.statusMessage || message.status.metadata?.error || 'Import failed';
             const projectName = message.status.projectId || 'unknown';
-            
+
             // Extract more user-friendly error message
             let displayError = errorMessage;
             if (errorMessage.includes('UnknownHostException: graphdb') || errorMessage.includes('UnknownHostException')) {
@@ -4396,15 +4762,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
               displayError = 'Unable to start database transaction. Please verify GraphDB is running and the repository exists.';
               console.log('[Dashboard] 🔄 Translated error to user-friendly message (transaction)');
             }
-            
+
             console.log('[Dashboard] 📝 Display error:', displayError);
-            
+
             // Show notification for all failed imports
             notificationService.error(
-              'Import Failed', 
+              'Import Failed',
               `Failed to import "${projectName}": ${displayError}`
             );
-            
+
             // Close dialogs if this is the current project
             if (message.status.projectId === projectId) {
               console.log('[Dashboard] Closing dialogs for current project');
@@ -4433,10 +4799,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           break;
       }
     };
-    
+
     console.log('[Dashboard] 📢 Attaching message listener');
     window.addEventListener("message", handleMessage);
-    
+
     // CRITICAL: Send webviewReady AFTER listener is attached, but ONLY ONCE
     // This ensures we receive any immediate messages (like showLoading) from the extension
     if (window.vscode && !webviewReadySentRef.current) {
@@ -4450,18 +4816,18 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       window.removeEventListener("message", handleMessage);
     };
   }, [projectId, initialProjectId, isExpectingFileReady]); // Remove fetchData to prevent infinite loop - it's captured in the closure
-  
+
   const loadChildren = useCallback(async (nodeId: string) => {
     if (!projectId) return;
     try {
       console.log(`[loadChildren] Loading children for node: ${nodeId}`);
       const response = await apiClient.get<any>(`/api/ontology/classes/children/${projectId}?parentIri=${encodeURIComponent(nodeId)}`);
       console.log('[loadChildren] Children response:', response);
-      
+
       // Extract array from response - handle both direct array and wrapped responses
-      const children = Array.isArray(response) ? response : 
-                      Array.isArray(response?.data) ? response.data : 
-                      Array.isArray(response?.classes) ? response.classes : [];
+      const children = Array.isArray(response) ? response :
+        Array.isArray(response?.data) ? response.data :
+          Array.isArray(response?.classes) ? response.classes : [];
       console.log('[loadChildren] Extracted children:', children);
 
       const updateTree = (nodes: TreeNode[]): TreeNode[] =>
@@ -4506,12 +4872,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     try {
       const response = await apiClient.get<any>(
         `/api/ontology/${projectId}/reasoner/inferred-subclasses`,
-        { 
-          params: { 
-            classIri: nodeId, 
+        {
+          params: {
+            classIri: nodeId,
             direct: true,
             reasonerType: selectedReasoner
-          } 
+          }
         }
       );
       const payload = response?.data || response;
@@ -4572,10 +4938,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           // The updatedItem from details endpoint usually doesn't have the full children tree
           const existingChildren = (item as TreeNode).children;
           const newChildren = (updatedItem as TreeNode).children;
-          
-          return { 
-            ...updatedItem, 
-            children: newChildren && newChildren.length > 0 ? newChildren : existingChildren 
+
+          return {
+            ...updatedItem,
+            children: newChildren && newChildren.length > 0 ? newChildren : existingChildren
           };
         }
         const treeNode = item as TreeNode;
@@ -4637,7 +5003,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     lastClassHierarchyRefreshAt.current = now;
     try {
       const topLevelRes = await apiClient.get<any>(`/api/ontology/classes/top-level/${projectId}`);
-      
+
       let classes: any[] = [];
       if (Array.isArray(topLevelRes?.classes)) {
         classes = topLevelRes.classes;
@@ -4667,7 +5033,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       const hierarchyWithCounts = applyInstanceCountsToTree([owlThingNode], classInstanceCounts);
       setClassHierarchy(hierarchyWithCounts);
       console.log('[Dashboard] ✅ Class hierarchy refreshed via refreshClassHierarchy');
-      
+
       // Re-load children for all previously expanded nodes to preserve tree state
       // We need to reload children in order (parent before child) to maintain tree structure
       const currentExpandedNodes = expandedNodesRef.current.filter(id => id !== "http://www.w3.org/2002/07/owl#Thing");
@@ -4688,7 +5054,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
 
   useEffect(() => {
     if (!projectId || mainTab !== 'Entities' || entitiesTab !== 'Classes') return;
-    
+
     console.log('[Dashboard] Classes tab active, view mode:', currentHierarchyViewMode);
     if (currentHierarchyViewMode === 'inferred') {
       // Always load full recursive hierarchy from API when in inferred mode
@@ -4731,15 +5097,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     const handleRemoteEdit = (event: Event) => {
       const customEvent = event as CustomEvent;
       const edit = customEvent.detail;
-      
+
       console.log('[Dashboard] 🔄 Handling remote edit event:', edit);
-      
+
       // Immediately reload the affected data based on edit type
       if (!projectId) {
         console.warn('[Dashboard] No project ID, cannot apply remote edit');
         return;
       }
-      
+
       // Check if this is an edit made by the current user - skip refresh since we already updated local state
       const editUserId = (edit as any).userId || (edit as any).user?.id || (edit as any).user;
       const currentUserId = user?.email || user?.id;
@@ -4747,7 +5113,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         console.log('[Dashboard] ⏭️ Skipping refresh - edit was made by current user');
         return;
       }
-      
+
       // Map edit type to which data needs refreshing
       switch (edit.type) {
         case 'CLASS_ADDED':
@@ -4770,8 +5136,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
             console.log(`[Dashboard] Refreshing children of parent: ${parentId}`);
             loadChildren(parentId);
           } else {
-             // Fallback to full refresh
-             refreshClassHierarchy();
+            // Fallback to full refresh
+            refreshClassHierarchy();
           }
           break;
 
@@ -4782,10 +5148,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           // This preserves the tree structure
           const classId = (edit as any).iri || (edit as any).id;
           if (classId) {
-             console.log(`[Dashboard] Fetching details for modified class: ${classId}`);
-             // Add delay to ensure backend is ready
-             setTimeout(() => {
-               apiClient.get(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(classId)}`)
+            console.log(`[Dashboard] Fetching details for modified class: ${classId}`);
+            // Add delay to ensure backend is ready
+            setTimeout(() => {
+              apiClient.get(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(classId)}`)
                 .then(response => {
                   const newData = response.data || response;
                   // Ensure ID is present
@@ -4797,19 +5163,19 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                   console.log('[Dashboard] ✅ Class updated in state');
                 })
                 .catch(error => console.error('[Dashboard] Failed to refresh class details:', error));
-             }, 200);
+            }, 200);
           } else {
-             // Fallback
-             console.warn('[Dashboard] No class ID in edit event, falling back to full refresh');
-             refreshClassHierarchy();
+            // Fallback
+            console.warn('[Dashboard] No class ID in edit event, falling back to full refresh');
+            refreshClassHierarchy();
           }
           break;
-          
+
         case 'ANNOTATION_ADDED':
         case 'ANNOTATION_MODIFIED':
         case 'ANNOTATION_DELETED':
           console.log('[Dashboard] 📝 Refreshing annotation due to annotation edit:', edit);
-          
+
           // Add a small delay to ensure backend consistency
           setTimeout(() => {
             // Trigger refresh of current selected item to show updated annotations
@@ -4818,19 +5184,19 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
               // Check if the edit is relevant to the selected item (optional optimization, but good for correctness)
               // The edit object usually has 'subject' or 'iri'
               const editSubject = (edit as any).subject || (edit as any).iri || (edit as any).id;
-              
+
               if (editSubject && editSubject !== entityId) {
                 console.log(`[Dashboard] Edit subject (${editSubject}) does not match selected item (${entityId}), but refreshing anyway to be safe`);
               }
 
               console.log(`[Dashboard] Refreshing selected item: ${entityId}`);
-              
+
               // Use the appropriate endpoint based on entity type to ensure we get full details (including annotations)
               let url = `/api/ontology/class/${projectId}/${encodeURIComponent(entityId)}`;
               if (entitiesTab === 'Classes') {
                 url = `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(entityId)}`;
               }
-              
+
               apiClient.get(url)
                 .then(response => {
                   const newData = response.data || response;
@@ -4838,7 +5204,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                   if (!newData.id && newData.iri) {
                     newData.id = newData.iri;
                   }
-                  
+
                   console.log('[Dashboard] Received updated entity data:', newData);
                   // Update both selected item and the item in the state/tree
                   updateItemInState(newData);
@@ -4850,7 +5216,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
             }
           }, 200); // 200ms delay
           break;
-          
+
         case 'PROPERTY_ADDED':
         case 'PROPERTY_MODIFIED':
         case 'PROPERTY_DELETED':
@@ -4858,16 +5224,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           // Trigger refresh of properties
           apiClient.get(`/api/ontology/properties/${projectId}`)
             .then(response => {
-              const allProps = Array.isArray(response.data) ? response.data : 
-                               Array.isArray(response.properties) ? response.properties : 
-                               Array.isArray(response) ? response : [];
+              const allProps = Array.isArray(response.data) ? response.data :
+                Array.isArray(response.properties) ? response.properties :
+                  Array.isArray(response) ? response : [];
               const opList = allProps.filter((p: any) => p.type === "ObjectProperty");
               setObjectProperties(opList);
               console.log('[Dashboard] ✅ Object properties refreshed');
             })
             .catch(error => console.error('[Dashboard] Failed to refresh properties:', error));
           break;
-          
+
         case 'INDIVIDUAL_ADDED':
         case 'INDIVIDUAL_MODIFIED':
         case 'INDIVIDUAL_DELETED':
@@ -4880,7 +5246,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
             })
             .catch(error => console.error('[Dashboard] Failed to refresh individuals:', error));
           break;
-        
+
         // Handle SPARQL updates - need full refresh since we don't know what changed
         case 'SPARQL_UPDATE':
           console.log('[Dashboard] 📊 SPARQL update detected, refreshing all data');
@@ -4888,7 +5254,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           // Full refresh since SPARQL can change anything
           fetchData(projectId, false);
           break;
-        
+
         // Handle change reverts - need full refresh
         case 'CHANGE_REVERTED':
           console.log('[Dashboard] ⏪ Change reverted, refreshing all data');
@@ -4896,7 +5262,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           // Full refresh to get the reverted state
           fetchData(projectId, false);
           break;
-        
+
         // Handle project saved by another user
         case 'PROJECT_SAVED':
           console.log('[Dashboard] 💾 Project saved by another user');
@@ -4904,14 +5270,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           // Refresh to get the latest saved state
           fetchData(projectId, false);
           break;
-        
+
         // Handle disjoint axiom changes
         case 'DISJOINT_ADDED':
         case 'DISJOINT_REMOVED':
           console.log('[Dashboard] 🔗 Disjoint axiom changed, refreshing class hierarchy');
           refreshClassHierarchy();
           break;
-          
+
         // Handle equivalent class axiom changes
         case 'EQUIVALENT_ADDED':
         case 'EQUIVALENT_REMOVED':
@@ -4934,7 +5300,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
             }, 1000);
           }
           break;
-          
+
         // Handle subclass axiom changes
         case 'SUBCLASS_ADDED':
         case 'SUBCLASS_REMOVED':
@@ -4962,7 +5328,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
             refreshClassHierarchy();
           }
           break;
-          
+
         default:
           console.log('[Dashboard] 🔄 Generic remote edit, refreshing metadata');
           // Generic refresh for other edit types
@@ -4980,11 +5346,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         collaborationPanelRef.current.refreshChanges();
       }
     };
-    
+
     // Listen for remoteEditReceived events
     window.addEventListener('remoteEditReceived', handleRemoteEdit as EventListener);
     console.log('[Dashboard] 🎧 Registered listener for remote edits');
-    
+
     return () => {
       window.removeEventListener('remoteEditReceived', handleRemoteEdit as EventListener);
       console.log('[Dashboard] 🎧 Unregistered listener for remote edits');
@@ -4997,16 +5363,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       const customEvent = event as CustomEvent;
       const detail = customEvent.detail;
       console.log('[Dashboard] 🔄 Rollback event received:', detail);
-      
+
       if (!projectId || detail?.projectId !== projectId) {
         return;
       }
-      
+
       const rollbackUser = detail.username || 'Someone';
       const originalAuthor = detail.originalAuthor || 'Unknown';
       const oldValue = detail.oldValue;
       const newValue = detail.newValue;
-      
+
       // Build notification message with value changes if available
       let message = `${rollbackUser} rolled back change by ${originalAuthor}`;
       if (oldValue && newValue) {
@@ -5015,21 +5381,21 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         message += ` (restored to "${newValue}")`;
       }
       message += '. Refreshing data...';
-      
+
       showNotification(message, 'info');
-      
+
       // Check if this is a rollback of an "added" change (which means deleting the entity)
       const isAddedRollback = detail.action && detail.action.toLowerCase() === 'added';
-      
+
       if (isAddedRollback) {
         // Entity was deleted by rollback - remove it from UI
         console.log('[Dashboard] 🗑️ Rollback of added change - removing entity from UI:', detail.entityIRI);
-        
+
         // Clear selection if this was the selected item
         if (selectedItem?.id === detail.entityIRI) {
           setSelectedItem(null);
         }
-        
+
         // Remove from class hierarchy
         if (entitiesTab === 'Classes' || detail.changeType?.toLowerCase().includes('class')) {
           setClassHierarchy(prevHierarchy => {
@@ -5044,7 +5410,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
             return removeNodeFromTree(prevHierarchy);
           });
         }
-        
+
         // Remove from properties lists
         if (detail.changeType?.toLowerCase().includes('objectproperty')) {
           setObjectProperties(prev => prev.filter(p => p.id !== detail.entityIRI));
@@ -5053,28 +5419,28 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         } else if (detail.changeType?.toLowerCase().includes('annotationproperty')) {
           setAnnotationProperties(prev => prev.filter(p => p.id !== detail.entityIRI));
         }
-        
+
         // Remove from individuals list
         if (detail.changeType?.toLowerCase().includes('individual')) {
           setIndividuals(prev => prev.filter(i => i.id !== detail.entityIRI));
         }
-        
+
         return; // Don't try to fetch the deleted entity
       }
-      
+
       // Refresh the data after rollback with longer delay to ensure GraphDB has processed
       setTimeout(() => {
         // If we have the entity IRI, refresh its details first
         if (detail?.entityIRI) {
           console.log('[Dashboard] 🔄 Refreshing entity details after rollback for:', detail.entityIRI);
           console.log('[Dashboard] 🔄 Entity type from event:', detail.entityType, 'Current tab:', entitiesTab);
-          
+
           // Determine the correct API endpoint based on current tab first, then entity type
           // Annotation changes should use the entity's actual type (class, property, individual)
           const entityType = detail.entityType ? detail.entityType.toLowerCase() : '';
           let apiEndpoint = '';
-          
-          
+
+
           // For annotation changes, we need to refresh the entity that has the annotation
           // The entityIRI is the entity whose annotation was changed
           // Use entitiesTab as primary indicator since that's what the user is viewing
@@ -5095,7 +5461,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
             // Default to class details as most common case
             apiEndpoint = `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(detail.entityIRI)}`;
           }
-          
+
           if (apiEndpoint) {
             apiClient.get(apiEndpoint)
               .then(response => {
@@ -5105,20 +5471,20 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                 }
                 console.log('[Dashboard] ✅ Refreshed entity after rollback:', newData);
                 console.log('[Dashboard] 📝 Updated label:', newData.label);
-                
+
                 // Update the entity in the appropriate list (don't mark as unsaved - rollback is already in DB)
                 updateItemInState(newData, false);
-                
+
                 // If this is the selected item, update it to show new values immediately
                 if (selectedItem?.id === detail.entityIRI) {
                   setSelectedItem(newData);
                 }
-                
+
                 // For annotation changes, just update the node in place without refreshing hierarchy
                 // This prevents the tree from collapsing
-                const isAnnotationChange = entityType.includes('annotation') || 
-                                          (oldValue && newValue); // Has old/new values = annotation change
-                
+                const isAnnotationChange = entityType.includes('annotation') ||
+                  (oldValue && newValue); // Has old/new values = annotation change
+
                 if (isAnnotationChange && (entitiesTab === 'Classes' || entityType.includes('class'))) {
                   console.log('[Dashboard] 📝 Soft refresh: updating class node annotations in place');
                   // Update the class hierarchy node without reloading the tree
@@ -5164,10 +5530,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         }
       }, 1500); // Increased delay to ensure GraphDB fully processes the rollback
     };
-    
+
     window.addEventListener('ontologyRollback', handleRollback as EventListener);
     console.log('[Dashboard] 🎧 Registered listener for rollback events');
-    
+
     return () => {
       window.removeEventListener('ontologyRollback', handleRollback as EventListener);
     };
@@ -5178,13 +5544,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     const handleFileShared = (event: CustomEvent) => {
       console.log('[Dashboard] 📨 File shared event received:', event.detail);
       const notification = event.detail;
-      
+
       // Show toast notification
       showToast(
         `${notification.sharedByUsername} shared "${notification.fileName}" with you (${notification.permission} access)`,
         'info'
       );
-      
+
       // Refresh the file list to show the new shared file
       if (projectId) {
         console.log('[Dashboard] Refreshing data after file share...');
@@ -5193,10 +5559,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         }, 500);
       }
     };
-    
+
     window.addEventListener('fileShared', handleFileShared as EventListener);
     console.log('[Dashboard] 🎧 Registered listener for file share events');
-    
+
     return () => {
       window.removeEventListener('fileShared', handleFileShared as EventListener);
     };
@@ -5214,9 +5580,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         }, 500);
       }
     };
-    
+
     window.addEventListener('collaborationReconnected', handleReconnection as EventListener);
-    
+
     return () => {
       window.removeEventListener('collaborationReconnected', handleReconnection as EventListener);
     };
@@ -5235,7 +5601,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         timestamp: Date.now()
       });
     });
-    
+
     // Request notification permission for web browsers
     if (typeof window !== 'undefined' && !window.vscode) {
       notificationService.requestPermission();
@@ -5248,11 +5614,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       try {
         pluginLoader.loadFromStorage();
         const installed = pluginLoader.getInstalledPlugins();
-        
+
         // Update state with installed plugin IDs
         const pluginIds = installed.map(p => p.id);
         setInstalledPlugins(new Set(pluginIds));
-        
+
         // Map plugin IDs to tab IDs and show tabs for installed plugins
         const pluginToTabMap: Record<string, string> = {
           'swrl-editor-plugin': 'SWRL',
@@ -5262,11 +5628,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           'sparql-query-plugin': 'SPARQL',
           'reasoner-plugin': 'Reasoner'
         };
-        
+
         const tabsToShow = pluginIds
           .map(id => pluginToTabMap[id])
           .filter(Boolean);
-        
+
         if (tabsToShow.length > 0) {
           setVisibleMainTabs(prev => {
             const newTabs = [...prev];
@@ -5278,16 +5644,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
             return newTabs;
           });
         }
-        
+
         // Auto-load installed plugins in PARALLEL for better performance
         const loadPluginPromises = installed.map(async (plugin) => {
           try {
             // Set loading state
             setPluginLoadingStates(prev => ({ ...prev, [plugin.id]: { loading: true, error: null } }));
-            
+
             await pluginLoader.loadPlugin(plugin.id);
             console.log(`[Dashboard] Auto-loaded plugin: ${plugin.id}`);
-            
+
             // Clear loading state on success
             setPluginLoadingStates(prev => ({ ...prev, [plugin.id]: { loading: false, error: null } }));
             // Force re-render
@@ -5295,13 +5661,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           } catch (error) {
             console.warn(`[Dashboard] Failed to auto-load plugin ${plugin.id}:`, error);
             // Set error state
-            setPluginLoadingStates(prev => ({ 
-              ...prev, 
-              [plugin.id]: { loading: false, error: error instanceof Error ? error.message : 'Failed to load plugin' } 
+            setPluginLoadingStates(prev => ({
+              ...prev,
+              [plugin.id]: { loading: false, error: error instanceof Error ? error.message : 'Failed to load plugin' }
             }));
           }
         });
-        
+
         // Wait for all plugins to load in parallel
         await Promise.all(loadPluginPromises);
         console.log(`[Dashboard] All plugins loaded in parallel`);
@@ -5309,7 +5675,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         console.error('[Dashboard] Failed to load installed plugins:', error);
       }
     };
-    
+
     loadInstalledPlugins();
   }, [projectId]);
 
@@ -5323,7 +5689,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     console.log('[toggleNode] Current expandedNodes:', expandedNodes);
     console.log('[toggleNode] entitiesTab:', entitiesTab);
     console.log('[toggleNode] currentHierarchyViewMode:', currentHierarchyViewMode);
-    
+
     if (expandedNodes.includes(nodeId)) {
       console.log('[toggleNode] ⬇️ Collapsing node:', nodeId);
       setExpandedNodes(prev => prev.filter(id => id !== nodeId));
@@ -5339,20 +5705,20 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         }
         return null;
       };
-      const currentHierarchy = entitiesTab === 'Classes' 
+      const currentHierarchy = entitiesTab === 'Classes'
         ? (currentHierarchyViewMode === 'inferred' ? inferredClassHierarchy : classHierarchy)
-        : (entitiesTab === 'ObjectProperties' 
-            ? (hierarchyViewModes.ObjectProperties === 'inferred' ? inferredObjectPropertyHierarchy : objectPropertyHierarchy)
-            : (hierarchyViewModes.DataProperties === 'inferred' ? inferredDataPropertyHierarchy : dataPropertyHierarchy)
-          );
+        : (entitiesTab === 'ObjectProperties'
+          ? (hierarchyViewModes.ObjectProperties === 'inferred' ? inferredObjectPropertyHierarchy : objectPropertyHierarchy)
+          : (hierarchyViewModes.DataProperties === 'inferred' ? inferredDataPropertyHierarchy : dataPropertyHierarchy)
+        );
 
       const node = findNode(currentHierarchy as TreeNode[], nodeId);
-      
+
       setExpandedNodes(prev => {
         const updated = [...prev, nodeId];
         return updated;
       });
-      
+
       if (node && node.hasChildren && (!node.children || node.children.length === 0)) {
         console.log(`Node ${nodeId} needs children loaded`);
         if (entitiesTab === 'Classes') {
@@ -5405,7 +5771,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     setHasUnsavedChanges(true);
     // Update draft count after a short delay
     setTimeout(() => updateDraftCount(), 500);
-    
+
     // Auto-sync reasoner if enabled
     if (isReasonerSynced && isReasonerRunning && projectId) {
       console.log('[DEBUG] Auto-sync: Re-running reasoner after ontology change');
@@ -5431,40 +5797,40 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     try {
       setIsSaving(true);
       console.log('[Dashboard] 💾 Saving changes to backend...');
-      
+
       // Notify sync service about local save to avoid triggering refresh for current user
       syncService.notifyLocalSave(projectId);
-      
+
       // Save will apply all drafts to GraphDB and export
       const startTime = Date.now();
       const saveUrl = `/api/ontology/save/${projectId}?userId=${user?.id || 'anonymous'}&username=${encodeURIComponent(user?.username || 'Anonymous')}`;
       console.log('[Dashboard] 📤 Save URL:', saveUrl);
       const response = await apiClient.post(saveUrl);
       const duration = Date.now() - startTime;
-      
+
       console.log(`[Dashboard] Save response received after ${duration}ms:`, response);
-      
+
       // Handle both direct response and response.data (VS Code proxy vs direct HTTP)
       const data = response.data || response;
-      
+
       if (data && data.success) {
         setHasUnsavedChanges(false);
         setDraftCount(0);
-        
+
         console.log('[Dashboard] ✅ Changes saved to GraphDB database!');
         console.log('[Dashboard] 📊 Applied drafts:', data.appliedDrafts || 0);
         console.log('[Dashboard] 📝 History recorded in database');
-        
-        notificationService.success('Saved to Database', 
+
+        notificationService.success('Saved to Database',
           `${data.appliedDrafts || 0} change${(data.appliedDrafts || 0) !== 1 ? 's' : ''} saved to GraphDB and history recorded.`);
         console.log('[Dashboard] Save complete:', data);
-        
+
         // Refresh the current file to show saved changes
         console.log('[Dashboard] 🔄 Refreshing current file after save...');
         await fetchData(projectId, false);
-        
+
         // Monitoring is automatically restarted by fetchData
-        
+
         // Refresh collaboration panel to show recent changes
         collaborationPanelRef.current?.refreshChanges();
       } else {
@@ -5486,7 +5852,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     const switchFile = async () => {
       console.log('[Dashboard] 🔄 Switching to file:', newProjectId);
       console.log('[Dashboard] 🧹 Clearing current state for:', projectId);
-      
+
       // Clear all current state
       setClassHierarchy([]);
       setObjectProperties([]);
@@ -5495,7 +5861,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       setIndividuals([]);
       setSelectedItem(null);
       setSearchQuery('');
-      
+      setActiveFileId(null);
+      setActiveFileName(newProjectId); // Use new project ID as file name if no explicit file ID Provided
+
       if (window.vscode) {
         window.vscode.postMessage({
           type: "fileLoaded",
@@ -5504,7 +5872,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       }
       setHasUnsavedChanges(false);
       setDraftCount(0);
-      
+
       console.log('[Dashboard] ✅ State cleared, loading new file:', newProjectId);
     };
 
@@ -5545,11 +5913,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       console.error('[Dashboard] Cannot load project file without parent project ID');
       return;
     }
-    
+
     try {
       console.log('[Dashboard] 📂 Loading file from project:', fileId, fileName);
+      setActiveFileId(fileId);
+      setActiveFileName(fileName);
+      if (onFileSelected) onFileSelected(fileId, fileName);
       notificationService.info('Loading File', `Loading ${fileName}...`);
-      
+
       // Reset all entity state before loading new file
       console.log('[Dashboard] 🔄 Resetting state for new file...');
       setClassHierarchy([]);
@@ -5563,42 +5934,44 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       setSearchQuery('');
       setHasUnsavedChanges(false);
       setDraftCount(0);
-      
+
       // Fetch file content from auth service
       const fileContent = await apiClient.get<{ id: string; name: string; content: string; type: string; size: number }>(
         `/api/projects/${initialProjectId}/files/${fileId}/content`
       );
-      
+
       if (!fileContent || !fileContent.content) {
         throw new Error('File content not found');
       }
-      
+
       console.log('[Dashboard] 📥 File content retrieved, uploading to ontology editor...');
-      
+
       // Create a unique project ID for this file (remove extension and add timestamp)
       const baseFileName = fileName.replace(/\.[^/.]+$/, '');
       const ontologyProjectId = `${baseFileName}-${Date.now()}`;
-      
+
       // Extract pure base64 data (remove data URL prefix if present)
-      const base64Data = fileContent.content.includes(',') 
-        ? fileContent.content.split(',')[1] 
+      const base64Data = fileContent.content.includes(',')
+        ? fileContent.content.split(',')[1]
         : fileContent.content;
-      
+
       // Set the project ID first so IMPORT_COMPLETED knows which project to load
       setProjectId(ontologyProjectId);
       pendingImportProjectIdRef.current = ontologyProjectId;
-      
+
       // Upload to ontology editor service
       if (window.vscode) {
         // In VS Code, use message passing
+        const resolvedEmail = resolveUserEmail();
         window.vscode.postMessage({
           type: 'uploadOntology',
           projectId: ontologyProjectId,
           fileName: fileName,
           fileContent: base64Data,
-          ownerEmail: user?.email
+          ownerEmail: resolvedEmail || undefined,
+          skipDuplicateCheck: true
         });
-        
+
         // The fileReady message will trigger fetchData via IMPORT_COMPLETED
         setIsExpectingFileReady(true);
         console.log('[Dashboard] ✅ Upload request sent to extension');
@@ -5613,28 +5986,29 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         }
         const byteArray = new Uint8Array(byteNumbers);
         const blob = new Blob([byteArray], { type: 'application/rdf+xml' });
-        
+
         // Create FormData
         const formData = new FormData();
         formData.append('file', blob, fileName);
-        
+
         // Upload using axios directly (apiClient doesn't support FormData)
         const token = localStorage.getItem('authToken');
-        const uploadResponse = await fetch(`${window.API_BASE_URL || 'http://localhost:80'}/api/ontology/upload/${ontologyProjectId}?ownerEmail=${encodeURIComponent(user?.email || '')}`, {
+        const resolvedEmail = resolveUserEmail();
+        const uploadResponse = await fetch(`${window.API_BASE_URL || 'http://ec2-13-218-153-101.compute-1.amazonaws.com'}/api/ontology/upload/${ontologyProjectId}?ownerEmail=${encodeURIComponent(resolvedEmail || '')}`, {
           method: 'POST',
           headers: token ? { 'Authorization': `Bearer ${token}` } : {},
           body: formData
         });
-        
+
         if (uploadResponse.ok) {
           console.log('[Dashboard] ✅ File uploaded successfully');
           setProjectId(ontologyProjectId);
-          
+
           // Wait a moment for processing then fetch data with parentProjectId for file menu
           setTimeout(() => {
             fetchData(ontologyProjectId, false, initialProjectId);
           }, 2000);
-          
+
           notificationService.success('File Loaded', `${fileName} is ready for editing`);
         } else {
           const errorData = await uploadResponse.json().catch(() => ({ error: 'Upload failed' }));
@@ -5645,7 +6019,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       console.error('[Dashboard] ❌ Failed to load project file:', error);
       notificationService.error('Load Failed', error?.message || 'Failed to load file');
     }
-  }, [initialProjectId, user?.email]); // Removed fetchData to prevent infinite loop
+  }, [initialProjectId, resolveUserEmail]); // Removed fetchData to prevent infinite loop
 
   // Create Property from Class Expression Dialog
   const handleCreatePropertyFromDialog = useCallback(() => {
@@ -5718,7 +6092,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       if (isEntityAnnotation && selectedItem) {
         // Entity annotation
         await ontologyMutationService.addAnnotation(projectId, selectedItem.id, propertyIri, value, user?.email || 'anonymous', user?.username || 'Anonymous');
-        
+
         // Update local state
         const updatedAnnotations = { ...selectedItem.annotations, [propertyIri]: value };
         const updatedItem = { ...selectedItem, annotations: updatedAnnotations };
@@ -5742,10 +6116,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           language: lang,
           datatype
         });
-        
+
         await refreshOntologyAnnotations();
       }
-      
+
       showNotification('Annotation added successfully!', 'info');
     } catch (error) {
       console.error('Failed to add annotation:', error);
@@ -5758,7 +6132,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
 
   const handleEditAnnotation = useCallback(async (propertyIri: string, currentValue: string) => {
     if (!projectId) return;
-    
+
     // Open dialog with current value pre-filled
     setEditAnnotationData({
       propertyIri,
@@ -5789,7 +6163,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       if (isEntityAnnotation && selectedItem) {
         // Entity annotation
         await ontologyMutationService.updateAnnotation(projectId, selectedItem.id, propertyIri, newValue, user?.email || 'anonymous', user?.username || 'Anonymous', oldValue);
-        
+
         // Update local state
         const updatedAnnotations = { ...selectedItem.annotations, [propertyIri]: newValue };
         const updatedItem = { ...selectedItem, annotations: updatedAnnotations };
@@ -5836,10 +6210,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           language: lang,
           datatype
         });
-        
+
         await refreshOntologyAnnotations();
       }
-      
+
       showNotification('Annotation updated successfully!', 'info');
     } catch (error) {
       console.error('Failed to update annotation:', error);
@@ -5854,11 +6228,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     if (!projectId) return;
     try {
       await apiClient.put(`/api/ontology/metadata/${projectId}/iri`, { ontologyIri, versionIri });
-      
+
       // Refresh metadata
       const metadataRes = await apiClient.get(`/api/ontology/metadata/${projectId}`);
       setMetadata(metadataRes.data || metadataRes);
-      
+
       showNotification('Ontology IRIs updated successfully!', 'info');
     } catch (error) {
       console.error('Failed to update ontology IRIs:', error);
@@ -5871,21 +6245,21 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     try {
       if (editGCIData) {
         // Update existing GCI
-        await apiClient.put(`/api/ontology/metadata/${projectId}/gci/${editGCIData.index}`, { 
-          subClass, 
+        await apiClient.put(`/api/ontology/metadata/${projectId}/gci/${editGCIData.index}`, {
+          subClass,
           superClass,
-          oldValue: editGCIData.value 
+          oldValue: editGCIData.value
         });
       } else {
         // Add new GCI
         await apiClient.post(`/api/ontology/metadata/${projectId}/gci`, { subClass, superClass });
       }
-      
+
       // Refresh GCIs
       const gciRes = await apiClient.get(`/api/ontology/metadata/${projectId}/gci`);
       const gciData = Array.isArray(gciRes?.data) ? gciRes.data : (Array.isArray(gciRes?.axioms) ? gciRes.axioms : (Array.isArray(gciRes) ? gciRes : []));
       setGeneralClassAxioms(gciData);
-      
+
       showNotification(editGCIData ? 'GCI updated successfully!' : 'GCI added successfully!', 'info');
       setEditGCIData(null);
     } catch (error) {
@@ -5896,7 +6270,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
 
   const handleDeleteGCI = useCallback(async (axiom: any, index: number) => {
     if (!projectId) return;
-    
+
     setConfirmDialog({
       isOpen: true,
       title: 'Delete GCI',
@@ -5904,12 +6278,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       onConfirm: async () => {
         try {
           await apiClient.delete(`/api/ontology/metadata/${projectId}/gci`, { value: axiom.value });
-          
+
           // Refresh GCIs
           const gciRes = await apiClient.get(`/api/ontology/metadata/${projectId}/gci`);
           const gciData = Array.isArray(gciRes?.data) ? gciRes.data : (Array.isArray(gciRes?.axioms) ? gciRes.axioms : (Array.isArray(gciRes) ? gciRes : []));
           setGeneralClassAxioms(gciData);
-          
+
           showNotification('GCI deleted successfully!', 'info');
         } catch (error) {
           console.error('Failed to delete GCI:', error);
@@ -5921,7 +6295,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
 
   const handleDeleteAnnotation = useCallback(async (key: string) => {
     if (!selectedItem || !selectedItem.annotations || !projectId) return;
-    
+
     // Show confirm dialog instead of using confirm()
     setConfirmDialog({
       isOpen: true,
@@ -5932,7 +6306,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           const value = selectedItem.annotations[key];
           // Call backend API
           await ontologyMutationService.deleteAnnotation(projectId, selectedItem.id, key, value, user?.email || 'anonymous', user?.username || 'Anonymous');
-          
+
           // Update local state
           const remainingAnnotations = { ...selectedItem.annotations };
           delete remainingAnnotations[key];
@@ -5948,36 +6322,36 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     });
   }, [selectedItem, updateItemInState, projectId]);
 
-  
+
   // Function to refresh only properties (not classes) to avoid closing dialogs
   const refreshProperties = useCallback(async () => {
     if (!projectId) return;
-    
+
     try {
       console.log('[refreshProperties] Starting property refresh...');
       const propertiesRes = await apiClient.get<any>(`/api/ontology/properties/${projectId}`);
-      
-      const allProps = Array.isArray(propertiesRes?.data) 
-        ? propertiesRes.data 
-        : Array.isArray(propertiesRes?.properties) 
-        ? propertiesRes.properties 
-        : Array.isArray(propertiesRes) 
-        ? propertiesRes 
-        : [];
-      
+
+      const allProps = Array.isArray(propertiesRes?.data)
+        ? propertiesRes.data
+        : Array.isArray(propertiesRes?.properties)
+          ? propertiesRes.properties
+          : Array.isArray(propertiesRes)
+            ? propertiesRes
+            : [];
+
       console.log('[refreshProperties] Total properties fetched:', allProps.length);
-      
+
       const opList = allProps.filter((p: any) => p.type === 'ObjectProperty');
       console.log('[refreshProperties] Object properties:', opList.length);
       setObjectProperties(opList);
-      
+
       console.log('[Dashboard] ✅ Properties refreshed');
       // Build object property hierarchy
       const opMap = new Map<string, TreeNode>();
       opList.forEach((p: any) => {
         opMap.set(p.id, { ...p, children: [], hasChildren: false });
       });
-      
+
       const topOpNode: TreeNode = {
         id: 'http://www.w3.org/2002/07/owl#topObjectProperty',
         label: 'owl:topObjectProperty',
@@ -5986,7 +6360,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         hasChildren: false,
         annotations: {}
       };
-      
+
       opList.forEach((p: any) => {
         const node = opMap.get(p.id)!;
         if (p.superProperties && p.superProperties.length > 0) {
@@ -6012,21 +6386,21 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           topOpNode.hasChildren = true;
         }
       });
-      
+
       console.log('[refreshProperties] Built object property hierarchy with', topOpNode.children?.length, 'top-level properties');
       // Create a new array to ensure React detects the change
       setObjectPropertyHierarchy([{ ...topOpNode, children: [...(topOpNode.children || [])] }]);
-      
+
       // Build data property hierarchy
       const dpList = allProps.filter((p: any) => p.type === 'DatatypeProperty');
       console.log('[refreshProperties] Data properties:', dpList.length);
       setDataProperties(dpList);
-      
+
       const dpMap = new Map<string, TreeNode>();
       dpList.forEach((p: any) => {
         dpMap.set(p.id, { ...p, children: [], hasChildren: false });
       });
-      
+
       const topDpNode: TreeNode = {
         id: 'http://www.w3.org/2002/07/owl#topDataProperty',
         label: 'owl:topDataProperty',
@@ -6035,7 +6409,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         hasChildren: false,
         annotations: {}
       };
-      
+
       dpList.forEach((p: any) => {
         const node = dpMap.get(p.id)!;
         if (p.superProperties && p.superProperties.length > 0) {
@@ -6061,7 +6435,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           topDpNode.hasChildren = true;
         }
       });
-      
+
       console.log('[refreshProperties] Built data property hierarchy with', topDpNode.children?.length, 'top-level properties');
       // Create a new array to ensure React detects the change
       setDataPropertyHierarchy([{ ...topDpNode, children: [...(topDpNode.children || [])] }]);
@@ -6104,7 +6478,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       const newIri = `${baseIri}${baseIri.endsWith('#') || baseIri.endsWith('/') ? '' : '#'}${cleanName}`;
 
       let parentIri = 'http://www.w3.org/2002/07/owl#topObjectProperty';
-      
+
       if (parentId) {
         if (type === 'subclass') {
           parentIri = parentId;
@@ -6153,7 +6527,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       const newIri = `${baseIri}${baseIri.endsWith('#') || baseIri.endsWith('/') ? '' : '#'}${cleanName}`;
 
       let parentIri = 'http://www.w3.org/2002/07/owl#topDataProperty';
-      
+
       if (parentId) {
         if (type === 'subclass') {
           parentIri = parentId;
@@ -6201,7 +6575,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       const newIri = `${baseIri}${baseIri.endsWith('#') || baseIri.endsWith('/') ? '' : '#'}${cleanName}`;
 
       let parentIri = 'http://www.w3.org/2002/07/owl#Thing';
-      
+
       if (parentId) {
         if (type === 'subclass') {
           parentIri = parentId;
@@ -6224,19 +6598,19 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       console.log('[handleAddClassInline] Class created, refreshing...');
       // Add a small delay to ensure backend has processed the class
       await new Promise(resolve => setTimeout(resolve, 300));
-      
+
       // Ensure parent node is in expanded nodes before refresh
       if (parentIri && !expandedNodes.includes(parentIri)) {
         setExpandedNodes(prev => [...prev, parentIri]);
       }
-      
+
       await refreshClassHierarchy();
-      
+
       // Re-expand the parent node after refresh to ensure it stays open
       if (parentIri && !expandedNodes.includes(parentIri)) {
         setExpandedNodes(prev => [...prev, parentIri]);
       }
-      
+
       console.log('[handleAddClassInline] Refresh complete');
       showNotification(`Class "${name}" created successfully!`);
     } catch (error) {
@@ -6248,7 +6622,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
 
   const handleAddItem = useCallback(async (type: 'subclass' | 'sibling' | 'individual') => {
     if (!projectId) return;
-    
+
     if (type === 'individual') {
       setCreateIndividualModalOpen(true);
       return;
@@ -6264,8 +6638,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       if (type === 'sibling') {
         const parent = findParentNode(objectPropertyHierarchy, selectedItem.id);
         const isTopLevel = !parent ||
-                          selectedItem.id.includes('topObjectProperty') ||
-                          selectedItem.label === 'owl:topObjectProperty';
+          selectedItem.id.includes('topObjectProperty') ||
+          selectedItem.label === 'owl:topObjectProperty';
 
         if (isTopLevel) {
           showNotification('Cannot create sibling of top-level object property. Please create a subproperty instead.', 'warning');
@@ -6293,8 +6667,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       if (type === 'sibling') {
         const parent = findParentNode(dataPropertyHierarchy, selectedItem.id);
         const isTopLevel = !parent ||
-                          selectedItem.id.includes('topDataProperty') ||
-                          selectedItem.label === 'owl:topDataProperty';
+          selectedItem.id.includes('topDataProperty') ||
+          selectedItem.label === 'owl:topDataProperty';
 
         if (isTopLevel) {
           showNotification('Cannot create sibling of top-level data property. Please create a subproperty instead.', 'warning');
@@ -6338,8 +6712,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     if (type === 'sibling') {
       const parent = findParentNode(classHierarchy, selectedItem.id);
       const isTopLevel = !parent ||
-                        selectedItem.id.includes('Thing') ||
-                        selectedItem.label === 'owl:Thing';
+        selectedItem.id.includes('Thing') ||
+        selectedItem.label === 'owl:Thing';
 
       if (isTopLevel) {
         showNotification('Cannot create sibling of owl:Thing. Please create a subclass instead.', 'warning');
@@ -6371,125 +6745,69 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     try {
       const baseIri = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
       const newIri = `${baseIri}#${name.replace(/\s+/g, '_')}`;
-      
+
       // Determine parent IRI based on type
       let parentIri = 'http://www.w3.org/2002/07/owl#Thing';
-      
+
       if (entitiesTab === 'Classes') {
-          if (type === 'subclass' && selectedItem?.id) {
-            parentIri = selectedItem.id;
-          } else if (type === 'sibling' && selectedItem?.id) {
-            // Use functional update to find parent without dependency
-            let foundParentIri = 'http://www.w3.org/2002/07/owl#Thing';
-            setClassHierarchy(currentHierarchy => {
-              const findParent = (nodes: TreeNode[], targetId: string, parent: TreeNode | null = null): TreeNode | null => {
-                for (const node of nodes) {
-                  if (node.id === targetId) return parent;
-                  if (node.children) {
-                    const found = findParent(node.children, targetId, node);
-                    if (found) return found;
-                  }
-                }
-                return null;
-              };
-              const parent = findParent(currentHierarchy, selectedItem.id);
-              foundParentIri = parent?.id || 'http://www.w3.org/2002/07/owl#Thing';
-              return currentHierarchy; // No change yet
-            });
-            parentIri = foundParentIri;
-          }
-
-          // Call backend API with user info
-          await ontologyMutationService.createClass(
-            projectId, 
-            newIri, 
-            name, 
-            parentIri,
-            user?.email || 'anonymous',
-            user?.username || 'Anonymous'
-          );
-
-          // Update local state
-          const newNode: TreeNode = {
-            id: newIri,
-            label: name,
-            children: undefined,
-            hasChildren: false,
-            annotations: { 'rdfs:label': name }
-          };
-
-          setExpandedNodes(prev => {
-            if (type === 'subclass' && selectedItem?.id && !prev.includes(selectedItem.id)) {
-              return [...prev, selectedItem.id];
-            }
-            return prev;
-          });
-
-          setClassHierarchy(prev => {
-            const addNodeRecursively = (nodes: TreeNode[]): TreeNode[] => {
-              return nodes.map(node => {
-                if (type === 'subclass' && node.id === selectedItem?.id) {
-                  const children = node.children ? [...node.children, newNode] : [newNode];
-                  return { ...node, children, hasChildren: true };
-                }
-                if (type === 'sibling' && node.children?.some((child: TreeNode) => child.id === selectedItem?.id)) {
-                  return { ...node, children: [...(node.children || []), newNode] };
-                }
+        if (type === 'subclass' && selectedItem?.id) {
+          parentIri = selectedItem.id;
+        } else if (type === 'sibling' && selectedItem?.id) {
+          // Use functional update to find parent without dependency
+          let foundParentIri = 'http://www.w3.org/2002/07/owl#Thing';
+          setClassHierarchy(currentHierarchy => {
+            const findParent = (nodes: TreeNode[], targetId: string, parent: TreeNode | null = null): TreeNode | null => {
+              for (const node of nodes) {
+                if (node.id === targetId) return parent;
                 if (node.children) {
-                  return { ...node, children: addNodeRecursively(node.children) };
+                  const found = findParent(node.children, targetId, node);
+                  if (found) return found;
                 }
-                return node;
-              });
+              }
+              return null;
             };
-
-            // If adding sibling at root level
-            if (type === 'sibling' && prev.some(node => node.id === selectedItem.id)) {
-              return [...prev, newNode];
-            } else {
-              return addNodeRecursively(prev);
-            }
+            const parent = findParent(currentHierarchy, selectedItem.id);
+            foundParentIri = parent?.id || 'http://www.w3.org/2002/07/owl#Thing';
+            return currentHierarchy; // No change yet
           });
-          markAsUnsaved();
-      } else if (entitiesTab === 'ObjectProperties') {
-          // Handle Object Property Creation
-          parentIri = 'http://www.w3.org/2002/07/owl#topObjectProperty';
-          if (type === 'subclass' && selectedItem?.id) {
-              parentIri = selectedItem.id;
-          } else if (type === 'sibling' && selectedItem?.id) {
-              // Find parent of selected item in hierarchy
-              const findParent = (nodes: any[], targetId: string, parent: any | null = null): any | null => {
-                  for (const node of nodes) {
-                      if (node.id === targetId) return parent;
-                      if (node.children) {
-                          const found = findParent(node.children, targetId, node);
-                          if (found) return found;
-                      }
-                  }
-                  return null;
-              };
-              const parent = findParent(objectPropertyHierarchy, selectedItem.id);
-              parentIri = parent?.id || 'http://www.w3.org/2002/07/owl#topObjectProperty';
-          }
-          
-          await ontologyMutationService.createObjectProperty(projectId, newIri, name, parentIri, user?.email || 'anonymous', user?.username || 'Anonymous');
-          
-          const newProp: Property & TreeNode = {
-              id: newIri,
-              label: name,
-              type: 'ObjectProperty' as const,
-              annotations: { 'rdfs:label': name },
-              children: [],
-              hasChildren: false
-          };
-          
-          setObjectProperties(prev => [...prev, newProp]);
+          parentIri = foundParentIri;
+        }
 
-          // Update Hierarchy
-          const addNodeRecursively = (nodes: any[]): any[] => {
+        // Call backend API with user info
+        await ontologyMutationService.createClass(
+          projectId,
+          newIri,
+          name,
+          parentIri,
+          user?.email || 'anonymous',
+          user?.username || 'Anonymous'
+        );
+
+        // Update local state
+        const newNode: TreeNode = {
+          id: newIri,
+          label: name,
+          children: undefined,
+          hasChildren: false,
+          annotations: { 'rdfs:label': name }
+        };
+
+        setExpandedNodes(prev => {
+          if (type === 'subclass' && selectedItem?.id && !prev.includes(selectedItem.id)) {
+            return [...prev, selectedItem.id];
+          }
+          return prev;
+        });
+
+        setClassHierarchy(prev => {
+          const addNodeRecursively = (nodes: TreeNode[]): TreeNode[] => {
             return nodes.map(node => {
-              if (node.id === parentIri) {
-                const children = node.children ? [...node.children, newProp] : [newProp];
+              if (type === 'subclass' && node.id === selectedItem?.id) {
+                const children = node.children ? [...node.children, newNode] : [newNode];
                 return { ...node, children, hasChildren: true };
+              }
+              if (type === 'sibling' && node.children?.some((child: TreeNode) => child.id === selectedItem?.id)) {
+                return { ...node, children: [...(node.children || []), newNode] };
               }
               if (node.children) {
                 return { ...node, children: addNodeRecursively(node.children) };
@@ -6497,12 +6815,68 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
               return node;
             });
           };
-          
-          setObjectPropertyHierarchy(prev => addNodeRecursively(prev));
-          
-          if (parentIri && !expandedNodes.includes(parentIri)) {
-             setExpandedNodes(prev => [...prev, parentIri]);
+
+          // If adding sibling at root level
+          if (type === 'sibling' && prev.some(node => node.id === selectedItem.id)) {
+            return [...prev, newNode];
+          } else {
+            return addNodeRecursively(prev);
           }
+        });
+        markAsUnsaved();
+      } else if (entitiesTab === 'ObjectProperties') {
+        // Handle Object Property Creation
+        parentIri = 'http://www.w3.org/2002/07/owl#topObjectProperty';
+        if (type === 'subclass' && selectedItem?.id) {
+          parentIri = selectedItem.id;
+        } else if (type === 'sibling' && selectedItem?.id) {
+          // Find parent of selected item in hierarchy
+          const findParent = (nodes: any[], targetId: string, parent: any | null = null): any | null => {
+            for (const node of nodes) {
+              if (node.id === targetId) return parent;
+              if (node.children) {
+                const found = findParent(node.children, targetId, node);
+                if (found) return found;
+              }
+            }
+            return null;
+          };
+          const parent = findParent(objectPropertyHierarchy, selectedItem.id);
+          parentIri = parent?.id || 'http://www.w3.org/2002/07/owl#topObjectProperty';
+        }
+
+        await ontologyMutationService.createObjectProperty(projectId, newIri, name, parentIri, user?.email || 'anonymous', user?.username || 'Anonymous');
+
+        const newProp: Property & TreeNode = {
+          id: newIri,
+          label: name,
+          type: 'ObjectProperty' as const,
+          annotations: { 'rdfs:label': name },
+          children: [],
+          hasChildren: false
+        };
+
+        setObjectProperties(prev => [...prev, newProp]);
+
+        // Update Hierarchy
+        const addNodeRecursively = (nodes: any[]): any[] => {
+          return nodes.map(node => {
+            if (node.id === parentIri) {
+              const children = node.children ? [...node.children, newProp] : [newProp];
+              return { ...node, children, hasChildren: true };
+            }
+            if (node.children) {
+              return { ...node, children: addNodeRecursively(node.children) };
+            }
+            return node;
+          });
+        };
+
+        setObjectPropertyHierarchy(prev => addNodeRecursively(prev));
+
+        if (parentIri && !expandedNodes.includes(parentIri)) {
+          setExpandedNodes(prev => [...prev, parentIri]);
+        }
       }
 
       showNotification(`${entitiesTab === 'Classes' ? 'Class' : 'Property'} created successfully!`, 'info');
@@ -6521,26 +6895,26 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     try {
       const baseIri = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
       const newIri = `${baseIri}#${name.replace(/\s+/g, '_')}`;
-      
+
       let parentIri = 'http://www.w3.org/2002/07/owl#topObjectProperty';
-        if (type === 'subproperty' && selectedItem?.id) {
-          parentIri = selectedItem.id;
-        } else if (type === 'sibling' && selectedItem?.id) {
-          const parent = findParentNode(objectPropertyHierarchy, selectedItem.id);
-          parentIri = parent?.id || 'http://www.w3.org/2002/07/owl#topObjectProperty';
-        }
-      
+      if (type === 'subproperty' && selectedItem?.id) {
+        parentIri = selectedItem.id;
+      } else if (type === 'sibling' && selectedItem?.id) {
+        const parent = findParentNode(objectPropertyHierarchy, selectedItem.id);
+        parentIri = parent?.id || 'http://www.w3.org/2002/07/owl#topObjectProperty';
+      }
+
       await ontologyMutationService.createObjectProperty(projectId, newIri, name, parentIri);
-      
+
       const newProp: Property & TreeNode = {
-          id: newIri,
-          label: name,
-          type: 'ObjectProperty',
-          annotations: { 'rdfs:label': name },
-          children: [],
-          hasChildren: false
+        id: newIri,
+        label: name,
+        type: 'ObjectProperty',
+        annotations: { 'rdfs:label': name },
+        children: [],
+        hasChildren: false
       };
-      
+
       setObjectProperties(prev => [...prev, newProp]);
 
       const addNodeRecursively = (nodes: any[]): any[] => {
@@ -6555,11 +6929,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           return node;
         });
       };
-      
+
       setObjectPropertyHierarchy(prev => addNodeRecursively(prev));
-      
+
       if (parentIri && !expandedNodes.includes(parentIri)) {
-         setExpandedNodes(prev => [...prev, parentIri]);
+        setExpandedNodes(prev => [...prev, parentIri]);
       }
 
       markAsUnsaved();
@@ -6580,26 +6954,26 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     try {
       const baseIri = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
       const newIri = `${baseIri}#${name.replace(/\s+/g, '_')}`;
-      
+
       let parentIri = 'http://www.w3.org/2002/07/owl#topDataProperty';
-        if (type === 'subproperty' && selectedItem?.id) {
-          parentIri = selectedItem.id;
-        } else if (type === 'sibling' && selectedItem?.id) {
-          const parent = findParentNode(dataPropertyHierarchy, selectedItem.id);
-          parentIri = parent?.id || 'http://www.w3.org/2002/07/owl#topDataProperty';
-        }
-      
+      if (type === 'subproperty' && selectedItem?.id) {
+        parentIri = selectedItem.id;
+      } else if (type === 'sibling' && selectedItem?.id) {
+        const parent = findParentNode(dataPropertyHierarchy, selectedItem.id);
+        parentIri = parent?.id || 'http://www.w3.org/2002/07/owl#topDataProperty';
+      }
+
       await ontologyMutationService.createDataProperty(projectId, newIri, name, parentIri);
-      
+
       const newProp: Property & TreeNode = {
-          id: newIri,
-          label: name,
-          type: 'DatatypeProperty' as const,
-          annotations: { 'rdfs:label': name },
-          children: [],
-          hasChildren: false
+        id: newIri,
+        label: name,
+        type: 'DatatypeProperty' as const,
+        annotations: { 'rdfs:label': name },
+        children: [],
+        hasChildren: false
       };
-      
+
       setDataProperties(prev => [...prev, newProp]);
 
       const addNodeRecursively = (nodes: any[]): any[] => {
@@ -6614,11 +6988,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           return node;
         });
       };
-      
+
       setDataPropertyHierarchy(prev => addNodeRecursively(prev));
-      
+
       if (parentIri && !expandedNodes.includes(parentIri)) {
-         setExpandedNodes(prev => [...prev, parentIri]);
+        setExpandedNodes(prev => [...prev, parentIri]);
       }
 
       markAsUnsaved();
@@ -6688,19 +7062,19 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       showNotification('No project loaded.', 'error');
       return;
     }
-    
+
     const base = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
     const id = `${base}#${name.replace(/\s+/g, '_')}`;
-    
+
     // Determine the class IRI - use selected class if available, otherwise owl:Thing
-    const classIri = (entitiesTab === 'Classes' && selectedItem?.id) 
-      ? selectedItem.id 
+    const classIri = (entitiesTab === 'Classes' && selectedItem?.id)
+      ? selectedItem.id
       : 'http://www.w3.org/2002/07/owl#Thing';
-    
+
     try {
       // Call the mutation service to persist the individual
       await ontologyMutationService.createIndividual(projectId, id, name, classIri);
-      
+
       // Update local state
       const newIndividual: Individual = {
         id,
@@ -6710,7 +7084,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         types: [classIri]
       };
       setIndividuals(prev => [...prev, newIndividual]);
-      
+
       markAsUnsaved();
       showNotification(`Individual "${name}" created successfully!`, 'info');
     } catch (error) {
@@ -6778,14 +7152,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     const item = itemOverride || selectedItem;
     const activeTab = tabOverride || entitiesTab;
     if (!item || !projectId) return;
-    
+
     // Validate item has a valid IRI
     if (!item.id) {
       console.error('[DELETE] Item has no IRI:', item);
       showNotification('Cannot delete: item has no valid IRI', 'error');
       return;
     }
-    
+
     // Show confirm dialog instead of using confirm()
     setConfirmDialog({
       isOpen: true,
@@ -6794,7 +7168,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       onConfirm: async () => {
         try {
           console.log('[DELETE] Deleting item:', { id: item.id, label: item.label, tab: activeTab });
-          
+
           // Call backend API based on entity type
           switch (activeTab) {
             case 'Classes':
@@ -7140,16 +7514,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
   const ClassHierarchyNode: React.FC<{ node: any; level: number }> = ({ node, level }) => {
     const [showTooltip, setShowTooltip] = useState(false);
     const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
-    
+
     const handleMouseEnter = (e: React.MouseEvent) => {
       setTooltipPos({ x: e.clientX, y: e.clientY });
       setShowTooltip(true);
     };
-    
+
     const handleMouseLeave = () => {
       setShowTooltip(false);
     };
-    
+
     return (
       <div style={{ marginLeft: `${level * 12}px` }} className="relative">
         <div
@@ -7165,7 +7539,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
             <span className="text-[10px] bg-green-100 text-green-700 px-1 rounded">inferred</span>
           )}
         </div>
-        
+
         {/* Explanation Tooltip */}
         {showTooltip && node.explanation && (
           <div
@@ -7180,7 +7554,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
             <div className="text-xs text-gray-700">{node.explanation}</div>
           </div>
         )}
-        
+
         {Array.isArray(node.children) && node.children.length > 0 && node.children.map((child: any, idx: number) => (
           <ClassHierarchyNode key={idx} node={child} level={level + 1} />
         ))}
@@ -7191,10 +7565,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
   // Helper function to render class hierarchy
   const renderClassHierarchy = (nodes: any[]): React.ReactNode => {
     if (!Array.isArray(nodes) || nodes.length === 0) return null;
-    
+
     // Filter out null/undefined nodes
     const validNodes = nodes.filter(node => node && (node.iri || node.id));
-    
+
     return validNodes.map((node: any, idx: number) => (
       <ClassHierarchyNode key={node.iri || node.id || idx} node={node} level={0} />
     ));
@@ -7214,61 +7588,55 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                 <div className="mb-4 flex gap-2 flex-wrap flex-shrink-0">
                   <button
                     onClick={() => fetchCodeViewContent('turtle')}
-                    className={`px-3 py-1 text-sm rounded-md ${
-                      codeViewFormat === 'turtle'
-                        ? 'bg-purple-600 text-white hover:bg-purple-700'
-                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                    }`}
+                    className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === 'turtle'
+                      ? 'bg-purple-600 text-white hover:bg-purple-700'
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                      }`}
                   >
                     Turtle
                   </button>
                   <button
                     onClick={() => fetchCodeViewContent('rdfxml')}
-                    className={`px-3 py-1 text-sm rounded-md ${
-                      codeViewFormat === 'rdfxml'
-                        ? 'bg-purple-600 text-white hover:bg-purple-700'
-                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                    }`}
+                    className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === 'rdfxml'
+                      ? 'bg-purple-600 text-white hover:bg-purple-700'
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                      }`}
                   >
                     RDF/XML
                   </button>
                   <button
                     onClick={() => fetchCodeViewContent('ntriples')}
-                    className={`px-3 py-1 text-sm rounded-md ${
-                      codeViewFormat === 'ntriples'
-                        ? 'bg-purple-600 text-white hover:bg-purple-700'
-                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                    }`}
+                    className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === 'ntriples'
+                      ? 'bg-purple-600 text-white hover:bg-purple-700'
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                      }`}
                   >
                     N-Triples
                   </button>
                   <button
                     onClick={() => fetchCodeViewContent('owlxml')}
-                    className={`px-3 py-1 text-sm rounded-md ${
-                      codeViewFormat === 'owlxml'
-                        ? 'bg-purple-600 text-white hover:bg-purple-700'
-                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                    }`}
+                    className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === 'owlxml'
+                      ? 'bg-purple-600 text-white hover:bg-purple-700'
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                      }`}
                   >
                     OWL/XML
                   </button>
                   <button
                     onClick={() => fetchCodeViewContent('manchester')}
-                    className={`px-3 py-1 text-sm rounded-md ${
-                      codeViewFormat === 'manchester'
-                        ? 'bg-purple-600 text-white hover:bg-purple-700'
-                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                    }`}
+                    className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === 'manchester'
+                      ? 'bg-purple-600 text-white hover:bg-purple-700'
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                      }`}
                   >
                     Manchester
                   </button>
                   <button
                     onClick={() => fetchCodeViewContent('functional')}
-                    className={`px-3 py-1 text-sm rounded-md ${
-                      codeViewFormat === 'functional'
-                        ? 'bg-purple-600 text-white hover:bg-purple-700'
-                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                    }`}
+                    className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === 'functional'
+                      ? 'bg-purple-600 text-white hover:bg-purple-700'
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                      }`}
                   >
                     Functional
                   </button>
@@ -7300,12 +7668,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         // Use dynamically loaded SPARQL Query Plugin
         const sparqlPlugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === 'sparql-query-plugin');
         const sparqlLoadingState = pluginLoadingStates['sparql-query-plugin'];
-        
+
         if (sparqlPlugin?.component && projectId) {
           const SparqlPluginComponent = sparqlPlugin.component;
           return (
-            <SparqlPluginComponent 
-              projectId={projectId} 
+            <SparqlPluginComponent
+              projectId={projectId}
               prefixes={(metadata as any)?.prefixes || []}
               context={{
                 apiClient,
@@ -7316,7 +7684,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
             />
           );
         }
-        
+
         return (
           <PluginPlaceholder
             pluginId="sparql-query-plugin"
@@ -7344,12 +7712,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         // Use dynamically loaded Graph View Plugin
         const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === 'graph-view-plugin');
         const loadingState = pluginLoadingStates['graph-view-plugin'];
-        
+
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
-          return <PluginComponent 
-            projectId={projectId} 
-            context={{ 
+          return <PluginComponent
+            projectId={projectId}
+            context={{
               projectId,
               apiBaseUrl: (window as any).API_BASE_URL || 'http://ec2-13-218-153-101.compute-1.amazonaws.com',
               // apiBaseUrl: (window as any).API_BASE_URL || 'http://localhost:8082',
@@ -7360,10 +7728,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                 canExport: true
               }
             }}
-            onNodeClick={handleGraphNodeClick} 
+            onNodeClick={handleGraphNodeClick}
           />;
         }
-        
+
         return (
           <PluginPlaceholder
             pluginId="graph-view-plugin"
@@ -7390,12 +7758,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       case 'SWRL': {
         const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === 'swrl-editor-plugin');
         const loadingState = pluginLoadingStates['swrl-editor-plugin'];
-        
+
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
           return <PluginComponent projectId={projectId} />;
         }
-        
+
         return (
           <PluginPlaceholder
             pluginId="swrl-editor-plugin"
@@ -7422,12 +7790,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       case 'Fuzzy': {
         const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === 'fuzzy-ontology-plugin');
         const loadingState = pluginLoadingStates['fuzzy-ontology-plugin'];
-        
+
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
           return <PluginComponent projectId={projectId} />;
         }
-        
+
         return (
           <PluginPlaceholder
             pluginId="fuzzy-ontology-plugin"
@@ -7454,12 +7822,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       case 'Changes': {
         const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === 'change-assistant-plugin');
         const loadingState = pluginLoadingStates['change-assistant-plugin'];
-        
+
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
           return <PluginComponent projectId={projectId} />;
         }
-        
+
         return (
           <PluginPlaceholder
             pluginId="change-assistant-plugin"
@@ -7486,11 +7854,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       case 'Reasoner': {
         const plugin = pluginLoader.getInstalledPlugins().find(p => p.id === 'reasoner-plugin');
         const loadingState = pluginLoadingStates['reasoner-plugin'];
-        
+
         if (plugin?.component) {
           const PluginComponent = plugin.component;
           return (
-            <PluginComponent 
+            <PluginComponent
               projectId={projectId || ''}
               apiBaseUrl={window.API_BASE_URL}
               selectedReasoner={selectedReasoner}
@@ -7509,10 +7877,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
             />
           );
         }
-        
+
         return (
-          <PluginPlaceholder 
-            pluginId="reasoner-plugin" 
+          <PluginPlaceholder
+            pluginId="reasoner-plugin"
             pluginName="OWL Reasoner"
             description="Advanced OWL 2 DL reasoning with classification, consistency checking, explanations, and inferred hierarchies."
             icon={<Zap size={32} className="text-white" />}
@@ -7541,7 +7909,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
               <div className="p-4 border-b" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--surface-2)' }}>
                 <div className="flex justify-between items-start mb-4">
                   <h2 className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-primary)' }}>Ontology header</h2>
-                  <button 
+                  <button
                     onClick={() => setEditOntologyIRIDialogOpen(true)}
                     className="p-1 rounded transition-colors"
                     style={{ color: 'var(--accent)' }}
@@ -7552,7 +7920,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                     <Edit2 size={14} />
                   </button>
                 </div>
-                
+
                 <div className="grid grid-cols-1 gap-4">
                   <div className="p-3 border rounded shadow-sm" style={{ backgroundColor: 'var(--bg)', borderColor: 'var(--border)' }}>
                     <div className="text-[10px] font-bold uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>Ontology IRI</div>
@@ -7563,7 +7931,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                       </a>
                     </div>
                   </div>
-                  
+
                   <div className="p-3 border rounded shadow-sm" style={{ backgroundColor: 'var(--bg)', borderColor: 'var(--border)' }}>
                     <div className="text-[10px] font-bold uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>Ontology Version IRI</div>
                     <div className="flex items-center gap-2">
@@ -7655,8 +8023,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
               {/* Resize Handle */}
               <div
                 className="relative cursor-ns-resize group"
-                style={{ 
-                  height: '6px', 
+                style={{
+                  height: '6px',
                   backgroundColor: isResizing ? 'var(--accent)' : 'var(--border)',
                   transition: 'background-color 0.2s'
                 }}
@@ -7664,19 +8032,19 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                   setIsResizing(true);
                   const startY = e.clientY;
                   const startHeight = bottomTabsHeight;
-                  
+
                   const handleMouseMove = (moveEvent: MouseEvent) => {
                     const deltaY = startY - moveEvent.clientY;
                     const newHeight = Math.max(150, Math.min(600, startHeight + deltaY));
                     setBottomTabsHeight(newHeight);
                   };
-                  
+
                   const handleMouseUp = () => {
                     setIsResizing(false);
                     document.removeEventListener('mousemove', handleMouseMove);
                     document.removeEventListener('mouseup', handleMouseUp);
                   };
-                  
+
                   document.addEventListener('mousemove', handleMouseMove);
                   document.addEventListener('mouseup', handleMouseUp);
                 }}
@@ -7685,8 +8053,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
               </div>
 
               {/* Bottom Tabs Section (Imports, GCIs, Prefixes) */}
-              <div className="border-t flex flex-col" style={{ 
-                borderColor: 'var(--border)', 
+              <div className="border-t flex flex-col" style={{
+                borderColor: 'var(--border)',
                 backgroundColor: 'var(--surface-2)',
                 height: `${bottomTabsHeight}px`,
                 minHeight: '150px'
@@ -7699,7 +8067,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                   ].map(t => (
                     <button key={t.id} onClick={() => setActiveOntologySubTab(t.id)}
                       className="px-4 py-2 flex items-center gap-2 border-r transition-all"
-                      style={{ 
+                      style={{
                         borderColor: 'var(--border)',
                         backgroundColor: activeOntologySubTab === t.id ? 'var(--bg)' : 'transparent',
                         color: activeOntologySubTab === t.id ? 'var(--accent)' : 'var(--text-secondary)',
@@ -7742,10 +8110,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                             </thead>
                             <tbody>
                               {prefixMappings.map((p, idx) => (
-                                <tr 
-                                  key={`${p.prefix}-${idx}`} 
-                                  className="border-b" 
-                                  style={{ borderColor: 'var(--border)' }} 
+                                <tr
+                                  key={`${p.prefix}-${idx}`}
+                                  className="border-b"
+                                  style={{ borderColor: 'var(--border)' }}
                                   onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-overlay)'}
                                   onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                                 >
@@ -7822,9 +8190,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                               const fileName = iri.substring(iri.lastIndexOf('/') + 1) || iri;
                               const isLocal = iri.startsWith('file://') || (!iri.startsWith('http://') && !iri.startsWith('https://'));
                               const isExpanded = expandedImports.has(iri);
-                              
+
                               return (
-                                <div 
+                                <div
                                   key={`${iri}-${idx}`}
                                   className="group"
                                   onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-overlay)'}
@@ -7931,8 +8299,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                         ) : (
                           <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
                             {generalClassAxioms.map((axiom, idx) => (
-                              <div 
-                                key={`${axiom.subExpression}-${idx}`} 
+                              <div
+                                key={`${axiom.subExpression}-${idx}`}
                                 className="p-3"
                                 onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-overlay)'}
                                 onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
@@ -8024,7 +8392,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                   }
                 }
               ].map(metricSection => (
-               
+
                 <div key={metricSection.title}>
                   <h3 className="font-semibold text-sm mb-2 border-b pb-1" style={{ color: 'var(--text-primary)', borderColor: 'var(--border)' }}>{metricSection.title}</h3>
                   <div className="space-y-1 text-xs">
@@ -8397,7 +8765,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           'http://www.w3.org/2002/07/owl#topObjectProperty',
           'http://www.w3.org/2002/07/owl#topDataProperty'
         ]);
-        
+
         // Flatten the class hierarchy tree to get all classes (excluding owl:Thing)
         const flattenClassHierarchy = (nodes: TreeNode[]): { id: string; label: string }[] => {
           const result: { id: string; label: string }[] = [];
@@ -8414,7 +8782,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           traverse(nodes);
           return result;
         };
-        
+
         // Flatten the property hierarchy tree (excluding owl:topObjectProperty/topDataProperty)
         const flattenPropertyHierarchy = (nodes: Property[]): { id: string; label: string }[] => {
           const result: { id: string; label: string }[] = [];
@@ -8431,7 +8799,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           traverse(nodes);
           return result;
         };
-        
+
         return (
           <DLQueryPanel
             projectId={projectId || ''}
@@ -8448,8 +8816,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
             apiClient={apiClient}
             onAddToOntology={async (expression, className) => {
               try {
-                await apiClient.post(`/api/ontology/${projectId}/dl/add`, { 
-                  expression, 
+                await apiClient.post(`/api/ontology/${projectId}/dl/add`, {
+                  expression,
                   className,
                   userEmail: user?.email || 'anonymous'
                 });
@@ -8481,8 +8849,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                 const normalizedClassName = (className || '').trim().replace(/\s+/g, '_');
                 const base =
                   target.includes('#') ? target.split('#')[0] + '#' :
-                  target.includes('/') ? target.substring(0, target.lastIndexOf('/') + 1) :
-                  'http://example.com/ont#';
+                    target.includes('/') ? target.substring(0, target.lastIndexOf('/') + 1) :
+                      'http://example.com/ont#';
 
                 const newIri = base + normalizedClassName;
 
@@ -8529,7 +8897,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
   // #region Selector Handlers
   const handleOpenClassSelector = (target: 'domain' | 'range') => {
     setSelectorTarget(target);
-    
+
     // For Data Property ranges, show the datatype selector instead of class expression
     if (target === 'range' && selectedItem?.type === 'DatatypeProperty') {
       setIsDataPropertyRangeDialogOpen(true);
@@ -8556,14 +8924,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         }
         return iri.split('#').pop() || iri;
       };
-      
+
       const displayLabel = getDisplayLabel(datatypeIri);
-      
+
       await ontologyMutationService.addPropertyRange(
-        projectId, 
-        selectedItem.id, 
-        datatypeIri, 
-        user?.email || 'anonymous', 
+        projectId,
+        selectedItem.id,
+        datatypeIri,
+        user?.email || 'anonymous',
         user?.username || 'Anonymous'
       );
       updateItemInState({ ...selectedItem, ranges: [...((selectedItem as Property).ranges || []), displayLabel] });
@@ -8589,10 +8957,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       switch (selectorTarget) {
         case 'domain':
           await ontologyMutationService.addPropertyDomain(
-            projectId, 
-            selectedItem.id, 
-            expression, 
-            user?.email || 'anonymous', 
+            projectId,
+            selectedItem.id,
+            expression,
+            user?.email || 'anonymous',
             user?.username || 'Anonymous',
             restrictionData
           );
@@ -8600,10 +8968,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           break;
         case 'range':
           await ontologyMutationService.addPropertyRange(
-            projectId, 
-            selectedItem.id, 
-            expression, 
-            user?.email || 'anonymous', 
+            projectId,
+            selectedItem.id,
+            expression,
+            user?.email || 'anonymous',
             user?.username || 'Anonymous',
             restrictionData
           );
@@ -8637,10 +9005,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           updateItemInState({ ...selectedItem, disjointProperties: [...((selectedItem as Property).disjointProperties || []), expression] });
           break;
         case 'equivalent': {
-           const existing = (selectedItem as Property).equivalentProperties || [];
-           await ontologyMutationService.addEquivalentProperty(projectId, selectedItem.id, expression, user?.email || 'anonymous', user?.username || 'Anonymous');
-           updateItemInState({ ...selectedItem, equivalentProperties: [...existing, expression] });
-           break;
+          const existing = (selectedItem as Property).equivalentProperties || [];
+          await ontologyMutationService.addEquivalentProperty(projectId, selectedItem.id, expression, user?.email || 'anonymous', user?.username || 'Anonymous');
+          updateItemInState({ ...selectedItem, equivalentProperties: [...existing, expression] });
+          break;
         }
       }
     } catch (error) {
@@ -8658,7 +9026,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
     try {
       // Build the final expression - if inverse, wrap with inverse()
       const finalExpression = isInverse ? `inverse(${expression})` : expression;
-      
+
       switch (selectorTarget) {
         case 'subProperty':
           await ontologyMutationService.addSubPropertyOf(projectId, selectedItem.id, finalExpression, user?.email || 'anonymous', user?.username || 'Anonymous');
@@ -8708,13 +9076,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
 
   const handleAnnotationDomainConfirm = async (domainIri: string) => {
     if (!selectedItem || !projectId) return;
-    
+
     try {
       await ontologyMutationService.addPropertyDomain(projectId, selectedItem.id, domainIri, user?.email || 'anonymous', user?.username || 'Anonymous');
       const extendedItem = selectedItem as AnnotationProperty & { domains?: string[] };
-      updateItemInState({ 
-        ...selectedItem, 
-        domains: [...(extendedItem.domains || []), domainIri] 
+      updateItemInState({
+        ...selectedItem,
+        domains: [...(extendedItem.domains || []), domainIri]
       });
     } catch (error) {
       console.error('Failed to add annotation property domain', error);
@@ -8725,13 +9093,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
 
   const handleAnnotationRangeConfirm = async (rangeIri: string) => {
     if (!selectedItem || !projectId) return;
-    
+
     try {
       await ontologyMutationService.addPropertyRange(projectId, selectedItem.id, rangeIri, user?.email || 'anonymous', user?.username || 'Anonymous');
       const extendedItem = selectedItem as AnnotationProperty & { ranges?: string[] };
-      updateItemInState({ 
-        ...selectedItem, 
-        ranges: [...(extendedItem.ranges || []), rangeIri] 
+      updateItemInState({
+        ...selectedItem,
+        ranges: [...(extendedItem.ranges || []), rangeIri]
       });
     } catch (error) {
       console.error('Failed to add annotation property range', error);
@@ -8742,13 +9110,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
 
   const handleAnnotationSuperpropertyConfirm = async (superpropertyIri: string) => {
     if (!selectedItem || !projectId) return;
-    
+
     try {
       await ontologyMutationService.addSubPropertyOf(projectId, selectedItem.id, superpropertyIri, user?.email || 'anonymous', user?.username || 'Anonymous');
       const extendedItem = selectedItem as AnnotationProperty & { superProperties?: string[] };
-      updateItemInState({ 
-        ...selectedItem, 
-        superProperties: [...(extendedItem.superProperties || []), superpropertyIri] 
+      updateItemInState({
+        ...selectedItem,
+        superProperties: [...(extendedItem.superProperties || []), superpropertyIri]
       });
     } catch (error) {
       console.error('Failed to add annotation property superproperty', error);
@@ -8794,22 +9162,22 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
       <AddObjectPropertyDialog
         isOpen={isAddPropertyDialogOpen}
         onClose={() => setAddPropertyDialogOpen(false)}
-        onCreate={entitiesTab === 'ObjectProperties' ? handleCreateObjectProperty : 
-                  entitiesTab === 'DataProperties' ? handleCreateDataProperty : 
-                  handleCreateAnnotationProperty}
+        onCreate={entitiesTab === 'ObjectProperties' ? handleCreateObjectProperty :
+          entitiesTab === 'DataProperties' ? handleCreateDataProperty :
+            handleCreateAnnotationProperty}
         type={addPropertyType}
         parentLabel={propertyParentLabel}
-        propertyType={entitiesTab === 'ObjectProperties' ? 'object' : 
-                     entitiesTab === 'DataProperties' ? 'data' : 'annotation'}
+        propertyType={entitiesTab === 'ObjectProperties' ? 'object' :
+          entitiesTab === 'DataProperties' ? 'data' : 'annotation'}
       />
       <AddDatatypeDialog
         isOpen={isAddDatatypeDialogOpen}
         onClose={() => setAddDatatypeDialogOpen(false)}
         onCreate={handleCreateDatatype}
       />
-      <AddAnnotationDialog 
-        isOpen={isAddAnnotationDialogOpen} 
-        onClose={() => setAddAnnotationDialogOpen(false)} 
+      <AddAnnotationDialog
+        isOpen={isAddAnnotationDialogOpen}
+        onClose={() => setAddAnnotationDialogOpen(false)}
         onAdd={handleAnnotationDialogAdd}
         availableProperties={annotationProperties}
         entities={{
@@ -8819,8 +9187,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
           individuals: individuals
         }}
       />
-      <AddAnnotationDialog 
-        isOpen={isEditAnnotationDialogOpen} 
+      <AddAnnotationDialog
+        isOpen={isEditAnnotationDialogOpen}
         onClose={() => {
           setEditAnnotationDialogOpen(false);
           setEditAnnotationData(null);
@@ -9290,9 +9658,27 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         myFiles={myFiles}
         sharedFiles={sharedFiles}
         currentProjectId={projectId}
+        currentFileId={activeFileId}
+        currentFileName={activeFileName}
+        onDeleteFile={user?.workspaceId ? undefined : handleDeleteFile}
         onSwitchFile={handleSwitchFile}
         parentProjectId={initialProjectId}
         onLoadProjectFile={handleLoadProjectFile}
+        projectFiles={projectFiles}
+      />
+      <DuplicateFileDialog
+        isOpen={duplicatePrompt.isOpen}
+        fileName={duplicatePrompt.fileName}
+        detail={duplicatePrompt.detail}
+        copyName={duplicateCopyName}
+        onCopyNameChange={setDuplicateCopyName}
+        onOpenExisting={() => sendDuplicatePromptResponse('open_existing')}
+        onReplace={() => sendDuplicatePromptResponse('replace')}
+        onCreateCopy={handleDuplicateCreateCopy}
+        onCancel={handleDuplicatePromptCancel}
+        allowOpenExisting={duplicatePrompt.allowOpenExisting}
+        error={duplicateCopyError}
+        isSubmitting={duplicateCopySubmitting}
       />
       <ConfirmDialog
         isOpen={confirmDialog.isOpen}
@@ -9301,6 +9687,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
         onCancel={confirmDialog.onCancel}
         title={confirmDialog.title}
         message={confirmDialog.message}
+      />
+      <ConfirmDialog
+        isOpen={deleteFileDialog.isOpen}
+        onClose={() => setDeleteFileDialog({ isOpen: false, projectId: '', fileName: '' })}
+        onConfirm={confirmDeleteFile}
+        onCancel={() => setDeleteFileDialog({ isOpen: false, projectId: '', fileName: '' })}
+        title="Delete File"
+        message={`Are you sure you want to delete "${deleteFileDialog.fileName}"? This action cannot be undone.`}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
       />
       <KeyboardShortcutsDialog
         isOpen={isKeyboardShortcutsDialogOpen}
@@ -9378,11 +9774,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                 const tab = ALL_MAIN_TABS[tabId];
                 if (!tab) return null;
                 return (
-                <button
-                  key={tabId}
-                  className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border-b-2 whitespace-nowrap ${mainTab === tabId ? "text-purple-600 border-purple-600" : "text-gray-500 hover:text-gray-800 border-transparent"}`}
-                  onClick={() => setMainTab(tabId)}
-                >
+                  <button
+                    key={tabId}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border-b-2 whitespace-nowrap ${mainTab === tabId ? "text-purple-600 border-purple-600" : "text-gray-500 hover:text-gray-800 border-transparent"}`}
+                    onClick={() => setMainTab(tabId)}
+                  >
                     <tab.icon size={14} /> {tab.label}
                   </button>
                 );
@@ -9398,13 +9794,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                     }
                     setShowCollaborationPanel(!showCollaborationPanel);
                   }}
-                  className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors ${
-                    showCollaborationPanel
-                      ? 'bg-blue-600 text-white hover:bg-blue-700'
-                      : isCurrentFileShared 
-                        ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  } ${!subscription.canAccessFeature('hasAdvancedCollaboration') && !subscription.isFree ? 'opacity-60' : ''}`}
+                  className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors ${showCollaborationPanel
+                    ? 'bg-blue-600 text-white hover:bg-blue-700'
+                    : isCurrentFileShared
+                      ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    } ${!subscription.canAccessFeature('hasAdvancedCollaboration') && !subscription.isFree ? 'opacity-60' : ''}`}
                   title={
                     !subscription.canAccessFeature('hasAdvancedCollaboration') && !subscription.isFree
                       ? subscription.getUpgradeMessage('Advanced Collaboration')
@@ -9450,7 +9845,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                   </span>
                 )}
               </span>
-              <button 
+              <button
                 onClick={() => setShowThemeSettings(true)}
                 className="ontocode-icon-hover-accent cursor-pointer disabled:cursor-not-allowed flex items-center gap-1.5 text-xs p-2 rounded-md"
                 title="Theme Settings"
@@ -9458,21 +9853,20 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                 <Palette size={14} />
               </button>
               {/* Subscription Plan Badge */}
-              <button 
+              <button
                 onClick={() => setShowPlanDetails(true)}
-                className={`flex items-center gap-1.5 px-2 py-1 text-[10px] font-semibold rounded-md transition-all hover:shadow-lg cursor-pointer ${
-                  subscription.isEnterprise ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:from-amber-600 hover:to-orange-600' :
+                className={`flex items-center gap-1.5 px-2 py-1 text-[10px] font-semibold rounded-md transition-all hover:shadow-lg cursor-pointer ${subscription.isEnterprise ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:from-amber-600 hover:to-orange-600' :
                   subscription.isPro ? 'bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600' :
-                  'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`} 
+                    'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
                 title={`Current Plan: ${subscription.plan.toUpperCase()} - Click for details`}
               >
                 {subscription.isEnterprise ? <Crown size={12} /> : subscription.isPro ? <Zap size={12} /> : <Sparkles size={12} />}
                 {subscription.plan.toUpperCase()}
               </button>
               {onBackToProjects && (
-                <button 
-                  onClick={onBackToProjects} 
+                <button
+                  onClick={onBackToProjects}
                   className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50 p-2 rounded-md cursor-pointer"
                   title="Back to Projects"
                 >
@@ -9627,12 +10021,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
               e.preventDefault();
               const formData = new FormData(e.currentTarget);
               const importIRI = formData.get('importIRI') as string;
-              
+
               if (!projectId || !importIRI) return;
-              
+
               try {
                 await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, { importIri: importIRI });
-                
+
                 // Refresh all metadata related state
                 const [metadataRes, annotationsRes, importsRes, gciRes] = await Promise.all([
                   apiClient.get(`/api/ontology/metadata/${projectId}`),
@@ -9642,8 +10036,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                 ]);
 
                 // Extract data with fallbacks
-                const annotationsData = Array.isArray(annotationsRes?.data) ? annotationsRes.data : 
-                                       (Array.isArray(annotationsRes) ? annotationsRes : []);
+                const annotationsData = Array.isArray(annotationsRes?.data) ? annotationsRes.data :
+                  (Array.isArray(annotationsRes) ? annotationsRes : []);
                 const importsData = Array.isArray(importsRes?.data) ? importsRes.data : (Array.isArray(importsRes?.imports) ? importsRes.imports : (Array.isArray(importsRes) ? importsRes : []));
                 const gciData = Array.isArray(gciRes?.data) ? gciRes.data : (Array.isArray(gciRes?.axioms) ? gciRes.axioms : (Array.isArray(gciRes) ? gciRes : []));
 
@@ -10029,7 +10423,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                   <Info size={12} className="flex-shrink-0 mt-0.5" style={{ color: 'var(--accent)' }} />
                   <span>Specify the IRI of the ontology to import. This can be a web URL (http/https) or a local file path.</span>
                 </div>
-                
+
                 {/* IRI Input */}
                 <div className="space-y-3">
                   <div className="flex gap-2">
@@ -10051,7 +10445,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                     <div className="flex-1 h-px" style={{ backgroundColor: 'var(--border)' }}></div>
                   </div>
 
-                  <label className="flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed rounded cursor-pointer transition-all" 
+                  <label className="flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed rounded cursor-pointer transition-all"
                     style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
                     onMouseEnter={(e) => e.currentTarget.style.borderColor = 'var(--accent)'}
                     onMouseLeave={(e) => e.currentTarget.style.borderColor = 'var(--border)'}
@@ -10094,8 +10488,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onBackToProjects, selectedFileId,
                       key={ontology.iri}
                       onClick={() => setImportDialogData({ ...importDialogData, iri: ontology.iri })}
                       className="px-3 py-2 text-[11px] rounded text-left border transition-colors"
-                      style={{ 
-                        backgroundColor: importDialogData.iri === ontology.iri ? 'var(--accent-tint)' : 'var(--surface-2)', 
+                      style={{
+                        backgroundColor: importDialogData.iri === ontology.iri ? 'var(--accent-tint)' : 'var(--surface-2)',
                         color: importDialogData.iri === ontology.iri ? 'var(--accent)' : 'var(--text-primary)',
                         borderColor: importDialogData.iri === ontology.iri ? 'var(--accent)' : 'var(--border)'
                       }}
