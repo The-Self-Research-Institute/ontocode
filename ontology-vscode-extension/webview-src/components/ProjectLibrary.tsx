@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
     ArrowLeft, 
     Upload, 
@@ -38,6 +38,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     onBack,
     onFileSelect 
 }) => {
+    const isMountedRef = useRef(true);
     const [files, setFiles] = useState<FileItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
@@ -47,6 +48,13 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     const [processingFile, setProcessingFile] = useState<string | null>(null);
     const [selectedFile, setSelectedFile] = useState<string | null>(null);
     const [deleteConfirm, setDeleteConfirm] = useState<{ show: boolean; fileId: string; fileName: string }>({ show: false, fileId: '', fileName: '' });
+    const [duplicateConfirm, setDuplicateConfirm] = useState<{
+        show: boolean;
+        existingFileId: string | null;
+        existingFileName: string;
+        pendingFile: File | null;
+        copyName: string;
+    }>({ show: false, existingFileId: null, existingFileName: '', pendingFile: null, copyName: '' });
     const [toast, setToast] = useState<{ show: boolean; message: string; type: 'success' | 'error' }>({ show: false, message: '', type: 'success' });
     const [openMenuFileId, setOpenMenuFileId] = useState<string | null>(null); // Track which file menu is open
     const { user } = useAuth();
@@ -59,6 +67,12 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     useEffect(() => {
         loadFiles();
     }, [projectId]);
+
+    useEffect(() => {
+        return () => {
+            isMountedRef.current = false;
+        };
+    }, []);
 
     // Close menu when clicking outside
     useEffect(() => {
@@ -89,39 +103,20 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         }
     };
 
-    const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0];
-        if (!file) return;
-
-        // Validate file size (max 300MB)
-        const maxSize = 300 * 1024 * 1024; // 300MB
-        if (file.size > maxSize) {
-            showToast(`File too large. Maximum size is 300MB. Your file is ${(file.size / (1024 * 1024)).toFixed(1)}MB`, 'error');
-            event.target.value = '';
-            return;
-        }
-
-        // Validate file type
-        const validExtensions = ['.owl', '.rdf', '.ttl', '.n3'];
-        const fileExtension = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
-        if (!validExtensions.includes(fileExtension)) {
-            showToast('Invalid file type. Only .owl, .rdf, .ttl, .n3 files are allowed', 'error');
-            event.target.value = '';
-            return;
-        }
-
+    const performUpload = async (file: File, replaceFileId?: string | null, overrideFileName?: string) => {
         try {
             setUploading(true);
             setUploadProgress(0);
-            setProcessingFile(file.name);
+            const targetFileName = overrideFileName || file.name;
+            setProcessingFile(targetFileName);
             
-            console.log(`[ProjectLibrary] Processing large file: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)}MB)`);
+            console.log(`[ProjectLibrary] Processing file: ${targetFileName} (${(file.size / (1024 * 1024)).toFixed(2)}MB)`);
             
             // For large files (>10MB), use chunked processing
             const isLargeFile = file.size > 10 * 1024 * 1024;
             
             if (isLargeFile) {
-                showToast(`Processing large file: ${file.name}...`, 'success');
+                showToast(`Processing large file: ${targetFileName}...`, 'success');
             }
             
             // Convert file to base64 for message passing
@@ -146,13 +141,19 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             
             console.log('[ProjectLibrary] File read complete, uploading to server...');
             
-            // Send as JSON with timeout for large files
-            const uploadResponse = await apiClient.post(`/api/projects/${projectId}/files`, {
-                fileName: file.name,
+            const uploadPayload: any = {
+                fileName: targetFileName,
                 fileData: base64Data,
                 fileSize: file.size,
                 fileType: file.type || 'application/rdf+xml'
-            }, {
+            };
+
+            if (replaceFileId) {
+                uploadPayload.replaceFileId = replaceFileId;
+            }
+            
+            // Send as JSON with timeout for large files
+            const uploadResponse = await apiClient.post(`/api/projects/${projectId}/files`, uploadPayload, {
                 timeout: 300000, // 5 minute timeout for large files
                 onUploadProgress: (progressEvent) => {
                     if (progressEvent.total) {
@@ -166,12 +167,22 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             setUploadProgress(100);
             
             if (isLargeFile) {
-                showToast('Large file uploaded successfully! Processing in background...', 'success');
+                showToast(`Large file "${targetFileName}" ${replaceFileId ? 'replaced' : 'uploaded'} successfully! Processing in background...`, 'success');
             } else {
-                showToast('File uploaded successfully', 'success');
+                showToast(replaceFileId ? 'File replaced successfully' : `File "${targetFileName}" uploaded successfully`, 'success');
             }
             
-            // Reload files to show the uploaded file
+            const responseData = (uploadResponse as any)?.data || uploadResponse;
+            const uploadedFileId = responseData?.fileId || responseData?.id || null;
+            const uploadedFileName = responseData?.filename || targetFileName;
+
+            if (uploadedFileId) {
+                setSelectedFile(uploadedFileId);
+                onFileSelect(uploadedFileId, uploadedFileName);
+                return;
+            }
+
+            // Reload files to show the uploaded file if no ID was returned
             await loadFiles();
         } catch (error: any) {
             console.error('Error uploading file:', error);
@@ -188,11 +199,63 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             
             showToast(errorMessage, 'error');
         } finally {
+            if (!isMountedRef.current) {
+                return;
+            }
             setUploading(false);
             setUploadProgress(0);
             setProcessingFile(null);
-            event.target.value = '';
         }
+    };
+
+    const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        // Reset input so selecting same file again triggers change
+        event.target.value = '';
+
+        // Validate file size (max 300MB)
+        const maxSize = 300 * 1024 * 1024; // 300MB
+        if (file.size > maxSize) {
+            showToast(`File too large. Maximum size is 300MB. Your file is ${(file.size / (1024 * 1024)).toFixed(1)}MB`, 'error');
+            return;
+        }
+
+        // Validate file type
+        const validExtensions = ['.owl', '.rdf', '.ttl', '.n3'];
+        const fileExtension = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+        if (!validExtensions.includes(fileExtension)) {
+            showToast('Invalid file type. Only .owl, .rdf, .ttl, .n3 files are allowed', 'error');
+            return;
+        }
+
+        // Check if file already exists in project
+        try {
+            const checkResponse = await apiClient.get(`/api/projects/${projectId}/files/check?fileName=${encodeURIComponent(file.name)}`);
+            const checkData = (checkResponse as any)?.data || checkResponse;
+            if (checkData?.exists) {
+                const existing = checkData.existingFile || {};
+                const existingFileId = existing.fileId || existing.id || null;
+                const existingFileName = existing.fileName || file.name;
+                const dotIndex = file.name.lastIndexOf('.');
+                const baseName = dotIndex > 0 ? file.name.substring(0, dotIndex) : file.name;
+                const extension = dotIndex > 0 ? file.name.substring(dotIndex) : '';
+                const defaultCopyName = `${baseName}-copy-1${extension}`;
+                setDuplicateConfirm({
+                    show: true,
+                    existingFileId,
+                    existingFileName,
+                    pendingFile: file,
+                    copyName: defaultCopyName
+                });
+                return;
+            }
+        } catch (error) {
+            // If check fails, continue with upload for backward compatibility
+            console.warn('[ProjectLibrary] Duplicate check failed:', error);
+        }
+
+        await performUpload(file);
     };
 
     const handleFileClick = (file: FileItem) => {
@@ -219,6 +282,67 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
 
     const cancelDelete = () => {
         setDeleteConfirm({ show: false, fileId: '', fileName: '' });
+    };
+
+    const handleDuplicateReplace = async () => {
+        const fileToUpload = duplicateConfirm.pendingFile;
+        const replaceFileId = duplicateConfirm.existingFileId;
+        setDuplicateConfirm({ show: false, existingFileId: null, existingFileName: '', pendingFile: null, copyName: '' });
+        if (!fileToUpload) return;
+        await performUpload(fileToUpload, replaceFileId);
+    };
+
+    const handleDuplicateCreateCopy = async () => {
+        const fileToUpload = duplicateConfirm.pendingFile;
+        if (!fileToUpload) {
+            setDuplicateConfirm({ show: false, existingFileId: null, existingFileName: '', pendingFile: null, copyName: '' });
+            return;
+        }
+
+        const originalName = fileToUpload.name;
+        const dotIndex = originalName.lastIndexOf('.');
+        const extension = dotIndex > 0 ? originalName.substring(dotIndex) : '';
+        let candidateName = duplicateConfirm.copyName.trim();
+        if (!candidateName) {
+            showToast('Copy name is required', 'error');
+            return;
+        }
+        if (extension && !candidateName.toLowerCase().endsWith(extension.toLowerCase())) {
+            candidateName = `${candidateName}${extension}`;
+        }
+
+        if (!/\.((owl|rdf|ttl|n3|nt|jsonld))$/i.test(candidateName)) {
+            showToast('Invalid file type for copy', 'error');
+            return;
+        }
+
+        try {
+            const checkResponse = await apiClient.get(`/api/projects/${projectId}/files/check?fileName=${encodeURIComponent(candidateName)}`);
+            const checkData = (checkResponse as any)?.data || checkResponse;
+            if (checkData?.exists) {
+                showToast(`"${candidateName}" already exists. Choose a different name.`, 'error');
+                return;
+            }
+        } catch (error) {
+            console.warn('[ProjectLibrary] Copy name duplicate check failed:', error);
+        }
+
+        setDuplicateConfirm({ show: false, existingFileId: null, existingFileName: '', pendingFile: null, copyName: '' });
+        await performUpload(fileToUpload, null, candidateName);
+    };
+
+    const handleDuplicateOpenExisting = () => {
+        if (duplicateConfirm.existingFileId) {
+            setSelectedFile(duplicateConfirm.existingFileId);
+            onFileSelect(duplicateConfirm.existingFileId, duplicateConfirm.existingFileName);
+        } else {
+            showToast('Could not open existing file', 'error');
+        }
+        setDuplicateConfirm({ show: false, existingFileId: null, existingFileName: '', pendingFile: null, copyName: '' });
+    };
+
+    const cancelDuplicateConfirm = () => {
+        setDuplicateConfirm({ show: false, existingFileId: null, existingFileName: '', pendingFile: null, copyName: '' });
     };
 
     const formatFileSize = (bytes: number) => {
@@ -496,6 +620,59 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                                 className="px-4 py-2 bg-red-600 text-white hover:bg-red-700 rounded-lg transition-colors"
                             >
                                 Delete
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Duplicate File Dialog */}
+            {duplicateConfirm.show && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+                        <h3 className="text-lg font-semibold text-gray-900 mb-2">File Already Exists</h3>
+                        <p className="text-gray-600 mb-6">
+                            A file named <span className="font-semibold">{duplicateConfirm.existingFileName}</span> already exists in this project.
+                            What would you like to do?
+                        </p>
+                        <div className="mb-4">
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Copy name</label>
+                            <input
+                                type="text"
+                                value={duplicateConfirm.copyName}
+                                onChange={(e) => setDuplicateConfirm(prev => ({ ...prev, copyName: e.target.value }))}
+                                className="w-full px-3 py-2 text-sm border rounded-md focus:ring-2 focus:ring-purple-500"
+                                placeholder="Enter copy name"
+                            />
+                        </div>
+                        <div className="flex flex-wrap justify-end gap-3">
+                            <button
+                                onClick={cancelDuplicateConfirm}
+                                disabled={uploading}
+                                className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleDuplicateOpenExisting}
+                                disabled={!duplicateConfirm.existingFileId || uploading}
+                                className="px-4 py-2 text-blue-700 bg-blue-100 hover:bg-blue-200 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                Open Existing
+                            </button>
+                            <button
+                                onClick={handleDuplicateCreateCopy}
+                                disabled={uploading}
+                                className="px-4 py-2 text-purple-700 bg-purple-100 hover:bg-purple-200 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                Create Copy
+                            </button>
+                            <button
+                                onClick={handleDuplicateReplace}
+                                disabled={uploading}
+                                className="px-4 py-2 bg-purple-600 text-white hover:bg-purple-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                Replace
                             </button>
                         </div>
                     </div>

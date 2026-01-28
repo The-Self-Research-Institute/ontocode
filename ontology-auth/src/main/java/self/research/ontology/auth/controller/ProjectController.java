@@ -361,7 +361,7 @@ public class ProjectController {
     /**
      * Get a specific project
      */
-    @GetMapping("/{projectId}")
+    @GetMapping("/{projectId:.+}")
     public ResponseEntity<?> getProject(@PathVariable String projectId) {
         try {
             String username = getCurrentUsername();
@@ -395,7 +395,7 @@ public class ProjectController {
     /**
      * Update a project
      */
-    @PutMapping("/{projectId}")
+    @PutMapping("/{projectId:.+}")
     public ResponseEntity<?> updateProject(
             @PathVariable String projectId,
             @Valid @RequestBody UpdateProjectRequest request) {
@@ -432,7 +432,7 @@ public class ProjectController {
     /**
      * Check if member already exists in project
      */
-    @GetMapping("/{projectId}/members/check")
+    @GetMapping("/{projectId:.+}/members/check")
     public ResponseEntity<?> checkMemberExists(
             @PathVariable String projectId,
             @RequestParam String email) {
@@ -487,7 +487,7 @@ public class ProjectController {
     /**
      * Add a member to a project
      */
-    @PostMapping("/{projectId}/members")
+    @PostMapping("/{projectId:.+}/members")
     public ResponseEntity<?> addMember(
             @PathVariable String projectId,
             @Valid @RequestBody AddMemberRequest request) {
@@ -534,7 +534,7 @@ public class ProjectController {
     /**
      * Remove a member from a project
      */
-    @DeleteMapping("/{projectId}/members/{userId}")
+    @DeleteMapping("/{projectId:.+}/members/{userId}")
     public ResponseEntity<?> removeMember(
             @PathVariable String projectId,
             @PathVariable String userId) {
@@ -566,7 +566,7 @@ public class ProjectController {
     /**
      * Archive a project
      */
-    @PostMapping("/{projectId}/archive")
+    @PostMapping("/{projectId:.+}/archive")
     public ResponseEntity<?> archiveProject(@PathVariable String projectId) {
         try {
             String username = getCurrentUsername();
@@ -592,7 +592,7 @@ public class ProjectController {
     /**
      * Soft delete a project
      */
-    @DeleteMapping("/{projectId}")
+    @DeleteMapping("/{projectId:.+}")
     public ResponseEntity<?> deleteProject(@PathVariable String projectId) {
         try {
             String username = getCurrentUsername();
@@ -618,7 +618,7 @@ public class ProjectController {
     /**
      * Restore a soft deleted project
      */
-    @PostMapping("/{projectId}/restore")
+    @PostMapping("/{projectId:.+}/restore")
     public ResponseEntity<?> restoreProject(
             @PathVariable String projectId,
             @RequestParam(defaultValue = "true") boolean restoreFiles) {
@@ -675,7 +675,7 @@ public class ProjectController {
     /**
      * Get files for a project
      */
-    @GetMapping("/{projectId}/files")
+    @GetMapping("/{projectId:.+}/files")
     public ResponseEntity<?> getProjectFiles(@PathVariable String projectId) {
         try {
             String username = getCurrentUsername();
@@ -742,7 +742,7 @@ public class ProjectController {
     /**
      * Get file content by file ID
      */
-    @GetMapping("/{projectId}/files/{fileId}/content")
+    @GetMapping("/{projectId:.+}/files/{fileId}/content")
     public ResponseEntity<?> getFileContent(
             @PathVariable String projectId,
             @PathVariable String fileId) {
@@ -790,7 +790,7 @@ public class ProjectController {
     /**
      * Check if a file with the same name already exists in the project
      */
-    @GetMapping("/{projectId}/files/check")
+    @GetMapping("/{projectId:.+}/files/check")
     public ResponseEntity<?> checkFileExists(
             @PathVariable String projectId,
             @RequestParam String fileName) {
@@ -843,7 +843,7 @@ public class ProjectController {
     /**
      * Upload a file to a project
      */
-    @PostMapping("/{projectId}/files")
+    @PostMapping("/{projectId:.+}/files")
     public ResponseEntity<?> uploadFile(
             @PathVariable String projectId,
             @RequestBody Map<String, Object> fileData) {
@@ -954,7 +954,7 @@ public class ProjectController {
     /**
      * Soft delete a file from a project
      */
-    @DeleteMapping("/{projectId}/files/{fileId}")
+    @DeleteMapping("/{projectId:.+}/files/{fileId}")
     public ResponseEntity<?> deleteFile(
             @PathVariable String projectId,
             @PathVariable String fileId) {
@@ -997,7 +997,7 @@ public class ProjectController {
     /**
      * Restore a soft deleted file in a project
      */
-    @PostMapping("/{projectId}/files/{fileId}/restore")
+    @PostMapping("/{projectId:.+}/files/{fileId}/restore")
     public ResponseEntity<?> restoreFile(
             @PathVariable String projectId,
             @PathVariable String fileId) {

@@ -35,6 +35,38 @@ function base64ToUint8Array(base64: string): Uint8Array {
     return bytes;
 }
 
+function buildDefaultCopyName(fileName: string, copyIndex: number = 1): string {
+    const dotIndex = fileName.lastIndexOf('.');
+    if (dotIndex > 0) {
+        const baseName = fileName.substring(0, dotIndex);
+        const extension = fileName.substring(dotIndex);
+        return `${baseName}-copy-${copyIndex}${extension}`;
+    }
+    return `${fileName}-copy-${copyIndex}`;
+}
+
+function normalizeCopyName(inputName: string, originalExtension: string): string {
+    const trimmed = inputName.trim();
+    if (!originalExtension) {
+        return trimmed;
+    }
+    const lower = trimmed.toLowerCase();
+    const extLower = originalExtension.toLowerCase();
+    if (lower.endsWith(extLower)) {
+        return trimmed;
+    }
+    return `${trimmed}${originalExtension}`;
+}
+
+function extractExtension(fileName: string): string {
+    const dotIndex = fileName.lastIndexOf('.');
+    return dotIndex > 0 ? fileName.substring(dotIndex) : '';
+}
+
+function isSupportedOntologyExtension(fileName: string): boolean {
+    return /\.(owl|rdf|ttl|n3|nt|jsonld)$/i.test(fileName);
+}
+
 const TOKEN_KEY = 'ontocode.authToken';
 // Production endpoints (commented for local development)
 const GATEWAY_URL = 'http://13.218.153.101'; // Gateway IPv4
@@ -98,7 +130,9 @@ type WebviewMessage =
   | { type: 'showLogin' }
   | { type: 'showLoading'; projectId: string }
   | { type: 'fileReady'; projectId: string }
+  | { type: 'openProjectFile'; projectId: string; fileId: string; fileName: string }
   | { type: 'loadingFailed'; error: string }
+  | { type: 'duplicateFilePrompt'; requestId: string; context: 'project' | 'ontology'; fileName: string; projectId?: string; ownerEmail?: string; defaultCopyName?: string; detail?: string; allowOpenExisting?: boolean; error?: string }
   // Fix: Added message type for API responses from the proxy
   | { type: 'apiResponse'; requestId: string; response?: any; error?: any }
   | { type: 'proxyResponse'; reqId: string; data?: any; error?: any }
@@ -119,6 +153,8 @@ type ExtensionMessage =
   | { type: 'saveAuthToken'; token: string }
   | { type: 'requestAuthToken' }
   | { type: 'logout' }
+  | { type: 'openLocalFile'; projectId?: string | null }
+  | { type: 'duplicateFilePromptResponse'; requestId: string; action: 'open_existing' | 'replace' | 'create_copy' | 'cancel'; copyName?: string }
   // Fix: Added message types for API requests to the proxy
   | { type: 'apiGet'; requestId: string; url: string; params?: Record<string, unknown> }
   | { type: 'apiPost'; requestId: string; url: string; body?: unknown }
@@ -135,9 +171,12 @@ type ExtensionMessage =
   | { type: 'cursorMoved'; nodeId: string; nodeName: string } // User moved cursor to a node
   | { type: 'broadcastCursor'; projectId: string; userId: string; userName: string; position: { x: number; y: number }; timestamp: number } // User cursor position
   | { type: 'importLocalFile'; filePath: string; currentProjectId: string } // Import local OWL file
-  | { type: 'uploadOntology'; projectId: string; fileName: string; fileContent: string; ownerEmail?: string } // Upload ontology from webview (admin flow)
+  | { type: 'uploadOntology'; projectId: string; fileName: string; fileContent: string; ownerEmail?: string; skipDuplicateCheck?: boolean } // Upload ontology from webview (admin flow)
   | { type: 'uploadFileToProject'; projectId: string; fileName: string; fileContent: string; fileSize: number }
   | { type: 'showSubscriptionPlans' }; // Request to show subscription plans page
+
+type DuplicatePromptAction = 'open_existing' | 'replace' | 'create_copy' | 'cancel';
+type DuplicatePromptResult = { action: DuplicatePromptAction; copyName?: string };
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -304,8 +343,10 @@ class OntoCodePanel {
     private _isWebviewReady: boolean = false;
     private _pendingFileUri: vscode.Uri | null = null;
     private _isPendingRegularUpload: boolean = false;
+    private _pendingAuthUpload: { projectId: string; fileName: string; fileData: Uint8Array } | null = null;
     private _lastProjectId: string | null = null; // Track last opened project
     public _pendingInvitationToken: string | null = null; // Track pending invitation token
+    private _pendingDuplicatePrompts = new Map<string, { resolve: (result: DuplicatePromptResult | null) => void; timeout: ReturnType<typeof setTimeout> }>();
 
     // Collaborative editing
     private collaborationManager: ICollaborationManager | null = null;
@@ -390,6 +431,7 @@ class OntoCodePanel {
                             // Fix: Cast context to `any` to access the `secrets` property, bypassing outdated type definitions.
                             await (this._context as any).secrets.store(TOKEN_KEY, message.token);
                             vscode.window.showInformationMessage('Authentication successful.');
+                            await this.resumePendingAuthUpload();
                         }
                         break;
                     case 'requestAuthToken':
@@ -400,7 +442,14 @@ class OntoCodePanel {
                     case 'logout':
                         // Fix: Cast context to `any` to access the `secrets` property, bypassing outdated type definitions.
                         await (this._context as any).secrets.delete(TOKEN_KEY);
+                        this._pendingAuthUpload = null;
                         this.postMessage({ type: 'loggedOut' });
+                        break;
+                    case 'openLocalFile':
+                        await this.handleOpenLocalFile(message.projectId || null);
+                        break;
+                    case 'duplicateFilePromptResponse':
+                        this.handleDuplicatePromptResponse(message);
                         break;
                     // Fix: Added cases to handle API proxy requests from the webview
                     case 'apiGet':
@@ -479,7 +528,7 @@ class OntoCodePanel {
                     case 'uploadOntology':
                         // Handle ontology upload from webview (admin flow - load file from project)
                         console.log('[OntoCode] 📤 Upload ontology request received:', message.projectId, message.fileName);
-                        this.handleUploadOntologyFromWebview(message.projectId, message.fileName, message.fileContent, message.ownerEmail);
+                        this.handleUploadOntologyFromWebview(message.projectId, message.fileName, message.fileContent, message.ownerEmail, message.skipDuplicateCheck);
                         break;
                     case 'uploadFileToProject':
                         // Handle file upload to MongoDB project (admin flow - save to project)
@@ -523,6 +572,270 @@ class OntoCodePanel {
         // If webview is *already* ready (e.g., panel was just revealed), trigger now.
         if (this._isWebviewReady) {
             this.triggerPendingUpload();
+        }
+    }
+
+    private async requestDuplicatePrompt(payload: {
+        context: 'project' | 'ontology';
+        fileName: string;
+        projectId?: string;
+        ownerEmail?: string;
+        defaultCopyName?: string;
+        detail?: string;
+        allowOpenExisting?: boolean;
+        error?: string;
+    }): Promise<DuplicatePromptResult | null> {
+        if (!this._isWebviewReady) {
+            return null;
+        }
+
+        const requestId = `dup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        return new Promise((resolve) => {
+            const timeout = setTimeout(() => {
+                this._pendingDuplicatePrompts.delete(requestId);
+                resolve(null);
+            }, 300_000);
+
+            this._pendingDuplicatePrompts.set(requestId, { resolve, timeout });
+            this.postMessage({
+                type: 'duplicateFilePrompt',
+                requestId,
+                ...payload
+            });
+        });
+    }
+
+    private handleDuplicatePromptResponse(message: { requestId: string; action: DuplicatePromptAction; copyName?: string }) {
+        const pending = this._pendingDuplicatePrompts.get(message.requestId);
+        if (!pending) {
+            return;
+        }
+        clearTimeout(pending.timeout);
+        this._pendingDuplicatePrompts.delete(message.requestId);
+        pending.resolve({ action: message.action, copyName: message.copyName });
+    }
+
+    private async resumePendingAuthUpload() {
+        if (!this._pendingAuthUpload) {
+            return;
+        }
+
+        // Clear first to avoid loops if anything below triggers another auth prompt
+        const pending = this._pendingAuthUpload;
+        this._pendingAuthUpload = null;
+
+        // Fix: Cast context to `any` to access the `secrets` property, bypassing outdated type definitions.
+        const token = await (this._context as any).secrets.get(TOKEN_KEY);
+        if (!token) {
+            // Still not authenticated; keep it cleared to avoid repeated retries
+            return;
+        }
+
+        const tokenData = parseJwtToken(token);
+        const hasWorkspace = tokenData?.workspaceId !== undefined && tokenData?.workspaceId !== null && tokenData?.workspaceId !== '';
+        const isAdmin = tokenData?.isAdmin === true;
+
+        if (isAdmin || hasWorkspace) {
+            console.log('[OntoCode] Auth restored, sending pending file for project selection.');
+            const base64Content = uint8ArrayToBase64(pending.fileData);
+            this.postMessage({
+                type: 'pendingFileUpload',
+                fileName: pending.fileName,
+                fileContent: base64Content,
+                fileSize: pending.fileData.length
+            });
+        } else {
+            console.log('[OntoCode] Auth restored, uploading pending file directly.');
+            await this._uploadOntology(pending.projectId, pending.fileName, pending.fileData);
+        }
+    }
+
+    private async handleOpenLocalFile(projectId?: string | null) {
+        const fileUri = await vscode.window.showOpenDialog({
+            canSelectMany: false,
+            openLabel: 'Open Ontology File',
+            filters: {
+                'Ontology Files': ['owl', 'rdf', 'ttl', 'n3', 'nt', 'jsonld'],
+                'All Files': ['*']
+            }
+        });
+
+        if (fileUri && fileUri[0]) {
+            console.log('[OntoCode] User selected local file from webview:', fileUri[0].fsPath);
+            if (!projectId) {
+                this.setPendingUpload(false, fileUri[0]);
+                return;
+            }
+
+            const token = await (this._context as any).secrets.get(TOKEN_KEY);
+            if (!token) {
+                vscode.window.showErrorMessage('You must be logged in to open a project file.');
+                this.postMessage({ type: 'showLogin' });
+                return;
+            }
+
+            const fileData = await (vscode.workspace as any).fs.readFile(fileUri[0]);
+            const fileName = fileUri[0].path.substring(fileUri[0].path.lastIndexOf('/') + 1);
+            const fileSize = fileData.length;
+            const base64Content = uint8ArrayToBase64(fileData);
+
+            let existingFileId: string | null = null;
+            let existingFileName: string | null = null;
+            let skipDuplicateCheck = false;
+            try {
+                const checkUrl = `${GATEWAY_URL}/api/projects/${projectId}/files/check?fileName=${encodeURIComponent(fileName)}`;
+                const checkResponse = await axios.get(checkUrl, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (checkResponse.data?.exists) {
+                    const existing = checkResponse.data.existingFile || {};
+                    existingFileId = existing.fileId || existing.id || null;
+                    existingFileName = existing.fileName || fileName;
+
+                    const defaultCopyName = buildDefaultCopyName(fileName, 1);
+                    const duplicateDecision = await this.requestDuplicatePrompt({
+                        context: 'project',
+                        fileName,
+                        projectId,
+                        defaultCopyName,
+                        allowOpenExisting: true,
+                        detail: 'Do you want to overwrite it, create a copy, or open the existing file?'
+                    });
+
+                    if (!duplicateDecision) {
+                        const choice = await vscode.window.showWarningMessage(
+                            `A file named "${fileName}" already exists in this project.`,
+                            { modal: true, detail: 'Do you want to overwrite it, create a copy, or open the existing file?' },
+                            'Overwrite',
+                            'Create Copy',
+                            'Open Existing',
+                            'Cancel'
+                        );
+
+                        if (choice === 'Open Existing') {
+                            if (existingFileId) {
+                                this.postMessage({
+                                    type: 'openProjectFile',
+                                    projectId,
+                                    fileId: existingFileId,
+                                    fileName: existingFileName || fileName
+                                });
+                            } else {
+                                vscode.window.showErrorMessage('Could not locate the existing file to open.');
+                            }
+                            return;
+                        }
+
+                        if (choice === 'Create Copy') {
+                            const originalExt = extractExtension(fileName);
+                            let copyIndex = 1;
+                            while (true) {
+                                const defaultName = buildDefaultCopyName(fileName, copyIndex);
+                                const copyInput = await vscode.window.showInputBox({
+                                    title: 'Create Copy',
+                                    prompt: 'Enter a name for the copy',
+                                    value: defaultName,
+                                    ignoreFocusOut: true,
+                                    validateInput: (value) => {
+                                        const trimmed = value.trim();
+                                        if (!trimmed) return 'Name is required.';
+                                        const normalized = normalizeCopyName(trimmed, originalExt);
+                                        if (originalExt && !normalized.toLowerCase().endsWith(originalExt.toLowerCase())) {
+                                            return `Name must end with ${originalExt}`;
+                                        }
+                                        if (!isSupportedOntologyExtension(normalized)) {
+                                            return 'Unsupported file type.';
+                                        }
+                                        return null;
+                                    }
+                                });
+
+                                if (!copyInput) {
+                                    return;
+                                }
+
+                                const candidateName = normalizeCopyName(copyInput, originalExt);
+                                try {
+                                    const dupCheck = await axios.get(
+                                        `${GATEWAY_URL}/api/projects/${projectId}/files/check?fileName=${encodeURIComponent(candidateName)}`,
+                                        { headers: { 'Authorization': `Bearer ${token}` } }
+                                    );
+                                    if (dupCheck.data?.exists) {
+                                        vscode.window.showWarningMessage(`"${candidateName}" already exists. Please choose a different name.`);
+                                        copyIndex++;
+                                        continue;
+                                    }
+                                } catch (dupError) {
+                                    console.warn('[OntoCode] Copy name duplicate check failed:', dupError);
+                                }
+
+                                await this.handleUploadFileToProject(projectId, candidateName, base64Content, fileSize, {
+                                    skipDuplicateCheck: true,
+                                    openAfterUpload: true
+                                });
+                                return;
+                            }
+                        }
+
+                        if (choice !== 'Overwrite') {
+                            return;
+                        }
+                        skipDuplicateCheck = true;
+                    } else {
+                        const action = duplicateDecision.action;
+                        if (action === 'open_existing') {
+                            if (existingFileId) {
+                                this.postMessage({
+                                    type: 'openProjectFile',
+                                    projectId,
+                                    fileId: existingFileId,
+                                    fileName: existingFileName || fileName
+                                });
+                            } else {
+                                vscode.window.showErrorMessage('Could not locate the existing file to open.');
+                            }
+                            return;
+                        }
+
+                        if (action === 'create_copy') {
+                            const originalExt = extractExtension(fileName);
+                            const candidateName = normalizeCopyName(duplicateDecision.copyName || defaultCopyName, originalExt);
+                            if (!isSupportedOntologyExtension(candidateName)) {
+                                vscode.window.showErrorMessage('Unsupported file type for copy.');
+                                return;
+                            }
+                            await this.handleUploadFileToProject(projectId, candidateName, base64Content, fileSize, {
+                                skipDuplicateCheck: true,
+                                openAfterUpload: true
+                            });
+                            return;
+                        }
+
+                        if (action !== 'replace') {
+                            return;
+                        }
+                        skipDuplicateCheck = true;
+                    }
+                } else {
+                    skipDuplicateCheck = true;
+                }
+            } catch (checkError: any) {
+                console.warn('[OntoCode] Failed to check for duplicate file:', checkError?.message || checkError);
+            }
+
+            const uploadResult = await this.handleUploadFileToProject(projectId, fileName, base64Content, fileSize, {
+                skipDuplicateCheck,
+                replaceFileId: existingFileId,
+                openAfterUpload: true
+            });
+
+            if (!uploadResult) {
+                return;
+            }
+        } else {
+            console.log('[OntoCode] User cancelled local file selection from webview');
+            vscode.window.showInformationMessage('Please select an ontology file to open.');
         }
     }
     
@@ -772,7 +1085,14 @@ class OntoCodePanel {
      * Uploads ontology file to the gateway which routes to the OWL Editor service.
      */
     // Fix: Changed fileData parameter from 'fs.ReadStream | Buffer' to 'Uint8Array'.
-    private async _uploadOntology(projectId: string, fileName: string, fileData: Uint8Array, action?: string): Promise<void> {
+    private async _uploadOntology(
+        projectId: string,
+        fileName: string,
+        fileData: Uint8Array,
+        action?: string,
+        ownerEmailOverride?: string,
+        skipDuplicateCheck?: boolean
+    ): Promise<void> {
         console.log(`[OntoCode] Starting upload for project: ${projectId}, file: ${fileName}, action: ${action || 'none'}`);
         
         // 1. Check for authentication token
@@ -780,7 +1100,9 @@ class OntoCodePanel {
         const token = await (this._context as any).secrets.get(TOKEN_KEY);
         if (!token) {
             console.error('[OntoCode] No authentication token found');
-            vscode.window.showErrorMessage("You must be logged in to process an ontology.");
+            // Preserve upload to resume after authentication
+            this._pendingAuthUpload = { projectId, fileName, fileData };
+            vscode.window.showErrorMessage("You must be logged in to process an ontology. Please log in to continue.");
             this.postMessage({ type: 'showLogin' });
             return;
         }
@@ -821,43 +1143,316 @@ class OntoCodePanel {
             }
         }
         
+        const resolvedOwnerEmail = ownerEmailOverride || ownerEmail;
+        const authHeaders = { 'Authorization': `Bearer ${token}` };
+        let duplicateCheckResult: 'duplicate' | 'unique' | 'failed' | 'skipped' = 'skipped';
+
         // 2. Check for duplicate file if action not specified
-        if (!action && ownerEmail) {
+        if (!action && !skipDuplicateCheck && resolvedOwnerEmail) {
             console.log(`[OntoCode] Checking for duplicate file: ${fileName}`);
             try {
-                const checkUrl = `${GATEWAY_URL}/api/ontology/check-duplicate?filename=${encodeURIComponent(fileName)}&ownerEmail=${encodeURIComponent(ownerEmail)}`;
-                const checkResponse = await axios.get(checkUrl, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
+                const checkUrl = `${GATEWAY_URL}/api/ontology/check-duplicate?filename=${encodeURIComponent(fileName)}&ownerEmail=${encodeURIComponent(resolvedOwnerEmail)}`;
+                const checkResponse = await axios.get(checkUrl, { headers: authHeaders });
                 
                 if (checkResponse.data.isDuplicate) {
+                    duplicateCheckResult = 'duplicate';
                     console.log(`[OntoCode] Duplicate file detected:`, checkResponse.data);
                     
-                    // Show user choice dialog
-                    const choice = await vscode.window.showWarningMessage(
-                        `A file named "${fileName}" already exists.`,
-                        {
-                            modal: true,
-                            detail: `Status: ${checkResponse.data.status || 'Unknown'}\nLast Updated: ${checkResponse.data.lastUpdated ? new Date(checkResponse.data.lastUpdated).toLocaleString() : 'Unknown'}\n\nWhat would you like to do?`
-                        },
-                        'Replace',
-                        'Create Copy',
-                        'Cancel'
-                    );
+                    const detail = `Status: ${checkResponse.data.status || 'Unknown'}\nLast Updated: ${checkResponse.data.lastUpdated ? new Date(checkResponse.data.lastUpdated).toLocaleString() : 'Unknown'}\n\nWhat would you like to do?`;
+                    const defaultCopyName = buildDefaultCopyName(fileName, 1);
+                    const duplicateDecision = await this.requestDuplicatePrompt({
+                        context: 'ontology',
+                        fileName,
+                        ownerEmail: resolvedOwnerEmail,
+                        defaultCopyName,
+                        detail,
+                        allowOpenExisting: true
+                    });
+
+                    if (!duplicateDecision) {
+                        // Show user choice dialog (fallback)
+                        const choice = await vscode.window.showWarningMessage(
+                            `A file named "${fileName}" already exists.`,
+                            {
+                                modal: true,
+                                detail
+                            },
+                            'Open Existing',
+                            'Replace',
+                            'Create Copy',
+                            'Cancel'
+                        );
                     
-                    if (choice === 'Cancel' || !choice) {
+                        if (choice === 'Open Existing') {
+                        const existingProjectId = checkResponse.data.projectId;
+                        if (existingProjectId) {
+                            console.log('[OntoCode] Opening existing project:', existingProjectId);
+                            this._lastProjectId = existingProjectId;
+                            try {
+                                await this.initializeCollaborationForProject(existingProjectId, token);
+                            } catch (error) {
+                                console.warn('[OntoCode] Failed to initialize collaboration for existing project:', error);
+                            }
+                            if (this._isWebviewReady) {
+                                this.postMessage({ type: 'fileReady', projectId: existingProjectId });
+                            }
+                        } else {
+                            vscode.window.showErrorMessage('Could not determine existing project to open.');
+                        }
+                        return;
+                    }
+
+                        if (choice === 'Cancel' || !choice) {
                         console.log('[OntoCode] User cancelled upload');
                         return;
                     }
                     
+                        if (choice === 'Create Copy') {
+                        const originalExt = extractExtension(fileName);
+                        let copyIndex = 1;
+                        while (true) {
+                            const defaultName = buildDefaultCopyName(fileName, copyIndex);
+                            const copyInput = await vscode.window.showInputBox({
+                                title: 'Create Copy',
+                                prompt: 'Enter a name for the copy',
+                                value: defaultName,
+                                ignoreFocusOut: true,
+                                validateInput: (value) => {
+                                    const trimmed = value.trim();
+                                    if (!trimmed) return 'Name is required.';
+                                    const normalized = normalizeCopyName(trimmed, originalExt);
+                                    if (originalExt && !normalized.toLowerCase().endsWith(originalExt.toLowerCase())) {
+                                        return `Name must end with ${originalExt}`;
+                                    }
+                                    if (!isSupportedOntologyExtension(normalized)) {
+                                        return 'Unsupported file type.';
+                                    }
+                                    return null;
+                                }
+                            });
+
+                            if (!copyInput) {
+                                return;
+                            }
+
+                            const candidateName = normalizeCopyName(copyInput, originalExt);
+                            try {
+                                const dupCheck = await axios.get(
+                                    `${GATEWAY_URL}/api/ontology/check-duplicate?filename=${encodeURIComponent(candidateName)}&ownerEmail=${encodeURIComponent(resolvedOwnerEmail)}`,
+                                    { headers: authHeaders }
+                                );
+                                if (dupCheck.data?.isDuplicate) {
+                                    vscode.window.showWarningMessage(`"${candidateName}" already exists. Please choose a different name.`);
+                                    copyIndex++;
+                                    continue;
+                                }
+                            } catch (dupError) {
+                                console.warn('[OntoCode] Copy name duplicate check failed:', dupError);
+                            }
+
+                            const candidateBase = normalizeCopyName(candidateName, '').replace(/\.[^/.]+$/, '');
+                            const copyProjectId = useUserStorage && userId
+                                ? `user_${userId}_${candidateBase}`
+                                : candidateBase;
+                            console.log(`[OntoCode] Creating copy with filename: ${candidateName}`);
+                            return this._uploadOntology(copyProjectId, candidateName, fileData, 'create_copy', resolvedOwnerEmail);
+                        }
+                    }
+
                     // Retry upload with user's choice
-                    const selectedAction = choice === 'Replace' ? 'replace' : 'create_copy';
-                    console.log(`[OntoCode] 🔄 User chose: ${choice} -> Calling _uploadOntology with action: ${selectedAction}`);
-                    return this._uploadOntology(projectId, fileName, fileData, selectedAction);
+                        if (choice === 'Replace') {
+                            console.log(`[OntoCode] 🔄 User chose: ${choice} -> Calling _uploadOntology with action: replace`);
+                            return this._uploadOntology(projectId, fileName, fileData, 'replace', resolvedOwnerEmail);
+                        }
+                        return;
+                    }
+
+                    const action = duplicateDecision.action;
+                    if (action === 'open_existing') {
+                        const existingProjectId = checkResponse.data.projectId;
+                        if (existingProjectId) {
+                            console.log('[OntoCode] Opening existing project:', existingProjectId);
+                            this._lastProjectId = existingProjectId;
+                            try {
+                                await this.initializeCollaborationForProject(existingProjectId, token);
+                            } catch (error) {
+                                console.warn('[OntoCode] Failed to initialize collaboration for existing project:', error);
+                            }
+                            if (this._isWebviewReady) {
+                                this.postMessage({ type: 'fileReady', projectId: existingProjectId });
+                            }
+                        } else {
+                            vscode.window.showErrorMessage('Could not determine existing project to open.');
+                        }
+                        return;
+                    }
+
+                    if (action === 'cancel') {
+                        console.log('[OntoCode] User cancelled upload');
+                        return;
+                    }
+
+                    if (action === 'create_copy') {
+                        const originalExt = extractExtension(fileName);
+                        const candidateName = normalizeCopyName(duplicateDecision.copyName || defaultCopyName, originalExt);
+                        if (!isSupportedOntologyExtension(candidateName)) {
+                            vscode.window.showErrorMessage('Unsupported file type for copy.');
+                            return;
+                        }
+                        const candidateBase = normalizeCopyName(candidateName, '').replace(/\.[^/.]+$/, '');
+                        const copyProjectId = useUserStorage && userId
+                            ? `user_${userId}_${candidateBase}`
+                            : candidateBase;
+                        console.log(`[OntoCode] Creating copy with filename: ${candidateName}`);
+                        return this._uploadOntology(copyProjectId, candidateName, fileData, 'create_copy', resolvedOwnerEmail);
+                    }
+
+                    if (action === 'replace') {
+                        console.log(`[OntoCode] 🔄 User chose: replace -> Calling _uploadOntology with action: replace`);
+                        return this._uploadOntology(projectId, fileName, fileData, 'replace', resolvedOwnerEmail);
+                    }
+                    return;
+                } else {
+                    duplicateCheckResult = 'unique';
                 }
             } catch (checkError: any) {
-                console.error('[OntoCode] Duplicate check failed:', checkError);
+                if (axios.isAxiosError(checkError) && checkError.response?.status === 404) {
+                    console.warn('[OntoCode] Duplicate check endpoint not available, skipping duplicate check.');
+                    duplicateCheckResult = 'skipped';
+                } else {
+                    console.error('[OntoCode] Duplicate check failed:', checkError);
+                    duplicateCheckResult = 'failed';
+                }
                 // Continue with upload if check fails
+            }
+        }
+
+        if (!action && !skipDuplicateCheck && duplicateCheckResult !== 'unique') {
+            try {
+                const statusUrl = `${GATEWAY_URL}/api/ontology/metadata/${projectId}/timestamp`;
+                const statusResp = await axios.get(statusUrl, {
+                    headers: authHeaders,
+                    validateStatus: (status) => status < 500
+                });
+                if (statusResp?.status === 200 && statusResp?.data?.success) {
+                    const defaultCopyName = buildDefaultCopyName(fileName, 1);
+                    const duplicateDecision = await this.requestDuplicatePrompt({
+                        context: 'ontology',
+                        fileName,
+                        ownerEmail: resolvedOwnerEmail,
+                        defaultCopyName,
+                        detail: 'What would you like to do?',
+                        allowOpenExisting: true
+                    });
+
+                    if (!duplicateDecision) {
+                        const choice = await vscode.window.showWarningMessage(
+                            `A file named "${fileName}" already exists.`,
+                            {
+                                modal: true,
+                                detail: 'What would you like to do?'
+                            },
+                            'Open Existing',
+                            'Replace',
+                            'Create Copy',
+                            'Cancel'
+                        );
+
+                        if (choice === 'Open Existing') {
+                            this._lastProjectId = projectId;
+                            try {
+                                await this.initializeCollaborationForProject(projectId, token);
+                            } catch (error) {
+                                console.warn('[OntoCode] Failed to initialize collaboration for existing project:', error);
+                            }
+                            if (this._isWebviewReady) {
+                                this.postMessage({ type: 'fileReady', projectId });
+                            }
+                            return;
+                        }
+
+                        if (choice === 'Create Copy') {
+                            const originalExt = extractExtension(fileName);
+                            let copyIndex = 1;
+                            while (true) {
+                                const defaultName = buildDefaultCopyName(fileName, copyIndex);
+                                const copyInput = await vscode.window.showInputBox({
+                                    title: 'Create Copy',
+                                    prompt: 'Enter a name for the copy',
+                                    value: defaultName,
+                                    ignoreFocusOut: true,
+                                    validateInput: (value) => {
+                                        const trimmed = value.trim();
+                                        if (!trimmed) return 'Name is required.';
+                                        const normalized = normalizeCopyName(trimmed, originalExt);
+                                        if (originalExt && !normalized.toLowerCase().endsWith(originalExt.toLowerCase())) {
+                                            return `Name must end with ${originalExt}`;
+                                        }
+                                        if (!isSupportedOntologyExtension(normalized)) {
+                                            return 'Unsupported file type.';
+                                        }
+                                        return null;
+                                    }
+                                });
+
+                                if (!copyInput) {
+                                    return;
+                                }
+
+                                const candidateName = normalizeCopyName(copyInput, originalExt);
+                                const candidateBase = normalizeCopyName(candidateName, '').replace(/\.[^/.]+$/, '');
+                                const copyProjectId = useUserStorage && userId
+                                    ? `user_${userId}_${candidateBase}`
+                                    : candidateBase;
+                                return this._uploadOntology(copyProjectId, candidateName, fileData, 'create_copy', resolvedOwnerEmail);
+                            }
+                        }
+
+                        if (choice === 'Replace') {
+                            return this._uploadOntology(projectId, fileName, fileData, 'replace', resolvedOwnerEmail);
+                        }
+                        return;
+                    }
+
+                    const action = duplicateDecision.action;
+                    if (action === 'open_existing') {
+                        this._lastProjectId = projectId;
+                        try {
+                            await this.initializeCollaborationForProject(projectId, token);
+                        } catch (error) {
+                            console.warn('[OntoCode] Failed to initialize collaboration for existing project:', error);
+                        }
+                        if (this._isWebviewReady) {
+                            this.postMessage({ type: 'fileReady', projectId });
+                        }
+                        return;
+                    }
+
+                    if (action === 'cancel') {
+                        return;
+                    }
+
+                    if (action === 'create_copy') {
+                        const originalExt = extractExtension(fileName);
+                        const candidateName = normalizeCopyName(duplicateDecision.copyName || defaultCopyName, originalExt);
+                        if (!isSupportedOntologyExtension(candidateName)) {
+                            vscode.window.showErrorMessage('Unsupported file type for copy.');
+                            return;
+                        }
+                        const candidateBase = normalizeCopyName(candidateName, '').replace(/\.[^/.]+$/, '');
+                        const copyProjectId = useUserStorage && userId
+                            ? `user_${userId}_${candidateBase}`
+                            : candidateBase;
+                        return this._uploadOntology(copyProjectId, candidateName, fileData, 'create_copy', resolvedOwnerEmail);
+                    }
+
+                    if (action === 'replace') {
+                        return this._uploadOntology(projectId, fileName, fileData, 'replace', resolvedOwnerEmail);
+                    }
+                    return;
+                }
+            } catch (fallbackError) {
+                console.warn('[OntoCode] Fallback duplicate check failed:', fallbackError);
             }
         }
 
@@ -898,9 +1493,9 @@ class OntoCodePanel {
             }
 
             // Extract user email from JWT token
-            if (ownerEmail) {
-                formData.append('ownerEmail', ownerEmail);
-                console.log(`[OntoCode] ✅ Adding owner email: ${ownerEmail}`);
+            if (resolvedOwnerEmail) {
+                formData.append('ownerEmail', resolvedOwnerEmail);
+                console.log(`[OntoCode] ✅ Adding owner email: ${resolvedOwnerEmail}`);
             } else {
                 // Fallback to extracting from token if not already extracted
                 try {
@@ -958,7 +1553,8 @@ class OntoCodePanel {
             // 5. Check if upload was successful
             if (response.status === 200 || response.status === 201) {
                 console.log(`[OntoCode] Upload successful for project: ${projectId}`);
-                this._lastProjectId = projectId; // Remember this project
+                const uploadProjectId = response.data?.projectId || projectId;
+                this._lastProjectId = uploadProjectId; // Remember this project
 
                 // WebSocket already initialized before upload - will receive IMPORT_COMPLETED
                 console.log(`[OntoCode] Upload successful, WebSocket listening for IMPORT_COMPLETED`);
@@ -981,28 +1577,129 @@ class OntoCodePanel {
                 }
                 
                 vscode.window.showInformationMessage(message);
+
+                if (isReplacement && this._isWebviewReady) {
+                    this.postMessage({ type: 'fileReady', projectId: uploadProjectId });
+                }
                 
-                // If it's a replacement, the file might already be processed - set a fallback timeout
-                if (isReplacement) {
-                    console.log(`[OntoCode] File replacement detected, will check status after 3 seconds if no IMPORT_COMPLETED`);
+                // Fallback: check status and trigger fileReady if COMPLETED (covers cases where WebSocket misses IMPORT_COMPLETED)
+                const scheduleStatusCheck = (attempt: number) => {
+                    const delays = [3000, 10000, 30000];
+                    const delay = delays[Math.min(attempt - 1, delays.length - 1)];
+                    console.log(`[OntoCode] Scheduling fallback status check (attempt ${attempt}) in ${delay}ms for ${uploadProjectId}`);
                     setTimeout(async () => {
-                        // Check if we already received IMPORT_COMPLETED (pendingImportProjectIdRef would be cleared)
-                        // If not, check the project status and trigger fileReady if COMPLETED
                         try {
                             const statusUrl = `http://ec2-13-218-153-101.compute-1.amazonaws.com/api/ontology/status/${projectId}`;
                             // const statusUrl = `http://localhost:80/api/ontology/status/${projectId}`;
                             const statusResp = await axios.get(statusUrl, { headers });
-                            console.log(`[OntoCode] Fallback status check for ${projectId}:`, statusResp.data);
+                            console.log(`[OntoCode] Fallback status check for ${uploadProjectId}:`, statusResp.data);
                             
-                            if (statusResp.data?.status === 'COMPLETED') {
-                                console.log(`[OntoCode] File already completed, sending fileReady`);
-                                this.postMessage({ type: 'fileReady', projectId });
+                            const status = statusResp.data?.status;
+                            if (status === 'COMPLETED') {
+                                console.log(`[OntoCode] File completed, sending fileReady`);
+                                this.postMessage({ type: 'fileReady', projectId: uploadProjectId });
+                                return;
+                            }
+                            if (status !== 'FAILED' && attempt < 3) {
+                                scheduleStatusCheck(attempt + 1);
                             }
                         } catch (err) {
                             console.error('[OntoCode] Failed to check fallback status:', err);
+                            if (attempt < 3) {
+                                scheduleStatusCheck(attempt + 1);
+                            }
                         }
-                    }, 3000);
+                    }, delay);
+                };
+
+                scheduleStatusCheck(1);
+            } else if (response.status === 409 && response.data?.isDuplicate && !action) {
+                const conflictProjectId = response.data?.projectId;
+                if (!conflictProjectId) {
+                    const conflictMessage = response.data?.error || 'A file with this name already exists.';
+                    vscode.window.showErrorMessage(conflictMessage);
+                    return;
                 }
+
+                const choice = await vscode.window.showWarningMessage(
+                    `A file named "${fileName}" already exists.`,
+                    { modal: true, detail: 'Do you want to overwrite it, create a copy, or open the existing file?' },
+                    'Open Existing',
+                    'Replace',
+                    'Create Copy',
+                    'Cancel'
+                );
+
+                if (choice === 'Open Existing') {
+                    this._lastProjectId = conflictProjectId;
+                    try {
+                        await this.initializeCollaborationForProject(conflictProjectId, token);
+                    } catch (error) {
+                        console.warn('[OntoCode] Failed to initialize collaboration for existing project:', error);
+                    }
+                    if (this._isWebviewReady) {
+                        this.postMessage({ type: 'fileReady', projectId: conflictProjectId });
+                    }
+                    return;
+                }
+
+                if (choice === 'Create Copy') {
+                    const originalExt = extractExtension(fileName);
+                    let copyIndex = 1;
+                    while (true) {
+                        const defaultName = buildDefaultCopyName(fileName, copyIndex);
+                        const copyInput = await vscode.window.showInputBox({
+                            title: 'Create Copy',
+                            prompt: 'Enter a name for the copy',
+                            value: defaultName,
+                            ignoreFocusOut: true,
+                            validateInput: (value) => {
+                                const trimmed = value.trim();
+                                if (!trimmed) return 'Name is required.';
+                                const normalized = normalizeCopyName(trimmed, originalExt);
+                                if (originalExt && !normalized.toLowerCase().endsWith(originalExt.toLowerCase())) {
+                                    return `Name must end with ${originalExt}`;
+                                }
+                                if (!isSupportedOntologyExtension(normalized)) {
+                                    return 'Unsupported file type.';
+                                }
+                                return null;
+                            }
+                        });
+
+                        if (!copyInput) {
+                            return;
+                        }
+
+                        const candidateName = normalizeCopyName(copyInput, originalExt);
+                        if (resolvedOwnerEmail) {
+                            try {
+                                const dupCheck = await axios.get(
+                                    `${GATEWAY_URL}/api/ontology/check-duplicate?filename=${encodeURIComponent(candidateName)}&ownerEmail=${encodeURIComponent(resolvedOwnerEmail)}`,
+                                    { headers: authHeaders }
+                                );
+                                if (dupCheck.data?.isDuplicate) {
+                                    vscode.window.showWarningMessage(`"${candidateName}" already exists. Please choose a different name.`);
+                                    copyIndex++;
+                                    continue;
+                                }
+                            } catch (dupError) {
+                                console.warn('[OntoCode] Copy name duplicate check failed:', dupError);
+                            }
+                        }
+
+                        const candidateBase = normalizeCopyName(candidateName, '').replace(/\.[^/.]+$/, '');
+                        const copyProjectId = useUserStorage && userId
+                            ? `user_${userId}_${candidateBase}`
+                            : candidateBase;
+                        return this._uploadOntology(copyProjectId, candidateName, fileData, 'create_copy', resolvedOwnerEmail);
+                    }
+                }
+
+                if (choice === 'Replace') {
+                    return this._uploadOntology(projectId, fileName, fileData, 'replace', resolvedOwnerEmail);
+                }
+                return;
             } else {
                 throw new Error(`Upload failed with status ${response.status}: ${JSON.stringify(response.data)}`);
             }
@@ -1052,7 +1749,7 @@ class OntoCodePanel {
      * Handle ontology upload from webview (admin flow - loading file from project)
      * This receives base64 file content and uploads it to the ontology editor
      */
-    private async handleUploadOntologyFromWebview(projectId: string, fileName: string, base64Content: string, ownerEmail?: string) {
+    private async handleUploadOntologyFromWebview(projectId: string, fileName: string, base64Content: string, ownerEmail?: string, skipDuplicateCheck?: boolean) {
         console.log(`[OntoCode] 📤 Handling webview upload for project: ${projectId}, file: ${fileName}`);
         
         try {
@@ -1062,7 +1759,7 @@ class OntoCodePanel {
             console.log(`[OntoCode] 📦 Converted base64 to binary, size: ${fileData.length} bytes`);
             
             // Delegate to the shared upload logic
-            await this._uploadOntology(projectId, fileName, fileData);
+            await this._uploadOntology(projectId, fileName, fileData, undefined, ownerEmail, skipDuplicateCheck);
             
         } catch (error: any) {
             console.error('[OntoCode] ❌ Failed to upload from webview:', error);
@@ -1075,7 +1772,13 @@ class OntoCodePanel {
      * Handle file upload to MongoDB project (admin flow - save file to project)
      * This receives base64 file content and uploads it to a project's file collection
      */
-    private async handleUploadFileToProject(projectId: string, fileName: string, base64Content: string, fileSize: number) {
+    private async handleUploadFileToProject(
+        projectId: string,
+        fileName: string,
+        base64Content: string,
+        fileSize: number,
+        options?: { skipDuplicateCheck?: boolean; replaceFileId?: string | null; openAfterUpload?: boolean }
+    ): Promise<{ fileId: string; fileName: string } | null> {
         console.log(`[OntoCode] 📤 Uploading file to project: ${projectId}, file: ${fileName}, size: ${(fileSize / (1024 * 1024)).toFixed(2)}MB`);
         
         try {
@@ -1089,66 +1792,107 @@ class OntoCodePanel {
             const checkUrl = `${GATEWAY_URL}/api/projects/${projectId}/files/check?fileName=${encodeURIComponent(fileName)}`;
             console.log(`[OntoCode] Checking for duplicate file: ${checkUrl}`);
             
-            let replaceFileId: string | null = null;
+            let replaceFileId: string | null = options?.replaceFileId ?? null;
             let finalFileName = fileName;
             
-            try {
-                const checkResponse = await axios.get(checkUrl, {
-                    headers: {
-                        'Authorization': `Bearer ${token}`
-                    }
-                });
-                
-                if (checkResponse.data.exists) {
-                    console.log(`[OntoCode] ⚠️ File "${fileName}" already exists in project`);
+            if (!options?.skipDuplicateCheck) {
+                try {
+                    const checkResponse = await axios.get(checkUrl, {
+                        headers: {
+                            'Authorization': `Bearer ${token}`
+                        }
+                    });
                     
-                    // Show confirmation dialog with options
-                    const choice = await vscode.window.showWarningMessage(
-                        `A file named "${fileName}" already exists in this project.`,
-                        {
-                            modal: true,
-                            detail: 'What would you like to do?'
-                        },
-                        'Replace',
-                        'Create Copy',
-                        'Cancel'
-                    );
-                    
-                    if (choice === 'Replace') {
-                        // User chose to replace - store the existing file ID
-                        replaceFileId = checkResponse.data.existingFile.id;
-                        console.log(`[OntoCode] User chose to replace file. Old file ID: ${replaceFileId}`);
-                    } else if (choice === 'Create Copy') {
-                        // User chose to create a copy - append suffix to filename
-                        const namePart = fileName.substring(0, fileName.lastIndexOf('.'));
-                        const extension = fileName.substring(fileName.lastIndexOf('.'));
-                        let copyNumber = 2;
+                    if (checkResponse.data.exists) {
+                        console.log(`[OntoCode] ⚠️ File "${fileName}" already exists in project`);
                         
-                        // Find a unique filename
-                        while (true) {
-                            const testName = `${namePart} (${copyNumber})${extension}`;
-                            const testCheckResponse = await axios.get(
-                                `${GATEWAY_URL}/api/projects/${projectId}/files/check?fileName=${encodeURIComponent(testName)}`,
-                                { headers: { 'Authorization': `Bearer ${token}` } }
-                            );
-                            
-                            if (!testCheckResponse.data.exists) {
-                                finalFileName = testName;
+                        // Show confirmation dialog with options
+                        const choice = await vscode.window.showWarningMessage(
+                            `A file named "${fileName}" already exists in this project.`,
+                            {
+                                modal: true,
+                                detail: 'What would you like to do?'
+                            },
+                            'Open Existing',
+                            'Replace',
+                            'Create Copy',
+                            'Cancel'
+                        );
+                        
+                        if (choice === 'Open Existing') {
+                            const existingId = checkResponse.data.existingFile?.fileId || checkResponse.data.existingFile?.id || null;
+                            const existingName = checkResponse.data.existingFile?.fileName || fileName;
+                            if (existingId) {
+                                this.postMessage({
+                                    type: 'openProjectFile',
+                                    projectId,
+                                    fileId: existingId,
+                                    fileName: existingName
+                                });
+                            } else {
+                                vscode.window.showErrorMessage('Could not locate the existing file to open.');
+                            }
+                            return null;
+                        } else if (choice === 'Replace') {
+                            // User chose to replace - store the existing file ID
+                            replaceFileId = checkResponse.data.existingFile?.fileId || checkResponse.data.existingFile?.id || null;
+                            console.log(`[OntoCode] User chose to replace file. Old file ID: ${replaceFileId}`);
+                        } else if (choice === 'Create Copy') {
+                            const originalExt = extractExtension(fileName);
+                            let copyIndex = 1;
+                            while (true) {
+                                const defaultName = buildDefaultCopyName(fileName, copyIndex);
+                                const copyInput = await vscode.window.showInputBox({
+                                    title: 'Create Copy',
+                                    prompt: 'Enter a name for the copy',
+                                    value: defaultName,
+                                    ignoreFocusOut: true,
+                                    validateInput: (value) => {
+                                        const trimmed = value.trim();
+                                        if (!trimmed) return 'Name is required.';
+                                        const normalized = normalizeCopyName(trimmed, originalExt);
+                                        if (originalExt && !normalized.toLowerCase().endsWith(originalExt.toLowerCase())) {
+                                            return `Name must end with ${originalExt}`;
+                                        }
+                                        if (!isSupportedOntologyExtension(normalized)) {
+                                            return 'Unsupported file type.';
+                                        }
+                                        return null;
+                                    }
+                                });
+
+                                if (!copyInput) {
+                                    return null;
+                                }
+
+                                const candidateName = normalizeCopyName(copyInput, originalExt);
+                                try {
+                                    const dupCheck = await axios.get(
+                                        `${GATEWAY_URL}/api/projects/${projectId}/files/check?fileName=${encodeURIComponent(candidateName)}`,
+                                        { headers: { 'Authorization': `Bearer ${token}` } }
+                                    );
+                                    if (dupCheck.data?.exists) {
+                                        vscode.window.showWarningMessage(`"${candidateName}" already exists. Please choose a different name.`);
+                                        copyIndex++;
+                                        continue;
+                                    }
+                                } catch (dupError) {
+                                    console.warn('[OntoCode] Copy name duplicate check failed:', dupError);
+                                }
+
+                                finalFileName = candidateName;
                                 break;
                             }
-                            copyNumber++;
+                        } else {
+                            // User cancelled
+                            console.log('[OntoCode] User cancelled upload');
+                            return null;
                         }
-                        
-                        console.log(`[OntoCode] User chose to create copy. New filename: ${finalFileName}`);
-                    } else {
-                        // User cancelled
-                        console.log('[OntoCode] User cancelled upload');
-                        return;
                     }
+                } catch (checkError: any) {
+                    // If check endpoint fails, continue with upload (backward compatibility)
+                    console.warn('[OntoCode] Failed to check for duplicate file:', checkError.message);
                 }
-            } catch (checkError: any) {
-                // If check endpoint fails, continue with upload (backward compatibility)
-                console.warn('[OntoCode] Failed to check for duplicate file:', checkError.message);
             }
 
             // Check if it's a large file (>10MB)
@@ -1214,6 +1958,24 @@ class OntoCodePanel {
                 
                 // Notify webview to refresh file list
                 this.postMessage({ type: 'fileReady', projectId: projectId });
+
+                const uploadedFileId = response.data?.fileId || response.data?.id;
+                const uploadedFileName = response.data?.filename || finalFileName;
+
+                if (options?.openAfterUpload && uploadedFileId) {
+                    this.postMessage({
+                        type: 'openProjectFile',
+                        projectId,
+                        fileId: uploadedFileId,
+                        fileName: uploadedFileName
+                    });
+                }
+
+                if (uploadedFileId) {
+                    return { fileId: uploadedFileId, fileName: uploadedFileName };
+                }
+
+                return null;
             } else {
                 throw new Error(`Upload failed with status: ${response.status}`);
             }
@@ -1230,7 +1992,10 @@ class OntoCodePanel {
             }
             
             vscode.window.showErrorMessage(errorMessage);
+            return null;
         }
+
+        return null;
     }
 
     /**

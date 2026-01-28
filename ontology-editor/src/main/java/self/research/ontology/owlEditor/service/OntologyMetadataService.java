@@ -40,6 +40,12 @@ public class OntologyMetadataService {
         
         // 1. Get base metadata from MongoDB
         projectMetadataService.readMeta(projectId).ifPresent(metadata::putAll);
+
+        // Include filename and status from project metadata for UI context
+        projectMetadataService.readStatus(projectId).ifPresent(status -> {
+            metadata.put("filename", status.filename());
+            metadata.put("projectStatus", status.status());
+        });
         
         // 2. Merge with dynamic metrics from GraphDB
         metadata.putAll(getDynamicMetrics(projectId));
