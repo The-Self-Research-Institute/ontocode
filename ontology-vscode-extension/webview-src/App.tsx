@@ -40,7 +40,7 @@ const AppContent = () => {
         const params = new URLSearchParams(window.location.search);
         const token = params.get('token') || params.get('invite');
         const email = params.get('email');
-        
+
         if (token) {
             console.log('[App] Found invitation token in URL:', token);
             setInviteToken(token);
@@ -55,7 +55,7 @@ const AppContent = () => {
         const handleMessage = (event: MessageEvent) => {
             const message = event.data;
             console.log('[App] Received message from extension:', message.type, message);
-            
+
             if (message.type === 'pendingFileUpload') {
                 console.log('[App] 📎 Received pending file upload:', message.fileName);
                 setPendingFile({
@@ -86,7 +86,7 @@ const AppContent = () => {
 
     const handleProjectSelected = (projectId: string, projectName: string) => {
         console.log('[App] Project selected:', projectId, projectName);
-        
+
         // If there's a pending file, upload it to this project
         if (pendingFile) {
             console.log('[App] Uploading pending file to project:', pendingFile.fileName);
@@ -102,7 +102,7 @@ const AppContent = () => {
             // Clear pending file immediately after sending upload message
             setPendingFile(null);
         }
-        
+
         setSelectedProjectId(projectId);
         setSelectedProjectName(projectName);
     };
@@ -160,7 +160,7 @@ const AppContent = () => {
         // Clear invitation state
         setInviteToken(null);
         setInviteEmail(null);
-        
+
         if (workspaceData) {
             console.log('[App] Successfully joined workspace:', workspaceData.workspaceId || workspaceData.workspace?.id);
             // Select the workspace the user just joined
@@ -304,9 +304,10 @@ const AppContent = () => {
     if (user) {
         console.log('[App] Routing to Dashboard - isAdmin:', user.isAdmin, 'workspaceId:', user.workspaceId, 'selectedFileId:', selectedFileId, 'selectedProjectId:', selectedProjectId);
         return (
-            <Dashboard 
+            <Dashboard
                 key={selectedFileId || 'default'} // Force remount when file changes
                 onBackToProjects={user.workspaceId ? handleBackToProjectDashboard : undefined}
+                onFileSelected={handleFileSelected}
                 selectedFileId={selectedFileId || undefined}
                 selectedFileName={selectedFileName || undefined}
                 projectId={selectedProjectId || undefined}
@@ -317,15 +318,15 @@ const AppContent = () => {
         const handleBackToInvitation = () => {
             setShowAuthForInvitation(false);
         };
-        
+
         return isLoginView ? (
-            <LoginForm 
-                onToggleForm={toggleFormView} 
+            <LoginForm
+                onToggleForm={toggleFormView}
                 prefillEmail={inviteEmail || undefined}
                 onBackToInvitation={inviteToken ? handleBackToInvitation : undefined}
             />
         ) : (
-            <SignupForm 
+            <SignupForm
                 onToggleForm={toggleFormView}
                 prefillEmail={inviteEmail || undefined}
                 onBackToInvitation={inviteToken ? handleBackToInvitation : undefined}
@@ -337,11 +338,11 @@ const AppContent = () => {
 const App = () => {
     return (
         <ThemeProvider>
-        <CollaborationProvider>
-            <EntityPreferencesProvider>
-                <AppContent />
-            </EntityPreferencesProvider>
-        </CollaborationProvider>
+            <CollaborationProvider>
+                <EntityPreferencesProvider>
+                    <AppContent />
+                </EntityPreferencesProvider>
+            </CollaborationProvider>
         </ThemeProvider>
     );
 };
