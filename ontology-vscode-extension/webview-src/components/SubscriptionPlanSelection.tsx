@@ -45,15 +45,17 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
             description: 'Perfect for getting started',
             features: [
                 'Up to 3 team members',
-                '5 GB storage',
+                '10 GB storage',
+                'Up to 3 workspaces',
                 'Basic collaboration',
+                'File sharing & comments',
                 'Community support',
                 'Core ontology features'
             ],
             limitations: [
-                'Limited to 1 workspace',
-                'No version control',
-                'No advanced plugins'
+                'No real-time editing',
+                'Limited advanced features',
+                'No version control'
             ],
             gradient: 'from-gray-400 to-gray-600',
             buttonColor: 'bg-gray-600 hover:bg-gray-700'
@@ -66,14 +68,19 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
             period: 'per month',
             description: 'For growing teams',
             features: [
-                'Up to 20 team members',
-                '50 GB storage',
-                'Advanced collaboration',
+                'Up to 10 team members',
+                '100 GB storage',
+                'Up to 10 workspaces',
+                'No collaboration',
                 'Priority support',
                 'Version control & history',
                 'Custom plugins',
                 'Advanced reasoning',
                 'API access'
+            ],
+            limitations: [
+                'No real-time editing',
+                'No file sharing features'
             ],
             popular: true,
             badge: 'Most Popular',
@@ -89,8 +96,10 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
             description: 'For large organizations',
             features: [
                 'Unlimited team members',
-                '500 GB storage',
-                'Real-time collaboration',
+                'Unlimited storage',
+                'Unlimited workspaces',
+                'Basic collaboration',
+                'File sharing & comments',
                 'Dedicated support 24/7',
                 'Advanced security & SSO',
                 'Custom integrations',

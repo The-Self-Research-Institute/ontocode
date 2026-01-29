@@ -886,6 +886,53 @@ public class ProjectController {
             
             Project project = projectOpt.get();
             
+            // Get workspace and check storage limits
+            String workspaceId = project.getWorkspaceId();
+            Optional<Workspace> workspaceOpt = workspaceService.getWorkspace(workspaceId);
+            
+            if (workspaceOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Workspace not found"));
+            }
+            
+            Workspace workspace = workspaceOpt.get();
+            String subscriptionPlan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
+            
+            // Calculate current storage usage for workspace
+            long currentStorageBytes = calculateWorkspaceStorageUsage(workspaceId);
+            long newFileSize = ((Number) fileData.getOrDefault("fileSize", 0)).longValue();
+            
+            // If replacing, subtract old file size
+            if (replaceFileId != null && !replaceFileId.isEmpty()) {
+                Optional<FileMetadata> oldFile = fileMetadataRepository.findById(replaceFileId);
+                if (oldFile.isPresent() && oldFile.get().getFileSize() != null) {
+                    currentStorageBytes -= oldFile.get().getFileSize();
+                }
+            }
+            
+            // Get storage limit for subscription plan (convert GB to bytes)
+            double storageLimitGB = getStorageLimitForPlan(subscriptionPlan);
+            long storageLimitBytes = (long) (storageLimitGB * 1024 * 1024 * 1024);
+            
+            // Check if upload would exceed limit
+            if (currentStorageBytes + newFileSize > storageLimitBytes) {
+                double currentStorageMB = currentStorageBytes / (1024.0 * 1024.0);
+                double newFileSizeMB = newFileSize / (1024.0 * 1024.0);
+                double limitMB = storageLimitGB * 1024;
+                
+                log.warn("Storage limit exceeded for workspace {}. Current: {:.2f} MB, New file: {:.2f} MB, Limit: {:.2f} MB",
+                    workspaceId, currentStorageMB, newFileSizeMB, limitMB);
+                
+                return ResponseEntity.status(413).body(Map.of(
+                    "error", "Storage limit exceeded for " + subscriptionPlan + " plan",
+                    "currentStorageMB", String.format("%.2f", currentStorageMB),
+                    "newFileSizeMB", String.format("%.2f", newFileSizeMB),
+                    "storageLimitMB", String.format("%.2f", limitMB),
+                    "plan", subscriptionPlan,
+                    "message", String.format("Your workspace has used %.2f MB of %.2f MB. This file (%.2f MB) would exceed your storage limit. Please upgrade your plan or delete existing files.",
+                        currentStorageMB, limitMB, newFileSizeMB)
+                ));
+            }
+            
             // If replaceFileId is provided, delete the old file first
             if (replaceFileId != null && !replaceFileId.isEmpty()) {
                 try {
@@ -1110,5 +1157,47 @@ public class ProjectController {
     public static class AddMemberRequest {
         public String username;
         public String role; // EDITOR, VIEWER
+    }
+    
+    /**
+     * Calculate total storage usage for a workspace (in bytes)
+     */
+    private long calculateWorkspaceStorageUsage(String workspaceId) {
+        try {
+            // Get all projects in the workspace
+            List<Project> projects = projectRepository.findByWorkspaceIdAndStatus(workspaceId, "ACTIVE");
+            
+            long totalStorage = 0;
+            
+            // Sum up all file sizes from all projects
+            for (Project project : projects) {
+                List<Project.FileMetadataInfo> files = project.getActiveFiles();
+                for (Project.FileMetadataInfo file : files) {
+                    if (file.getFileSize() != null) {
+                        totalStorage += file.getFileSize();
+                    }
+                }
+            }
+            
+            log.info("Workspace {} storage usage: {} bytes ({:.2f} MB)", 
+                workspaceId, totalStorage, totalStorage / (1024.0 * 1024.0));
+            
+            return totalStorage;
+        } catch (Exception e) {
+            log.error("Error calculating workspace storage usage", e);
+            return 0;
+        }
+    }
+    
+    /**
+     * Get storage limit for subscription plan (in GB)
+     */
+    private double getStorageLimitForPlan(String plan) {
+        return switch (plan.toUpperCase()) {
+            case "FREE" -> 10.0;              // 10 GB
+            case "PRO" -> 100.0;              // 100 GB
+            case "ENTERPRISE" -> Double.MAX_VALUE;  // Unlimited
+            default -> 10.0;                  // Default to FREE plan
+        };
     }
 }

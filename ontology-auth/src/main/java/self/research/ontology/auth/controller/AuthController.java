@@ -226,12 +226,8 @@ public class AuthController {
         user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.setEmail(request.getEmail());
         
-        // Set roles based on signup request
-        if ("admin".equalsIgnoreCase(request.getRole())) {
-            user.setRoles(Set.of("ROLE_USER", "ROLE_ADMIN"));
-        } else {
-            user.setRoles(Set.of("ROLE_USER"));
-        }
+        // Don't set role on signup - will be set after deployment selection
+        user.setRoles(new HashSet<>());
         
         user.setEnabled(true); // Enable immediately for development (skip email verification)
 
@@ -462,6 +458,74 @@ public class AuthController {
             log.error("Failed to get user email", e);
             return ResponseEntity.badRequest().body(Map.of(
                 "error", e.getMessage()
+            ));
+        }
+    }
+
+    /**
+     * Update user role based on deployment type
+     */
+    @PutMapping("/update-role")
+    public ResponseEntity<?> updateRole(@RequestBody Map<String, String> request) {
+        try {
+            String username = request.get("username");
+            String deploymentType = request.get("deploymentType");
+            
+            log.info("Update role request - username: {}, deploymentType: {}", username, deploymentType);
+            
+            if (username == null || deploymentType == null) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "error", "Username and deploymentType are required"
+                ));
+            }
+            
+            Optional<User> userOpt = userRepository.findByUsername(username);
+            if (userOpt.isEmpty()) {
+                log.error("User not found: {}", username);
+                return ResponseEntity.notFound().build();
+            }
+            
+            User user = userOpt.get();
+            log.info("Current user roles: {}", user.getRoles());
+            
+            // Set role based on deployment type
+            if ("cloud".equalsIgnoreCase(deploymentType)) {
+                user.setRoles(Set.of("ROLE_USER", "ROLE_ADMIN"));
+                log.info("Setting cloud roles (ROLE_USER, ROLE_ADMIN) for user: {}", username);
+            } else {
+                user.setRoles(Set.of("ROLE_USER"));
+                log.info("Setting self-hosted roles (ROLE_USER) for user: {}", username);
+            }
+            
+            userRepository.save(user);
+            log.info("User roles saved. New roles: {}", user.getRoles());
+            
+            // Generate new JWT token with updated roles
+            try {
+                UserDetails userDetails = userDetailsService.loadUserByUsername(username);
+                String jwt = jwtUtil.generateToken(userDetails, user.getEmail());
+                
+                boolean isAdmin = user.getRoles().contains("ROLE_ADMIN");
+                
+                Map<String, Object> response = new HashMap<>();
+                response.put("jwt", jwt);
+                response.put("username", user.getUsername());
+                response.put("email", user.getEmail());
+                response.put("roles", user.getRoles());
+                response.put("isAdmin", isAdmin);
+                response.put("message", "Role updated successfully");
+                
+                log.info("Successfully updated role for user: {} to deployment type: {}", username, deploymentType);
+                
+                return ResponseEntity.ok(response);
+            } catch (Exception tokenError) {
+                log.error("Failed to generate JWT token for user: {}", username, tokenError);
+                throw new RuntimeException("Failed to generate authentication token: " + tokenError.getMessage());
+            }
+        } catch (Exception e) {
+            log.error("Failed to update user role for username: {}", request.get("username"), e);
+            return ResponseEntity.internalServerError().body(Map.of(
+                "error", "Failed to update role: " + e.getMessage()
             ));
         }
     }

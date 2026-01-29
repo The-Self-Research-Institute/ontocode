@@ -171,6 +171,7 @@
     "@stomp/stompjs": "^7.0.0",
     "axios": "^1.10.0",
     "crypto-browserify": "^3.12.1",
+    "dotenv": "^16.4.5",
     "form-data": "^4.0.3",
     "fs-extra": "^11.1.0",
     "lucide-react": "^0.525.0",

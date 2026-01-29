@@ -14,7 +14,6 @@ const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation }: SignupFo
     const [email, setEmail] = useState(prefillEmail || '');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
-    const [role, setRole] = useState('user'); // Default to user role
     const [showPassword, setShowPassword] = useState(false);
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
@@ -51,7 +50,7 @@ const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation }: SignupFo
         
         setIsLoading(true);
         try {
-            await signup(username, email, password, role);
+            await signup(username, email, password);
             // If we get here without error, signup succeeded with immediate login
         } catch (err: any) {
             // Check if it's a success case (verification required)
@@ -104,36 +103,6 @@ const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation }: SignupFo
                         className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 text-white"
                         placeholder="Username"
                     />
-                    
-                    <div>
-                        <label className="block text-gray-300 text-sm font-medium mb-2">Role</label>
-                        <div className="flex gap-4">
-                            <label className="flex items-center cursor-pointer">
-                                <input
-                                    type="radio"
-                                    name="role"
-                                    value="user"
-                                    checked={role === 'user'}
-                                    onChange={(e) => setRole(e.target.value)}
-                                    disabled={isLoading}
-                                    className="mr-2"
-                                />
-                                <span className="text-white">User</span>
-                            </label>
-                            <label className="flex items-center cursor-pointer">
-                                <input
-                                    type="radio"
-                                    name="role"
-                                    value="admin"
-                                    checked={role === 'admin'}
-                                    onChange={(e) => setRole(e.target.value)}
-                                    disabled={isLoading}
-                                    className="mr-2"
-                                />
-                                <span className="text-white">Admin</span>
-                            </label>
-                        </div>
-                    </div>
 
                     <input
                         type="email"
