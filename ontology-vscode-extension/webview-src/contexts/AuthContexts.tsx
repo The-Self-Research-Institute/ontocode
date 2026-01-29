@@ -20,13 +20,16 @@ interface AuthContextType {
     loading: boolean;
     needsWorkspaceSelection: boolean;
     login: (username: string, password: string) => Promise<void>;
-    signup: (username: string, email: string, password: string, role?: string) => Promise<void>;
+    signup: (username: string, email: string, password: string) => Promise<void>;
     selectWorkspace: (workspaceData: any) => void;
     switchWorkspace: () => void;
     updateSubscriptionPlan: (planId: string) => Promise<void>;
+    updateUserRole: (deploymentType: 'self-hosted' | 'cloud') => Promise<void>;
     logout: () => void;
     sessionExpiredMessage: string | null;
 }
+
+type DeploymentType = 'self-hosted' | 'cloud';
 
 // Decode JWT token to check expiration
 const isTokenExpired = (token: string): boolean => {
@@ -68,6 +71,32 @@ const decodeToken = (token: string): { userId?: string; username: string; email?
         console.error('[AuthContext] Error decoding token:', e);
         return { username: 'unknown' };
     }
+};
+
+const getStoredDeploymentType = (): DeploymentType | null => {
+    try {
+        const value = localStorage.getItem('deploymentType');
+        if (value === 'self-hosted' || value === 'cloud') {
+            return value;
+        }
+    } catch (error) {
+        console.warn('[AuthContext] Unable to read deployment type from storage:', error);
+    }
+    return null;
+};
+
+const shouldRequireWorkspaceSelection = (
+    deploymentType: DeploymentType | null,
+    isAdmin: boolean,
+    workspaceId?: string
+): boolean => {
+    if (deploymentType === 'self-hosted') {
+        return false;
+    }
+    if (deploymentType === 'cloud') {
+        return !workspaceId;
+    }
+    return isAdmin && !workspaceId;
 };
 
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -125,49 +154,32 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         }
                         // Decode JWT to get user info
                         const userInfo = decodeToken(message.token);
+                        const deploymentType = getStoredDeploymentType();
                         
-                        // Check if user has workspace selected
-                        if (userInfo.workspaceId && userInfo.isAdmin) {
-                            // Admin with workspace selected - show ProjectDashboard
-                            setUser({ 
-                                token: message.token,
-                                userId: userInfo.userId,
-                                username: userInfo.username, 
-                                email: userInfo.email,
-                                roles: userInfo.roles,
-                                isAdmin: userInfo.isAdmin,
-                                workspaceId: userInfo.workspaceId,
-                                workspaceName: userInfo.workspaceName,
-                                workspaceRole: userInfo.workspaceRole
-                            });
-                            setNeedsWorkspaceSelection(false);
-                        } else if (userInfo.workspaceId && !userInfo.isAdmin) {
-                            // Non-admin with workspace - go directly to editor
-                            setUser({ 
-                                token: message.token,
-                                userId: userInfo.userId,
-                                username: userInfo.username, 
-                                email: userInfo.email,
-                                roles: userInfo.roles,
-                                isAdmin: userInfo.isAdmin,
-                                workspaceId: userInfo.workspaceId,
-                                workspaceName: userInfo.workspaceName,
-                                workspaceRole: userInfo.workspaceRole
-                            });
-                            setNeedsWorkspaceSelection(false);
-                        } else {
-                            // User without workspace
-                            setUser({ 
-                                token: message.token,
-                                userId: userInfo.userId,
-                                username: userInfo.username, 
-                                email: userInfo.email,
-                                roles: userInfo.roles,
-                                isAdmin: userInfo.isAdmin
-                            });
-                            // Admins need workspace selection, non-admins go directly to editor
-                            setNeedsWorkspaceSelection(userInfo.isAdmin || false);
-                        }
+                        // Cloud users are always admins
+                        const isAdmin = deploymentType === 'cloud' ? true : (userInfo.isAdmin || false);
+                        
+                        const requiresWorkspace = shouldRequireWorkspaceSelection(
+                            deploymentType,
+                            isAdmin,
+                            userInfo.workspaceId
+                        );
+
+                        // Persist user state from token
+                        setUser({ 
+                            token: message.token,
+                            userId: userInfo.userId,
+                            username: userInfo.username, 
+                            email: userInfo.email,
+                            roles: userInfo.roles,
+                            isAdmin: isAdmin,
+                            workspaceId: userInfo.workspaceId,
+                            workspaceName: userInfo.workspaceName,
+                            workspaceRole: userInfo.workspaceRole
+                        });
+
+                        // Workspace selection based on deployment choice and role
+                        setNeedsWorkspaceSelection(requiresWorkspace);
                         // Clear expired message on successful login
                         setSessionExpiredMessage(null);
                     }
@@ -213,9 +225,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             // Backend returns 'jwt' field, not 'token'
             const token = response?.jwt || response?.token || response?.data?.jwt || response?.data?.token;
             const responseData = response?.data || response;
-            const isAdmin = responseData?.isAdmin || false;
             const roles = responseData?.roles || [];
             const email = responseData?.email || '';
+            
+            // Cloud users are always admins
+            const deploymentType = getStoredDeploymentType();
+            const isAdmin = deploymentType === 'cloud' ? true : (responseData?.isAdmin || false);
 
             if (!token) {
                 // Check if it's an error response
@@ -247,13 +262,64 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 workspaceRole: userInfo.workspaceRole
             });
             
-            // Admins need workspace selection, non-admins skip it and go directly to editor
-            if (isAdmin || (roles && roles.includes('ROLE_ADMIN'))) {
-                console.log('[AuthContext]  Login successful - Admin user (ROLE_ADMIN), needs workspace selection');
-                setNeedsWorkspaceSelection(true);
+            // After login, update user role based on deployment type
+            if (deploymentType === 'self-hosted' || deploymentType === 'cloud') {
+                try {
+                    console.log('[AuthContext] Updating role based on deployment type:', deploymentType);
+                    const roleResponse = await apiClient.put('/api/auth/update-role', {
+                        username,
+                        deploymentType
+                    });
+                    
+                    const newToken = roleResponse?.jwt || roleResponse?.token || roleResponse?.data?.jwt || roleResponse?.data?.token;
+                    if (newToken) {
+                        if (window.vscode) {
+                            window.vscode.postMessage({ type: 'saveAuthToken', token: newToken });
+                        }
+                        
+                        const roleData = roleResponse?.data || roleResponse;
+                        // Cloud users are always admins
+                        const newIsAdmin = deploymentType === 'cloud' ? true : (roleData?.isAdmin || false);
+                        const newRoles = roleData?.roles || [];
+                        
+                        setUser({ 
+                            token: newToken,
+                            userId: userInfo.userId,
+                            username: userInfo.username || username, 
+                            email: userInfo.email || email,
+                            roles: newRoles,
+                            isAdmin: newIsAdmin,
+                            workspaceId: userInfo.workspaceId,
+                            workspaceName: userInfo.workspaceName,
+                            workspaceRole: userInfo.workspaceRole
+                        });
+                        
+                        // Determine workspace selection based on deployment type and role
+                        const requiresWorkspace = shouldRequireWorkspaceSelection(
+                            deploymentType,
+                            newIsAdmin || (newRoles && newRoles.includes('ROLE_ADMIN')),
+                            userInfo.workspaceId
+                        );
+                        setNeedsWorkspaceSelection(requiresWorkspace);
+                    }
+                } catch (roleError) {
+                    console.error('[AuthContext] Failed to update role after login:', roleError);
+                    // Continue with existing role
+                    const requiresWorkspace = shouldRequireWorkspaceSelection(
+                        deploymentType,
+                        isAdmin || (roles && roles.includes('ROLE_ADMIN')),
+                        userInfo.workspaceId
+                    );
+                    setNeedsWorkspaceSelection(requiresWorkspace);
+                }
             } else {
-                console.log('[AuthContext]  Login successful - Regular user, skip workspace selection (direct to editor)');
-                setNeedsWorkspaceSelection(false);
+                // No deployment type - use existing role
+                const requiresWorkspace = shouldRequireWorkspaceSelection(
+                    deploymentType,
+                    isAdmin || (roles && roles.includes('ROLE_ADMIN')),
+                    userInfo.workspaceId
+                );
+                setNeedsWorkspaceSelection(requiresWorkspace);
             }
             
             // Clear expired message on successful login
@@ -265,16 +331,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
     
-    const signup = async (username: string, email: string, password: string, role: string = 'user') => {
+    const signup = async (username: string, email: string, password: string) => {
         try {
-            console.log('[AuthContext] Attempting signup for user:', username, 'with role:', role);
+            console.log('[AuthContext] Attempting signup for user:', username);
             
-            // Call actual signup endpoint through VS Code proxy
+            // Call actual signup endpoint through VS Code proxy (without role)
             const response = await apiClient.post('/api/auth/signup', { 
                 username, 
                 email, 
-                password,
-                role
+                password
             });
             
             console.log('[AuthContext] Signup response:', response);
@@ -297,8 +362,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 // Decode JWT to get user info
                 const userInfo = decodeToken(token);
                 const responseData = response?.data || response;
-                const isAdmin = responseData?.isAdmin || userInfo.isAdmin || false;
                 const roles = responseData?.roles || userInfo.roles || [];
+                
+                // Cloud users are always admins
+                const deploymentType = getStoredDeploymentType();
+                const isAdmin = deploymentType === 'cloud' ? true : (responseData?.isAdmin || userInfo.isAdmin || false);
                 
                 setUser({ 
                     token,
@@ -309,14 +377,59 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     isAdmin: isAdmin
                 });
                 
-                // Only admin users need workspace selection after signup
-                // Non-admin users go directly to editor (can upload files to GraphDB)
-                if (isAdmin || (roles && roles.includes('ROLE_ADMIN'))) {
-                    console.log('[AuthContext]  Signup successful - Admin user, needs workspace selection');
-                    setNeedsWorkspaceSelection(true);
+                // After signup, update user role based on deployment type
+                if (deploymentType === 'self-hosted' || deploymentType === 'cloud') {
+                    try {
+                        console.log('[AuthContext] Updating role based on deployment type:', deploymentType);
+                        const roleResponse = await apiClient.put('/api/auth/update-role', {
+                            username,
+                            deploymentType
+                        });
+                        
+                        const newToken = roleResponse?.jwt || roleResponse?.token || roleResponse?.data?.jwt || roleResponse?.data?.token;
+                        if (newToken) {
+                            if (window.vscode) {
+                                window.vscode.postMessage({ type: 'saveAuthToken', token: newToken });
+                            }
+                            
+                            const roleData = roleResponse?.data || roleResponse;
+                            const newIsAdmin = roleData?.isAdmin || false;
+                            const newRoles = roleData?.roles || [];
+                            
+                            setUser({ 
+                                token: newToken,
+                                userId: userInfo.userId,
+                                username: userInfo.username || username, 
+                                email: userInfo.email || email,
+                                roles: newRoles,
+                                isAdmin: newIsAdmin
+                            });
+                            
+                            const requiresWorkspace = shouldRequireWorkspaceSelection(
+                                deploymentType,
+                                newIsAdmin || (newRoles && newRoles.includes('ROLE_ADMIN')),
+                                userInfo.workspaceId
+                            );
+                            setNeedsWorkspaceSelection(requiresWorkspace);
+                        }
+                    } catch (roleError) {
+                        console.error('[AuthContext] Failed to update role after signup:', roleError);
+                        // Continue with default role assignment
+                        const requiresWorkspace = shouldRequireWorkspaceSelection(
+                            deploymentType,
+                            isAdmin || (roles && roles.includes('ROLE_ADMIN')),
+                            userInfo.workspaceId
+                        );
+                        setNeedsWorkspaceSelection(requiresWorkspace);
+                    }
                 } else {
-                    console.log('[AuthContext]  Signup successful - Regular user, skip workspace selection (direct to editor)');
-                    setNeedsWorkspaceSelection(false);
+                    // No deployment type - use default role assignment
+                    const requiresWorkspace = shouldRequireWorkspaceSelection(
+                        deploymentType,
+                        isAdmin || (roles && roles.includes('ROLE_ADMIN')),
+                        userInfo.workspaceId
+                    );
+                    setNeedsWorkspaceSelection(requiresWorkspace);
                 }
                 
                 // Clear expired message on successful signup
@@ -416,6 +529,53 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
+    const updateUserRole = async (deploymentType: 'self-hosted' | 'cloud') => {
+        if (!user) {
+            throw new Error('No user logged in');
+        }
+
+        try {
+            console.log('[AuthContext] Updating user role for deployment type:', deploymentType);
+            
+            const response = await apiClient.put('/api/auth/update-role', {
+                username: user.username,
+                deploymentType
+            });
+
+            console.log('[AuthContext] Role update response:', response);
+            
+            // Update token and user state with new role
+            const token = response?.jwt || response?.token || response?.data?.jwt || response?.data?.token;
+            if (token) {
+                if (window.vscode) {
+                    window.vscode.postMessage({ type: 'saveAuthToken', token });
+                }
+                
+                const responseData = response?.data || response;
+                // Cloud users are always admins
+                const isAdmin = deploymentType === 'cloud' ? true : (responseData?.isAdmin || false);
+                const roles = responseData?.roles || [];
+                
+                setUser({
+                    ...user,
+                    token,
+                    roles,
+                    isAdmin
+                });
+                
+                const requiresWorkspace = shouldRequireWorkspaceSelection(
+                    deploymentType,
+                    isAdmin || (roles && roles.includes('ROLE_ADMIN')),
+                    user?.workspaceId
+                );
+                setNeedsWorkspaceSelection(requiresWorkspace);
+            }
+        } catch (error: any) {
+            console.error('[AuthContext] Failed to update user role:', error);
+            throw error;
+        }
+    };
+
     const value = {
         user,
         loading,
@@ -425,6 +585,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         selectWorkspace,
         switchWorkspace,
         updateSubscriptionPlan,
+        updateUserRole,
         logout: () => logout(false),
         sessionExpiredMessage,
     };

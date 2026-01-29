@@ -74,6 +74,27 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         };
     }, []);
 
+    // Listen for file import completion messages from extension
+    useEffect(() => {
+        const handleMessage = (event: MessageEvent) => {
+            const message = event.data;
+            
+            // Refetch files when import completes or file is ready
+            if (message.type === 'fileReady' || message.type === 'importStatusUpdate') {
+                console.log('[ProjectLibrary] Received import completion message:', message);
+                
+                // Check if the message is for this project
+                if (message.projectId === projectId || message.status?.status === 'COMPLETED') {
+                    console.log('[ProjectLibrary] Refetching files after import completion');
+                    loadFiles();
+                }
+            }
+        };
+
+        window.addEventListener('message', handleMessage);
+        return () => window.removeEventListener('message', handleMessage);
+    }, [projectId]);
+
     // Close menu when clicking outside
     useEffect(() => {
         const handleClickOutside = () => setOpenMenuFileId(null);
@@ -176,14 +197,13 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             const uploadedFileId = responseData?.fileId || responseData?.id || null;
             const uploadedFileName = responseData?.filename || targetFileName;
 
+            // Always reload files to refresh the file list after upload
+            await loadFiles();
+
+            // Set the uploaded file as selected in the list, but don't automatically load it into the editor
             if (uploadedFileId) {
                 setSelectedFile(uploadedFileId);
-                onFileSelect(uploadedFileId, uploadedFileName);
-                return;
             }
-
-            // Reload files to show the uploaded file if no ID was returned
-            await loadFiles();
         } catch (error: any) {
             console.error('Error uploading file:', error);
             console.error('Error status:', error.status);
@@ -470,7 +490,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             </div>
 
             {/* Content */}
-            <div className="max-w-7xl mx-auto px-6 py-6">
+            <div className="max-w-7xl mx-auto px-6 py-6 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 280px)' }}>
                 {loading ? (
                     <div className="text-center py-12">
                         <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-purple-600 mx-auto"></div>

@@ -68,15 +68,50 @@ function isSupportedOntologyExtension(fileName: string): boolean {
 }
 
 const TOKEN_KEY = 'ontocode.authToken';
-// Production endpoints (commented for local development)
-const GATEWAY_URL = 'http://13.218.153.101'; // Gateway IPv4
-const OWL_EDITOR_URL = GATEWAY_URL; // WebSocket endpoint routed via gateway
-const PLUGIN_SERVICE_URL = 'http://13.218.153.101:8087'; // Plugin service port
+const DEPLOYMENT_TYPE_KEY = 'ontocode.deploymentType';
 
-// Local development endpoints - Gateway port 80 routes to all backend services
-// const GATEWAY_URL = 'http://localhost:80'; // Gateway port 80 (routes to auth:8086, editor:8083)
-// const OWL_EDITOR_URL = GATEWAY_URL; // OWL Editor service (WebSocket endpoint via Gateway)
-// const PLUGIN_SERVICE_URL = 'http://localhost:8087'; // Plugin service direct port
+// Function to get URLs based on deployment type
+function getUrlsForDeployment(deploymentType: 'self-hosted' | 'cloud'): { gateway: string; editor: string; plugin: string } {
+    if (deploymentType === 'self-hosted') {
+        return {
+            gateway: process.env.SELF_HOSTED_GATEWAY_URL || 'http://localhost:80',
+            editor: process.env.SELF_HOSTED_EDITOR_URL || 'http://localhost:80',
+            plugin: process.env.SELF_HOSTED_PLUGIN_URL || 'http://localhost:8087'
+        };
+    } else {
+        return {
+            gateway: process.env.CLOUD_GATEWAY_URL || 'http://13.218.153.101',
+            editor: process.env.CLOUD_EDITOR_URL || 'http://13.218.153.101',
+            plugin: process.env.CLOUD_PLUGIN_URL || 'http://13.218.153.101:8087'
+        };
+    }
+}
+
+// Default deployment type from environment or cloud
+const defaultDeploymentType = (process.env.DEFAULT_DEPLOYMENT_TYPE || 'cloud') as 'self-hosted' | 'cloud';
+const defaultUrls = getUrlsForDeployment(defaultDeploymentType);
+console.log(defaultUrls,"default")
+let GATEWAY_URL = defaultUrls.gateway;
+let OWL_EDITOR_URL = defaultUrls.editor;
+let PLUGIN_SERVICE_URL = defaultUrls.plugin;
+
+// Update URLs based on stored deployment preference
+async function updateDeploymentUrls(context: vscode.ExtensionContext) {
+    try {
+        const deploymentType = (await (context as any).secrets.get(DEPLOYMENT_TYPE_KEY)) as 'self-hosted' | 'cloud' | undefined;
+        if (deploymentType) {
+            const urls = getUrlsForDeployment(deploymentType);
+            GATEWAY_URL = urls.gateway;
+            OWL_EDITOR_URL = urls.editor;
+            PLUGIN_SERVICE_URL = urls.plugin;
+            console.log(`[OntoCode] Using ${deploymentType} deployment URLs:`, urls);
+        } else {
+            console.log('[OntoCode] No deployment type stored, using cloud (default)');
+        }
+    } catch (error) {
+        console.error('[OntoCode] Error loading deployment type:', error);
+    }
+}
 
 /**
  * Parse JWT token to extract user information
@@ -173,7 +208,8 @@ type ExtensionMessage =
   | { type: 'importLocalFile'; filePath: string; currentProjectId: string } // Import local OWL file
   | { type: 'uploadOntology'; projectId: string; fileName: string; fileContent: string; ownerEmail?: string; skipDuplicateCheck?: boolean } // Upload ontology from webview (admin flow)
   | { type: 'uploadFileToProject'; projectId: string; fileName: string; fileContent: string; fileSize: number }
-  | { type: 'showSubscriptionPlans' }; // Request to show subscription plans page
+  | { type: 'showSubscriptionPlans' } // Request to show subscription plans page
+  | { type: 'setApiBaseUrl'; url: string; deploymentType?: 'self-hosted' | 'cloud' }; // Set API base URL based on deployment type
 
 type DuplicatePromptAction = 'open_existing' | 'replace' | 'create_copy' | 'cancel';
 type DuplicatePromptResult = { action: DuplicatePromptAction; copyName?: string };
@@ -182,6 +218,11 @@ type DuplicatePromptResult = { action: DuplicatePromptAction; copyName?: string 
 export function activate(context: vscode.ExtensionContext) {
     console.log('OntoCode extension is now active!');
     console.log('[OntoCode] Extension can handle URIs like: vscode://self.ontocode-extension/invite?token=xxx');
+    
+    // Load deployment URLs on activation
+    updateDeploymentUrls(context).then(() => {
+        console.log('[OntoCode] Deployment URLs loaded');
+    });
 
     // Register URI handler for invitation links
     const uriHandler = vscode.window.registerUriHandler({
@@ -353,6 +394,32 @@ class OntoCodePanel {
     private editCapture: EditCapture;
     private remoteEditApplier: RemoteEditApplier;
     private currentProjectId: string | null = null;
+
+    private async getStoredDeploymentType(): Promise<'self-hosted' | 'cloud' | null> {
+        try {
+            const deploymentType = await (this._context as any).secrets.get(DEPLOYMENT_TYPE_KEY);
+            if (deploymentType === 'self-hosted' || deploymentType === 'cloud') {
+                return deploymentType;
+            }
+        } catch (error) {
+            console.warn('[OntoCode] Failed to read deployment type from secrets:', error);
+        }
+        return null;
+    }
+
+    private async shouldUseWorkspaceFlow(tokenData?: { workspaceId?: string | null; isAdmin?: boolean }): Promise<boolean> {
+        const deploymentType = await this.getStoredDeploymentType();
+        if (deploymentType === 'self-hosted') {
+            return false;
+        }
+        if (deploymentType === 'cloud') {
+            return true;
+        }
+
+        const hasWorkspace = tokenData?.workspaceId !== undefined && tokenData?.workspaceId !== null && tokenData?.workspaceId !== '';
+        const isAdmin = tokenData?.isAdmin === true;
+        return isAdmin || hasWorkspace;
+    }
 
     // Fix: Made createOrShow async to handle async webview content loading.
     public static async createOrShow(extensionUri: vscode.Uri, context: vscode.ExtensionContext, shouldTriggerUpload: boolean = false): Promise<OntoCodePanel> {
@@ -540,6 +607,27 @@ class OntoCodePanel {
                         console.log('[OntoCode] 📋 Showing subscription plans');
                         this.postMessage({ type: 'showSubscriptionPlans' });
                         break;
+                    case 'setApiBaseUrl':
+                        // Handle deployment type selection and update URLs
+                        console.log('[OntoCode] 🔧 Setting API base URL:', message.url);
+                        const deploymentType = (message as any).deploymentType || 
+                            (message.url.includes('localhost') ? 'self-hosted' : 'cloud');
+                        
+                        // Update URLs immediately (synchronously)
+                        const urls = getUrlsForDeployment(deploymentType);
+                        GATEWAY_URL = urls.gateway;
+                        OWL_EDITOR_URL = urls.editor;
+                        PLUGIN_SERVICE_URL = urls.plugin;
+                        console.log('[OntoCode] ✅ URLs updated immediately for', deploymentType, ':', urls);
+                        console.log('[OntoCode] 📍 GATEWAY_URL is now:', GATEWAY_URL);
+                        
+                        // Save to secrets for persistence (asynchronously)
+                        (this._context as any).secrets.store(DEPLOYMENT_TYPE_KEY, deploymentType).then(() => {
+                            console.log('[OntoCode] ✅ Deployment type saved to secrets:', deploymentType);
+                        }).catch((err: any) => {
+                            console.error('[OntoCode] ❌ Failed to save deployment type:', err);
+                        });
+                        break;
                 }
             },
             null,
@@ -632,10 +720,9 @@ class OntoCodePanel {
         }
 
         const tokenData = parseJwtToken(token);
-        const hasWorkspace = tokenData?.workspaceId !== undefined && tokenData?.workspaceId !== null && tokenData?.workspaceId !== '';
-        const isAdmin = tokenData?.isAdmin === true;
+        const useWorkspaceFlow = await this.shouldUseWorkspaceFlow(tokenData || undefined);
 
-        if (isAdmin || hasWorkspace) {
+        if (useWorkspaceFlow) {
             console.log('[OntoCode] Auth restored, sending pending file for project selection.');
             const base64Content = uint8ArrayToBase64(pending.fileData);
             this.postMessage({
@@ -1034,12 +1121,11 @@ class OntoCodePanel {
         // Check if user has workspace selected
         const tokenData = parseJwtToken(token);
         console.log(tokenData,"token===========================================>")
-        const hasWorkspace = tokenData?.workspaceId !== undefined && tokenData?.workspaceId !== null;
-        const isAdmin = tokenData?.isAdmin === true;
+        const useWorkspaceFlow = await this.shouldUseWorkspaceFlow(tokenData || undefined);
         
-        // Admin users or workspace users should get project selection
-        if (isAdmin || hasWorkspace) {
-            console.log(`[OntoCode] ${isAdmin ? 'Admin' : 'Workspace'} user detected, sending file for project selection`);
+        // Admin users or workspace users should get project selection (cloud deployment always uses workspace flow)
+        if (useWorkspaceFlow) {
+            console.log('[OntoCode] Workspace flow detected, sending file for project selection');
             // Convert to base64 for message passing (web-compatible)
             const base64Content = uint8ArrayToBase64(fileData);
             this.postMessage({
@@ -1130,9 +1216,11 @@ class OntoCodePanel {
         }
         
         // 1.6 Check if user is ROLE_USER or has no workspace - use user-based storage
+        const deploymentType = await this.getStoredDeploymentType();
         const isRoleUser = userRoles.includes('ROLE_USER') && !userRoles.includes('ROLE_ADMIN');
         const hasNoWorkspace = !workspaceId || workspaceId === '';
-        const useUserStorage = isRoleUser || hasNoWorkspace;
+        const forceUserStorage = deploymentType === 'self-hosted';
+        const useUserStorage = forceUserStorage || isRoleUser || hasNoWorkspace;
         
         if (useUserStorage) {
             console.log(`[OntoCode] 🔒 User-based storage detected - ROLE_USER: ${isRoleUser}, No Workspace: ${hasNoWorkspace}`);
@@ -2297,6 +2385,16 @@ class OntoCodePanel {
                 const vscode = acquireVsCodeApi();
                 window.vscode = vscode;
                 window.API_BASE_URL = '${GATEWAY_URL}';
+                // Inject environment configuration
+                window.__ONTOCODE_CONFIG__ = {
+                    SELF_HOSTED_GATEWAY_URL: '${process.env.SELF_HOSTED_GATEWAY_URL || 'http://localhost:80'}',
+                    SELF_HOSTED_EDITOR_URL: '${process.env.SELF_HOSTED_EDITOR_URL || 'http://localhost:80'}',
+                    SELF_HOSTED_PLUGIN_URL: '${process.env.SELF_HOSTED_PLUGIN_URL || 'http://localhost:8087'}',
+                    CLOUD_GATEWAY_URL: '${process.env.CLOUD_GATEWAY_URL || 'http://13.218.153.101'}',
+                    CLOUD_EDITOR_URL: '${process.env.CLOUD_EDITOR_URL || 'http://13.218.153.101'}',
+                    CLOUD_PLUGIN_URL: '${process.env.CLOUD_PLUGIN_URL || 'http://13.218.153.101:8087'}',
+                    DEFAULT_DEPLOYMENT_TYPE: '${process.env.DEFAULT_DEPLOYMENT_TYPE || 'cloud'}'
+                };
                 // Fallback for minified bundle expecting a global toggleNode
                 if (typeof window.toggleNode !== 'function') {
                     window.toggleNode = () => {};
