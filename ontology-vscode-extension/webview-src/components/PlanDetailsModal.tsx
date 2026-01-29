@@ -23,6 +23,7 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({ isOpen, onClose, on
             features: [
                 `${subscription.limits.maxTeamMembers} team members`,
                 `${subscription.limits.storageGB} GB storage`,
+                `${subscription.limits.maxWorkspaces} workspaces`,
                 'Basic collaboration',
                 'Community support',
                 'Core ontology features'
@@ -36,9 +37,10 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({ isOpen, onClose, on
             gradient: 'from-purple-500 to-blue-600',
             badge: 'Most Popular',
             features: [
-                'Up to 20 team members',
-                '50 GB storage',
-                'Advanced collaboration',
+                'Up to 10 team members',
+                '100 GB storage',
+                '10 workspaces',
+                'No collaboration',
                 'Priority support',
                 'Version control & history',
                 'Custom plugins',
@@ -55,8 +57,10 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({ isOpen, onClose, on
             badge: 'Best Value',
             features: [
                 'Unlimited team members',
-                '500 GB storage',
-                'Real-time collaboration',
+                'Unlimited storage',
+                'Unlimited workspaces',
+                'Basic collaboration',
+                'File sharing & comments',
                 'Dedicated support 24/7',
                 'Advanced security & SSO',
                 'Custom integrations',

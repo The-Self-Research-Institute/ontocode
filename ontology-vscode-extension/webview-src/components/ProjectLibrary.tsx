@@ -74,6 +74,27 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         };
     }, []);
 
+    // Listen for file import completion messages from extension
+    useEffect(() => {
+        const handleMessage = (event: MessageEvent) => {
+            const message = event.data;
+            
+            // Refetch files when import completes or file is ready
+            if (message.type === 'fileReady' || message.type === 'importStatusUpdate') {
+                console.log('[ProjectLibrary] Received import completion message:', message);
+                
+                // Check if the message is for this project
+                if (message.projectId === projectId || message.status?.status === 'COMPLETED') {
+                    console.log('[ProjectLibrary] Refetching files after import completion');
+                    loadFiles();
+                }
+            }
+        };
+
+        window.addEventListener('message', handleMessage);
+        return () => window.removeEventListener('message', handleMessage);
+    }, [projectId]);
+
     // Close menu when clicking outside
     useEffect(() => {
         const handleClickOutside = () => setOpenMenuFileId(null);
@@ -176,27 +197,43 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             const uploadedFileId = responseData?.fileId || responseData?.id || null;
             const uploadedFileName = responseData?.filename || targetFileName;
 
+            // Always reload files to refresh the file list after upload
+            await loadFiles();
+
+            // Set the uploaded file as selected in the list, but don't automatically load it into the editor
             if (uploadedFileId) {
                 setSelectedFile(uploadedFileId);
-                onFileSelect(uploadedFileId, uploadedFileName);
-                return;
             }
-
-            // Reload files to show the uploaded file if no ID was returned
-            await loadFiles();
         } catch (error: any) {
             console.error('Error uploading file:', error);
+            console.error('Error status:', error.status);
+            console.error('Error data:', error.data);
             
             // Provide specific error messages
+            // Note: apiClient transforms errors into ApiError with status and data properties (not response.status/response.data)
             let errorMessage = 'Failed to upload file';
             if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
                 errorMessage = 'Upload timeout. Please try a smaller file or check your connection.';
-            } else if (error.response?.status === 413) {
-                errorMessage = 'File too large for server. Maximum size is 300MB.';
-            } else if (error.response?.data?.error) {
-                errorMessage = error.response.data.error;
+            } else if (error.status === 413) {
+                // Storage limit exceeded or file too large
+                const responseData = error.data;
+                console.log('Storage limit response data:', responseData);
+                if (responseData?.message) {
+                    errorMessage = responseData.message;
+                } else if (responseData?.error) {
+                    errorMessage = responseData.error;
+                } else {
+                    errorMessage = 'Storage limit exceeded. Please upgrade your plan or delete existing files.';
+                }
+            } else if (error.data?.message) {
+                errorMessage = error.data.message;
+            } else if (error.data?.error) {
+                errorMessage = error.data.error;
+            } else if (error.message) {
+                errorMessage = `Failed to upload file: ${error.message}`;
             }
             
+            console.log('Final error message to display:', errorMessage);
             showToast(errorMessage, 'error');
         } finally {
             if (!isMountedRef.current) {
@@ -453,7 +490,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             </div>
 
             {/* Content */}
-            <div className="max-w-7xl mx-auto px-6 py-6">
+            <div className="max-w-7xl mx-auto px-6 py-6 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 280px)' }}>
                 {loading ? (
                     <div className="text-center py-12">
                         <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-purple-600 mx-auto"></div>

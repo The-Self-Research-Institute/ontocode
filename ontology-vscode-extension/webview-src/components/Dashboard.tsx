@@ -1638,6 +1638,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   const readonlyMode = false; // Allow editing by default
   const [showThemeSettings, setShowThemeSettings] = useState(false);
   const [showPlanDetails, setShowPlanDetails] = useState(false);
+  const deploymentType = localStorage.getItem('deploymentType') as 'self-hosted' | 'cloud' | null;
+  const isCloudDeployment = deploymentType === 'cloud';
 
   const handleUpgradePlan = async (planId: string) => {
     try {
@@ -9799,35 +9801,48 @@ const Dashboard: React.FC<DashboardProps> = ({
               {projectId && (
                 <button
                   onClick={() => {
-                    if (!subscription.canAccessFeature('hasAdvancedCollaboration') && !subscription.isFree) {
+                    if (subscription.isFree) {
+                      showToast('Collaboration is only available in Pro and Enterprise plans. Upgrade to enable real-time collaboration.', 'warning');
+                      return;
+                    }
+                    if (!subscription.canAccessFeature('hasAdvancedCollaboration')) {
                       showToast(subscription.getUpgradeMessage('Advanced Collaboration'), 'warning');
                       return;
                     }
                     setShowCollaborationPanel(!showCollaborationPanel);
                   }}
-                  className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors ${showCollaborationPanel
-                    ? 'bg-blue-600 text-white hover:bg-blue-700'
-                    : isCurrentFileShared
-                      ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  disabled={subscription.isFree}
+                  className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors ${
+                    subscription.isFree
+                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed opacity-50'
+                      : showCollaborationPanel
+                        ? 'bg-blue-600 text-white hover:bg-blue-700'
+                        : isCurrentFileShared
+                          ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                     } ${!subscription.canAccessFeature('hasAdvancedCollaboration') && !subscription.isFree ? 'opacity-60' : ''}`}
                   title={
-                    !subscription.canAccessFeature('hasAdvancedCollaboration') && !subscription.isFree
-                      ? subscription.getUpgradeMessage('Advanced Collaboration')
-                      : `Toggle Collaboration Panel${hasMultipleActiveUsers ? ` (${activeUsersInProject.length} users)` : isCurrentFileShared ? ' (Shared file)' : ' (Enable sharing to collaborate)'}`
+                    subscription.isFree
+                      ? 'Collaboration is only available in Pro and Enterprise plans'
+                      : !subscription.canAccessFeature('hasAdvancedCollaboration')
+                        ? subscription.getUpgradeMessage('Advanced Collaboration')
+                        : `Toggle Collaboration Panel${hasMultipleActiveUsers ? ` (${activeUsersInProject.length} users)` : isCurrentFileShared ? ' (Shared file)' : ' (Enable sharing to collaborate)'}`
                   }
                 >
                   <Users size={14} />
                   <span>Collaboration</span>
+                  {subscription.isFree && (
+                    <span className="bg-amber-500 text-white text-[10px] px-1 rounded">PRO</span>
+                  )}
                   {!subscription.canAccessFeature('hasAdvancedCollaboration') && !subscription.isFree && (
                     <span className="bg-amber-500 text-white text-[10px] px-1 rounded">PRO</span>
                   )}
-                  {hasMultipleActiveUsers && subscription.canAccessFeature('hasAdvancedCollaboration') && (
+                  {hasMultipleActiveUsers && !subscription.isFree && subscription.canAccessFeature('hasAdvancedCollaboration') && (
                     <span className="bg-blue-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-semibold">
                       {activeUsersInProject.length}
                     </span>
                   )}
-                  {isCurrentFileShared && !hasMultipleActiveUsers && (
+                  {isCurrentFileShared && !hasMultipleActiveUsers && !subscription.isFree && (
                     <span className="bg-green-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">✓</span>
                   )}
                 </button>
@@ -9863,8 +9878,8 @@ const Dashboard: React.FC<DashboardProps> = ({
               >
                 <Palette size={14} />
               </button>
-              {/* Subscription Plan Badge */}
-              <button
+              {/* Subscription Plan Badge - Only for cloud deployments */}
+              { user.role === "ROLE_ADMIN" && isCloudDeployment && ( <button
                 onClick={() => setShowPlanDetails(true)}
                 className={`flex items-center gap-1.5 px-2 py-1 text-[10px] font-semibold rounded-md transition-all hover:shadow-lg cursor-pointer ${subscription.isEnterprise ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:from-amber-600 hover:to-orange-600' :
                   subscription.isPro ? 'bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600' :
@@ -9874,7 +9889,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               >
                 {subscription.isEnterprise ? <Crown size={12} /> : subscription.isPro ? <Zap size={12} /> : <Sparkles size={12} />}
                 {subscription.plan.toUpperCase()}
-              </button>
+              </button>)}
               {onBackToProjects && (
                 <button
                   onClick={onBackToProjects}
@@ -10332,12 +10347,14 @@ const Dashboard: React.FC<DashboardProps> = ({
         onClose={() => setShowThemeSettings(false)}
       />
 
-      {/* Plan Details Modal */}
-      <PlanDetailsModal
-        isOpen={showPlanDetails}
-        onClose={() => setShowPlanDetails(false)}
-        onUpgrade={handleUpgradePlan}
-      />
+      {/* Plan Details Modal - Only for cloud deployments */}
+      {isCloudDeployment && (
+        <PlanDetailsModal
+          isOpen={showPlanDetails}
+          onClose={() => setShowPlanDetails(false)}
+          onUpgrade={handleUpgradePlan}
+        />
+      )}
 
       {/* History Panel */}
       {projectId && (
