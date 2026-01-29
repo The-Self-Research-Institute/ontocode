@@ -1,12 +1,14 @@
 
 import React, { useState, useEffect } from 'react';
 import { useAuth } from './custom-hook/useAuth';
+import { updateBaseUrl } from './services/apiClient';
 import { CollaborationProvider } from './contexts/CollaborationContext';
 import { EntityPreferencesProvider } from './contexts/EntityPreferencesContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import Dashboard from './components/Dashboard';
 import LoginForm from './components/LoginForm';
 import SignupForm from './components/SignupForm';
+import DeploymentSelector from './components/DeploymentSelector';
 import WorkspaceSelection from './components/WorkspaceSelection';
 import ProjectDashboard from './components/ProjectDashboard';
 import ProjectLibrary from './components/ProjectLibrary';
@@ -15,7 +17,7 @@ import InviteAcceptPage from './components/InviteAcceptPage';
 import { Loader2 } from 'lucide-react';
 
 const AppContent = () => {
-    const { user, loading, needsWorkspaceSelection, selectWorkspace, logout, updateSubscriptionPlan } = useAuth();
+    const { user, loading, needsWorkspaceSelection, selectWorkspace, logout, updateSubscriptionPlan, updateUserRole } = useAuth();
     const [isLoginView, setIsLoginView] = useState(true);
     const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
     const [selectedProjectName, setSelectedProjectName] = useState<string>('');
@@ -26,6 +28,23 @@ const AppContent = () => {
     const [inviteEmail, setInviteEmail] = useState<string | null>(null);
     const [pendingFile, setPendingFile] = useState<{ fileName: string; fileContent: string; fileSize: number } | null>(null);
     const [showAuthForInvitation, setShowAuthForInvitation] = useState(false); // Show login/signup form while keeping invite token
+    const [needsDeploymentSelection, setNeedsDeploymentSelection] = useState(false);
+    const [deploymentType, setDeploymentType] = useState<'self-hosted' | 'cloud' | null>(null);
+
+    // Helper to check if workspace selection is required
+    const shouldShowWorkspaceSelection = (): boolean => {
+        if (!user || user.workspaceId) return false;
+        
+        const storedDeploymentType = localStorage.getItem('deploymentType') as 'self-hosted' | 'cloud' | null;
+        
+        // Cloud users always need workspace selection if they don't have one
+        if (storedDeploymentType === 'cloud') {
+            return true;
+        }
+        
+        // Fall back to needsWorkspaceSelection from auth context
+        return needsWorkspaceSelection;
+    };
 
     // Send webviewReady on mount to ensure extension knows webview is loaded
     useEffect(() => {
@@ -33,6 +52,9 @@ const AppContent = () => {
         if (window.vscode) {
             window.vscode.postMessage({ type: 'webviewReady' });
         }
+        
+        // Don't load stored deployment type - always show selector before login
+        // Deployment type will be set after user selects in DeploymentSelector
     }, []);
 
     useEffect(() => {
@@ -136,6 +158,45 @@ const AppContent = () => {
         setShowSubscriptionPlan(false);
     };
 
+    const handleDeploymentSelected = async (type: 'self-hosted' | 'cloud') => {
+        console.log('[App] Deployment selected:', type);
+        setDeploymentType(type);
+        
+        // Store preference
+        localStorage.setItem('deploymentType', type);
+        
+        // Update apiClient base URL immediately
+        updateBaseUrl(type);
+        console.log('[App] API client base URL updated for deployment type:', type);
+        
+        // Update API base URL using environment config
+        const config = (window as any).__ONTOCODE_CONFIG__;
+        const baseUrl = type === 'self-hosted' 
+            ? (config?.SELF_HOSTED_GATEWAY_URL || 'http://localhost:80')
+            : (config?.CLOUD_GATEWAY_URL || 'http://13.218.153.101');
+        
+        // Notify extension to update API URLs
+        if (window.vscode) {
+            window.vscode.postMessage({ 
+                type: 'setApiBaseUrl', 
+                url: baseUrl,
+                deploymentType: type  // Send deployment type explicitly
+            });
+        }
+        
+        // If user is already logged in, update their role
+        if (user) {
+            try {
+                await updateUserRole(type);
+                console.log('[App] User role updated successfully');
+            } catch (error) {
+                console.error('[App] Failed to update user role:', error);
+            }
+        }
+        
+        // User will proceed to login/signup with deployment type already selected
+    };
+
     const handleLogout = () => {
         // Reset all navigation state before logout
         setSelectedProjectId(null);
@@ -145,6 +206,7 @@ const AppContent = () => {
         setShowSubscriptionPlan(false);
         setInviteToken(null);
         setInviteEmail(null);
+        // Keep deployment type so user doesn't need to select again
         logout();
     };
 
@@ -246,8 +308,13 @@ const AppContent = () => {
         );
     }
 
+    // Show deployment selector BEFORE login if user hasn't selected deployment type yet
+    if (!user && !deploymentType) {
+        return <DeploymentSelector onSelect={handleDeploymentSelected} />;
+    }
+
     // Show workspace selection if user is logged in but hasn't selected a workspace
-    if (user && needsWorkspaceSelection) {
+    if (user && shouldShowWorkspaceSelection()) {
         return (
             <WorkspaceSelection
                 username={user.username}

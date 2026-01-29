@@ -1,11 +1,38 @@
 // services/apiClient.ts
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from 'axios';
 
-// Production URL (commented for local development)
-const BASE_URL = 'http://ec2-13-218-153-101.compute-1.amazonaws.com'; // Backend gateway
+// Get base URL from localStorage or default to cloud
+const getStoredDeploymentType = () => {
+    try {
+        return localStorage.getItem('deploymentType') || 'cloud';
+    } catch {
+        return 'cloud';
+    }
+};
 
-// Local development URL - Gateway routes to all services
-// const BASE_URL = 'http://localhost:80'; // Gateway port 80 (routes to auth:8086, editor:8083, etc.)
+const getBaseUrlForDeployment = (deploymentType: string) => {
+    // Use environment config if available (injected by extension)
+    const config = (window as any).__ONTOCODE_CONFIG__;
+    if (config) {
+        return deploymentType === 'self-hosted'
+            ? config.SELF_HOSTED_GATEWAY_URL
+            : config.CLOUD_GATEWAY_URL;
+    }
+    // Fallback to hardcoded values
+    return deploymentType === 'self-hosted' 
+        ? 'http://localhost:80'
+        : 'http://13.218.153.101';
+};
+
+// Get initial base URL
+let BASE_URL = getBaseUrlForDeployment(getStoredDeploymentType());
+
+// Allow updating base URL dynamically
+export const updateBaseUrl = (deploymentType: 'self-hosted' | 'cloud') => {
+    BASE_URL = getBaseUrlForDeployment(deploymentType);
+    console.log('[ApiClient] Base URL updated to:', BASE_URL);
+};
+
 const TIMEOUT = 300_000; // Allow up to 5 minutes for heavy ontology operations
 
 // VS Code API detection

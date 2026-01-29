@@ -158,8 +158,10 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
         try {
             setLoading(true);
             
-            // Load projects for current workspace
-            const projectsResponse = await apiClient.get(`/api/projects/my`);
+            // Load projects for current workspace only
+            const projectsResponse = user?.workspaceId 
+                ? await apiClient.get(`/api/projects/my?workspaceId=${user.workspaceId}`)
+                : await apiClient.get(`/api/projects/my`);
             const projectsData = projectsResponse?.data || projectsResponse;
             setProjects(projectsData?.projects || []);
             
@@ -631,7 +633,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
                                 <Building2 size={20} />
                                 <span className="hidden sm:inline">Switch Workspace</span>
                             </button>
-                            {user?.roles?.includes('ROLE_ADMIN') && (
                                 <button
                                     onClick={() => setShowCreateProject(true)}
                                     className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
@@ -639,7 +640,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
                                     <Plus size={20} />
                                     New Project
                                 </button>
-                            )}
                             <button
                                 onClick={() => setShowSettings(true)}
                                 className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg"
@@ -709,7 +709,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
                             <p className="text-gray-500 mb-4">
                                 {searchQuery ? 'No projects found matching your search' : 'No projects yet'}
                             </p>
-                            {!searchQuery && user?.roles?.includes('ROLE_ADMIN') && (
+                            {!searchQuery && (
                                 <button
                                     onClick={() => setShowCreateProject(true)}
                                     className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
