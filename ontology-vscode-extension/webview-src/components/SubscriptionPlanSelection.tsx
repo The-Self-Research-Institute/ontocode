@@ -47,12 +47,12 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                 'Up to 3 team members',
                 '10 GB storage',
                 'Up to 3 workspaces',
-                'Basic collaboration',
-                'File sharing & comments',
                 'Community support',
                 'Core ontology features'
             ],
             limitations: [
+                'No collaboration features',
+                'No file sharing',
                 'No real-time editing',
                 'Limited advanced features',
                 'No version control'
@@ -71,7 +71,8 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                 'Up to 10 team members',
                 '100 GB storage',
                 'Up to 10 workspaces',
-                'No collaboration',
+                'Basic collaboration',
+                'File sharing & comments',
                 'Priority support',
                 'Version control & history',
                 'Custom plugins',
@@ -80,7 +81,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
             ],
             limitations: [
                 'No real-time editing',
-                'No file sharing features'
+                'No advanced collaboration'
             ],
             popular: true,
             badge: 'Most Popular',
@@ -98,7 +99,8 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                 'Unlimited team members',
                 'Unlimited storage',
                 'Unlimited workspaces',
-                'Basic collaboration',
+                'Advanced collaboration',
+                'Real-time editing',
                 'File sharing & comments',
                 'Dedicated support 24/7',
                 'Advanced security & SSO',

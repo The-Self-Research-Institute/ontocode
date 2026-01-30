@@ -1,15 +1,17 @@
-import React from 'react';
-import { X, Check, Crown, Zap, Sparkles, Users, HardDrive, Shield, Rocket } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, Check, Crown, Zap, Sparkles, Users, HardDrive, Shield, Rocket, Loader2 } from 'lucide-react';
 import { useSubscription } from '../hooks/useSubscription';
 
 interface PlanDetailsModalProps {
     isOpen: boolean;
     onClose: () => void;
     onUpgrade?: (planId: string) => void;
+    isUpgrading?: boolean;
 }
 
-const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({ isOpen, onClose, onUpgrade }) => {
+const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({ isOpen, onClose, onUpgrade, isUpgrading = false }) => {
     const subscription = useSubscription();
+    const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
 
     if (!isOpen) return null;
 
@@ -21,10 +23,10 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({ isOpen, onClose, on
             price: 0,
             gradient: 'from-gray-400 to-gray-600',
             features: [
-                `${subscription.limits.maxTeamMembers} team members`,
-                `${subscription.limits.storageGB} GB storage`,
-                `${subscription.limits.maxWorkspaces} workspaces`,
-                'Basic collaboration',
+                `${subscription.limits?.maxTeamMembers || 3} team members`,
+                `${subscription.limits?.storageGB || 10} GB storage`,
+                `${subscription.limits?.maxWorkspaces || 3} workspaces`,
+                'No collaboration',
                 'Community support',
                 'Core ontology features'
             ]
@@ -40,7 +42,8 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({ isOpen, onClose, on
                 'Up to 10 team members',
                 '100 GB storage',
                 '10 workspaces',
-                'No collaboration',
+                'Basic collaboration',
+                'File sharing & comments',
                 'Priority support',
                 'Version control & history',
                 'Custom plugins',
@@ -59,7 +62,8 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({ isOpen, onClose, on
                 'Unlimited team members',
                 'Unlimited storage',
                 'Unlimited workspaces',
-                'Basic collaboration',
+                'Advanced collaboration',
+                'Real-time editing',
                 'File sharing & comments',
                 'Dedicated support 24/7',
                 'Advanced security & SSO',
@@ -71,7 +75,8 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({ isOpen, onClose, on
         }
     ];
 
-    const currentPlan = plans.find(p => p.id === subscription.plan);
+    // Find current plan, fallback to free plan if not found
+    const currentPlan = plans.find(p => p.id === subscription.plan) || plans[0];
 
     return (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -79,9 +84,9 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({ isOpen, onClose, on
                 {/* Header */}
                 <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between z-10">
                     <div>
-                        <h2 className="text-2xl font-bold text-gray-900">Subscription Plan</h2>
+                        <h2 className="text-2xl font-bold text-gray-900">Workspace Subscription Plan</h2>
                         <p className="text-sm text-gray-600 mt-1">
-                            Current plan: <span className="font-semibold text-purple-600">{currentPlan?.name}</span>
+                            Current workspace plan: <span className="font-semibold text-purple-600">{currentPlan?.name}</span>
                         </p>
                     </div>
                     <button
@@ -118,13 +123,15 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({ isOpen, onClose, on
                         <div className="bg-white rounded-lg p-3 shadow-sm">
                             <HardDrive size={20} className="text-blue-600 mb-1" />
                             <p className="text-xs text-gray-600">Storage</p>
-                            <p className="text-lg font-bold text-gray-900">{subscription.limits.storageGB} GB</p>
+                            <p className="text-lg font-bold text-gray-900">
+                                {subscription.limits.storageGB === Infinity ? 'Unlimited' : `${subscription.limits.storageGB} GB`}
+                            </p>
                         </div>
                         <div className="bg-white rounded-lg p-3 shadow-sm">
                             <Shield size={20} className="text-green-600 mb-1" />
                             <p className="text-xs text-gray-600">Collaboration</p>
                             <p className="text-lg font-bold text-gray-900">
-                                {subscription.limits.hasAdvancedCollaboration ? 'Advanced' : 'Basic'}
+                                {subscription.limits.hasAdvancedCollaboration ? 'Advanced' : subscription.limits.hasBasicCollaboration ? 'Basic' : 'None'}
                             </p>
                         </div>
                         <div className="bg-white rounded-lg p-3 shadow-sm">
@@ -192,13 +199,22 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({ isOpen, onClose, on
                                 ) : (
                                     <button
                                         onClick={() => {
-                                            if (onUpgrade) {
+                                            if (onUpgrade && !isUpgrading) {
+                                                setSelectedPlan(plan.id);
                                                 onUpgrade(plan.id);
                                             }
                                         }}
-                                        className={`w-full py-2 bg-gradient-to-r ${plan.gradient} text-white rounded-lg font-semibold hover:opacity-90 transition-opacity`}
+                                        disabled={isUpgrading}
+                                        className={`w-full py-2 bg-gradient-to-r ${plan.gradient} text-white rounded-lg font-semibold hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2`}
                                     >
-                                        Upgrade to {plan.name}
+                                        {isUpgrading && selectedPlan === plan.id ? (
+                                            <>
+                                                <Loader2 size={16} className="animate-spin" />
+                                                Upgrading...
+                                            </>
+                                        ) : (
+                                            `Upgrade to ${plan.name}`
+                                        )}
                                     </button>
                                 )}
                             </div>

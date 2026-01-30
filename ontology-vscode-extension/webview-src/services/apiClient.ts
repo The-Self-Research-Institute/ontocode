@@ -19,6 +19,7 @@ const getBaseUrlForDeployment = (deploymentType: string) => {
             : config.CLOUD_GATEWAY_URL;
     }
     // Fallback to hardcoded values
+    // For testing: Cloud URL pointing to localhost===================>
     return deploymentType === 'self-hosted' 
         ? 'http://localhost:80'
         : 'http://13.218.153.101';
