@@ -28,7 +28,6 @@ import ToastNotification from './ToastNotification';
 import { CollaborativeCursors } from './CollaborativeCursor';
 import ShareDialog from './ShareDialog';
 import ThemeSettings from './ThemeSettings';
-import PlanDetailsModal from './PlanDetailsModal';
 // ImportProgressToast removed per user request
 import { QueueStatusIndicator, GlobalQueueStats } from './QueueStatusIndicator';
 import {
@@ -1637,24 +1636,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   const subscription = useSubscription();
   const readonlyMode = false; // Allow editing by default
   const [showThemeSettings, setShowThemeSettings] = useState(false);
-  const [showPlanDetails, setShowPlanDetails] = useState(false);
   const deploymentType = localStorage.getItem('deploymentType') as 'self-hosted' | 'cloud' | null;
   const isCloudDeployment = deploymentType === 'cloud';
-
-  const handleUpgradePlan = async (planId: string) => {
-    try {
-      await apiClient.patch(`/api/workspaces/${user?.workspaceId}/subscription`, {
-        plan: planId
-      });
-
-      // Reload the page to get updated user with new plan
-      window.location.reload();
-      showToast(`Successfully upgraded to ${planId.toUpperCase()} plan!`, 'success');
-    } catch (error: any) {
-      console.error('Failed to upgrade plan:', error);
-      showToast(error?.response?.data?.error || 'Failed to upgrade plan. Please try again.', 'error');
-    }
-  };
 
   const applyInstanceCountsToTree = useCallback((
     nodes: TreeNode[],
@@ -4139,38 +4122,75 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (data?.success) {
         // Handle new format with myFiles and sharedFiles (check if properties exist, not just truthy)
         if (data.myFiles !== undefined && data.sharedFiles !== undefined) {
-          // Ensure all files have filename property for display
-          const myFilesWithNames = (data.myFiles || []).map((p: any) => ({
-            ...p,
-            filename: p.filename || p.name || p.id
-          }));
-          const sharedFilesWithNames = (data.sharedFiles || []).map((p: any) => ({
-            ...p,
-            filename: p.filename || p.name || p.id
-          }));
+          // Map files to ensure they have proper project structure, not just GridFS file IDs
+          const mapFileToProject = (p: any) => {
+            // If this looks like a raw GridFS file (has only id, contentType, length), skip it
+            if (p.contentType && p.length && !p.name && !p.filename) {
+              console.warn('[Dashboard] ⚠️ Skipping raw GridFS file entry:', p.id);
+              return null;
+            }
+            return {
+              ...p,
+              // Ensure we have proper display properties
+              id: p.id || p.projectId || p._id,
+              filename: p.filename || p.name || p.id,
+              name: p.name || p.filename || p.id,
+              // Preserve other project metadata
+              status: p.status,
+              updatedAt: p.updatedAt,
+              ownerEmail: p.ownerEmail,
+              metadata: p.metadata
+            };
+          };
+
+          const myFilesWithNames = (data.myFiles || []).map(mapFileToProject).filter(Boolean);
+          const sharedFilesWithNames = (data.sharedFiles || []).map(mapFileToProject).filter(Boolean);
           const allProjects = [...myFilesWithNames, ...sharedFilesWithNames];
+          
           setAvailableProjects(allProjects);
           setMyFiles(myFilesWithNames);
           setSharedFiles(sharedFilesWithNames);
-          setListOfFiles(allProjects); // Update listOfFiles with combined list
+          setListOfFiles(allProjects);
+          
           console.log('[Dashboard] ✅ Files loaded - My Files:', myFilesWithNames.length, 'Shared:', sharedFilesWithNames.length);
-          console.log('[Dashboard] ✅ myFilesWithNames:', myFilesWithNames);
-          console.log('[Dashboard] ✅ sharedFilesWithNames:', sharedFilesWithNames);
+          console.log('[Dashboard] 📋 Sample myFile:', myFilesWithNames[0]);
+          console.log('[Dashboard] 📋 Sample sharedFile:', sharedFilesWithNames[0]);
+          
           return { myFiles: myFilesWithNames, sharedFiles: sharedFilesWithNames };
         } else if (data.projects) {
           // Backward compatibility with old format
-          const projectsWithNames = (data.projects || []).map((p: any) => ({
-            ...p,
-            filename: p.filename || p.name || p.id
-          }));
+          const mapFileToProject = (p: any) => {
+            // If this looks like a raw GridFS file, skip it
+            if (p.contentType && p.length && !p.name && !p.filename) {
+              console.warn('[Dashboard] ⚠️ Skipping raw GridFS file entry:', p.id);
+              return null;
+            }
+            return {
+              ...p,
+              id: p.id || p.projectId || p._id,
+              filename: p.filename || p.name || p.id,
+              name: p.name || p.filename || p.id,
+              status: p.status,
+              updatedAt: p.updatedAt,
+              ownerEmail: p.ownerEmail,
+              metadata: p.metadata
+            };
+          };
+
+          const projectsWithNames = (data.projects || []).map(mapFileToProject).filter(Boolean);
           setAvailableProjects(projectsWithNames);
+          
           // Assume all projects are "myFiles" if no sharedBy field
           const myFilesList = projectsWithNames.filter((p: any) => !p.sharedBy);
           const sharedFilesList = projectsWithNames.filter((p: any) => p.sharedBy);
+          
           setMyFiles(myFilesList);
           setSharedFiles(sharedFilesList);
-          setListOfFiles(projectsWithNames); // Set combined list
+          setListOfFiles(projectsWithNames);
+          
           console.log('[Dashboard] ✅ Files loaded (legacy format) - My Files:', myFilesList.length, 'Shared:', sharedFilesList.length);
+          console.log('[Dashboard] 📋 Sample project:', projectsWithNames[0]);
+          
           return { myFiles: myFilesList, sharedFiles: sharedFilesList };
         } else {
           console.log('[Dashboard] ⚠️ No myFiles/sharedFiles or projects in response - setting empty arrays');
@@ -9801,53 +9821,48 @@ const Dashboard: React.FC<DashboardProps> = ({
               {projectId && (
                 <button
                   onClick={() => {
-                    if (subscription.isFree) {
+                    console.log('[Dashboard] Collaboration button clicked', { subscription, deploymentType, isCloudDeployment });
+                    
+                    // Only cloud deployment with free version doesn't have access to collaboration
+                    if (isCloudDeployment && subscription.isFree) {
                       showToast('Collaboration is only available in Pro and Enterprise plans. Upgrade to enable real-time collaboration.', 'warning');
                       return;
                     }
-                    if (!subscription.canAccessFeature('hasAdvancedCollaboration')) {
-                      showToast(subscription.getUpgradeMessage('Advanced Collaboration'), 'warning');
-                      return;
-                    }
+                    
                     setShowCollaborationPanel(!showCollaborationPanel);
                   }}
-                  disabled={subscription.isFree}
+                  // disabled={isCloudDeployment && subscription.isFree}
                   className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors ${
-                    subscription.isFree
+                    isCloudDeployment && subscription.isFree
                       ? 'bg-gray-100 text-gray-400 cursor-not-allowed opacity-50'
                       : showCollaborationPanel
                         ? 'bg-blue-600 text-white hover:bg-blue-700'
                         : isCurrentFileShared
                           ? 'bg-green-100 text-green-700 hover:bg-green-200'
                           : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                    } ${!subscription.canAccessFeature('hasAdvancedCollaboration') && !subscription.isFree ? 'opacity-60' : ''}`}
+                    }`}
                   title={
-                    subscription.isFree
+                    isCloudDeployment && subscription.isFree
                       ? 'Collaboration is only available in Pro and Enterprise plans'
-                      : !subscription.canAccessFeature('hasAdvancedCollaboration')
-                        ? subscription.getUpgradeMessage('Advanced Collaboration')
-                        : `Toggle Collaboration Panel${hasMultipleActiveUsers ? ` (${activeUsersInProject.length} users)` : isCurrentFileShared ? ' (Shared file)' : ' (Enable sharing to collaborate)'}`
+                      : `Toggle Collaboration Panel${hasMultipleActiveUsers ? ` (${activeUsersInProject.length} users)` : isCurrentFileShared ? ' (Shared file)' : ' (Enable sharing to collaborate)'}`
                   }
                 >
                   <Users size={14} />
                   <span>Collaboration</span>
-                  {subscription.isFree && (
+                  {isCloudDeployment && subscription.isFree && (
                     <span className="bg-amber-500 text-white text-[10px] px-1 rounded">PRO</span>
                   )}
-                  {!subscription.canAccessFeature('hasAdvancedCollaboration') && !subscription.isFree && (
-                    <span className="bg-amber-500 text-white text-[10px] px-1 rounded">PRO</span>
-                  )}
-                  {hasMultipleActiveUsers && !subscription.isFree && subscription.canAccessFeature('hasAdvancedCollaboration') && (
+                  {hasMultipleActiveUsers && (
                     <span className="bg-blue-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-semibold">
                       {activeUsersInProject.length}
                     </span>
                   )}
-                  {isCurrentFileShared && !hasMultipleActiveUsers && !subscription.isFree && (
+                  {isCurrentFileShared && !hasMultipleActiveUsers && (
                     <span className="bg-green-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">✓</span>
                   )}
                 </button>
               )}
-              {projectId && (
+              {/* {projectId && (
                 <button
                   onClick={handleOpenProjectSelector}
                   className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-800 hover:bg-gray-100 p-2 rounded-md"
@@ -9862,7 +9877,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                     <Loader2 size={12} className="animate-spin ml-1 text-blue-600" />
                   )}
                 </button>
-              )}
+              )} */}
               <span className="text-xs text-gray-600">
                 Welcome, {user?.username || 'Guest'}
                 {user?.workspaceName && (
@@ -9878,18 +9893,6 @@ const Dashboard: React.FC<DashboardProps> = ({
               >
                 <Palette size={14} />
               </button>
-              {/* Subscription Plan Badge - Only for cloud deployments */}
-              { user.role === "ROLE_ADMIN" && isCloudDeployment && ( <button
-                onClick={() => setShowPlanDetails(true)}
-                className={`flex items-center gap-1.5 px-2 py-1 text-[10px] font-semibold rounded-md transition-all hover:shadow-lg cursor-pointer ${subscription.isEnterprise ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:from-amber-600 hover:to-orange-600' :
-                  subscription.isPro ? 'bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600' :
-                    'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                title={`Current Plan: ${subscription.plan.toUpperCase()} - Click for details`}
-              >
-                {subscription.isEnterprise ? <Crown size={12} /> : subscription.isPro ? <Zap size={12} /> : <Sparkles size={12} />}
-                {subscription.plan.toUpperCase()}
-              </button>)}
               {onBackToProjects && (
                 <button
                   onClick={onBackToProjects}
@@ -10346,15 +10349,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         isOpen={showThemeSettings}
         onClose={() => setShowThemeSettings(false)}
       />
-
-      {/* Plan Details Modal - Only for cloud deployments */}
-      {isCloudDeployment && (
-        <PlanDetailsModal
-          isOpen={showPlanDetails}
-          onClose={() => setShowPlanDetails(false)}
-          onUpgrade={handleUpgradePlan}
-        />
-      )}
 
       {/* History Panel */}
       {projectId && (
