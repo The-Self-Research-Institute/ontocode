@@ -12,7 +12,7 @@ interface User {
     workspaceId?: string;
     workspaceName?: string;
     workspaceRole?: string;
-    subscriptionPlan?: string; // 'free', 'pro', or 'enterprise'
+    subscriptionPlan?: string; // Workspace subscription plan: 'free', 'pro', or 'enterprise'
 }
 
 interface AuthContextType {
@@ -51,7 +51,7 @@ const isTokenExpired = (token: string): boolean => {
 };
 
 // Decode JWT token to get user info
-const decodeToken = (token: string): { userId?: string; username: string; email?: string; roles?: string[]; isAdmin?: boolean; workspaceId?: string; workspaceName?: string; workspaceRole?: string } => {
+const decodeToken = (token: string): { userId?: string; username: string; email?: string; roles?: string[]; isAdmin?: boolean; workspaceId?: string; workspaceName?: string; workspaceRole?: string; subscriptionPlan?: string } => {
     try {
         const parts = token.split('.');
         if (parts.length !== 3) return { username: 'unknown' };
@@ -65,7 +65,8 @@ const decodeToken = (token: string): { userId?: string; username: string; email?
             isAdmin: payload.isAdmin || false,
             workspaceId: payload.workspaceId,
             workspaceName: payload.workspaceName,
-            workspaceRole: payload.workspaceRole
+            workspaceRole: payload.workspaceRole,
+            subscriptionPlan: payload.subscriptionPlan
         };
     } catch (e) {
         console.error('[AuthContext] Error decoding token:', e);
@@ -175,7 +176,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             isAdmin: isAdmin,
                             workspaceId: userInfo.workspaceId,
                             workspaceName: userInfo.workspaceName,
-                            workspaceRole: userInfo.workspaceRole
+                            workspaceRole: userInfo.workspaceRole,
+                            subscriptionPlan: userInfo.subscriptionPlan
                         });
 
                         // Workspace selection based on deployment choice and role
@@ -259,7 +261,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 isAdmin: userInfo.isAdmin || isAdmin,
                 workspaceId: userInfo.workspaceId,
                 workspaceName: userInfo.workspaceName,
-                workspaceRole: userInfo.workspaceRole
+                workspaceRole: userInfo.workspaceRole,
+                subscriptionPlan: userInfo.subscriptionPlan
             });
             
             // After login, update user role based on deployment type
@@ -291,7 +294,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             isAdmin: newIsAdmin,
                             workspaceId: userInfo.workspaceId,
                             workspaceName: userInfo.workspaceName,
-                            workspaceRole: userInfo.workspaceRole
+                            workspaceRole: userInfo.workspaceRole,
+                            subscriptionPlan: userInfo.subscriptionPlan
                         });
                         
                         // Determine workspace selection based on deployment type and role
@@ -374,7 +378,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     username: userInfo.username || username, 
                     email: userInfo.email || email,
                     roles: roles,
-                    isAdmin: isAdmin
+                    isAdmin: isAdmin,
+                    subscriptionPlan: userInfo.subscriptionPlan
                 });
                 
                 // After signup, update user role based on deployment type
@@ -402,7 +407,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                                 username: userInfo.username || username, 
                                 email: userInfo.email || email,
                                 roles: newRoles,
-                                isAdmin: newIsAdmin
+                                isAdmin: newIsAdmin,
+                                subscriptionPlan: userInfo.subscriptionPlan
                             });
                             
                             const requiresWorkspace = shouldRequireWorkspaceSelection(
@@ -486,7 +492,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             workspaceId: workspaceData.workspaceId,
             workspaceName: workspaceData.workspaceName,
             workspaceRole: workspaceData.role,
-            subscriptionPlan: workspaceData.subscriptionPlan || 'FREE'
+            subscriptionPlan: workspaceData.subscriptionPlan || 'FREE' // Workspace subscription plan
         });
         setNeedsWorkspaceSelection(false);
         console.log('[AuthContext]  Workspace selection complete');
@@ -512,19 +518,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
 
         try {
+            // Update the workspace subscription plan
             const response = await apiClient.patch(`/api/workspaces/${user.workspaceId}/subscription`, {
                 plan: planId
             });
 
-            // Update user state with new subscription plan
+            // Update user context with new workspace subscription plan
             setUser({
                 ...user,
                 subscriptionPlan: planId
             });
 
-            console.log('[AuthContext] Subscription plan updated to:', planId);
+            console.log('[AuthContext] Workspace subscription plan updated to:', planId);
         } catch (error: any) {
-            console.error('[AuthContext] Failed to update subscription plan:', error);
+            console.error('[AuthContext] Failed to update workspace subscription plan:', error);
             throw error;
         }
     };

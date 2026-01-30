@@ -118,7 +118,7 @@ async function updateDeploymentUrls(context: vscode.ExtensionContext) {
  * @param token JWT token string
  * @returns Decoded token payload or null if invalid
  */
-function parseJwtToken(token: string): { userId?: string; username?: string; sub?: string; email?: string; isAdmin?: boolean; workspaceId?: string } | null {
+function parseJwtToken(token: string): { userId?: string; username?: string; sub?: string; email?: string; isAdmin?: boolean; workspaceId?: string; subscriptionPlan?: string } | null {
     try {
         console.log('[OntoCode] 🔍 Parsing JWT token...');
         console.log('[OntoCode] Token length:', token?.length || 0);
@@ -2519,12 +2519,25 @@ class OntoCodePanel {
                 return;
             }
             
-            // Extract userId, username, and email from token
+            // Extract userId, username, email, and subscription plan from token
             const userId = tokenData.userId || tokenData.sub || 'unknown';
             const username = tokenData.username || tokenData.sub || 'User';
             const userEmail = tokenData.email || '';
+            const subscriptionPlan = tokenData.subscriptionPlan || 'free';
             
-            console.log(`[OntoCode] Extracted user info - userId: ${userId}, username: ${username}, email: ${userEmail}`);
+            console.log(`[OntoCode] Extracted user info - userId: ${userId}, username: ${username}, email: ${userEmail}, plan: ${subscriptionPlan}`);
+            console.log(`[OntoCode] Token data keys:`, Object.keys(tokenData));
+            
+            // Check if user's workspace subscription plan supports collaboration (Pro or Enterprise only)
+            const planLower = subscriptionPlan.toLowerCase();
+            console.log(`[OntoCode] Checking plan: '${subscriptionPlan}' (normalized: '${planLower}')`);
+            
+            if (planLower !== 'pro' && planLower !== 'enterprise' && planLower !== 'professional') {
+                console.log(`[OntoCode] ⚠️  Collaboration disabled for ${subscriptionPlan} plan. Upgrade to Pro or Enterprise to enable collaboration.`);
+                return;
+            }
+            
+            console.log(`[OntoCode] ✅ Collaboration enabled for ${subscriptionPlan} plan`);
             
             // Call the main initialization method
             await this.initializeCollaboration(projectId, userId, username, userEmail);

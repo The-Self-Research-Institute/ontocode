@@ -128,6 +128,8 @@
     "bundle:extension": "webpack --config webpack.extension.js --mode production",
     "bundle:web": "webpack --config webpack.config.js --mode production",
     "bundle:all": "npm run bundle:extension && npm run bundle:web",
+    "test:selfhosted": "cross-env ENV_FILE=.env.selfhosted-test npm run bundle:all",
+    "test:cloud": "cross-env ENV_FILE=.env.cloud-test npm run bundle:all",
     "analyze:extension": "cross-env ANALYZE=true webpack --config webpack.extension.js --mode production",
     "analyze:web": "cross-env ANALYZE=true webpack --config webpack.config.js --mode production",
     "check:size": "node check-bundle-size.js",
