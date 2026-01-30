@@ -26,7 +26,9 @@ import {
     UserMinus,
     Save,
     Loader2,
-    Crown
+    Crown,
+    Zap,
+    Sparkles
 } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import { useAuth } from '../custom-hook/useAuth';
@@ -35,6 +37,7 @@ import InviteMemberModal from './InviteMemberModal';
 import SettingsModal from './SettingsModal';
 import CreateProjectModal from './CreateProjectModal';
 import ConfirmationModal from './ConfirmationModal';
+import PlanDetailsModal from './PlanDetailsModal';
 
 interface ProjectMember {
     userId: string;
@@ -87,6 +90,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
     const [showCreateProject, setShowCreateProject] = useState(false);
     const [showInviteMember, setShowInviteMember] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
+    const [showPlanDetails, setShowPlanDetails] = useState(false);
     const [renaming, setRenaming] = useState<{ projectId: string; currentName: string } | null>(null);
     const [newName, setNewName] = useState('');
     const [newProjectName, setNewProjectName] = useState('');
@@ -107,6 +111,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
     
     // Toast notification state
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'warning' | 'info' } | null>(null);
+    const [upgradingPlan, setUpgradingPlan] = useState(false);
     const [openMenuProjectId, setOpenMenuProjectId] = useState<string | null>(null); // Track which project menu is open
     
     // Confirmation modal state
@@ -122,6 +127,32 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
     // Check if current user is workspace owner
     // Check both userId match and if user has OWNER role in the workspace
     const isWorkspaceOwner = user?.userId === workspaceOwnerId || user?.workspaceRole === 'OWNER';
+
+    // Handle workspace subscription plan upgrade
+    const handleUpgradePlan = async (planId: string) => {
+        setUpgradingPlan(true);
+        try {
+            // Update workspace subscription plan via API
+            await apiClient.patch(`/api/workspaces/${user?.workspaceId}/subscription`, {
+                plan: planId
+            });
+
+            // Close modal first
+            setShowPlanDetails(false);
+            
+            // Show success toast
+            showToast(`Successfully upgraded to ${planId.toUpperCase()} plan! Refreshing...`, 'success');
+            
+            // Wait a bit for toast to be visible, then reload to get updated user data
+            setTimeout(() => {
+                window.location.reload();
+            }, 1500);
+        } catch (error: any) {
+            console.error('Failed to upgrade workspace plan:', error);
+            showToast(error?.response?.data?.error || 'Failed to upgrade plan. Please try again.', 'error');
+            setUpgradingPlan(false);
+        }
+    };
 
     // Helper function to show toast
     const showToast = (message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info') => {
@@ -582,6 +613,28 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
 
     return (
         <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
+            {/* Toast Notification */}
+            {toast && (
+                <div className={`fixed top-4 right-4 z-[100] px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 max-w-md animate-in slide-in-from-top-2 ${
+                    toast.type === 'success' ? 'bg-green-500 text-white' :
+                    toast.type === 'error' ? 'bg-red-500 text-white' :
+                    toast.type === 'warning' ? 'bg-amber-500 text-white' :
+                    'bg-blue-500 text-white'
+                }`}>
+                    {toast.type === 'success' && <CheckCircle size={18} />}
+                    {toast.type === 'error' && <XCircle size={18} />}
+                    {toast.type === 'warning' && <AlertTriangle size={18} />}
+                    {toast.type === 'info' && <AlertTriangle size={18} />}
+                    <span className="text-sm font-medium">{toast.message}</span>
+                    <button 
+                        onClick={() => setToast(null)}
+                        className="ml-2 hover:opacity-80"
+                    >
+                        <X size={16} />
+                    </button>
+                </div>
+            )}
+
             {/* Pending File Upload Banner */}
             {pendingFile && (
                 <div className="bg-gradient-to-r from-purple-600 to-blue-600 text-white px-4 py-3 flex-shrink-0">
@@ -625,6 +678,21 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
                             </p>
                         </div>
                         <div className="flex items-center gap-3">
+                            {/* Workspace Subscription Plan Badge */}
+                            <button
+                                onClick={() => setShowPlanDetails(true)}
+                                className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg transition-all hover:shadow-lg cursor-pointer ${
+                                    subscription.isEnterprise 
+                                        ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:from-amber-600 hover:to-orange-600' 
+                                        : subscription.isPro 
+                                            ? 'bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600' 
+                                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                }`}
+                                title={`Workspace Plan: ${subscription.plan.toUpperCase()} - Click for details`}
+                            >
+                                {subscription.isEnterprise ? <Crown size={14} /> : subscription.isPro ? <Zap size={14} /> : <Sparkles size={14} />}
+                                {subscription.plan.toUpperCase()}
+                            </button>
                             <button
                                 onClick={switchWorkspace}
                                 className="flex items-center gap-2 px-3 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
@@ -1329,6 +1397,14 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
                     </div>
                 </div>
             )}
+
+            {/* Plan Details Modal */}
+            <PlanDetailsModal
+                isOpen={showPlanDetails}
+                onClose={() => setShowPlanDetails(false)}
+                onUpgrade={handleUpgradePlan}
+                isUpgrading={upgradingPlan}
+            />
         </div>
     );
 };

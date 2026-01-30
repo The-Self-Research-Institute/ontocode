@@ -24,7 +24,7 @@ export const PLAN_LIMITS: Record<string, SubscriptionLimits> = {
     free: {
         maxTeamMembers: 3,
         storageGB: 10,
-        hasBasicCollaboration: true,
+        hasBasicCollaboration: false,
         hasAdvancedCollaboration: false,
         hasVersionControl: false,
         hasCustomPlugins: false,
@@ -42,7 +42,7 @@ export const PLAN_LIMITS: Record<string, SubscriptionLimits> = {
     pro: {
         maxTeamMembers: 10,
         storageGB: 100,
-        hasBasicCollaboration: false,
+        hasBasicCollaboration: true,
         hasAdvancedCollaboration: false,
         hasVersionControl: true,
         hasCustomPlugins: true,
@@ -61,7 +61,7 @@ export const PLAN_LIMITS: Record<string, SubscriptionLimits> = {
         maxTeamMembers: Infinity,
         storageGB: Infinity,
         hasBasicCollaboration: true,
-        hasAdvancedCollaboration: false,
+        hasAdvancedCollaboration: true,
         hasVersionControl: true,
         hasCustomPlugins: true,
         hasAdvancedReasoning: true,
@@ -80,7 +80,8 @@ export const PLAN_LIMITS: Record<string, SubscriptionLimits> = {
 export const useSubscription = () => {
     const { user } = useAuth();
 
-    const plan = user?.subscriptionPlan || 'free';
+    // Get workspace subscription plan from user context and normalize to lowercase
+    const plan = (user?.subscriptionPlan || 'free').toLowerCase();
     const limits = useMemo(() => PLAN_LIMITS[plan] || PLAN_LIMITS.free, [plan]);
 
     const canAccessFeature = (feature: keyof SubscriptionLimits): boolean => {
