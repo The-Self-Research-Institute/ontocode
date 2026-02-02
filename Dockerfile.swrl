@@ -1,7 +1,7 @@
 # Multi-stage build for SWRL Rules Engine Service
 # NOTE: SWRL service MUST use Java 17 due to SWRLAPI/Drools/MVEL incompatibility with Java 21
 # See ontology-swrl/JAVA_COMPATIBILITY.md for details
-FROM maven:3.9-eclipse-temurin-17-alpine AS build
+FROM maven:3.9-eclipse-temurin-17 AS build
 
 WORKDIR /build
 
