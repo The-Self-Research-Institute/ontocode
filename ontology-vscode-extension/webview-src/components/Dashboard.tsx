@@ -4604,8 +4604,8 @@ const Dashboard: React.FC<DashboardProps> = ({
             setProjectId(message.projectId);
             setSelectedItem(null);
             setLoadingProjectName(message.projectId);
-            userLoadingChoice.current = null;
-            setShowLoadingChoice(true);
+            // userLoadingChoice.current = null;
+            // setShowLoadingChoice(true);
 
             loadingPromiseRef.current = fetchData(message.projectId, false, initialProjectId)
               .then(() => {
@@ -6027,11 +6027,15 @@ const Dashboard: React.FC<DashboardProps> = ({
         // Upload using axios directly (apiClient doesn't support FormData)
         const token = localStorage.getItem('authToken');
         const resolvedEmail = resolveUserEmail();
-        const uploadResponse = await fetch(`${window.API_BASE_URL || 'http://ec2-13-218-153-101.compute-1.amazonaws.com'}/api/ontology/upload/${ontologyProjectId}?ownerEmail=${encodeURIComponent(resolvedEmail || '')}`, {
+        // Use deployment-aware URL
+        const uploadBaseUrl = window.API_BASE_URL || (localStorage.getItem('deploymentType') === 'self-hosted' ? 'http://localhost:80' : 'http://13.218.153.101');
+        const uploadResponse = await fetch(`${uploadBaseUrl}/api/ontology/upload/${ontologyProjectId}?ownerEmail=${encodeURIComponent(resolvedEmail || '')}`, {
           method: 'POST',
           headers: token ? { 'Authorization': `Bearer ${token}` } : {},
           body: formData
         });
+
+        console.log(uploadResponse,"upload-response")
 
         if (uploadResponse.ok) {
           console.log('[Dashboard] ✅ File uploaded successfully');
@@ -7752,8 +7756,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             projectId={projectId}
             context={{
               projectId,
-              apiBaseUrl: (window as any).API_BASE_URL || 'http://ec2-13-218-153-101.compute-1.amazonaws.com',
-              // apiBaseUrl: (window as any).API_BASE_URL || 'http://localhost:8082',
+              apiBaseUrl: getApiBaseUrl(),
               permissions: {
                 canEdit: !readonlyMode,
                 canDelete: !readonlyMode,
@@ -9160,8 +9163,13 @@ const Dashboard: React.FC<DashboardProps> = ({
   // #endregion
 
   // #region Main Render
-  // Define apiBaseUrl for plugin usage
-  const apiBaseUrl = (window as any).API_BASE_URL || 'http://localhost:8082';
+  // Define apiBaseUrl for plugin usage - use deployment-aware fallback
+  const getApiBaseUrl = () => {
+    if (window.API_BASE_URL) return window.API_BASE_URL;
+    const deployType = localStorage.getItem('deploymentType');
+    return deployType === 'self-hosted' ? 'http://localhost:80' : 'http://13.218.153.101';
+  };
+  const apiBaseUrl = getApiBaseUrl();
 
   const ALL_MAIN_TABS: Record<string, { label: string, icon: React.ElementType }> = {
     ActiveOntology: { label: "Active ontology", icon: FileText },
