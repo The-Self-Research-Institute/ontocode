@@ -1701,6 +1701,7 @@ class OntoCodePanel {
                 };
 
                 scheduleStatusCheck(1);
+
             } else if (response.status === 409 && response.data?.isDuplicate && !action) {
                 const conflictProjectId = response.data?.projectId;
                 if (!conflictProjectId) {
@@ -1723,7 +1724,7 @@ class OntoCodePanel {
                     try {
                         await this.initializeCollaborationForProject(conflictProjectId, token);
                     } catch (error) {
-                        console.warn('[OntoCode] Failed to initialize collaboration for existing project:', error);
+                        console.warn('[OntoCode] Failed to collaboration for existing project:', error);
                     }
                     if (this._isWebviewReady) {
                         this.postMessage({ type: 'fileReady', projectId: conflictProjectId });
