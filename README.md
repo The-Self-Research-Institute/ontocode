@@ -261,4 +261,4 @@ Regardless of the method used, OntoCode automatically:
 
 ## �📄 License
 
-[MIT License](LICENSE)
+[MIT License](LICENCE.md)
