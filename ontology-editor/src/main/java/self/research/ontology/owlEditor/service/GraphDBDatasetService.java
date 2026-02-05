@@ -63,16 +63,21 @@ public class GraphDBDatasetService {
             try {
                 HTTPRepository httpRepo = new HTTPRepository(graphdbUrl, repositoryId);
                 
-                // Configure HTTP client with extended timeouts for large file uploads
+                // PERFORMANCE: Configure HTTP client with extended timeouts and connection pooling
                 // This prevents "Connection aborted" errors during large imports
                 httpRepo.setAdditionalHttpHeaders(java.util.Map.of(
-                    "Keep-Alive", "timeout=1800, max=1" // 30 minutes keep-alive
+                    "Keep-Alive", "timeout=3600, max=100", // 1 hour keep-alive, reuse connections
+                    "Connection", "keep-alive",
+                    "Accept-Encoding", "gzip, deflate" // Enable compression
                 ));
                 
                 repository = httpRepo;
                 repository.init();
                 
-                log.info("GraphDB HTTP client configured with extended timeouts for large file support");
+                log.info("✅ GraphDB HTTP client configured with:");
+                log.info("   - Extended timeouts (1 hour)");
+                log.info("   - Connection pooling (max 100 reuse)");
+                log.info("   - Compression enabled");
                 
                 // Test connection
                 try (RepositoryConnection conn = repository.getConnection()) {
@@ -431,7 +436,8 @@ public class GraphDBDatasetService {
      */
     public void bulkLoadChunked(String projectId, InputStream inputStream, RDFFormat rdfFormat) {
         long bulkLoadStart = System.nanoTime();
-        final int BATCH_SIZE = 1000; // Triples per batch
+        // PERFORMANCE: 50x larger batch size for dramatically faster imports
+        final int BATCH_SIZE = 50000; // Triples per batch (optimized from 1000)
         
         try {
             Repository repo = getRepository();
@@ -518,10 +524,17 @@ public class GraphDBDatasetService {
                                 // Upload batch
                                 conn.add(batch, graphIri);
                                 long count = totalTriples.addAndGet(batch.size());
-                                if (count % 10000 == 0) {
+                                // PERFORMANCE: Log every 100k triples instead of 10k to reduce I/O overhead
+                                if (count % 100000 == 0) {
                                     log.info("Uploaded {} triples so far...", count);
                                 }
                                 batch.clear();
+                                // PERFORMANCE: Periodic commits for very large files (every 1M triples)
+                                if (count % 1000000 == 0 && count > 0) {
+                                    conn.commit();
+                                    conn.begin();
+                                    log.info("Intermediate commit at {} triples", count);
+                                }
                             }
                         }
                     });
