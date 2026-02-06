@@ -9,6 +9,7 @@ import { CollaborationManager } from './collaboration/CollaborationManager.web';
 import { ICollaborationManager } from './collaboration/types';
 import { EditCapture } from './collaboration/EditCapture';
 import { RemoteEditApplier } from './collaboration/RemoteEditApplier';
+import { optimizedUpload, shouldCompressFile, ChunkMetadata } from './utils/uploadOptimizer';
 
 /**
  * Utility: Convert Uint8Array to base64 string (web-compatible)
@@ -1595,20 +1596,62 @@ class OntoCodePanel {
 
         // 3. Let the webview know we're starting an upload
         console.log(`[OntoCode] 📢 Sending showLoading message to webview for project: ${projectId}`);
+
+        // Show notification for large files
+        const fileSizeMB = fileData.length / (1024 * 1024);
+        if (fileSizeMB > 50) {
+            const estimatedMinutes = Math.ceil(fileSizeMB / 10); // ~1 min per 10MB for GraphDB
+            vscode.window.showInformationMessage(
+                `Uploading large file (${fileSizeMB.toFixed(1)}MB). GraphDB processing may take ${estimatedMinutes}+ minutes. Please wait...`,
+                { modal: false }
+            );
+        }
+
         const showLoadingResult = this.postMessage({ type: 'showLoading', projectId });
         console.log(`[OntoCode] 📢 showLoading message sent, result:`, showLoadingResult);
 
         try {
             // 4. Prepare the form data for multipart upload
             // Convert Uint8Array to Blob for web extension compatibility
-            // Create a new Uint8Array with ArrayBuffer to ensure compatibility
             const buffer = new Uint8Array(fileData.buffer.byteLength);
             buffer.set(new Uint8Array(fileData.buffer));
-            const fileBlob = new Blob([buffer], { type: 'application/rdf+xml' });
-            // Create a File object from the Blob to preserve filename
+
+            // Optional: Compress file if it's a compressible format and > 1MB
+            let dataToUpload = buffer;
+            const enableCompression = shouldCompressFile(fileName) && buffer.length > 1024 * 1024;
+
+            if (enableCompression) {
+                console.log(`[OntoCode] File is ${(buffer.length / (1024 * 1024)).toFixed(2)}MB, attempting compression...`);
+                try {
+                    // Check if CompressionStream is available
+                    if (typeof CompressionStream !== 'undefined') {
+                        const startTime = Date.now();
+                        const blob = new Blob([buffer]);
+                        const compressedStream = blob.stream().pipeThrough(new CompressionStream('gzip'));
+                        const compressedBlob = await new Response(compressedStream).blob();
+                        dataToUpload = new Uint8Array(await compressedBlob.arrayBuffer());
+
+                        const compressionTime = Date.now() - startTime;
+                        const compressionRatio = ((1 - dataToUpload.length / buffer.length) * 100).toFixed(1);
+                        console.log(`[OntoCode] ✅ Compressed from ${buffer.length} to ${dataToUpload.length} bytes (${compressionRatio}% reduction) in ${compressionTime}ms`);
+                    } else {
+                        console.log(`[OntoCode] ⚠️ CompressionStream not available, uploading uncompressed`);
+                    }
+                } catch (compressionError) {
+                    console.error(`[OntoCode] ⚠️ Compression failed, uploading uncompressed:`, compressionError);
+                    dataToUpload = buffer;
+                }
+            }
+
+            const fileBlob = new Blob([dataToUpload], { type: 'application/rdf+xml' });
             const file = new File([fileBlob], fileName, { type: 'application/rdf+xml' });
             const formData = new FormData();
             formData.append('file', file);
+
+            // Indicate if file is compressed
+            if (enableCompression && dataToUpload.length < buffer.length) {
+                formData.append('compressed', 'true');
+            }
             
             // Add action parameter if specified (replace or create_copy)
             if (action) {
@@ -1659,19 +1702,86 @@ class OntoCodePanel {
 
             // 4. Upload to gateway endpoint
             const uploadUrl = `${GATEWAY_URL}/api/ontology/upload/${projectId}`;
+            const fileSizeMB = (fileData.length / (1024 * 1024)).toFixed(2);
+
             console.log(`[OntoCode] Uploading to: ${uploadUrl}`);
             console.log(`[OntoCode] Upload parameters - fileName: ${fileName}, action: ${action || 'none'}, projectId: ${projectId}`);
-            // Fix: Updated file size logging to work with Uint8Array instead of Buffer.
-            console.log(`[OntoCode] File size: ${fileData.length} bytes`);
-            
-            const response = await axios.post(uploadUrl, formData, {
-                headers,
-                maxRedirects: 0,  // Disable redirects to catch any redirect issues
-                timeout: 300000,  // 5 minutes timeout for large files
-                maxContentLength: Infinity,
-                maxBodyLength: Infinity,
-                validateStatus: (status) => status < 500 // Accept all non-5xx responses
-            });
+            console.log(`[OntoCode] File size: ${fileData.length} bytes (${fileSizeMB} MB)`);
+
+            // Dynamic timeout based on file size
+            // Base: 10 min, add 1 min per 10MB for GraphDB processing
+            const baseTimeout = 10 * 60 * 1000; // 10 minutes
+            const additionalTimeout = Math.ceil(fileData.length / (10 * 1024 * 1024)) * 60 * 1000; // 1 min per 10MB
+            const uploadTimeout = Math.min(baseTimeout + additionalTimeout, 60 * 60 * 1000); // Max 60 minutes
+
+            console.log(`[OntoCode] Calculated timeout: ${(uploadTimeout / 60000).toFixed(1)} minutes (includes GraphDB processing time)`);
+
+            // Upload with retry logic (max 3 attempts)
+            const MAX_RETRIES = 3;
+            let lastError: any = null;
+            let response: any = null;
+
+            for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+                try {
+                    if (attempt > 0) {
+                        const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 2s, 4s
+                        console.log(`[OntoCode] Retry attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms delay...`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    }
+
+                    response = await axios.post(uploadUrl, formData, {
+                        headers,
+                        maxRedirects: 0,  // Disable redirects to catch any redirect issues
+                        timeout: uploadTimeout,  // Dynamic timeout based on file size
+                        maxContentLength: Infinity,
+                        maxBodyLength: Infinity,
+                        validateStatus: (status) => status < 500, // Accept all non-5xx responses
+                        onUploadProgress: (progressEvent) => {
+                            const percentCompleted = progressEvent.total
+                                ? Math.round((progressEvent.loaded * 100) / progressEvent.total)
+                                : 0;
+                            const statusMsg = percentCompleted === 100
+                                ? `Upload complete. Processing in GraphDB... (this may take several minutes for large files)`
+                                : `Uploading: ${percentCompleted}%`;
+                            console.log(`[OntoCode] ${statusMsg} (${progressEvent.loaded} / ${progressEvent.total} bytes)`);
+                            // Send progress to webview
+                            this.postMessage({
+                                type: 'uploadProgress',
+                                projectId,
+                                percent: percentCompleted,
+                                loaded: progressEvent.loaded,
+                                total: progressEvent.total,
+                                message: statusMsg
+                            });
+                        }
+                    });
+
+                    // Success - break out of retry loop
+                    console.log(`[OntoCode] ✅ Upload successful on attempt ${attempt + 1}`);
+                    break;
+
+                } catch (error: any) {
+                    lastError = error;
+                    const status = error?.response?.status;
+
+                    // Don't retry on authentication/authorization errors
+                    if (status === 401 || status === 403) {
+                        console.error(`[OntoCode] ❌ Auth error (${status}), not retrying`);
+                        throw error;
+                    }
+
+                    console.error(`[OntoCode] Upload attempt ${attempt + 1} failed:`, error?.message || error);
+
+                    // If this was the last attempt, throw the error
+                    if (attempt === MAX_RETRIES - 1) {
+                        throw error;
+                    }
+                }
+            }
+
+            if (!response) {
+                throw lastError || new Error('Upload failed with no response');
+            }
 
             console.log(`[OntoCode] Upload response status: ${response.status}`);
             console.log(`[OntoCode] Upload response data:`, response.data);
@@ -2329,25 +2439,115 @@ class OntoCodePanel {
             console.log('[OntoCode] Generated upload project ID:', uploadProjectId);
             
             // Upload file to the system using web-compatible FormData
+            // Optional: Compress file if it's a compressible format and > 1MB
+            let dataToUpload = fileData;
+            const enableCompression = shouldCompressFile(fileName) && fileData.length > 1024 * 1024;
+
+            if (enableCompression) {
+                console.log(`[OntoCode] File is ${(fileData.length / (1024 * 1024)).toFixed(2)}MB, attempting compression...`);
+                try {
+                    if (typeof CompressionStream !== 'undefined') {
+                        const startTime = Date.now();
+                        const blob = new Blob([fileData]);
+                        const compressedStream = blob.stream().pipeThrough(new CompressionStream('gzip'));
+                        const compressedBlob = await new Response(compressedStream).blob();
+                        dataToUpload = new Uint8Array(await compressedBlob.arrayBuffer());
+
+                        const compressionTime = Date.now() - startTime;
+                        const compressionRatio = ((1 - dataToUpload.length / fileData.length) * 100).toFixed(1);
+                        console.log(`[OntoCode] ✅ Compressed from ${fileData.length} to ${dataToUpload.length} bytes (${compressionRatio}% reduction) in ${compressionTime}ms`);
+                    }
+                } catch (compressionError) {
+                    console.error(`[OntoCode] ⚠️ Compression failed:`, compressionError);
+                    dataToUpload = fileData;
+                }
+            }
+
             const formData = new FormData();
-            // Create a Blob from the Uint8Array
-            const fileBlob = new Blob([fileData], { type: 'application/rdf+xml' });
+            const fileBlob = new Blob([dataToUpload], { type: 'application/rdf+xml' });
             const file = new File([fileBlob], fileName, { type: 'application/rdf+xml' });
             formData.append('file', file);
-            
+
+            if (enableCompression && dataToUpload.length < fileData.length) {
+                formData.append('compressed', 'true');
+            }
+
             const uploadUrl = `${GATEWAY_URL}/api/ontology/upload/${uploadProjectId}`;
-            
+            const fileSizeMB = (fileData.length / (1024 * 1024)).toFixed(2);
+
             console.log('[OntoCode] Upload URL:', uploadUrl);
-            console.log('[OntoCode] Uploading file...');
-            
-            const response = await axios.post(uploadUrl, formData, {
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                },
-                maxContentLength: Infinity,
-                maxBodyLength: Infinity,
-                timeout: 300000
-            });
+            console.log(`[OntoCode] Uploading file... Size: ${fileSizeMB}MB`);
+
+            // Show notification for large files
+            if (fileData.length > 50 * 1024 * 1024) {
+                const estimatedMinutes = Math.ceil(fileData.length / (10 * 1024 * 1024));
+                vscode.window.showInformationMessage(
+                    `Uploading large file (${fileSizeMB}MB). GraphDB processing may take ${estimatedMinutes}+ minutes.`,
+                    { modal: false }
+                );
+            }
+
+            // Dynamic timeout based on file size
+            const baseTimeout = 10 * 60 * 1000;
+            const additionalTimeout = Math.ceil(fileData.length / (10 * 1024 * 1024)) * 60 * 1000;
+            const uploadTimeout = Math.min(baseTimeout + additionalTimeout, 60 * 60 * 1000);
+
+            console.log(`[OntoCode] Calculated timeout: ${(uploadTimeout / 60000).toFixed(1)} minutes`);
+
+            // Upload with retry logic (max 3 attempts)
+            const MAX_RETRIES = 3;
+            let lastError: any = null;
+            let response: any = null;
+
+            for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+                try {
+                    if (attempt > 0) {
+                        const delay = Math.pow(2, attempt) * 1000;
+                        console.log(`[OntoCode] Retry attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms...`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    }
+
+                    response = await axios.post(uploadUrl, formData, {
+                        headers: {
+                            'Authorization': `Bearer ${token}`
+                        },
+                        maxContentLength: Infinity,
+                        maxBodyLength: Infinity,
+                        timeout: uploadTimeout,
+                        onUploadProgress: (progressEvent) => {
+                            const percentCompleted = progressEvent.total
+                                ? Math.round((progressEvent.loaded * 100) / progressEvent.total)
+                                : 0;
+                            const statusMsg = percentCompleted === 100
+                                ? `Upload complete. Processing in GraphDB...`
+                                : `Uploading: ${percentCompleted}%`;
+                            console.log(`[OntoCode] ${statusMsg} (${progressEvent.loaded} / ${progressEvent.total} bytes)`);
+                        }
+                    });
+
+                    console.log(`[OntoCode] ✅ Upload successful on attempt ${attempt + 1}`);
+                    break;
+
+                } catch (error: any) {
+                    lastError = error;
+                    const status = error?.response?.status;
+
+                    if (status === 401 || status === 403) {
+                        console.error(`[OntoCode] ❌ Auth error (${status}), not retrying`);
+                        throw error;
+                    }
+
+                    console.error(`[OntoCode] Upload attempt ${attempt + 1} failed:`, error?.message || error);
+
+                    if (attempt === MAX_RETRIES - 1) {
+                        throw error;
+                    }
+                }
+            }
+
+            if (!response) {
+                throw lastError || new Error('Upload failed with no response');
+            }
             
             console.log('[OntoCode] Upload response status:', response.status);
             console.log('[OntoCode] Upload response data:', response.data);
