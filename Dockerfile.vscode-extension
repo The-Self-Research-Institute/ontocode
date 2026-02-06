@@ -1,4 +1,4 @@
-# Multi-stage build for OntoCode VS Code Extension
+# Multi-stage build for OntoCode VS Code Extension with Web Server
 # Stage 1: Build the extension
 FROM node:21-alpine AS builder
 
@@ -13,31 +13,41 @@ RUN npm ci
 # Copy source code
 COPY ontology-vscode-extension ./
 
-# Build the extension and webview
-RUN npm run compile && npm run bundle:all
+# Install webview dependencies (required for bundle:all)
+RUN cd webview-src && npm ci
 
-# Stage 2: Runtime - Simple web server to serve extension artifacts
+# Build the extension and webview
+RUN npm run bundle:all
+
+# Stage 2: Runtime with VS Code Web Server
 FROM node:21-alpine
 
-WORKDIR /app
+WORKDIR /extension
 
-# Install http-server for serving static files
-RUN npm install -g http-server
+# Install VS Code test-web globally and http-server as fallback
+RUN npm install -g @vscode/test-web http-server
 
 # Copy built extension from builder stage
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/out ./out
-COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app ./
 
-# Copy only the necessary files for the extension to reference
-COPY ontology-vscode-extension/language-configuration.json ./
+# Create directory for workspace data (will be mounted via volume)
+RUN mkdir -p /workspace/projects
 
-# Expose port for development server
+# Expose port for VS Code web server
 EXPOSE 3000
 
 # Health check - verify extension files are present
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-    CMD [ -f "/app/dist/web/extension.js" ] || exit 1
+    CMD wget --quiet --tries=1 --spider http://localhost:3000/ || exit 1
 
-# Default command: Start development server
-CMD ["http-server", "./dist", "-p", "3000", "--cors", "-g"]
+# Environment variables
+ENV VSCODE_WEB_HOST=0.0.0.0
+ENV VSCODE_WEB_PORT=3000
+
+# Default command: Start VS Code Web Server with extension
+CMD ["vscode-test-web", \
+     "--browserType=none", \
+     "--host=0.0.0.0", \
+     "--port=3000", \
+     "--extensionDevelopmentPath=/extension", \
+     "/workspace/projects"]
