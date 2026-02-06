@@ -30,6 +30,10 @@ RUN npm install -g @vscode/test-web http-server
 # Copy built extension from builder stage
 COPY --from=builder /app ./
 
+# Copy and prepare the entrypoint script that patches CSP for external HTTP connections
+COPY ontology-vscode-extension/docker-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 # Create directory for workspace data (will be mounted via volume)
 RUN mkdir -p /workspace/projects
 
@@ -44,10 +48,5 @@ HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
 ENV VSCODE_WEB_HOST=0.0.0.0
 ENV VSCODE_WEB_PORT=3000
 
-# Default command: Start VS Code Web Server with extension
-CMD ["vscode-test-web", \
-     "--browserType=none", \
-     "--host=0.0.0.0", \
-     "--port=3000", \
-     "--extensionDevelopmentPath=/extension", \
-     "/workspace/projects"]
+# Default command: Use entrypoint that patches Extension Host CSP before starting
+ENTRYPOINT ["/entrypoint.sh"]
