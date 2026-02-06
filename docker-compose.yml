@@ -27,10 +27,7 @@ services:
 
   # GraphDB (RDF Triple Store) - with embedded license
   graphdb:
-    build:
-      context: .
-      dockerfile: Dockerfile.graphdb
-    image: ontocode-graphdb:latest
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-graphdb:${VERSION:-latest}
     container_name: ontocode-graphdb
     restart: unless-stopped
     ports:
@@ -47,7 +44,7 @@ services:
       interval: 15s
       timeout: 10s
       retries: 5
-      start_period: 60s
+      start_period: 180s
 
   # GraphDB Repository Initializer - Creates 'ontocode' repository with inference DISABLED
   graphdb-init:
@@ -114,13 +111,7 @@ services:
 
   # Authentication Service
   auth:
-    build:
-      context: .
-      dockerfile: Dockerfile.auth
-      args:
-        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-        - VCS_REF=$(git rev-parse --short HEAD)
-    image: ontocode-auth:latest
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-auth:${VERSION:-latest}
     container_name: ontocode-auth
     restart: unless-stopped
     ports:
@@ -138,13 +129,7 @@ services:
 
   # API Gateway
   gateway:
-    build:
-      context: .
-      dockerfile: Dockerfile.gateway
-      args:
-        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-        - VCS_REF=$(git rev-parse --short HEAD)
-    image: ontocode-gateway:latest
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-gateway:${VERSION:-latest}
     container_name: ontocode-gateway
     restart: unless-stopped
     ports:
@@ -162,13 +147,7 @@ services:
 
   # Ontology Editor Service
   owl-editor:
-    build:
-      context: .
-      dockerfile: Dockerfile.editor
-      args:
-        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-        - VCS_REF=$(git rev-parse --short HEAD)
-    image: ontocode-editor:latest
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-editor:${VERSION:-latest}
     container_name: ontocode-editor
     restart: unless-stopped
     ports:
@@ -188,13 +167,7 @@ services:
 
   # SWRL Rules Service
   swrl-service:
-    build:
-      context: .
-      dockerfile: Dockerfile.swrl
-      args:
-        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-        - VCS_REF=$(git rev-parse --short HEAD)
-    image: ontocode-swrl:latest
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-swrl:${VERSION:-latest}
     container_name: ontocode-swrl
     restart: unless-stopped
     ports:
@@ -214,13 +187,7 @@ services:
 
   # Plugin Service
   plugin-service:
-    build:
-      context: .
-      dockerfile: Dockerfile.plugin
-      args:
-        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-        - VCS_REF=$(git rev-parse --short HEAD)
-    image: ontocode-plugin:latest
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-plugin:${VERSION:-latest}
     container_name: ontocode-plugin
     restart: unless-stopped
     ports:
@@ -238,9 +205,7 @@ services:
 
   # Plugin Initialization Service
   plugin-init:
-    build:
-      context: .
-      dockerfile: Dockerfile.plugin-init
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-plugin-init:${VERSION:-latest}
     container_name: ontocode-plugin-init
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
@@ -255,13 +220,7 @@ services:
 
   # VS Code Web Extension (Self-Contained)
   vscode-web:
-    build:
-      context: .
-      dockerfile: Dockerfile.vscode-extension
-      args:
-        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-        - VCS_REF=$(git rev-parse --short HEAD)
-    image: ontocode-vscode-web:latest
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-vscode-web:${VERSION:-latest}
     container_name: ontocode-vscode-web
     restart: unless-stopped
     ports:
