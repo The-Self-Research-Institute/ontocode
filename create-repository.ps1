@@ -45,33 +45,33 @@ $config = @"
 @prefix rep: <http://www.openrdf.org/config/repository#> .
 @prefix sr: <http://www.openrdf.org/config/repository/sail#> .
 @prefix sail: <http://www.openrdf.org/config/sail#> .
-@prefix owlim: <http://www.ontotext.com/trree/owlim#> .
+@prefix graphdb: <http://www.ontotext.com/config/graphdb#> .
 
 [] a rep:Repository ;
     rep:repositoryID "ontocode" ;
-    rdfs:label "OntoCode Repository" ;
+    rdfs:label "OntoCode Repository (No Inference)" ;
     rep:repositoryImpl [
-        rep:repositoryType "graphdb:FreeSailRepository" ;
+        rep:repositoryType "graphdb:SailRepository" ;
         sr:sailImpl [
-            sail:sailType "graphdb:FreeSail" ;
-            owlim:base-URL "http://example.org/graphdb#" ;
-            owlim:defaultNS "" ;
-            owlim:entity-index-size "10000000" ;
-            owlim:entity-id-size "32" ;
-            owlim:imports "" ;
-            owlim:repository-type "file-repository" ;
-            owlim:ruleset "owl-horst-optimized" ;
-            owlim:storage-folder "storage" ;
-            owlim:enable-context-index "false" ;
-            owlim:enablePredicateList "true" ;
-            owlim:in-memory-literal-properties "true" ;
-            owlim:enable-literal-index "true" ;
-            owlim:check-for-inconsistencies "false" ;
-            owlim:disable-sameAs "true" ;
-            owlim:query-timeout "0" ;
-            owlim:query-limit-results "0" ;
-            owlim:throw-QueryEvaluationException-on-timeout "false" ;
-            owlim:read-only "false" ;
+            sail:sailType "graphdb:Sail" ;
+            graphdb:ruleset "empty" ;
+            graphdb:base-URL "http://example.org/graphdb#" ;
+            graphdb:defaultNS "" ;
+            graphdb:entity-index-size "10000000" ;
+            graphdb:entity-id-size "32" ;
+            graphdb:imports "" ;
+            graphdb:repository-type "file-repository" ;
+            graphdb:storage-folder "storage" ;
+            graphdb:enable-context-index "false" ;
+            graphdb:enablePredicateList "true" ;
+            graphdb:in-memory-literal-properties "true" ;
+            graphdb:enable-literal-index "true" ;
+            graphdb:check-for-inconsistencies "false" ;
+            graphdb:disable-sameAs "true" ;
+            graphdb:query-timeout "0" ;
+            graphdb:query-limit-results "0" ;
+            graphdb:throw-QueryEvaluationException-on-timeout "false" ;
+            graphdb:read-only "false" ;
         ]
     ] .
 "@
@@ -114,7 +114,7 @@ $fileContent
         Write-Host ""
         Write-Host "Repository: ontocode" -ForegroundColor Cyan
         Write-Host "URL: http://localhost:7200/repositories/ontocode" -ForegroundColor Cyan
-        Write-Host "Ruleset: OWL-HORST (Optimized)" -ForegroundColor Cyan
+        Write-Host "Ruleset: empty (NO INFERENCE)" -ForegroundColor Cyan
         Write-Host ""
         Write-Host "You can now upload ontology files!" -ForegroundColor Green
         Write-Host ""
@@ -134,7 +134,7 @@ $fileContent
     Write-Host "2. Go to Setup → Repositories" -ForegroundColor Yellow
     Write-Host "3. Click 'Create new repository'" -ForegroundColor Yellow
     Write-Host "4. Repository ID: ontocode" -ForegroundColor Yellow
-    Write-Host "5. Ruleset: owl-horst-optimized" -ForegroundColor Yellow
+    Write-Host "5. Ruleset: empty (disable inference)" -ForegroundColor Yellow
     Write-Host "6. Click Create" -ForegroundColor Yellow
     Write-Host ""
 } finally {

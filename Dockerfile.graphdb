@@ -1,0 +1,16 @@
+# GraphDB with embedded license
+FROM ontotext/graphdb:11.1.1
+
+# Copy license file into the image
+COPY CORETOPIA_GRAPHDB_FREE_v11.1.license /opt/graphdb/home/conf/graphdb.license
+
+# Set proper permissions
+RUN chmod 644 /opt/graphdb/home/conf/graphdb.license
+
+# Environment variables
+ENV GDB_HEAP_SIZE=2g
+ENV GDB_LICENSE_PATH=/opt/graphdb
+
+EXPOSE 7200
+
+# Use the default entrypoint from base image
