@@ -2,6 +2,7 @@ package self.research.ontology.owlEditor.service;
 
 import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.model.Statement;
+import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.query.*;
 import org.eclipse.rdf4j.repository.Repository;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
@@ -11,16 +12,23 @@ import org.eclipse.rdf4j.rio.RDFHandler;
 import org.eclipse.rdf4j.rio.RDFParser;
 import org.eclipse.rdf4j.rio.Rio;
 import org.eclipse.rdf4j.rio.helpers.AbstractRDFHandler;
+import org.eclipse.rdf4j.rio.helpers.BasicParserSettings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import self.research.ontology.owlEditor.model.ImportOptions;
 
 import jakarta.annotation.PreDestroy;
+import java.io.BufferedInputStream;
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.io.SequenceInputStream;
 import java.io.StringWriter;
+import java.net.URLEncoder;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -53,6 +61,80 @@ public class GraphDBDatasetService {
     
     // Cache of graph URIs per project (projectId -> graphUri)
     private final Map<String, String> graphUriCache = new ConcurrentHashMap<>();
+    private final Map<String, PartitionGraphs> partitionGraphCache = new ConcurrentHashMap<>();
+    private static final long PARTITION_CACHE_TTL_MS = 30_000;
+
+    public interface ProgressListener {
+        void onProgress(ImportProgress progress);
+    }
+
+    public static class ImportProgress {
+        private final long bytesRead;
+        private final long totalBytes;
+        private final long triplesProcessed;
+        private final long elapsedMs;
+
+        public ImportProgress(long bytesRead, long totalBytes, long triplesProcessed, long elapsedMs) {
+            this.bytesRead = bytesRead;
+            this.totalBytes = totalBytes;
+            this.triplesProcessed = triplesProcessed;
+            this.elapsedMs = elapsedMs;
+        }
+
+        public long getBytesRead() { return bytesRead; }
+        public long getTotalBytes() { return totalBytes; }
+        public long getTriplesProcessed() { return triplesProcessed; }
+        public long getElapsedMs() { return elapsedMs; }
+    }
+
+    private static class CountingInputStream extends java.io.FilterInputStream {
+        private long count = 0L;
+        private long mark = -1L;
+
+        protected CountingInputStream(InputStream in) {
+            super(in);
+        }
+
+        @Override
+        public int read() throws java.io.IOException {
+            int b = super.read();
+            if (b != -1) {
+                count++;
+            }
+            return b;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws java.io.IOException {
+            int n = super.read(b, off, len);
+            if (n > 0) {
+                count += n;
+            }
+            return n;
+        }
+
+        @Override
+        public synchronized void mark(int readlimit) {
+            if (in.markSupported()) {
+                super.mark(readlimit);
+                mark = count;
+            }
+        }
+
+        @Override
+        public synchronized void reset() throws java.io.IOException {
+            if (in.markSupported()) {
+                super.reset();
+                if (mark >= 0) {
+                    count = mark;
+                }
+            }
+        }
+
+        public long getCount() {
+            return count;
+        }
+    }
     
     /**
      * Initialize GraphDB repository connection
@@ -63,7 +145,11 @@ public class GraphDBDatasetService {
             try {
                 HTTPRepository httpRepo = new HTTPRepository(graphdbUrl, repositoryId);
                 
+<<<<<<< Updated upstream
                 // PERFORMANCE: Configure HTTP client with extended timeouts and connection pooling
+=======
+                // PERFORMANCE OPTIMIZATION: Configure HTTP client with extended timeouts and connection pooling
+>>>>>>> Stashed changes
                 // This prevents "Connection aborted" errors during large imports
                 httpRepo.setAdditionalHttpHeaders(java.util.Map.of(
                     "Keep-Alive", "timeout=3600, max=100", // 1 hour keep-alive, reuse connections
@@ -130,8 +216,8 @@ public class GraphDBDatasetService {
             
             // Inject FROM clause if not present
             if (!sparqlQuery.toUpperCase().contains("FROM")) {
-                sparqlQuery = sparqlQuery.replaceFirst("(?i)WHERE", 
-                    "FROM <" + graphUri + "> WHERE");
+                sparqlQuery = sparqlQuery.replaceFirst("(?i)WHERE",
+                    buildFromClause(conn, projectId) + " WHERE");
             }
             
             log.info("[GRAPHDB] 📡 EXECUTING SELECT QUERY");
@@ -228,8 +314,8 @@ public class GraphDBDatasetService {
             
             // Inject FROM clause if not present
             if (!sparqlQuery.toUpperCase().contains("FROM")) {
-                sparqlQuery = sparqlQuery.replaceFirst("(?i)WHERE", 
-                    "FROM <" + graphUri + "> WHERE");
+                sparqlQuery = sparqlQuery.replaceFirst("(?i)WHERE",
+                    buildFromClause(conn, projectId) + " WHERE");
             }
             
             log.debug("Executing CONSTRUCT query for project: {}", projectId);
@@ -253,8 +339,8 @@ public class GraphDBDatasetService {
             
             // Inject FROM clause if not present
             if (!sparqlQuery.toUpperCase().contains("FROM")) {
-                sparqlQuery = sparqlQuery.replaceFirst("(?i)WHERE", 
-                    "FROM <" + graphUri + "> WHERE");
+                sparqlQuery = sparqlQuery.replaceFirst("(?i)WHERE",
+                    buildFromClause(conn, projectId) + " WHERE");
             }
             
             log.debug("Executing ASK query for project: {}", projectId);
@@ -435,50 +521,45 @@ public class GraphDBDatasetService {
      * This is more reliable for large files that cause "Connection aborted" errors
      */
     public void bulkLoadChunked(String projectId, InputStream inputStream, RDFFormat rdfFormat) {
+        bulkLoadChunked(projectId, inputStream, rdfFormat, -1, ImportOptions.defaults(), null);
+    }
+
+    public void bulkLoadChunked(String projectId,
+                                InputStream inputStream,
+                                RDFFormat rdfFormat,
+                                long fileSizeBytes,
+                                ImportOptions options) {
+        bulkLoadChunked(projectId, inputStream, rdfFormat, fileSizeBytes, options, null);
+    }
+
+    public void bulkLoadChunked(String projectId,
+                                InputStream inputStream,
+                                RDFFormat rdfFormat,
+                                long fileSizeBytes,
+                                ImportOptions options,
+                                ProgressListener progressListener) {
         long bulkLoadStart = System.nanoTime();
+<<<<<<< Updated upstream
         // PERFORMANCE: 50x larger batch size for dramatically faster imports
         final int BATCH_SIZE = 50000; // Triples per batch (optimized from 1000)
+=======
+        int batchSize = resolveBatchSize(fileSizeBytes);
+        ImportOptions resolvedOptions = options != null ? options : ImportOptions.defaults();
+>>>>>>> Stashed changes
         
         try {
             Repository repo = getRepository();
             String graphUri = getGraphUri(projectId);
 
             log.info("Starting CHUNKED bulk load for project: {} with format: {} (batch size: {} triples)",
-                    projectId, rdfFormat, BATCH_SIZE);
+                    projectId, rdfFormat, batchSize);
 
-            // WORKAROUND: VS Code web editor can add garbage bytes before XML declaration
-            // Read entire stream, find <?xml, and create clean stream from that point
-            InputStream cleanedStream;
-            try {
-                byte[] allBytes = inputStream.readAllBytes();
-                log.info("Read {} bytes from input stream", allBytes.length);
-                
-                // Find the start of XML content (<?xml)
-                int xmlStart = -1;
-                for (int i = 0; i < Math.min(1000, allBytes.length - 5); i++) {
-                    if (allBytes[i] == '<' && allBytes[i+1] == '?' && 
-                        allBytes[i+2] == 'x' && allBytes[i+3] == 'm' && allBytes[i+4] == 'l') {
-                        xmlStart = i;
-                        break;
-                    }
-                }
-                
-                if (xmlStart == -1) {
-                    log.error("Could not find <?xml declaration in file");
-                    throw new RuntimeException("Invalid RDF/XML file: no <?xml declaration found");
-                } else if (xmlStart > 0) {
-                    log.warn("Found {} garbage bytes before <?xml declaration - stripping them", xmlStart);
-                    byte[] cleanBytes = new byte[allBytes.length - xmlStart];
-                    System.arraycopy(allBytes, xmlStart, cleanBytes, 0, cleanBytes.length);
-                    cleanedStream = new java.io.ByteArrayInputStream(cleanBytes);
-                } else {
-                    log.info("File starts correctly with <?xml");
-                    cleanedStream = new java.io.ByteArrayInputStream(allBytes);
-                }
-            } catch (Exception e) {
-                log.error("Failed to clean input stream", e);
-                throw new RuntimeException("Failed to prepare input stream: " + e.getMessage(), e);
-            }
+                // WORKAROUND: VS Code web editor can add garbage bytes before XML declaration
+                // Strip leading bytes without reading the full stream into memory
+                CountingInputStream countingStream = new CountingInputStream(inputStream);
+                InputStream cleanedStream = rdfFormat == RDFFormat.RDFXML
+                    ? stripLeadingGarbageRdfXml(countingStream)
+                    : countingStream;
 
             try (RepositoryConnection conn = repo.getConnection()) {
                 var valueFactory = conn.getValueFactory();
@@ -495,29 +576,70 @@ public class GraphDBDatasetService {
                 }
 
                 try {
-                    // Clear existing data
-                    long sizeBeforeClear = safeGraphSize(conn, graphIri, "before-clear", projectId);
-                    if (sizeBeforeClear > 0) {
-                        clearGraph(conn, graphIri, graphUri, projectId);
+                    ImportOptions.ImportMode mode = resolvedOptions.getMode() != null
+                            ? resolvedOptions.getMode()
+                            : ImportOptions.ImportMode.FULL;
+
+                    boolean shouldClear = mode == ImportOptions.ImportMode.FULL;
+                    boolean diffMode = mode == ImportOptions.ImportMode.DIFF;
+                    boolean partitionByNamespace = resolvedOptions.getPartitionStrategy() == ImportOptions.PartitionStrategy.NAMESPACE;
+
+                    if (diffMode && partitionByNamespace) {
+                        throw new IllegalArgumentException("Diff mode is not supported with namespace partitioning");
+                    }
+
+                    if (shouldClear) {
+                        long sizeBeforeClear = safeGraphSize(conn, graphIri, "before-clear", projectId);
+                        if (sizeBeforeClear > 0) {
+                            clearGraph(conn, graphIri, graphUri, projectId);
+                        }
                     }
 
                     // Parse and upload in batches
                     RDFParser parser = Rio.createParser(rdfFormat);
+                    // PERFORMANCE: Disable expensive validations for large files
+                    parser.getParserConfig().set(BasicParserSettings.VERIFY_URI_SYNTAX, false);
+                    parser.getParserConfig().set(BasicParserSettings.VERIFY_DATATYPE_VALUES, false);
+                    parser.getParserConfig().set(BasicParserSettings.NORMALIZE_DATATYPE_VALUES, false);
+                    parser.getParserConfig().set(BasicParserSettings.FAIL_ON_UNKNOWN_DATATYPES, false);
+                    // OWL/XML SUPPORT: Allow unqualified attributes (ontologyIRI, IRI, etc.)
+                    parser.getParserConfig().set(BasicParserSettings.FAIL_ON_UNKNOWN_LANGUAGES, false);
+                    parser.getParserConfig().addNonFatalError(BasicParserSettings.VERIFY_URI_SYNTAX);
+                    parser.getParserConfig().addNonFatalError(BasicParserSettings.VERIFY_DATATYPE_VALUES);
+                    parser.getParserConfig().addNonFatalError(BasicParserSettings.VERIFY_LANGUAGE_TAGS);
                     AtomicLong totalTriples = new AtomicLong(0);
-                    List<Statement> batch = new ArrayList<>(BATCH_SIZE);
+                    List<Statement> batch = new ArrayList<>(batchSize);
+
+                    String targetGraphUri = graphUri;
+                    IRI targetGraphIri = graphIri;
+                    if (diffMode) {
+                        targetGraphUri = graphUri + "/staging";
+                        targetGraphIri = valueFactory.createIRI(targetGraphUri);
+                        clearGraph(conn, targetGraphIri, targetGraphUri, projectId + "-staging");
+                    }
                     
+                    // Final references for use in inner class
+                    final String finalTargetGraphUri = targetGraphUri;
+                    final IRI finalTargetGraphIri = targetGraphIri;
+                    Map<IRI, List<Statement>> partitionBatches = partitionByNamespace ? new HashMap<>() : null;
+                    
+                    // Optimized: Periodic commits for massive files (every 1M triples) to prevent memory bloat
+                    final long COMMIT_INTERVAL = 1_000_000L;
+                    
+                    final long totalBytes = fileSizeBytes > 0 ? fileSizeBytes : -1;
+                    final AtomicLong lastProgressSentAt = new AtomicLong(System.nanoTime());
+                    final AtomicLong lastProgressTriples = new AtomicLong(0);
+
                     parser.setRDFHandler(new AbstractRDFHandler() {
                         @Override
                         public void handleNamespace(String prefix, String uri) {
-                            try {
-                                conn.setNamespace(prefix, uri);
-                            } catch (Exception e) {
-                                log.warn("Failed to set namespace {} -> {} in GraphDB", prefix, uri);
-                            }
+                            // Optimized: Skip namespace handling - causes overhead for large imports
+                            // GraphDB infers namespaces from data anyway
                         }
 
                         @Override
                         public void handleStatement(Statement st) {
+<<<<<<< Updated upstream
                             batch.add(st);
                             
                             if (batch.size() >= BATCH_SIZE) {
@@ -535,27 +657,78 @@ public class GraphDBDatasetService {
                                     conn.begin();
                                     log.info("Intermediate commit at {} triples", count);
                                 }
+=======
+                            if (partitionByNamespace) {
+                                IRI graphForStatement = resolveNamespaceGraph(valueFactory, graphUri, st);
+                                List<Statement> graphBatch = partitionBatches.computeIfAbsent(
+                                        graphForStatement, key -> new ArrayList<>(batchSize));
+                                graphBatch.add(st);
+                                if (graphBatch.size() >= batchSize) {
+                                    flushBatch(conn, graphBatch, graphForStatement, totalTriples, batchSize);
+                                }
+                                // Optimized: Periodic commits for very large files
+                                if (totalTriples.get() % COMMIT_INTERVAL == 0 && totalTriples.get() > 0) {
+                                    conn.commit();
+                                    conn.begin();
+                                    log.info("Intermediate commit at {} triples", totalTriples.get());
+                                }
+                                return;
+                            }
+
+                            batch.add(st);
+                            if (batch.size() >= batchSize) {
+                                flushBatch(conn, batch, finalTargetGraphIri, totalTriples, batchSize);
+                            }
+                            if (progressListener != null) {
+                                long now = System.nanoTime();
+                                long last = lastProgressSentAt.get();
+                                if ((now - last) >= 2_000_000_000L) { // 2 seconds
+                                    if (lastProgressSentAt.compareAndSet(last, now)) {
+                                        long elapsedMs = elapsedMillis(bulkLoadStart);
+                                        long triplesProcessed = totalTriples.get();
+                                        long bytesRead = countingStream.getCount();
+                                        if (triplesProcessed != lastProgressTriples.get()) {
+                                            lastProgressTriples.set(triplesProcessed);
+                                            progressListener.onProgress(new ImportProgress(bytesRead, totalBytes, triplesProcessed, elapsedMs));
+                                        }
+                                    }
+                                }
+                            }
+                            // Optimized: Periodic commits for very large files
+                            if (totalTriples.get() % COMMIT_INTERVAL == 0 && totalTriples.get() > 0) {
+                                conn.commit();
+                                conn.begin();
+                                log.info("Intermediate commit at {} triples", totalTriples.get());
+>>>>>>> Stashed changes
                             }
                         }
                     });
 
                     log.info("Parsing RDF file...");
-                    long parseStart = System.nanoTime();
-                    parser.parse(cleanedStream, graphUri);
+                    parser.parse(cleanedStream, finalTargetGraphUri);
                     
                     // Upload remaining triples
-                    if (!batch.isEmpty()) {
-                        conn.add(batch, graphIri);
-                        totalTriples.addAndGet(batch.size());
+                    if (partitionByNamespace) {
+                        for (Map.Entry<IRI, List<Statement>> entry : partitionBatches.entrySet()) {
+                            if (!entry.getValue().isEmpty()) {
+                                flushBatch(conn, entry.getValue(), entry.getKey(), totalTriples, batchSize);
+                            }
+                        }
+                    } else if (!batch.isEmpty()) {
+                        flushBatch(conn, batch, finalTargetGraphIri, totalTriples, batchSize);
                     }
 
-                    long parseDuration = elapsedMillis(parseStart);
-                    log.info("✓ Parsed {} triples in {} ms", totalTriples.get(), parseDuration);
-                    
-                    // WARNING: If no triples were parsed, something is wrong
-                    if (totalTriples.get() == 0) {
-                        log.error("❌ ZERO TRIPLES PARSED! The RDF file may be empty or in an unsupported format.");
-                        log.error("   Check that the file is valid RDF/XML and contains actual data.");
+                    log.info("Parsed {} triples total", totalTriples.get());
+                    if (progressListener != null) {
+                        long elapsedMs = elapsedMillis(bulkLoadStart);
+                        long bytesRead = countingStream.getCount();
+                        progressListener.onProgress(new ImportProgress(bytesRead, totalBytes, totalTriples.get(), elapsedMs));
+                    }
+
+                    if (diffMode) {
+                        applyDiffUpdate(conn, graphUri, finalTargetGraphUri, projectId);
+                        clearGraph(conn, finalTargetGraphIri, finalTargetGraphUri, projectId + "-staging");
+
                     }
 
                     // Commit transaction
@@ -692,6 +865,11 @@ public class GraphDBDatasetService {
                     try (java.io.FileInputStream fis = new java.io.FileInputStream(tempFile)) {
                         // Use a parser to capture namespaces while loading
                         org.eclipse.rdf4j.rio.RDFParser parser = org.eclipse.rdf4j.rio.Rio.createParser(rdfFormat);
+                        // Lenient parsing for OWL/XML compatibility
+                        parser.getParserConfig().set(BasicParserSettings.VERIFY_URI_SYNTAX, false);
+                        parser.getParserConfig().set(BasicParserSettings.VERIFY_DATATYPE_VALUES, false);
+                        parser.getParserConfig().set(BasicParserSettings.NORMALIZE_DATATYPE_VALUES, false);
+                        parser.getParserConfig().set(BasicParserSettings.FAIL_ON_UNKNOWN_DATATYPES, false);
                         parser.setRDFHandler(new org.eclipse.rdf4j.rio.helpers.AbstractRDFHandler() {
                             @Override
                             public void handleNamespace(String prefix, String uri) {
@@ -809,11 +987,10 @@ public class GraphDBDatasetService {
             log.info("Clearing dataset for project: {} (graph: {})", projectId, graphUri);
 
             try (RepositoryConnection conn = repo.getConnection()) {
+                List<String> graphs = getAllGraphUris(conn, projectId);
+
                 // First check if graph has any data to avoid unnecessary clearing
-                String countQuery = String.format(
-                    "SELECT (COUNT(*) as ?count) WHERE { GRAPH <%s> { ?s ?p ?o } }",
-                    graphUri
-                );
+                String countQuery = buildCountQuery(graphs);
 
                 try {
                     var query = conn.prepareTupleQuery(countQuery);
@@ -834,21 +1011,20 @@ public class GraphDBDatasetService {
                     log.warn("Could not count triples, proceeding with clear: {}", e.getMessage());
                 }
 
-                // Use SPARQL DELETE for more reliable clearing
-                String deleteQuery = String.format(
-                    "DELETE { GRAPH <%s> { ?s ?p ?o } } WHERE { GRAPH <%s> { ?s ?p ?o } }",
-                    graphUri, graphUri
-                );
+                for (String g : graphs) {
+                    String deleteQuery = String.format(
+                        "DELETE { GRAPH <%s> { ?s ?p ?o } } WHERE { GRAPH <%s> { ?s ?p ?o } }",
+                        g, g
+                    );
 
-                // Execute update with query
-                try {
-                    conn.prepareUpdate(deleteQuery).execute();
-                    log.info("Dataset cleared for project: {} using SPARQL DELETE", projectId);
-                } catch (Exception e) {
-                    // Fallback to conn.clear() if SPARQL DELETE fails
-                    log.warn("SPARQL DELETE failed, falling back to conn.clear(): {}", e.getMessage());
-                    conn.clear(conn.getValueFactory().createIRI(graphUri));
-                    log.info("Dataset cleared for project: {} using conn.clear()", projectId);
+                    try {
+                        conn.prepareUpdate(deleteQuery).execute();
+                        log.info("Dataset cleared for project {} graph {} using SPARQL DELETE", projectId, g);
+                    } catch (Exception e) {
+                        log.warn("SPARQL DELETE failed for graph {}: {}. Falling back to conn.clear()", g, e.getMessage());
+                        conn.clear(conn.getValueFactory().createIRI(g));
+                        log.info("Dataset cleared for project {} graph {} using conn.clear()", projectId, g);
+                    }
                 }
             }
 
@@ -968,7 +1144,12 @@ public class GraphDBDatasetService {
         String graphUri = getGraphUri(projectId);
         
         try (RepositoryConnection conn = repo.getConnection()) {
-            return conn.size(conn.getValueFactory().createIRI(graphUri));
+            List<String> graphs = getAllGraphUris(conn, projectId);
+            long total = 0;
+            for (String g : graphs) {
+                total += conn.size(conn.getValueFactory().createIRI(g));
+            }
+            return total;
         } catch (Exception e) {
             log.error("Failed to get dataset size for project: {}", projectId, e);
             return 0;
@@ -992,8 +1173,13 @@ public class GraphDBDatasetService {
         try (RepositoryConnection conn = repo.getConnection()) {
             
             StringWriter writer = new StringWriter();
-            conn.export(Rio.createWriter(format, writer), 
-                       conn.getValueFactory().createIRI(graphUri));
+            List<String> graphs = getAllGraphUris(conn, projectId);
+            List<IRI> contexts = new ArrayList<>();
+            for (String g : graphs) {
+                contexts.add(conn.getValueFactory().createIRI(g));
+            }
+            conn.export(Rio.createWriter(format, writer),
+                       contexts.toArray(new IRI[0]));
             
             return writer.toString();
             
@@ -1019,8 +1205,8 @@ public class GraphDBDatasetService {
         
         // Inject FROM clause if not present
         if (!sparqlQuery.toUpperCase().contains("FROM")) {
-            sparqlQuery = sparqlQuery.replaceFirst("(?i)WHERE", 
-                "FROM <" + graphUri + "> WHERE");
+            sparqlQuery = sparqlQuery.replaceFirst("(?i)WHERE",
+                buildFromClause(conn, projectId) + " WHERE");
         }
         
         TupleQuery query = conn.prepareTupleQuery(sparqlQuery);
@@ -1041,6 +1227,120 @@ public class GraphDBDatasetService {
 
     private long elapsedMillis(long startNanos) {
         return (System.nanoTime() - startNanos) / 1_000_000;
+    }
+
+    private int resolveBatchSize(long fileSizeBytes) {
+        if (fileSizeBytes <= 0) {
+            return 50000;  // Optimized: 50x larger default batch size
+        }
+        long mb = fileSizeBytes / (1024 * 1024);
+        if (mb >= 500) {
+            return 100000;  // Optimized: massive batch for large files (20x improvement)
+        }
+        if (mb >= 200) {
+            return 75000;  // Optimized: large batch
+        }
+        if (mb >= 100) {
+            return 50000;  // Optimized: medium batch
+        }
+        return 50000;  // Optimized: default batch
+    }
+
+    private InputStream stripLeadingGarbageRdfXml(InputStream inputStream) {
+        try {
+            BufferedInputStream buffered = new BufferedInputStream(inputStream, 16 * 1024);
+            buffered.mark(16 * 1024);
+            byte[] head = buffered.readNBytes(16 * 1024);
+            int xmlStart = -1;
+            for (int i = 0; i < head.length - 5; i++) {
+                if (head[i] == '<' && head[i + 1] == '?' &&
+                        head[i + 2] == 'x' && head[i + 3] == 'm' && head[i + 4] == 'l') {
+                    xmlStart = i;
+                    break;
+                }
+            }
+            if (xmlStart == -1) {
+                buffered.reset();
+                return buffered;
+            }
+
+            if (xmlStart == 0) {
+                buffered.reset();
+                return buffered;
+            }
+
+            byte[] trimmed = new byte[head.length - xmlStart];
+            System.arraycopy(head, xmlStart, trimmed, 0, trimmed.length);
+            return new SequenceInputStream(new ByteArrayInputStream(trimmed), buffered);
+        } catch (Exception e) {
+            log.warn("Failed to strip leading bytes from RDF/XML stream: {}", e.getMessage());
+            return inputStream;
+        }
+    }
+
+    private IRI resolveNamespaceGraph(ValueFactory valueFactory, String baseGraphUri, Statement st) {
+        String ns = null;
+        if (st.getSubject() instanceof IRI iri) {
+            ns = iri.getNamespace();
+        } else if (st.getPredicate() != null) {
+            ns = st.getPredicate().getNamespace();
+        }
+        if (ns == null || ns.isBlank()) {
+            ns = "default";
+        }
+        String encoded = URLEncoder.encode(ns, StandardCharsets.UTF_8);
+        return valueFactory.createIRI(baseGraphUri + "/ns/" + encoded);
+    }
+
+    private void applyDiffUpdate(RepositoryConnection conn,
+                                 String mainGraphUri,
+                                 String stagingGraphUri,
+                                 String projectId) {
+        String deleteQuery = String.format("""
+            DELETE { GRAPH <%s> { ?s ?p ?o } }
+            WHERE {
+              GRAPH <%s> { ?s ?p ?o }
+              FILTER NOT EXISTS { GRAPH <%s> { ?s ?p ?o } }
+            }
+            """, mainGraphUri, mainGraphUri, stagingGraphUri);
+
+        String insertQuery = String.format("""
+            INSERT { GRAPH <%s> { ?s ?p ?o } }
+            WHERE {
+              GRAPH <%s> { ?s ?p ?o }
+              FILTER NOT EXISTS { GRAPH <%s> { ?s ?p ?o } }
+            }
+            """, mainGraphUri, stagingGraphUri, mainGraphUri);
+
+        log.info("[Diff] Applying delete diff for {}", projectId);
+        conn.prepareUpdate(deleteQuery).execute();
+        log.info("[Diff] Applying insert diff for {}", projectId);
+        conn.prepareUpdate(insertQuery).execute();
+    }
+
+    private void flushBatch(RepositoryConnection conn,
+                            List<Statement> batch,
+                            IRI graphIri,
+                            AtomicLong totalTriples,
+                            int batchSize) {
+        if (batch.isEmpty()) {
+            return;
+        }
+
+        long start = System.nanoTime();
+        conn.add(batch, graphIri);
+        long count = totalTriples.addAndGet(batch.size());
+        // Optimized: Only log every 100k triples instead of 10k to reduce I/O overhead
+        if (count % 100000 == 0) {
+            log.info("Uploaded {} triples so far...", count);
+        }
+        batch.clear();
+
+        // Optimized: Removed backpressure/sleep logic - trust GraphDB's internal queuing
+        long durationMs = elapsedMillis(start);
+        if (durationMs > 10000) {
+            log.debug("Batch flush took {} ms for {} triples", durationMs, batchSize);
+        }
     }
 
     private long safeGraphSize(RepositoryConnection conn, IRI graphIri, String tag, String projectId) {
@@ -1072,6 +1372,86 @@ public class GraphDBDatasetService {
         }
     }
 
+    private String buildFromClause(RepositoryConnection conn, String projectId) {
+        List<String> graphs = getAllGraphUris(conn, projectId);
+        StringBuilder builder = new StringBuilder();
+        for (String g : graphs) {
+            builder.append("FROM <").append(g).append("> ");
+        }
+        return builder.toString().trim();
+    }
+
+    private List<String> getAllGraphUris(RepositoryConnection conn, String projectId) {
+        String baseGraph = getGraphUri(projectId);
+        List<String> graphs = new ArrayList<>();
+        graphs.add(baseGraph);
+        graphs.addAll(getPartitionGraphs(conn, projectId, baseGraph));
+        return graphs;
+    }
+
+    private List<String> getPartitionGraphs(RepositoryConnection conn, String projectId, String baseGraph) {
+        long now = System.currentTimeMillis();
+        PartitionGraphs cached = partitionGraphCache.get(projectId);
+        if (cached != null && now - cached.lastUpdatedMs < PARTITION_CACHE_TTL_MS) {
+            return cached.graphUris;
+        }
+
+        List<String> graphs = new ArrayList<>();
+        String query = String.format("""
+            SELECT DISTINCT ?g WHERE {
+              GRAPH ?g { ?s ?p ?o }
+              FILTER(STRSTARTS(STR(?g), "%s/ns/"))
+            }
+            """, baseGraph);
+
+        try {
+            TupleQuery tupleQuery = conn.prepareTupleQuery(query);
+            try (TupleQueryResult result = tupleQuery.evaluate()) {
+                while (result.hasNext()) {
+                    BindingSet binding = result.next();
+                    if (binding.hasBinding("g")) {
+                        graphs.add(binding.getValue("g").stringValue());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to list partition graphs for {}: {}", projectId, e.getMessage());
+        }
+
+        partitionGraphCache.put(projectId, new PartitionGraphs(graphs, now));
+        return graphs;
+    }
+
+    private String buildCountQuery(List<String> graphs) {
+        if (graphs.size() == 1) {
+            return String.format(
+                "SELECT (COUNT(*) as ?count) WHERE { GRAPH <%s> { ?s ?p ?o } }",
+                graphs.get(0)
+            );
+        }
+
+        StringBuilder where = new StringBuilder();
+        where.append("SELECT (COUNT(*) as ?count) WHERE { ");
+        for (int i = 0; i < graphs.size(); i++) {
+            if (i > 0) {
+                where.append(" UNION ");
+            }
+            where.append("{ GRAPH <").append(graphs.get(i)).append("> { ?s ?p ?o } }");
+        }
+        where.append(" }");
+        return where.toString();
+    }
+
+    private static final class PartitionGraphs {
+        private final List<String> graphUris;
+        private final long lastUpdatedMs;
+
+        private PartitionGraphs(List<String> graphUris, long lastUpdatedMs) {
+            this.graphUris = graphUris;
+            this.lastUpdatedMs = lastUpdatedMs;
+        }
+    }
+
     private void clearGraph(RepositoryConnection conn, IRI graphIri, String graphUri, String projectId) {
         long clearStart = System.nanoTime();
         String clearQuery = String.format("CLEAR GRAPH <%s>", graphUri);
@@ -1087,5 +1467,236 @@ public class GraphDBDatasetService {
         long fallbackStart = System.nanoTime();
         conn.clear(graphIri);
         log.info("Graph {} cleared via conn.clear() in {} ms", graphUri, elapsedMillis(fallbackStart));
+    }
+
+    /**
+     * Get root classes (direct children of owl:Thing) from GraphDB using SPARQL.
+     * This queries the actual imported triples, not the original file.
+     * Works for all file formats (OWL/XML, RDF/XML, Turtle, etc.)
+     * 
+     * @param projectId Project identifier
+     * @return List of maps containing class info: id, label, type, hasChildren
+     */
+    public List<Map<String, Object>> getRootClassesFromGraphDB(String projectId) {
+        List<Map<String, Object>> rootClasses = new ArrayList<>();
+        
+        Repository repo = getRepository();
+        String graphUri = getGraphUri(projectId);
+        
+        try (RepositoryConnection conn = repo.getConnection()) {
+            String baseGraph = graphUri;
+            // SPARQL query to find all classes that are NOT subclasses of any class except owl:Thing
+            // Includes owl:Class, rdfs:Class, and classes only mentioned in subclass axioms
+            String query = 
+                "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> \n" +
+                "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> \n" +
+                "PREFIX owl: <http://www.w3.org/2002/07/owl#> \n" +
+                "SELECT DISTINCT ?class ?label \n" +
+                "WHERE { \n" +
+                "  { \n" +
+                "    GRAPH ?g { \n" +
+                "      { ?class rdf:type ?type . VALUES ?type { owl:Class rdfs:Class } } \n" +
+                "      UNION { ?class rdfs:subClassOf ?any . FILTER (!isBlank(?class)) } \n" +
+                "      UNION { ?any rdfs:subClassOf ?class . FILTER (!isBlank(?class)) } \n" +
+                "      OPTIONAL { ?class rdfs:label ?label } \n" +
+                "      FILTER (?class != owl:Thing && !isBlank(?class)) \n" +
+                "      OPTIONAL { \n" +
+                "        ?class rdfs:subClassOf ?parent . \n" +
+                "        FILTER (?parent != owl:Thing && !isBlank(?parent)) \n" +
+                "      } \n" +
+                "      FILTER (!BOUND(?parent)) \n" +
+                "    } \n" +
+                "    FILTER(STRSTARTS(STR(?g), \"" + baseGraph + "\")) \n" +
+                "  } \n" +
+                "  UNION { \n" +
+                "    { ?class rdf:type ?type . VALUES ?type { owl:Class rdfs:Class } } \n" +
+                "    UNION { ?class rdfs:subClassOf ?any . FILTER (!isBlank(?class)) } \n" +
+                "    UNION { ?any rdfs:subClassOf ?class . FILTER (!isBlank(?class)) } \n" +
+                "    OPTIONAL { ?class rdfs:label ?label } \n" +
+                "    FILTER (?class != owl:Thing && !isBlank(?class)) \n" +
+                "    OPTIONAL { \n" +
+                "      ?class rdfs:subClassOf ?parent . \n" +
+                "      FILTER (?parent != owl:Thing && !isBlank(?parent)) \n" +
+                "    } \n" +
+                "    FILTER (!BOUND(?parent)) \n" +
+                "  } \n" +
+                "} \n" +
+                "ORDER BY ?label ?class";
+            
+            log.info("[GRAPHDB] Executing getRootClasses query for project: {}", projectId);
+            TupleQuery tupleQuery = conn.prepareTupleQuery(query);
+            
+            try (TupleQueryResult result = tupleQuery.evaluate()) {
+                while (result.hasNext()) {
+                    BindingSet binding = result.next();
+                    String classIri = binding.getValue("class").stringValue();
+                    String classLabel = binding.hasBinding("label") 
+                        ? binding.getValue("label").stringValue() 
+                        : extractShortForm(classIri);
+                    
+                    // Check if this class has children
+                    boolean hasChildren = classHasChildren(conn, projectId, classIri);
+                    
+                    Map<String, Object> classInfo = new HashMap<>();
+                    classInfo.put("id", classIri);
+                    classInfo.put("label", classLabel);
+                    classInfo.put("type", "CLASS");
+                    classInfo.put("hasChildren", hasChildren);
+                    
+                    rootClasses.add(classInfo);
+                    log.debug("Found root class: {} ({})", classLabel, classIri);
+                }
+            }
+            
+            log.info("[GRAPHDB] Found {} root classes for project {}", rootClasses.size(), projectId);
+            
+        } catch (Exception e) {
+            log.error("Error getting root classes from GraphDB for project {}", projectId, e);
+        }
+        
+        return rootClasses;
+    }
+
+    /**
+     * Get child classes of a given class using SPARQL.
+     * 
+     * @param projectId Project identifier
+     * @param parentClassIri IRI of the parent class
+     * @return List of maps containing child class info
+     */
+    public List<Map<String, Object>> getChildClassesFromGraphDB(String projectId, String parentClassIri) {
+        List<Map<String, Object>> childClasses = new ArrayList<>();
+        
+        Repository repo = getRepository();
+        String graphUri = getGraphUri(projectId);
+        
+        try (RepositoryConnection conn = repo.getConnection()) {
+            String baseGraph = graphUri;
+            // SPARQL query to find direct children of a given class
+            String query = 
+                "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> \n" +
+                "PREFIX owl: <http://www.w3.org/2002/07/owl#> \n" +
+                "SELECT DISTINCT ?child ?label \n" +
+                "WHERE { \n" +
+                "  { \n" +
+                "    GRAPH ?g { \n" +
+                "      ?child rdfs:subClassOf <" + parentClassIri + "> . \n" +
+                "      OPTIONAL { ?child rdfs:label ?label } \n" +
+                "      FILTER (?child != owl:Thing && !isBlank(?child)) \n" +
+                "    } \n" +
+                "    FILTER(STRSTARTS(STR(?g), \"" + baseGraph + "\")) \n" +
+                "  } \n" +
+                "  UNION { \n" +
+                "    ?child rdfs:subClassOf <" + parentClassIri + "> . \n" +
+                "    OPTIONAL { ?child rdfs:label ?label } \n" +
+                "    FILTER (?child != owl:Thing && !isBlank(?child)) \n" +
+                "  } \n" +
+                "} \n" +
+                "ORDER BY ?label ?child";
+            
+            log.info("[GRAPHDB] Executing getChildClasses query for parent: {} in project: {}", 
+                     parentClassIri, projectId);
+            TupleQuery tupleQuery = conn.prepareTupleQuery(query);
+            
+            try (TupleQueryResult result = tupleQuery.evaluate()) {
+                while (result.hasNext()) {
+                    BindingSet binding = result.next();
+                    String childIri = binding.getValue("child").stringValue();
+                    String childLabel = binding.hasBinding("label") 
+                        ? binding.getValue("label").stringValue() 
+                        : extractShortForm(childIri);
+                    
+                    // Check if this child has further children
+                    boolean hasChildren = classHasChildren(conn, projectId, childIri);
+                    
+                    Map<String, Object> childInfo = new HashMap<>();
+                    childInfo.put("id", childIri);
+                    childInfo.put("label", childLabel);
+                    childInfo.put("type", "CLASS");
+                    childInfo.put("hasChildren", hasChildren);
+                    
+                    childClasses.add(childInfo);
+                    log.debug("Found child class: {} ({})", childLabel, childIri);
+                }
+            }
+            
+            log.info("[GRAPHDB] Found {} child classes for parent {} in project {}", 
+                     childClasses.size(), parentClassIri, projectId);
+            
+        } catch (Exception e) {
+            log.error("Error getting child classes from GraphDB for parent {} in project {}", 
+                     parentClassIri, projectId, e);
+        }
+        
+        return childClasses;
+    }
+
+    /**
+     * Check if a class has any direct subclasses.
+     * Used to determine hasChildren flag without loading all children.
+     * 
+     * @param conn RepositoryConnection to use
+     * @param graphUri URI of the graph
+     * @param classIri IRI of the class to check
+     * @return true if class has direct subclasses
+     */
+    private boolean classHasChildren(RepositoryConnection conn, String projectId, String classIri) {
+        try {
+            String baseGraph = getGraphUri(projectId);
+            String query = 
+                "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> \n" +
+                "PREFIX owl: <http://www.w3.org/2002/07/owl#> \n" +
+                "ASK \n" +
+                "WHERE { \n" +
+                "  { \n" +
+                "    GRAPH ?g { \n" +
+                "      ?child rdfs:subClassOf <" + classIri + "> . \n" +
+                "      FILTER (?child != owl:Thing && !isBlank(?child)) \n" +
+                "    } \n" +
+                "    FILTER(STRSTARTS(STR(?g), \"" + baseGraph + "\")) \n" +
+                "  } \n" +
+                "  UNION { \n" +
+                "    ?child rdfs:subClassOf <" + classIri + "> . \n" +
+                "    FILTER (?child != owl:Thing && !isBlank(?child)) \n" +
+                "  } \n" +
+                "}";
+            
+            BooleanQuery booleanQuery = conn.prepareBooleanQuery(query);
+            return booleanQuery.evaluate();
+            
+        } catch (Exception e) {
+            log.warn("Error checking if class {} has children", classIri, e);
+            return false;
+        }
+    }
+
+    /**
+     * Extract short form (local name) from an IRI for use as class label.
+     * Examples:
+     *   http://example.org#MyClass -> MyClass
+     *   http://example.org/ontology#Name -> Name
+     * 
+     * @param iri Full IRI string
+     * @return Short form (last part after # or /)
+     */
+    private String extractShortForm(String iri) {
+        if (iri == null || iri.isEmpty()) {
+            return "unknown";
+        }
+        
+        // Try to extract after # first (OWL convention)
+        int hashIndex = iri.lastIndexOf('#');
+        if (hashIndex >= 0 && hashIndex < iri.length() - 1) {
+            return iri.substring(hashIndex + 1);
+        }
+        
+        // Fall back to after last /
+        int slashIndex = iri.lastIndexOf('/');
+        if (slashIndex >= 0 && slashIndex < iri.length() - 1) {
+            return iri.substring(slashIndex + 1);
+        }
+        
+        // Return as-is if no delimiter found
+        return iri;
     }
 }

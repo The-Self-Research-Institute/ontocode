@@ -52,6 +52,9 @@ public class ImportQueueController {
             }
 
             response.put("waitTimeMs", item.getWaitTimeMs());
+            long estimatedWaitTimeMs = queueManager.getEstimatedWaitTimeMs(projectId);
+            response.put("estimatedWaitTimeMs", estimatedWaitTimeMs);
+            response.put("estimatedWaitMinutes", estimatedWaitTimeMs / 60000);
 
             return ResponseEntity.ok(response);
 
@@ -101,8 +104,7 @@ public class ImportQueueController {
                 QueueStatusMessage.QueueStats stats = queueManager.getQueueStats();
                 response.put("totalInQueue", stats.getQueuedImports());
                 response.put("filesAhead", item.getQueuePosition() - 1);
-
-                long estimatedWait = (item.getQueuePosition() - 1) * stats.getAverageProcessingTimeMs();
+                long estimatedWait = queueManager.getEstimatedWaitTimeMs(projectId);
                 response.put("estimatedWaitMs", estimatedWait);
                 response.put("estimatedWaitMinutes", estimatedWait / 60000);
 
