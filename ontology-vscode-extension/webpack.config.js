@@ -2,10 +2,17 @@ const path = require('path');
 const webpack = require('webpack');
 const CopyPlugin = require('copy-webpack-plugin');
 const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
+const TerserPlugin = require('terser-webpack-plugin');
 
 module.exports = {
   mode: 'production',
   target: 'webworker',
+  cache: {
+    type: 'filesystem',
+    buildDependencies: {
+      config: [__filename]
+    }
+  },
   entry: {
     extension: './src/extension.ts'
   },
@@ -36,6 +43,22 @@ module.exports = {
         "https": require.resolve("https-browserify"),
         "process": require.resolve("process/browser"),
     }
+  },
+  optimization: {
+    minimize: true,
+    minimizer: [
+      new TerserPlugin({
+        terserOptions: {
+          compress: {
+            drop_console: false,
+            passes: 2
+          },
+          mangle: true
+        }
+      })
+    ],
+    usedExports: true,
+    sideEffects: false
   },
   module: {
     rules: [
