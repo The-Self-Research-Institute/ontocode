@@ -931,7 +931,7 @@ class OntoCodePanel {
      */
     private async handleApiRequest(message: Extract<ExtensionMessage, { type: 'apiGet' | 'apiPost' | 'apiPut' | 'apiPatch' | 'apiDelete' }>) {
         const { requestId, type, url } = message;
-        
+
         // Check if this is a public endpoint that doesn't require authentication
         const isPublicEndpoint = 
             url.includes('/api/auth/login') || 
@@ -1007,7 +1007,12 @@ class OntoCodePanel {
                     status: axiosError.response?.status,
                     data: axiosError.response?.data,
                 };
-
+                console.error('[Proxy] Detailed Error:', {
+                    code: axiosError.code,
+                    message: axiosError.message,
+                    stack: axiosError.stack,
+                    isAxiosError: axios.isAxiosError(e)
+                });
                 const errorLogPayload = {
                     url: fullUrl,
                     method: type.replace('api', '').toUpperCase(),
@@ -2685,10 +2690,10 @@ class OntoCodePanel {
             <meta http-equiv="Content-Security-Policy" content="
                 default-src 'none'; 
                 img-src ${webview.cspSource} https: data: blob:; 
-                script-src 'nonce-${nonce}' https://cdn.tailwindcss.com https://unpkg.com https://aistudiocdn.com ${GATEWAY_URL} ${PLUGIN_SERVICE_URL} ${webview.cspSource};
+                script-src 'nonce-${nonce}' https://cdn.tailwindcss.com https://unpkg.com https://aistudiocdn.com ${webview.cspSource} 'unsafe-eval';
                 style-src ${webview.cspSource} 'unsafe-inline' https://unpkg.com https://cdn.tailwindcss.com;
                 font-src ${webview.cspSource} https://unpkg.com data:; 
-                connect-src ${GATEWAY_URL} ${PLUGIN_SERVICE_URL} https://unpkg.com https://aistudiocdn.com;
+                connect-src 'self' https: wss: http://13.218.153.101:* ws://13.218.153.101:* http://localhost:* http://127.0.0.1:* ${GATEWAY_URL} ${PLUGIN_SERVICE_URL};
             ">
             ${vscodeApiInjectionScript}`
         );
