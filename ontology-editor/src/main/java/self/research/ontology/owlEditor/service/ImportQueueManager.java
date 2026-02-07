@@ -3,9 +3,12 @@ package self.research.ontology.owlEditor.service;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
+import self.research.ontology.owlEditor.model.ImportOptions;
 import self.research.ontology.owlEditor.model.ImportQueueItem;
 import self.research.ontology.owlEditor.model.collaboration.QueueStatusMessage;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -13,8 +16,6 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
 
 /**
  * Manages import queue with notifications and statistics
@@ -24,25 +25,36 @@ import java.util.stream.Collectors;
 public class ImportQueueManager {
 
     private final SimpMessagingTemplate messagingTemplate;
+    private final ImportTimeEstimator estimator;
+    private final ProjectMetadataService metadataService;
     private final LinkedList<ImportQueueItem> queue = new LinkedList<>();
     private final Map<String, ImportQueueItem> activeImports = new ConcurrentHashMap<>();
-    private final Map<String, Long> completedImportDurations = new ConcurrentHashMap<>();
-    private final AtomicInteger queueCounter = new AtomicInteger(0);
 
     // Configuration
     private static final int MAX_CONCURRENT_IMPORTS = 1; // Process one at a time to avoid GraphDB conflicts
-    private static final long DEFAULT_ESTIMATED_DURATION_MS = 5 * 60 * 1000; // 5 minutes default
     private static final int MAX_RETRIES = 3; // Maximum retry attempts for failed imports
     private static final long RETRY_DELAY_MS = 10 * 1000; // 10 seconds delay before retry
 
-    public ImportQueueManager(SimpMessagingTemplate messagingTemplate) {
+    public ImportQueueManager(SimpMessagingTemplate messagingTemplate,
+                              ImportTimeEstimator estimator,
+                              ProjectMetadataService metadataService) {
         this.messagingTemplate = messagingTemplate;
+        this.estimator = estimator;
+        this.metadataService = metadataService;
     }
 
     /**
      * Add a project to the import queue
      */
     public synchronized ImportQueueItem enqueue(String projectId, String filename, String ownerEmail, Path owlFile) {
+        return enqueue(projectId, filename, ownerEmail, owlFile, ImportOptions.defaults());
+    }
+
+    public synchronized ImportQueueItem enqueue(String projectId,
+                                               String filename,
+                                               String ownerEmail,
+                                               Path owlFile,
+                                               ImportOptions options) {
         // Check if already queued or processing
         ImportQueueItem existing = findInQueue(projectId);
         if (existing != null) {
@@ -56,22 +68,32 @@ public class ImportQueueManager {
             return activeImports.get(projectId);
         }
 
+        ImportOptions resolvedOptions = options != null ? options : ImportOptions.defaults();
+        long fileSizeBytes = resolveFileSize(owlFile);
+        Integer classCount = readMetaCount(projectId, "classCount", "classes");
+        Integer annotationCount = readMetaCount(projectId, "annotationPropertyCount", "annotationProperties");
+        long estimatedDurationMs = estimator.estimateDurationMs(fileSizeBytes, classCount, annotationCount);
+
         // Create queue item
         ImportQueueItem item = ImportQueueItem.builder()
                 .projectId(projectId)
                 .filename(filename)
                 .ownerEmail(ownerEmail)
                 .owlFile(owlFile)
+                .importMode(resolvedOptions.getMode())
+                .partitionStrategy(resolvedOptions.getPartitionStrategy())
+                .fileSizeBytes(fileSizeBytes)
+                .classCount(classCount)
+                .annotationCount(annotationCount)
                 .queuedAt(Instant.now())
                 .status(ImportQueueItem.ImportStatus.QUEUED)
-                .estimatedDurationMs(getAverageProcessingTime())
+                .estimatedDurationMs(estimatedDurationMs)
                 .queuePosition(queue.size() + 1)
                 .retryCount(0)
                 .maxRetries(MAX_RETRIES)
                 .build();
 
         queue.addLast(item);
-        queueCounter.incrementAndGet();
 
         log.info("[Queue] Added project {} to queue at position {} (total in queue: {})",
                 projectId, item.getQueuePosition(), queue.size());
@@ -122,18 +144,12 @@ public class ImportQueueManager {
         ImportQueueItem item = activeImports.remove(projectId);
         if (item != null) {
             item.setStatus(ImportQueueItem.ImportStatus.COMPLETED);
-            completedImportDurations.put(projectId, durationMs);
-
-            // Keep only last 10 durations for average calculation
-            if (completedImportDurations.size() > 10) {
-                String oldestKey = completedImportDurations.keySet().iterator().next();
-                completedImportDurations.remove(oldestKey);
-            }
 
             log.info("[Queue] Completed project {} in {} ms (avg: {} ms)",
                     projectId, durationMs, getAverageProcessingTime());
         }
 
+        refreshQueuedEstimates();
         // Update queue positions
         updateQueuePositions();
 
@@ -229,19 +245,66 @@ public class ImportQueueManager {
         return findInQueue(projectId);
     }
 
+    public synchronized void updateItemMetrics(String projectId,
+                                               Long fileSizeBytes,
+                                               Integer classCount,
+                                               Integer annotationCount) {
+        ImportQueueItem item = findInQueue(projectId);
+        if (item == null) {
+            return;
+        }
+
+        if (fileSizeBytes != null && fileSizeBytes > 0) {
+            item.setFileSizeBytes(fileSizeBytes);
+        }
+        if (classCount != null) {
+            item.setClassCount(classCount);
+        }
+        if (annotationCount != null) {
+            item.setAnnotationCount(annotationCount);
+        }
+
+        long updatedEstimate = estimator.estimateDurationMs(
+                item.getFileSizeBytes(),
+                item.getClassCount(),
+                item.getAnnotationCount());
+        item.setEstimatedDurationMs(updatedEstimate);
+        notifyQueueStatus(projectId);
+        broadcastQueueStats();
+    }
+
+    /**
+     * Estimate wait time for a given project in the queue.
+     */
+    public synchronized long getEstimatedWaitTimeMs(String projectId) {
+        ImportQueueItem item = getStatus(projectId);
+        if (item == null) {
+            return 0;
+        }
+        return calculateEstimatedWaitTime(item);
+    }
+
     /**
      * Get overall queue statistics
      */
     public synchronized QueueStatusMessage.QueueStats getQueueStats() {
-        List<QueueStatusMessage.QueuedProject> queuedProjects = queue.stream()
-                .map(item -> QueueStatusMessage.QueuedProject.builder()
-                        .projectId(item.getProjectId())
-                        .filename(item.getFilename())
-                        .position(item.getQueuePosition())
-                        .estimatedWaitTimeMs(calculateEstimatedWaitTime(item.getQueuePosition()))
-                        .queuedSinceMs(item.getWaitTimeMs())
-                        .build())
-                .collect(Collectors.toList());
+        long activeRemainingMs = activeImports.values().stream()
+                .mapToLong(this::estimateRemainingTimeMs)
+                .sum();
+
+        long runningTotal = activeRemainingMs;
+        List<QueueStatusMessage.QueuedProject> queuedProjects = new ArrayList<>();
+        for (ImportQueueItem item : queue) {
+            queuedProjects.add(QueueStatusMessage.QueuedProject.builder()
+                    .projectId(item.getProjectId())
+                    .filename(item.getFilename())
+                    .position(item.getQueuePosition())
+                    .estimatedWaitTimeMs(runningTotal)
+                    .queuedSinceMs(item.getWaitTimeMs())
+                    .build());
+
+            runningTotal += estimateDurationMsForItem(item);
+        }
 
         return QueueStatusMessage.QueueStats.builder()
                 .activeImports(activeImports.size())
@@ -267,6 +330,60 @@ public class ImportQueueManager {
                 .orElse(null);
     }
 
+    private long calculateEstimatedWaitTime(ImportQueueItem target) {
+        if (target == null) {
+            return 0;
+        }
+        if (target.getStatus() == ImportQueueItem.ImportStatus.PROCESSING) {
+            return 0;
+        }
+
+        long waitTimeMs = activeImports.values().stream()
+                .mapToLong(this::estimateRemainingTimeMs)
+                .sum();
+
+        for (ImportQueueItem item : queue) {
+            if (item.getProjectId().equals(target.getProjectId())) {
+                break;
+            }
+            waitTimeMs += estimateDurationMsForItem(item);
+        }
+
+        return waitTimeMs;
+    }
+
+    private long estimateRemainingTimeMs(ImportQueueItem item) {
+        long estimate = estimateDurationMsForItem(item);
+        if (estimate <= 0) {
+            return 0;
+        }
+
+        if (item.getStatus() == ImportQueueItem.ImportStatus.PROCESSING && item.getStartedAt() != null) {
+            long elapsedMs = Instant.now().toEpochMilli() - item.getStartedAt().toEpochMilli();
+            return Math.max(0, estimate - elapsedMs);
+        }
+
+        return estimate;
+    }
+
+    private long estimateDurationMsForItem(ImportQueueItem item) {
+        if (item == null) {
+            return 0;
+        }
+        long estimate = item.getEstimatedDurationMs();
+        return estimate > 0 ? estimate : estimator.getAverageDurationMs();
+    }
+
+    private void refreshQueuedEstimates() {
+        for (ImportQueueItem item : queue) {
+            long updatedEstimate = estimator.estimateDurationMs(
+                    item.getFileSizeBytes(),
+                    item.getClassCount(),
+                    item.getAnnotationCount());
+            item.setEstimatedDurationMs(updatedEstimate);
+        }
+    }
+
     private void updateQueuePositions() {
         int position = 1;
         for (ImportQueueItem item : queue) {
@@ -279,32 +396,51 @@ public class ImportQueueManager {
         }
     }
 
-    private long getAverageProcessingTime() {
-        if (completedImportDurations.isEmpty()) {
-            return DEFAULT_ESTIMATED_DURATION_MS;
-        }
-
-        return (long) completedImportDurations.values().stream()
-                .mapToLong(Long::longValue)
-                .average()
-                .orElse(DEFAULT_ESTIMATED_DURATION_MS);
-    }
-
-    private long calculateEstimatedWaitTime(int position) {
-        if (position <= 0) {
+    private long resolveFileSize(Path owlFile) {
+        try {
+            return Files.size(owlFile);
+        } catch (IOException e) {
+            log.warn("[Queue] Failed to read file size for {}: {}", owlFile, e.getMessage());
             return 0;
         }
+    }
 
-        long avgTime = getAverageProcessingTime();
-        int activeCount = activeImports.size();
+    private Integer readMetaCount(String projectId, String primaryKey, String fallbackKey) {
+        return metadataService.readMeta(projectId)
+                .map(meta -> extractCount(meta, primaryKey, fallbackKey))
+                .orElse(null);
+    }
 
-        // Calculate time for active imports to complete
-        long activeWaitTime = activeCount * avgTime;
+    private Integer extractCount(Map<String, Object> meta, String primaryKey, String fallbackKey) {
+        Integer value = toInteger(meta.get(primaryKey));
+        if (value != null) {
+            return value;
+        }
 
-        // Add time for items ahead in queue
-        long queueWaitTime = (position - 1) * avgTime;
+        Object counts = meta.get("counts");
+        if (counts instanceof Map<?, ?> countMap) {
+            return toInteger(countMap.get(fallbackKey));
+        }
 
-        return activeWaitTime + queueWaitTime;
+        return null;
+    }
+
+    private Integer toInteger(Object value) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value instanceof String text) {
+            try {
+                return Integer.parseInt(text);
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private long getAverageProcessingTime() {
+        return estimator.getAverageDurationMs();
     }
 
     private void notifyQueueStatus(String projectId) {
@@ -313,11 +449,12 @@ public class ImportQueueManager {
             return;
         }
 
+        long estimatedWaitTimeMs = calculateEstimatedWaitTime(item);
         QueueStatusMessage message = QueueStatusMessage.builder()
                 .projectId(projectId)
                 .queuePosition(item.getQueuePosition())
                 .totalInQueue(queue.size())
-                .estimatedWaitTimeMs(calculateEstimatedWaitTime(item.getQueuePosition()))
+                .estimatedWaitTimeMs(estimatedWaitTimeMs)
                 .status(item.getStatus().name())
                 .message(buildQueueMessage(item))
                 .timestamp(System.currentTimeMillis())
@@ -414,13 +551,13 @@ public class ImportQueueManager {
         if (item.getQueuePosition() == 1) {
             return String.format("'%s' is next in queue (estimated wait: %d seconds)",
                     item.getFilename(),
-                    calculateEstimatedWaitTime(item.getQueuePosition()) / 1000);
+                    calculateEstimatedWaitTime(item) / 1000);
         }
 
         return String.format("'%s' is at position %d in queue (%d ahead, estimated wait: %d seconds)",
                 item.getFilename(),
                 item.getQueuePosition(),
                 item.getQueuePosition() - 1,
-                calculateEstimatedWaitTime(item.getQueuePosition()) / 1000);
+                calculateEstimatedWaitTime(item) / 1000);
     }
 }

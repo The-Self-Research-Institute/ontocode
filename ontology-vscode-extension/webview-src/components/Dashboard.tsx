@@ -249,8 +249,8 @@ const LoadingChoiceDialog = ({
               "{projectName}" is loading in the background...
             </p>
             {loadingStatusMessage && (
-              <p className="text-xs text-purple-600 font-medium mt-2">
-                {loadingStatusMessage}
+              <p className="text-xs text-blue-600 font-medium mt-2 bg-blue-50 px-2 py-1 rounded">
+                📊 {loadingStatusMessage}
               </p>
             )}
           </div>
@@ -270,9 +270,9 @@ const LoadingChoiceDialog = ({
               <span><strong>Continue:</strong> Work on other files, you'll get a notification when ready</span>
             </li>
           </ul>
-          {loadingStatusMessage.includes('several minutes') && (
+          {loadingStatusMessage && loadingStatusMessage.includes('minute') && (
             <div className="mt-3 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
-              <strong>Large file detected:</strong> Processing may take 2-5 minutes. We recommend clicking "Continue Working" to avoid waiting.
+              <strong>⏱️ Large file detected:</strong> This may take several minutes. We recommend clicking "Continue Working".
             </div>
           )}
         </div>
@@ -1027,44 +1027,57 @@ const TopMenuBar = ({
 };
 
 const OpenFileDialog = ({
-  isOpen,
-  onClose,
-  myFiles,
-  sharedFiles,
-  currentProjectId,
-  currentFileId,
-  currentFileName,
-  onDeleteFile,
-  onSwitchFile,
-  parentProjectId,
-  onLoadProjectFile,
-  projectFiles
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  myFiles: FileInfo[];
-  sharedFiles: FileInfo[];
+    isOpen,
+    onClose,
+    myFiles,
+    sharedFiles,
+    currentProjectId,
+    currentFileId,
+    currentFileName,
+    onDeleteFile,
+    onSwitchFile,
+    parentProjectId,
+    onLoadProjectFile,
+    projectFiles,
+    importMode,
+    partitionStrategy,
+    onImportModeChange,
+    onPartitionStrategyChange
+  }: {
+    isOpen: boolean;
+    onClose: () => void;
+    myFiles: FileInfo[];
+    sharedFiles: FileInfo[];
   currentProjectId: string | null;
   currentFileId?: string | null;
   currentFileName?: string | null;
   onDeleteFile?: (projectId: string, fileName: string) => void;
-  onSwitchFile: (projectId: string) => void;
-  parentProjectId?: string;
-  onLoadProjectFile?: (fileId: string, fileName: string) => void;
-  projectFiles?: FileInfo[];
-}) => {
+    onSwitchFile: (projectId: string) => void;
+    parentProjectId?: string;
+    onLoadProjectFile?: (fileId: string, fileName: string) => void;
+    projectFiles?: FileInfo[];
+    importMode: 'full' | 'incremental' | 'diff';
+    partitionStrategy: 'none' | 'namespace';
+    onImportModeChange: (mode: 'full' | 'incremental' | 'diff') => void;
+    onPartitionStrategyChange: (strategy: 'none' | 'namespace') => void;
+  }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const canOpenLocalFile = typeof window !== 'undefined' && !!(window as any).vscode;
   const usingProjectFiles = !!parentProjectId;
   const primaryFiles = usingProjectFiles ? (projectFiles || []) : myFiles;
   const secondaryFiles = usingProjectFiles ? [] : sharedFiles;
-  const handleOpenLocalFile = () => {
-    if (!canOpenLocalFile || !window.vscode) {
-      return;
-    }
-    window.vscode.postMessage({ type: 'openLocalFile', projectId: parentProjectId || undefined });
-    onClose();
-  };
+    const handleOpenLocalFile = () => {
+      if (!canOpenLocalFile || !window.vscode) {
+        return;
+      }
+      window.vscode.postMessage({
+        type: 'openLocalFile',
+        projectId: parentProjectId || undefined,
+        importMode,
+        partition: partitionStrategy
+      });
+      onClose();
+    };
 
   // console.log('[OpenFileDialog] Rendered with myFiles:', myFiles.length, 'sharedFiles:', sharedFiles.length, 'isOpen:', isOpen);
   // console.log('[OpenFileDialog] myFiles data:', myFiles);
@@ -1238,10 +1251,54 @@ const OpenFileDialog = ({
             </div>
           )}
         </div>
-        <div className="p-3 border-t" style={{ borderColor: 'var(--color-border)' }}>
-          <button
-            onClick={handleOpenLocalFile}
-            disabled={!canOpenLocalFile}
+          <div className="p-3 border-t" style={{ borderColor: 'var(--color-border)' }}>
+            <div className="mb-3">
+              <div className="text-[11px] font-semibold text-gray-600 mb-2">Import options</div>
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <label className="block text-[10px] text-gray-500 mb-1">Mode</label>
+                  <select
+                    value={importMode}
+                    onChange={(e) => onImportModeChange(e.target.value as 'full' | 'incremental' | 'diff')}
+                    className="w-full text-xs px-2 py-1.5 rounded border"
+                    style={{
+                      borderColor: 'var(--color-border)',
+                      backgroundColor: 'var(--color-surface)',
+                      color: 'var(--color-text)'
+                    }}
+                  >
+                    <option value="full">Full</option>
+                    <option value="incremental">Incremental</option>
+                    <option value="diff">Diff</option>
+                  </select>
+                </div>
+                <div className="flex-1">
+                  <label className="block text-[10px] text-gray-500 mb-1">Partition</label>
+                  <select
+                    value={partitionStrategy}
+                    onChange={(e) => onPartitionStrategyChange(e.target.value as 'none' | 'namespace')}
+                    disabled={importMode === 'diff'}
+                    className="w-full text-xs px-2 py-1.5 rounded border disabled:opacity-60"
+                    style={{
+                      borderColor: 'var(--color-border)',
+                      backgroundColor: 'var(--color-surface)',
+                      color: 'var(--color-text)'
+                    }}
+                  >
+                    <option value="none">None</option>
+                    <option value="namespace">Namespace</option>
+                  </select>
+                </div>
+              </div>
+              {importMode === 'diff' && (
+                <div className="text-[10px] text-amber-600 mt-1">
+                  Diff mode does not support namespace partitioning.
+                </div>
+              )}
+            </div>
+            <button
+              onClick={handleOpenLocalFile}
+              disabled={!canOpenLocalFile}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs rounded-md border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
             style={{
               borderColor: 'var(--color-border)',
@@ -1874,6 +1931,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   const collaborationPanelRef = useRef<CollaborationPanelRef>(null);
   const [showOpenDialog, setShowOpenDialog] = useState(false);
   const [activeOntologySubTab, setActiveOntologySubTab] = useState('prefixes');
+  const [importMode, setImportMode] = useState<'full' | 'incremental' | 'diff'>('full');
+  const [partitionStrategy, setPartitionStrategy] = useState<'none' | 'namespace'>('none');
   const [isCreateIndividualModalOpen, setCreateIndividualModalOpen] = useState(false);
   const [isAddAnnotationDialogOpen, setAddAnnotationDialogOpen] = useState(false);
   const [isEditAnnotationDialogOpen, setEditAnnotationDialogOpen] = useState(false);
@@ -4830,6 +4889,27 @@ const Dashboard: React.FC<DashboardProps> = ({
             }, message.status.type === 'IMPORT_COMPLETED' ? 3000 : 10000);
           }
           break;
+
+        case "importFailed":
+          console.error('[Dashboard] ❌ Import failed for project:', message.projectId, message.error);
+          setShowLoadingChoice(false);
+          setShowQueueStatus(false);
+          setIsInitialLoading(false);
+          notificationService.error('Import Failed', `Failed to import ontology: ${message.error || 'Unknown error'}`);
+          break;
+
+        case "importTimeout":
+          console.error('[Dashboard] ⏱️ Import timeout for project:', message.projectId);
+          setShowLoadingChoice(false);
+          setShowQueueStatus(false);
+          setIsInitialLoading(false);
+          notificationService.error('Import Timeout', 'The import operation took too long. Your ontology may still be processing. Please check back later.');
+          break;
+
+        case "updateLoadingStatus":
+          console.log('[Dashboard] 📊 Loading status update:', message.message, `(${message.attempt}/${message.maxAttempts})`);
+          setLoadingStatusMessage(message.message);
+          break;
       }
     };
 
@@ -5996,14 +6076,16 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (window.vscode) {
         // In VS Code, use message passing
         const resolvedEmail = resolveUserEmail();
-        window.vscode.postMessage({
-          type: 'uploadOntology',
-          projectId: ontologyProjectId,
-          fileName: fileName,
-          fileContent: base64Data,
-          ownerEmail: resolvedEmail || undefined,
-          skipDuplicateCheck: true
-        });
+          window.vscode.postMessage({
+            type: 'uploadOntology',
+            projectId: ontologyProjectId,
+            fileName: fileName,
+            fileContent: base64Data,
+            ownerEmail: resolvedEmail || undefined,
+            skipDuplicateCheck: true,
+            importMode,
+            partition: partitionStrategy
+          });
 
         // The fileReady message will trigger fetchData via IMPORT_COMPLETED
         setIsExpectingFileReady(true);
@@ -6029,7 +6111,11 @@ const Dashboard: React.FC<DashboardProps> = ({
         const resolvedEmail = resolveUserEmail();
         // Use deployment-aware URL
         const uploadBaseUrl = window.API_BASE_URL || (localStorage.getItem('deploymentType') === 'self-hosted' ? 'http://localhost:80' : 'http://13.218.153.101');
-        const uploadResponse = await fetch(`${uploadBaseUrl}/api/ontology/upload/${ontologyProjectId}?ownerEmail=${encodeURIComponent(resolvedEmail || '')}`, {
+        const query = new URLSearchParams();
+        query.set('ownerEmail', resolvedEmail || '');
+        query.set('importMode', importMode);
+        query.set('partition', partitionStrategy);
+        const uploadResponse = await fetch(`${uploadBaseUrl}/api/ontology/upload/${ontologyProjectId}?${query.toString()}`, {
           method: 'POST',
           headers: token ? { 'Authorization': `Bearer ${token}` } : {},
           body: formData
@@ -6056,7 +6142,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       console.error('[Dashboard] ❌ Failed to load project file:', error);
       notificationService.error('Load Failed', error?.message || 'Failed to load file');
     }
-  }, [initialProjectId, resolveUserEmail]); // Removed fetchData to prevent infinite loop
+    }, [initialProjectId, resolveUserEmail, importMode, partitionStrategy]); // Removed fetchData to prevent infinite loop
 
   // Create Property from Class Expression Dialog
   const handleCreatePropertyFromDialog = useCallback(() => {
@@ -7756,7 +7842,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             projectId={projectId}
             context={{
               projectId,
-              apiBaseUrl: getApiBaseUrl(),
+              apiBaseUrl: (window as any).API_BASE_URL || (localStorage.getItem('deploymentType') === 'self-hosted' ? 'http://localhost:80' : 'http://13.218.153.101'),
               permissions: {
                 canEdit: !readonlyMode,
                 canDelete: !readonlyMode,
@@ -9706,6 +9792,10 @@ const Dashboard: React.FC<DashboardProps> = ({
         parentProjectId={initialProjectId}
         onLoadProjectFile={handleLoadProjectFile}
         projectFiles={projectFiles}
+        importMode={importMode}
+        partitionStrategy={partitionStrategy}
+        onImportModeChange={setImportMode}
+        onPartitionStrategyChange={setPartitionStrategy}
       />
       <DuplicateFileDialog
         isOpen={duplicatePrompt.isOpen}

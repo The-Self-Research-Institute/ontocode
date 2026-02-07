@@ -1,9 +1,9 @@
-# OntoCode Development Docker Compose
-# Use docker-compose.production.yml for production deployments
-# This file is for quick local development and testing
+# OntoCode Local Development Docker Compose
+# This file builds all services from local source code
+# Usage: docker compose -f docker-compose.dev.yml up --build
 
 services:
-  # MongoDB Database
+  # MongoDB Database (external image - no build needed)
   mongo:
     image: mongo:6
     container_name: ontocode-mongo
@@ -25,9 +25,12 @@ services:
       retries: 5
       start_period: 40s
 
-  # GraphDB (RDF Triple Store) - with embedded license
+  # GraphDB (RDF Triple Store) - BUILD LOCALLY
   graphdb:
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-graphdb:${VERSION:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.graphdb
+    image: ontocode-graphdb:local
     container_name: ontocode-graphdb
     restart: unless-stopped
     ports:
@@ -46,7 +49,7 @@ services:
       retries: 5
       start_period: 180s
 
-  # GraphDB Repository Initializer - Creates 'ontocode' repository with inference DISABLED
+  # GraphDB Repository Initializer
   graphdb-init:
     image: curlimages/curl:latest
     container_name: ontocode-graphdb-init
@@ -109,9 +112,12 @@ services:
         fi
         echo "=== Init Complete ==="
 
-  # Authentication Service
+  # Authentication Service - BUILD LOCALLY
   auth:
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-auth:${VERSION:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.auth
+    image: ontocode-auth:local
     container_name: ontocode-auth
     restart: unless-stopped
     ports:
@@ -126,10 +132,19 @@ services:
         condition: service_healthy
     networks:
       - ontology-net
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep java || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
 
-  # API Gateway
+  # API Gateway - BUILD LOCALLY
   gateway:
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-gateway:${VERSION:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    image: ontocode-gateway:local
     container_name: ontocode-gateway
     restart: unless-stopped
     ports:
@@ -141,13 +156,22 @@ services:
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
     depends_on:
       auth:
-        condition: service_started
+        condition: service_healthy
     networks:
       - ontology-net
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep java || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
 
-  # Ontology Editor Service
+  # Ontology Editor Service - BUILD LOCALLY
   owl-editor:
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-editor:${VERSION:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.editor
+    image: ontocode-editor:local
     container_name: ontocode-editor
     restart: unless-stopped
     ports:
@@ -160,14 +184,25 @@ services:
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
       EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
     depends_on:
-      - mongo
-      - graphdb
+      mongo:
+        condition: service_healthy
+      graphdb:
+        condition: service_healthy
     networks:
       - ontology-net
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep java || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
 
-  # SWRL Rules Service
+  # SWRL Rules Service - BUILD LOCALLY
   swrl-service:
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-swrl:${VERSION:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.swrl
+    image: ontocode-swrl:local
     container_name: ontocode-swrl
     restart: unless-stopped
     ports:
@@ -180,14 +215,25 @@ services:
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
     depends_on:
-      - mongo
-      - graphdb
+      mongo:
+        condition: service_healthy
+      graphdb:
+        condition: service_healthy
     networks:
       - ontology-net
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep java || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
 
-  # Plugin Service
+  # Plugin Service - BUILD LOCALLY
   plugin-service:
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-plugin:${VERSION:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.plugin
+    image: ontocode-plugin:local
     container_name: ontocode-plugin
     restart: unless-stopped
     ports:
@@ -199,14 +245,25 @@ services:
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
     depends_on:
-      - mongo
+      mongo:
+        condition: service_healthy
     networks:
       - ontology-net
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep java || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
 
-  # Plugin Initialization Service
+  # Plugin Initialization Service - BUILD LOCALLY
   plugin-init:
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-plugin-init:${VERSION:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.plugin-init
+    image: ontocode-plugin-init:local
     container_name: ontocode-plugin-init
+    restart: "no"
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       MONGODB_DATABASE: ${MONGODB_DATABASE:-ontocode}
@@ -214,13 +271,16 @@ services:
       mongo:
         condition: service_healthy
       plugin-service:
-        condition: service_started
+        condition: service_healthy
     networks:
       - ontology-net
 
-  # VS Code Web Extension (Self-Contained)
+  # VS Code Web Extension - BUILD LOCALLY
   vscode-web:
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-vscode-web:${VERSION:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.vscode-extension
+    image: ontocode-vscode-web:local
     container_name: ontocode-vscode-web
     restart: unless-stopped
     ports:
@@ -235,8 +295,10 @@ services:
       ONTOCODE_API_URL: http://gateway:80
       AUTH_SERVICE_URL: http://auth:8086
     depends_on:
-      - gateway
-      - auth
+      gateway:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
     networks:
       - ontology-net
     healthcheck:
