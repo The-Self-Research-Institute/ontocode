@@ -9,9 +9,9 @@ module.exports = (env, argv) => {
 
   return {
     mode: isProduction ? 'production' : 'development',
-    entry: './webview-src/src/index.tsx', // Make sure this is .tsx now!
+    entry: './webview-src/index.tsx', // Make sure this is .tsx now!
     output: {
-      path: path.resolve(__dirname, 'webview'),
+      path: path.resolve(__dirname, 'webview-src/dist'),
       filename: 'static/js/[name].js',
       clean: true,
       publicPath: '/'
@@ -54,7 +54,7 @@ module.exports = (env, argv) => {
     plugins: [
       // ⭐⭐⭐ ENSURE THIS IS PRESENT AND CORRECT ⭐⭐⭐
       new HtmlWebpackPlugin({
-        template: './webview-src/public/index.html',
+        template: './webview-src/index.html',
         filename: 'index.html',
         inject: 'body',
         minify: isProduction ? {

@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.document.ProjectDocument;
 import self.research.ontology.owlEditor.model.ProjectStatus;
@@ -12,6 +14,8 @@ import java.util.Optional;
 @Service
 public class ProjectMetadataService {
 
+    private static final Logger log = LoggerFactory.getLogger(ProjectMetadataService.class);
+    
     private final ProjectRepository projectRepository;
 
     public ProjectMetadataService(ProjectRepository projectRepository) {
@@ -104,8 +108,12 @@ public class ProjectMetadataService {
     /**
      * FIX: Batch update project metadata in a single database operation
      * Improves performance by avoiding 3 separate DB writes
+     * Creates MongoDB project document for both cloud and self-hosted deployments
      */
     public void updateProjectMetadata(String projectId, ProjectStatus status, String gridfsFileId, String ownerEmail) {
+        log.info("[ProjectMetadataService] Updating project metadata - projectId: {}, owner: {}, status: {}", 
+            projectId, ownerEmail, status.status());
+            
         ProjectDocument doc = projectRepository.findById(projectId)
                 .orElse(new ProjectDocument(projectId, projectId, status.filename()));
 
@@ -117,12 +125,17 @@ public class ProjectMetadataService {
 
         if (ownerEmail != null && !ownerEmail.isEmpty()) {
             doc.setOwnerEmail(ownerEmail);
+            log.info("[ProjectMetadataService] Setting owner email: {} for project: {}", ownerEmail, projectId);
+        } else {
+            log.warn("[ProjectMetadataService] No owner email provided for project: {}", projectId);
         }
 
         doc.setUpdatedAt(Instant.now());
 
-        // Single database write
-        projectRepository.save(doc);
+        // Single database write - saves to MongoDB for both cloud and self-hosted
+        ProjectDocument savedDoc = projectRepository.save(doc);
+        log.info("[ProjectMetadataService] ✓ Project saved to MongoDB - id: {}, owner: {}, filename: {}", 
+            savedDoc.getId(), savedDoc.getOwnerEmail(), savedDoc.getFilename());
     }
     
     /**

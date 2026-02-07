@@ -25,9 +25,9 @@ services:
       retries: 5
       start_period: 40s
 
-  # GraphDB (RDF Triple Store)
+  # GraphDB (RDF Triple Store) - with embedded license
   graphdb:
-    image: ontotext/graphdb:11.1.1
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-graphdb:${VERSION:-latest}
     container_name: ontocode-graphdb
     restart: unless-stopped
     ports:
@@ -37,8 +37,6 @@ services:
       GDB_LICENSE_PATH: /opt/graphdb
     volumes:
       - graphdb-data:/opt/graphdb/data
-      # Ensure this license file exists in your root folder!
-      - ${GDB_LICENSE_FILE:-./CORETOPIA_GRAPHDB_FREE_v11.1.license}:/opt/graphdb/home/conf/graphdb.license:ro
     networks:
       - ontology-net
     healthcheck:
@@ -46,32 +44,74 @@ services:
       interval: 15s
       timeout: 10s
       retries: 5
-      start_period: 60s
+      start_period: 180s
 
-  # GraphDB Repository Initializer (UPDATED FIX)
+  # GraphDB Repository Initializer - Creates 'ontocode' repository with inference DISABLED
   graphdb-init:
     image: curlimages/curl:latest
     container_name: ontocode-graphdb-init
     depends_on:
       graphdb:
         condition: service_healthy
-    volumes:
-      # Points to the NEW script to bypass Windows cache issues
-      - ./scripts/init-repo.sh:/init-repo.sh:ro
     networks:
       - ontology-net
-    command: sh /init-repo.sh
     restart: "no"
+    command:
+      - sh
+      - -c
+      - |
+        echo "=== GraphDB Repository Init ==="
+        for i in $$(seq 1 30); do
+          curl -sf http://graphdb:7200/rest/repositories >/dev/null 2>&1 && break
+          echo "Waiting for GraphDB... attempt $$i/30"
+          sleep 5
+        done
+        
+        if curl -s http://graphdb:7200/rest/repositories | grep -q "ontocode"; then
+          echo "[OK] Repository ontocode already exists"
+        else
+          echo "Creating ontocode repository with inference DISABLED..."
+          cat > /tmp/repo.ttl << 'EOFCONFIG'
+        @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+        @prefix rep: <http://www.openrdf.org/config/repository#> .
+        @prefix sr: <http://www.openrdf.org/config/repository/sail#> .
+        @prefix sail: <http://www.openrdf.org/config/sail#> .
+        @prefix graphdb: <http://www.ontotext.com/config/graphdb#> .
+        [] a rep:Repository ;
+            rep:repositoryID "ontocode" ;
+            rdfs:label "OntoCode Repository - No Inference" ;
+            rep:repositoryImpl [
+                rep:repositoryType "graphdb:SailRepository" ;
+                sr:sailImpl [
+                    sail:sailType "graphdb:Sail" ;
+                    graphdb:ruleset "empty" ;
+                    graphdb:disable-sameAs "true" ;
+                    graphdb:check-for-inconsistencies "false" ;
+                    graphdb:in-memory-literal-properties "true" ;
+                    graphdb:enable-literal-index "true" ;
+                    graphdb:entity-index-size "10000000" ;
+                    graphdb:enablePredicateList "true" ;
+                    graphdb:read-only "false" ;
+                ]
+            ] .
+        EOFCONFIG
+          curl -sS -X POST -H "Content-Type: multipart/form-data" -F "config=@/tmp/repo.ttl" http://graphdb:7200/rest/repositories >/dev/null
+          echo "[OK] Repository created successfully"
+        fi
+        
+        echo "Setting ontocode as active repository..."
+        if curl -sf http://graphdb:7200/rest/repositories/ontocode/size >/dev/null 2>&1; then
+          echo "[OK] Repository ontocode is ACTIVE and accessible"
+          echo "[OK] Active Repository: ontocode"
+          echo "[OK] Inference: DISABLED (ruleset: empty)"
+        else
+          echo "[ERROR] Repository not accessible"
+        fi
+        echo "=== Init Complete ==="
 
   # Authentication Service
   auth:
-    build:
-      context: .
-      dockerfile: Dockerfile.auth
-      args:
-        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-        - VCS_REF=$(git rev-parse --short HEAD)
-    image: ontocode-auth:latest
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-auth:${VERSION:-latest}
     container_name: ontocode-auth
     restart: unless-stopped
     ports:
@@ -89,13 +129,7 @@ services:
 
   # API Gateway
   gateway:
-    build:
-      context: .
-      dockerfile: Dockerfile.gateway
-      args:
-        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-        - VCS_REF=$(git rev-parse --short HEAD)
-    image: ontocode-gateway:latest
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-gateway:${VERSION:-latest}
     container_name: ontocode-gateway
     restart: unless-stopped
     ports:
@@ -113,13 +147,7 @@ services:
 
   # Ontology Editor Service
   owl-editor:
-    build:
-      context: .
-      dockerfile: Dockerfile.editor
-      args:
-        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-        - VCS_REF=$(git rev-parse --short HEAD)
-    image: ontocode-editor:latest
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-editor:${VERSION:-latest}
     container_name: ontocode-editor
     restart: unless-stopped
     ports:
@@ -139,13 +167,7 @@ services:
 
   # SWRL Rules Service
   swrl-service:
-    build:
-      context: .
-      dockerfile: Dockerfile.swrl
-      args:
-        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-        - VCS_REF=$(git rev-parse --short HEAD)
-    image: ontocode-swrl:latest
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-swrl:${VERSION:-latest}
     container_name: ontocode-swrl
     restart: unless-stopped
     ports:
@@ -165,13 +187,7 @@ services:
 
   # Plugin Service
   plugin-service:
-    build:
-      context: .
-      dockerfile: Dockerfile.plugin
-      args:
-        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-        - VCS_REF=$(git rev-parse --short HEAD)
-    image: ontocode-plugin:latest
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-plugin:${VERSION:-latest}
     container_name: ontocode-plugin
     restart: unless-stopped
     ports:
@@ -189,9 +205,7 @@ services:
 
   # Plugin Initialization Service
   plugin-init:
-    build:
-      context: .
-      dockerfile: Dockerfile.plugin-init
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-plugin-init:${VERSION:-latest}
     container_name: ontocode-plugin-init
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
@@ -203,6 +217,34 @@ services:
         condition: service_started
     networks:
       - ontology-net
+
+  # VS Code Web Extension (Self-Contained)
+  vscode-web:
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-vscode-web:${VERSION:-latest}
+    container_name: ontocode-vscode-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount local workspace for file editing
+      - ${WORKSPACE_PATH:-./data/projects}:/workspace/projects
+    environment:
+      VSCODE_WEB_HOST: 0.0.0.0
+      VSCODE_WEB_PORT: 3000
+      # OntoCode API endpoints
+      ONTOCODE_API_URL: http://gateway:80
+      AUTH_SERVICE_URL: http://auth:8086
+    depends_on:
+      - gateway
+      - auth
+    networks:
+      - ontology-net
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
 
 volumes:
   mongo-data:

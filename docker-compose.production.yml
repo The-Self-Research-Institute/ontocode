@@ -1,5 +1,6 @@
-# OntoCode Production Docker Compose
-# This file is for production-like deployments with proper configurations
+# OntoCode Development Docker Compose
+# Use docker-compose.production.yml for production deployments
+# This file is for quick local development and testing
 
 services:
   # MongoDB Database
@@ -11,7 +12,6 @@ services:
       - "27017:27017"
     volumes:
       - mongo-data:/data/db
-      - mongo-init:/docker-entrypoint-initdb.d
     environment:
       MONGO_INITDB_DATABASE: ${MONGODB_DATABASE:-ontocode}
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-admin}
@@ -25,9 +25,12 @@ services:
       retries: 5
       start_period: 40s
 
-  # GraphDB (RDF Triple Store)
+  # GraphDB (RDF Triple Store) - with embedded license
   graphdb:
-    image: ontotext/graphdb:11.1.1
+    build:
+      context: .
+      dockerfile: Dockerfile.graphdb
+    image: ontocode-graphdb:latest
     container_name: ontocode-graphdb
     restart: unless-stopped
     ports:
@@ -37,7 +40,6 @@ services:
       GDB_LICENSE_PATH: /opt/graphdb
     volumes:
       - graphdb-data:/opt/graphdb/data
-      - ${GDB_LICENSE_FILE:-./CORETOPIA_GRAPHDB_FREE_v11.1.license}:/opt/graphdb/home/conf/graphdb.license:ro
     networks:
       - ontology-net
     healthcheck:
@@ -47,24 +49,87 @@ services:
       retries: 5
       start_period: 60s
 
+  # GraphDB Repository Initializer - Creates 'ontocode' repository with inference DISABLED
+  graphdb-init:
+    image: curlimages/curl:latest
+    container_name: ontocode-graphdb-init
+    depends_on:
+      graphdb:
+        condition: service_healthy
+    networks:
+      - ontology-net
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - |
+        echo "=== GraphDB Repository Init ==="
+        for i in $$(seq 1 30); do
+          curl -sf http://graphdb:7200/rest/repositories >/dev/null 2>&1 && break
+          echo "Waiting for GraphDB... attempt $$i/30"
+          sleep 5
+        done
+        
+        if curl -s http://graphdb:7200/rest/repositories | grep -q "ontocode"; then
+          echo "[OK] Repository ontocode already exists"
+        else
+          echo "Creating ontocode repository with inference DISABLED..."
+          cat > /tmp/repo.ttl << 'EOFCONFIG'
+        @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+        @prefix rep: <http://www.openrdf.org/config/repository#> .
+        @prefix sr: <http://www.openrdf.org/config/repository/sail#> .
+        @prefix sail: <http://www.openrdf.org/config/sail#> .
+        @prefix graphdb: <http://www.ontotext.com/config/graphdb#> .
+        [] a rep:Repository ;
+            rep:repositoryID "ontocode" ;
+            rdfs:label "OntoCode Repository - No Inference" ;
+            rep:repositoryImpl [
+                rep:repositoryType "graphdb:SailRepository" ;
+                sr:sailImpl [
+                    sail:sailType "graphdb:Sail" ;
+                    graphdb:ruleset "empty" ;
+                    graphdb:disable-sameAs "true" ;
+                    graphdb:check-for-inconsistencies "false" ;
+                    graphdb:in-memory-literal-properties "true" ;
+                    graphdb:enable-literal-index "true" ;
+                    graphdb:entity-index-size "10000000" ;
+                    graphdb:enablePredicateList "true" ;
+                    graphdb:read-only "false" ;
+                ]
+            ] .
+        EOFCONFIG
+          curl -sS -X POST -H "Content-Type: multipart/form-data" -F "config=@/tmp/repo.ttl" http://graphdb:7200/rest/repositories >/dev/null
+          echo "[OK] Repository created successfully"
+        fi
+        
+        echo "Setting ontocode as active repository..."
+        if curl -sf http://graphdb:7200/rest/repositories/ontocode/size >/dev/null 2>&1; then
+          echo "[OK] Repository ontocode is ACTIVE and accessible"
+          echo "[OK] Active Repository: ontocode"
+          echo "[OK] Inference: DISABLED (ruleset: empty)"
+        else
+          echo "[ERROR] Repository not accessible"
+        fi
+        echo "=== Init Complete ==="
+
   # Authentication Service
   auth:
     build:
       context: .
       dockerfile: Dockerfile.auth
+      args:
+        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+        - VCS_REF=$(git rev-parse --short HEAD)
+    image: ontocode-auth:latest
     container_name: ontocode-auth
     restart: unless-stopped
     ports:
       - "8086:8086"
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
-      JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-this}
-      SPRING_PROFILES_ACTIVE: production
+      JWT_SECRET: ${JWT_SECRET:-b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==}
+      SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
-      LOGGING_LEVEL_SELF_RESEARCH: ${LOGGING_LEVEL_SELF_RESEARCH:-DEBUG}
-      EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
-      MAILTRAP_API_TOKEN: ${MAILTRAP_API_TOKEN:-}
-      EMAIL_FROM: ${EMAIL_FROM:-noreply@ontocode.com}
     depends_on:
       mongo:
         condition: service_healthy
@@ -76,33 +141,34 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.gateway
+      args:
+        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+        - VCS_REF=$(git rev-parse --short HEAD)
+    image: ontocode-gateway:latest
     container_name: ontocode-gateway
     restart: unless-stopped
     ports:
       - "80:80"
     environment:
-      SPRING_PROFILES_ACTIVE: production
-      JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-this}
+      SPRING_PROFILES_ACTIVE: docker
+      JWT_SECRET: ${JWT_SECRET:-b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==}
       AUTH_SERVICE_URL: http://auth:8086
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
-      LOGGING_LEVEL_SELF_RESEARCH: ${LOGGING_LEVEL_SELF_RESEARCH:-DEBUG}
     depends_on:
       auth:
         condition: service_started
     networks:
       - ontology-net
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80/actuator/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
 
   # Ontology Editor Service
   owl-editor:
     build:
       context: .
       dockerfile: Dockerfile.editor
+      args:
+        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+        - VCS_REF=$(git rev-parse --short HEAD)
+    image: ontocode-editor:latest
     container_name: ontocode-editor
     restart: unless-stopped
     ports:
@@ -111,31 +177,24 @@ services:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       GRAPHDB_URL: http://graphdb:7200
       GRAPHDB_REPOSITORY: ${GRAPHDB_REPOSITORY:-ontocode}
-      SPRING_PROFILES_ACTIVE: production
+      SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
-      LOGGING_LEVEL_SELF_RESEARCH: ${LOGGING_LEVEL_SELF_RESEARCH:-DEBUG}
       EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
-      GMAIL_USERNAME: ${GMAIL_USERNAME:-}
-      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
     depends_on:
-      mongo:
-        condition: service_healthy
-      graphdb:
-        condition: service_healthy
+      - mongo
+      - graphdb
     networks:
       - ontology-net
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8083/actuator/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
 
   # SWRL Rules Service
   swrl-service:
     build:
       context: .
       dockerfile: Dockerfile.swrl
+      args:
+        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+        - VCS_REF=$(git rev-parse --short HEAD)
+    image: ontocode-swrl:latest
     container_name: ontocode-swrl
     restart: unless-stopped
     ports:
@@ -144,28 +203,24 @@ services:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       GRAPHDB_URL: http://graphdb:7200
       GRAPHDB_REPOSITORY: ${GRAPHDB_REPOSITORY:-ontocode}
-      SPRING_PROFILES_ACTIVE: production
+      ONTOLOGY_EDITOR_URL: http://owl-editor:8083
+      SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
-      LOGGING_LEVEL_SELF_RESEARCH: ${LOGGING_LEVEL_SELF_RESEARCH:-DEBUG}
     depends_on:
-      mongo:
-        condition: service_healthy
-      graphdb:
-        condition: service_healthy
+      - mongo
+      - graphdb
     networks:
       - ontology-net
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8084/actuator/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
 
   # Plugin Service
   plugin-service:
     build:
       context: .
       dockerfile: Dockerfile.plugin
+      args:
+        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+        - VCS_REF=$(git rev-parse --short HEAD)
+    image: ontocode-plugin:latest
     container_name: ontocode-plugin
     restart: unless-stopped
     ports:
@@ -173,23 +228,15 @@ services:
     environment:
       SPRING_DATA_MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       SPRING_DATA_MONGODB_DATABASE: ${MONGODB_DATABASE:-ontocode}
-      JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-this}
-      SPRING_PROFILES_ACTIVE: production
+      JWT_SECRET: ${JWT_SECRET:-b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==}
+      SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
-      LOGGING_LEVEL_SELF_RESEARCH: ${LOGGING_LEVEL_SELF_RESEARCH:-DEBUG}
     depends_on:
-      mongo:
-        condition: service_healthy
+      - mongo
     networks:
       - ontology-net
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8087/actuator/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
 
-  # Plugin Initialization Service (optional)
+  # Plugin Initialization Service
   plugin-init:
     build:
       context: .
@@ -201,42 +248,49 @@ services:
     depends_on:
       mongo:
         condition: service_healthy
+      plugin-service:
+        condition: service_started
     networks:
       - ontology-net
-    profiles:
-      - init
-    restart: "no"
 
-  # MongoDB Express Admin UI (optional)
-  mongo-express:
-    image: mongo-express:latest
-    container_name: ontocode-mongo-express
+  # VS Code Web Extension (Self-Contained)
+  vscode-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.vscode-extension
+      args:
+        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+        - VCS_REF=$(git rev-parse --short HEAD)
+    image: ontocode-vscode-web:latest
+    container_name: ontocode-vscode-web
     restart: unless-stopped
     ports:
-      - "8081:8081"
+      - "3000:3000"
+    volumes:
+      # Mount local workspace for file editing
+      - ${WORKSPACE_PATH:-./data/projects}:/workspace/projects
     environment:
-      ME_CONFIG_MONGODB_ADMINUSERNAME: ${MONGO_ROOT_USER:-admin}
-      ME_CONFIG_MONGODB_ADMINPASSWORD: ${MONGO_ROOT_PASSWORD:-changeme123}
-      ME_CONFIG_MONGODB_URL: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/?authSource=admin
-      ME_CONFIG_BASICAUTH_USERNAME: ${MONGO_EXPRESS_USER:-admin}
-      ME_CONFIG_BASICAUTH_PASSWORD: ${MONGO_EXPRESS_PASSWORD:-pass}
+      VSCODE_WEB_HOST: 0.0.0.0
+      VSCODE_WEB_PORT: 3000
+      # OntoCode API endpoints
+      ONTOCODE_API_URL: http://gateway:80
+      AUTH_SERVICE_URL: http://auth:8086
     depends_on:
-      mongo:
-        condition: service_healthy
+      - gateway
+      - auth
     networks:
       - ontology-net
-    profiles:
-      - admin
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
 
 volumes:
   mongo-data:
-    driver: local
-  mongo-init:
-    driver: local
   graphdb-data:
-    driver: local
 
 networks:
   ontology-net:
     driver: bridge
-

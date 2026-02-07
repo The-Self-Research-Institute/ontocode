@@ -148,6 +148,21 @@ public class GraphDBDatasetService {
             
             log.info("[GRAPHDB] ✅ Query completed, retrieved {} results from GraphDB", results.size());
             
+            // Diagnostic: If no results, check if graph has any data at all
+            if (results.isEmpty()) {
+                try {
+                    var graphIri = conn.getValueFactory().createIRI(graphUri);
+                    long graphSize = conn.size(graphIri);
+                    log.warn("[GRAPHDB] ⚠️ Query returned 0 results. Graph {} contains {} total triples.", graphUri, graphSize);
+                    
+                    if (graphSize == 0) {
+                        log.error("[GRAPHDB] ❌ Graph is EMPTY! Data may not have been loaded or committed.");
+                    }
+                } catch (Exception diagEx) {
+                    log.warn("[GRAPHDB] Could not check graph size: {}", diagEx.getMessage());
+                }
+            }
+            
             // Return a simple iterator-based implementation
             return new SimpleTupleQueryResult(bindingNames, results);
             
@@ -512,6 +527,7 @@ public class GraphDBDatasetService {
                     });
 
                     log.info("Parsing RDF file...");
+                    long parseStart = System.nanoTime();
                     parser.parse(cleanedStream, graphUri);
                     
                     // Upload remaining triples
@@ -520,18 +536,44 @@ public class GraphDBDatasetService {
                         totalTriples.addAndGet(batch.size());
                     }
 
-                    log.info("Parsed {} triples total", totalTriples.get());
+                    long parseDuration = elapsedMillis(parseStart);
+                    log.info("✓ Parsed {} triples in {} ms", totalTriples.get(), parseDuration);
+                    
+                    // WARNING: If no triples were parsed, something is wrong
+                    if (totalTriples.get() == 0) {
+                        log.error("❌ ZERO TRIPLES PARSED! The RDF file may be empty or in an unsupported format.");
+                        log.error("   Check that the file is valid RDF/XML and contains actual data.");
+                    }
 
                     // Commit transaction
-                    log.warn("Committing {} triples to GraphDB...", totalTriples.get());
+                    log.warn("⏳ Committing {} triples to GraphDB...", totalTriples.get());
                     long commitStart = System.nanoTime();
                     conn.commit();
-                    log.info("Transaction committed in {} ms", elapsedMillis(commitStart));
+                    long commitDuration = elapsedMillis(commitStart);
+                    log.info("✓ Transaction committed in {} ms ({} sec)", commitDuration, commitDuration / 1000);
+
+                    // VERIFICATION: Check if data is actually readable after commit
+                    long verifyStart = System.nanoTime();
+                    long verifiedSize = conn.size(graphIri);
+                    log.info("✓ VERIFICATION: Graph {} contains {} triples after commit (check took {} ms)", 
+                            graphUri, verifiedSize, elapsedMillis(verifyStart));
+                    
+                    if (verifiedSize == 0 && totalTriples.get() > 0) {
+                        log.error("❌ DATA LOSS DETECTED: Parsed {} triples but graph is empty after commit!", totalTriples.get());
+                    }
 
                     conn.setAutoCommit(originalAutoCommit);
 
-                    log.info("CHUNKED bulk load completed for project: {} - loaded {} triples (total {} seconds)",
-                            projectId, totalTriples.get(), elapsedMillis(bulkLoadStart) / 1000);
+                    long totalDuration = elapsedMillis(bulkLoadStart);
+                    log.info("═══════════════════════════════════════════════════════════");
+                    log.info("✓ CHUNKED UPLOAD COMPLETE for project: {}", projectId);
+                    log.info("  Total triples: {}", totalTriples.get());
+                    log.info("  TIMING BREAKDOWN:");
+                    log.info("    • Parsing & batched upload: {} ms ({}%)", parseDuration, (parseDuration * 100) / totalDuration);
+                    log.info("    • Commit to GraphDB: {} ms ({}%)", commitDuration, (commitDuration * 100) / totalDuration);
+                    log.info("  TOTAL TIME: {} ms ({} seconds)", totalDuration, totalDuration / 1000);
+                    log.info("  Average speed: {:.0f} triples/sec", (totalTriples.get() * 1000.0) / totalDuration);
+                    log.info("═══════════════════════════════════════════════════════════");
                 } catch (Exception e) {
                     if (conn.isActive()) {
                         conn.rollback();
@@ -620,14 +662,20 @@ public class GraphDBDatasetService {
                     tempFile.deleteOnExit();
                     
                     log.info("Copying stream to temp file: {}", tempFile.getAbsolutePath());
+                    long tempFileStart = System.nanoTime();
                     try (java.io.FileOutputStream fos = new java.io.FileOutputStream(tempFile)) {
                         bufferedStream.transferTo(fos);
                     }
+                    long tempFileDuration = elapsedMillis(tempFileStart);
                     long fileSize = tempFile.length();
-                    log.info("Temp file created: {} bytes ({} MB)", fileSize, fileSize / 1024 / 1024);
+                    log.info("✓ Temp file created in {} ms: {} bytes ({} MB) - Speed: {:.2f} MB/s", 
+                            tempFileDuration, fileSize, fileSize / 1024 / 1024,
+                            (fileSize / 1024.0 / 1024.0) / (tempFileDuration / 1000.0));
 
                     // Now load from file (repeatable if connection drops)
                     long addStart = System.nanoTime();
+                    final AtomicLong tripleCounter = new AtomicLong(0);
+                    final AtomicLong lastLogTime = new AtomicLong(System.currentTimeMillis());
                     try (java.io.FileInputStream fis = new java.io.FileInputStream(tempFile)) {
                         // Use a parser to capture namespaces while loading
                         org.eclipse.rdf4j.rio.RDFParser parser = org.eclipse.rdf4j.rio.Rio.createParser(rdfFormat);
@@ -640,11 +688,23 @@ public class GraphDBDatasetService {
                             @Override
                             public void handleStatement(org.eclipse.rdf4j.model.Statement st) {
                                 conn.add(st, graphIri);
+                                long count = tripleCounter.incrementAndGet();
+                                // Log progress every 50000 triples or every 30 seconds
+                                if (count % 50000 == 0 || (System.currentTimeMillis() - lastLogTime.get() > 30000)) {
+                                    long elapsed = elapsedMillis(addStart);
+                                    double rate = (count * 1000.0) / elapsed; // triples per second
+                                    log.info("  Progress: {} triples parsed/uploaded in {} ms ({:.0f} triples/sec)", 
+                                            count, elapsed, rate);
+                                    lastLogTime.set(System.currentTimeMillis());
+                                }
                             }
                         });
                         parser.parse(fis, graphUri);
                     }
-                    log.info("GraphDB add() finished in {} ms", elapsedMillis(addStart));
+                    long parseDuration = elapsedMillis(addStart);
+                    double parseRate = (tripleCounter.get() * 1000.0) / parseDuration;
+                    log.info("✓ Parsing & uploading completed in {} ms ({} sec) - {} triples at {:.0f} triples/sec", 
+                            parseDuration, parseDuration / 1000, tripleCounter.get(), parseRate);
                     
                     // Clean up temp file
                     tempFile.delete();
@@ -656,17 +716,28 @@ public class GraphDBDatasetService {
 
                     // **COMMIT THE TRANSACTION** - This is where all changes are persisted
                     // For large files (100k+ triples), this commit can take 1-5 minutes
-                    log.warn("Committing {} triples to GraphDB - this may take several minutes for large ontologies...", tripleCount);
+                    log.warn("⏳ Committing {} triples to GraphDB - this may take several minutes for large ontologies...", tripleCount);
                     long commitStart = System.nanoTime();
                     conn.commit();
-                    log.info("Transaction committed in {} ms ({} seconds)", 
-                            elapsedMillis(commitStart), elapsedMillis(commitStart) / 1000);
+                    long commitDuration = elapsedMillis(commitStart);
+                    log.info("✓ Transaction committed in {} ms ({} seconds)", 
+                            commitDuration, commitDuration / 1000);
 
                     // Restore original auto-commit setting
                     conn.setAutoCommit(originalAutoCommit);
 
-                    log.info("Bulk load completed for project: {} - loaded {} triples (total {} ms = {} seconds)",
-                            projectId, tripleCount, elapsedMillis(bulkLoadStart), elapsedMillis(bulkLoadStart) / 1000);
+                    long totalDuration = elapsedMillis(bulkLoadStart);
+                    log.info("═══════════════════════════════════════════════════════════");
+                    log.info("✓ UPLOAD COMPLETE for project: {}", projectId);
+                    log.info("  Total triples: {}", tripleCount);
+                    log.info("  File size: {} MB", fileSize / 1024 / 1024);
+                    log.info("  TIMING BREAKDOWN:");
+                    log.info("    • File preparation: {} ms ({}%)", tempFileDuration, (tempFileDuration * 100) / totalDuration);
+                    log.info("    • Parsing & upload: {} ms ({}%)", parseDuration, (parseDuration * 100) / totalDuration);
+                    log.info("    • Commit to GraphDB: {} ms ({}%)", commitDuration, (commitDuration * 100) / totalDuration);
+                    log.info("  TOTAL TIME: {} ms ({} seconds)", totalDuration, totalDuration / 1000);
+                    log.info("  Average speed: {:.0f} triples/sec", (tripleCount * 1000.0) / totalDuration);
+                    log.info("═══════════════════════════════════════════════════════════");
                 } catch (Exception e) {
                     // Rollback on any error
                     try {

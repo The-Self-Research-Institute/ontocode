@@ -489,12 +489,14 @@ public class AuthController {
             log.info("Current user roles: {}", user.getRoles());
             
             // Set role based on deployment type
-            if ("cloud".equalsIgnoreCase(deploymentType)) {
+            // Self-hosted: Users get admin access (they own the instance)
+            // Cloud: Users get regular user access (shared multi-tenant environment)
+            if ("self-hosted".equalsIgnoreCase(deploymentType)) {
                 user.setRoles(Set.of("ROLE_USER", "ROLE_ADMIN"));
-                log.info("Setting cloud roles (ROLE_USER, ROLE_ADMIN) for user: {}", username);
+                log.info("Setting self-hosted roles (ROLE_USER, ROLE_ADMIN) for user: {}", username);
             } else {
                 user.setRoles(Set.of("ROLE_USER"));
-                log.info("Setting self-hosted roles (ROLE_USER) for user: {}", username);
+                log.info("Setting cloud roles (ROLE_USER) for user: {}", username);
             }
             
             userRepository.save(user);

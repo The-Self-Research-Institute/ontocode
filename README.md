@@ -44,17 +44,77 @@ It consists of multiple Java microservices, a rule management service for **SWRL
 
 ## 🚀 Quick Start
 
-### Using Docker
-To spin up all backend services with a single command:
+### 🎯 One-Click Installation
 
-```bash
-docker-compose up
+Choose your installation mode based on your needs:
+
+#### 🐳 **Docker-Only Mode** (Recommended - No Node.js Required!)
+
+Everything runs in Docker, including the VS Code web editor. **Only Docker required!**
+
+**Windows:**
+```cmd
+docker-install.bat
 ```
+
+**PowerShell:**
+```powershell
+.\docker-install.ps1
+```
+
+**Linux/Mac:**
+```bash
+chmod +x docker-install.sh
+./docker-install.sh
+```
+
+Access the editor at: **http://localhost:3000**
 
 ---
 
-### Using Scripts
-You can also use the provided helper scripts.
+#### 💻 **Hybrid Mode** (For Developers - Node.js + Docker)
+
+Backend in Docker, VS Code extension runs locally with hot-reload.
+
+**Windows:**
+```cmd
+install-and-run.bat
+```
+
+**PowerShell:**
+```powershell
+.\install-and-run.ps1
+```
+
+**Linux/Mac:**
+```bash
+chmod +x install-and-run.sh
+./install-and-run.sh
+```
+
+**Smart Auto-Detection:** These scripts automatically detect if Node.js is available and choose the best mode!
+
+---
+
+**See [INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md) for detailed comparison and instructions.**
+
+---
+
+### Using Docker Compose Manually (Backend Only)
+To spin up just the backend services:
+
+```bash
+docker compose up -d
+```
+
+Then access:
+- Docker-Only: Open http://localhost:3000
+- Hybrid: Run `cd ontology-vscode-extension && npm run test-web`
+
+---
+
+### Using Scripts (Advanced)
+For manual control over each component:
 
 ```bash
 # Setup (run once)

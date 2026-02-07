@@ -88,7 +88,7 @@ function getUrlsForDeployment(deploymentType: 'self-hosted' | 'cloud'): { gatewa
 }
 
 // Default deployment type from environment or cloud
-const defaultDeploymentType = (process.env.DEFAULT_DEPLOYMENT_TYPE || 'cloud') as 'self-hosted' | 'cloud';
+const defaultDeploymentType = (process.env.DEFAULT_DEPLOYMENT_TYPE || 'self-hosted') as 'self-hosted' | 'cloud';
 const defaultUrls = getUrlsForDeployment(defaultDeploymentType);
 console.log(defaultUrls,"default")
 let GATEWAY_URL = defaultUrls.gateway;
@@ -722,19 +722,17 @@ class OntoCodePanel {
         const tokenData = parseJwtToken(token);
         const useWorkspaceFlow = await this.shouldUseWorkspaceFlow(tokenData || undefined);
 
-        if (useWorkspaceFlow) {
-            console.log('[OntoCode] Auth restored, sending pending file for project selection.');
-            const base64Content = uint8ArrayToBase64(pending.fileData);
-            this.postMessage({
-                type: 'pendingFileUpload',
-                fileName: pending.fileName,
-                fileContent: base64Content,
-                fileSize: pending.fileData.length
-            });
-        } else {
-            console.log('[OntoCode] Auth restored, uploading pending file directly.');
-            await this._uploadOntology(pending.projectId, pending.fileName, pending.fileData);
-        }
+        // Always send to webview for proper initialization
+        // Cloud: Shows project selection dialog
+        // Self-hosted: Auto-uploads but with proper state management
+        console.log(`[OntoCode] Auth restored, sending pending file (${useWorkspaceFlow ? 'project selection' : 'auto-upload'}).`);
+        const base64Content = uint8ArrayToBase64(pending.fileData);
+        this.postMessage({
+            type: 'pendingFileUpload',
+            fileName: pending.fileName,
+            fileContent: base64Content,
+            fileSize: pending.fileData.length
+        });
     }
 
     private async handleOpenLocalFile(projectId?: string | null) {
@@ -932,7 +930,7 @@ class OntoCodePanel {
      */
     private async handleApiRequest(message: Extract<ExtensionMessage, { type: 'apiGet' | 'apiPost' | 'apiPut' | 'apiPatch' | 'apiDelete' }>) {
         const { requestId, type, url } = message;
-        
+
         // Check if this is a public endpoint that doesn't require authentication
         const isPublicEndpoint = 
             url.includes('/api/auth/login') || 
@@ -1008,7 +1006,12 @@ class OntoCodePanel {
                     status: axiosError.response?.status,
                     data: axiosError.response?.data,
                 };
-
+                console.error('[Proxy] Detailed Error:', {
+                    code: axiosError.code,
+                    message: axiosError.message,
+                    stack: axiosError.stack,
+                    isAxiosError: axios.isAxiosError(e)
+                });
                 const errorLogPayload = {
                     url: fullUrl,
                     method: type.replace('api', '').toUpperCase(),
@@ -1123,22 +1126,47 @@ class OntoCodePanel {
         console.log(tokenData,"token===========================================>")
         const useWorkspaceFlow = await this.shouldUseWorkspaceFlow(tokenData || undefined);
         
-        // Admin users or workspace users should get project selection (cloud deployment always uses workspace flow)
-        if (useWorkspaceFlow) {
-            console.log('[OntoCode] Workspace flow detected, sending file for project selection');
-            // Convert to base64 for message passing (web-compatible)
-            const base64Content = uint8ArrayToBase64(fileData);
-            this.postMessage({
-                type: 'pendingFileUpload',
-                fileName: fileName,
-                fileContent: base64Content,
-                fileSize: fileData.length
-            });
-        } else {
-            console.log('[OntoCode] Non-admin user without workspace, uploading directly to GraphDB');
-            const projectId = fileName.endsWith('.owl') ? fileName.slice(0, -4) : fileName;
-            this._uploadOntology(projectId, fileName, fileData);
+        // Always send file to webview for proper initialization
+        // Cloud: User selects project from list
+        // Self-hosted: Auto-uploads but webview is properly initialized
+        console.log(`[OntoCode] Sending file for ${useWorkspaceFlow ? 'project selection' : 'auto-upload'}`);
+        console.log(`[OntoCode] isWebviewReady: ${this._isWebviewReady}`);
+        
+        const base64Content = uint8ArrayToBase64(fileData);
+        
+        // If webview is not ready, wait for it
+        if (!this._isWebviewReady) {
+            console.log('[OntoCode] ⏳ Webview not ready, waiting...');
+            await this.waitForWebviewReady(5000); // Wait up to 5 seconds
         }
+        
+        console.log(`[OntoCode] 📤 Sending pendingFileUpload message for: ${fileName}`);
+        const result = this.postMessage({
+            type: 'pendingFileUpload',
+            fileName: fileName,
+            fileContent: base64Content,
+            fileSize: fileData.length
+        });
+        console.log(`[OntoCode] 📤 pendingFileUpload sent, result:`, result);
+    }
+    
+    // Helper to wait for webview to be ready
+    private waitForWebviewReady(timeout: number): Promise<void> {
+        return new Promise((resolve) => {
+            if (this._isWebviewReady) {
+                resolve();
+                return;
+            }
+            
+            const startTime = Date.now();
+            const checkInterval = setInterval(() => {
+                if (this._isWebviewReady || Date.now() - startTime > timeout) {
+                    clearInterval(checkInterval);
+                    console.log(`[OntoCode] Webview ready check complete. isReady: ${this._isWebviewReady}`);
+                    resolve();
+                }
+            }, 100);
+        });
     }
 
     /**
@@ -1160,10 +1188,25 @@ class OntoCodePanel {
         const fileData = await vscode.workspace.fs.readFile(targetEditor.document.uri);
         // Fix: Replaced path.basename with string manipulation on the URI path.
         const fileName = targetEditor.document.uri.path.substring(targetEditor.document.uri.path.lastIndexOf('/') + 1);
-        const projectId = fileName.endsWith('.owl') ? fileName.slice(0, -4) : fileName;
 
-        // Delegate to the shared upload logic
-        this._uploadOntology(projectId, fileName, fileData);
+        // Check if user is logged in
+        const token = await (this._context as any).secrets.get(TOKEN_KEY);
+        if (!token) {
+            console.log('[OntoCode] Not logged in, uploading directly to GraphDB');
+            const projectId = fileName.endsWith('.owl') ? fileName.slice(0, -4) : fileName;
+            this._uploadOntology(projectId, fileName, fileData);
+            return;
+        }
+
+        // Always send file to webview for proper initialization (both cloud and self-hosted)
+        console.log('[OntoCode] Sending active file to webview for upload');
+        const base64Content = uint8ArrayToBase64(fileData);
+        this.postMessage({
+            type: 'pendingFileUpload',
+            fileName: fileName,
+            fileContent: base64Content,
+            fileSize: fileData.length
+        });
     }
 
     /**
@@ -1674,22 +1717,40 @@ class OntoCodePanel {
                 const scheduleStatusCheck = (attempt: number) => {
                     const delays = [3000, 10000, 30000];
                     const delay = delays[Math.min(attempt - 1, delays.length - 1)];
+                    console.log(GATEWAY_URL,"GATEWAY_URL")
                     console.log(`[OntoCode] Scheduling fallback status check (attempt ${attempt}) in ${delay}ms for ${uploadProjectId}`);
                     setTimeout(async () => {
                         try {
-                            const statusUrl = `http://ec2-13-218-153-101.compute-1.amazonaws.com/api/ontology/status/${projectId}`;
-                            // const statusUrl = `http://localhost:80/api/ontology/status/${projectId}`;
+                            // Use the module-level GATEWAY_URL which is already set based on deployment type
+                            // URL-encode the project ID to handle special characters (spaces, parentheses, etc.)
+                            const encodedProjectId = encodeURIComponent(uploadProjectId);
+                            const statusUrl = `${GATEWAY_URL}/api/ontology/status/${encodedProjectId}`;
+                            console.log(`[OntoCode] Checking status at: ${statusUrl}`);
+                            
                             const statusResp = await axios.get(statusUrl, { headers });
                             console.log(`[OntoCode] Fallback status check for ${uploadProjectId}:`, statusResp.data);
                             
-                            const status = statusResp.data?.status;
+                            // Response structure: { success: true, data: { status, statusMessage, updatedAt, filename } }
+                            const status = statusResp.data?.data?.status || statusResp.data?.status;
+                            console.log(`[OntoCode] Fallback status check result - Status: ${status}, ProjectId: ${uploadProjectId}`);
+                            
                             if (status === 'COMPLETED') {
-                                console.log(`[OntoCode] File completed, sending fileReady`);
+                                console.log(`[OntoCode] ✅ File completed via fallback status check, sending fileReady to webview`);
+                                console.log(`[OntoCode] Webview ready state: ${this._isWebviewReady}`);
                                 this.postMessage({ type: 'fileReady', projectId: uploadProjectId });
                                 return;
                             }
-                            if (status !== 'FAILED' && attempt < 3) {
+                            if (status === 'ERROR' || status === 'FAILED') {
+                                console.error(`[OntoCode] ❌ Import failed with status: ${status}`);
+                                const errorMsg = statusResp.data?.data?.statusMessage || 'Import failed';
+                                vscode.window.showErrorMessage(`Import failed: ${errorMsg}`);
+                                return;
+                            }
+                            if (attempt < 3) {
+                                console.log(`[OntoCode] Status is ${status}, scheduling next check...`);
                                 scheduleStatusCheck(attempt + 1);
+                            } else {
+                                console.warn(`[OntoCode] ⚠️  Max fallback attempts reached, status is: ${status}`);
                             }
                         } catch (err) {
                             console.error('[OntoCode] Failed to check fallback status:', err);
@@ -2429,10 +2490,10 @@ class OntoCodePanel {
             <meta http-equiv="Content-Security-Policy" content="
                 default-src 'none'; 
                 img-src ${webview.cspSource} https: data: blob:; 
-                script-src 'nonce-${nonce}' https://cdn.tailwindcss.com https://unpkg.com https://aistudiocdn.com ${GATEWAY_URL} ${PLUGIN_SERVICE_URL} ${webview.cspSource};
+                script-src 'nonce-${nonce}' https://cdn.tailwindcss.com https://unpkg.com https://aistudiocdn.com ${webview.cspSource} 'unsafe-eval';
                 style-src ${webview.cspSource} 'unsafe-inline' https://unpkg.com https://cdn.tailwindcss.com;
                 font-src ${webview.cspSource} https://unpkg.com data:; 
-                connect-src ${GATEWAY_URL} ${PLUGIN_SERVICE_URL} https://unpkg.com https://aistudiocdn.com;
+                connect-src 'self' http://13.218.153.101 https: wss: http://13.218.153.101:* ws://13.218.153.101:* http://localhost:* http://127.0.0.1:* ${GATEWAY_URL} ${PLUGIN_SERVICE_URL};
             ">
             ${vscodeApiInjectionScript}`
         );
@@ -2529,16 +2590,9 @@ class OntoCodePanel {
             console.log(`[OntoCode] Extracted user info - userId: ${userId}, username: ${username}, email: ${userEmail}, plan: ${subscriptionPlan}`);
             console.log(`[OntoCode] Token data keys:`, Object.keys(tokenData));
             
-            // Check if user's workspace subscription plan supports collaboration (Pro or Enterprise only)
-            const planLower = subscriptionPlan.toLowerCase();
-            console.log(`[OntoCode] Checking plan: '${subscriptionPlan}' (normalized: '${planLower}')`);
-            
-            if (planLower !== 'pro' && planLower !== 'enterprise' && planLower !== 'professional') {
-                console.log(`[OntoCode] ⚠️  Collaboration disabled for ${subscriptionPlan} plan. Upgrade to Pro or Enterprise to enable collaboration.`);
-                return;
-            }
-            
-            console.log(`[OntoCode] ✅ Collaboration enabled for ${subscriptionPlan} plan`);
+            // ALWAYS enable WebSocket for import notifications - required for loading dialog to close
+            // WebSocket is needed to receive IMPORT_COMPLETED messages regardless of plan or delployment type
+            console.log(`[OntoCode] ✅ WebSocket enabled for import notifications`);
             
             // Call the main initialization method
             await this.initializeCollaboration(projectId, userId, username, userEmail);
@@ -2593,6 +2647,12 @@ class OntoCodePanel {
                     // Log errors with more detail
                     if (status.type === 'IMPORT_FAILED') {
                         console.error(`[OntoCode] ❌ Import failed for ${status.projectId}:`, status.statusMessage || status.metadata?.error);
+                    }
+                    
+                    // Check if import completed and send fileReady
+                    if (status.type === 'IMPORT_COMPLETED') {
+                        console.log(`[OntoCode] ✅ Import completed via WebSocket for ${status.projectId}, sending fileReady to webview`);
+                        this.postMessage({ type: 'fileReady', projectId: status.projectId });
                     }
 
                     // Forward import status to webview
