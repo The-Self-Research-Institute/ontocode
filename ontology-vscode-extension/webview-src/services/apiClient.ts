@@ -173,10 +173,14 @@ class ApiClient {
   private setupAxios() {
     this.axiosClient = axios.create({
       baseURL: BASE_URL,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Accept-Encoding': 'identity' // Disable compression
+      },
       timeout: TIMEOUT,
       maxContentLength: Infinity,
-      maxBodyLength: Infinity
+      maxBodyLength: Infinity,
+      decompress: false // Disable automatic decompression to avoid zlib
     });
 
     // Request interceptor to add auth token

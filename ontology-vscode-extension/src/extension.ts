@@ -11,6 +11,11 @@ import { EditCapture } from './collaboration/EditCapture';
 import { RemoteEditApplier } from './collaboration/RemoteEditApplier';
 import { optimizedUpload, shouldCompressFile, ChunkMetadata } from './utils/uploadOptimizer';
 
+// Configure axios for browser compatibility - disable automatic decompression
+// to avoid zlib issues in web workers
+axios.defaults.decompress = false;
+axios.defaults.headers.common['Accept-Encoding'] = 'identity';
+
 /**
  * Utility: Convert Uint8Array to base64 string (web-compatible)
  */
@@ -280,6 +285,24 @@ export function activate(context: vscode.ExtensionContext) {
     
     context.subscriptions.push(uriHandler);
 
+    // FIX: Register WebviewPanelSerializer to ensure the webview content is restored on reload
+    if (vscode.window.registerWebviewPanelSerializer) {
+        console.log('[OntoCode] Registering WebviewPanelSerializer for ontocodeEditor');
+        vscode.window.registerWebviewPanelSerializer('ontocodeEditor', {
+            async deserializeWebviewPanel(webviewPanel: vscode.WebviewPanel, state: any) {
+                console.log('[OntoCode] Reviving webview panel from serialized state');
+                
+                // Reset the webview options to ensure correct localResourceRoots
+                webviewPanel.webview.options = {
+                    enableScripts: true,
+                    localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'webview-src', 'dist')]
+                };
+                
+                await OntoCodePanel.revive(webviewPanel, context.extensionUri, context);
+            }
+        });
+    }
+
     // Register all commands
     context.subscriptions.push(
         // Fix: Made command handler async to support async panel creation/file upload.
@@ -447,8 +470,7 @@ class OntoCodePanel {
             {
                 enableScripts: true,
                 retainContextWhenHidden: true,
-                // Fix: Replace missing Uri.joinPath with Uri.parse and string interpolation for compatibility.
-                localResourceRoots: [vscode.Uri.parse(`${extensionUri.toString()}/webview-src/dist`)]
+                localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'webview-src', 'dist')]
             }
         );
 
@@ -456,6 +478,12 @@ class OntoCodePanel {
         // Fix: Awaited the update of the webview content after panel creation.
         await OntoCodePanel.currentPanel._update();
         return OntoCodePanel.currentPanel!;
+    }
+
+    // FIX: Revive method for WebviewPanelSerializer to restore panel on reload
+    public static async revive(panel: vscode.WebviewPanel, extensionUri: vscode.Uri, context: vscode.ExtensionContext) {
+        OntoCodePanel.currentPanel = new OntoCodePanel(panel, extensionUri, context);
+        await OntoCodePanel.currentPanel._update();
     }
 
     private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri, context: vscode.ExtensionContext) {
@@ -1784,14 +1812,14 @@ class OntoCodePanel {
                             const statusMsg = percentCompleted === 100
                                 ? `Upload complete. Processing in GraphDB... (this may take several minutes for large files)`
                                 : `Uploading: ${percentCompleted}%`;
-                            console.log(`[OntoCode] ${statusMsg} (${progressEvent.loaded} / ${progressEvent.total} bytes)`);
+                            console.log(`[OntoCode] ${statusMsg} (${progressEvent.loaded} / ${progressEvent.total ?? 0} bytes)`);
                             // Send progress to webview
                             this.postMessage({
                                 type: 'uploadProgress',
                                 projectId,
                                 percent: percentCompleted,
                                 loaded: progressEvent.loaded,
-                                total: progressEvent.total,
+                                total: progressEvent.total ?? 0,
                                 message: statusMsg
                             });
                         }
