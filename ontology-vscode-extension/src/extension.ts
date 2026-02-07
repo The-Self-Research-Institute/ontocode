@@ -185,6 +185,7 @@ type WebviewMessage =
   | { type: 'shareNotification'; notification: any }
   | { type: 'cursorUpdate'; userId: string; userName: string; position: { x: number; y: number }; timestamp: number }
   | { type: 'pendingFileUpload'; fileName: string; fileContent: string; fileSize: number; importMode?: string; partition?: string }
+  | { type: 'uploadProgress'; projectId: string; percent: number; loaded: number; total: number; message: string }
   | { type: 'showSubscriptionPlans' }; // Navigate to subscription plans page
 
 type ExtensionMessage =
@@ -1656,10 +1657,10 @@ class OntoCodePanel {
                 console.log(`[OntoCode] File is ${(buffer.length / (1024 * 1024)).toFixed(2)}MB, attempting compression...`);
                 try {
                     // Check if CompressionStream is available
-                    if (typeof CompressionStream !== 'undefined') {
+                    if (typeof (globalThis as any).CompressionStream !== 'undefined') {
                         const startTime = Date.now();
                         const blob = new Blob([buffer]);
-                        const compressedStream = blob.stream().pipeThrough(new CompressionStream('gzip'));
+                        const compressedStream = blob.stream().pipeThrough(new (globalThis as any).CompressionStream('gzip'));
                         const compressedBlob = await new Response(compressedStream).blob();
                         dataToUpload = new Uint8Array(await compressedBlob.arrayBuffer());
 
@@ -2523,10 +2524,10 @@ class OntoCodePanel {
             if (enableCompression) {
                 console.log(`[OntoCode] File is ${(fileData.length / (1024 * 1024)).toFixed(2)}MB, attempting compression...`);
                 try {
-                    if (typeof CompressionStream !== 'undefined') {
+                    if (typeof (globalThis as any).CompressionStream !== 'undefined') {
                         const startTime = Date.now();
                         const blob = new Blob([fileData]);
-                        const compressedStream = blob.stream().pipeThrough(new CompressionStream('gzip'));
+                        const compressedStream = blob.stream().pipeThrough(new (globalThis as any).CompressionStream('gzip'));
                         const compressedBlob = await new Response(compressedStream).blob();
                         dataToUpload = new Uint8Array(await compressedBlob.arrayBuffer());
 

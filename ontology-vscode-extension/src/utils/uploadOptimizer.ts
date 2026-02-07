@@ -40,9 +40,9 @@ function simpleHash(data: Uint8Array): string {
 async function compressData(data: Uint8Array): Promise<Uint8Array> {
     try {
         // Check if CompressionStream is available (modern browsers)
-        if (typeof CompressionStream !== 'undefined') {
+        if (typeof (globalThis as any).CompressionStream !== 'undefined') {
             const blob = new Blob([data]);
-            const stream = blob.stream().pipeThrough(new CompressionStream('gzip'));
+            const stream = blob.stream().pipeThrough(new (globalThis as any).CompressionStream('gzip'));
             const compressedBlob = await new Response(stream).blob();
             return new Uint8Array(await compressedBlob.arrayBuffer());
         }

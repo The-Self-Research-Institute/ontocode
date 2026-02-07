@@ -145,11 +145,7 @@ public class GraphDBDatasetService {
             try {
                 HTTPRepository httpRepo = new HTTPRepository(graphdbUrl, repositoryId);
                 
-<<<<<<< Updated upstream
-                // PERFORMANCE: Configure HTTP client with extended timeouts and connection pooling
-=======
                 // PERFORMANCE OPTIMIZATION: Configure HTTP client with extended timeouts and connection pooling
->>>>>>> Stashed changes
                 // This prevents "Connection aborted" errors during large imports
                 httpRepo.setAdditionalHttpHeaders(java.util.Map.of(
                     "Keep-Alive", "timeout=3600, max=100", // 1 hour keep-alive, reuse connections
@@ -539,13 +535,8 @@ public class GraphDBDatasetService {
                                 ImportOptions options,
                                 ProgressListener progressListener) {
         long bulkLoadStart = System.nanoTime();
-<<<<<<< Updated upstream
-        // PERFORMANCE: 50x larger batch size for dramatically faster imports
-        final int BATCH_SIZE = 50000; // Triples per batch (optimized from 1000)
-=======
         int batchSize = resolveBatchSize(fileSizeBytes);
         ImportOptions resolvedOptions = options != null ? options : ImportOptions.defaults();
->>>>>>> Stashed changes
         
         try {
             Repository repo = getRepository();
@@ -639,25 +630,6 @@ public class GraphDBDatasetService {
 
                         @Override
                         public void handleStatement(Statement st) {
-<<<<<<< Updated upstream
-                            batch.add(st);
-                            
-                            if (batch.size() >= BATCH_SIZE) {
-                                // Upload batch
-                                conn.add(batch, graphIri);
-                                long count = totalTriples.addAndGet(batch.size());
-                                // PERFORMANCE: Log every 100k triples instead of 10k to reduce I/O overhead
-                                if (count % 100000 == 0) {
-                                    log.info("Uploaded {} triples so far...", count);
-                                }
-                                batch.clear();
-                                // PERFORMANCE: Periodic commits for very large files (every 1M triples)
-                                if (count % 1000000 == 0 && count > 0) {
-                                    conn.commit();
-                                    conn.begin();
-                                    log.info("Intermediate commit at {} triples", count);
-                                }
-=======
                             if (partitionByNamespace) {
                                 IRI graphForStatement = resolveNamespaceGraph(valueFactory, graphUri, st);
                                 List<Statement> graphBatch = partitionBatches.computeIfAbsent(
@@ -699,7 +671,6 @@ public class GraphDBDatasetService {
                                 conn.commit();
                                 conn.begin();
                                 log.info("Intermediate commit at {} triples", totalTriples.get());
->>>>>>> Stashed changes
                             }
                         }
                     });
@@ -751,6 +722,7 @@ public class GraphDBDatasetService {
                     conn.setAutoCommit(originalAutoCommit);
 
                     long totalDuration = elapsedMillis(bulkLoadStart);
+                    long parseDuration = totalDuration - commitDuration;
                     log.info("═══════════════════════════════════════════════════════════");
                     log.info("✓ CHUNKED UPLOAD COMPLETE for project: {}", projectId);
                     log.info("  Total triples: {}", totalTriples.get());
