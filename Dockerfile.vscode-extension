@@ -31,7 +31,8 @@ RUN npm install -g @vscode/test-web http-server
 COPY --from=builder /app ./
 
 # Copy and prepare the entrypoint script that patches CSP for external HTTP connections
-COPY ontology-vscode-extension/docker-entrypoint.sh /entrypoint.sh
+COPY --from=builder /app/docker-entrypoint.sh /entrypoint.sh
+RUN dos2unix /entrypoint.sh 2>/dev/null || sed -i 's/\r$//' /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Create directory for workspace data (will be mounted via volume)

@@ -46,12 +46,11 @@
         // Completely remove and block service worker API
         if ('serviceWorker' in navigator) {
           try {
-            // Delete first
-            delete navigator.serviceWorker;
+             // Only block register/getRegistration, but preserve enough shape for innocent checks
+             // Don't delete navigator.serviceWorker as some frameworks check for its existence
             
-            // Then define a frozen mock that does nothing
-            Object.defineProperty(navigator, 'serviceWorker', {
-              value: Object.freeze({
+            // Override with a safe mock
+            const safeServiceWorker = {
                 register: () => Promise.resolve({
                   installing: null,
                   waiting: null,
@@ -67,17 +66,26 @@
                 addEventListener: () => {},
                 removeEventListener: () => {},
                 controller: null
-              }),
-              configurable: false,
-              writable: false,
-              enumerable: false
-            });
-          } catch (e) {
-            // Fallback: just override methods
+            };
+
+            // Try to override property
             try {
-              navigator.serviceWorker.register = () => Promise.resolve({});
-              navigator.serviceWorker.getRegistration = () => Promise.resolve(undefined);
-              navigator.serviceWorker.getRegistrations = () => Promise.resolve([]);
+                 Object.defineProperty(navigator, 'serviceWorker', {
+                  value: safeServiceWorker,
+                  configurable: true,
+                  writable: true // Allow overwrites if really needed
+                });
+            } catch(e) { console.error("Could not override serviceWorker property", e); }
+
+
+          } catch (e) {
+            // Fallback: just override methods if possible
+            try {
+              if (navigator.serviceWorker) {
+                  navigator.serviceWorker.register = () => Promise.resolve({});
+                  navigator.serviceWorker.getRegistration = () => Promise.resolve(undefined);
+                  navigator.serviceWorker.getRegistrations = () => Promise.resolve([]);
+              }
             } catch (err) {
               // Last resort: do nothing
             }
@@ -115,22 +123,6 @@
     <link rel="stylesheet" href="https://unpkg.com/vis-network/styles/vis-network.min.css" type="text/css" />
     <!-- Load vis-network globally for ReasoningVisualizer component -->
     <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
-  <script type="importmap">
-{
-  "imports": {
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.546.0",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "vis-network": "https://unpkg.com/vis-network/standalone/umd/vis-network.min.js",
-    "path": "https://aistudiocdn.com/path@^0.12.7",
-    "axios": "https://aistudiocdn.com/axios@^1.12.2",
-    "fs": "https://aistudiocdn.com/fs@^0.0.1-security",
-    "form-data": "https://aistudiocdn.com/form-data@^4.0.4",
-    "vscode": "https://aistudiocdn.com/vscode@^1.1.37"
-  }
-}
-</script>
 <link rel="stylesheet" href="/index.css">
 </head>
   <body class="bg-gray-100">

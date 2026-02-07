@@ -14,11 +14,15 @@ export default defineConfig(({ mode }) => {
       plugins: [react()],
       define: {
         'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
+        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
+        // Provide zlib constants as global defines
+        'process.env.Z_SYNC_FLUSH': '2',
+        'process.env.Z_NO_FLUSH': '0'
       },
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),
+          'zlib': path.resolve(__dirname, '../src/zlib-shim.js')
         }
       },
       build: {

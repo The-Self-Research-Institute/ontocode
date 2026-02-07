@@ -29,6 +29,20 @@ public record ProjectStatus(
                 filename);
     }
 
+    public static ProjectStatus processing(String filename, String message) {
+        return new ProjectStatus("PROCESSING",
+                Objects.requireNonNullElse(message, "Bulk import in progress"),
+                Instant.now(),
+                filename);
+    }
+
+    public static ProjectStatus indexing(String filename) {
+        return new ProjectStatus("INDEXING",
+                "Indexing and metadata computation in progress",
+                Instant.now(),
+                filename);
+    }
+
     public static ProjectStatus completed(String filename) {
         return new ProjectStatus("COMPLETED",
                 "Ontology imported successfully",

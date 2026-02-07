@@ -16,6 +16,11 @@ public class ImportQueueItem {
     private String filename;
     private String ownerEmail;
     private Path owlFile;
+    private ImportOptions.ImportMode importMode;
+    private ImportOptions.PartitionStrategy partitionStrategy;
+    private long fileSizeBytes;
+    private Integer classCount;
+    private Integer annotationCount;
     private Instant queuedAt;
     private Instant startedAt;
     private ImportStatus status;
