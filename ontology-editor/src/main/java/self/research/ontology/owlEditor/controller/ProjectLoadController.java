@@ -42,9 +42,11 @@ import self.research.ontology.owlEditor.service.StorageManager;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.PushbackInputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.zip.GZIPInputStream;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -107,9 +109,10 @@ public class ProjectLoadController {
                                                       @RequestParam(required = false) String ownerEmail,
                                                       @RequestParam(required = false) String action,
                                                       @RequestParam(required = false) String importMode,
-                                                      @RequestParam(required = false) String partition) {
-        log.info("[ProjectLoadController] Upload request - projectId: {}, filename: {}, ownerEmail: {}, action: {}", 
-            projectId, file.getOriginalFilename(), ownerEmail, action);
+                                                      @RequestParam(required = false) String partition,
+                                                      @RequestParam(required = false, defaultValue = "false") boolean compressed) {
+        log.info("[ProjectLoadController] Upload request - projectId: {}, filename: {}, ownerEmail: {}, action: {}, compressed: {}",
+            projectId, file.getOriginalFilename(), ownerEmail, action, compressed);
         try {
             // VALIDATION: Check file size (max 300MB)
             long maxSize = 300 * 1024 * 1024; // 300MB
@@ -174,12 +177,42 @@ public class ProjectLoadController {
             Files.createDirectories(original.getParent());
 
             String gridfsFileId;
-            try (InputStream in = file.getInputStream();
+            
+            // Auto-detect GZIP compression
+            InputStream fileStream = file.getInputStream();
+            InputStream effectiveStream = fileStream;
+            boolean wasCompressed = compressed;
+            
+            if (!compressed) {
+                PushbackInputStream pb = new PushbackInputStream(fileStream, 2);
+                byte[] signature = new byte[2];
+                int len = pb.read(signature);
+                if (len > 0) {
+                    pb.unread(signature, 0, len);
+                }
+                
+                if (len == 2 && signature[0] == (byte) 0x1f && signature[1] == (byte) 0x8b) {
+                    log.info("[ProjectLoadController] Auto-detected GZIP content. Enabling decompression.");
+                    effectiveStream = new GZIPInputStream(pb);
+                    wasCompressed = true;
+                } else {
+                    effectiveStream = pb;
+                }
+            } else {
+                effectiveStream = new GZIPInputStream(fileStream);
+            }
+
+            try (InputStream in = effectiveStream;
                  OutputStream out = Files.newOutputStream(original,
                          StandardOpenOption.CREATE,
                          StandardOpenOption.TRUNCATE_EXISTING,
                          StandardOpenOption.WRITE);
                  TeeInputStream tee = new TeeInputStream(in, out, true)) {
+
+                if (wasCompressed) {
+                    log.info("[ProjectLoadController] Decompressing gzipped file before processing");
+                }
+
                 gridfsFileId = gridFSFileService.storeFile(
                     actualProjectId,
                     filename,  // Use potentially modified filename

@@ -14,7 +14,7 @@ module.exports = {
     }
   },
   entry: {
-    extension: './src/extension.ts'
+    extension: './src/extension.web.ts'
   },
   output: {
     filename: '[name].js',
@@ -29,6 +29,13 @@ module.exports = {
   },
   resolve: {
     extensions: ['.ts', '.js'],
+    alias: {
+        '_stream_readable': 'readable-stream/lib/_stream_readable',
+        '_stream_writable': 'readable-stream/lib/_stream_writable',
+        '_stream_duplex': 'readable-stream/lib/_stream_duplex',
+        '_stream_transform': 'readable-stream/lib/_stream_transform',
+        '_stream_passthrough': 'readable-stream/lib/_stream_passthrough'
+    },
     fallback: {
         "path": require.resolve("path-browserify"),
         "fs": false,
@@ -42,6 +49,9 @@ module.exports = {
         "http": require.resolve("stream-http"),
         "https": require.resolve("https-browserify"),
         "process": require.resolve("process/browser"),
+        "tty": false,
+        "zlib": require.resolve("./src/zlib-shim.js"),
+        "vm": false
     }
   },
   optimization: {
@@ -73,6 +83,9 @@ module.exports = {
     new webpack.ProvidePlugin({
         process: 'process/browser',
         Buffer: ['buffer', 'Buffer'],
+    }),
+    new webpack.DefinePlugin({
+        'process.env.NODE_DEBUG': JSON.stringify(false),
     }),
     new CopyPlugin({
       patterns: [
