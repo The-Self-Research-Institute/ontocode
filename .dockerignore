@@ -25,13 +25,24 @@
 
 # Node modules
 **/node_modules/
-**/package-lock.json
 **/yarn.lock
 
-# VS Code Extension artifacts
-ontology-vscode-extension/
-webview-src/
-**/*.vsix
+# Exclude package-lock.json from most places, but KEEP it for extension and webview
+**/package-lock.json
+!ontology-vscode-extension/package-lock.json
+!ontology-vscode-extension/webview-src/package-lock.json
+
+# VS Code Extension artifacts (exclude build artifacts but keep source)
+ontology-vscode-extension/node_modules/
+ontology-vscode-extension/dist/
+ontology-vscode-extension/out/
+ontology-vscode-extension/.vscode-test/
+ontology-vscode-extension/.vscode-test-web/
+ontology-vscode-extension/**/*.vsix
+
+# Webview artifacts (exclude node_modules and dist but keep source)
+ontology-vscode-extension/webview-src/node_modules/
+ontology-vscode-extension/webview-src/dist/
 
 # Documentation and markdown files (keep only in source, not in containers)
 *.md

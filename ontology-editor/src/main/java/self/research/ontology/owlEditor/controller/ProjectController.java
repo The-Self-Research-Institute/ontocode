@@ -84,11 +84,16 @@ public class ProjectController {
                     boolean isOwner = userEmail.equals(docOwner);
                     boolean isUnowned = (docOwner == null || docOwner.isEmpty());
                     
-                    // If file is unowned, assign it to this user automatically
+                    // If file is unowned, assign it to this user automatically (best-effort)
                     if (isUnowned) {
-                        log.info("[ProjectController] Assigning unowned project {} to user {}", doc.getId(), userEmail);
-                        doc.setOwnerEmail(userEmail);
-                        projectRepository.save(doc);
+                        try {
+                            log.info("[ProjectController] Assigning unowned project {} to user {}", doc.getId(), userEmail);
+                            doc.setOwnerEmail(userEmail);
+                            projectRepository.save(doc);
+                        } catch (Exception e) {
+                            log.error("[ProjectController] Failed to assign owner to project {}: {}", doc.getId(), e.getMessage());
+                            // Continue anyway - don't fail the entire request
+                        }
                         return true;
                     }
                     
@@ -96,12 +101,16 @@ public class ProjectController {
                 })
                 .map(doc -> {
                     Map<String, Object> info = mapProjectToInfo(doc);
-                    // Add sharedWith info for files owned by user
-                    shareService.getShareByProjectId(doc.getId()).ifPresent(share -> {
-                        if (!share.getSharedWithEmails().isEmpty()) {
-                            info.put("sharedWith", share.getSharedWithEmails());
-                        }
-                    });
+                    // Add sharedWith info for files owned by user (best-effort)
+                    try {
+                        shareService.getShareByProjectId(doc.getId()).ifPresent(share -> {
+                            if (!share.getSharedWithEmails().isEmpty()) {
+                                info.put("sharedWith", share.getSharedWithEmails());
+                            }
+                        });
+                    } catch (Exception e) {
+                        log.warn("[ProjectController] Failed to get share info for {}: {}", doc.getId(), e.getMessage());
+                    }
                     return info;
                 })
                 .collect(Collectors.toList());
@@ -135,7 +144,8 @@ public class ProjectController {
             ));
 
         } catch (Exception e) {
-            return ResponseEntity.ok(Map.of(
+            log.error("[ProjectController] listProjects failed for user {}", userEmail, e);
+            return ResponseEntity.status(500).body(Map.of(
                 "success", false,
                 "error", "Failed to list projects: " + e.getMessage()
             ));

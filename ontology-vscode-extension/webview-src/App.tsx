@@ -98,6 +98,27 @@ const AppContent = () => {
         return () => window.removeEventListener('message', handleMessage);
     }, []);
 
+    // Auto-upload for self-hosted users (no workspace)
+    useEffect(() => {
+        if (user && !user.workspaceId && pendingFile) {
+            console.log('[App] 🚀 Auto-uploading file for self-hosted user:', pendingFile.fileName);
+            const projectId = pendingFile.fileName.replace(/\.(owl|rdf|ttl|n3|nt|jsonld)$/i, '');
+            
+            if (window.vscode) {
+                window.vscode.postMessage({
+                    type: 'uploadOntology',
+                    projectId: projectId,
+                    fileName: pendingFile.fileName,
+                    fileContent: pendingFile.fileContent,
+                    skipDuplicateCheck: false
+                });
+            }
+            
+            // Clear pending file after triggering upload
+            setPendingFile(null);
+        }
+    }, [user, pendingFile]);
+
     const toggleFormView = () => setIsLoginView(!isLoginView);
 
     const handleWorkspaceSelected = (workspaceData: any) => {
