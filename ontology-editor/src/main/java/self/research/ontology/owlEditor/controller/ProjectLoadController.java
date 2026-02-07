@@ -18,8 +18,13 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.eclipse.rdf4j.rio.RDFFormat;
+import org.apache.commons.io.input.TeeInputStream;
+
+import java.util.Locale;
 
 import self.research.ontology.owlEditor.model.DraftChange;
+import self.research.ontology.owlEditor.model.ImportOptions;
 import self.research.ontology.owlEditor.model.ProjectStatus;
 import self.research.ontology.owlEditor.repository.DraftChangeRepository;
 import self.research.ontology.owlEditor.repository.ProjectRepository;
@@ -27,6 +32,8 @@ import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.GraphDBDatasetService;
 import self.research.ontology.owlEditor.service.GraphDBHistoryService;
 import self.research.ontology.owlEditor.service.GridFSFileService;
+import self.research.ontology.owlEditor.service.OntologyPreparseService;
+import self.research.ontology.owlEditor.service.ImportWorkerDispatcher;
 import self.research.ontology.owlEditor.service.ProjectImportService;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
 import self.research.ontology.owlEditor.service.ProjectShareService;
@@ -63,6 +70,8 @@ public class ProjectLoadController {
     private final SimpMessagingTemplate messagingTemplate;
     private final GraphDBDatasetService datasetService;
     private final ProjectRepository projectRepository;
+    private final OntologyPreparseService preparseService;
+    private final ImportWorkerDispatcher importWorkerDispatcher;
 
     public ProjectLoadController(StorageManager storageManager,
                                  ProjectMetadataService metadataService,
@@ -74,7 +83,9 @@ public class ProjectLoadController {
                                  DraftChangeRepository draftChangeRepository,
                                  SimpMessagingTemplate messagingTemplate,
                                  GraphDBDatasetService datasetService,
-                                 ProjectRepository projectRepository) {
+                                 ProjectRepository projectRepository,
+                                 OntologyPreparseService preparseService,
+                                 ImportWorkerDispatcher importWorkerDispatcher) {
         this.storageManager = storageManager;
         this.metadataService = metadataService;
         this.importService = importService;
@@ -86,13 +97,17 @@ public class ProjectLoadController {
         this.messagingTemplate = messagingTemplate;
         this.datasetService = datasetService;
         this.projectRepository = projectRepository;
+        this.preparseService = preparseService;
+        this.importWorkerDispatcher = importWorkerDispatcher;
     }
 
     @PostMapping("/upload/{projectId}")
     public ResponseEntity<Map<String, Object>> upload(@PathVariable String projectId,
                                                       @RequestParam("file") MultipartFile file,
                                                       @RequestParam(required = false) String ownerEmail,
-                                                      @RequestParam(required = false) String action) {
+                                                      @RequestParam(required = false) String action,
+                                                      @RequestParam(required = false) String importMode,
+                                                      @RequestParam(required = false) String partition) {
         log.info("[ProjectLoadController] Upload request - projectId: {}, filename: {}, ownerEmail: {}, action: {}", 
             projectId, file.getOriginalFilename(), ownerEmail, action);
         try {
@@ -153,31 +168,23 @@ public class ProjectLoadController {
                 }
             }
             
-            // FIX: Optimize by writing to both GridFS and filesystem in one pass
-            // Save to local filesystem first
+            // Optimize by writing to filesystem and GridFS in one pass
             Path projectDir = storageManager.prepareProjectDir(actualProjectId);
             Path original = projectDir.resolve("ontology.original.owl");
             Files.createDirectories(original.getParent());
 
-            // Write uploaded file directly to local filesystem
+            String gridfsFileId;
             try (InputStream in = file.getInputStream();
                  OutputStream out = Files.newOutputStream(original,
                          StandardOpenOption.CREATE,
                          StandardOpenOption.TRUNCATE_EXISTING,
-                         StandardOpenOption.WRITE)) {
-                in.transferTo(out);
-            }
-
-            log.info("Saved file to local filesystem: {}", original);
-
-            // Then store in GridFS for backup/versioning
-            String gridfsFileId;
-            try (InputStream fileIn = Files.newInputStream(original)) {
+                         StandardOpenOption.WRITE);
+                 TeeInputStream tee = new TeeInputStream(in, out, true)) {
                 gridfsFileId = gridFSFileService.storeFile(
                     actualProjectId,
                     filename,  // Use potentially modified filename
                     file.getContentType(),
-                    fileIn
+                    tee
                 );
             }
 
@@ -193,7 +200,11 @@ public class ProjectLoadController {
             ProjectStatus status = ProjectStatus.uploaded(filename);
             metadataService.updateProjectMetadata(actualProjectId, status, gridfsFileId, ownerEmail);
 
-            importService.submitImport(actualProjectId, original, ownerEmail);
+            ImportOptions options = resolveImportOptions(importMode, partition);
+            importWorkerDispatcher.dispatch(actualProjectId, original, ownerEmail, filename, gridfsFileId, options);
+
+            RDFFormat format = detectFormat(original);
+            preparseService.preparse(original, actualProjectId, format);
             
             String message = isReplacement ? "File replaced successfully, processing scheduled" : 
                             ("create_copy".equals(action) ? "Copy created successfully with name '" + filename + "', processing scheduled" :
@@ -241,6 +252,41 @@ public class ProjectLoadController {
         
         log.info("Generated copy filename: {} from original: {}", candidateFilename, originalFilename);
         return candidateFilename;
+    }
+
+    private ImportOptions resolveImportOptions(String importMode, String partition) {
+        ImportOptions.ImportMode mode = ImportOptions.ImportMode.FULL;
+        if (importMode != null) {
+            switch (importMode.toLowerCase(Locale.ROOT)) {
+                case "incremental" -> mode = ImportOptions.ImportMode.INCREMENTAL;
+                case "diff" -> mode = ImportOptions.ImportMode.DIFF;
+                default -> mode = ImportOptions.ImportMode.FULL;
+            }
+        }
+
+        ImportOptions.PartitionStrategy strategy = ImportOptions.PartitionStrategy.NONE;
+        if (partition != null && partition.equalsIgnoreCase("namespace")) {
+            strategy = ImportOptions.PartitionStrategy.NAMESPACE;
+        }
+
+        return ImportOptions.builder()
+                .mode(mode)
+                .partitionStrategy(strategy)
+                .build();
+    }
+
+    private RDFFormat detectFormat(Path file) {
+        String fileName = file.getFileName().toString().toLowerCase(Locale.ROOT);
+        if (fileName.endsWith(".ttl") || fileName.endsWith(".turtle")) {
+            return RDFFormat.TURTLE;
+        } else if (fileName.endsWith(".nt") || fileName.endsWith(".ntriples")) {
+            return RDFFormat.NTRIPLES;
+        } else if (fileName.endsWith(".jsonld")) {
+            return RDFFormat.JSONLD;
+        } else if (fileName.endsWith(".n3")) {
+            return RDFFormat.N3;
+        }
+        return RDFFormat.RDFXML; // default
     }
 
     @GetMapping("/status/{projectId}")

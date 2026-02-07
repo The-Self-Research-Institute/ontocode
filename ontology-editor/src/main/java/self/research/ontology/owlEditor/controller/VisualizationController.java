@@ -15,6 +15,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.service.GraphGeneratingService;
 import self.research.ontology.owlEditor.service.GraphGeneratingService.Graph;
+import self.research.ontology.owlEditor.service.GraphDBDatasetService;
 
 import java.io.InputStream;
 import java.util.*;
@@ -35,6 +36,9 @@ public class VisualizationController {
 
     @Autowired
     private GraphGeneratingService graphService;
+
+    @Autowired
+    private GraphDBDatasetService graphDBService;
 
     private final Map<String, OWLOntology> ontologyCache = new HashMap<>();
 
@@ -200,39 +204,17 @@ public class VisualizationController {
     /**
      * Get root classes for hierarchical navigation
      * GET /api/ontology/{projectId}/hierarchy/roots
+     * NOW: Uses GraphDB SPARQL queries instead of loading from GridFS
+     * This works for ALL file formats (OWL/XML, RDF/XML, Turtle, etc.)
      */
     @GetMapping("/{projectId}/hierarchy/roots")
     public ResponseEntity<Map<String, Object>> getRootClasses(@PathVariable String projectId) {
         try {
-            log.info("Getting root classes for project: {}", projectId);
+            log.info("Getting root classes for project: {} from GraphDB", projectId);
             
-            OWLOntology ontology = loadOntology(projectId);
-            OWLDataFactory factory = ontology.getOWLOntologyManager().getOWLDataFactory();
-            OWLClass owlThing = factory.getOWLThing();
-            
-            Set<Map<String, Object>> rootClasses = new HashSet<>();
-            
-            // Get direct subclasses of owl:Thing
-            for (OWLClass cls : ontology.getClassesInSignature()) {
-                boolean isRoot = true;
-                
-                // Check if this class has any superclasses other than owl:Thing
-                for (OWLClassExpression superClass : EntitySearcher.getSuperClasses(cls, ontology).collect(Collectors.toSet())) {
-                    if (superClass instanceof OWLClass && !superClass.equals(owlThing) && !superClass.equals(cls)) {
-                        isRoot = false;
-                        break;
-                    }
-                }
-                
-                if (isRoot && !cls.isOWLThing() && !cls.isOWLNothing()) {
-                    Map<String, Object> classInfo = new HashMap<>();
-                    classInfo.put("id", cls.getIRI().toString());
-                    classInfo.put("label", getClassLabel(cls, ontology));
-                    classInfo.put("type", "CLASS");
-                    classInfo.put("hasChildren", EntitySearcher.getSubClasses(cls, ontology).findAny().isPresent());
-                    rootClasses.add(classInfo);
-                }
-            }
+            // Query GraphDB SPARQL instead of loading from GridFS
+            // This ensures we get the actual imported triples, not parsing issues from the original file
+            List<Map<String, Object>> rootClasses = graphDBService.getRootClassesFromGraphDB(projectId);
             
             Map<String, Object> response = new HashMap<>();
             response.put("success", true);
@@ -242,7 +224,7 @@ public class VisualizationController {
             return ResponseEntity.ok(response);
             
         } catch (Exception e) {
-            log.error("Error getting root classes", e);
+            log.error("Error getting root classes from GraphDB for project {}", projectId, e);
             return ResponseEntity.status(500).body(Map.of(
                 "success", false,
                 "error", e.getMessage()
@@ -253,6 +235,7 @@ public class VisualizationController {
     /**
      * Get children of a specific class
      * GET /api/ontology/{projectId}/hierarchy/children
+     * NOW: Uses GraphDB SPARQL queries instead of loading from GridFS
      */
     @GetMapping("/{projectId}/hierarchy/children")
     public ResponseEntity<Map<String, Object>> getClassChildren(
@@ -260,29 +243,10 @@ public class VisualizationController {
             @RequestParam String classIRI
     ) {
         try {
-            log.info("Getting children for class: {}", classIRI);
+            log.info("Getting children for class: {} from GraphDB", classIRI);
             
-            OWLOntology ontology = loadOntology(projectId);
-            OWLDataFactory factory = ontology.getOWLOntologyManager().getOWLDataFactory();
-            OWLClass parentClass = factory.getOWLClass(IRI.create(classIRI));
-            
-            Set<Map<String, Object>> children = new HashSet<>();
-            
-            // Get direct subclasses
-            for (OWLClassExpression subClass : EntitySearcher.getSubClasses(parentClass, ontology).collect(Collectors.toSet())) {
-                if (subClass instanceof OWLClass) {
-                    OWLClass childClass = (OWLClass) subClass;
-                    if (!childClass.isOWLNothing()) {
-                        Map<String, Object> classInfo = new HashMap<>();
-                        classInfo.put("id", childClass.getIRI().toString());
-                        classInfo.put("label", getClassLabel(childClass, ontology));
-                        classInfo.put("type", "CLASS");
-                        classInfo.put("hasChildren", EntitySearcher.getSubClasses(childClass, ontology).findAny().isPresent());
-                        classInfo.put("parentId", classIRI);
-                        children.add(classInfo);
-                    }
-                }
-            }
+            // Query GraphDB SPARQL instead of loading from GridFS
+            List<Map<String, Object>> children = graphDBService.getChildClassesFromGraphDB(projectId, classIRI);
             
             Map<String, Object> response = new HashMap<>();
             response.put("success", true);
@@ -293,7 +257,7 @@ public class VisualizationController {
             return ResponseEntity.ok(response);
             
         } catch (Exception e) {
-            log.error("Error getting class children", e);
+            log.error("Error getting class children from GraphDB for parent {}", classIRI, e);
             return ResponseEntity.status(500).body(Map.of(
                 "success", false,
                 "error", e.getMessage()
