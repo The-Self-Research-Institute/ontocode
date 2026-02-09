@@ -45,40 +45,74 @@ if not exist ".env" (
 )
 echo [OK] Workspace ready
 
-REM [3/5] Pull pre-built images
+REM [3/5] Check/Pull images
 echo.
-echo [3/5] Pulling pre-built images from %REGISTRY%...
-echo This may take a few minutes on first run...
-echo.
-for %%I in (ontocode-graphdb ontocode-auth ontocode-gateway ontocode-editor ontocode-swrl ontocode-plugin ontocode-plugin-init ontocode-vscode-web) do (
-    echo   Pulling %REGISTRY%/%%I:%VERSION%...
-    docker pull %REGISTRY%/%%I:%VERSION% >nul 2>&1
-    if errorlevel 1 (
-        echo   [WARN] Failed to pull %%I - will build locally
-    ) else (
-        echo   [OK] %%I
+echo [3/5] Checking images...
+REM Check if main image exists
+docker images %REGISTRY%/ontocode-gateway:%VERSION% --format "{{.Repository}}" 2>nul | findstr "ontocode-gateway" >nul 2>&1
+if !errorlevel! equ 0 (
+    echo [INFO] Images already available
+    echo [OK] Images ready
+) else (
+    echo [INFO] Pulling pre-built images from %REGISTRY%...
+    echo This may take a few minutes on first run...
+    echo.
+    for %%I in (ontocode-graphdb ontocode-auth ontocode-gateway ontocode-editor ontocode-swrl ontocode-plugin ontocode-plugin-init ontocode-vscode-web) do (
+        echo   Pulling %REGISTRY%/%%I:%VERSION%...
+        docker pull %REGISTRY%/%%I:%VERSION% >nul 2>&1
+        if errorlevel 1 (
+            echo   [WARN] Failed to pull %%I - will build locally
+        ) else (
+            echo   [OK] %%I
+        )
     )
+    echo.
+    echo [OK] Images ready
 )
-echo.
-echo [OK] Images ready
 
 REM [4/5] Start services
 echo.
-echo [4/5] Starting all services...
-docker compose down >nul 2>&1
-set DOCKER_REGISTRY=%REGISTRY%
-docker compose up -d
-if errorlevel 1 (
-    echo [ERROR] Failed to start services. Check errors above.
-    pause
-    exit /b 1
+echo [4/5] Checking and starting services...
+REM Check if services are already running
+docker compose ps --services --filter "status=running" 2>nul | findstr "ontology-gateway" >nul 2>&1
+if !errorlevel! equ 0 (
+    echo [INFO] Services are already running
+    echo [OK] All services active
+) else (
+    echo [INFO] Starting services...
+    docker compose down >nul 2>&1
+    set DOCKER_REGISTRY=%REGISTRY%
+    docker compose up -d
+    if errorlevel 1 (
+        echo [ERROR] Failed to start services. Check errors above.
+        pause
+        exit /b 1
+    )
+    echo [OK] All services started
 )
-echo [OK] All services started
 
-REM [5/5] Wait and open
+REM [5/6] Create desktop shortcut
 echo.
-echo [5/5] Waiting for services to be ready...
-timeout /t 40 /nobreak >nul
+echo [5/6] Creating desktop shortcut...
+set SCRIPT_DIR=%~dp0
+set DESKTOP=%USERPROFILE%\Desktop
+powershell -Command "$WshShell = New-Object -comObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut('%DESKTOP%\OntoCode.lnk'); $Shortcut.TargetPath = '%SCRIPT_DIR%install-and-run.bat'; $Shortcut.WorkingDirectory = '%SCRIPT_DIR%'; $Shortcut.Description = 'One-click launcher for OntoCode'; $Shortcut.Save()" >nul 2>&1
+if exist "%DESKTOP%\OntoCode.lnk" (
+    echo [OK] Desktop shortcut created
+) else (
+    echo [WARN] Could not create desktop shortcut
+)
+
+REM [6/6] Wait and open
+echo.
+echo [6/6] Waiting for services to be ready...
+REM Check if this is first start or restart
+docker compose ps --services --filter "status=running" 2>nul | findstr "ontology-gateway" >nul 2>&1
+if !errorlevel! neq 0 (
+    timeout /t 40 /nobreak >nul
+) else (
+    timeout /t 5 /nobreak >nul
+)
 echo [OK] Services initialized
 
 echo.
