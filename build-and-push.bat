@@ -9,7 +9,7 @@ REM HTTP connections to external API servers (e.g. cloud gateway).
 set REGISTRY=%1
 set VERSION=%2
 
-if "%REGISTRY%"=="" set REGISTRY=ghcr.io/yourusername
+if "%REGISTRY%"=="" set REGISTRY=sindhujacoretopia
 if "%VERSION%"=="" set VERSION=latest
 
 echo ============================================
