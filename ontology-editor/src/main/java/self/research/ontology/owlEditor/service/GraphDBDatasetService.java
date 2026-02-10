@@ -1,6 +1,7 @@
 package self.research.ontology.owlEditor.service;
 
 import org.eclipse.rdf4j.model.IRI;
+import org.eclipse.rdf4j.model.Resource;
 import org.eclipse.rdf4j.model.Statement;
 import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.query.*;
@@ -643,6 +644,7 @@ public class GraphDBDatasetService {
 
                         @Override
                         public void handleStatement(Statement st) {
+                            st = sanitizeStatement(st, valueFactory);
                             if (partitionByNamespace) {
                                 IRI graphForStatement = resolveNamespaceGraph(valueFactory, graphUri, st);
                                 List<Statement> graphBatch = partitionBatches.computeIfAbsent(
@@ -782,6 +784,7 @@ public class GraphDBDatasetService {
             
         } catch (Exception e) {
             log.error("Chunked bulk load failed for project: {}", projectId, e);
+            logCauseChain(e);
             throw new RuntimeException("Chunked bulk load failed: " + e.getMessage(), e);
         }
     }
@@ -889,6 +892,7 @@ public class GraphDBDatasetService {
 
                             @Override
                             public void handleStatement(org.eclipse.rdf4j.model.Statement st) {
+                                st = sanitizeStatement(st, conn.getValueFactory());
                                 conn.add(st, graphIri);
                                 long count = tripleCounter.incrementAndGet();
                                 // Log progress every 50000 triples or every 30 seconds
@@ -1339,7 +1343,20 @@ public class GraphDBDatasetService {
         }
 
         long start = System.nanoTime();
-        conn.add(batch, graphIri);
+        try {
+            conn.add(batch, graphIri);
+        } catch (Exception e) {
+            // Log the failing batch details to identify the problematic IRI
+            log.error("Failed to add batch of {} statements to graph {}. Error: {}",
+                    batch.size(), graphIri, e.getMessage());
+            for (Statement st : batch) {
+                String subj = st.getSubject().stringValue();
+                String pred = st.getPredicate().stringValue();
+                String obj = st.getObject().stringValue();
+                log.error("  Statement: <{}> <{}> <{}>", subj, pred, obj);
+            }
+            throw e;
+        }
         long count = totalTriples.addAndGet(batch.size());
         // Optimized: Only log every 100k triples instead of 10k to reduce I/O overhead
         if (count % 100000 == 0) {
@@ -1682,11 +1699,101 @@ public class GraphDBDatasetService {
     }
 
     /**
+     * Sanitize a statement by percent-encoding invalid characters in IRIs.
+     * GraphDB rejects IRIs containing characters like [], {}, etc.
+     * Returns the original statement if no sanitization is needed.
+     */
+    private static final AtomicLong sanitizeLogCount = new AtomicLong(0);
+
+    private Statement sanitizeStatement(Statement st, ValueFactory vf) {
+        Resource subject = st.getSubject();
+        IRI predicate = st.getPredicate();
+        org.eclipse.rdf4j.model.Value object = st.getObject();
+        boolean changed = false;
+
+        if (subject instanceof IRI subjectIri) {
+            String sanitized = sanitizeIriString(subjectIri.stringValue());
+            if (sanitized != null) {
+                subject = vf.createIRI(sanitized);
+                changed = true;
+            }
+        }
+
+        String sanitizedPred = sanitizeIriString(predicate.stringValue());
+        if (sanitizedPred != null) {
+            predicate = vf.createIRI(sanitizedPred);
+            changed = true;
+        }
+
+        if (object instanceof IRI objectIri) {
+            String sanitized = sanitizeIriString(objectIri.stringValue());
+            if (sanitized != null) {
+                object = vf.createIRI(sanitized);
+                changed = true;
+            }
+        }
+
+        if (changed && sanitizeLogCount.incrementAndGet() <= 20) {
+            log.warn("[IRI-SANITIZE] Sanitized statement: <{}> <{}> <{}>",
+                    subject.stringValue(), predicate.stringValue(), object.stringValue());
+        }
+        return changed ? vf.createStatement(subject, predicate, object) : st;
+    }
+
+    /**
+     * Percent-encode characters in an IRI that GraphDB rejects.
+     * Returns null if no sanitization needed (fast path for common case).
+     */
+    private String sanitizeIriString(String iri) {
+        if (iri == null) return null;
+
+        // Fast check: scan for any character that needs encoding
+        boolean needsEncoding = false;
+        for (int i = 0; i < iri.length(); i++) {
+            char c = iri.charAt(i);
+            if (c == '[' || c == ']' || c == '{' || c == '}' || c == '|'
+                    || c == '\\' || c == '^' || c == '`' || c == ' '
+                    || c == '(' || c == ')' || c > 127) {
+                needsEncoding = true;
+                break;
+            }
+        }
+        if (!needsEncoding) return null;
+
+        StringBuilder sb = new StringBuilder(iri.length() + 40);
+        for (int i = 0; i < iri.length(); i++) {
+            char c = iri.charAt(i);
+            if (c == '[') sb.append("%5B");
+            else if (c == ']') sb.append("%5D");
+            else if (c == '{') sb.append("%7B");
+            else if (c == '}') sb.append("%7D");
+            else if (c == '|') sb.append("%7C");
+            else if (c == '\\') sb.append("%5C");
+            else if (c == '^') sb.append("%5E");
+            else if (c == '`') sb.append("%60");
+            else if (c == ' ') sb.append("%20");
+            else if (c == '(') sb.append("%28");
+            else if (c == ')') sb.append("%29");
+            else if (c > 127) {
+                // Percent-encode non-ASCII (Unicode subscripts, etc.)
+                byte[] utf8 = String.valueOf(c).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                for (byte b : utf8) {
+                    sb.append('%');
+                    sb.append(Character.toUpperCase(Character.forDigit((b >> 4) & 0xF, 16)));
+                    sb.append(Character.toUpperCase(Character.forDigit(b & 0xF, 16)));
+                }
+            }
+            else sb.append(c);
+        }
+        return sb.toString();
+    }
+
+    /**
      * Extract short form (local name) from an IRI for use as class label.
      * Examples:
      *   http://example.org#MyClass -> MyClass
      *   http://example.org/ontology#Name -> Name
-     * 
+     *
      * @param iri Full IRI string
      * @return Short form (last part after # or /)
      */

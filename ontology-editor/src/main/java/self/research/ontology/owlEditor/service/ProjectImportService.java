@@ -1,9 +1,6 @@
 package self.research.ontology.owlEditor.service;
 
 import org.eclipse.rdf4j.rio.RDFFormat;
-import org.semanticweb.owlapi.apibinding.OWLManager;
-import org.semanticweb.owlapi.model.OWLOntology;
-import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -16,16 +13,12 @@ import self.research.ontology.owlEditor.model.collaboration.ImportStatusMessage;
 import self.research.ontology.owlEditor.util.OWLFormatConverter;
 
 import java.io.BufferedInputStream;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
@@ -218,36 +211,50 @@ public class ProjectImportService {
                     .partitionStrategy(item.getPartitionStrategy() != null ? item.getPartitionStrategy() : ImportOptions.PartitionStrategy.NONE)
                     .build();
 
-            // Check if this is OWL/XML and needs conversion to RDF/XML
-            InputStream inputStream;
-            long actualFileSize;
-            boolean needsConversion = format == RDFFormat.RDFXML && isOwlXmlFormat(owlFile);
-            
-            if (needsConversion) {
+            // Check if file needs conversion (e.g., OWL/XML -> RDF/XML)
+            Path fileToLoad = owlFile;
+            long actualFileSize = fileSizeBytes;
+            boolean converted = false;
+
+            if (isOwlXmlFormat(owlFile)) {
+                log.info("[Import {}] Detected OWL/XML format, converting to RDF/XML", projectId);
+
+                Map<String, Object> conversionMeta = new HashMap<>();
+                conversionMeta.put("progress", 15);
+                conversionMeta.put("stage", "format-conversion");
+                sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
+                        "PROCESSING", "Converting OWL/XML to RDF/XML...", filename, conversionMeta);
+
                 try {
-                    log.info("[Import {}] Detected OWL/XML format, stripping imports and uploading directly", projectId);
-                    sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
-                            "PROCESSING", "Processing OWL/XML format...", filename, null);
-                    
-                    // Strip Import elements using simple text replacement (avoids OWL API network issues)
-                    byte[] processedBytes = stripOwlXmlImportsSimple(owlFile);
-                    actualFileSize = processedBytes.length;
-                    inputStream = new ByteArrayInputStream(processedBytes);
-                    
-                    // Change format to OWL/XML for GraphDB (it can parse OWL/XML natively)
-                    format = org.eclipse.rdf4j.rio.RDFFormat.RDFXML; // GraphDB handles OWL/XML under RDFXML
-                    
-                    log.info("[Import {}] OWL/XML processed (imports stripped): {} bytes", projectId, actualFileSize);
+                    long conversionStart = System.nanoTime();
+                    fileToLoad = OWLFormatConverter.convertToRDFXML(owlFile);
+                    converted = true;
+                    format = RDFFormat.RDFXML;
+                    actualFileSize = Files.size(fileToLoad);
+                    long conversionDuration = elapsedMillis(conversionStart);
+                    log.info("[Import {}] Format conversion completed in {} ms. New file: {} ({} bytes)",
+                            projectId, conversionDuration, fileToLoad.getFileName(), actualFileSize);
+
+                    // Log first 500 chars of converted file to verify format
+                    try {
+                        String preview = Files.readString(fileToLoad, StandardCharsets.UTF_8);
+                        log.info("[Import {}] Converted file preview (first 500 chars):\n{}",
+                                projectId, preview.substring(0, Math.min(500, preview.length())));
+                    } catch (Exception previewEx) {
+                        log.warn("[Import {}] Could not preview converted file: {}", projectId, previewEx.getMessage());
+                    }
                 } catch (Exception e) {
-                    log.error("[Import {}] Failed to process OWL/XML: {}", projectId, e.getMessage(), e);
-                    throw new RuntimeException("Failed to process OWL/XML format: " + e.getMessage(), e);
+                    log.error("[Import {}] Format conversion failed", projectId, e);
+                    throw new RuntimeException("Failed to convert OWL format: " + e.getMessage(), e);
                 }
             } else {
-                inputStream = Files.newInputStream(owlFile);
-                actualFileSize = fileSizeBytes;
+                log.info("[Import {}] File format is compatible, no conversion needed", projectId);
             }
 
-            try (InputStream in = inputStream) {
+            log.info("[Import {}] Starting bulkLoadChunked: file={}, format={}, size={} bytes, converted={}",
+                    projectId, fileToLoad.getFileName(), format, actualFileSize, converted);
+
+            try (InputStream in = Files.newInputStream(fileToLoad)) {
                 datasetService.bulkLoadChunked(projectId, in, format, actualFileSize, options, progress -> {
                     long totalBytes = progress.getTotalBytes();
                     long bytesRead = progress.getBytesRead();
@@ -293,6 +300,16 @@ public class ProjectImportService {
                         }
                     }
                 });
+            } finally {
+                // Clean up converted file if it was created
+                if (converted && fileToLoad != null && !fileToLoad.equals(owlFile)) {
+                    try {
+                        Files.deleteIfExists(fileToLoad);
+                        log.debug("[Import {}] Cleaned up temporary converted file", projectId);
+                    } catch (Exception e) {
+                        log.warn("[Import {}] Failed to clean up converted file: {}", projectId, e.getMessage());
+                    }
+                }
             }
             log.info("[Import {}] GraphDB bulk load completed in {} ms", projectId, elapsedMillis(bulkLoadStart));
 
@@ -459,26 +476,6 @@ public class ProjectImportService {
         return false;
     }
 
-    /**
-     * Strip Import elements from OWL/XML file using simple text processing.
-     * This avoids OWL API's network-based import resolution entirely.
-     * GraphDB can parse OWL/XML natively, so we just need to remove imports.
-     */
-    private byte[] stripOwlXmlImportsSimple(Path owlXmlFile) throws Exception {
-        String content = Files.readString(owlXmlFile, StandardCharsets.UTF_8);
-        
-        // Remove <Import>...</Import> elements (handles both single-line and multi-line)
-        // Pattern: <Import>any content</Import> or <Import ...>any content</Import>
-        String stripped = content.replaceAll("(?s)<Import[^>]*>.*?</Import>\\s*", "");
-        
-        // Also remove self-closing imports: <Import ... />
-        stripped = stripped.replaceAll("<Import[^/]*/\\s*>\\s*", "");
-        
-        log.info("Stripped imports from OWL/XML. Original: {} bytes, After: {} bytes", 
-                content.length(), stripped.length());
-        
-        return stripped.getBytes(StandardCharsets.UTF_8);
-    }
 
     private String extensionFor(RDFFormat format) {
         if (format == null) {
