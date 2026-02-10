@@ -38,6 +38,7 @@ import self.research.ontology.owlEditor.service.ProjectImportService;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
 import self.research.ontology.owlEditor.service.ProjectShareService;
 import self.research.ontology.owlEditor.service.StorageManager;
+import self.research.ontology.owlEditor.util.OWLFormatConverter;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -227,6 +228,11 @@ public class ProjectLoadController {
             }
 
             log.info("Stored file in GridFS for project {}: fileId={}", actualProjectId, gridfsFileId);
+
+            // Strip binary garbage bytes that the upload pipeline may prepend before XML content.
+            // This fixes the file on disk so ALL downstream consumers (preparse, import, conversion)
+            // get a clean file without needing their own stripping logic.
+            OWLFormatConverter.sanitizeFileOnDisk(original);
 
             // FIX: Batch metadata updates into single operation for better performance
             // Use the potentially modified filename

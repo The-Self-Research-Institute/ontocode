@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 
 /**
  * Utility to convert OWL ontologies from various formats to RDF/XML
@@ -97,17 +98,28 @@ public class OWLFormatConverter {
      * @throws OWLOntologyStorageException if conversion fails
      * @throws IOException if file I/O fails
      */
-    public static Path convertToRDFXML(Path inputPath) 
+    public static Path convertToRDFXML(Path inputPath)
             throws OWLOntologyCreationException, OWLOntologyStorageException, IOException {
-        
+
         log.info("Starting OWL format conversion for: {}", inputPath.getFileName());
-        
+
+        long inputSize = Files.size(inputPath);
+        log.info("Input file size: {} bytes", inputSize);
+
+        if (inputSize == 0) {
+            throw new IOException("Input file is empty (0 bytes): " + inputPath);
+        }
+
+        // Fix: strip any binary garbage prepended before the XML declaration.
+        // The upload pipeline sometimes prepends binary bytes (e.g. from multipart encoding).
+        Path fileToLoad = stripBinaryPrefix(inputPath);
+
         // Create OWL API manager with silent import handling
         OWLOntologyManager manager = createManagerWithSilentImports();
-        
+
         // Load ontology (OWL API will auto-detect format)
         long loadStart = System.nanoTime();
-        OWLOntology ontology = manager.loadOntologyFromOntologyDocument(inputPath.toFile());
+        OWLOntology ontology = manager.loadOntologyFromOntologyDocument(fileToLoad.toFile());
         long loadDuration = (System.nanoTime() - loadStart) / 1_000_000;
         log.info("Loaded ontology in {} ms. Axioms: {}", loadDuration, ontology.getAxiomCount());
         
@@ -139,10 +151,97 @@ public class OWLFormatConverter {
         long saveDuration = (System.nanoTime() - saveStart) / 1_000_000;
         
         long fileSize = Files.size(outputPath);
-        log.info("✓ Converted to RDF/XML in {} ms. Output: {} ({} bytes)", 
+        log.info("✓ Converted to RDF/XML in {} ms. Output: {} ({} bytes)",
             saveDuration, outputPath.getFileName(), fileSize);
-        
+
+        // Clean up the stripped temp file if one was created
+        if (!fileToLoad.equals(inputPath)) {
+            try {
+                Files.deleteIfExists(fileToLoad);
+            } catch (Exception e) {
+                log.warn("Could not delete temp stripped file: {}", e.getMessage());
+            }
+        }
+
         return outputPath;
+    }
+
+    /**
+     * Strip binary garbage bytes that may be prepended before the actual XML/OWL content.
+     * This can happen when the upload pipeline (multipart encoding, gateway proxy) corrupts the file.
+     * Returns the original path if the file is clean, or a new stripped temp file path.
+     */
+    private static Path stripBinaryPrefix(Path filePath) throws IOException {
+        byte[] content = Files.readAllBytes(filePath);
+
+        // Log first 16 bytes for diagnostics
+        StringBuilder hexDump = new StringBuilder();
+        for (int i = 0; i < Math.min(16, content.length); i++) {
+            hexDump.append(String.format("%02X ", content[i]));
+        }
+        log.info("File header hex (first 16 bytes): {}", hexDump.toString().trim());
+
+        // Check if file already starts with valid XML
+        if (content.length > 0 && content[0] == '<') {
+            log.info("File starts with '<', no stripping needed");
+            return filePath;
+        }
+
+        // Check for UTF-8 BOM (EF BB BF) followed by '<'
+        if (content.length > 3 && content[0] == (byte) 0xEF && content[1] == (byte) 0xBB
+                && content[2] == (byte) 0xBF && content[3] == '<') {
+            log.info("File has UTF-8 BOM, stripping 3 bytes");
+            Path stripped = filePath.getParent().resolve("stripped-" + filePath.getFileName());
+            Files.write(stripped, Arrays.copyOfRange(content, 3, content.length));
+            return stripped;
+        }
+
+        // Search for <?xml or <Ontology or <rdf:RDF marker in the first 1024 bytes
+        String header = new String(content, 0, Math.min(1024, content.length),
+                java.nio.charset.StandardCharsets.ISO_8859_1);
+        int xmlStart = header.indexOf("<?xml");
+        if (xmlStart < 0) {
+            xmlStart = header.indexOf("<Ontology");
+        }
+        if (xmlStart < 0) {
+            xmlStart = header.indexOf("<rdf:RDF");
+        }
+
+        if (xmlStart > 0) {
+            log.warn("Found {} bytes of binary garbage before XML content. Stripping prefix.", xmlStart);
+            log.info("Garbage bytes: {}",
+                hexDump(content, 0, Math.min(xmlStart, 32)));
+            Path stripped = filePath.getParent().resolve("stripped-" + filePath.getFileName());
+            Files.write(stripped, Arrays.copyOfRange(content, xmlStart, content.length));
+            log.info("Wrote stripped file: {} ({} bytes)", stripped.getFileName(), content.length - xmlStart);
+            return stripped;
+        }
+
+        // No XML marker found - return original and let OWL API try to parse
+        log.info("No binary prefix detected or file is not XML format");
+        return filePath;
+    }
+
+    /**
+     * Sanitize a file on disk by stripping any binary garbage bytes before the actual content.
+     * Overwrites the file in place if garbage is found.
+     * Safe to call on any file - returns immediately if the file is already clean.
+     */
+    public static void sanitizeFileOnDisk(Path filePath) throws IOException {
+        Path stripped = stripBinaryPrefix(filePath);
+        if (!stripped.equals(filePath)) {
+            // Stripped file was created - replace original with it
+            Files.move(stripped, filePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            log.info("Sanitized file in place: {}", filePath.getFileName());
+        }
+    }
+
+    private static String hexDump(byte[] data, int offset, int length) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = offset; i < offset + length && i < data.length; i++) {
+            sb.append(String.format("%02X ", data[i]));
+        }
+        return sb.toString().trim();
     }
     
     /**
