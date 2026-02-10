@@ -25,19 +25,20 @@ public class OWLFormatConverter {
      */
     private static OWLOntologyManager createManagerWithSilentImports() {
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
-        
-        // Configure to silently ignore missing imports instead of failing
+
+        // Prevent all network access for import resolution - this is the #1 performance killer.
+        // Without this, OWL API tries to HTTP-fetch every <Import> URL and waits for timeout.
+        manager.getIRIMappers().clear();
+
         OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
-                .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT);
+                .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT)
+                .setConnectionTimeout(1000); // 1 second max if any network call still happens
         manager.setOntologyLoaderConfiguration(config);
-        
-        // Also add a listener to log which imports are being skipped
+
         manager.addMissingImportListener(event -> {
-            log.warn("Skipping missing import: {} (reason: {})", 
-                    event.getImportedOntologyURI(), 
-                    event.getCreationException() != null ? event.getCreationException().getMessage() : "unknown");
+            log.info("Skipped import: {}", event.getImportedOntologyURI());
         });
-        
+
         return manager;
     }
     
