@@ -540,45 +540,35 @@ public class GraphDBDatasetService {
         ImportOptions resolvedOptions = options != null ? options : ImportOptions.defaults();
         
         try {
+            long t0 = System.nanoTime();
             Repository repo = getRepository();
             String graphUri = getGraphUri(projectId);
 
             log.info("Starting CHUNKED bulk load for project: {} with format: {} (batch size: {} triples)",
                     projectId, rdfFormat, batchSize);
 
-                // WORKAROUND: VS Code web editor can add garbage bytes before XML declaration
-                // Strip leading bytes without reading the full stream into memory
+                // Strip binary garbage bytes that may be prepended by the upload pipeline.
+                // OWLFormatConverter handles this for OWL/XML files, but RDF/XML files
+                // come here directly and still need stripping.
                 CountingInputStream countingStream = new CountingInputStream(inputStream);
                 InputStream cleanedStream = rdfFormat == RDFFormat.RDFXML
                     ? stripLeadingGarbageRdfXml(countingStream)
                     : countingStream;
 
+            long t1 = System.nanoTime();
             try (RepositoryConnection conn = repo.getConnection()) {
+                long t2 = System.nanoTime();
+                log.info("[TIMING] getRepository: {} ms, getConnection: {} ms",
+                        (t1 - t0) / 1_000_000, (t2 - t1) / 1_000_000);
+
                 var valueFactory = conn.getValueFactory();
                 IRI graphIri = valueFactory.createIRI(graphUri);
-
-                // Disable auto-commit for better performance
-                boolean originalAutoCommit = conn.isAutoCommit();
-                if (originalAutoCommit) {
-                    conn.setAutoCommit(false);
-                }
 
                 if (!conn.isActive()) {
                     conn.begin();
                 }
-
-                // PERFORMANCE OPTIMIZATION: Disable inference during bulk import (saves 5-8 minutes for 122MB files)
-                IRI inferenceDisabled = valueFactory.createIRI("http://www.ontotext.com/owlim/system#inferenceDisabled");
-                boolean wasInferenceDisabled = false;
-                try {
-                    conn.add(inferenceDisabled, inferenceDisabled, valueFactory.createLiteral(true));
-                    conn.commit();
-                    conn.begin();
-                    wasInferenceDisabled = true;
-                    log.info("[PERFORMANCE] Disabled inference for bulk import - will rebuild after import completes");
-                } catch (Exception e) {
-                    log.warn("[PERFORMANCE] Could not disable inference: {}", e.getMessage());
-                }
+                long t3 = System.nanoTime();
+                log.info("[TIMING] begin transaction: {} ms", (t3 - t2) / 1_000_000);
 
                 try {
                     ImportOptions.ImportMode mode = resolvedOptions.getMode() != null
@@ -719,30 +709,6 @@ public class GraphDBDatasetService {
 
                     }
 
-                    // PERFORMANCE OPTIMIZATION: Re-enable inference and rebuild index
-                    if (wasInferenceDisabled) {
-                        try {
-                            log.info("[PERFORMANCE] Re-enabling inference and rebuilding index...");
-                            long rebuildStart = System.nanoTime();
-
-                            // Remove the inference disabled flag
-                            conn.remove(inferenceDisabled, inferenceDisabled, valueFactory.createLiteral(true));
-
-                            // Force rebuild of inference index
-                            IRI forceRebuild = valueFactory.createIRI("http://www.ontotext.com/owlim/system#forceRebuildIndex");
-                            conn.add(forceRebuild, forceRebuild, valueFactory.createLiteral(true));
-
-                            conn.commit();
-                            conn.begin();
-
-                            long rebuildDuration = elapsedMillis(rebuildStart);
-                            log.info("[PERFORMANCE] ✓ Inference rebuild completed in {} ms ({} seconds)",
-                                    rebuildDuration, rebuildDuration / 1000);
-                        } catch (Exception e) {
-                            log.error("[PERFORMANCE] Failed to rebuild inference: {}", e.getMessage());
-                        }
-                    }
-
                     // Commit transaction
                     log.warn("⏳ Committing {} triples to GraphDB...", totalTriples.get());
                     long commitStart = System.nanoTime();
@@ -759,8 +725,6 @@ public class GraphDBDatasetService {
                     if (verifiedSize == 0 && totalTriples.get() > 0) {
                         log.error("❌ DATA LOSS DETECTED: Parsed {} triples but graph is empty after commit!", totalTriples.get());
                     }
-
-                    conn.setAutoCommit(originalAutoCommit);
 
                     long totalDuration = elapsedMillis(bulkLoadStart);
                     long parseDuration = totalDuration - commitDuration;

@@ -1,6 +1,6 @@
 # Multi-stage build for OntoCode VS Code Extension with Web Server
 # Stage 1: Build the extension
-FROM node:21-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
@@ -32,7 +32,7 @@ RUN rm -rf webview-src/node_modules \
               *.md .eslintrc* .prettierrc*
 
 # Stage 2: Runtime with VS Code Web Server
-FROM node:21-alpine
+FROM node:22-alpine
 
 WORKDIR /extension
 
