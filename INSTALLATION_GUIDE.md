@@ -1,53 +1,96 @@
-# 🚀 OntoCode Installation Guide
+# OntoCode - Complete Installation Guide
 
-## Two Installation Modes
-
-OntoCode offers **two installation modes** to suit different needs:
-
-### 🐳 Mode 1: Docker-Only (Recommended for Most Users)
-
-**Perfect for:**
-- Users who just want to run the platform
-- Production deployments
-- Users without Node.js
-- Minimal local dependencies
-
-**Requirements:**
-- ✅ Docker Desktop only
-- ❌ No Node.js required
-- ❌ No source code compilation needed
-
-**Install Command:**
-```cmd
-docker-install.bat
-```
-
-Everything runs in Docker containers, including the VS Code web editor!
+## Table of Contents
+1. [Common Installation (Manual)](#common-installation)
+2. [Windows Installation](#windows-installation)
+3. [Linux & macOS Installation](#linux-macos-installation)
 
 ---
 
-### 💻 Mode 2: Hybrid (For Developers)
+## Common Installation
 
-**Perfect for:**
-- Active development on the VS Code extension
-- Hot-reloading during development
-- Debugging the extension code
+**For users who want to install manually using Docker Compose**
 
-**Requirements:**
-- ✅ Docker Desktop
-- ✅ Node.js 18+
-- ✅ Source code access
+### Requirements
+- Docker Desktop (Windows/Mac) or Docker Engine (Linux)
+- 8 GB RAM, 20 GB disk space
 
-**Install Command:**
-```cmd
-install-and-run.bat
-```
+### Installation Steps
 
-Backend runs in Docker, VS Code extension runs locally with hot-reload.
+1. Download and extract the OntoCode ZIP file
+2. Install Docker from https://www.docker.com/products/docker-desktop
+3. Navigate to extracted folder
+4. Right-click inside folder → Select "Open in Terminal"
+5. Run: `docker compose up -d`
+6. Open http://localhost:3000 in browser
+7. Click **File** → **Open File** to open OWL file
+8. Right-click file → Select **OntoCode: Process Large OWL File**
+
+**Stop:** `docker compose down`
 
 ---
 
-## Quick Start
+## Windows Installation
+
+**For Windows users using the automated launcher**
+
+### Requirements
+- Windows 7/8/10/11 (64-bit)
+- Docker Desktop for Windows
+- 8 GB RAM, 20 GB disk space
+
+### Installation Steps
+
+1. Download and extract the OntoCode ZIP file
+2. Install Docker Desktop from https://www.docker.com/products/docker-desktop
+3. Double-click **OntoCodeLauncher.exe**
+4. Wait for setup to complete (3-5 minutes first time)
+5. Browser opens automatically to http://localhost:3000
+6. Click **File** → **Open File** to open OWL file
+7. Right-click file → **OntoCode: Process Large OWL File**
+
+**Desktop shortcut created automatically**  
+**Stop:** `docker compose down`
+
+---
+
+## Linux & macOS Installation
+
+**For Linux and macOS users using the automated launcher**
+
+### Requirements
+- **macOS:** Docker Desktop (10.13+)
+- **Linux:** Docker Engine + Docker Compose
+- 8 GB RAM, 20 GB disk space
+
+### Installation Steps
+
+1. Download and extract the OntoCode ZIP file
+2. Install Docker (macOS: https://www.docker.com/products/docker-desktop, Linux: https://docs.docker.com/engine/install/)
+3. Open Terminal in OntoCode folder
+4. Run: `chmod +x OntoCodeLauncher.sh`
+5. Run: `./OntoCodeLauncher.sh`
+6. Wait for setup (3-5 minutes first time)
+7. Browser opens to http://localhost:3000
+8. Click **File** → **Open File** to open OWL file
+9. Right-click file → **OntoCode: Process Large OWL File**
+
+**Desktop shortcut created automatically**  
+**Stop:** `docker compose down`
+
+---
+
+## Access Points (All Platforms)
+
+- **VS Code Web Editor:** http://localhost:3000
+- **API Gateway:** http://localhost:80
+- **GraphDB UI:** http://localhost:7200
+- **MongoDB:** mongodb://localhost:27017
+
+---
+
+**Version:** 1.0.0  
+**Platforms:** Windows, macOS, Linux
 
 ### Windows
 
