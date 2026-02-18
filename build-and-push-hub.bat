@@ -3,8 +3,9 @@ set /p DOCKER_USER="Enter your Docker Hub username: "
 
 echo.
 echo ==============================================
-echo Building and Pushing OntoCode Images for Production
+echo Building and Pushing OntoCode Multi-Platform Images
 echo Docker User: %DOCKER_USER%
+echo Platforms: linux/amd64, linux/arm64 (Mac M1/M2/M3 compatible)
 echo ==============================================
 echo.
 
@@ -13,43 +14,59 @@ docker login
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 echo.
-echo 2. Building Images...
-
-echo Building vscode-web...
-docker build -f Dockerfile.vscode-extension -t %DOCKER_USER%/ontocode-vscode-web:latest .
-echo Building graphdb...
-docker build -f Dockerfile.graphdb -t %DOCKER_USER%/ontocode-graphdb:latest .
-echo Building gateway...
-docker build -f Dockerfile.gateway -t %DOCKER_USER%/ontocode-gateway:latest ontology-gateway
-echo Building editor...
-docker build -f Dockerfile.editor -t %DOCKER_USER%/ontocode-editor:latest ontology-editor
-echo Building auth...
-docker build -f Dockerfile.auth -t %DOCKER_USER%/ontocode-auth:latest ontology-auth
-echo Building plugin-service...
-docker build -f Dockerfile.plugin -t %DOCKER_USER%/ontocode-plugin-service:latest ontology-plugin-service
-echo Building plugin-init...
-docker build -f Dockerfile.plugin-init -t %DOCKER_USER%/ontocode-plugin-init:latest .
-echo Building swrl...
-docker build -f Dockerfile.swrl -t %DOCKER_USER%/ontocode-swrl:latest ontology-swrl
+echo 2. Setting up buildx for multi-platform builds...
+docker buildx create --name ontocode-builder --use --driver docker-container 2>nul
+docker buildx inspect --bootstrap
 
 echo.
-echo 3. Pushing Images to Docker Hub...
+echo 3. Building and Pushing Multi-Platform Images...
+echo    This may take a while as images are built for both Intel and ARM architectures...
+echo.
 
-docker push %DOCKER_USER%/ontocode-vscode-web:latest
-docker push %DOCKER_USER%/ontocode-graphdb:latest
-docker push %DOCKER_USER%/ontocode-gateway:latest
-docker push %DOCKER_USER%/ontocode-editor:latest
-docker push %DOCKER_USER%/ontocode-auth:latest
-docker push %DOCKER_USER%/ontocode-plugin-service:latest
-docker push %DOCKER_USER%/ontocode-plugin-init:latest
-docker push %DOCKER_USER%/ontocode-swrl:latest
+echo Building vscode-web...
+docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.vscode-extension -t %DOCKER_USER%/ontocode-vscode-web:latest --push .
+echo Building graphdb...
+docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.graphdb -t %DOCKER_USER%/ontocode-graphdb:latest --push .
+echo Building gateway...
+docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.gateway -t %DOCKER_USER%/ontocode-gateway:latest --push .
+echo Building editor...
+docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.editor -t %DOCKER_USER%/ontocode-editor:latest --push .
+echo Building auth...
+docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.auth -t %DOCKER_USER%/ontocode-auth:latest --push .
+echo Building plugin-service...
+docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.plugin -t %DOCKER_USER%/ontocode-plugin-service:latest --push .
+echo Building plugin-init...
+docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.plugin-init -t %DOCKER_USER%/ontocode-plugin-init:latest --push .
+echo Building swrl...
+docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.swrl -t %DOCKER_USER%/ontocode-swrl:latest --push .
+
+echo Building swrl...
+docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.swrl -t %DOCKER_USER%/ontocode-swrl:latest --push .
+
+echo.
+echo 4. Cleaning up buildx builder...
+docker buildx rm ontocode-builder 2>nul
 
 echo.
 echo ==============================================
-echo DONE! 
+echo SUCCESS! All images built and pushed!
 echo.
-echo To deploy on your server, create a docker-compose.yml that uses these images:
-echo   image: %DOCKER_USER%/ontocode-vscode-web:latest
-echo   ...
+echo Multi-platform support:
+echo   ✓ Intel/AMD (linux/amd64)
+echo   ✓ Apple Silicon M1/M2/M3 (linux/arm64)
+echo.
+echo Users can now run on any platform:
+echo   docker pull %DOCKER_USER%/ontocode-vscode-web:latest
+echo   docker compose up -d
+echo.
+echo Images available:
+echo   - %DOCKER_USER%/ontocode-vscode-web:latest
+echo   - %DOCKER_USER%/ontocode-graphdb:latest
+echo   - %DOCKER_USER%/ontocode-gateway:latest
+echo   - %DOCKER_USER%/ontocode-editor:latest
+echo   - %DOCKER_USER%/ontocode-auth:latest
+echo   - %DOCKER_USER%/ontocode-plugin-service:latest
+echo   - %DOCKER_USER%/ontocode-plugin-init:latest
+echo   - %DOCKER_USER%/ontocode-swrl:latest
 echo ==============================================
 pause

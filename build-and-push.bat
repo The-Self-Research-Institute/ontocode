@@ -1,5 +1,6 @@
 @echo off
-REM Build all Docker images and push to registry
+REM Build multi-platform Docker images and push to registry
+REM Supports both Intel (amd64) and Apple Silicon (arm64) Macs
 REM Usage: build-and-push.bat [registry] [version]
 REM
 REM The vscode-web image includes a docker-entrypoint.sh that patches
@@ -13,9 +14,10 @@ if "%REGISTRY%"=="" set REGISTRY=sindhujacoretopia
 if "%VERSION%"=="" set VERSION=latest
 
 echo ============================================
-echo    Building and Pushing OntoCode Images
+echo    Building Multi-Platform OntoCode Images
 echo    Registry: %REGISTRY%
 echo    Version: %VERSION%
+echo    Platforms: linux/amd64, linux/arm64
 echo ============================================
 echo.
 
@@ -28,42 +30,55 @@ if not exist "ontology-vscode-extension\docker-entrypoint.sh" (
     exit /b 1
 )
 
+echo Setting up buildx for multi-platform builds...
+docker buildx create --name ontocode-builder --use --driver docker-container 2>nul
+docker buildx inspect --bootstrap
+echo.
+
+echo Building and pushing multi-platform images...
+echo This may take a while as images are built for both Intel and ARM architectures...
+echo.
+
 echo [1/8] Building ontocode-graphdb...
-docker build -t %REGISTRY%/ontocode-graphdb:%VERSION% -f Dockerfile.graphdb .
+docker buildx build --platform linux/amd64,linux/arm64 -t %REGISTRY%/ontocode-graphdb:%VERSION% -f Dockerfile.graphdb --push .
 if errorlevel 1 goto :error
 
 echo [2/8] Building ontocode-auth...
-docker build -t %REGISTRY%/ontocode-auth:%VERSION% -f Dockerfile.auth .
+docker buildx build --platform linux/amd64,linux/arm64 -t %REGISTRY%/ontocode-auth:%VERSION% -f Dockerfile.auth --push .
 if errorlevel 1 goto :error
 
 echo [3/8] Building ontocode-gateway...
-docker build -t %REGISTRY%/ontocode-gateway:%VERSION% -f Dockerfile.gateway .
+docker buildx build --platform linux/amd64,linux/arm64 -t %REGISTRY%/ontocode-gateway:%VERSION% -f Dockerfile.gateway --push .
 if errorlevel 1 goto :error
 
 echo [4/8] Building ontocode-editor...
-docker build -t %REGISTRY%/ontocode-editor:%VERSION% -f Dockerfile.editor .
+docker buildx build --platform linux/amd64,linux/arm64 -t %REGISTRY%/ontocode-editor:%VERSION% -f Dockerfile.editor --push .
 if errorlevel 1 goto :error
 
 echo [5/8] Building ontocode-swrl...
-docker build -t %REGISTRY%/ontocode-swrl:%VERSION% -f Dockerfile.swrl .
+docker buildx build --platform linux/amd64,linux/arm64 -t %REGISTRY%/ontocode-swrl:%VERSION% -f Dockerfile.swrl --push .
 if errorlevel 1 goto :error
 
 echo [6/8] Building ontocode-plugin...
-docker build -t %REGISTRY%/ontocode-plugin:%VERSION% -f Dockerfile.plugin .
+docker buildx build --platform linux/amd64,linux/arm64 -t %REGISTRY%/ontocode-plugin:%VERSION% -f Dockerfile.plugin --push .
 if errorlevel 1 goto :error
 
 echo [7/8] Building ontocode-plugin-init...
-docker build -t %REGISTRY%/ontocode-plugin-init:%VERSION% -f Dockerfile.plugin-init .
+docker buildx build --platform linux/amd64,linux/arm64 -t %REGISTRY%/ontocode-plugin-init:%VERSION% -f Dockerfile.plugin-init --push .
 if errorlevel 1 goto :error
 
 echo [8/8] Building ontocode-vscode-web (with CSP entrypoint)...
-docker build -t %REGISTRY%/ontocode-vscode-web:%VERSION% -f Dockerfile.vscode-extension .
+docker buildx build --platform linux/amd64,linux/arm64 -t %REGISTRY%/ontocode-vscode-web:%VERSION% -f Dockerfile.vscode-extension --push .
 if errorlevel 1 goto :error
 
 echo.
-echo ============================================
-echo    All images built successfully!
-echo ============================================
+echo Cleaning up buildx builder...
+docker buildx rm ontocode-builder 2>nul
+echo.
+
+echo.
+echo Cleaning up buildx builder...
+docker buildx rm ontocode-builder 2>nul
 echo.
 
 REM --- Optional: Patch CSP in local .vscode-test-web for dev testing ---
@@ -75,41 +90,22 @@ for /r "ontology-vscode-extension\.vscode-test-web" %%f in (webWorkerExtensionHo
 echo.
 
 echo ============================================
-echo    Pushing images to registry...
+echo    SUCCESS! All images built and pushed!
 echo ============================================
 echo.
-
-docker push %REGISTRY%/ontocode-graphdb:%VERSION%
-if errorlevel 1 echo WARNING: Failed to push ontocode-graphdb
-
-docker push %REGISTRY%/ontocode-auth:%VERSION%
-if errorlevel 1 echo WARNING: Failed to push ontocode-auth
-
-docker push %REGISTRY%/ontocode-gateway:%VERSION%
-if errorlevel 1 echo WARNING: Failed to push ontocode-gateway
-
-docker push %REGISTRY%/ontocode-editor:%VERSION%
-if errorlevel 1 echo WARNING: Failed to push ontocode-editor
-
-docker push %REGISTRY%/ontocode-swrl:%VERSION%
-if errorlevel 1 echo WARNING: Failed to push ontocode-swrl
-
-docker push %REGISTRY%/ontocode-plugin:%VERSION%
-if errorlevel 1 echo WARNING: Failed to push ontocode-plugin
-
-docker push %REGISTRY%/ontocode-plugin-init:%VERSION%
-if errorlevel 1 echo WARNING: Failed to push ontocode-plugin-init
-
-docker push %REGISTRY%/ontocode-vscode-web:%VERSION%
-if errorlevel 1 echo WARNING: Failed to push ontocode-vscode-web
-
+echo Multi-platform support:
+echo   * Intel/AMD (linux/amd64)
+echo   * Apple Silicon M1/M2/M3 (linux/arm64)
 echo.
-echo ============================================
-echo    All images built and pushed successfully!
-echo ============================================
+echo Mac users can now run:
+echo   DOCKER_REGISTRY=%REGISTRY% docker compose up -d
 echo.
-echo Users can now run: docker compose up -d
-echo Make sure to set DOCKER_REGISTRY in .env file
+echo Or create .env file with:
+echo   DOCKER_REGISTRY=%REGISTRY%
+echo   VERSION=%VERSION%
+echo.
+echo Then run:
+echo   docker compose up -d
 echo.
 echo NOTE: The vscode-web container automatically patches
 echo the Extension Host CSP at startup via docker-entrypoint.sh
@@ -120,8 +116,17 @@ exit /b 0
 
 :error
 echo.
+echo Cleaning up buildx builder...
+docker buildx rm ontocode-builder 2>nul
+echo.
 echo ============================================
 echo    BUILD FAILED! See error above.
 echo ============================================
+echo.
+echo If you see a buildx error, try:
+echo   docker buildx rm ontocode-builder
+echo   docker buildx prune -af
+echo Then run this script again.
+echo.
 pause
 exit /b 1
