@@ -44,18 +44,19 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
             period: 'forever',
             description: 'Perfect for getting started',
             features: [
-                'Up to 3 team members',
-                '10 GB storage',
-                'Up to 3 workspaces',
-                'Community support',
-                'Core ontology features'
+                'Up to 10 team members',
+                '5 GB storage',
+                'OWL/RDF ontology editing',
+                'Class hierarchy & properties',
+                'SPARQL query execution',
+                'SWRL rule editor',
+                'DL Query & reasoning',
+                'Import OWL/TTL/RDF files',
+                'Custom plugin support',
+                'Community support'
             ],
             limitations: [
-                'No collaboration features',
-                'No file sharing',
-                'No real-time editing',
-                'Limited advanced features',
-                'No version control'
+                'No Live collaboration'
             ],
             gradient: 'from-gray-400 to-gray-600',
             buttonColor: 'bg-gray-600 hover:bg-gray-700'
@@ -68,20 +69,11 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
             period: 'per month',
             description: 'For growing teams',
             features: [
-                'Up to 10 team members',
-                '100 GB storage',
-                'Up to 10 workspaces',
-                'Basic collaboration',
-                'File sharing & comments',
-                'Priority support',
-                'Version control & history',
-                'Custom plugins',
-                'Advanced reasoning',
-                'API access'
-            ],
-            limitations: [
-                'No real-time editing',
-                'No advanced collaboration'
+                'Up to 50 team members',
+                '50 GB storage',
+                'All Free features',
+                'Live collaboration',
+                'Priority email support'
             ],
             popular: true,
             badge: 'Most Popular',
@@ -98,17 +90,9 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
             features: [
                 'Unlimited team members',
                 'Unlimited storage',
-                'Unlimited workspaces',
+                'All Pro features',
                 'Advanced collaboration',
-                'Real-time editing',
-                'File sharing & comments',
-                'Dedicated support 24/7',
-                'Advanced security & SSO',
-                'Custom integrations',
-                'SLA guarantee',
-                'On-premise option',
-                'White-label solution',
-                'Training & onboarding'
+                'Dedicated support'
             ],
             gradient: 'from-amber-500 to-orange-600',
             buttonColor: 'bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700',

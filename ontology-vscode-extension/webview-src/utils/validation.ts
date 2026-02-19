@@ -212,13 +212,13 @@ export const getMaxWorkspacesForPlan = (plan: string): number => {
 export const getMaxMembersForPlan = (plan: string): number => {
   switch (plan.toUpperCase()) {
     case 'FREE':
-      return 3;
-    case 'PRO':
       return 10;
+    case 'PRO':
+      return 50;
     case 'ENTERPRISE':
       return Number.MAX_SAFE_INTEGER;
     default:
-      return 3; // Default to FREE plan limits
+      return 10; // Default to FREE plan limits
   }
 };
 

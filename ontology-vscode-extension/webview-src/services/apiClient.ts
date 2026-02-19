@@ -34,7 +34,7 @@ export const updateBaseUrl = (deploymentType: 'self-hosted' | 'cloud') => {
     console.log('[ApiClient] Base URL updated to:', BASE_URL);
 };
 
-const TIMEOUT = 300_000; // Allow up to 5 minutes for heavy ontology operations
+const TIMEOUT = 600_000; // Allow up to 10 minutes for heavy ontology operations (increased for large files)
 
 // VS Code API detection
 declare global {
@@ -173,8 +173,14 @@ class ApiClient {
   private setupAxios() {
     this.axiosClient = axios.create({
       baseURL: BASE_URL,
-      headers: { 'Content-Type': 'application/json' },
-      timeout: TIMEOUT
+      headers: { 
+        'Content-Type': 'application/json',
+        'Accept-Encoding': 'identity' // Disable compression
+      },
+      timeout: TIMEOUT,
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
+      decompress: false // Disable automatic decompression to avoid zlib
     });
 
     // Request interceptor to add auth token

@@ -36,7 +36,7 @@ services:
       GDB_HEAP_SIZE: 2g
       GDB_LICENSE_PATH: /opt/graphdb
     volumes:
-      - graphdb-data:/opt/graphdb/data
+      - graphdb-data:/opt/graphdb/home/data
     networks:
       - ontology-net
     healthcheck:
@@ -95,7 +95,7 @@ services:
                 ]
             ] .
         EOFCONFIG
-          curl -sS -X POST -H "Content-Type: multipart/form-data" -F "config=@/tmp/repo.ttl" http://graphdb:7200/rest/repositories >/dev/null
+          curl -v -X POST -H "Content-Type: multipart/form-data" -F "config=@/tmp/repo.ttl" http://graphdb:7200/rest/repositories
           echo "[OK] Repository created successfully"
         fi
         
