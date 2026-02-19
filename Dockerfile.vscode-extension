@@ -1,6 +1,6 @@
 # Multi-stage build for OntoCode VS Code Extension with Web Server
 # Stage 1: Build the extension
-FROM node:21-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
@@ -19,19 +19,58 @@ RUN cd webview-src && npm ci
 # Build the extension and webview
 RUN npm run bundle:all
 
+# Clean up build-only dependencies to reduce final image size
+# Keep only production dependencies needed at runtime
+RUN rm -rf webview-src/node_modules \
+    && npm prune --production \
+    && rm -rf src/ webview-src/components/ webview-src/contexts/ \
+              webview-src/services/ webview-src/utils/ \
+              webview-src/*.tsx webview-src/*.ts webview-src/*.css \
+              webview-src/vite.config.ts webview-src/tsconfig.json \
+              backend-examples/ test-collaboration.html out.txt \
+              webpack.*.cjs check-bundle-size.js tsconfig*.json \
+              *.md .eslintrc* .prettierrc*
+
 # Stage 2: Runtime with VS Code Web Server
-FROM node:21-alpine
+FROM node:22-alpine
 
 WORKDIR /extension
 
-# Install VS Code test-web globally and http-server as fallback
-RUN npm install -g @vscode/test-web http-server
+# Install VS Code test-web globally (skip http-server — not needed)
+RUN npm install -g @vscode/test-web \
+    && npm cache clean --force
 
-# Copy built extension from builder stage
-COPY --from=builder /app ./
+# Copy only the built extension (pruned) from builder stage
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/dist/ ./dist/
+COPY --from=builder /app/node_modules/ ./node_modules/
+COPY --from=builder /app/webview-src/dist/ ./webview-src/dist/
 
-# Copy and prepare the entrypoint script that patches CSP for external HTTP connections
-COPY ontology-vscode-extension/docker-entrypoint.sh /entrypoint.sh
+# Pre-download VS Code Web assets at build time so the container doesn't need internet access
+# Then patch the Extension Host CSP to allow HTTP connections to external API servers
+RUN mkdir -p /workspace/projects && \
+    vscode-test-web --browserType=none --host=0.0.0.0 --port=3001 \
+      --extensionDevelopmentPath=/extension /workspace/projects & \
+    SERVER_PID=$!; \
+    echo "Waiting for VS Code Web server to be fully ready..."; \
+    for i in $(seq 1 300); do \
+      if wget -q --spider http://127.0.0.1:3001/ 2>/dev/null; then \
+        echo "Server ready after ${i}s"; \
+        break; \
+      fi; \
+      sleep 1; \
+    done; \
+    kill $SERVER_PID 2>/dev/null || true; wait $SERVER_PID 2>/dev/null || true; \
+    echo "Patching CSP in all Extension Host iframe files..."; \
+    find / -name "webWorkerExtensionHostIframe.html" 2>/dev/null | while read f; do \
+      sed -i "s|connect-src 'self' https: wss: http://localhost:\* http://127.0.0.1:\* ws://localhost:\* ws://127.0.0.1:\*|connect-src 'self' http: https: wss: ws: http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*|g" "$f"; \
+      echo "Patched: $f"; \
+    done; \
+    echo "CSP patch complete."
+
+# Copy and prepare the entrypoint script (fallback CSP patch for any re-downloads)
+COPY --from=builder /app/docker-entrypoint.sh /entrypoint.sh
+RUN dos2unix /entrypoint.sh 2>/dev/null || sed -i 's/\r$//' /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Create directory for workspace data (will be mounted via volume)

@@ -1,0 +1,317 @@
+# OntoCode Local Development Docker Compose
+# This file builds all services from local source code
+# Usage: docker compose -f docker-compose.dev.yml up --build
+
+services:
+  # MongoDB Database (external image - no build needed)
+  mongo:
+    image: mongo:6
+    container_name: ontocode-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: ${MONGODB_DATABASE:-ontocode}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-changeme123}
+    networks:
+      - ontology-net
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh "mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@localhost:27017/admin" --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  # GraphDB (RDF Triple Store) - BUILD LOCALLY
+  graphdb:
+    build:
+      context: .
+      dockerfile: Dockerfile.graphdb
+    image: ontocode-graphdb:local
+    container_name: ontocode-graphdb
+    restart: unless-stopped
+    ports:
+      - "7200:7200"
+    environment:
+      GDB_HEAP_SIZE: 2g
+      GDB_LICENSE_PATH: /opt/graphdb
+    volumes:
+      - graphdb-data:/opt/graphdb/home/data
+    networks:
+      - ontology-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7200/rest/repositories"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+
+  # GraphDB Repository Initializer
+  graphdb-init:
+    image: curlimages/curl:latest
+    container_name: ontocode-graphdb-init
+    depends_on:
+      graphdb:
+        condition: service_healthy
+    networks:
+      - ontology-net
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - |
+        echo "=== GraphDB Repository Init ==="
+        for i in $$(seq 1 30); do
+          curl -sf http://graphdb:7200/rest/repositories >/dev/null 2>&1 && break
+          echo "Waiting for GraphDB... attempt $$i/30"
+          sleep 5
+        done
+        
+        if curl -s http://graphdb:7200/rest/repositories | grep -q "ontocode"; then
+          echo "[OK] Repository ontocode already exists"
+        else
+          echo "Creating ontocode repository with inference DISABLED..."
+          cat > /tmp/repo.ttl << 'EOFCONFIG'
+        @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+        @prefix rep: <http://www.openrdf.org/config/repository#> .
+        @prefix sr: <http://www.openrdf.org/config/repository/sail#> .
+        @prefix sail: <http://www.openrdf.org/config/sail#> .
+        @prefix graphdb: <http://www.ontotext.com/config/graphdb#> .
+        [] a rep:Repository ;
+            rep:repositoryID "ontocode" ;
+            rdfs:label "OntoCode Repository - No Inference" ;
+            rep:repositoryImpl [
+                rep:repositoryType "graphdb:SailRepository" ;
+                sr:sailImpl [
+                    sail:sailType "graphdb:Sail" ;
+                    graphdb:ruleset "empty" ;
+                    graphdb:disable-sameAs "true" ;
+                    graphdb:check-for-inconsistencies "false" ;
+                    graphdb:in-memory-literal-properties "true" ;
+                    graphdb:enable-literal-index "true" ;
+                    graphdb:entity-index-size "10000000" ;
+                    graphdb:enablePredicateList "true" ;
+                    graphdb:read-only "false" ;
+                ]
+            ] .
+        EOFCONFIG
+          curl -v -X POST -H "Content-Type: multipart/form-data" -F "config=@/tmp/repo.ttl" http://graphdb:7200/rest/repositories
+          echo "[OK] Repository created successfully"
+        fi
+        
+        echo "Setting ontocode as active repository..."
+        if curl -sf http://graphdb:7200/rest/repositories/ontocode/size >/dev/null 2>&1; then
+          echo "[OK] Repository ontocode is ACTIVE and accessible"
+          echo "[OK] Active Repository: ontocode"
+          echo "[OK] Inference: DISABLED (ruleset: empty)"
+        else
+          echo "[ERROR] Repository not accessible"
+        fi
+        echo "=== Init Complete ==="
+
+  # Authentication Service - BUILD LOCALLY
+  auth:
+    build:
+      context: .
+      dockerfile: Dockerfile.auth
+    image: ontocode-auth:local
+    container_name: ontocode-auth
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    environment:
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      JWT_SECRET: ${JWT_SECRET:-b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==}
+      SPRING_PROFILES_ACTIVE: dev
+      LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - ontology-net
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep java || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # API Gateway - BUILD LOCALLY
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    image: ontocode-gateway:local
+    container_name: ontocode-gateway
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      JWT_SECRET: ${JWT_SECRET:-b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==}
+      AUTH_SERVICE_URL: http://auth:8086
+      LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+    depends_on:
+      auth:
+        condition: service_healthy
+    networks:
+      - ontology-net
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep java || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # Ontology Editor Service - BUILD LOCALLY
+  owl-editor:
+    build:
+      context: .
+      dockerfile: Dockerfile.editor
+    image: ontocode-editor:local
+    container_name: ontocode-editor
+    restart: unless-stopped
+    ports:
+      - "8083:8083"
+    environment:
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      GRAPHDB_URL: http://graphdb:7200
+      GRAPHDB_REPOSITORY: ${GRAPHDB_REPOSITORY:-ontocode}
+      SPRING_PROFILES_ACTIVE: dev
+      LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
+    depends_on:
+      mongo:
+        condition: service_healthy
+      graphdb:
+        condition: service_healthy
+    networks:
+      - ontology-net
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep java || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+  # SWRL Rules Service - BUILD LOCALLY
+  swrl-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.swrl
+    image: ontocode-swrl:local
+    container_name: ontocode-swrl
+    restart: unless-stopped
+    ports:
+      - "8084:8084"
+    environment:
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      GRAPHDB_URL: http://graphdb:7200
+      GRAPHDB_REPOSITORY: ${GRAPHDB_REPOSITORY:-ontocode}
+      ONTOLOGY_EDITOR_URL: http://owl-editor:8083
+      SPRING_PROFILES_ACTIVE: dev
+      LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+    depends_on:
+      mongo:
+        condition: service_healthy
+      graphdb:
+        condition: service_healthy
+    networks:
+      - ontology-net
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep java || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # Plugin Service - BUILD LOCALLY
+  plugin-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.plugin
+    image: ontocode-plugin:local
+    container_name: ontocode-plugin
+    restart: unless-stopped
+    ports:
+      - "8087:8087"
+    environment:
+      SPRING_DATA_MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      SPRING_DATA_MONGODB_DATABASE: ${MONGODB_DATABASE:-ontocode}
+      JWT_SECRET: ${JWT_SECRET:-b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==}
+      SPRING_PROFILES_ACTIVE: dev
+      LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - ontology-net
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep java || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # Plugin Initialization Service - BUILD LOCALLY
+  plugin-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.plugin-init
+    image: ontocode-plugin-init:local
+    container_name: ontocode-plugin-init
+    restart: "no"
+    environment:
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      MONGODB_DATABASE: ${MONGODB_DATABASE:-ontocode}
+    depends_on:
+      mongo:
+        condition: service_healthy
+      plugin-service:
+        condition: service_healthy
+    networks:
+      - ontology-net
+
+  # VS Code Web Extension - BUILD LOCALLY
+  vscode-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.vscode-extension
+    image: ontocode-vscode-web:local
+    container_name: ontocode-vscode-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount local workspace for file editing
+      - ${WORKSPACE_PATH:-./data/projects}:/workspace/projects
+    environment:
+      VSCODE_WEB_HOST: 0.0.0.0
+      VSCODE_WEB_PORT: 3000
+      # OntoCode API endpoints
+      ONTOCODE_API_URL: http://gateway:80
+      AUTH_SERVICE_URL: http://auth:8086
+    depends_on:
+      gateway:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    networks:
+      - ontology-net
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+volumes:
+  mongo-data:
+  graphdb-data:
+
+networks:
+  ontology-net:
+    driver: bridge

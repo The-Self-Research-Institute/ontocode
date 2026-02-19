@@ -18,8 +18,13 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.eclipse.rdf4j.rio.RDFFormat;
+import org.apache.commons.io.input.TeeInputStream;
+
+import java.util.Locale;
 
 import self.research.ontology.owlEditor.model.DraftChange;
+import self.research.ontology.owlEditor.model.ImportOptions;
 import self.research.ontology.owlEditor.model.ProjectStatus;
 import self.research.ontology.owlEditor.repository.DraftChangeRepository;
 import self.research.ontology.owlEditor.repository.ProjectRepository;
@@ -27,17 +32,22 @@ import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.GraphDBDatasetService;
 import self.research.ontology.owlEditor.service.GraphDBHistoryService;
 import self.research.ontology.owlEditor.service.GridFSFileService;
+import self.research.ontology.owlEditor.service.OntologyPreparseService;
+import self.research.ontology.owlEditor.service.ImportWorkerDispatcher;
 import self.research.ontology.owlEditor.service.ProjectImportService;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
 import self.research.ontology.owlEditor.service.ProjectShareService;
 import self.research.ontology.owlEditor.service.StorageManager;
+import self.research.ontology.owlEditor.util.OWLFormatConverter;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.PushbackInputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.zip.GZIPInputStream;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -63,6 +73,8 @@ public class ProjectLoadController {
     private final SimpMessagingTemplate messagingTemplate;
     private final GraphDBDatasetService datasetService;
     private final ProjectRepository projectRepository;
+    private final OntologyPreparseService preparseService;
+    private final ImportWorkerDispatcher importWorkerDispatcher;
 
     public ProjectLoadController(StorageManager storageManager,
                                  ProjectMetadataService metadataService,
@@ -74,7 +86,9 @@ public class ProjectLoadController {
                                  DraftChangeRepository draftChangeRepository,
                                  SimpMessagingTemplate messagingTemplate,
                                  GraphDBDatasetService datasetService,
-                                 ProjectRepository projectRepository) {
+                                 ProjectRepository projectRepository,
+                                 OntologyPreparseService preparseService,
+                                 ImportWorkerDispatcher importWorkerDispatcher) {
         this.storageManager = storageManager;
         this.metadataService = metadataService;
         this.importService = importService;
@@ -86,15 +100,20 @@ public class ProjectLoadController {
         this.messagingTemplate = messagingTemplate;
         this.datasetService = datasetService;
         this.projectRepository = projectRepository;
+        this.preparseService = preparseService;
+        this.importWorkerDispatcher = importWorkerDispatcher;
     }
 
     @PostMapping("/upload/{projectId}")
     public ResponseEntity<Map<String, Object>> upload(@PathVariable String projectId,
                                                       @RequestParam("file") MultipartFile file,
                                                       @RequestParam(required = false) String ownerEmail,
-                                                      @RequestParam(required = false) String action) {
-        log.info("[ProjectLoadController] Upload request - projectId: {}, filename: {}, ownerEmail: {}, action: {}", 
-            projectId, file.getOriginalFilename(), ownerEmail, action);
+                                                      @RequestParam(required = false) String action,
+                                                      @RequestParam(required = false) String importMode,
+                                                      @RequestParam(required = false) String partition,
+                                                      @RequestParam(required = false, defaultValue = "false") boolean compressed) {
+        log.info("[ProjectLoadController] Upload request - projectId: {}, filename: {}, ownerEmail: {}, action: {}, compressed: {}",
+            projectId, file.getOriginalFilename(), ownerEmail, action, compressed);
         try {
             // VALIDATION: Check file size (max 300MB)
             long maxSize = 300 * 1024 * 1024; // 300MB
@@ -153,31 +172,53 @@ public class ProjectLoadController {
                 }
             }
             
-            // FIX: Optimize by writing to both GridFS and filesystem in one pass
-            // Save to local filesystem first
+            // Optimize by writing to filesystem and GridFS in one pass
             Path projectDir = storageManager.prepareProjectDir(actualProjectId);
             Path original = projectDir.resolve("ontology.original.owl");
             Files.createDirectories(original.getParent());
 
-            // Write uploaded file directly to local filesystem
-            try (InputStream in = file.getInputStream();
+            String gridfsFileId;
+            
+            // Auto-detect GZIP compression
+            InputStream fileStream = file.getInputStream();
+            InputStream effectiveStream = fileStream;
+            boolean wasCompressed = compressed;
+            
+            if (!compressed) {
+                PushbackInputStream pb = new PushbackInputStream(fileStream, 2);
+                byte[] signature = new byte[2];
+                int len = pb.read(signature);
+                if (len > 0) {
+                    pb.unread(signature, 0, len);
+                }
+                
+                if (len == 2 && signature[0] == (byte) 0x1f && signature[1] == (byte) 0x8b) {
+                    log.info("[ProjectLoadController] Auto-detected GZIP content. Enabling decompression.");
+                    effectiveStream = new GZIPInputStream(pb);
+                    wasCompressed = true;
+                } else {
+                    effectiveStream = pb;
+                }
+            } else {
+                effectiveStream = new GZIPInputStream(fileStream);
+            }
+
+            try (InputStream in = effectiveStream;
                  OutputStream out = Files.newOutputStream(original,
                          StandardOpenOption.CREATE,
                          StandardOpenOption.TRUNCATE_EXISTING,
-                         StandardOpenOption.WRITE)) {
-                in.transferTo(out);
-            }
+                         StandardOpenOption.WRITE);
+                 TeeInputStream tee = new TeeInputStream(in, out, true)) {
 
-            log.info("Saved file to local filesystem: {}", original);
+                if (wasCompressed) {
+                    log.info("[ProjectLoadController] Decompressing gzipped file before processing");
+                }
 
-            // Then store in GridFS for backup/versioning
-            String gridfsFileId;
-            try (InputStream fileIn = Files.newInputStream(original)) {
                 gridfsFileId = gridFSFileService.storeFile(
                     actualProjectId,
                     filename,  // Use potentially modified filename
                     file.getContentType(),
-                    fileIn
+                    tee
                 );
             }
 
@@ -188,12 +229,21 @@ public class ProjectLoadController {
 
             log.info("Stored file in GridFS for project {}: fileId={}", actualProjectId, gridfsFileId);
 
+            // Strip binary garbage bytes that the upload pipeline may prepend before XML content.
+            // This fixes the file on disk so ALL downstream consumers (preparse, import, conversion)
+            // get a clean file without needing their own stripping logic.
+            OWLFormatConverter.sanitizeFileOnDisk(original);
+
             // FIX: Batch metadata updates into single operation for better performance
             // Use the potentially modified filename
             ProjectStatus status = ProjectStatus.uploaded(filename);
             metadataService.updateProjectMetadata(actualProjectId, status, gridfsFileId, ownerEmail);
 
-            importService.submitImport(actualProjectId, original, ownerEmail);
+            ImportOptions options = resolveImportOptions(importMode, partition);
+            importWorkerDispatcher.dispatch(actualProjectId, original, ownerEmail, filename, gridfsFileId, options);
+
+            RDFFormat format = detectFormat(original);
+            preparseService.preparse(original, actualProjectId, format);
             
             String message = isReplacement ? "File replaced successfully, processing scheduled" : 
                             ("create_copy".equals(action) ? "Copy created successfully with name '" + filename + "', processing scheduled" :
@@ -241,6 +291,41 @@ public class ProjectLoadController {
         
         log.info("Generated copy filename: {} from original: {}", candidateFilename, originalFilename);
         return candidateFilename;
+    }
+
+    private ImportOptions resolveImportOptions(String importMode, String partition) {
+        ImportOptions.ImportMode mode = ImportOptions.ImportMode.FULL;
+        if (importMode != null) {
+            switch (importMode.toLowerCase(Locale.ROOT)) {
+                case "incremental" -> mode = ImportOptions.ImportMode.INCREMENTAL;
+                case "diff" -> mode = ImportOptions.ImportMode.DIFF;
+                default -> mode = ImportOptions.ImportMode.FULL;
+            }
+        }
+
+        ImportOptions.PartitionStrategy strategy = ImportOptions.PartitionStrategy.NONE;
+        if (partition != null && partition.equalsIgnoreCase("namespace")) {
+            strategy = ImportOptions.PartitionStrategy.NAMESPACE;
+        }
+
+        return ImportOptions.builder()
+                .mode(mode)
+                .partitionStrategy(strategy)
+                .build();
+    }
+
+    private RDFFormat detectFormat(Path file) {
+        String fileName = file.getFileName().toString().toLowerCase(Locale.ROOT);
+        if (fileName.endsWith(".ttl") || fileName.endsWith(".turtle")) {
+            return RDFFormat.TURTLE;
+        } else if (fileName.endsWith(".nt") || fileName.endsWith(".ntriples")) {
+            return RDFFormat.NTRIPLES;
+        } else if (fileName.endsWith(".jsonld")) {
+            return RDFFormat.JSONLD;
+        } else if (fileName.endsWith(".n3")) {
+            return RDFFormat.N3;
+        }
+        return RDFFormat.RDFXML; // default
     }
 
     @GetMapping("/status/{projectId}")
