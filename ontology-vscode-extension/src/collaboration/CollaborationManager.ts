@@ -180,6 +180,52 @@ export class CollaborationManager implements ICollaborationManager {
         // Send USER_JOINED presence (will be broadcast back to us)
         await this.sendPresence(PresenceType.USER_JOINED);
         
+        // Fetch currently active users in this project
+        try {
+            // Use global fetch (Node.js 18+ or polyfill)
+            const response = await fetch(`${this.serverUrl}/api/collab-graph/${projectId}/active-users`);
+            if (response.ok) {
+                const data: any = await response.json();
+                if (data.users && Array.isArray(data.users)) {
+                    // Add existing users to activeUsers map
+                    data.users.forEach((user: any) => {
+                        // Don't add ourselves (we'll get our own USER_JOINED broadcast)
+                        if (user.userId !== this.userId) {
+                            this.state.activeUsers.set(user.userId, {
+                                userId: user.userId,
+                                username: user.username,
+                                sessionId: user.sessionId,
+                                color: user.color,
+                                lastActivity: user.lastActivity,
+                                cursorPosition: user.cursorPosition,
+                                selectedNodes: user.selectedNodes
+                            });
+                        }
+                    });
+                    console.log(`Loaded ${data.users.length - 1} existing active users`);
+                    
+                    // Notify handler of the initial user list
+                    if (this.onPresenceUpdate) {
+                        data.users.forEach((user: any) => {
+                            if (user.userId !== this.userId) {
+                                this.onPresenceUpdate!({
+                                    type: PresenceType.USER_ACTIVE,
+                                    projectId: projectId,
+                                    userId: user.userId,
+                                    username: user.username,
+                                    sessionId: user.sessionId,
+                                    color: user.color,
+                                    timestamp: user.lastActivity
+                                });
+                            }
+                        });
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Failed to fetch active users:', error);
+        }
+        
         console.log(`Joined project: ${projectId}`);
     }
 

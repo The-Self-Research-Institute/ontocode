@@ -9,7 +9,12 @@
 FROM node:21-alpine AS build-change-assistant
 WORKDIR /build
 COPY plugins/change-assistant-plugin/package*.json ./
-RUN npm install
+RUN npm config set fetch-retries 10 && \
+    npm config set fetch-retry-mintimeout 10000 && \
+    npm config set fetch-retry-maxtimeout 120000 && \
+    npm config set fetch-timeout 120000 && \
+    npm config set maxsockets 15 && \
+    npm install
 COPY plugins/change-assistant-plugin/ ./
 RUN npm run build
 
@@ -19,7 +24,12 @@ RUN npm run build
 FROM node:21-alpine AS build-fuzzy-ontology
 WORKDIR /build
 COPY plugins/fuzzy-ontology-plugin/package*.json ./
-RUN npm install
+RUN npm config set fetch-retries 10 && \
+    npm config set fetch-retry-mintimeout 10000 && \
+    npm config set fetch-retry-maxtimeout 120000 && \
+    npm config set fetch-timeout 120000 && \
+    npm config set maxsockets 15 && \
+    npm install
 COPY plugins/fuzzy-ontology-plugin/ ./
 RUN npm run build
 
@@ -29,7 +39,12 @@ RUN npm run build
 FROM node:21-alpine AS build-graph-view
 WORKDIR /build
 COPY plugins/graph-view-plugin/package*.json ./
-RUN npm install
+RUN npm config set fetch-retries 10 && \
+    npm config set fetch-retry-mintimeout 10000 && \
+    npm config set fetch-retry-maxtimeout 120000 && \
+    npm config set fetch-timeout 120000 && \
+    npm config set maxsockets 15 && \
+    npm install
 COPY plugins/graph-view-plugin/ ./
 RUN npm run build
 
@@ -39,7 +54,12 @@ RUN npm run build
 FROM node:21-alpine AS build-swrl-editor
 WORKDIR /build
 COPY plugins/swrl-editor-plugin/package*.json ./
-RUN npm install
+RUN npm config set fetch-retries 10 && \
+    npm config set fetch-retry-mintimeout 10000 && \
+    npm config set fetch-retry-maxtimeout 120000 && \
+    npm config set fetch-timeout 120000 && \
+    npm config set maxsockets 15 && \
+    npm install
 COPY plugins/swrl-editor-plugin/ ./
 RUN npm run build
 
@@ -49,7 +69,12 @@ RUN npm run build
 FROM node:21-alpine AS build-sparql-query
 WORKDIR /build
 COPY plugins/sparql-query-plugin/package*.json ./
-RUN npm install
+RUN npm config set fetch-retries 10 && \
+    npm config set fetch-retry-mintimeout 10000 && \
+    npm config set fetch-retry-maxtimeout 120000 && \
+    npm config set fetch-timeout 120000 && \
+    npm config set maxsockets 15 && \
+    npm install
 COPY plugins/sparql-query-plugin/ ./
 RUN npm run build
 
@@ -59,7 +84,12 @@ RUN npm run build
 FROM node:21-alpine AS build-reasoner
 WORKDIR /build
 COPY plugins/reasoner-plugin/package*.json ./
-RUN npm install
+RUN npm config set fetch-retries 10 && \
+    npm config set fetch-retry-mintimeout 10000 && \
+    npm config set fetch-retry-maxtimeout 120000 && \
+    npm config set fetch-timeout 120000 && \
+    npm config set maxsockets 15 && \
+    npm install
 COPY plugins/reasoner-plugin/ ./
 RUN npm run build
 
@@ -74,7 +104,12 @@ RUN apk add --no-cache bash curl
 
 # Install MongoDB driver
 COPY scripts/package.json ./package.json
-RUN npm install mongodb
+RUN npm config set fetch-retries 10 && \
+    npm config set fetch-retry-mintimeout 10000 && \
+    npm config set fetch-retry-maxtimeout 120000 && \
+    npm config set fetch-timeout 120000 && \
+    npm config set maxsockets 15 && \
+    npm install mongodb
 
 # Copy unified plugin manager script
 COPY scripts/manage-plugins.js ./manage-plugins.js

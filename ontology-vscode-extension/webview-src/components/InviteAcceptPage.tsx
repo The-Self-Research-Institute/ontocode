@@ -90,12 +90,18 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
             }
         } catch (err: any) {
             console.error('[InviteAcceptPage] Error loading invitation:', err);
-            // Handle error message from various sources
-            const errorMsg = err?.error || err?.response?.data?.error || err?.message || 'Failed to load invitation details';
-            if (errorMsg.toLowerCase().includes('expired')) {
-                setIsExpired(true);
+            
+            // Handle 404 specifically - invitation not found
+            if (err?.status === 404 || err?.response?.status === 404) {
+                setError('This invitation link is invalid or has been removed. Please contact the workspace owner to request a new invitation.');
+            } else {
+                // Handle error message from various sources
+                const errorMsg = err?.error || err?.response?.data?.error || err?.message || 'Failed to load invitation details';
+                if (errorMsg.toLowerCase().includes('expired')) {
+                    setIsExpired(true);
+                }
+                setError(errorMsg);
             }
-            setError(errorMsg);
         } finally {
             setLoading(false);
         }

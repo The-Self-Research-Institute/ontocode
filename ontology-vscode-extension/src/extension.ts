@@ -825,20 +825,32 @@ class OntoCodePanel {
             const fileSize = fileData.length;
             const base64Content = uint8ArrayToBase64(fileData);
 
+            // Check deployment type
+            const deploymentType = await this.getStoredDeploymentType();
+            const isCloudDeployment = deploymentType === 'cloud';
+
             let existingFileId: string | null = null;
             let existingFileName: string | null = null;
             let skipDuplicateCheck = false;
-            try {
-                const checkUrl = `${GATEWAY_URL}/api/projects/${projectId}/files/check?fileName=${encodeURIComponent(fileName)}`;
-                const checkResponse = await axios.get(checkUrl, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
 
-                if (checkResponse.data?.exists) {
-                    const existing = checkResponse.data.existingFile || {};
-                    existingFileId = existing.fileId || existing.id || null;
-                    existingFileName = existing.fileName || fileName;
+            // For cloud deployment: skip duplicate check entirely
+            if (isCloudDeployment) {
+                console.log('[OntoCode] ☁️ Cloud deployment: skipping duplicate check');
+                skipDuplicateCheck = true;
+            } else {
+                // For self-hosted: check for duplicates
+                try {
+                    const checkUrl = `${GATEWAY_URL}/api/projects/${projectId}/files/check?fileName=${encodeURIComponent(fileName)}`;
+                    const checkResponse = await axios.get(checkUrl, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
 
+                    if (checkResponse.data?.exists) {
+                        const existing = checkResponse.data.existingFile || {};
+                        existingFileId = existing.fileId || existing.id || null;
+                        existingFileName = existing.fileName || fileName;
+
+                        // Self-hosted: show dialog
                     const defaultCopyName = buildDefaultCopyName(fileName, 1);
                     const duplicateDecision = await this.requestDuplicatePrompt({
                         context: 'project',
@@ -966,8 +978,9 @@ class OntoCodePanel {
                 } else {
                     skipDuplicateCheck = true;
                 }
-            } catch (checkError: any) {
-                console.warn('[OntoCode] Failed to check for duplicate file:', checkError?.message || checkError);
+                } catch (checkError: any) {
+                    console.warn('[OntoCode] Failed to check for duplicate file:', checkError?.message || checkError);
+                }
             }
 
             const uploadResult = await this.handleUploadFileToProject(projectId, fileName, base64Content, fileSize, {
@@ -1315,28 +1328,27 @@ class OntoCodePanel {
             console.error('[OntoCode] Could not extract user info from token:', tokenError);
         }
         
-        // 1.6 Check if user is ROLE_USER or has no workspace - use user-based storage
+        // 1.6 Check deployment type
         const deploymentType = await this.getStoredDeploymentType();
-        const isRoleUser = userRoles.includes('ROLE_USER') && !userRoles.includes('ROLE_ADMIN');
-        const hasNoWorkspace = !workspaceId || workspaceId === '';
-        const forceUserStorage = deploymentType === 'self-hosted';
-        const useUserStorage = forceUserStorage || isRoleUser || hasNoWorkspace;
+        const isCloudDeployment = deploymentType === 'cloud';
         
-        if (useUserStorage) {
-            console.log(`[OntoCode] 🔒 User-based storage detected - ROLE_USER: ${isRoleUser}, No Workspace: ${hasNoWorkspace}`);
-            // For user-based storage, use user-specific projectId format: user_{userId}_{filename}
-            if (userId) {
-                projectId = `user_${userId}_${fileName.replace('.owl', '')}`;
-                console.log(`[OntoCode] Using user-based projectId: ${projectId}`);
-            }
-        }
+        // Always use filename (without extension) as projectId
+        // Remove user_ prefix for cleaner project IDs
+        projectId = fileName.replace(/\.(owl|rdf|ttl|n3|nt|jsonld)$/i, '');
+        console.log(`[OntoCode] Using projectId: ${projectId}`);
         
         const resolvedOwnerEmail = ownerEmailOverride || ownerEmail;
         const authHeaders = { 'Authorization': `Bearer ${token}` };
         let duplicateCheckResult: 'duplicate' | 'unique' | 'failed' | 'skipped' = 'skipped';
 
-        // 2. Check for duplicate file if action not specified
-        if (!action && !skipDuplicateCheck && resolvedOwnerEmail) {
+        // 2. For cloud deployment: skip duplicate checking, proceed directly with upload
+        if (isCloudDeployment) {
+            console.log(`[OntoCode] ☁️ Cloud deployment: skipping duplicate check, proceeding with upload`);
+            duplicateCheckResult = 'skipped';
+        }
+
+        // 3. For self-hosted: Check for duplicate file if action not specified
+        if (!isCloudDeployment && !action && !skipDuplicateCheck && resolvedOwnerEmail) {
             console.log(`[OntoCode] Checking for duplicate file: ${fileName}`);
             try {
                 const checkUrl = `${GATEWAY_URL}/api/ontology/check-duplicate?filename=${encodeURIComponent(fileName)}&ownerEmail=${encodeURIComponent(resolvedOwnerEmail)}`;
@@ -1439,9 +1451,7 @@ class OntoCodePanel {
                             }
 
                             const candidateBase = normalizeCopyName(candidateName, '').replace(/\.[^/.]+$/, '');
-                            const copyProjectId = useUserStorage && userId
-                                ? `user_${userId}_${candidateBase}`
-                                : candidateBase;
+                            const copyProjectId = candidateBase;
                             console.log(`[OntoCode] Creating copy with filename: ${candidateName}`);
                             return this._uploadOntology(copyProjectId, candidateName, fileData, 'create_copy', resolvedOwnerEmail, undefined, importMode, partition);
                         }
@@ -1488,9 +1498,7 @@ class OntoCodePanel {
                             return;
                         }
                         const candidateBase = normalizeCopyName(candidateName, '').replace(/\.[^/.]+$/, '');
-                        const copyProjectId = useUserStorage && userId
-                            ? `user_${userId}_${candidateBase}`
-                            : candidateBase;
+                        const copyProjectId = candidateBase;
                         console.log(`[OntoCode] Creating copy with filename: ${candidateName}`);
                         return this._uploadOntology(copyProjectId, candidateName, fileData, 'create_copy', resolvedOwnerEmail, undefined, importMode, partition);
                     }
@@ -1589,9 +1597,7 @@ class OntoCodePanel {
 
                                 const candidateName = normalizeCopyName(copyInput, originalExt);
                                 const candidateBase = normalizeCopyName(candidateName, '').replace(/\.[^/.]+$/, '');
-                                const copyProjectId = useUserStorage && userId
-                                    ? `user_${userId}_${candidateBase}`
-                                    : candidateBase;
+                                const copyProjectId = candidateBase;
                                 return this._uploadOntology(copyProjectId, candidateName, fileData, 'create_copy', resolvedOwnerEmail, undefined, importMode, partition);
                             }
                         }
@@ -1628,9 +1634,7 @@ class OntoCodePanel {
                             return;
                         }
                         const candidateBase = normalizeCopyName(candidateName, '').replace(/\.[^/.]+$/, '');
-                        const copyProjectId = useUserStorage && userId
-                            ? `user_${userId}_${candidateBase}`
-                            : candidateBase;
+                        const copyProjectId = candidateBase;
                         return this._uploadOntology(copyProjectId, candidateName, fileData, 'create_copy', resolvedOwnerEmail, undefined, importMode, partition);
                     }
 
@@ -2042,9 +2046,7 @@ class OntoCodePanel {
                         }
 
                         const candidateBase = normalizeCopyName(candidateName, '').replace(/\.[^/.]+$/, '');
-                        const copyProjectId = useUserStorage && userId
-                            ? `user_${userId}_${candidateBase}`
-                            : candidateBase;
+                        const copyProjectId = candidateBase;
                         return this._uploadOntology(copyProjectId, candidateName, fileData, 'create_copy', resolvedOwnerEmail, undefined, importMode, partition);
                     }
                 }
@@ -2156,7 +2158,16 @@ class OntoCodePanel {
             let replaceFileId: string | null = options?.replaceFileId ?? null;
             let finalFileName = fileName;
             
-            if (!options?.skipDuplicateCheck) {
+            // Check deployment type first
+            const deploymentType = await this.getStoredDeploymentType();
+            const isCloudDeployment = deploymentType === 'cloud';
+            
+            if (isCloudDeployment) {
+                console.log('[OntoCode] ☁️ Cloud deployment: skipping duplicate file check');
+            }
+            
+            if (!options?.skipDuplicateCheck && !isCloudDeployment) {
+                // Only check for duplicates in self-hosted mode
                 try {
                     const checkResponse = await axios.get(checkUrl, {
                         headers: {
@@ -2167,7 +2178,7 @@ class OntoCodePanel {
                     if (checkResponse.data.exists) {
                         console.log(`[OntoCode] ⚠️ File "${fileName}" already exists in project`);
                         
-                        // Show confirmation dialog with options
+                        // Self-hosted: show confirmation dialog with options
                         const choice = await vscode.window.showWarningMessage(
                             `A file named "${fileName}" already exists in this project.`,
                             {
