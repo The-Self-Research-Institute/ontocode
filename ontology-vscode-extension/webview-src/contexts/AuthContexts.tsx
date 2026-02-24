@@ -520,7 +520,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         try {
             // Update the workspace subscription plan
             const response = await apiClient.patch(`/api/workspaces/${user.workspaceId}/subscription`, {
-                plan: planId
+                subscriptionPlan: planId
             });
 
             // Update user context with new workspace subscription plan

@@ -9916,7 +9916,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               })}
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
-              {projectId && (
+              {isCloudDeployment && projectId && (
                 <button
                   onClick={() => {
                     console.log('[Dashboard] Collaboration button clicked', { subscription, deploymentType, isCloudDeployment });

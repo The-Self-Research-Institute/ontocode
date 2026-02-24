@@ -106,7 +106,7 @@
             <version>2.6.5</version>
         </dependency>
 
-        <!-- ELK Reasoner (Fast for EL++ profile) -->
+        <!-- ELK Reasoner - Fast and scalable EL reasoner -->
         <dependency>
             <groupId>org.semanticweb.elk</groupId>
             <artifactId>elk-owlapi</artifactId>

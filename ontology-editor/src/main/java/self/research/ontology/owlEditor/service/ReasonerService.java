@@ -99,8 +99,8 @@ public class ReasonerService {
                     return new JFactFactory().createReasoner(ontology, config);
                     
                 case ELK:
-                    // ELK - Fast for EL++ profile ontologies
-                    log.info("Using ELK reasoner (optimized for EL++)");
+                    // ELK - Fast and scalable EL reasoner
+                    log.info("Using ELK (Consequence-based) reasoner");
                     return new ElkReasonerFactory().createReasoner(ontology, config);
                     
                 case STRUCTURAL:

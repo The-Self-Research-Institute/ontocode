@@ -72,7 +72,7 @@ const PLUGINS = [
     pluginId: 'fuzzy-ontology-plugin',
     name: 'Fuzzy Ontology',
     shortDescription: 'Fuzzy ontology editor with modifiers, membership functions, and visual canvas',
-    description: 'Fuzzy ontology editor with 5 fuzzy modifiers (very, more_or_less, slightly, extremely, somewhat), 5 membership functions (singleton, triangular, trapezoidal, Gaussian, sigmoid), visual canvas editor with real-time curve rendering, fuzzy rules with T-norms/T-conorms, and comprehensive SPARQL integration.',
+    description: 'Fuzzy ontology editor with 5 fuzzy modifiers (extremely, very, slightly, more_or_less, somewhat), 5 membership functions (singleton, triangular, trapezoidal, Gaussian, sigmoid), visual canvas editor with real-time curve rendering, fuzzy rules with T-norms/T-conorms, and comprehensive SPARQL integration.',
     version: '1.1.0',
     category: 'Reasoning',
     keywords: ['fuzzy', 'ontology', 'membership', 'reasoning', 'fuzzy-logic', 'owl', 'modifiers', 'canvas', 'visualization'],

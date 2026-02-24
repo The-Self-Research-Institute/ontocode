@@ -3,11 +3,12 @@ import { Sparkles, Plus, Trash2, Save, Play, Download, Edit2, TrendingUp, Zap } 
 import MembershipFunctionCanvas from './components/MembershipFunctionCanvas';
 
 // Fuzzy modifier functions (like Protégé)
+
 const FUZZY_MODIFIERS = {
-  'very': (degree: number) => degree * degree,
+  'extremely': (degree: number) => degree * degree,
+  'very': (degree: number) => Math.pow(degree, 3),
+  'slightly': (degree: number) => Math.pow(degree, 4),
   'more_or_less': (degree: number) => Math.sqrt(degree),
-  'slightly': (degree: number) => degree * degree * degree,
-  'extremely': (degree: number) => Math.pow(degree, 4),
   'somewhat': (degree: number) => Math.pow(degree, 0.33),
 };
 
@@ -851,11 +852,11 @@ ${rules.map(r => `<http://example.org/rules/${r.id}> a fuzzy:Rule ;
                   style={styles.select}
                 >
                   <option value="none">None</option>
-                  <option value="very">very (x²)</option>
-                  <option value="more_or_less">more or less (√x)</option>
-                  <option value="slightly">slightly (x³)</option>
-                  <option value="extremely">extremely (x⁴)</option>
-                  <option value="somewhat">somewhat (x^0.33)</option>
+                  <option value="extremely">extremely (x²) - much much stronger membership</option>
+                  <option value="very">very (x³) - much stronger membership</option>
+                  <option value="slightly">slightly (x⁴) - stronger membership</option>
+                  <option value="more_or_less">more or less (√x) - weaker membership</option>
+                  <option value="somewhat">somewhat (x^0.33) - much weaker membership</option>
                 </select>
               </div>
 
@@ -1009,11 +1010,11 @@ ${rules.map(r => `<http://example.org/rules/${r.id}> a fuzzy:Rule ;
               <div key={name} style={styles.modifierCard}>
                 <h4 style={styles.modifierName}>{name.replace('_', ' ')}</h4>
                 <div style={styles.modifierFormula}>
-                  {name === 'very' && 'μ′(x) = μ(x)²'}
-                  {name === 'more_or_less' && 'μ′(x) = √μ(x)'}
-                  {name === 'slightly' && 'μ′(x) = μ(x)³'}
-                  {name === 'extremely' && 'μ′(x) = μ(x)⁴'}
-                  {name === 'somewhat' && 'μ′(x) = μ(x)^0.33'}
+                  {name === 'extremely' && 'μ′(x) = μ(x)² (much much stronger membership)'}
+                  {name === 'very' && 'μ′(x) = μ(x)³ (much stronger membership)'}
+                  {name === 'slightly' && 'μ′(x) = μ(x)⁴ (stronger membership)'}
+                  {name === 'more_or_less' && 'μ′(x) = √μ(x) (weaker membership)'}
+                  {name === 'somewhat' && 'μ′(x) = μ(x)^0.33 (much weaker membership)'}
                 </div>
                 <div style={styles.modifierExample}>
                   <strong>Example:</strong>

@@ -134,7 +134,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
         try {
             // Update workspace subscription plan via API
             await apiClient.patch(`/api/workspaces/${user?.workspaceId}/subscription`, {
-                plan: planId
+                subscriptionPlan: planId
             });
 
             // Close modal first
