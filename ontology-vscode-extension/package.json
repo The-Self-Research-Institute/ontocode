@@ -172,7 +172,6 @@
     "vsce": "^2.15.0"
   },
   "dependencies": {
-    "-": "^0.0.1",
     "@stomp/stompjs": "^7.0.0",
     "axios": "^1.10.0",
     "crypto-browserify": "^3.12.1",
