@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import axios, { AxiosError } from 'axios';
 import { insertCitationCommand } from './features/citationInsertion';
 import { CitationPickerPanel } from './webview/citationPicker';
+import { sci2CodeService } from './services/sci2CodeService';
 // Use web-compatible collaboration manager in browser environment
 import { CollaborationManager } from './collaboration/CollaborationManager.web';
 import { ICollaborationManager } from './collaboration/types';
@@ -81,7 +82,7 @@ function getUrlsForDeployment(deploymentType: 'self-hosted' | 'cloud'): { gatewa
     if (deploymentType === 'self-hosted') {
         return {
             gateway: process.env.SELF_HOSTED_GATEWAY_URL || 'http://localhost:80',
-            editor: process.env.SELF_HOSTED_EDITOR_URL || 'http://localhost:80',
+            editor: process.env.SELF_HOSTED_EDITOR_URL || 'http://localhost:8083',
             plugin: process.env.SELF_HOSTED_PLUGIN_URL || 'http://localhost:8087'
         };
     } else {
@@ -191,7 +192,11 @@ type WebviewMessage =
   | { type: 'cursorUpdate'; userId: string; userName: string; position: { x: number; y: number }; timestamp: number }
   | { type: 'pendingFileUpload'; fileName: string; fileContent: string; fileSize: number; importMode?: string; partition?: string }
   | { type: 'uploadProgress'; projectId: string; percent: number; loaded: number; total: number; message: string }
-  | { type: 'showSubscriptionPlans' }; // Navigate to subscription plans page
+  | { type: 'showSubscriptionPlans' }
+  // Citation messages
+  | { type: 'zoteroLibraryData'; items: any[] }
+  | { type: 'zoteroLibraryError'; error: string }
+  | { type: 'citationFormatted'; citation: string; metadata: any; projectId: string }; // Navigate to subscription plans page
 
 type ExtensionMessage =
   | { type: 'error'; value: string }
@@ -219,7 +224,10 @@ type ExtensionMessage =
   | { type: 'uploadOntology'; projectId: string; fileName: string; fileContent: string; ownerEmail?: string; skipDuplicateCheck?: boolean; importMode?: string; partition?: string } // Upload ontology from webview (admin flow)
   | { type: 'uploadFileToProject'; projectId: string; fileName: string; fileContent: string; fileSize: number }
   | { type: 'showSubscriptionPlans' } // Request to show subscription plans page
-  | { type: 'setApiBaseUrl'; url: string; deploymentType?: 'self-hosted' | 'cloud' }; // Set API base URL based on deployment type
+  | { type: 'setApiBaseUrl'; url: string; deploymentType?: 'self-hosted' | 'cloud' }
+  | { type: 'requestZoteroLibrary' } // Request Zotero library
+  | { type: 'insertCitation'; citationKey: string; format: 'turtle' | 'rdfxml'; projectId: string } // Insert citation from Zotero
+  | { type: 'insertManualCitation'; citation: any; format: 'turtle' | 'rdfxml'; projectId: string }; // Insert manual citation // Set API base URL based on deployment type
 
 type DuplicatePromptAction = 'open_existing' | 'replace' | 'create_copy' | 'cancel';
 type DuplicatePromptResult = { action: DuplicatePromptAction; copyName?: string };
@@ -669,6 +677,18 @@ class OntoCodePanel {
                         }).catch((err: any) => {
                             console.error('[OntoCode] ❌ Failed to save deployment type:', err);
                         });
+                        break;
+                    case 'requestZoteroLibrary':
+                        // Handle request for Zotero library from webview
+                        await this.handleRequestZoteroLibrary();
+                        break;
+                    case 'insertCitation':
+                        // Handle citation insertion from Zotero
+                        await this.handleInsertCitation(message.citationKey, message.format, message.projectId);
+                        break;
+                    case 'insertManualCitation':
+                        // Handle manual citation insertion
+                        await this.handleInsertManualCitation(message.citation, message.format, message.projectId);
                         break;
                 }
             },
@@ -3084,6 +3104,259 @@ class OntoCodePanel {
             } catch (error) {
                 console.error('[OntoCode] Error disconnecting:', error);
             }
+        }
+    }
+
+    /**
+     * Handle request for Zotero library from webview
+     */
+    private async handleRequestZoteroLibrary(): Promise<void> {
+        try {
+            console.log('[OntoCode] Handling Zotero library request');
+            await sci2CodeService.initialize();
+            const items = await sci2CodeService.getZoteroLibrary();
+            
+            // Send library data back to webview
+            this.postMessage({
+                type: 'zoteroLibraryData',
+                items: items
+            });
+        } catch (error) {
+            console.error('[OntoCode] Failed to load Zotero library:', error);
+            this.postMessage({
+                type: 'zoteroLibraryError',
+                error: error instanceof Error ? error.message : 'Failed to load Zotero library'
+            });
+        }
+    }
+
+    /**
+     * Handle citation insertion from Zotero
+     */
+    private async handleInsertCitation(citationKey: string, format: 'turtle' | 'rdfxml', projectId: string): Promise<void> {
+        try {
+            console.log('[OntoCode] Inserting citation:', citationKey);
+            
+            // Get formatted citation
+            let formattedCitation = await sci2CodeService.formatCitationForOntology(citationKey, format);
+            if (!formattedCitation) {
+                vscode.window.showErrorMessage('Failed to format citation');
+                return;
+            }
+
+            // Fix RDF/XML from Sci2Code if it's missing namespace declarations
+            if (format === 'rdfxml' && formattedCitation.includes('rdf:Description') && !formattedCitation.includes('<rdf:RDF')) {
+                console.log('[OntoCode] Wrapping incomplete RDF/XML with proper namespace declarations');
+                formattedCitation = this.wrapRdfXml(formattedCitation);
+                console.log('[OntoCode] Wrapped RDF/XML preview:', formattedCitation.substring(0, 500));
+            }
+
+            // Get citation metadata
+            const metadata = await sci2CodeService.getCitationMetadata(citationKey);
+            
+            // Insert citation into backend GraphDB
+            let backendSuccess = false;
+            try {
+                console.log('[OntoCode] Calling backend API:', `${GATEWAY_URL}/api/citations/${projectId}/insert`);
+                
+                const response = await axios.post(
+                    `${GATEWAY_URL}/api/citations/${projectId}/insert`,
+                    {
+                        citation: formattedCitation,
+                        format: format,
+                        metadata: metadata
+                    },
+                    {
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    }
+                );
+
+                console.log('[OntoCode] Citation inserted into GraphDB successfully');
+                console.log('[OntoCode] Backend response:', response.data);
+                backendSuccess = true;
+            } catch (backendError) {
+                console.error('[OntoCode] Backend citation insertion failed:', backendError);
+                if (axios.isAxiosError(backendError)) {
+                    const errorMsg = backendError.response?.data?.error || backendError.message;
+                    vscode.window.showErrorMessage(`Failed to insert citation into GraphDB: ${errorMsg}`);
+                } else {
+                    vscode.window.showErrorMessage(`Failed to insert citation into GraphDB: ${backendError}`);
+                }
+                throw backendError; // Prevent false success message
+            }
+            
+            // Send formatted citation back to webview for display
+            this.postMessage({
+                type: 'citationFormatted',
+                citation: formattedCitation,
+                metadata: metadata,
+                projectId: projectId
+            });
+
+            // Update repository files (CITATION.cff, references.bib, CITATIONS.md)
+            if (metadata) {
+                await this.updateRepositoryCitations(metadata);
+            }
+
+            vscode.window.showInformationMessage(`✓ Citation inserted into GraphDB: ${metadata?.title || 'Citation'}`);
+        } catch (error) {
+            console.error('[OntoCode] Failed to insert citation:', error);
+            // Error message already shown in backend catch block
+        }
+    }
+
+    /**
+     * Handle manual citation insertion
+     */
+    private async handleInsertManualCitation(citation: any, format: 'turtle' | 'rdfxml', projectId: string): Promise<void> {
+        try {
+            console.log('[OntoCode] Inserting manual citation:', citation.title);
+            
+            // Format manual citation
+            const formattedCitation = sci2CodeService.formatManualCitation(citation, format);
+            
+            // Insert citation into backend GraphDB
+            let backendSuccess = false;
+            try {
+                console.log('[OntoCode] Calling backend API:', `${GATEWAY_URL}/api/citations/${projectId}/insert`);
+                console.log('[OntoCode] Citation content preview:', formattedCitation.substring(0, 200));
+                
+                const response = await axios.post(
+                    `${GATEWAY_URL}/api/citations/${projectId}/insert`,
+                    {
+                        citation: formattedCitation,
+                        format: format,
+                        metadata: citation
+                    },
+                    {
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    }
+                );
+
+                console.log('[OntoCode] Manual citation inserted into GraphDB successfully');
+                console.log('[OntoCode] Backend response:', response.data);
+                backendSuccess = true;
+            } catch (backendError) {
+                console.error('[OntoCode] Backend citation insertion failed:', backendError);
+                if (axios.isAxiosError(backendError)) {
+                    const errorMsg = backendError.response?.data?.error || backendError.message;
+                    vscode.window.showErrorMessage(`Failed to insert citation into GraphDB: ${errorMsg}`);
+                } else {
+                    vscode.window.showErrorMessage(`Failed to insert citation into GraphDB: ${backendError}`);
+                }
+                throw backendError; // Prevent false success message
+            }
+            
+            // Send to webview for display
+            this.postMessage({
+                type: 'citationFormatted',
+                citation: formattedCitation,
+                metadata: citation,
+                projectId: projectId
+            });
+
+            // Update repository files
+            await this.updateRepositoryCitations(citation);
+
+            vscode.window.showInformationMessage(`✓ Citation inserted into GraphDB: ${citation.title}`);
+        } catch (error) {
+            console.error('[OntoCode] Failed to insert manual citation:', error);
+            // Error message already shown in backend catch block
+        }
+    }
+
+    /**
+     * Wrap incomplete RDF/XML fragments with proper namespace declarations
+     */
+    private wrapRdfXml(rdfFragment: string): string {
+        // Remove XML declaration if present
+        let fragment = rdfFragment.replace(/<\?xml[^?]*\?>\s*/, '');
+        
+        // Build complete RDF/XML document
+        let wrappedRdf = `<?xml version="1.0"?>\n`;
+        wrappedRdf += `<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\n`;
+        wrappedRdf += `         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"\n`;
+        wrappedRdf += `         xmlns:owl="http://www.w3.org/2002/07/owl#"\n`;
+        wrappedRdf += `         xmlns:dc="http://purl.org/dc/elements/1.1/"\n`;
+        wrappedRdf += `         xmlns:dcterms="http://purl.org/dc/terms/"\n`;
+        wrappedRdf += `         xmlns:bibo="http://purl.org/ontology/bibo/"\n`;
+        wrappedRdf += `         xmlns:foaf="http://xmlns.com/foaf/0.1/"\n`;
+        wrappedRdf += `         xmlns:prov="http://www.w3.org/ns/prov#"\n`;
+        wrappedRdf += `         xmlns:xsd="http://www.w3.org/2001/XMLSchema#">\n\n`;
+        wrappedRdf += fragment.trim() + '\n';
+        wrappedRdf += `</rdf:RDF>`;
+        
+        return wrappedRdf;
+    }
+
+    /**
+     * Update repository citation files (CITATION.cff, references.bib, CITATIONS.md)
+     */
+    private async updateRepositoryCitations(citation: any): Promise<void> {
+        try {
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (!workspaceFolder) {
+                console.log('[OntoCode] No workspace folder for citation files');
+                return;
+            }
+
+            // Update references.bib
+            const bibPath = vscode.Uri.joinPath(workspaceFolder.uri, 'references.bib');
+            const bibSnippet = sci2CodeService.convertToBibTeX(citation);
+            
+            let bibContent = '';
+            try {
+                const bibData = await vscode.workspace.fs.readFile(bibPath);
+                bibContent = new TextDecoder('utf-8').decode(bibData);
+            } catch (e) {
+                // File doesn't exist, create new content
+            }
+
+            if (!bibContent.includes(citation.title)) {
+                bibContent += '\n' + bibSnippet + '\n';
+                await vscode.workspace.fs.writeFile(bibPath, new TextEncoder().encode(bibContent));
+                console.log('[OntoCode] Updated references.bib');
+            }
+
+            // Update CITATION.cff
+            const cffPath = vscode.Uri.joinPath(workspaceFolder.uri, 'CITATION.cff');
+            const cffRef = sci2CodeService.convertToCFFReference(citation);
+            
+            let cffContent = '';
+            try {
+                const cffData = await vscode.workspace.fs.readFile(cffPath);
+                cffContent = new TextDecoder('utf-8').decode(cffData);
+            } catch (e) {
+                // File doesn't exist
+            }
+
+            if (cffContent && !cffContent.includes(citation.title)) {
+                if (!cffContent.includes('references:')) {
+                    cffContent += '\nreferences:\n';
+                }
+                
+                const refString = `  - type: ${cffRef.type}\n` +
+                    `    title: "${cffRef.title}"\n` +
+                    `    authors:\n` +
+                    cffRef.authors.map((a: any) => 
+                        `      - family-names: "${a['family-names']}"\n        given-names: "${a['given-names']}"\n`
+                    ).join('') +
+                    `    year: ${cffRef.year}\n` +
+                    (cffRef.doi ? `    doi: "${cffRef.doi}"\n` : '') +
+                    (cffRef.url ? `    url: "${cffRef.url}"\n` : '');
+                
+                cffContent += refString;
+                await vscode.workspace.fs.writeFile(cffPath, new TextEncoder().encode(cffContent));
+                console.log('[OntoCode] Updated CITATION.cff');
+            }
+
+        } catch (error) {
+            console.error('[OntoCode] Error updating repository citations:', error);
+            // Don't fail the whole operation
         }
     }
 }

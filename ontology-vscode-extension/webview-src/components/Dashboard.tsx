@@ -59,6 +59,8 @@ import { CodeHighlighter } from './CodeHighlighter';
 import { PluginMarketplace } from './PluginMarketplace';
 import { pluginLoader } from '../services/pluginLoader';
 import DLQueryPanel from './DLQueryPanel';
+import CitationPickerDialog from './CitationPickerDialog';
+import ManualCitationDialog from './ManualCitationDialog';
 
 type TopLevelClass = TreeNode & { hasChildren: boolean };
 
@@ -2089,6 +2091,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [codeViewFormat, setCodeViewFormat] = useState<'turtle' | 'rdfxml' | 'ntriples' | 'owlxml' | 'manchester' | 'functional'>('turtle');
   const [codeViewContent, setCodeViewContent] = useState<string>('');
   const [codeViewLoading, setCodeViewLoading] = useState(false);
+  const [showCitationPicker, setShowCitationPicker] = useState(false);
+  const [showManualCitationDialog, setShowManualCitationDialog] = useState(false);
 
   // Reasoner state management
   const [selectedReasoner, setSelectedReasoner] = useState<string>('HermiT');
@@ -4910,6 +4914,25 @@ const Dashboard: React.FC<DashboardProps> = ({
           console.log('[Dashboard] 📊 Loading status update:', message.message, `(${message.attempt}/${message.maxAttempts})`);
           setLoadingStatusMessage(message.message);
           break;
+
+        case "citationFormatted":
+          // Handle formatted citation from extension
+          console.log('[Dashboard] 📚 Received formatted citation');
+          if (message.citation && message.projectId === projectId) {
+            // Append citation to code view content
+            setCodeViewContent(prev => prev + '\n\n' + message.citation);
+            
+            // Show success notification
+            if (message.metadata?.title) {
+              notificationService.success('Citation Inserted', `Added: ${message.metadata.title}`);
+            }
+          }
+          break;
+
+        case "zoteroLibraryData":
+        case "zoteroLibraryError":
+          // These will be handled by CitationPickerDialog component
+          break;
       }
     };
 
@@ -7616,6 +7639,68 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
   }, [projectId]);
 
+  // Citation insertion handlers
+  const handleCitationSelection = useCallback((citation: any) => {
+    if (citation === 'manual') {
+      setShowCitationPicker(false);
+      setShowManualCitationDialog(true);
+      return;
+    }
+
+    // Request formatted citation from extension
+    if (window.vscode) {
+      window.vscode.postMessage({
+        type: 'insertCitation',
+        citationKey: citation.key,
+        format: codeViewFormat === 'turtle' ? 'turtle' : 'rdfxml',
+        projectId: projectId
+      });
+    }
+
+    setShowCitationPicker(false);
+    // Refresh code view after insertion
+    setTimeout(() => {
+      fetchCodeViewContent(codeViewFormat);
+    }, 1000);
+  }, [projectId, codeViewFormat, fetchCodeViewContent]);
+
+  const handleManualCitationSubmit = useCallback((citationData: any) => {
+    // Format manual citation data to match CitationItem interface
+    const manualCitation = {
+      key: `manual_${Date.now()}`,
+      title: citationData.title,
+      creators: citationData.authors.split(',').map((author: string) => {
+        const parts = author.trim().split(' ');
+        return {
+          firstName: parts.slice(0, -1).join(' '),
+          lastName: parts[parts.length - 1] || '',
+          creatorType: 'author'
+        };
+      }),
+      date: citationData.year,
+      doi: citationData.doi,
+      url: citationData.url,
+      itemType: citationData.itemType,
+      publicationTitle: citationData.publicationTitle
+    };
+
+    // Request formatted citation from extension
+    if (window.vscode) {
+      window.vscode.postMessage({
+        type: 'insertManualCitation',
+        citation: manualCitation,
+        format: codeViewFormat === 'turtle' ? 'turtle' : 'rdfxml',
+        projectId: projectId
+      });
+    }
+
+    setShowManualCitationDialog(false);
+    // Refresh code view after insertion
+    setTimeout(() => {
+      fetchCodeViewContent(codeViewFormat);
+    }, 1000);
+  }, [projectId, codeViewFormat, fetchCodeViewContent]);
+
   // Cleanup sync service when switching projects
   useEffect(() => {
     return () => {
@@ -7764,8 +7849,16 @@ const Dashboard: React.FC<DashboardProps> = ({
                     Functional
                   </button>
                   <button
+                    onClick={() => setShowCitationPicker(true)}
+                    className="ml-auto px-3 py-1 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 flex items-center gap-1"
+                    title="Insert citation from Zotero or manually"
+                  >
+                    <BookOpen size={16} />
+                    Insert Citation
+                  </button>
+                  <button
                     onClick={() => fetchCodeViewContent(codeViewFormat)}
-                    className="ml-auto px-3 py-1 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                    className="px-3 py-1 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
                     disabled={codeViewLoading}
                   >
                     {codeViewLoading ? 'Refreshing...' : 'Refresh'}
@@ -10662,6 +10755,21 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       {/* Collaborative Cursors - Show cursors of all active users */}
       <CollaborativeCursors cursors={collaboratorCursors} />
+
+      {/* Citation Picker Dialog */}
+      <CitationPickerDialog
+        isOpen={showCitationPicker}
+        onClose={() => setShowCitationPicker(false)}
+        onSelectCitation={handleCitationSelection}
+        format={codeViewFormat === 'turtle' ? 'turtle' : 'rdfxml'}
+      />
+
+      {/* Manual Citation Dialog */}
+      <ManualCitationDialog
+        isOpen={showManualCitationDialog}
+        onClose={() => setShowManualCitationDialog(false)}
+        onSubmit={handleManualCitationSubmit}
+      />
 
     </>
   );
