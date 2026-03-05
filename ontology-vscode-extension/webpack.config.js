@@ -34,7 +34,8 @@ module.exports = {
         '_stream_writable': 'readable-stream/lib/_stream_writable',
         '_stream_duplex': 'readable-stream/lib/_stream_duplex',
         '_stream_transform': 'readable-stream/lib/_stream_transform',
-        '_stream_passthrough': 'readable-stream/lib/_stream_passthrough'
+        '_stream_passthrough': 'readable-stream/lib/_stream_passthrough',
+        'axios': 'axios/dist/browser/axios.cjs'
     },
     fallback: {
         "path": require.resolve("path-browserify"),
@@ -48,6 +49,12 @@ module.exports = {
         "url": require.resolve("url/"),
         "http": require.resolve("stream-http"),
         "https": require.resolve("https-browserify"),
+        "http2": false,
+        "net": false,
+        "tls": false,
+        "dns": false,
+        "child_process": false,
+        "dgram": false,
         "process": require.resolve("process/browser"),
         "tty": false,
         "zlib": require.resolve("./src/zlib-shim.js"),
