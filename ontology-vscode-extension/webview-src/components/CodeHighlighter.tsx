@@ -1,9 +1,14 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
-import { Search, X, ChevronDown, ChevronUp, WrapText } from 'lucide-react';
+import { Search, X, ChevronDown, ChevronUp, WrapText, Plus, Trash2 } from 'lucide-react';
 
 interface CodeHighlighterProps {
   content: string;
   format: 'turtle' | 'rdfxml' | 'ntriples' | 'owlxml' | 'manchester' | 'functional';
+  citationInsertionMode?: boolean;
+  citationRemovalMode?: boolean;
+  pendingCitation?: any;
+  onInsertCitationAt?: (lineNumber: number) => void;
+  onRemoveCitationAt?: (lineNumber: number) => void;
 }
 
 const MAX_LINES_INITIAL = 500; // Show first 500 lines initially
@@ -14,7 +19,15 @@ const MAX_SEARCH_LINES = 10000; // Limit search to prevent hanging on huge files
 const SEARCH_CHUNK_SIZE = 100; // Process 100 lines per chunk for search
 const SEARCH_CHUNK_DELAY = 8; // 8ms delay between search chunks
 
-export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({ content, format }) => {
+export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({ 
+  content, 
+  format, 
+  citationInsertionMode = false,
+  citationRemovalMode = false,
+  pendingCitation,
+  onInsertCitationAt,
+  onRemoveCitationAt
+}) => {
   const [displayedLines, setDisplayedLines] = useState(MAX_LINES_INITIAL);
   const [isProcessing, setIsProcessing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -156,6 +169,96 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({ content, forma
     }
   }, [currentMatchIndex, searchResults, displayedLines, totalLines]);
 
+  // Auto-show search panel when in citation insertion mode
+  useEffect(() => {
+    if (citationInsertionMode || citationRemovalMode) {
+      setShowSearchPanel(true);
+    }
+  }, [citationInsertionMode, citationRemovalMode]);
+
+  // Helper function to detect if a line is part of a citation block
+  const detectCitationLine = (line: string, format: string): boolean => {
+    if (!line) return false;
+    
+    // Citation patterns for different formats
+    const citationPatterns = [
+      // Common citation markers - MOST IMPORTANT
+      /urn:citation:/i,
+      /Zotero Citation/i,
+      /###\s+Zotero Citation/i,
+      /#\s+Zotero Citation/i,
+      /<!--\s*Zotero Citation/i,
+      
+      // Turtle/N-Triples citation patterns
+      /<urn:citation:[^>]+>/,
+      /dc:title\s+"/,
+      /dc:creator\s+"/,
+      /dc:date\s+"/,
+      /dc:source\s+"/,
+      /dc:publisher\s+"/,
+      /dc:description\s+"/,
+      /dc:identifier\s+"/,
+      /dc:language\s+"/,
+      /dc:rights\s+"/,
+      /dc:type\s+"/,
+      /dc:subject\s+"/,
+      /bibo:doi\s+"/,
+      /bibo:isbn\s+"/,
+      /bibo:issn\s+"/,
+      /bibo:volume\s+"/,
+      /bibo:issue\s+"/,
+      /bibo:pages\s+"/,
+      /foaf:homepage\s+</,
+      /prov:Entity/,
+      /owl:NamedIndividual/,
+      /rdf:type/,
+      
+      // RDF/XML citation patterns
+      /rdf:about="urn:citation:/,
+      /<dc:title>/,
+      /<dc:creator>/,
+      /<dc:date[^>]*>/,
+      /<dc:source>/,
+      /<dc:publisher>/,
+      /<dc:description>/,
+      /<dc:identifier>/,
+      /<bibo:doi/,
+      /<bibo:isbn/,
+      /<bibo:issn/,
+      /<foaf:homepage/,
+      /<\/owl:NamedIndividual>/,
+      
+      // OWL/XML citation patterns
+      /IRI="urn:citation:/,
+      /NamedIndividual IRI="urn:citation:/,
+      /<AnnotationAssertion>/,
+      /<\/AnnotationAssertion>/,
+      /<ClassAssertion>/,
+      /<\/ClassAssertion>/,
+      /<Declaration>/,
+      /<\/Declaration>/,
+      /prov#Entity/,
+      
+      // Manchester syntax patterns
+      /Individual:\s*<urn:citation:/,
+      /Types:\s*prov:Entity/,
+      /Annotations:/,
+      
+      // Functional syntax patterns
+      /Declaration\(NamedIndividual\(<urn:citation:/,
+      /ClassAssertion\(<[^>]*prov#Entity/,
+      /AnnotationAssertion\(/,
+      
+      // General annotation patterns commonly used with citations
+      /http:\/\/purl\.org\/dc\/elements\/1\.1\//,
+      /http:\/\/purl\.org\/ontology\/bibo\//,
+      /http:\/\/www\.w3\.org\/ns\/prov#/,
+      /http:\/\/xmlns\.com\/foaf\/0\.1\//,
+    ];
+    
+    return citationPatterns.some(pattern => pattern.test(line));
+  };
+
   const highlightedContent = useMemo(() => {
     if (!content) return '';
 
@@ -220,19 +323,39 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({ content, forma
       }
 
       const isLineSelected = selectedLines.has(index);
-      const lineStyle = isLineSelected ? 'background-color:#264f78' : '';
-      const lineNumberColor = isLineSelected ? '#4a9eff' : '#858585';
+      
+      // Detect if this line is part of a citation block
+      const isCitationLine = detectCitationLine(line, format);
+      
+      let lineStyle = isLineSelected ? 'background-color:#264f78' : '';
+      // Highlight citation lines in removal mode
+      if (citationRemovalMode && isCitationLine) {
+        lineStyle = 'background-color:#7f1d1d'; // Dark red for citation lines
+      }
+      const lineNumberColor = isLineSelected ? '#4a9eff' : (citationRemovalMode && isCitationLine ? '#ef4444' : '#858585');
       const lineNumberWeight = isLineSelected ? 'bold' : 'normal';
+      
+      // Add hover highlight when in citation insertion or removal mode
+      const citationModeCursor = citationInsertionMode || citationRemovalMode ? 'cursor:pointer;' : '';
+      const citationModeHoverStyle = citationInsertionMode || citationRemovalMode ? ';transition:background-color 0.2s' : '';
+      
+      // Build title text based on mode
+      let lineNumberTitle = 'Click to select/deselect line';
+      if (citationInsertionMode) {
+        lineNumberTitle = 'Click to insert citation here';
+      } else if (citationRemovalMode && isCitationLine) {
+        lineNumberTitle = 'Click to remove this citation';
+      }
 
       numberedLines[index] =
-        `<div class="code-line" data-line="${index}" style="${lineStyle};display:flex;min-height:20px;line-height:20px;padding:0;margin:0">` +
-        `<span style="color:${lineNumberColor};font-weight:${lineNumberWeight};user-select:none;width:50px;min-width:50px;text-align:right;padding-right:12px;flex-shrink:0;cursor:pointer" class="line-number" data-line-idx="${index}" title="Click to select/deselect line">${lineNumber}</span>` +
-        `<span style="color:#d4d4d4;white-space:${wordWrap ? 'pre-wrap' : 'pre'};overflow-wrap:${wordWrap ? 'anywhere' : 'normal'};word-break:${wordWrap ? 'break-word' : 'normal'};flex:1;min-width:0;user-select:text;cursor:text" class="line-content">${processedLine}</span>` +
+        `<div class="code-line${isCitationLine ? ' citation-line' : ''}" data-line="${index}" data-is-citation="${isCitationLine}" style="${lineStyle};display:flex;min-height:20px;line-height:20px;padding:0;margin:0${citationModeHoverStyle}">` +
+        `<span style="color:${lineNumberColor};font-weight:${lineNumberWeight};user-select:none;width:50px;min-width:50px;text-align:right;padding-right:12px;flex-shrink:0;cursor:pointer" class="line-number" data-line-idx="${index}" title="${lineNumberTitle}">${lineNumber}</span>` +
+        `<span style="color:#d4d4d4;white-space:${wordWrap ? 'pre-wrap' : 'pre'};overflow-wrap:${wordWrap ? 'anywhere' : 'normal'};word-break:${wordWrap ? 'break-word' : 'normal'};flex:1;min-width:0;user-select:text;${citationModeCursor}cursor:${citationInsertionMode || citationRemovalMode ? 'pointer' : 'text'}" class="line-content" data-line-idx="${index}">${processedLine}</span>` +
         `</div>`;
     }
 
     return numberedLines.join('');
-  }, [content, format, displayedLines, debouncedSearchQuery, caseSensitive, selectedLines, wordWrap]);
+  }, [content, format, displayedLines, debouncedSearchQuery, caseSensitive, selectedLines, wordWrap, citationInsertionMode, citationRemovalMode]);
 
   const loadMore = () => {
     if (isProcessing || displayedLines >= totalLines) return;
@@ -369,6 +492,60 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({ content, forma
 
     const handleMouseDown = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
+      
+      // Handle citation insertion mode click on code content
+      if (citationInsertionMode && target.classList.contains('line-content')) {
+        e.preventDefault();
+        const lineIndexAttr = target.getAttribute('data-line-idx');
+        if (lineIndexAttr !== null) {
+          const lineIndex = parseInt(lineIndexAttr);
+          console.log('[CodeHighlighter] Citation insertion click detected at line index:', lineIndex);
+          console.log('[CodeHighlighter] Displayed line element text:', target.textContent?.substring(0, 80) || '(empty)');
+          onInsertCitationAt?.(lineIndex);
+          return;
+        }
+      }
+      
+      // Handle citation removal mode click on code content
+      if (citationRemovalMode && target.classList.contains('line-content')) {
+        e.preventDefault();
+        const lineIndexAttr = target.getAttribute('data-line-idx');
+        if (lineIndexAttr !== null) {
+          const lineIndex = parseInt(lineIndexAttr);
+          // Check if the parent element has the citation-line class
+          const parentDiv = target.closest('.code-line');
+          const isCitationLine = parentDiv?.getAttribute('data-is-citation') === 'true';
+          
+          // Also check nearby lines for citation content (within 5 lines)
+          // This allows clicking on lines within a citation block that may not match individual patterns
+          let isNearCitation = isCitationLine;
+          if (!isNearCitation) {
+            const allLines = document.querySelectorAll('.code-line');
+            // Find lines by their data-line attribute which matches the actual line number
+            for (let i = 0; i < allLines.length; i++) {
+              const nearbyLine = allLines[i];
+              const nearbyLineNum = parseInt(nearbyLine?.getAttribute('data-line') || '-1');
+              // Check if this line is within 5 lines of clicked line and is a citation line
+              if (nearbyLineNum >= 0 && 
+                  Math.abs(nearbyLineNum - lineIndex) <= 5 && 
+                  nearbyLine?.getAttribute('data-is-citation') === 'true') {
+                isNearCitation = true;
+                break;
+              }
+            }
+          }
+          
+          // Always allow removal attempt - let the Dashboard handle whether it can find the citation
+          console.log('[CodeHighlighter] Citation removal click detected at line index:', lineIndex);
+          console.log('[CodeHighlighter] Is citation line:', isCitationLine, ', Is near citation:', isNearCitation);
+          console.log('[CodeHighlighter] Line content:', target.textContent?.substring(0, 80) || '(empty)');
+          
+          // Call the removal handler - it will search for citation URI in nearby lines
+          onRemoveCitationAt?.(lineIndex);
+          return;
+        }
+      }
+      
       if (target.classList.contains('line-number')) {
         e.preventDefault();
         const lineIndexAttr = target.getAttribute('data-line-idx');
@@ -444,7 +621,7 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({ content, forma
       codeElement.removeEventListener('mousedown', handleMouseDown);
       codeElement.removeEventListener('mousemove', handleMouseMove);
     };
-  }, []);
+  }, [citationInsertionMode, citationRemovalMode, onInsertCitationAt, onRemoveCitationAt]);
 
   const hasMore = displayedLines < totalLines;
 
@@ -612,7 +789,11 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({ content, forma
         <div className="bg-gray-800 border-b border-gray-700 max-h-64 overflow-auto">
           <div className="p-2">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold text-gray-300">Search Results</span>
+              <span className="text-xs font-semibold text-gray-300">
+                {citationInsertionMode ? '📍 Search Results - Click Line to Insert' : 
+                 citationRemovalMode ? '🗑️ Search Results - Click Citation Line to Remove' : 
+                 'Search Results'}
+              </span>
               <button
                 onClick={() => setShowSearchPanel(false)}
                 className="text-gray-400 hover:text-white"

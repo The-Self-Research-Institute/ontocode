@@ -35,8 +35,8 @@ public class EmailService {
      * Send invitation email to the invitee
      */
     public void sendInvitationEmail(self.research.ontology.auth.model.Invitation invitation) {
-        // Generate both web and VS Code extension links
-        String webInvitationLink = baseUrl + "/invite?token=" + invitation.getInvitationToken();
+        // Generate both VS Code extension and webview dev server links
+        String webviewLink = "http://localhost:3000/?token=" + invitation.getInvitationToken();
         // Use correct extension identifier: publisher.extensionName
         String vscodeInvitationLink = "vscode://self.ontocode-extension/invite?token=" + invitation.getInvitationToken();
         
@@ -118,7 +118,7 @@ public class EmailService {
                         <div class="options">
                             <a href="%s" class="button" style="color: white; text-decoration: none;">🚀 Open in VS Code</a>
                             <br>
-                            <a href="%s" class="button button-secondary" style="color: white; text-decoration: none;">🌐 Open in Browser</a>
+                            <a href="%s" class="button button-secondary" style="color: white; text-decoration: none;">🌐 Open in Webview</a>
                         </div>
                         
                         <div style="background-color: #f9fafb; padding: 15px; border-radius: 6px; margin: 20px 0;">
@@ -141,15 +141,15 @@ public class EmailService {
             invitation.getWorkspaceName(),
             invitation.getRole(),
             vscodeInvitationLink,
-            webInvitationLink,
-            webInvitationLink,
+            webviewLink,
+            webviewLink,
             vscodeInvitationLink,
             invitation.getExpiresAt().toString()
         );
 
         try {
             log.info("📧 Preparing to send invitation email to: {}", invitation.getInviteeEmail());
-            log.info("📧 Web invitation link: {}", webInvitationLink);
+            log.info("📧 Webview link: {}", webviewLink);
             log.info("📧 VS Code invitation link: {}", vscodeInvitationLink);
             log.info("📧 From email: {}", fromEmail);
             

@@ -61,6 +61,7 @@ import { pluginLoader } from '../services/pluginLoader';
 import DLQueryPanel from './DLQueryPanel';
 import CitationPickerDialog from './CitationPickerDialog';
 import ManualCitationDialog from './ManualCitationDialog';
+import ConfirmDialog from './ConfirmDialog';
 
 type TopLevelClass = TreeNode & { hasChildren: boolean };
 
@@ -2088,11 +2089,17 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [installedPlugins, setInstalledPlugins] = useState<Set<string>>(new Set());
   const [pluginLoadingStates, setPluginLoadingStates] = useState<Record<string, { loading: boolean; error: string | null }>>({});
 
-  const [codeViewFormat, setCodeViewFormat] = useState<'turtle' | 'rdfxml' | 'ntriples' | 'owlxml' | 'manchester' | 'functional'>('turtle');
+  const [codeViewFormat, setCodeViewFormat] = useState<'rdfxml' | 'turtle' | 'ntriples' | 'owlxml' | 'manchester' | 'functional'>('rdfxml');
   const [codeViewContent, setCodeViewContent] = useState<string>('');
   const [codeViewLoading, setCodeViewLoading] = useState(false);
+  const [hasLocalCodeViewChanges, setHasLocalCodeViewChanges] = useState(false); // Track if user has made local modifications
+  const [citationJustInserted, setCitationJustInserted] = useState(false); // Track recent citation insertion for format refresh
   const [showCitationPicker, setShowCitationPicker] = useState(false);
   const [showManualCitationDialog, setShowManualCitationDialog] = useState(false);
+  const [pendingCitation, setPendingCitation] = useState<any | null>(null);
+  const [citationInsertionMode, setCitationInsertionMode] = useState(false);
+  const [citationRemovalMode, setCitationRemovalMode] = useState(false);
+  const [selectedInsertionLine, setSelectedInsertionLine] = useState<number | null>(null);
 
   // Reasoner state management
   const [selectedReasoner, setSelectedReasoner] = useState<string>('HermiT');
@@ -7619,17 +7626,41 @@ const Dashboard: React.FC<DashboardProps> = ({
   // #endregion
 
   // #region Render Methods
-  const fetchCodeViewContent = useCallback(async (format: 'turtle' | 'rdfxml' | 'ntriples' | 'owlxml' | 'manchester' | 'functional') => {
+  const fetchCodeViewContent = useCallback(async (format: 'rdfxml' | 'turtle' | 'ntriples' | 'owlxml' | 'manchester' | 'functional', forceRefresh: boolean = false, forceReload: boolean = false) => {
     if (!projectId) return;
+    
+    // If clicking same format without force refresh/reload, just return (prevents unnecessary reloads)
+    if (format === codeViewFormat && !forceRefresh && !forceReload && codeViewContent) {
+      console.log('[Dashboard] Same format clicked, content already loaded');
+      return;
+    }
+    
+    // If force refresh, clear the cache so we get fresh content from GraphDB
+    if (forceRefresh) {
+      console.log('[Dashboard] Force refresh - clearing code view cache');
+      try {
+        await apiClient.delete(`/api/ontology/${projectId}/code-view-cache`);
+        console.log('[Dashboard] Code view cache cleared');
+      } catch (cacheError) {
+        console.warn('[Dashboard] Failed to clear code view cache:', cacheError);
+      }
+    }
+    
     setCodeViewLoading(true);
     try {
-      const response = await apiClient.get<{ success: boolean; content: string; format: string }>(
+      const response = await apiClient.get<{ success: boolean; content: string; format: string; cached?: boolean }>(
         `/api/ontology/${projectId}/content`,
-        { format }
+        { format, forceRefresh: forceRefresh ? 'true' : 'false' }
       );
       if (response.success) {
         setCodeViewContent(response.content);
         setCodeViewFormat(format);
+        setHasLocalCodeViewChanges(false);
+        if (response.cached) {
+          console.log('[Dashboard] Content loaded from cache (line positions preserved)');
+        } else {
+          console.log('[Dashboard] Content loaded fresh from GraphDB');
+        }
       }
     } catch (error) {
       console.error('Failed to fetch code view content:', error);
@@ -7637,7 +7668,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     } finally {
       setCodeViewLoading(false);
     }
-  }, [projectId]);
+  }, [projectId, codeViewFormat, codeViewContent]);
 
   // Citation insertion handlers
   const handleCitationSelection = useCallback((citation: any) => {
@@ -7647,22 +7678,11 @@ const Dashboard: React.FC<DashboardProps> = ({
       return;
     }
 
-    // Request formatted citation from extension
-    if (window.vscode) {
-      window.vscode.postMessage({
-        type: 'insertCitation',
-        citationKey: citation.key,
-        format: codeViewFormat === 'turtle' ? 'turtle' : 'rdfxml',
-        projectId: projectId
-      });
-    }
-
+    // Set up for search-based insertion
+    setPendingCitation(citation);
+    setCitationInsertionMode(true);
     setShowCitationPicker(false);
-    // Refresh code view after insertion
-    setTimeout(() => {
-      fetchCodeViewContent(codeViewFormat);
-    }, 1000);
-  }, [projectId, codeViewFormat, fetchCodeViewContent]);
+  }, []);
 
   const handleManualCitationSubmit = useCallback((citationData: any) => {
     // Format manual citation data to match CitationItem interface
@@ -7700,6 +7720,1299 @@ const Dashboard: React.FC<DashboardProps> = ({
       fetchCodeViewContent(codeViewFormat);
     }, 1000);
   }, [projectId, codeViewFormat, fetchCodeViewContent]);
+
+  // Handle insertion at selected location in code view
+  const handleInsertCitationAtLocation = useCallback(async (lineNumber: number) => {
+    if (!pendingCitation || !codeViewContent) {
+      console.error('[Dashboard] Missing pendingCitation or codeViewContent');
+      return;
+    }
+
+    let insertAtIndex = 0; // Declare at function scope
+    
+    try {
+      // Extract citation data - Zotero citations have data nested in .data property
+      const citationData = pendingCitation.data || pendingCitation;
+      const citationKey = pendingCitation.key || `citation_${Date.now()}`;
+      
+      // Split code into lines
+      const lines = codeViewContent.split('\n');
+      
+      console.log('[Dashboard] Citation insertion triggered at line:', lineNumber);
+      console.log('[Dashboard] Total lines in content:', lines.length);
+      console.log('[Dashboard] Pending citation:', pendingCitation);
+      console.log('[Dashboard] Citation data extracted:', citationData);
+      
+      // Ensure line number is within bounds (lineNumber is 0-based)
+      insertAtIndex = Math.max(0, Math.min(lineNumber, lines.length));
+      console.log('[Dashboard] Citation will be inserted at index:', insertAtIndex);
+      
+      // Extract entity name/IRI from the clicked line for reference in other formats
+      // Supports ALL OWL constructs: classes, properties, individuals, axioms, restrictions, annotations
+      const clickedLine = lines[Math.min(lineNumber, lines.length - 1)] || '';
+      let referencedEntity = '';
+      
+      // ========== COMPREHENSIVE OWL ELEMENT EXTRACTION ==========
+      // 1. Full URI patterns (all formats)
+      const fullUriMatch = clickedLine.match(/<([^>]+)>/);
+      
+      // 2. Prefixed name patterns (Turtle, Manchester)
+      const prefixedNameMatch = clickedLine.match(/(?:^|\s|,)([a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*)/);
+      
+      // 3. RDF/XML patterns
+      const rdfAboutMatch = clickedLine.match(/rdf:about="([^"]+)"/);
+      const rdfIdMatch = clickedLine.match(/rdf:ID="([^"]+)"/);
+      const rdfResourceMatch = clickedLine.match(/rdf:resource="([^"]+)"/);
+      
+      // 4. OWL/XML patterns
+      const owlXmlIriMatch = clickedLine.match(/\bIRI="([^"]+)"/);
+      const owlXmlAbbrevMatch = clickedLine.match(/abbreviatedIRI="([^"]+)"/);
+      
+      // 5. Manchester syntax patterns (Class:, Individual:, ObjectProperty:, etc.)
+      const manchesterDeclMatch = clickedLine.match(/(?:Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):\s*([<:][^\s]+|[a-zA-Z_][a-zA-Z0-9_:-]*)/);
+      
+      // 6. Functional syntax patterns - extract from Declaration, ClassAssertion, etc.
+      const functionalEntityMatch = clickedLine.match(/(?:Declaration|ClassAssertion|ObjectPropertyAssertion|DataPropertyAssertion|AnnotationAssertion|SubClassOf|EquivalentClasses|DisjointClasses|SubObjectPropertyOf|EquivalentObjectProperties|SubDataPropertyOf|ObjectPropertyDomain|ObjectPropertyRange|DataPropertyDomain|DataPropertyRange|SameIndividual|DifferentIndividuals)\s*\(\s*(?:[^(]*\()?\s*([<][^>]+[>]|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*)/);
+      
+      // 7. OWL axiom patterns in Turtle (SubClassOf, EquivalentClass, etc.)
+      const owlAxiomMatch = clickedLine.match(/(?:owl:equivalentClass|owl:disjointWith|rdfs:subClassOf|rdfs:subPropertyOf|owl:inverseOf|owl:propertyChainAxiom|owl:hasKey)\s+([<][^>]+[>]|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*)/);
+      
+      // 8. Property restriction patterns
+      const restrictionMatch = clickedLine.match(/(?:owl:onProperty|owl:someValuesFrom|owl:allValuesFrom|owl:hasValue|owl:onClass|owl:onDataRange|owl:minCardinality|owl:maxCardinality|owl:cardinality|owl:minQualifiedCardinality|owl:maxQualifiedCardinality|owl:qualifiedCardinality)\s+([<][^>]+[>]|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*|\d+)/);
+      
+      // 9. Annotation patterns
+      const annotationMatch = clickedLine.match(/(?:rdfs:label|rdfs:comment|rdfs:seeAlso|rdfs:isDefinedBy|owl:versionInfo|dc:title|dc:description|dc:creator|skos:prefLabel|skos:altLabel|skos:definition|skos:example|skos:note)\s+(?:"[^"]*"|([<][^>]+[>]|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*))/);
+      
+      // 10. SWRL rule patterns
+      const swrlMatch = clickedLine.match(/(?:swrl:body|swrl:head|swrl:argument1|swrl:argument2|swrl:classPredicate|swrl:propertyPredicate)\s+([<][^>]+[>]|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*)/);
+      
+      // 11. RDF/XML OWL element tags
+      const xmlOwlElementMatch = clickedLine.match(/<owl:(Class|ObjectProperty|DatatypeProperty|AnnotationProperty|NamedIndividual|Restriction|AllDifferent|AllDisjointClasses|AllDisjointProperties|NegativePropertyAssertion|Datatype|FunctionalProperty|InverseFunctionalProperty|TransitiveProperty|SymmetricProperty|AsymmetricProperty|ReflexiveProperty|IrreflexiveProperty)/);
+      
+      // 12. Import declaration
+      const importMatch = clickedLine.match(/(?:owl:imports|Import)\s*\(?\s*([<][^>]+[>]|"[^"]+"|[a-zA-Z_][a-zA-Z0-9_:-]*)/);
+      
+      // 13. Datatype patterns
+      const datatypeMatch = clickedLine.match(/\^\^([<][^>]+[>]|xsd:[a-zA-Z]+|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*)/);
+      
+      // 14. N-Triples subject pattern
+      const ntriplesSubjectMatch = clickedLine.match(/^([<][^>]+[>])\s+[<]/);
+      
+      // Priority order for entity extraction (most specific to least specific)
+      if (manchesterDeclMatch) {
+        referencedEntity = manchesterDeclMatch[1].replace(/^[<:]/, '').replace(/>$/, '');
+      } else if (functionalEntityMatch) {
+        referencedEntity = functionalEntityMatch[1].replace(/^</, '').replace(/>$/, '');
+      } else if (rdfAboutMatch) {
+        referencedEntity = rdfAboutMatch[1];
+      } else if (rdfIdMatch) {
+        referencedEntity = rdfIdMatch[1];
+      } else if (owlXmlIriMatch) {
+        referencedEntity = owlXmlIriMatch[1];
+      } else if (owlXmlAbbrevMatch) {
+        referencedEntity = owlXmlAbbrevMatch[1];
+      } else if (owlAxiomMatch) {
+        referencedEntity = owlAxiomMatch[1].replace(/^</, '').replace(/>$/, '');
+      } else if (restrictionMatch && !restrictionMatch[1].match(/^\d+$/)) {
+        referencedEntity = restrictionMatch[1].replace(/^</, '').replace(/>$/, '');
+      } else if (annotationMatch && annotationMatch[1]) {
+        referencedEntity = annotationMatch[1].replace(/^</, '').replace(/>$/, '');
+      } else if (swrlMatch) {
+        referencedEntity = swrlMatch[1].replace(/^</, '').replace(/>$/, '');
+      } else if (importMatch) {
+        referencedEntity = importMatch[1].replace(/^[<"]/, '').replace(/[>"]$/, '');
+      } else if (rdfResourceMatch) {
+        referencedEntity = rdfResourceMatch[1];
+      } else if (ntriplesSubjectMatch) {
+        referencedEntity = ntriplesSubjectMatch[1].replace(/^</, '').replace(/>$/, '');
+      } else if (prefixedNameMatch) {
+        referencedEntity = prefixedNameMatch[1];
+      } else if (fullUriMatch) {
+        referencedEntity = fullUriMatch[1];
+      } else if (xmlOwlElementMatch) {
+        // For OWL element tags, look for rdf:about or rdf:ID on same or nearby lines
+        const nearbyLines = lines.slice(Math.max(0, lineNumber - 2), Math.min(lines.length, lineNumber + 3)).join(' ');
+        const nearbyAbout = nearbyLines.match(/rdf:about="([^"]+)"/);
+        const nearbyId = nearbyLines.match(/rdf:ID="([^"]+)"/);
+        if (nearbyAbout) {
+          referencedEntity = nearbyAbout[1];
+        } else if (nearbyId) {
+          referencedEntity = nearbyId[1];
+        }
+      }
+      
+      console.log('[Dashboard] Referenced entity from clicked line:', referencedEntity || '(none detected)');
+      console.log('[Dashboard] Clicked line content:', clickedLine.substring(0, 100) + (clickedLine.length > 100 ? '...' : ''));
+      
+      // Helper function to escape Turtle strings
+      const escapeTurtle = (str: string): string => {
+        if (!str) return '';
+        return str
+          .replace(/\\/g, '\\\\')
+          .replace(/"/g, '\\"')
+          .replace(/\n/g, '\\n')
+          .replace(/\r/g, '\\r')
+          .replace(/\t/g, '\\t');
+      };
+      
+      // Helper function to escape XML strings
+      const escapeXml = (str: string): string => {
+        if (!str) return '';
+        return str
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&apos;');
+      };
+      
+      // Extract all citation fields
+      const title = citationData.title || 'Untitled';
+      const authors = citationData.creators?.map((c: any) => 
+        `${c.firstName || ''} ${c.lastName || ''}`.trim()
+      ).join(', ') || 'Unknown';
+      const year = citationData.date ? (citationData.date.match(/\d{4}/)?.[0] || '') : '';
+      const doi = citationData.DOI || citationData.doi || '';
+      const url = citationData.url || '';
+      const abstractNote = citationData.abstractNote || '';
+      const publicationTitle = citationData.publicationTitle || '';
+      const volume = citationData.volume || '';
+      const issue = citationData.issue || '';
+      const pages = citationData.pages || '';
+      const publisher = citationData.publisher || '';
+      const itemType = citationData.itemType || 'document';
+      const tags = citationData.tags?.map((t: any) => t.tag || t).filter(Boolean) || [];
+      const isbn = citationData.ISBN || '';
+      const issn = citationData.ISSN || '';
+      const language = citationData.language || '';
+      const rights = citationData.rights || '';
+      
+      // Generate complete citation block
+      const citationLines: string[] = [];
+      
+      if (codeViewFormat === 'turtle' || codeViewFormat === 'ntriples') {
+        // Generate comprehensive Turtle format with all Zotero details
+        citationLines.push('');
+        citationLines.push('###  Zotero Citation: ' + escapeTurtle(title));
+        citationLines.push(`<urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}> rdf:type owl:NamedIndividual ,`);
+        citationLines.push('         prov:Entity ;');
+        citationLines.push(`    dc:title "${escapeTurtle(title)}" ;`);
+        citationLines.push(`    dc:creator "${escapeTurtle(authors)}" ;`);
+        
+        if (year) {
+          citationLines.push(`    dc:date "${year}"^^xsd:gYear ;`);
+        }
+        
+        if (publicationTitle) {
+          citationLines.push(`    dc:source "${escapeTurtle(publicationTitle)}" ;`);
+        }
+        
+        if (publisher) {
+          citationLines.push(`    dc:publisher "${escapeTurtle(publisher)}" ;`);
+        }
+        
+        if (doi) {
+          citationLines.push(`    dc:identifier "doi:${escapeTurtle(doi)}" ;`);
+          citationLines.push(`    bibo:doi "${escapeTurtle(doi)}" ;`);
+        }
+        
+        if (isbn) {
+          citationLines.push(`    bibo:isbn "${escapeTurtle(isbn)}" ;`);
+        }
+        
+        if (issn) {
+          citationLines.push(`    bibo:issn "${escapeTurtle(issn)}" ;`);
+        }
+        
+        if (url) {
+          citationLines.push(`    foaf:homepage <${url}> ;`);
+        }
+        
+        if (volume) {
+          citationLines.push(`    bibo:volume "${escapeTurtle(volume)}" ;`);
+        }
+        
+        if (issue) {
+          citationLines.push(`    bibo:issue "${escapeTurtle(issue)}" ;`);
+        }
+        
+        if (pages) {
+          citationLines.push(`    bibo:pages "${escapeTurtle(pages)}" ;`);
+        }
+        
+        if (language) {
+          citationLines.push(`    dc:language "${escapeTurtle(language)}" ;`);
+        }
+        
+        if (rights) {
+          citationLines.push(`    dc:rights "${escapeTurtle(rights)}" ;`);
+        }
+        
+        if (itemType) {
+          citationLines.push(`    dc:type "${escapeTurtle(itemType)}" ;`);
+        }
+        
+        // Add tags as dc:subject
+        if (tags.length > 0) {
+          tags.forEach((tag: string) => {
+            citationLines.push(`    dc:subject "${escapeTurtle(tag)}" ;`);
+          });
+        }
+        
+        // Add full abstract (not truncated)
+        if (abstractNote) {
+          citationLines.push(`    dc:description "${escapeTurtle(abstractNote)}" ;`);
+        }
+        
+        // Replace last semicolon with period
+        citationLines[citationLines.length - 1] = citationLines[citationLines.length - 1].replace(/ ;$/, ' .');
+        citationLines.push('');
+        
+      } else if (codeViewFormat === 'manchester') {
+        // Generate Manchester OWL syntax format
+        const escManchester = (s: string) => s.replace(/"/g, '\\"').replace(/\n/g, ' ');
+        citationLines.push('');
+        citationLines.push(`# Zotero Citation: ${title}`);
+        citationLines.push(`Individual: <urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}>`);
+        citationLines.push(`    Types: prov:Entity`);
+        citationLines.push(`    Annotations:`);
+        citationLines.push(`        dc:title "${escManchester(title)}",`);
+        citationLines.push(`        dc:creator "${escManchester(authors)}"${year || publicationTitle || doi || abstractNote ? ',' : ''}`);
+        if (year) citationLines.push(`        dc:date "${year}"^^xsd:gYear${publicationTitle || doi || abstractNote ? ',' : ''}`);
+        if (publicationTitle) citationLines.push(`        dc:source "${escManchester(publicationTitle)}"${doi || abstractNote ? ',' : ''}`);
+        if (publisher) citationLines.push(`        dc:publisher "${escManchester(publisher)}"${doi || abstractNote ? ',' : ''}`);
+        if (doi) citationLines.push(`        bibo:doi "${escManchester(doi)}"${abstractNote ? ',' : ''}`);
+        if (url) citationLines.push(`        foaf:homepage <${url}>${abstractNote ? ',' : ''}`);
+        if (abstractNote) citationLines.push(`        dc:description "${escManchester(abstractNote)}"`);
+        citationLines.push('');
+        
+      } else if (codeViewFormat === 'functional') {
+        // Generate OWL 2 Functional syntax format
+        const escFunc = (s: string) => s.replace(/"/g, '\\"').replace(/\n/g, ' ');
+        const citUri = `<urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}>`;
+        citationLines.push('');
+        citationLines.push(`# Zotero Citation: ${title}`);
+        citationLines.push(`Declaration(NamedIndividual(${citUri}))`);
+        citationLines.push(`ClassAssertion(<http://www.w3.org/ns/prov#Entity> ${citUri})`);
+        citationLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/title> ${citUri} "${escFunc(title)}")`);
+        citationLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/creator> ${citUri} "${escFunc(authors)}")`);
+        if (year) citationLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/date> ${citUri} "${year}"^^xsd:gYear)`);
+        if (publicationTitle) citationLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/source> ${citUri} "${escFunc(publicationTitle)}")`);
+        if (publisher) citationLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/publisher> ${citUri} "${escFunc(publisher)}")`);
+        if (doi) citationLines.push(`AnnotationAssertion(<http://purl.org/ontology/bibo/doi> ${citUri} "${escFunc(doi)}")`);
+        if (url) citationLines.push(`AnnotationAssertion(<http://xmlns.com/foaf/0.1/homepage> ${citUri} <${url}>)`);
+        if (abstractNote) citationLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/description> ${citUri} "${escFunc(abstractNote)}")`);
+        citationLines.push('');
+        
+      } else if (codeViewFormat === 'owlxml') {
+        // Generate OWL/XML format
+        citationLines.push('');
+        citationLines.push(`    <!-- Zotero Citation: ${escapeXml(title)} -->`);
+        citationLines.push(`    <Declaration>`);
+        citationLines.push(`        <NamedIndividual IRI="urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}"/>`);
+        citationLines.push(`    </Declaration>`);
+        citationLines.push(`    <ClassAssertion>`);
+        citationLines.push(`        <Class IRI="http://www.w3.org/ns/prov#Entity"/>`);
+        citationLines.push(`        <NamedIndividual IRI="urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}"/>`);
+        citationLines.push(`    </ClassAssertion>`);
+        citationLines.push(`    <AnnotationAssertion>`);
+        citationLines.push(`        <AnnotationProperty IRI="http://purl.org/dc/elements/1.1/title"/>`);
+        citationLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}</IRI>`);
+        citationLines.push(`        <Literal>${escapeXml(title)}</Literal>`);
+        citationLines.push(`    </AnnotationAssertion>`);
+        citationLines.push(`    <AnnotationAssertion>`);
+        citationLines.push(`        <AnnotationProperty IRI="http://purl.org/dc/elements/1.1/creator"/>`);
+        citationLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}</IRI>`);
+        citationLines.push(`        <Literal>${escapeXml(authors)}</Literal>`);
+        citationLines.push(`    </AnnotationAssertion>`);
+        if (year) {
+          citationLines.push(`    <AnnotationAssertion>`);
+          citationLines.push(`        <AnnotationProperty IRI="http://purl.org/dc/elements/1.1/date"/>`);
+          citationLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}</IRI>`);
+          citationLines.push(`        <Literal datatypeIRI="http://www.w3.org/2001/XMLSchema#gYear">${year}</Literal>`);
+          citationLines.push(`    </AnnotationAssertion>`);
+        }
+        if (doi) {
+          citationLines.push(`    <AnnotationAssertion>`);
+          citationLines.push(`        <AnnotationProperty IRI="http://purl.org/ontology/bibo/doi"/>`);
+          citationLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}</IRI>`);
+          citationLines.push(`        <Literal>${escapeXml(doi)}</Literal>`);
+          citationLines.push(`    </AnnotationAssertion>`);
+        }
+        if (abstractNote) {
+          citationLines.push(`    <AnnotationAssertion>`);
+          citationLines.push(`        <AnnotationProperty IRI="http://purl.org/dc/elements/1.1/description"/>`);
+          citationLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}</IRI>`);
+          citationLines.push(`        <Literal>${escapeXml(abstractNote)}</Literal>`);
+          citationLines.push(`    </AnnotationAssertion>`);
+        }
+        citationLines.push('');
+        
+      } else if (codeViewFormat === 'rdfxml') {
+        // Generate comprehensive RDF/XML format with all Zotero details
+        citationLines.push('');
+        citationLines.push(`    <!-- Zotero Citation: ${escapeXml(title)} -->`);
+        citationLines.push(`    <owl:NamedIndividual rdf:about="urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}">`);
+        citationLines.push(`        <rdf:type rdf:resource="http://www.w3.org/ns/prov#Entity"/>`);
+        citationLines.push(`        <dc:title>${escapeXml(title)}</dc:title>`);
+        citationLines.push(`        <dc:creator>${escapeXml(authors)}</dc:creator>`);
+        
+        if (year) {
+          citationLines.push(`        <dc:date rdf:datatype="http://www.w3.org/2001/XMLSchema#gYear">${year}</dc:date>`);
+        }
+        
+        if (publicationTitle) {
+          citationLines.push(`        <dc:source>${escapeXml(publicationTitle)}</dc:source>`);
+        }
+        
+        if (publisher) {
+          citationLines.push(`        <dc:publisher>${escapeXml(publisher)}</dc:publisher>`);
+        }
+        
+        if (doi) {
+          citationLines.push(`        <dc:identifier>doi:${escapeXml(doi)}</dc:identifier>`);
+          citationLines.push(`        <bibo:doi xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(doi)}</bibo:doi>`);
+        }
+        
+        if (isbn) {
+          citationLines.push(`        <bibo:isbn xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(isbn)}</bibo:isbn>`);
+        }
+        
+        if (issn) {
+          citationLines.push(`        <bibo:issn xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(issn)}</bibo:issn>`);
+        }
+        
+        if (url) {
+          citationLines.push(`        <foaf:homepage rdf:resource="${escapeXml(url)}"/>`);
+        }
+        
+        if (volume) {
+          citationLines.push(`        <bibo:volume xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(volume)}</bibo:volume>`);
+        }
+        
+        if (issue) {
+          citationLines.push(`        <bibo:issue xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(issue)}</bibo:issue>`);
+        }
+        
+        if (pages) {
+          citationLines.push(`        <bibo:pages xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(pages)}</bibo:pages>`);
+        }
+        
+        if (language) {
+          citationLines.push(`        <dc:language>${escapeXml(language)}</dc:language>`);
+        }
+        
+        if (rights) {
+          citationLines.push(`        <dc:rights>${escapeXml(rights)}</dc:rights>`);
+        }
+        
+        if (itemType) {
+          citationLines.push(`        <dc:type>${escapeXml(itemType)}</dc:type>`);
+        }
+        
+        // Add tags as dc:subject
+        if (tags.length > 0) {
+          tags.forEach((tag: string) => {
+            citationLines.push(`        <dc:subject>${escapeXml(tag)}</dc:subject>`);
+          });
+        }
+        
+        // Add full abstract (not truncated)
+        if (abstractNote) {
+          citationLines.push(`        <dc:description>${escapeXml(abstractNote)}</dc:description>`);
+        }
+        
+        citationLines.push(`    </owl:NamedIndividual>`);
+        citationLines.push('');
+      }
+      
+      console.log('[Dashboard] Inserting full citation details at index:', insertAtIndex);
+      console.log('[Dashboard] Citation lines count:', citationLines.length);
+      console.log('[Dashboard] Total lines before insertion:', lines.length);
+      
+      // Insert the citation details AT the clicked line
+      lines.splice(insertAtIndex, 0, ...citationLines);
+      
+      console.log('[Dashboard] Total lines after insertion:', lines.length);
+      
+      // Create modified content with the citation details inserted
+      const modifiedContent = lines.join('\n');
+      console.log('[Dashboard] Modified content length:', modifiedContent.length, 'bytes');
+      
+      // Step 1: Update local code view immediately for UX feedback
+      setCodeViewContent(modifiedContent);
+      setHasLocalCodeViewChanges(true); // Mark that we have local modifications
+      console.log('[Dashboard] Code view updated locally with full citation at line', insertAtIndex);
+      
+      // Step 2: Cache the modified content and insert citation in ALL formats
+      // The modified content is stored in the code view cache, which the export endpoint will use
+      // This preserves the exact line positions (no GraphDB re-serialization)
+      // Current format: at clicked line, Other formats: near the referenced entity
+      console.log('[Dashboard] Inserting citation - current format at line', insertAtIndex, ', other formats near entity:', referencedEntity || '(none)');
+      
+      // Define all supported formats for multi-format sync
+      const allFormats = ['turtle', 'rdfxml', 'ntriples', 'owlxml', 'manchester', 'functional'] as const;
+      const otherFormats = allFormats.filter(f => f !== codeViewFormat);
+      
+      // Helper to generate citation in Turtle format
+      function generateTurtleCitationBlock(): string[] {
+          const citLines: string[] = [];
+          citLines.push('');
+          citLines.push('###  Zotero Citation: ' + escapeTurtle(title));
+          citLines.push(`<urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}> rdf:type owl:NamedIndividual ,`);
+          citLines.push('         prov:Entity ;');
+          citLines.push(`    dc:title "${escapeTurtle(title)}" ;`);
+          citLines.push(`    dc:creator "${escapeTurtle(authors)}" ;`);
+          if (year) citLines.push(`    dc:date "${year}"^^xsd:gYear ;`);
+          if (publicationTitle) citLines.push(`    dc:source "${escapeTurtle(publicationTitle)}" ;`);
+          if (publisher) citLines.push(`    dc:publisher "${escapeTurtle(publisher)}" ;`);
+          if (doi) {
+            citLines.push(`    dc:identifier "doi:${escapeTurtle(doi)}" ;`);
+            citLines.push(`    bibo:doi "${escapeTurtle(doi)}" ;`);
+          }
+          if (isbn) citLines.push(`    bibo:isbn "${escapeTurtle(isbn)}" ;`);
+          if (issn) citLines.push(`    bibo:issn "${escapeTurtle(issn)}" ;`);
+          if (url) citLines.push(`    foaf:homepage <${url}> ;`);
+          if (volume) citLines.push(`    bibo:volume "${escapeTurtle(volume)}" ;`);
+          if (issue) citLines.push(`    bibo:issue "${escapeTurtle(issue)}" ;`);
+          if (pages) citLines.push(`    bibo:pages "${escapeTurtle(pages)}" ;`);
+          if (language) citLines.push(`    dc:language "${escapeTurtle(language)}" ;`);
+          if (rights) citLines.push(`    dc:rights "${escapeTurtle(rights)}" ;`);
+          if (itemType) citLines.push(`    dc:type "${escapeTurtle(itemType)}" ;`);
+          tags.forEach((tag: string) => {
+            citLines.push(`    dc:subject "${escapeTurtle(tag)}" ;`);
+          });
+          if (abstractNote) citLines.push(`    dc:description "${escapeTurtle(abstractNote)}" ;`);
+          citLines[citLines.length - 1] = citLines[citLines.length - 1].replace(/ ;$/, ' .');
+          citLines.push('');
+          return citLines;
+        }
+
+        // Helper to generate citation in RDF/XML format
+        function generateRdfXmlCitationBlock(): string[] {
+          const citLines: string[] = [];
+          citLines.push('');
+          citLines.push(`    <!-- Zotero Citation: ${escapeXml(title)} -->`);
+          citLines.push(`    <owl:NamedIndividual rdf:about="urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}">`);
+          citLines.push(`        <rdf:type rdf:resource="http://www.w3.org/ns/prov#Entity"/>`);
+          citLines.push(`        <dc:title>${escapeXml(title)}</dc:title>`);
+          citLines.push(`        <dc:creator>${escapeXml(authors)}</dc:creator>`);
+          if (year) citLines.push(`        <dc:date rdf:datatype="http://www.w3.org/2001/XMLSchema#gYear">${year}</dc:date>`);
+          if (publicationTitle) citLines.push(`        <dc:source>${escapeXml(publicationTitle)}</dc:source>`);
+          if (publisher) citLines.push(`        <dc:publisher>${escapeXml(publisher)}</dc:publisher>`);
+          if (doi) {
+            citLines.push(`        <dc:identifier>doi:${escapeXml(doi)}</dc:identifier>`);
+            citLines.push(`        <bibo:doi xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(doi)}</bibo:doi>`);
+          }
+          if (isbn) citLines.push(`        <bibo:isbn xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(isbn)}</bibo:isbn>`);
+          if (issn) citLines.push(`        <bibo:issn xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(issn)}</bibo:issn>`);
+          if (url) citLines.push(`        <foaf:homepage rdf:resource="${escapeXml(url)}"/>`);
+          if (volume) citLines.push(`        <bibo:volume xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(volume)}</bibo:volume>`);
+          if (issue) citLines.push(`        <bibo:issue xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(issue)}</bibo:issue>`);
+          if (pages) citLines.push(`        <bibo:pages xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(pages)}</bibo:pages>`);
+          if (language) citLines.push(`        <dc:language>${escapeXml(language)}</dc:language>`);
+          if (rights) citLines.push(`        <dc:rights>${escapeXml(rights)}</dc:rights>`);
+          if (itemType) citLines.push(`        <dc:type>${escapeXml(itemType)}</dc:type>`);
+          tags.forEach((tag: string) => {
+            citLines.push(`        <dc:subject>${escapeXml(tag)}</dc:subject>`);
+          });
+          if (abstractNote) citLines.push(`        <dc:description>${escapeXml(abstractNote)}</dc:description>`);
+          citLines.push(`    </owl:NamedIndividual>`);
+          citLines.push('');
+          return citLines;
+        }
+
+        // Helper to generate citation in N-Triples format
+        function generateNTriplesCitationBlock(): string[] {
+          const citLines: string[] = [];
+          const uri = `<urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}>`;
+          const escNt = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+          citLines.push('');
+          citLines.push(`# Zotero Citation: ${title}`);
+          citLines.push(`${uri} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .`);
+          citLines.push(`${uri} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/ns/prov#Entity> .`);
+          citLines.push(`${uri} <http://purl.org/dc/elements/1.1/title> "${escNt(title)}" .`);
+          citLines.push(`${uri} <http://purl.org/dc/elements/1.1/creator> "${escNt(authors)}" .`);
+          if (year) citLines.push(`${uri} <http://purl.org/dc/elements/1.1/date> "${year}"^^<http://www.w3.org/2001/XMLSchema#gYear> .`);
+          if (publicationTitle) citLines.push(`${uri} <http://purl.org/dc/elements/1.1/source> "${escNt(publicationTitle)}" .`);
+          if (publisher) citLines.push(`${uri} <http://purl.org/dc/elements/1.1/publisher> "${escNt(publisher)}" .`);
+          if (doi) citLines.push(`${uri} <http://purl.org/ontology/bibo/doi> "${escNt(doi)}" .`);
+          if (isbn) citLines.push(`${uri} <http://purl.org/ontology/bibo/isbn> "${escNt(isbn)}" .`);
+          if (url) citLines.push(`${uri} <http://xmlns.com/foaf/0.1/homepage> <${url}> .`);
+          if (abstractNote) citLines.push(`${uri} <http://purl.org/dc/elements/1.1/description> "${escNt(abstractNote)}" .`);
+          citLines.push('');
+          return citLines;
+        }
+
+        // Helper to generate citation in Manchester syntax format
+        function generateManchesterCitationBlock(): string[] {
+          const citLines: string[] = [];
+          const escManchester = (s: string) => s.replace(/"/g, '\\"').replace(/\n/g, ' ');
+          citLines.push('');
+          citLines.push(`# Zotero Citation: ${title}`);
+          citLines.push(`Individual: <urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}>`);
+          citLines.push(`    Types: prov:Entity`);
+          citLines.push(`    Annotations:`);
+          citLines.push(`        dc:title "${escManchester(title)}",`);
+          citLines.push(`        dc:creator "${escManchester(authors)}"${year || publicationTitle || doi || abstractNote ? ',' : ''}`);
+          if (year) citLines.push(`        dc:date "${year}"^^xsd:gYear${publicationTitle || doi || abstractNote ? ',' : ''}`);
+          if (publicationTitle) citLines.push(`        dc:source "${escManchester(publicationTitle)}"${doi || abstractNote ? ',' : ''}`);
+          if (doi) citLines.push(`        bibo:doi "${escManchester(doi)}"${abstractNote ? ',' : ''}`);
+          if (abstractNote) citLines.push(`        dc:description "${escManchester(abstractNote)}"`);
+          citLines.push('');
+          return citLines;
+        }
+
+        // Helper to generate citation in OWL Functional syntax format
+        function generateFunctionalCitationBlock(): string[] {
+          const citLines: string[] = [];
+          const escFunc = (s: string) => s.replace(/"/g, '\\"').replace(/\n/g, ' ');
+          const citUri = `<urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}>`;
+          citLines.push('');
+          citLines.push(`# Zotero Citation: ${title}`);
+          citLines.push(`Declaration(NamedIndividual(${citUri}))`);
+          citLines.push(`ClassAssertion(<http://www.w3.org/ns/prov#Entity> ${citUri})`);
+          citLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/title> ${citUri} "${escFunc(title)}")`);
+          citLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/creator> ${citUri} "${escFunc(authors)}")`);
+          if (year) citLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/date> ${citUri} "${year}"^^xsd:gYear)`);
+          if (publicationTitle) citLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/source> ${citUri} "${escFunc(publicationTitle)}")`);
+          if (doi) citLines.push(`AnnotationAssertion(<http://purl.org/ontology/bibo/doi> ${citUri} "${escFunc(doi)}")`);
+          if (abstractNote) citLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/description> ${citUri} "${escFunc(abstractNote)}")`);
+          citLines.push('');
+          return citLines;
+        }
+
+        // Helper to generate citation in OWL/XML format
+        function generateOwlXmlCitationBlock(): string[] {
+          const citLines: string[] = [];
+          citLines.push('');
+          citLines.push(`    <!-- Zotero Citation: ${escapeXml(title)} -->`);
+          citLines.push(`    <Declaration>`);
+          citLines.push(`        <NamedIndividual IRI="urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}"/>`);
+          citLines.push(`    </Declaration>`);
+          citLines.push(`    <ClassAssertion>`);
+          citLines.push(`        <Class IRI="http://www.w3.org/ns/prov#Entity"/>`);
+          citLines.push(`        <NamedIndividual IRI="urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}"/>`);
+          citLines.push(`    </ClassAssertion>`);
+          citLines.push(`    <AnnotationAssertion>`);
+          citLines.push(`        <AnnotationProperty IRI="http://purl.org/dc/elements/1.1/title"/>`);
+          citLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}</IRI>`);
+          citLines.push(`        <Literal>${escapeXml(title)}</Literal>`);
+          citLines.push(`    </AnnotationAssertion>`);
+          citLines.push(`    <AnnotationAssertion>`);
+          citLines.push(`        <AnnotationProperty IRI="http://purl.org/dc/elements/1.1/creator"/>`);
+          citLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}</IRI>`);
+          citLines.push(`        <Literal>${escapeXml(authors)}</Literal>`);
+          citLines.push(`    </AnnotationAssertion>`);
+          if (year) {
+            citLines.push(`    <AnnotationAssertion>`);
+            citLines.push(`        <AnnotationProperty IRI="http://purl.org/dc/elements/1.1/date"/>`);
+            citLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}</IRI>`);
+            citLines.push(`        <Literal datatypeIRI="http://www.w3.org/2001/XMLSchema#gYear">${year}</Literal>`);
+            citLines.push(`    </AnnotationAssertion>`);
+          }
+          if (doi) {
+            citLines.push(`    <AnnotationAssertion>`);
+            citLines.push(`        <AnnotationProperty IRI="http://purl.org/ontology/bibo/doi"/>`);
+            citLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}</IRI>`);
+            citLines.push(`        <Literal>${escapeXml(doi)}</Literal>`);
+            citLines.push(`    </AnnotationAssertion>`);
+          }
+          citLines.push('');
+          return citLines;
+        }
+
+        // Clear all existing caches first
+        try {
+          await apiClient.delete(`/api/ontology/${projectId}/code-view-cache`);
+          console.log('[Dashboard] All format caches cleared');
+        } catch (e) {
+          console.warn('[Dashboard] Failed to clear caches:', e);
+        }
+
+        // Store modified content for current format (already modified with citation at clicked line)
+        try {
+          await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+            content: modifiedContent,
+            format: codeViewFormat
+          });
+          console.log('[Dashboard] Current format cache stored:', codeViewFormat);
+        } catch (e) {
+          console.warn('[Dashboard] Failed to store current format cache:', e);
+        }
+
+        // Now fetch and update ALL other formats with citation near the same entity
+        // Helper to find entity location in content - supports ALL OWL formats
+        function findEntityLocation(content: string, entity: string): number {
+          if (!entity) return -1;
+          
+          const lines = content.split('\n');
+          
+          // Extract just the local name from the entity for matching
+          const localName = entity.includes('#') ? entity.split('#').pop() || '' :
+                           entity.includes('/') ? entity.split('/').pop() || '' :
+                           entity.includes(':') ? entity.split(':').pop() || '' : entity;
+          
+          console.log(`[findEntityLocation] Searching for entity: '${entity}', localName: '${localName}'`);
+          
+          // Escape special regex characters in entity and localName
+          const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const safeEntity = escapeRegex(entity);
+          const safeLocalName = escapeRegex(localName);
+          
+          // Build comprehensive search patterns for ALL formats
+          const patterns: (string | RegExp)[] = [
+            // Full URI patterns
+            entity,
+            `<${entity}>`,
+            `"${entity}"`,
+            
+            // Fragment/path patterns
+            `#${localName}`,
+            `/${localName}`,
+            `/${localName}>`,
+            `#${localName}>`,
+            
+            // Prefixed name patterns (Turtle, Manchester)
+            `:${localName}`,
+            new RegExp(`[a-zA-Z_][a-zA-Z0-9_-]*:${safeLocalName}(?![a-zA-Z0-9_-])`),
+            
+            // RDF/XML patterns
+            `rdf:about="${entity}"`,
+            `rdf:ID="${localName}"`,
+            `rdf:resource="${entity}"`,
+            `rdf:resource="#${localName}"`,
+            
+            // OWL/XML patterns
+            `IRI="${entity}"`,
+            `IRI="#${localName}"`,
+            `abbreviatedIRI="${localName}"`,
+            new RegExp(`abbreviatedIRI="[^"]*:${safeLocalName}"`),
+            
+            // Manchester syntax patterns
+            new RegExp(`(?:Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):\\s*<?${safeLocalName}`),
+            new RegExp(`(?:Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):\\s*<?[^\\s]*#${safeLocalName}`),
+            
+            // Functional syntax patterns
+            new RegExp(`(?:Declaration|ClassAssertion|SubClassOf|EquivalentClasses)\\s*\\([^)]*<[^>]*${safeLocalName}>`),
+            new RegExp(`(?:NamedIndividual|Class|ObjectProperty|DataProperty)\\s*\\(<[^>]*${safeLocalName}>`),
+            
+            // Word boundary match (last resort)
+            new RegExp(`\\b${safeLocalName}\\b`, 'i')
+          ];
+          
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            for (const pattern of patterns) {
+              const matched = pattern instanceof RegExp ? pattern.test(line) : line.includes(pattern);
+              
+              if (matched) {
+                console.log(`[findEntityLocation] ✓ Match found at line ${i} using pattern: ${pattern instanceof RegExp ? pattern.source : pattern}`);
+                console.log(`[findEntityLocation] Matched line: ${line.substring(0, 100)}${line.length > 100 ? '...' : ''}`);
+                
+                // Find the end of this entity's definition block based on format detection
+                const isTurtle = line.includes('@prefix') || line.match(/^\s*[<:a-zA-Z].*[;.]$/);
+                const isXml = line.includes('<owl:') || line.includes('<rdf:') || line.includes('<rdfs:') || line.includes('IRI=');
+                const isManchester = line.match(/(?:Class|Individual|ObjectProperty|DataProperty):/);
+                const isFunctional = line.match(/(?:Declaration|ClassAssertion|SubClassOf)\s*\(/);
+                const isNTriples = line.match(/^<[^>]+>\s+<[^>]+>\s+/);
+                
+                // Find the end of this entity's definition block
+                for (let j = i; j < lines.length; j++) {
+                  const checkLine = lines[j];
+                  
+                  // Turtle: ends with .
+                  if ((isTurtle || isNTriples) && checkLine.trim().endsWith('.') && !checkLine.trim().startsWith('@')) {
+                    return j + 1;
+                  }
+                  
+                  // XML: closing tag
+                  if (isXml && (checkLine.includes('</owl:') || checkLine.includes('</rdf:') || checkLine.includes('</rdfs:') || checkLine.includes('</Declaration>') || checkLine.includes('</ClassAssertion>'))) {
+                    return j + 1;
+                  }
+                  
+                  // Manchester: next declaration block starts
+                  if (isManchester && j > i && checkLine.match(/^(?:Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):/)) {
+                    return j;
+                  }
+                  
+                  // Functional: closing parenthesis at same indentation
+                  if (isFunctional && j > i && checkLine.match(/^\)/) || (j > i && checkLine.match(/^[A-Z][a-zA-Z]+\s*\(/))) {
+                    return j;
+                  }
+                  
+                  // Blank line after definition
+                  if (j > i && checkLine.trim() === '') {
+                    return j;
+                  }
+                  
+                  // Safety: don't look more than 50 lines ahead
+                  if (j > i + 50) {
+                    return i + 1;
+                  }
+                }
+                return i + 1;
+              }
+            }
+          }
+          return -1;
+        }
+        
+        for (const fmt of otherFormats) {
+          try {
+            // Fetch fresh content from GraphDB for this format
+            const response = await apiClient.get<{ success: boolean; content: string }>(
+              `/api/ontology/${projectId}/content`,
+              { format: fmt, forceRefresh: 'true' }
+            );
+            
+            if (response.success && response.content) {
+              const fmtLines = response.content.split('\n');
+              
+              console.log(`[Dashboard] Processing format ${fmt}: ${fmtLines.length} lines, searching for entity: '${referencedEntity || '(none)'}'`);
+              
+              // Generate citation in appropriate format
+              let fmtCitationLines: string[] = [];
+              if (fmt === 'turtle') {
+                fmtCitationLines = generateTurtleCitationBlock();
+              } else if (fmt === 'manchester') {
+                fmtCitationLines = generateManchesterCitationBlock();
+              } else if (fmt === 'functional') {
+                fmtCitationLines = generateFunctionalCitationBlock();
+              } else if (fmt === 'rdfxml') {
+                fmtCitationLines = generateRdfXmlCitationBlock();
+              } else if (fmt === 'owlxml') {
+                fmtCitationLines = generateOwlXmlCitationBlock();
+              } else if (fmt === 'ntriples') {
+                fmtCitationLines = generateNTriplesCitationBlock();
+              }
+              
+              // Find where to insert based on referenced entity
+              let fmtInsertIndex = -1;
+              if (referencedEntity) {
+                console.log(`[Dashboard] Searching for entity '${referencedEntity}' in ${fmt} format...`);
+                fmtInsertIndex = findEntityLocation(response.content, referencedEntity);
+                if (fmtInsertIndex >= 0) {
+                  console.log(`[Dashboard] ✓ Found entity '${referencedEntity}' at line ${fmtInsertIndex} in ${fmt}`);
+                } else {
+                  console.log(`[Dashboard] ✗ Entity '${referencedEntity}' NOT found in ${fmt} (will use proportional positioning)`);
+                  // Show first few lines for debugging
+                  console.log(`[Dashboard] First 5 lines of ${fmt}:`, fmtLines.slice(0, 5).join('\n'));
+                }
+              }
+              
+              // If entity not found, use proportional positioning (same relative position as clicked line)
+              if (fmtInsertIndex < 0) {
+                const proportion = insertAtIndex / lines.length;
+                fmtInsertIndex = Math.floor(proportion * fmtLines.length);
+                console.log(`[Dashboard] No entity detected, using proportional position at line ${fmtInsertIndex} (${Math.round(proportion * 100)}% through file) in ${fmt}`);
+              }
+              
+              // Insert citation at found location
+              fmtLines.splice(fmtInsertIndex, 0, ...fmtCitationLines);
+              
+              // Store in cache
+              const fmtModifiedContent = fmtLines.join('\n');
+              await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+                content: fmtModifiedContent,
+                format: fmt
+              });
+              console.log('[Dashboard] Format cache stored with citation near entity:', fmt);
+            }
+          } catch (fmtError) {
+            console.warn(`[Dashboard] Failed to update format ${fmt}:`, fmtError);
+          }
+        }
+        
+        console.log('[Dashboard] Citation inserted near entity in all formats');
+        setHasLocalCodeViewChanges(false);
+        
+        // Step 3: Also insert citation into GraphDB directly for persistence
+        // Use the Turtle block helper and add prefixes
+        const graphDbCitation = `@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix dc: <http://purl.org/dc/elements/1.1/> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix bibo: <http://purl.org/ontology/bibo/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+` + generateTurtleCitationBlock().join('\n');
+        
+        console.log('[Dashboard] Sending citation to GraphDB for persistence');
+        
+        if (window.vscode) {
+          window.vscode.postMessage({
+            type: 'insertCitationToGraphDB',
+            citation: graphDbCitation,
+            format: 'turtle',
+            projectId: projectId,
+            metadata: {
+              title: title,
+              authors: authors,
+              year: year,
+              doi: doi,
+              url: url
+            }
+          });
+        }
+        
+        // Wait for GraphDB insertion
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      console.log('[Dashboard] Full citation persisted at line', insertAtIndex);
+      console.log('[Dashboard] Citation synced: Current format at line', insertAtIndex, ', Other formats near entity:', referencedEntity || 'end of file');
+      notificationService.success('Citation Inserted', `Added "${title}" - synced to all formats (${allFormats.join(', ')})`);
+      
+      // Step 4: Mark that citation was just inserted so format switches will force refresh
+      setCitationJustInserted(true);
+      console.log('[Dashboard] Citation insertion flag set - next format switch will force refresh');
+      
+    } catch (error) {
+      console.error('[Dashboard] Error inserting citation at location:', error);
+      notificationService.error('Citation Error', 'Failed to insert citation at location');
+    }
+
+    // Reset citation insertion mode
+    setPendingCitation(null);
+    setCitationInsertionMode(false);
+    setSelectedInsertionLine(null);
+    setCitationJustInserted(false); // Clear flag on error
+    console.log('[Dashboard] Citation insertion mode reset');
+  }, [pendingCitation, projectId, codeViewFormat, codeViewContent]);
+
+  // Handler for removing citations from the code view
+  const handleRemoveCitationAtLocation = useCallback(async (lineNumber: number) => {
+    if (!codeViewContent) {
+      console.warn('[Dashboard] No code view content available for citation removal');
+      return;
+    }
+
+    console.log('[Dashboard] Attempting to remove citation at line:', lineNumber);
+    
+    const lines = codeViewContent.split('\n');
+    
+    // Find the citation block boundaries (start and end lines)
+    const clickedLine = lines[lineNumber] || '';
+    console.log('[Dashboard] Clicked line content:', clickedLine.substring(0, 100));
+    
+    // Citation detection pattern
+    const citationUriPattern = /urn:citation:([a-zA-Z0-9]+)/i;
+    
+    // Extract citation URI from the clicked line or nearby lines
+    let citationUri = '';
+    const searchRange = 15; // Search 15 lines up and down
+    for (let i = Math.max(0, lineNumber - searchRange); i < Math.min(lines.length, lineNumber + searchRange); i++) {
+      const match = lines[i].match(citationUriPattern);
+      if (match) {
+        citationUri = match[1];
+        console.log('[Dashboard] Found citation URI at line', i, ':', citationUri);
+        break;
+      }
+    }
+    
+    if (!citationUri) {
+      notificationService.warning('Remove Citation', 'Could not identify the citation to remove. Please click directly on a citation line.');
+      return;
+    }
+    
+    console.log('[Dashboard] Citation URI to remove:', citationUri);
+    
+    // Find citation block using a more reliable approach
+    // Step 1: Find all lines that contain the citation URI
+    const citationUriLines: number[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes(`urn:citation:${citationUri}`)) {
+        citationUriLines.push(i);
+      }
+    }
+    
+    if (citationUriLines.length === 0) {
+      notificationService.warning('Remove Citation', 'Could not find the citation in the content.');
+      return;
+    }
+    
+    console.log('[Dashboard] Lines containing citation URI:', citationUriLines);
+    
+    // Step 2: Find the complete block boundaries
+    const linesToRemove = new Set<number>();
+    
+    // Format-specific block detection
+    const isXmlFormat = codeViewFormat === 'rdfxml' || codeViewFormat === 'owlxml';
+    const isTurtleFormat = codeViewFormat === 'turtle' || codeViewFormat === 'ntriples';
+    const isManchesterFormat = codeViewFormat === 'manchester';
+    const isFunctionalFormat = codeViewFormat === 'functional';
+    
+    for (const uriLineNum of citationUriLines) {
+      // Find block start (look backwards for comment or opening tag)
+      let blockStart = uriLineNum;
+      for (let i = uriLineNum - 1; i >= Math.max(0, uriLineNum - 10); i--) {
+        const line = lines[i].trim();
+        
+        // Check for comment line
+        if (line.includes('Zotero Citation') || line.startsWith('###') || line.startsWith('<!--')) {
+          blockStart = i;
+          break;
+        }
+        
+        // Check for blank line (previous block end)
+        if (line === '') {
+          // Don't include blank lines before the comment/start
+          break;
+        }
+        
+        // For XML, check for opening tag
+        if (isXmlFormat && (line.startsWith('<Declaration>') || line.startsWith('<owl:NamedIndividual') || line.startsWith('<ClassAssertion>'))) {
+          blockStart = i;
+        }
+      }
+      
+      // Find block end (look forwards for closing statement)
+      let blockEnd = uriLineNum;
+      for (let i = uriLineNum; i < Math.min(lines.length, uriLineNum + 50); i++) {
+        const line = lines[i];
+        const trimmedLine = line.trim();
+        
+        linesToRemove.add(i);
+        
+        if (isXmlFormat) {
+          // End at closing tag
+          if (trimmedLine === '</owl:NamedIndividual>' || trimmedLine === '</Declaration>' || 
+              trimmedLine === '</ClassAssertion>' || trimmedLine === '</AnnotationAssertion>') {
+            blockEnd = i;
+            // Include trailing blank line
+            if (i + 1 < lines.length && lines[i + 1].trim() === '') {
+              linesToRemove.add(i + 1);
+              blockEnd = i + 1;
+            }
+            break;
+          }
+        } else if (isTurtleFormat) {
+          // End at line ending with .
+          if (trimmedLine.endsWith('.') && !trimmedLine.startsWith('@') && !trimmedLine.startsWith('#')) {
+            blockEnd = i;
+            // Include trailing blank line
+            if (i + 1 < lines.length && lines[i + 1].trim() === '') {
+              linesToRemove.add(i + 1);
+              blockEnd = i + 1;
+            }
+            break;
+          }
+        } else if (isManchesterFormat) {
+          // End at blank line or next declaration
+          if (trimmedLine === '' || trimmedLine.match(/^(Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):/)) {
+            if (trimmedLine === '') {
+              linesToRemove.add(i);
+            }
+            blockEnd = i;
+            break;
+          }
+        } else if (isFunctionalFormat) {
+          // End at blank line (each statement is one line, but citation has multiple)
+          if (trimmedLine === '') {
+            linesToRemove.add(i);
+            blockEnd = i;
+            break;
+          }
+        }
+      }
+      
+      // Add all lines from blockStart to blockEnd
+      for (let i = blockStart; i <= blockEnd; i++) {
+        linesToRemove.add(i);
+      }
+      
+      console.log(`[Dashboard] Citation block: lines ${blockStart} to ${blockEnd}`);
+    }
+    
+    // Also capture preceding comment lines (### Zotero Citation) that might be separate
+    const sortedLines = [...linesToRemove].sort((a, b) => a - b);
+    if (sortedLines.length > 0) {
+      const firstLine = sortedLines[0];
+      // Check lines before for comments
+      for (let i = firstLine - 1; i >= Math.max(0, firstLine - 3); i--) {
+        const line = lines[i].trim();
+        if (line.includes('Zotero Citation') || (line.startsWith('#') && line.includes('Citation'))) {
+          linesToRemove.add(i);
+        } else if (line === '') {
+          // Include blank line before comment
+          if (i > 0 && lines[i - 1].includes('Zotero Citation')) {
+            linesToRemove.add(i);
+          }
+        } else {
+          break;
+        }
+      }
+    }
+    
+    // Sort and deduplicate lines to remove (descending for safe removal)
+    const uniqueLinesToRemove = [...linesToRemove].sort((a, b) => b - a);
+    
+    if (uniqueLinesToRemove.length === 0) {
+      notificationService.warning('Remove Citation', 'Could not find the citation block to remove.');
+      return;
+    }
+    
+    console.log('[Dashboard] Lines to remove (descending):', uniqueLinesToRemove);
+    console.log('[Dashboard] Lines content preview:');
+    uniqueLinesToRemove.slice(0, 5).forEach(idx => {
+      console.log(`  Line ${idx}: ${lines[idx]?.substring(0, 60)}...`);
+    });
+    
+    // Confirm removal with user using custom dialog
+    const lineCount = uniqueLinesToRemove.length;
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Remove Citation',
+      message: `Are you sure you want to remove this citation? ${lineCount} line${lineCount !== 1 ? 's' : ''} will be deleted.`,
+      onConfirm: async () => {
+        try {
+          console.log('[Dashboard] Performing citation removal');
+          
+          // Remove lines from content (remove from end to start to preserve indices)
+          const newLines = [...lines];
+          for (const lineIdx of uniqueLinesToRemove) {
+            newLines.splice(lineIdx, 1);
+          }
+          
+          const modifiedContent = newLines.join('\n');
+          
+          // Update local code view
+          setCodeViewContent(modifiedContent);
+          setHasLocalCodeViewChanges(true);
+          
+          // Clear all format caches
+          try {
+            await apiClient.delete(`/api/ontology/${projectId}/code-view-cache`);
+            console.log('[Dashboard] All format caches cleared for removal');
+          } catch (e) {
+            console.warn('[Dashboard] Failed to clear caches:', e);
+          }
+          
+          // Store modified content for current format
+          try {
+            await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+              content: modifiedContent,
+              format: codeViewFormat
+            });
+            console.log('[Dashboard] Current format cache stored after removal');
+          } catch (e) {
+            console.warn('[Dashboard] Failed to store current format cache:', e);
+          }
+          
+          // Upload modified content to backend
+          if (window.vscode) {
+            window.vscode.postMessage({
+              type: 'uploadOntologyContent',
+              content: modifiedContent,
+              format: codeViewFormat,
+              projectId: projectId
+            });
+            
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+          
+          // Remove citation from all other format caches
+          const allFormats = ['turtle', 'rdfxml', 'ntriples', 'owlxml', 'manchester', 'functional'] as const;
+          const otherFormats = allFormats.filter(f => f !== codeViewFormat);
+          
+          for (const fmt of otherFormats) {
+            try {
+              // Fetch fresh content from GraphDB for this format
+              const response = await apiClient.get<{ success: boolean; content: string }>(
+                `/api/ontology/${projectId}/content`,
+                { format: fmt, forceRefresh: 'true' }
+              );
+              
+              if (response.success && response.content) {
+                // Remove citation from this format too using same logic
+                const fmtLines = response.content.split('\n');
+                const fmtLinesToRemove = new Set<number>();
+                
+                const fmtIsXml = fmt === 'rdfxml' || fmt === 'owlxml';
+                const fmtIsTurtle = fmt === 'turtle' || fmt === 'ntriples';
+                const fmtIsManchester = fmt === 'manchester';
+                const fmtIsFunctional = fmt === 'functional';
+                
+                // Find all lines with citation URI
+                const fmtCitationLines: number[] = [];
+                for (let i = 0; i < fmtLines.length; i++) {
+                  if (fmtLines[i].includes(`urn:citation:${citationUri}`)) {
+                    fmtCitationLines.push(i);
+                  }
+                }
+                
+                for (const uriLineNum of fmtCitationLines) {
+                  // Find block start
+                  let blockStart = uriLineNum;
+                  for (let i = uriLineNum - 1; i >= Math.max(0, uriLineNum - 10); i--) {
+                    const line = fmtLines[i].trim();
+                    if (line.includes('Zotero Citation') || line.startsWith('###') || line.startsWith('<!--')) {
+                      blockStart = i;
+                      break;
+                    }
+                    if (line === '') break;
+                    if (fmtIsXml && (line.startsWith('<Declaration>') || line.startsWith('<owl:NamedIndividual') || line.startsWith('<ClassAssertion>'))) {
+                      blockStart = i;
+                    }
+                  }
+                  
+                  // Find block end
+                  for (let i = uriLineNum; i < Math.min(fmtLines.length, uriLineNum + 50); i++) {
+                    const line = fmtLines[i];
+                    const trimmedLine = line.trim();
+                    fmtLinesToRemove.add(i);
+                    
+                    if (fmtIsXml) {
+                      if (trimmedLine === '</owl:NamedIndividual>' || trimmedLine === '</Declaration>' || 
+                          trimmedLine === '</ClassAssertion>' || trimmedLine === '</AnnotationAssertion>') {
+                        if (i + 1 < fmtLines.length && fmtLines[i + 1].trim() === '') {
+                          fmtLinesToRemove.add(i + 1);
+                        }
+                        break;
+                      }
+                    } else if (fmtIsTurtle) {
+                      if (trimmedLine.endsWith('.') && !trimmedLine.startsWith('@') && !trimmedLine.startsWith('#')) {
+                        if (i + 1 < fmtLines.length && fmtLines[i + 1].trim() === '') {
+                          fmtLinesToRemove.add(i + 1);
+                        }
+                        break;
+                      }
+                    } else if (fmtIsManchester || fmtIsFunctional) {
+                      if (trimmedLine === '' || (fmtIsManchester && trimmedLine.match(/^(Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):/))) {
+                        if (trimmedLine === '') fmtLinesToRemove.add(i);
+                        break;
+                      }
+                    }
+                  }
+                  
+                  // Add all lines from blockStart
+                  for (let i = blockStart; i < uriLineNum; i++) {
+                    fmtLinesToRemove.add(i);
+                  }
+                }
+                
+                // Check for preceding comment lines
+                const sortedFmtLines = [...fmtLinesToRemove].sort((a, b) => a - b);
+                if (sortedFmtLines.length > 0) {
+                  const firstLine = sortedFmtLines[0];
+                  for (let i = firstLine - 1; i >= Math.max(0, firstLine - 3); i--) {
+                    const line = fmtLines[i].trim();
+                    if (line.includes('Zotero Citation') || (line.startsWith('#') && line.includes('Citation'))) {
+                      fmtLinesToRemove.add(i);
+                    } else if (line === '') {
+                      if (i > 0 && fmtLines[i - 1].includes('Zotero Citation')) {
+                        fmtLinesToRemove.add(i);
+                      }
+                    } else {
+                      break;
+                    }
+                  }
+                }
+                
+                // Remove lines
+                const uniqueFmtLinesToRemove = [...fmtLinesToRemove].sort((a, b) => b - a);
+                const newFmtLines = [...fmtLines];
+                for (const lineIdx of uniqueFmtLinesToRemove) {
+                  newFmtLines.splice(lineIdx, 1);
+                }
+                
+                // Store in cache
+                const fmtModifiedContent = newFmtLines.join('\n');
+                await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+                  content: fmtModifiedContent,
+                  format: fmt
+                });
+                console.log(`[Dashboard] Format ${fmt} cache updated after removal (${uniqueFmtLinesToRemove.length} lines removed)`);
+              }
+            } catch (fmtError) {
+              console.warn(`[Dashboard] Failed to update format ${fmt} after removal:`, fmtError);
+            }
+          }
+      
+      // Remove citation from GraphDB
+      console.log('[Dashboard] Removing citation from GraphDB:', citationUri);
+      window.vscode?.postMessage({
+        type: 'removeCitationFromGraphDB',
+        citationUri: `urn:citation:${citationUri}`,
+        projectId: projectId
+      });
+      
+      notificationService.success('Citation Removed', `Successfully removed citation from all formats`);
+      
+      // Reset removal mode
+      setCitationRemovalMode(false);
+      console.log('[Dashboard] Citation removal mode reset');
+      
+      // Close dialog after successful removal
+      setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+        } catch (error) {
+          console.error('[Dashboard] Error in citation removal:', error);
+          notificationService.error('Citation Error', 'Failed to remove citation');
+          // Close dialog even on error
+          setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+        }
+      },
+      onCancel: () => {
+        console.log('[Dashboard] Citation removal cancelled by user');
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+      }
+    });
+  }, [projectId, codeViewFormat, codeViewContent]);
+  
+  // Helper function to check if a line is related to a citation block
+  function isCitationRelatedLine(line: string, format: string): boolean {
+    const commonPatterns = [
+      /dc:title/i,
+      /dc:creator/i,
+      /dc:date/i,
+      /dc:source/i,
+      /dc:publisher/i,
+      /dc:description/i,
+      /dc:identifier/i,
+      /dc:language/i,
+      /dc:rights/i,
+      /dc:type/i,
+      /dc:subject/i,
+      /bibo:doi/i,
+      /bibo:isbn/i,
+      /bibo:issn/i,
+      /bibo:volume/i,
+      /bibo:issue/i,
+      /bibo:pages/i,
+      /foaf:homepage/i,
+      /prov:Entity/i,
+      /owl:NamedIndividual/i,
+      /rdf:type/i,
+    ];
+    
+    // XML-specific closing tags
+    if (format === 'rdfxml' || format === 'owlxml') {
+      if (line.trim().startsWith('</')) return true;
+      if (line.trim().startsWith('<')) return true;
+    }
+    
+    // Turtle continuation (ends with ; or has property assertions)
+    if (format === 'turtle' || format === 'ntriples') {
+      if (line.trim().endsWith(';')) return true;
+      if (line.trim().startsWith('dc:') || line.trim().startsWith('bibo:') || 
+          line.trim().startsWith('foaf:') || line.trim().startsWith('prov:')) return true;
+    }
+    
+    // Manchester annotations continuation
+    if (format === 'manchester') {
+      if (line.trim().startsWith('dc:') || line.trim().startsWith('bibo:') ||
+          line.includes('Annotations:') || line.includes('Types:')) return true;
+    }
+    
+    // Functional syntax assertions
+    if (format === 'functional') {
+      if (line.includes('AnnotationAssertion(') || line.includes('ClassAssertion(')) return true;
+    }
+    
+    return commonPatterns.some(pattern => pattern.test(line));
+  }
 
   // Cleanup sync service when switching projects
   useEffect(() => {
@@ -7795,7 +9108,10 @@ const Dashboard: React.FC<DashboardProps> = ({
               <div className="flex-1 flex flex-col overflow-hidden p-4">
                 <div className="mb-4 flex gap-2 flex-wrap flex-shrink-0">
                   <button
-                    onClick={() => fetchCodeViewContent('turtle')}
+                    onClick={() => { 
+                      fetchCodeViewContent('turtle', citationJustInserted, citationJustInserted); 
+                      setCitationJustInserted(false);
+                    }}
                     className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === 'turtle'
                       ? 'bg-purple-600 text-white hover:bg-purple-700'
                       : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
@@ -7804,7 +9120,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                     Turtle
                   </button>
                   <button
-                    onClick={() => fetchCodeViewContent('rdfxml')}
+                    onClick={() => { 
+                      fetchCodeViewContent('rdfxml', citationJustInserted, citationJustInserted); 
+                      setCitationJustInserted(false);
+                    }}
                     className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === 'rdfxml'
                       ? 'bg-purple-600 text-white hover:bg-purple-700'
                       : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
@@ -7813,7 +9132,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                     RDF/XML
                   </button>
                   <button
-                    onClick={() => fetchCodeViewContent('ntriples')}
+                    onClick={() => { 
+                      fetchCodeViewContent('ntriples', citationJustInserted, citationJustInserted); 
+                      setCitationJustInserted(false);
+                    }}
                     className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === 'ntriples'
                       ? 'bg-purple-600 text-white hover:bg-purple-700'
                       : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
@@ -7822,7 +9144,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                     N-Triples
                   </button>
                   <button
-                    onClick={() => fetchCodeViewContent('owlxml')}
+                    onClick={() => { 
+                      fetchCodeViewContent('owlxml', citationJustInserted, citationJustInserted); 
+                      setCitationJustInserted(false);
+                    }}
                     className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === 'owlxml'
                       ? 'bg-purple-600 text-white hover:bg-purple-700'
                       : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
@@ -7831,7 +9156,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                     OWL/XML
                   </button>
                   <button
-                    onClick={() => fetchCodeViewContent('manchester')}
+                    onClick={() => { 
+                      fetchCodeViewContent('manchester', citationJustInserted, citationJustInserted); 
+                      setCitationJustInserted(false);
+                    }}
                     className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === 'manchester'
                       ? 'bg-purple-600 text-white hover:bg-purple-700'
                       : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
@@ -7840,7 +9168,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                     Manchester
                   </button>
                   <button
-                    onClick={() => fetchCodeViewContent('functional')}
+                    onClick={() => { 
+                      fetchCodeViewContent('functional', citationJustInserted, citationJustInserted); 
+                      setCitationJustInserted(false);
+                    }}
                     className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === 'functional'
                       ? 'bg-purple-600 text-white hover:bg-purple-700'
                       : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
@@ -7849,7 +9180,9 @@ const Dashboard: React.FC<DashboardProps> = ({
                     Functional
                   </button>
                   <button
-                    onClick={() => setShowCitationPicker(true)}
+                    onClick={() => {
+                      setShowCitationPicker(true);
+                    }}
                     className="ml-auto px-3 py-1 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 flex items-center gap-1"
                     title="Insert citation from Zotero or manually"
                   >
@@ -7857,14 +9190,86 @@ const Dashboard: React.FC<DashboardProps> = ({
                     Insert Citation
                   </button>
                   <button
-                    onClick={() => fetchCodeViewContent(codeViewFormat)}
+                    onClick={() => {
+                      setCitationRemovalMode(!citationRemovalMode);
+                      if (citationInsertionMode) {
+                        setCitationInsertionMode(false);
+                        setPendingCitation(null);
+                        setCitationJustInserted(false);
+                      }
+                    }}
+                    className={`px-3 py-1 text-sm rounded-md flex items-center gap-1 ${
+                      citationRemovalMode
+                        ? 'bg-red-700 text-white hover:bg-red-800'
+                        : 'bg-red-600 text-white hover:bg-red-700'
+                    }`}
+                    title="Click to enter removal mode, then click on a citation to remove it"
+                  >
+                    <Trash2 size={16} />
+                    Remove Citation
+                  </button>
+                  <button
+                    onClick={() => {
+                      // Normal refresh - uses cache if available (preserves citation positions)
+                      fetchCodeViewContent(codeViewFormat, false, true);
+                    }}
                     className="px-3 py-1 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
                     disabled={codeViewLoading}
+                    title="Reload content (preserves inserted citations)"
                   >
                     {codeViewLoading ? 'Refreshing...' : 'Refresh'}
                   </button>
+                  {/* <button
+                    onClick={() => {
+                      if (window.confirm('This will reload fresh from GraphDB and lose any citation line positions. Continue?')) {
+                        fetchCodeViewContent(codeViewFormat, true);
+                      }
+                    }}
+                    className="px-3 py-1 text-sm bg-orange-600 text-white rounded-md hover:bg-orange-700"
+                    disabled={codeViewLoading}
+                    title="Discard cache and reload fresh from GraphDB"
+                  >
+                    Sync from GraphDB
+                  </button> */}
                 </div>
                 <div className="flex-1 overflow-hidden">
+                  {citationInsertionMode && (
+                    <div className="bg-blue-900 border-b-2 border-blue-600 p-3 text-blue-100 text-sm flex items-center gap-2">
+                      <div className="flex-1">
+                        <strong>📍 Citation Insertion Mode Active</strong>
+                        <div className="text-xs mt-1">
+                          Search for the location in your ontology where you want to insert the citation "{pendingCitation?.title || 'Citation'}", then click <strong>Insert Here</strong> on the matching line.
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setCitationInsertionMode(false);
+                          setPendingCitation(null);
+                        }}
+                        className="px-2 py-1 text-xs bg-blue-700 hover:bg-blue-600 rounded flex-shrink-0"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                  {citationRemovalMode && (
+                    <div className="bg-red-900 border-b-2 border-red-600 p-3 text-red-100 text-sm flex items-center gap-2">
+                      <div className="flex-1">
+                        <strong>🗑️ Citation Removal Mode Active</strong>
+                        <div className="text-xs mt-1">
+                          Citation lines are highlighted in <span className="bg-red-800 px-1 rounded">red</span>. Click on any citation line to remove it. Search for "Zotero Citation" or "urn:citation" to find citations.
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setCitationRemovalMode(false);
+                        }}
+                        className="px-2 py-1 text-xs bg-red-700 hover:bg-red-600 rounded flex-shrink-0"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
                   {codeViewLoading ? (
                     <div className="flex items-center justify-center h-64">
                       <div className="text-gray-500">Loading ontology content...</div>
@@ -7873,6 +9278,11 @@ const Dashboard: React.FC<DashboardProps> = ({
                     <CodeHighlighter
                       content={codeViewContent || '// No content available'}
                       format={codeViewFormat}
+                      citationInsertionMode={citationInsertionMode}
+                      citationRemovalMode={citationRemovalMode}
+                      pendingCitation={pendingCitation}
+                      onInsertCitationAt={handleInsertCitationAtLocation}
+                      onRemoveCitationAt={handleRemoveCitationAtLocation}
                     />
                   )}
                 </div>
@@ -10769,6 +12179,21 @@ const Dashboard: React.FC<DashboardProps> = ({
         isOpen={showManualCitationDialog}
         onClose={() => setShowManualCitationDialog(false)}
         onSubmit={handleManualCitationSubmit}
+      />
+
+      {/* Confirm Dialog for destructive actions */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        confirmText="Delete"
+        cancelText="Cancel"
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={() => {
+          confirmDialog.onCancel?.();
+          setConfirmDialog({ ...confirmDialog, isOpen: false });
+        }}
+        variant="danger"
       />
 
     </>

@@ -57,9 +57,10 @@ public class CitationController {
             }
 
             // Insert citation into GraphDB
-            citationService.insertCitation(projectId, request.citation(), request.format(), request.metadata());
+            int lineNumber = request.lineNumber() != null ? request.lineNumber() : 0;
+            citationService.insertCitation(projectId, request.citation(), request.format(), request.metadata(), lineNumber);
 
-            log.info("[CitationController] Successfully inserted citation for project: {}", projectId);
+            log.info("[CitationController] Successfully inserted citation for project: {} at line: {}", projectId, lineNumber);
 
             return ResponseEntity.ok(Map.of(
                 "success", true,
@@ -144,6 +145,7 @@ public class CitationController {
     public record InsertCitationRequest(
         String citation,
         String format,
-        Map<String, Object> metadata
+        Map<String, Object> metadata,
+        Integer lineNumber
     ) {}
 }

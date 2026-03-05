@@ -87,7 +87,7 @@ public class StorageManager {
         };
     }
 
-    private String extensionFor(String format) {
+    public String extensionFor(String format) {
         if (format == null) {
             return "owl";
         }
@@ -184,5 +184,93 @@ public class StorageManager {
         }
         Path original = dir.resolve("ontology.original.owl");
         return Files.exists(original) ? Optional.of(original) : Optional.empty();
+    }
+
+    /**
+     * Store code view content to cache for preserving line positions.
+     * This is used when the user inserts citations at specific lines.
+     * The cached content is returned instead of re-exporting from GraphDB.
+     * 
+     * @param projectId The project identifier
+     * @param content The content to cache
+     * @param format The format (turtle, rdfxml, etc.)
+     */
+    public void storeCodeViewCache(String projectId, String content, String format) throws IOException {
+        Path cacheFile = getCodeViewCachePath(projectId, format);
+        Files.createDirectories(cacheFile.getParent());
+        Files.writeString(cacheFile, content, StandardCharsets.UTF_8);
+        log.info("Stored code view cache for project {} in format {}: {} bytes", 
+                 projectId, format, content.length());
+    }
+
+    /**
+     * Retrieve cached code view content if available.
+     * Returns empty if no cache exists for the format.
+     * 
+     * @param projectId The project identifier
+     * @param format The format (turtle, rdfxml, etc.)
+     * @return Optional containing the cached content, or empty if not cached
+     */
+    public Optional<String> getCodeViewCache(String projectId, String format) {
+        Path cacheFile = getCodeViewCachePath(projectId, format);
+        if (Files.exists(cacheFile)) {
+            try {
+                String content = Files.readString(cacheFile, StandardCharsets.UTF_8);
+                log.info("Retrieved code view cache for project {} in format {}: {} bytes", 
+                         projectId, format, content.length());
+                return Optional.of(content);
+            } catch (IOException e) {
+                log.error("Failed to read code view cache for project {}", projectId, e);
+                return Optional.empty();
+            }
+        }
+        log.debug("No code view cache found for project {} in format {}", projectId, format);
+        return Optional.empty();
+    }
+
+    /**
+     * Clear code view cache for a project (all formats).
+     * Called when GraphDB content changes through other means.
+     * 
+     * @param projectId The project identifier
+     */
+    public void clearCodeViewCache(String projectId) {
+        Path cacheDir = projectDir(projectId).resolve("codeview-cache");
+        if (Files.exists(cacheDir)) {
+            try (Stream<Path> files = Files.list(cacheDir)) {
+                files.forEach(file -> {
+                    try {
+                        Files.deleteIfExists(file);
+                    } catch (IOException e) {
+                        log.warn("Failed to delete cache file: {}", file, e);
+                    }
+                });
+                log.info("Cleared code view cache for project {}", projectId);
+            } catch (IOException e) {
+                log.error("Failed to clear code view cache for project {}", projectId, e);
+            }
+        }
+    }
+
+    /**
+     * Clear code view cache for a specific format.
+     * 
+     * @param projectId The project identifier
+     * @param format The format to clear
+     */
+    public void clearCodeViewCacheFormat(String projectId, String format) {
+        Path cacheFile = getCodeViewCachePath(projectId, format);
+        try {
+            if (Files.deleteIfExists(cacheFile)) {
+                log.info("Cleared code view cache for project {} format {}", projectId, format);
+            }
+        } catch (IOException e) {
+            log.warn("Failed to delete cache file for project {} format {}", projectId, format, e);
+        }
+    }
+
+    private Path getCodeViewCachePath(String projectId, String format) {
+        String extension = extensionFor(format);
+        return projectDir(projectId).resolve("codeview-cache").resolve("content." + extension);
     }
 }
