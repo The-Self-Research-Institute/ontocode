@@ -35,29 +35,29 @@ echo.
 echo Building and pushing AMD64 images...
 echo.
 
-@REM echo [1/8] Building ontocode-graphdb...
-@REM docker buildx build --platform linux/amd64 -t %REGISTRY%/ontocode-graphdb:%VERSION% -f Dockerfile.graphdb --push .
-@REM if errorlevel 1 goto :error
+echo [1/8] Building ontocode-graphdb...
+docker buildx build --platform linux/amd64 -t %REGISTRY%/ontocode-graphdb:%VERSION% -f Dockerfile.graphdb --push .
+if errorlevel 1 goto :error
 
-@REM echo [2/8] Building ontocode-auth...
-@REM docker buildx build --platform linux/amd64 -t %REGISTRY%/ontocode-auth:%VERSION% -f Dockerfile.auth --push .
-@REM if errorlevel 1 goto :error
+echo [2/8] Building ontocode-auth...
+docker buildx build --platform linux/amd64 -t %REGISTRY%/ontocode-auth:%VERSION% -f Dockerfile.auth --push .
+if errorlevel 1 goto :error
 
-@REM echo [3/8] Building ontocode-gateway...
-@REM docker buildx build --platform linux/amd64 -t %REGISTRY%/ontocode-gateway:%VERSION% -f Dockerfile.gateway --push .
-@REM if errorlevel 1 goto :error
+echo [3/8] Building ontocode-gateway...
+docker buildx build --platform linux/amd64 -t %REGISTRY%/ontocode-gateway:%VERSION% -f Dockerfile.gateway --push .
+if errorlevel 1 goto :error
 
-@REM echo [4/8] Building ontocode-editor...
-@REM docker buildx build --platform linux/amd64 -t %REGISTRY%/ontocode-editor:%VERSION% -f Dockerfile.editor --push .
-@REM if errorlevel 1 goto :error
+echo [4/8] Building ontocode-editor...
+docker buildx build --platform linux/amd64 -t %REGISTRY%/ontocode-editor:%VERSION% -f Dockerfile.editor --push .
+if errorlevel 1 goto :error
 
-@REM echo [5/8] Building ontocode-swrl...
-@REM docker buildx build --platform linux/amd64 -t %REGISTRY%/ontocode-swrl:%VERSION% -f Dockerfile.swrl --push .
-@REM if errorlevel 1 goto :error
+echo [5/8] Building ontocode-swrl...
+docker buildx build --platform linux/amd64 -t %REGISTRY%/ontocode-swrl:%VERSION% -f Dockerfile.swrl --push .
+if errorlevel 1 goto :error
 
-@REM echo [6/8] Building ontocode-plugin...
-@REM docker buildx build --platform linux/amd64 -t %REGISTRY%/ontocode-plugin:%VERSION% -f Dockerfile.plugin --push .
-@REM if errorlevel 1 goto :error
+echo [6/8] Building ontocode-plugin...
+docker buildx build --platform linux/amd64 -t %REGISTRY%/ontocode-plugin:%VERSION% -f Dockerfile.plugin --push .
+if errorlevel 1 goto :error
 
 echo [7/8] Building ontocode-plugin-init...
 docker buildx build --platform linux/amd64 -t %REGISTRY%/ontocode-plugin-init:%VERSION% -f Dockerfile.plugin-init --push .
