@@ -240,7 +240,7 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
   
   // Ensure the API base URL doesn't end with a slash
   const normalizedApiBaseUrl = resolvedApiBaseUrl.replace(/\/$/, '');
-  console.log('[ProtegeReasonerPlugin] Using API base URL:', normalizedApiBaseUrl);
+  // console.log('[ProtegeReasonerPlugin] Using API base URL:', normalizedApiBaseUrl);
   
   // Use Dashboard state if provided, otherwise use local state
   const usingDashboardState = !!dashboardStartReasoner;

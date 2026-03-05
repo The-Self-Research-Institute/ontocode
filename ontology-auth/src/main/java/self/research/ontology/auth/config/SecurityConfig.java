@@ -72,6 +72,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/**").permitAll() // Allow public access to auth endpoints
                         .requestMatchers("/api/invitations/details/**").permitAll() // Allow public access to view invitation details
                         .requestMatchers("/api/invitations/request-resend/**").permitAll() // Allow public access to request invitation resend
+                        .requestMatchers("/invite").permitAll() // Allow public access to web invitation redirect page
                         .requestMatchers("/error").permitAll()
                         .requestMatchers("/actuator/**").permitAll() // Allow actuator endpoints for health checks
                         .anyRequest().authenticated() // All other requests require authentication

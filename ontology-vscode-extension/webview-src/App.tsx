@@ -63,9 +63,24 @@ const AppContent = () => {
         const token = params.get('token') || params.get('invite');
         const email = params.get('email');
 
-        if (token) {
-            console.log('[App] Found invitation token in URL:', token);
-            setInviteToken(token);
+        // Also check parent window URL (for test-web environment)
+        let parentToken: string | null = null;
+        try {
+            if (window.parent && window.parent !== window) {
+                const parentParams = new URLSearchParams(window.parent.location.search);
+                parentToken = parentParams.get('token') || parentParams.get('invite');
+                console.log('[App] Checked parent window for token:', !!parentToken);
+            }
+        } catch (e) {
+            // Cross-origin access blocked, ignore
+            console.log('[App] Cannot access parent window (cross-origin)');
+        }
+
+        const finalToken = token || parentToken;
+
+        if (finalToken) {
+            console.log('[App] Found invitation token in URL:', finalToken);
+            setInviteToken(finalToken);
             if (email) {
                 setInviteEmail(email);
             }
@@ -85,8 +100,15 @@ const AppContent = () => {
                     fileContent: message.fileContent,
                     fileSize: message.fileSize
                 });
+            } else if (message.type === 'clearInvitationState') {
+                console.log('[App] 🧹 Clearing existing invitation state for new invitation');
+                setInviteToken(null);
+                setInviteEmail(null);
+                setShowAuthForInvitation(false);
             } else if (message.type === 'invitationToken') {
                 console.log('[App] 📧 Received invitation token from extension:', message.token);
+                // Reset any auth-related state that might block showing the invitation page
+                setShowAuthForInvitation(false);
                 setInviteToken(message.token);
             } else if (message.type === 'showSubscriptionPlans') {
                 console.log('[App] 📋 Showing subscription plans page');

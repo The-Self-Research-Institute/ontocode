@@ -182,6 +182,7 @@ type WebviewMessage =
   | { type: 'apiResponse'; requestId: string; response?: any; error?: any }
   | { type: 'proxyResponse'; reqId: string; data?: any; error?: any }
   | { type: 'invitationToken'; token: string }
+  | { type: 'clearInvitationState' }
   // Collaborative editing messages
   | { type: 'remoteEdit'; edit: any }
   | { type: 'presenceUpdate'; presence: any }
@@ -196,7 +197,8 @@ type WebviewMessage =
   // Citation messages
   | { type: 'zoteroLibraryData'; items: any[] }
   | { type: 'zoteroLibraryError'; error: string }
-  | { type: 'citationFormatted'; citation: string; metadata: any; projectId: string }; // Navigate to subscription plans page
+  | { type: 'citationFormatted'; citation: string; metadata: any; projectId: string }
+  | { type: 'uploadOntologyContentDone'; success: boolean; projectId: string }; // Navigate to subscription plans page
 
 type ExtensionMessage =
   | { type: 'error'; value: string }
@@ -226,8 +228,11 @@ type ExtensionMessage =
   | { type: 'showSubscriptionPlans' } // Request to show subscription plans page
   | { type: 'setApiBaseUrl'; url: string; deploymentType?: 'self-hosted' | 'cloud' }
   | { type: 'requestZoteroLibrary' } // Request Zotero library
-  | { type: 'insertCitation'; citationKey: string; format: 'turtle' | 'rdfxml'; projectId: string } // Insert citation from Zotero
-  | { type: 'insertManualCitation'; citation: any; format: 'turtle' | 'rdfxml'; projectId: string }; // Insert manual citation // Set API base URL based on deployment type
+  | { type: 'insertCitation'; citationKey: string; format: 'turtle' | 'rdfxml'; projectId: string; lineNumber?: number } // Insert citation from Zotero
+  | { type: 'insertManualCitation'; citation: any; format: 'turtle' | 'rdfxml'; projectId: string; lineNumber?: number } // Insert manual citation
+  | { type: 'insertCitationToGraphDB'; citation: string; format: string; projectId: string; metadata: any } // Insert citation directly to GraphDB
+  | { type: 'removeCitationFromGraphDB'; citationUri: string; projectId: string } // Remove citation from GraphDB
+  | { type: 'uploadOntologyContent'; content: string; format: string; projectId: string }; // Upload modified ontology content
 
 type DuplicatePromptAction = 'open_existing' | 'replace' | 'create_copy' | 'cancel';
 type DuplicatePromptResult = { action: DuplicatePromptAction; copyName?: string };
@@ -241,6 +246,34 @@ export function activate(context: vscode.ExtensionContext) {
     updateDeploymentUrls(context).then(() => {
         console.log('[OntoCode] Deployment URLs loaded');
     });
+
+    // Check for invitation token in URL (for test-web environment)
+    if (typeof window !== 'undefined' && window.location) {
+        const urlParams = new URLSearchParams(window.location.search);
+        const inviteToken = urlParams.get('token');
+        
+        if (inviteToken) {
+            console.log('[OntoCode] Found invitation token in URL:', inviteToken.substring(0, 20) + '...');
+            
+            // Open OntoCode webview with invitation token
+            setTimeout(async () => {
+                vscode.window.showInformationMessage('Opening invitation in OntoCode...');
+                const panel = await OntoCodePanel.createOrShow(context.extensionUri, context, false);
+                
+                // Store token as pending
+                panel._pendingInvitationToken = inviteToken;
+                
+                // Send token when webview is ready
+                if (panel.isWebviewReady()) {
+                    panel.postMessage({ type: 'clearInvitationState' });
+                    setTimeout(() => {
+                        panel.postMessage({ type: 'invitationToken', token: inviteToken });
+                        panel._pendingInvitationToken = null;
+                    }, 100);
+                }
+            }, 500);
+        }
+    }
 
     // Register URI handler for invitation links
     const uriHandler = vscode.window.registerUriHandler({
@@ -262,21 +295,29 @@ export function activate(context: vscode.ExtensionContext) {
                 if (token) {
                     console.log('[OntoCode] Processing invitation token:', token.substring(0, 20) + '...');
                     
-                    vscode.window.showInformationMessage('Opening invitation...');
+                    vscode.window.showInformationMessage('Opening invitation in OntoCode...');
                     
                     // Open OntoCode webview with invitation token
                     const panel = await OntoCodePanel.createOrShow(context.extensionUri, context, false);
                     
-                    // Wait for webview to be ready before sending message
+                    // Always store the token as pending first
+                    panel._pendingInvitationToken = token;
+                    
+                    // If webview is ready, send the token immediately
+                    // Use a small delay to ensure the webview state is properly initialized
                     if (panel.isWebviewReady()) {
                         console.log('[OntoCode] Webview ready, sending token immediately');
-                        panel.postMessage({ 
-                            type: 'invitationToken', 
-                            token: token 
-                        });
+                        // Send a clear existing state message first, then send the invitation token
+                        panel.postMessage({ type: 'clearInvitationState' });
+                        setTimeout(() => {
+                            panel.postMessage({ 
+                                type: 'invitationToken', 
+                                token: token 
+                            });
+                            panel._pendingInvitationToken = null;
+                        }, 100);
                     } else {
-                        console.log('[OntoCode] Webview not ready, storing token for later');
-                        panel._pendingInvitationToken = token;
+                        console.log('[OntoCode] Webview not ready, token stored for later delivery');
                     }
                     
                     console.log('[OntoCode] Invitation processing complete');
@@ -684,11 +725,23 @@ class OntoCodePanel {
                         break;
                     case 'insertCitation':
                         // Handle citation insertion from Zotero
-                        await this.handleInsertCitation(message.citationKey, message.format, message.projectId);
+                        await this.handleInsertCitation(message.citationKey, message.format, message.projectId, message.lineNumber || 0);
                         break;
                     case 'insertManualCitation':
                         // Handle manual citation insertion
-                        await this.handleInsertManualCitation(message.citation, message.format, message.projectId);
+                        await this.handleInsertManualCitation(message.citation, message.format, message.projectId, message.lineNumber || 0);
+                        break;
+                    case 'insertCitationToGraphDB':
+                        // Handle direct citation insertion to GraphDB (for persistence across format changes)
+                        await this.handleInsertCitationToGraphDB(message.citation, message.format, message.projectId, message.metadata);
+                        break;
+                    case 'removeCitationFromGraphDB':
+                        // Handle citation removal from GraphDB
+                        await this.handleRemoveCitationFromGraphDB(message.citationUri, message.projectId);
+                        break;
+                    case 'uploadOntologyContent':
+                        // Handle uploading modified ontology content
+                        await this.handleUploadOntologyContent(message.content, message.format, message.projectId);
                         break;
                 }
             },
@@ -3131,9 +3184,27 @@ class OntoCodePanel {
     }
 
     /**
+     * Get the stored JWT token from secure storage
+     */
+    private async getValidJWTToken(): Promise<string | null> {
+        try {
+            const token = await (this._context as any).secrets.get(TOKEN_KEY);
+            if (token) {
+                console.log('[OntoCode] JWT token retrieved from secure storage');
+                return token;
+            }
+            console.log('[OntoCode] No JWT token found in secure storage');
+            return null;
+        } catch (error) {
+            console.error('[OntoCode] Error retrieving JWT token:', error);
+            return null;
+        }
+    }
+
+    /**
      * Handle citation insertion from Zotero
      */
-    private async handleInsertCitation(citationKey: string, format: 'turtle' | 'rdfxml', projectId: string): Promise<void> {
+    private async handleInsertCitation(citationKey: string, format: 'turtle' | 'rdfxml', projectId: string, lineNumber: number = 0): Promise<void> {
         try {
             console.log('[OntoCode] Inserting citation:', citationKey);
             
@@ -3164,7 +3235,8 @@ class OntoCodePanel {
                     {
                         citation: formattedCitation,
                         format: format,
-                        metadata: metadata
+                        metadata: metadata,
+                        lineNumber: lineNumber
                     },
                     {
                         headers: {
@@ -3210,7 +3282,7 @@ class OntoCodePanel {
     /**
      * Handle manual citation insertion
      */
-    private async handleInsertManualCitation(citation: any, format: 'turtle' | 'rdfxml', projectId: string): Promise<void> {
+    private async handleInsertManualCitation(citation: any, format: 'turtle' | 'rdfxml', projectId: string, lineNumber: number = 0): Promise<void> {
         try {
             console.log('[OntoCode] Inserting manual citation:', citation.title);
             
@@ -3228,7 +3300,8 @@ class OntoCodePanel {
                     {
                         citation: formattedCitation,
                         format: format,
-                        metadata: citation
+                        metadata: citation,
+                        lineNumber: lineNumber
                     },
                     {
                         headers: {
@@ -3266,6 +3339,186 @@ class OntoCodePanel {
         } catch (error) {
             console.error('[OntoCode] Failed to insert manual citation:', error);
             // Error message already shown in backend catch block
+        }
+    }
+
+    /**
+     * Handle direct citation insertion to GraphDB (for persistence across format changes)
+     * This is called when user inserts citation at a specific line in the code view
+     */
+    private async handleInsertCitationToGraphDB(citation: string, format: string, projectId: string, metadata: any): Promise<void> {
+        try {
+            console.log('[OntoCode] Inserting citation directly to GraphDB for persistence');
+            console.log('[OntoCode] Project:', projectId);
+            console.log('[OntoCode] Citation preview:', citation.substring(0, 300));
+            
+            const response = await axios.post(
+                `${GATEWAY_URL}/api/citations/${projectId}/insert`,
+                {
+                    citation: citation,
+                    format: format,
+                    metadata: metadata,
+                    lineNumber: 0 // Line number handled by file upload, this is just for triple storage
+                },
+                {
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+
+            console.log('[OntoCode] Citation triples inserted into GraphDB successfully');
+            console.log('[OntoCode] Backend response:', response.data);
+            
+        } catch (error) {
+            console.error('[OntoCode] Failed to insert citation to GraphDB:', error);
+            if (axios.isAxiosError(error)) {
+                const errorMsg = error.response?.data?.error || error.message;
+                console.error('[OntoCode] GraphDB insertion error:', errorMsg);
+                // Don't show error to user since file upload may have succeeded
+            }
+        }
+    }
+
+    /**
+     * Handle removing a citation from GraphDB
+     * Called when user removes a citation from the code view
+     */
+    private async handleRemoveCitationFromGraphDB(citationUri: string, projectId: string): Promise<void> {
+        try {
+            console.log('[OntoCode] Removing citation from GraphDB');
+            console.log('[OntoCode] Project:', projectId);
+            console.log('[OntoCode] Citation URI:', citationUri);
+            
+            // The citationUri is already the full URI (urn:citation:xxx), URL-encode for path parameter
+            const encodedCitationUri = encodeURIComponent(citationUri);
+            
+            const response = await axios.delete(
+                `${GATEWAY_URL}/api/citations/${projectId}/${encodedCitationUri}`,
+                {
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+
+            console.log('[OntoCode] Citation removed from GraphDB successfully');
+            console.log('[OntoCode] Backend response:', response.data);
+            
+        } catch (error) {
+            console.error('[OntoCode] Failed to remove citation from GraphDB:', error);
+            if (axios.isAxiosError(error)) {
+                const errorMsg = error.response?.data?.error || error.message;
+                console.error('[OntoCode] GraphDB removal error:', errorMsg);
+                // Don't show error to user since file update may have succeeded
+            }
+        }
+    }
+
+    /**
+     * Handle uploading modified ontology content back to the backend
+     */
+    private async handleUploadOntologyContent(content: string, format: string, projectId: string): Promise<void> {
+        try {
+            console.log('[OntoCode] Uploading modified ontology content for project:', projectId);
+            console.log('[OntoCode] Content length:', content.length, 'bytes');
+            
+            // Get the JWT token for authorization
+            const token = await this.getValidJWTToken();
+            if (!token) {
+                vscode.window.showErrorMessage('Not authenticated. Please log in first.');
+                this.postMessage({ type: 'uploadOntologyContentDone', success: false, projectId });
+                return;
+            }
+            
+            // Use Node.js fs to write content to a temporary file
+            const path = require('path');
+            const fs = require('fs');
+            const os = require('os');
+            
+            // Create temp file
+            const tmpDir = os.tmpdir();
+            const fileExtension = format === 'turtle' ? 'ttl' : 'rdf';
+            const tempFileName = `ontology_${projectId}_${Date.now()}.${fileExtension}`;
+            const tempFilePath = path.join(tmpDir, tempFileName);
+            
+            // Write content to temp file
+            fs.writeFileSync(tempFilePath, content, 'utf8');
+            console.log('[OntoCode] Temp file created:', tempFilePath);
+            
+            // Read the file as stream for upload
+            const fileStream = fs.createReadStream(tempFilePath);
+            const fileSizeBytes = fs.statSync(tempFilePath).size;
+            
+            // Create FormData using form-data package
+            const FormData = require('form-data');
+            const formData = new FormData();
+            formData.append('file', fileStream, tempFileName);
+            
+            // Upload via the ontology upload endpoint
+            const uploadUrl = `${GATEWAY_URL}/api/ontology/upload/${projectId}`;
+            console.log('[OntoCode] Uploading to:', uploadUrl, 'File size:', fileSizeBytes, 'bytes');
+            
+            const headers = {
+                'Authorization': `Bearer ${token}`,
+                ...formData.getHeaders()
+            };
+            
+            const response = await axios.post(
+                uploadUrl,
+                formData,
+                {
+                    headers: headers,
+                    timeout: 120000,
+                    maxContentLength: Infinity,
+                    maxBodyLength: Infinity
+                }
+            );
+
+            console.log('[OntoCode] Ontology content uploaded successfully');
+            console.log('[OntoCode] Backend response status:', response.status);
+            console.log('[OntoCode] Backend response data:', JSON.stringify(response.data).substring(0, 200));
+            
+            vscode.window.showInformationMessage('✓ Citation marker saved at specified line');
+            
+            // Send completion message back to webview
+            this.postMessage({
+                type: 'uploadOntologyContentDone',
+                success: true,
+                projectId: projectId
+            });
+            
+            // Clean up temp file
+            try {
+                fs.unlinkSync(tempFilePath);
+                console.log('[OntoCode] Temp file cleaned up');
+            } catch (cleanupError) {
+                console.warn('[OntoCode] Failed to cleanup temp file:', cleanupError);
+            }
+            
+        } catch (error) {
+            console.error('[OntoCode] Failed to upload ontology content:', error);
+            
+            if (axios.isAxiosError(error)) {
+                const errorMsg = error.response?.data?.error || error.response?.data?.message || error.message;
+                console.error('[OntoCode] Axios error details:', {
+                    status: error.response?.status,
+                    message: errorMsg,
+                    data: error.response?.data
+                });
+                vscode.window.showErrorMessage(`Failed to save citation marker: ${errorMsg}`);
+            } else if (error instanceof Error) {
+                console.error('[OntoCode] Error message:', error.message);
+                vscode.window.showErrorMessage(`Failed to save citation marker: ${error.message}`);
+            } else {
+                vscode.window.showErrorMessage(`Failed to save citation marker: Unknown error`);
+            }
+            
+            this.postMessage({
+                type: 'uploadOntologyContentDone',
+                success: false,
+                projectId: projectId
+            });
         }
     }
 

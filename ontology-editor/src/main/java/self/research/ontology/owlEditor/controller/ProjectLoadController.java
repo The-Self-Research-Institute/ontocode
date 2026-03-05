@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -340,7 +341,24 @@ public class ProjectLoadController {
     public ResponseEntity<Resource> export(@PathVariable String projectId,
                                            @RequestParam(defaultValue = "rdfxml") String format) {
         try {
-            Path exportPath = storageManager.exportOntology(projectId, format);
+            Path exportPath;
+            
+            // Check for cached code view content first (preserves citation line positions)
+            Optional<String> cachedContent = storageManager.getCodeViewCache(projectId, format);
+            if (cachedContent.isPresent()) {
+                log.info("[EXPORT] Using cached code view content to preserve citation positions for project: {}, format: {}", 
+                         projectId, format);
+                
+                // Write cached content to temporary export file
+                String extension = storageManager.extensionFor(format);
+                exportPath = storageManager.projectDir(projectId).resolve("ontology.export." + extension);
+                Files.writeString(exportPath, cachedContent.get());
+            } else {
+                // No cache - export from GraphDB (default behavior)
+                log.info("[EXPORT] No cache found, exporting from GraphDB for project: {}, format: {}", projectId, format);
+                exportPath = storageManager.exportOntology(projectId, format);
+            }
+            
             InputStreamResource resource = new InputStreamResource(Files.newInputStream(exportPath));
             return ResponseEntity.ok()
                     .contentType(MediaType.APPLICATION_OCTET_STREAM)
@@ -601,11 +619,27 @@ public class ProjectLoadController {
     @GetMapping("/{projectId}/content")
     public ResponseEntity<Map<String, Object>> getOntologyContent(
             @PathVariable String projectId,
-            @RequestParam(defaultValue = "rdfxml") String format) {
+            @RequestParam(defaultValue = "rdfxml") String format,
+            @RequestParam(defaultValue = "false") boolean forceRefresh) {
         try {
-            log.info("Fetching ontology content for project: {} in format: {}", projectId, format);
+            log.info("Fetching ontology content for project: {} in format: {}, forceRefresh: {}", projectId, format, forceRefresh);
             
-            // Export the ontology in the requested format
+            // Check for cached code view content first (preserves line positions)
+            if (!forceRefresh) {
+                Optional<String> cachedContent = storageManager.getCodeViewCache(projectId, format);
+                if (cachedContent.isPresent()) {
+                    log.info("Returning cached code view content for project: {} in format: {}", projectId, format);
+                    return ResponseEntity.ok(Map.of(
+                            "success", true,
+                            "content", cachedContent.get(),
+                            "format", format,
+                            "projectId", projectId,
+                            "cached", true
+                    ));
+                }
+            }
+            
+            // No cache or force refresh - export from GraphDB
             Path exportPath = storageManager.exportOntology(projectId, format);
             String content = Files.readString(exportPath);
             
@@ -613,7 +647,8 @@ public class ProjectLoadController {
                     "success", true,
                     "content", content,
                     "format", format,
-                    "projectId", projectId
+                    "projectId", projectId,
+                    "cached", false
             ));
         } catch (Exception e) {
             log.error("Failed to get ontology content for project: {}", projectId, e);
@@ -621,6 +656,78 @@ public class ProjectLoadController {
                     .body(Map.of(
                             "success", false,
                             "error", "Failed to get ontology content: " + e.getMessage()
+                    ));
+        }
+    }
+
+    /**
+     * Store code view content in cache to preserve line positions.
+     * POST /api/ontology/{projectId}/code-view-cache
+     * This is used when the user inserts citations at specific lines.
+     */
+    @PostMapping("/{projectId}/code-view-cache")
+    public ResponseEntity<Map<String, Object>> storeCodeViewCache(
+            @PathVariable String projectId,
+            @RequestBody Map<String, String> request) {
+        try {
+            String content = request.get("content");
+            String format = request.getOrDefault("format", "rdfxml");
+            
+            if (content == null || content.isEmpty()) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("success", false, "error", "Content is required"));
+            }
+            
+            log.info("Storing code view cache for project: {} in format: {}, size: {} bytes", 
+                     projectId, format, content.length());
+            
+            storageManager.storeCodeViewCache(projectId, content, format);
+            
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "projectId", projectId,
+                    "format", format,
+                    "message", "Code view cache stored successfully"
+            ));
+        } catch (Exception e) {
+            log.error("Failed to store code view cache for project: {}", projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of(
+                            "success", false,
+                            "error", "Failed to store code view cache: " + e.getMessage()
+                    ));
+        }
+    }
+
+    /**
+     * Clear code view cache for a project.
+     * DELETE /api/ontology/{projectId}/code-view-cache
+     * Optionally specify format to clear only specific format cache.
+     */
+    @DeleteMapping("/{projectId}/code-view-cache")
+    public ResponseEntity<Map<String, Object>> clearCodeViewCache(
+            @PathVariable String projectId,
+            @RequestParam(required = false) String format) {
+        try {
+            log.info("Clearing code view cache for project: {}, format: {}", projectId, format);
+            
+            if (format != null && !format.isEmpty()) {
+                storageManager.clearCodeViewCacheFormat(projectId, format);
+            } else {
+                storageManager.clearCodeViewCache(projectId);
+            }
+            
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "projectId", projectId,
+                    "message", "Code view cache cleared successfully"
+            ));
+        } catch (Exception e) {
+            log.error("Failed to clear code view cache for project: {}", projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of(
+                            "success", false,
+                            "error", "Failed to clear code view cache: " + e.getMessage()
                     ));
         }
     }

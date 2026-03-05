@@ -696,8 +696,8 @@ public class WorkspaceController {
      */
     private boolean hasBasicCollaboration(String plan) {
         return switch (plan.toUpperCase()) {
-            case "FREE" -> true;       // Basic collaboration: file sharing & comments
-            case "PRO" -> false;       // No collaboration
+            case "FREE" -> false;       // Basic collaboration: file sharing & comments
+            case "PRO" -> true;       // No collaboration
             case "ENTERPRISE" -> true; // Basic collaboration: file sharing & comments
             default -> false;
         };

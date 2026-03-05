@@ -72,8 +72,16 @@ public class ReasonerService {
                     
                 case ELK:
                     // ELK - Fast and scalable EL reasoner
-                    log.info("Using ELK (Consequence-based) reasoner");
-                    return new ElkReasonerFactory().createReasoner(ontology, config);
+                    // Note: ELK only supports EL profile of OWL, not full OWL 2 DL
+                    log.info("Using ELK (Consequence-based) reasoner - Note: EL profile only");
+                    try {
+                        OWLReasoner elkReasoner = new ElkReasonerFactory().createReasoner(ontology, config);
+                        log.info("ELK reasoner created successfully");
+                        return elkReasoner;
+                    } catch (Exception e) {
+                        log.error("Failed to create ELK reasoner - may be due to unsupported OWL constructs", e);
+                        throw e; // Will be caught by outer try-catch and fallback to Structural
+                    }
                     
                 case STRUCTURAL:
                 default:
@@ -147,16 +155,28 @@ public class ReasonerService {
                 // Continue anyway - some reasoners can still provide partial results
             }
             
-            reasoner.precomputeInferences(
-                InferenceType.CLASS_HIERARCHY,
-                InferenceType.OBJECT_PROPERTY_HIERARCHY,
-                InferenceType.DATA_PROPERTY_HIERARCHY
-            );
+            // ELK has specific limitations - only precompute supported types
+            if (type == ReasonerType.ELK) {
+                log.info("ELK reasoner: precomputing EL-profile compatible inferences");
+                try {
+                    reasoner.precomputeInferences(InferenceType.CLASS_HIERARCHY);
+                } catch (Exception e) {
+                    log.warn("ELK: CLASS_HIERARCHY precomputation failed, trying basic classification", e);
+                    // Some ELK versions might have issues, continue anyway
+                }
+            } else {
+                // Full precomputation for other reasoners
+                reasoner.precomputeInferences(
+                    InferenceType.CLASS_HIERARCHY,
+                    InferenceType.OBJECT_PROPERTY_HIERARCHY,
+                    InferenceType.DATA_PROPERTY_HIERARCHY
+                );
+            }
             
             long duration = System.currentTimeMillis() - startTime;
             log.info("Classification completed in {} ms", duration);
         } catch (Exception e) {
-            log.error("Error during classification", e);
+            log.error("Error during classification with {}", type.getDisplayName(), e);
             // Check if it's due to inconsistency
             try {
                 if (!reasoner.isConsistent()) {
@@ -167,6 +187,13 @@ public class ReasonerService {
             } catch (Exception consistencyCheckError) {
                 log.error("Could not check consistency", consistencyCheckError);
             }
+            
+            // For ELK, gracefully degrade instead of failing completely
+            if (type == ReasonerType.ELK) {
+                log.warn("ELK classification failed, but continuing with available inferences");
+                return; // Don't throw - let caller work with partial results
+            }
+            
             throw new RuntimeException("Classification failed: " + e.getMessage(), e);
         }
     }
@@ -202,7 +229,11 @@ public class ReasonerService {
                 Set<OWLClass> processedClasses = new HashSet<>();
                 buildClassHierarchy(reasoner, ontology, owlThing, classHierarchy, processedClasses, 0);
             } catch (Exception e) {
-                log.error("Error building class hierarchy, returning empty", e);
+                if (type == ReasonerType.ELK) {
+                    log.warn("ELK: Error building class hierarchy - may be due to unsupported OWL constructs", e);
+                } else {
+                    log.error("Error building class hierarchy, returning empty", e);
+                }
             }
             results.put("classHierarchy", classHierarchy);
             
@@ -210,20 +241,31 @@ public class ReasonerService {
             List<Map<String, Object>> equivalentClasses = new ArrayList<>();
             try {
                 for (OWLClass cls : ontology.getClassesInSignature()) {
-                    Set<OWLClass> equivalents = reasoner.getEquivalentClasses(cls).getEntities();
-                    if (equivalents.size() > 1) {
-                        Map<String, Object> eqGroup = new HashMap<>();
-                        eqGroup.put("classes", equivalents.stream()
-                            .map(c -> Map.of(
-                                "iri", c.getIRI().toString(),
-                                "label", getLabel(c, ontology)
-                            ))
-                            .collect(Collectors.toList()));
-                        equivalentClasses.add(eqGroup);
+                    try {
+                        Set<OWLClass> equivalents = reasoner.getEquivalentClasses(cls).getEntities();
+                        if (equivalents.size() > 1) {
+                            Map<String, Object> eqGroup = new HashMap<>();
+                            eqGroup.put("classes", equivalents.stream()
+                                .map(c -> Map.of(
+                                    "iri", c.getIRI().toString(),
+                                    "label", getLabel(c, ontology)
+                                ))
+                                .collect(Collectors.toList()));
+                            equivalentClasses.add(eqGroup);
+                        }
+                    } catch (Exception e) {
+                        // For ELK, skip classes that cause issues
+                        if (type != ReasonerType.ELK) {
+                            log.debug("Error processing equivalent classes for {}", cls.getIRI(), e);
+                        }
                     }
                 }
             } catch (Exception e) {
-                log.error("Error finding equivalent classes, returning empty", e);
+                if (type == ReasonerType.ELK) {
+                    log.warn("ELK: Error finding equivalent classes - may be due to unsupported OWL constructs", e);
+                } else {
+                    log.error("Error finding equivalent classes, returning empty", e);
+                }
             }
             results.put("equivalentClasses", equivalentClasses);
             
@@ -244,7 +286,11 @@ public class ReasonerService {
                         ))
                         .collect(Collectors.toList());
                 } catch (Exception e) {
-                    log.error("Error getting unsatisfiable classes", e);
+                    if (type == ReasonerType.ELK) {
+                        log.warn("ELK: Error getting unsatisfiable classes - may be due to unsupported OWL constructs", e);
+                    } else {
+                        log.error("Error getting unsatisfiable classes", e);
+                    }
                 }
             }
             results.put("unsatisfiableClasses", unsatisfiableList);
@@ -271,7 +317,22 @@ public class ReasonerService {
                     }
                 }
             } catch (Exception e) {
-                log.error("Error building object property hierarchy", e);
+                if (type == ReasonerType.ELK) {
+                    log.warn("ELK: Error building object property hierarchy - falling back to asserted properties", e);
+                    // For ELK, provide basic fallback
+                    for (OWLObjectProperty prop : ontology.getObjectPropertiesInSignature()) {
+                        if (!prop.isOWLTopObjectProperty() && !prop.isOWLBottomObjectProperty()) {
+                            Map<String, Object> node = new HashMap<>();
+                            node.put("iri", prop.getIRI().toString());
+                            node.put("label", getLabel(prop, ontology));
+                            node.put("depth", 0);
+                            node.put("childrenCount", 0);
+                            objectPropertyHierarchy.add(node);
+                        }
+                    }
+                } else {
+                    log.error("Error building object property hierarchy", e);
+                }
             }
             results.put("objectPropertyHierarchy", objectPropertyHierarchy);
 
@@ -296,12 +357,46 @@ public class ReasonerService {
                     }
                 }
             } catch (Exception e) {
-                log.error("Error building data property hierarchy", e);
+                if (type == ReasonerType.ELK) {
+                    log.warn("ELK: Error building data property hierarchy - falling back to asserted properties", e);
+                    // For ELK, provide basic fallback
+                    for (OWLDataProperty prop : ontology.getDataPropertiesInSignature()) {
+                        if (!prop.isOWLTopDataProperty() && !prop.isOWLBottomDataProperty()) {
+                            Map<String, Object> node = new HashMap<>();
+                            node.put("iri", prop.getIRI().toString());
+                            node.put("label", getLabel(prop, ontology));
+                            node.put("depth", 0);
+                            node.put("childrenCount", 0);
+                            dataPropertyHierarchy.add(node);
+                        }
+                    }
+                } else {
+                    log.error("Error building data property hierarchy", e);
+                }
             }
             results.put("dataPropertyHierarchy", dataPropertyHierarchy);
             
             // Total counts
             results.put("totalClasses", ontology.getClassesInSignature().size());
+            
+            // Add ELK profile warning if ELK reasoner is used
+            if (type == ReasonerType.ELK) {
+                String elkWarning = "ELK reasoner uses EL profile - complex OWL 2 DL constructs may not be classified correctly. " +
+                                    "For full OWL 2 DL support, use HermiT or Pellet reasoner.";
+                results.put("reasonerCapabilities", Map.of(
+                    "reasoner", "ELK",
+                    "profile", "EL (subset of OWL 2 DL)",
+                    "warning", elkWarning,
+                    "supportsFullOWL2", false
+                ));
+                log.warn(elkWarning);
+            } else {
+                results.put("reasonerCapabilities", Map.of(
+                    "reasoner", type.getDisplayName(),
+                    "profile", "OWL 2 DL",
+                    "supportsFullOWL2", true
+                ));
+            }
             
             log.info("Classification results: {} class nodes, {} object prop nodes, {} data prop nodes",
                 classHierarchy.size(), objectPropertyHierarchy.size(), dataPropertyHierarchy.size());
