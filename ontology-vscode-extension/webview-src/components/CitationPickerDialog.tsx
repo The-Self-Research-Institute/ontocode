@@ -5,19 +5,21 @@ import { TreeNode } from '@/types';
 
 interface CitationItem {
   key: string;
-  title: string;
-  creators: Array<{ firstName: string; lastName: string; creatorType: string }>;
-  date: string;
-  doi?: string;
-  url?: string;
-  itemType: string;
-  abstractNote?: string;
-  publicationTitle?: string;
-  volume?: string;
-  issue?: string;
-  pages?: string;
-  publisher?: string;
-  tags?: Array<{ tag: string }>;
+  data: {
+    title: string;
+    creators: Array<{ firstName: string; lastName: string; creatorType: string }>;
+    date: string;
+    doi?: string;
+    url?: string;
+    itemType: string;
+    abstractNote?: string;
+    publicationTitle?: string;
+    volume?: string;
+    issue?: string;
+    pages?: string;
+    publisher?: string;
+    tags?: Array<{ tag: string }>;
+  };
 }
 
 interface CitationPickerDialogProps {
@@ -51,11 +53,11 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
     } else {
       const query = searchQuery.toLowerCase();
       const filtered = citations.filter(citation => {
-        const title = citation.title?.toLowerCase() || '';
-        const authors = citation.creators?.map(c => 
+        const title = citation.data?.title?.toLowerCase() || '';
+        const authors = citation.data?.creators?.map(c => 
           `${c.firstName} ${c.lastName}`.toLowerCase()
         ).join(' ') || '';
-        const year = citation.date || '';
+        const year = citation.data?.date || '';
         
         return title.includes(query) || authors.includes(query) || year.includes(query);
       });

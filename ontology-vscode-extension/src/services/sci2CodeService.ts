@@ -27,7 +27,7 @@ interface Sci2CodeAPI {
 
 class Sci2CodeService {
   private api: Sci2CodeAPI | null = null;
-  private extensionId = 'SelfResearchInstitute.sci2code'; // IMPORTANT: Update with actual extension ID
+  private extensionId = 'self.ontocode-extension'; // Use OntoCode's own extension ID
   private initializationAttempted = false;
 
   async initialize(): Promise<boolean> {
