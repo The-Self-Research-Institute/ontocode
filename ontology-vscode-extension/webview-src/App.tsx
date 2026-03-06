@@ -65,25 +65,45 @@ const AppContent = () => {
 
         // Also check parent window URL (for test-web environment)
         let parentToken: string | null = null;
+        let parentEmail: string | null = null;
         try {
             if (window.parent && window.parent !== window) {
                 const parentParams = new URLSearchParams(window.parent.location.search);
                 parentToken = parentParams.get('token') || parentParams.get('invite');
-                console.log('[App] Checked parent window for token:', !!parentToken);
+                parentEmail = parentParams.get('email');
+                console.log('[App] Checked parent window for token:', !!parentToken, 'email:', !!parentEmail);
             }
         } catch (e) {
             // Cross-origin access blocked, ignore
             console.log('[App] Cannot access parent window (cross-origin)');
         }
 
-        const finalToken = token || parentToken;
+        // Also check window.location.hash for invitation parameters (vscode-test-web format)
+        let hashToken: string | null = null;
+        let hashEmail: string | null = null;
+        try {
+            if (window.location.hash) {
+                const hashPart = window.location.hash.substring(1); // Remove the '#'
+                const hashParams = new URLSearchParams(hashPart);
+                hashToken = hashParams.get('token') || hashParams.get('invite');
+                hashEmail = hashParams.get('email');
+                console.log('[App] Checked URL hash for token:', !!hashToken, 'email:', !!hashEmail);
+            }
+        } catch (e) {
+            console.log('[App] Error parsing hash:', e);
+        }
+
+        const finalToken = token || parentToken || hashToken;
+        const finalEmail = email || parentEmail || hashEmail;
 
         if (finalToken) {
-            console.log('[App] Found invitation token in URL:', finalToken);
+            console.log('[App] 📧 Found invitation token in URL, setting state');
             setInviteToken(finalToken);
-            if (email) {
-                setInviteEmail(email);
+            if (finalEmail) {
+                setInviteEmail(finalEmail);
             }
+        } else {
+            console.log('[App] No invitation token found in URL parameters, search, hash, or parent window');
         }
     }, []);
 
@@ -106,10 +126,12 @@ const AppContent = () => {
                 setInviteEmail(null);
                 setShowAuthForInvitation(false);
             } else if (message.type === 'invitationToken') {
-                console.log('[App] 📧 Received invitation token from extension:', message.token);
+                console.log('[App] 📧 Received invitation token from extension:', message.token?.substring(0, 20) + '...');
+                console.log('[App] Current state - inviteToken:', !!inviteToken, 'showAuthForInvitation:', showAuthForInvitation);
                 // Reset any auth-related state that might block showing the invitation page
                 setShowAuthForInvitation(false);
                 setInviteToken(message.token);
+                console.log('[App] 📧 Invitation token state updated, page should show now');
             } else if (message.type === 'showSubscriptionPlans') {
                 console.log('[App] 📋 Showing subscription plans page');
                 setShowSubscriptionPlan(true);
@@ -340,6 +362,7 @@ const AppContent = () => {
     // Show invitation acceptance page if there's an invite token (whether logged in or not)
     // But if user clicked login/signup, show auth form first
     if (inviteToken && !showAuthForInvitation) {
+        console.log('[App] 🎫 Rendering InviteAcceptPage with token:', inviteToken.substring(0, 20) + '...');
         return (
             <InviteAcceptPage
                 token={inviteToken}
@@ -349,6 +372,11 @@ const AppContent = () => {
                 onError={handleInvitationError}
             />
         );
+    }
+
+    // Debug: Log why we're not showing invitation page
+    if (inviteToken) {
+        console.log('[App] ⚠️ Have invite token but not showing InviteAcceptPage. showAuthForInvitation:', showAuthForInvitation);
     }
 
     // Show deployment selector BEFORE login if user hasn't selected deployment type yet

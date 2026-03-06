@@ -21,51 +21,51 @@ echo    Platforms: linux/amd64, linux/arm64
 echo ============================================
 echo.
 
-REM --- Pre-flight: ensure docker-entrypoint.sh exists for vscode-web ---
-if not exist "ontology-vscode-extension\docker-entrypoint.sh" (
-    echo ERROR: ontology-vscode-extension\docker-entrypoint.sh not found!
-    echo This file is required to patch the Extension Host CSP at runtime.
-    echo Please restore it before building.
-    pause
-    exit /b 1
-)
+@REM REM --- Pre-flight: ensure docker-entrypoint.sh exists for vscode-web ---
+@REM if not exist "ontology-vscode-extension\docker-entrypoint.sh" (
+@REM     echo ERROR: ontology-vscode-extension\docker-entrypoint.sh not found!
+@REM     echo This file is required to patch the Extension Host CSP at runtime.
+@REM     echo Please restore it before building.
+@REM     pause
+@REM     exit /b 1
+@REM )
 
-echo Setting up buildx for multi-platform builds...
-docker buildx create --name ontocode-builder --use --driver docker-container 2>nul
-docker buildx inspect --bootstrap
-echo.
+@REM echo Setting up buildx for multi-platform builds...
+@REM docker buildx create --name ontocode-builder --use --driver docker-container 2>nul
+@REM docker buildx inspect --bootstrap
+@REM echo.
 
-echo Building and pushing multi-platform images...
-echo This may take a while as images are built for both Intel and ARM architectures...
-echo.
+@REM echo Building and pushing multi-platform images...
+@REM echo This may take a while as images are built for both Intel and ARM architectures...
+@REM echo.
 
-echo [1/8] Building ontocode-graphdb...
-docker buildx build --platform linux/amd64,linux/arm64 -t %REGISTRY%/ontocode-graphdb:%VERSION% -f Dockerfile.graphdb --push .
-if errorlevel 1 goto :error
+@REM echo [1/8] Building ontocode-graphdb...
+@REM docker buildx build --platform linux/amd64,linux/arm64 -t %REGISTRY%/ontocode-graphdb:%VERSION% -f Dockerfile.graphdb --push .
+@REM if errorlevel 1 goto :error
 
-echo [2/8] Building ontocode-auth...
-docker buildx build --platform linux/amd64,linux/arm64 -t %REGISTRY%/ontocode-auth:%VERSION% -f Dockerfile.auth --push .
-if errorlevel 1 goto :error
+@REM echo [2/8] Building ontocode-auth...
+@REM docker buildx build --platform linux/amd64,linux/arm64 -t %REGISTRY%/ontocode-auth:%VERSION% -f Dockerfile.auth --push .
+@REM if errorlevel 1 goto :error
 
-echo [3/8] Building ontocode-gateway...
-docker buildx build --platform linux/amd64,linux/arm64 -t %REGISTRY%/ontocode-gateway:%VERSION% -f Dockerfile.gateway --push .
-if errorlevel 1 goto :error
+@REM echo [3/8] Building ontocode-gateway...
+@REM docker buildx build --platform linux/amd64,linux/arm64 -t %REGISTRY%/ontocode-gateway:%VERSION% -f Dockerfile.gateway --push .
+@REM if errorlevel 1 goto :error
 
-echo [4/8] Building ontocode-editor...
-docker buildx build --platform linux/amd64,linux/arm64 -t %REGISTRY%/ontocode-editor:%VERSION% -f Dockerfile.editor --push .
-if errorlevel 1 goto :error
+@REM echo [4/8] Building ontocode-editor...
+@REM docker buildx build --platform linux/amd64,linux/arm64 -t %REGISTRY%/ontocode-editor:%VERSION% -f Dockerfile.editor --push .
+@REM if errorlevel 1 goto :error
 
-echo [5/8] Building ontocode-swrl...
-docker buildx build --platform linux/amd64,linux/arm64 -t %REGISTRY%/ontocode-swrl:%VERSION% -f Dockerfile.swrl --push .
-if errorlevel 1 goto :error
+@REM echo [5/8] Building ontocode-swrl...
+@REM docker buildx build --platform linux/amd64,linux/arm64 -t %REGISTRY%/ontocode-swrl:%VERSION% -f Dockerfile.swrl --push .
+@REM if errorlevel 1 goto :error
 
-echo [6/8] Building ontocode-plugin...
-docker buildx build --platform linux/amd64,linux/arm64 -t %REGISTRY%/ontocode-plugin:%VERSION% -f Dockerfile.plugin --push .
-if errorlevel 1 goto :error
+@REM echo [6/8] Building ontocode-plugin...
+@REM docker buildx build --platform linux/amd64,linux/arm64 -t %REGISTRY%/ontocode-plugin:%VERSION% -f Dockerfile.plugin --push .
+@REM if errorlevel 1 goto :error
 
-echo [7/8] Building ontocode-plugin-init...
-docker buildx build --platform linux/amd64,linux/arm64 -t %REGISTRY%/ontocode-plugin-init:%VERSION% -f Dockerfile.plugin-init --push .
-if errorlevel 1 goto :error
+@REM echo [7/8] Building ontocode-plugin-init...
+@REM docker buildx build --platform linux/amd64,linux/arm64 -t %REGISTRY%/ontocode-plugin-init:%VERSION% -f Dockerfile.plugin-init --push .
+@REM if errorlevel 1 goto :error
 
 echo [8/8] Building ontocode-vscode-web (with CSP entrypoint)...
 docker buildx build --platform linux/amd64,linux/arm64 -t %REGISTRY%/ontocode-vscode-web:%VERSION% -f Dockerfile.vscode-extension --push .

@@ -30,9 +30,6 @@
   ],
   "main": "./dist/extension.js",
   "browser": "./dist/web/extension.js",
-  "extensionDependencies": [
-    "SelfResearchInstitute.sci2code"
-  ],
   "contributes": {
     "webviews": [
       {
@@ -65,6 +62,21 @@
       {
         "command": "ontocode.showCollaborationStatus",
         "title": "OntoCode: Show Collaboration Status",
+        "category": "OntoCode"
+      },
+      {
+        "command": "ontocode.configureZotero",
+        "title": "OntoCode: Configure Zotero Integration",
+        "category": "OntoCode"
+      },
+      {
+        "command": "ontocode.testZoteroConnection",
+        "title": "OntoCode: Test Zotero Connection",
+        "category": "OntoCode"
+      },
+      {
+        "command": "ontocode.testInvitationFlow",
+        "title": "OntoCode: Test Invitation Flow",
         "category": "OntoCode"
       }
     ],
@@ -112,7 +124,38 @@
         ],
         "configuration": "./language-configuration.json"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "OntoCode",
+      "properties": {
+        "ontocode.zotero.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Your Zotero API key (get from https://www.zotero.org/settings/keys)",
+          "markdownDescription": "Your Zotero API key. Get one from [Zotero Settings](https://www.zotero.org/settings/keys)"
+        },
+        "ontocode.zotero.userId": {
+          "type": "string",
+          "default": "",
+          "description": "Your Zotero user ID (found in API key page)",
+          "markdownDescription": "Your Zotero user ID. Found on your [API keys page](https://www.zotero.org/settings/keys)"
+        },
+        "ontocode.zotero.libraryType": {
+          "type": "string",
+          "enum": [
+            "user",
+            "group"
+          ],
+          "default": "user",
+          "description": "Type of Zotero library (user or group)"
+        },
+        "ontocode.zotero.groupId": {
+          "type": "string",
+          "default": "",
+          "description": "Group ID if using a group library"
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run bundle:extension",

@@ -5,6 +5,7 @@ import axios, { AxiosError } from 'axios';
 import { insertCitationCommand } from './features/citationInsertion';
 import { CitationPickerPanel } from './webview/citationPicker';
 import { sci2CodeService } from './services/sci2CodeService';
+import { zoteroApiService } from './services/zoteroApiService';
 // Use web-compatible collaboration manager in browser environment
 import { CollaborationManager } from './collaboration/CollaborationManager.web';
 import { ICollaborationManager } from './collaboration/types';
@@ -442,8 +443,180 @@ export function activate(context: vscode.ExtensionContext) {
         }),
         vscode.commands.registerCommand('ontocode.insertCitation', insertCitationCommand),
         // Fix: Use context.extensionUri to get the extension's URI.
-        vscode.commands.registerCommand('ontocode.openCitationPicker', () => CitationPickerPanel.createOrShow(context.extensionUri))
+        vscode.commands.registerCommand('ontocode.openCitationPicker', () => CitationPickerPanel.createOrShow(context.extensionUri)),
+        vscode.commands.registerCommand('ontocode.configureZotero', async () => {
+            await zoteroApiService.showConfigInstructions();
+        }),
+        vscode.commands.registerCommand('ontocode.testZoteroConnection', async () => {
+            await zoteroApiService.testConnection();
+        }),
+        vscode.commands.registerCommand('ontocode.testInvitationFlow', async () => {
+            const token = await vscode.window.showInputBox({
+                prompt: 'Enter invitation token to test',
+                placeHolder: 'Paste invitation token here',
+                ignoreFocusOut: true,
+                validateInput: (value) => {
+                    if (!value || value.trim().length === 0) {
+                        return 'Token is required';
+                    }
+                    return null;
+                }
+            });
+
+            if (token) {
+                vscode.window.showInformationMessage('Opening invitation...');
+                const panel = await OntoCodePanel.createOrShow(context.extensionUri, context, false);
+                
+                // Store token as pending
+                panel._pendingInvitationToken = token;
+                
+                // Send token when webview is ready
+                if (panel.isWebviewReady()) {
+                    panel.postMessage({ type: 'clearInvitationState' });
+                    setTimeout(() => {
+                        panel.postMessage({ type: 'invitationToken', token: token });
+                        panel._pendingInvitationToken = null;
+                    }, 100);
+                }
+            }
+        })
     );
+
+    // Export API for other extensions or internal use (replaces external Sci2Code dependency)
+    // Mock Zotero data for testing - must have nested 'data' property to match webview expectations
+    const mockZoteroLibrary = [
+        {
+            key: 'DEMO001',
+            data: {
+                title: 'Semantic Web Technologies: A Survey',
+                creators: [{ firstName: 'John', lastName: 'Smith', creatorType: 'author' }],
+                date: '2023',
+                doi: '10.1000/demo.001',
+                itemType: 'journalArticle',
+                abstractNote: 'A comprehensive survey of semantic web technologies and ontology development.',
+                publicationTitle: 'Journal of Web Semantics',
+                volume: '45',
+                pages: '1-25'
+            }
+        },
+        {
+            key: 'DEMO002',
+            data: {
+                title: 'OWL 2 Web Ontology Language Primer',
+                creators: [
+                    { firstName: 'Pascal', lastName: 'Hitzler', creatorType: 'author' },
+                    { firstName: 'Markus', lastName: 'Krötzsch', creatorType: 'author' }
+                ],
+                date: '2012',
+                url: 'https://www.w3.org/TR/owl2-primer/',
+                itemType: 'webpage',
+                abstractNote: 'This document provides an introduction to the OWL 2 Web Ontology Language.',
+                publisher: 'W3C'
+            }
+        },
+        {
+            key: 'DEMO003',
+            data: {
+                title: 'Knowledge Representation and Reasoning',
+                creators: [{ firstName: 'Frank', lastName: 'van Harmelen', creatorType: 'editor' }],
+                date: '2020',
+                itemType: 'book',
+                abstractNote: 'Foundations of knowledge representation and automated reasoning systems.',
+                publisher: 'MIT Press',
+                pages: '500'
+            }
+        }
+    ];
+
+    return {
+        getZoteroLibrary: async (): Promise<any[]> => {
+            console.log('[OntoCode] getZoteroLibrary called');
+            
+            // Try to fetch from Zotero API first
+            if (zoteroApiService.isConfigured()) {
+                console.log('[OntoCode] Fetching from Zotero API...');
+                const items = await zoteroApiService.fetchLibrary(100);
+                if (items && items.length > 0) {
+                    console.log(`[OntoCode] Returning ${items.length} items from Zotero API`);
+                    return items;
+                }
+            } else {
+                console.log('[OntoCode] Zotero not configured, showing instructions');
+                // Don't block - just show info and return mock data
+                setTimeout(() => {
+                    zoteroApiService.showConfigInstructions();
+                }, 500);
+            }
+            
+            // Fall back to mock data
+            console.log('[OntoCode] Returning mock Zotero data');
+            return mockZoteroLibrary;
+        },
+        getZoteroItem: async (key: string): Promise<any | null> => {
+            console.log('[OntoCode] getZoteroItem called for key:', key);
+            
+            // Try to fetch from Zotero API first
+            if (zoteroApiService.isConfigured()) {
+                const item = await zoteroApiService.fetchItem(key);
+                if (item) {
+                    return item.data;
+                }
+            }
+            
+            // Fall back to mock data
+            const item = mockZoteroLibrary.find(item => item.key === key);
+            return item ? item.data : null;
+        },
+        formatCitationForOntology: async (key: string, format?: 'turtle' | 'rdfxml'): Promise<string> => {
+            console.log('[OntoCode] formatCitationForOntology called for key:', key, 'format:', format);
+            const item = mockZoteroLibrary.find(i => i.key === key);
+            if (!item) return '';
+            
+            const data = item.data;
+            const isTurtle = format === 'turtle' || !format;
+            if (isTurtle) {
+                return `@prefix bibo: <http://purl.org/ontology/bibo/> .
+@prefix dc: <http://purl.org/dc/elements/1.1/> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+<http://example.org/citation/${item.key}> a bibo:Article ;
+    dc:title "${data.title}" ;
+    dc:date "${data.date}" ;
+    dc:creator [ a foaf:Person ; foaf:name "${data.creators[0].firstName} ${data.creators[0].lastName}" ] .
+`;
+            } else {
+                return `<?xml version="1.0"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:dc="http://purl.org/dc/elements/1.1/"
+         xmlns:bibo="http://purl.org/ontology/bibo/">
+  <bibo:Article rdf:about="http://example.org/citation/${item.key}">
+    <dc:title>${data.title}</dc:title>
+    <dc:date>${data.date}</dc:date>
+  </bibo:Article>
+</rdf:RDF>`;
+            }
+        },
+        getCitationMetadata: async (key: string): Promise<any | null> => {
+            console.log('[OntoCode] getCitationMetadata called for key:', key);
+            
+            // Try to fetch from Zotero API first
+            if (zoteroApiService.isConfigured()) {
+                const item = await zoteroApiService.fetchItem(key);
+                if (item) {
+                    return item.data;
+                }
+            }
+            
+            // Fall back to mock data
+            const item = mockZoteroLibrary.find(i => i.key === key);
+            return item ? item.data : null;
+        },
+        isAuthenticated: async (): Promise<boolean> => {
+            // Check if user is authenticated with OntoCode
+            const token = await (context as any).secrets.get(TOKEN_KEY);
+            return !!token;
+        }
+    };
 }
 
 export function deactivate() {
