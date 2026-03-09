@@ -1,7 +1,7 @@
 // src/Dashboard.tsx
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
-  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, Square, DatabaseZap, Upload, FolderOpen, Sparkles, Clock, Users, Download, RefreshCw, AlertCircle, Puzzle, Zap, BookOpen, Brain, Network, GitMerge, Palette, Edit2, Plus, Globe, Link as LinkIcon, Hash, X, FileCode, Info, Crown, Rocket
+  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, Square, DatabaseZap, Upload, FolderOpen, Sparkles, Clock, Users, Download, RefreshCw, AlertCircle, Puzzle, Zap, BookOpen, Brain, Network, GitMerge, Palette, Edit2, Plus, Globe, Link as LinkIcon, Hash, X, FileCode, Info, Crown, Rocket, Bug
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
@@ -27,6 +27,7 @@ import HistoryPanel from './HistoryPanel';
 import ToastNotification from './ToastNotification';
 import { CollaborativeCursors } from './CollaborativeCursor';
 import ShareDialog from './ShareDialog';
+import { ReportIssueModal } from './ReportIssueModal';
 import ThemeSettings from './ThemeSettings';
 // ImportProgressToast removed per user request
 import { QueueStatusIndicator, GlobalQueueStats } from './QueueStatusIndicator';
@@ -654,6 +655,7 @@ const TopMenuBar = ({
   onOpenDialog,
   onOpenPluginMarketplace,
   onOpenHistory,
+  onReportIssue,
   syncMode,
   onToggleSyncMode,
   isReasonerRunning,
@@ -682,6 +684,7 @@ const TopMenuBar = ({
   onOpenDialog: () => void;
   onOpenPluginMarketplace: () => void;
   onOpenHistory: () => void;
+  onReportIssue: () => void;
   syncMode: 'private' | 'public';
   onToggleSyncMode: () => void;
   isReasonerRunning?: boolean;
@@ -912,7 +915,20 @@ const TopMenuBar = ({
                   //   </button>
                   // </div>
                   // ) 
-                  : item === "File" ? (
+                  : item === "Help" ? (
+                    <div className="py-1">
+                      <button
+                        onClick={() => {
+                          onReportIssue();
+                          setOpenMenu(null);
+                        }}
+                        className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                      >
+                        <Bug size={14} />
+                        Report Issue
+                      </button>
+                    </div>
+                  ) : item === "File" ? (
                     <div className="flex flex-col py-1">
                       <div className="px-4 py-2 text-[11px] uppercase tracking-wide text-gray-500">File</div>
                       <button
@@ -2082,6 +2098,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [shareFileId, setShareFileId] = useState<string | null>(null);
   const [isCurrentFileShared, setIsCurrentFileShared] = useState(false);
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
+  const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
   const [showCollaborationPanel, setShowCollaborationPanel] = useState(false);
 
   const [visibleMainTabs, setVisibleMainTabs] = useState(['ActiveOntology', 'Entities', 'IndividualsByClass', 'DLQuery', 'CodeView']);
@@ -8130,7 +8147,57 @@ const Dashboard: React.FC<DashboardProps> = ({
       console.log('[Dashboard] Citation lines count:', citationLines.length);
       console.log('[Dashboard] Total lines before insertion:', lines.length);
       
-      // Insert the citation details AT the clicked line
+      // For RDF/XML format, ensure insertion is AFTER the root element opening tag
+      // to prevent "Content is not allowed in prolog" errors
+      if (codeViewFormat === 'rdfxml') {
+        // Find the line with the opening <rdf:RDF> or <Ontology> root element
+        let rootElementLine = -1;
+        for (let i = 0; i < Math.min(50, lines.length); i++) {
+          const trimmed = lines[i].trim();
+          if (trimmed.startsWith('<rdf:RDF') || trimmed.startsWith('<Ontology') || 
+              trimmed.startsWith('<owl:Ontology')) {
+            rootElementLine = i;
+            break;
+          }
+        }
+        
+        // Find the actual closing > of the root tag (may span multiple lines with xmlns)
+        let rootTagCloseLine = rootElementLine;
+        if (rootElementLine >= 0) {
+          for (let j = rootElementLine; j < Math.min(rootElementLine + 100, lines.length); j++) {
+            if (lines[j].includes('>')) {
+              const lastQuote = lines[j].lastIndexOf('"');
+              const lastGt = lines[j].lastIndexOf('>');
+              if (lastGt > lastQuote || lastQuote === -1) {
+                rootTagCloseLine = j;
+                break;
+              }
+            }
+          }
+        }
+        
+        if (rootElementLine >= 0 && insertAtIndex <= rootTagCloseLine) {
+          // User clicked before or inside the root element opening tag - insert after it
+          insertAtIndex = rootTagCloseLine + 1;
+          console.log('[Dashboard] RDF/XML: Adjusted insertion to line', insertAtIndex, 'to respect XML structure');
+        }
+        
+        // Also check if trying to insert after the closing </rdf:RDF> tag
+        for (let i = lines.length - 1; i >= Math.max(0, lines.length - 10); i--) {
+          const trimmed = lines[i].trim();
+          if (trimmed === '</rdf:RDF>' || trimmed === '</Ontology>' || trimmed === '</owl:Ontology>') {
+            if (insertAtIndex > i) {
+              insertAtIndex = i; // Insert before the closing tag
+              console.log('[Dashboard] RDF/XML: Adjusted insertion to line', insertAtIndex, 'to stay inside root element');
+            }
+            break;
+          }
+        }
+      }
+      
+      console.log('[Dashboard] Final insertion index after adjustments:', insertAtIndex);
+      
+      // Insert the citation details AT the adjusted line
       lines.splice(insertAtIndex, 0, ...citationLines);
       
       console.log('[Dashboard] Total lines after insertion:', lines.length);
@@ -8506,6 +8573,52 @@ const Dashboard: React.FC<DashboardProps> = ({
                 const proportion = insertAtIndex / lines.length;
                 fmtInsertIndex = Math.floor(proportion * fmtLines.length);
                 console.log(`[Dashboard] No entity detected, using proportional position at line ${fmtInsertIndex} (${Math.round(proportion * 100)}% through file) in ${fmt}`);
+              }
+              
+              // For RDF/XML format, ensure insertion is AFTER the root element opening tag
+              if (fmt === 'rdfxml') {
+                // Find the line with the opening <rdf:RDF> or <Ontology> root element
+                let rootElementLine = -1;
+                for (let i = 0; i < Math.min(50, fmtLines.length); i++) {
+                  const trimmed = fmtLines[i].trim();
+                  if (trimmed.startsWith('<rdf:RDF') || trimmed.startsWith('<Ontology') || 
+                      trimmed.startsWith('<owl:Ontology')) {
+                    rootElementLine = i;
+                    break;
+                  }
+                }
+                
+                // Find the actual closing > of the root tag (may span multiple lines with xmlns)
+                let rootTagCloseLine = rootElementLine;
+                if (rootElementLine >= 0) {
+                  for (let j = rootElementLine; j < Math.min(rootElementLine + 100, fmtLines.length); j++) {
+                    if (fmtLines[j].includes('>')) {
+                      const lastQuote = fmtLines[j].lastIndexOf('"');
+                      const lastGt = fmtLines[j].lastIndexOf('>');
+                      if (lastGt > lastQuote || lastQuote === -1) {
+                        rootTagCloseLine = j;
+                        break;
+                      }
+                    }
+                  }
+                }
+                
+                if (rootElementLine >= 0 && fmtInsertIndex <= rootTagCloseLine) {
+                  fmtInsertIndex = rootTagCloseLine + 1;
+                  console.log(`[Dashboard] RDF/XML ${fmt}: Adjusted insertion to line ${fmtInsertIndex} to respect XML structure`);
+                }
+                
+                // Check if trying to insert after the closing tag
+                for (let i = fmtLines.length - 1; i >= Math.max(0, fmtLines.length - 10); i--) {
+                  const trimmed = fmtLines[i].trim();
+                  if (trimmed === '</rdf:RDF>' || trimmed === '</Ontology>' || trimmed === '</owl:Ontology>') {
+                    if (fmtInsertIndex > i) {
+                      fmtInsertIndex = i;
+                      console.log(`[Dashboard] RDF/XML ${fmt}: Adjusted insertion to line ${fmtInsertIndex} to stay inside root element`);
+                    }
+                    break;
+                  }
+                }
               }
               
               // Insert citation at found location
@@ -9283,6 +9396,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                       pendingCitation={pendingCitation}
                       onInsertCitationAt={handleInsertCitationAtLocation}
                       onRemoveCitationAt={handleRemoveCitationAtLocation}
+                      onRequestZoteroCitation={() => setShowCitationPicker(true)}
                     />
                   )}
                 </div>
@@ -11376,6 +11490,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           onOpenDialog={() => setShowOpenDialog(true)}
           onOpenPluginMarketplace={() => setShowPluginMarketplace(true)}
           onOpenHistory={() => setIsHistoryPanelOpen(true)}
+          onReportIssue={() => setIsReportIssueModalOpen(true)}
           syncMode={syncMode}
           onToggleSyncMode={() => {
             const newMode = syncMode === 'public' ? 'private' : 'public';
@@ -11908,6 +12023,16 @@ const Dashboard: React.FC<DashboardProps> = ({
           }}
           projectId={shareFileId}
           userEmail={user?.email || ''}
+        />
+      )}
+
+      {/* Report Issue Modal */}
+      {isReportIssueModalOpen && (
+        <ReportIssueModal
+          projectName={projectId || undefined}
+          projectId={projectId || undefined}
+          ontologyFilePath={activeFileName || undefined}
+          onClose={() => setIsReportIssueModalOpen(false)}
         />
       )}
 

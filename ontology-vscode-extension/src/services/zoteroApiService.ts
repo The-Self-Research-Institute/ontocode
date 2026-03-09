@@ -101,10 +101,33 @@ class ZoteroApiService {
             if (axios.isAxiosError(error)) {
                 if (error.response?.status === 403) {
                     console.error('[ZoteroAPI] Invalid API key or permissions');
-                    vscode.window.showErrorMessage('Zotero API key is invalid or lacks permissions. Please check your settings.');
+                    const action = await vscode.window.showErrorMessage(
+                        'Zotero API key lacks library access permissions. When creating your API key at zotero.org/settings/keys, ensure "Allow library access" is checked.',
+                        'Get New Key',
+                        'Reconfigure',
+                        'Open Settings'
+                    );
+                    
+                    if (action === 'Get New Key') {
+                        vscode.env.openExternal(vscode.Uri.parse('https://www.zotero.org/settings/keys'));
+                    } else if (action === 'Reconfigure') {
+                        await this.promptForCredentials();
+                    } else if (action === 'Open Settings') {
+                        await vscode.commands.executeCommand('workbench.action.openSettings', 'ontocode.zotero');
+                    }
                 } else if (error.response?.status === 404) {
                     console.error('[ZoteroAPI] User/Group not found');
-                    vscode.window.showErrorMessage('Zotero user/group not found. Please check your user ID or group ID.');
+                    const action = await vscode.window.showErrorMessage(
+                        'Zotero user/group not found. Please check your user ID or group ID.',
+                        'Reconfigure',
+                        'Open Settings'
+                    );
+                    
+                    if (action === 'Reconfigure') {
+                        await this.promptForCredentials();
+                    } else if (action === 'Open Settings') {
+                        await vscode.commands.executeCommand('workbench.action.openSettings', 'ontocode.zotero');
+                    }
                 } else {
                     console.error('[ZoteroAPI] Request failed:', error.message);
                     vscode.window.showErrorMessage(`Failed to fetch Zotero library: ${error.message}`);

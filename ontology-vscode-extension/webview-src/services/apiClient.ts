@@ -76,7 +76,11 @@ const pending = new Map<
 class ApiClient {
   private static _instance: ApiClient;
   private axiosClient: AxiosInstance | null = null;
-  private isVSCode = typeof window !== 'undefined' && !!window.vscode; //
+  // In web extension mode, bypass the VS Code proxy due to CSP restrictions
+  // Use direct axios/fetch instead
+  private isVSCode = typeof window !== 'undefined' && 
+                     !!window.vscode && 
+                     !(window as any).__ONTOCODE_CONFIG__?.IS_WEB_EXTENSION;
   private listenerAttached = false;
   private onUnauthorized?: () => void; // Callback for 401 errors
 
@@ -93,11 +97,16 @@ class ApiClient {
   }
 
   private constructor() {
+    console.log('[ApiClient] Initializing - isVSCode:', this.isVSCode, 
+                'IS_WEB_EXTENSION:', (window as any).__ONTOCODE_CONFIG__?.IS_WEB_EXTENSION);
+    
     if (this.isVSCode) {
-      // If in VS Code, set up the message listener
+      // If in VS Code desktop, set up the message listener for proxy
+      console.log('[ApiClient] Using VS Code extension proxy for API requests');
       this.attachVSCodeListener();
     } else {
-      // If in browser, set up a standard Axios client
+      // If in browser or web extension, set up a standard Axios client
+      console.log('[ApiClient] Using direct axios for API requests (baseURL:', BASE_URL, ')');
       this.setupAxios();
     }
   }

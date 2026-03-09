@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
-import { Search, X, ChevronDown, ChevronUp, WrapText, Plus, Trash2 } from 'lucide-react';
+import { Search, X, ChevronDown, ChevronUp, WrapText, Plus, Trash2, BookOpen } from 'lucide-react';
 
 interface CodeHighlighterProps {
   content: string;
@@ -9,6 +9,7 @@ interface CodeHighlighterProps {
   pendingCitation?: any;
   onInsertCitationAt?: (lineNumber: number) => void;
   onRemoveCitationAt?: (lineNumber: number) => void;
+  onRequestZoteroCitation?: () => void;
 }
 
 const MAX_LINES_INITIAL = 500; // Show first 500 lines initially
@@ -26,7 +27,8 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
   citationRemovalMode = false,
   pendingCitation,
   onInsertCitationAt,
-  onRemoveCitationAt
+  onRemoveCitationAt,
+  onRequestZoteroCitation
 }) => {
   const [displayedLines, setDisplayedLines] = useState(MAX_LINES_INITIAL);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -782,6 +784,7 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
             Copy All
           </button>
         </div>
+        {onRequestZoteroCitation && <button onClick={onRequestZoteroCitation} className="px-2 py-1 text-xs bg-green-600 hover:bg-green-700 text-white rounded flex items-center gap-1" title="Insert Zotero citation"><BookOpen className="w-3 h-3" />Zotero</button>}
       </div>
 
       {/* Search Results Panel */}

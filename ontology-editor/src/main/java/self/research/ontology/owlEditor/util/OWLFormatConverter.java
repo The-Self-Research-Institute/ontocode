@@ -182,43 +182,50 @@ public class OWLFormatConverter {
         log.info("File header hex (first 16 bytes): {}", hexDump.toString().trim());
 
         // Check if file already starts with valid XML
-        if (content.length > 0 && content[0] == '<') {
-            log.info("File starts with '<', no stripping needed");
+        if (content.length > 0 && (content[0] == '<' || content[0] == '@')) {
+            log.info("File starts with '{}', no stripping needed", (char) content[0]);
             return filePath;
         }
 
-        // Check for UTF-8 BOM (EF BB BF) followed by '<'
+        // Check for UTF-8 BOM (EF BB BF) followed by '<' or '@'
         if (content.length > 3 && content[0] == (byte) 0xEF && content[1] == (byte) 0xBB
-                && content[2] == (byte) 0xBF && content[3] == '<') {
+                && content[2] == (byte) 0xBF && (content[3] == '<' || content[3] == '@')) {
             log.info("File has UTF-8 BOM, stripping 3 bytes");
             Path stripped = filePath.getParent().resolve("stripped-" + filePath.getFileName());
             Files.write(stripped, Arrays.copyOfRange(content, 3, content.length));
             return stripped;
         }
 
-        // Search for <?xml or <Ontology or <rdf:RDF marker in the first 1024 bytes
+        // Search for <?xml or <Ontology or <rdf:RDF or Turtle markers in the first 1024 bytes
         String header = new String(content, 0, Math.min(1024, content.length),
                 java.nio.charset.StandardCharsets.ISO_8859_1);
-        int xmlStart = header.indexOf("<?xml");
-        if (xmlStart < 0) {
-            xmlStart = header.indexOf("<Ontology");
+        int contentStart = header.indexOf("<?xml");
+        if (contentStart < 0) {
+            contentStart = header.indexOf("<Ontology");
         }
-        if (xmlStart < 0) {
-            xmlStart = header.indexOf("<rdf:RDF");
+        if (contentStart < 0) {
+            contentStart = header.indexOf("<rdf:RDF");
+        }
+        // Also detect Turtle format markers
+        if (contentStart < 0) {
+            contentStart = header.indexOf("@prefix");
+        }
+        if (contentStart < 0) {
+            contentStart = header.indexOf("@base");
         }
 
-        if (xmlStart > 0) {
-            log.warn("Found {} bytes of binary garbage before XML content. Stripping prefix.", xmlStart);
+        if (contentStart > 0) {
+            log.warn("Found {} bytes of binary garbage before content. Stripping prefix.", contentStart);
             log.info("Garbage bytes: {}",
-                hexDump(content, 0, Math.min(xmlStart, 32)));
+                hexDump(content, 0, Math.min(contentStart, 32)));
             Path stripped = filePath.getParent().resolve("stripped-" + filePath.getFileName());
-            Files.write(stripped, Arrays.copyOfRange(content, xmlStart, content.length));
-            log.info("Wrote stripped file: {} ({} bytes)", stripped.getFileName(), content.length - xmlStart);
+            Files.write(stripped, Arrays.copyOfRange(content, contentStart, content.length));
+            log.info("Wrote stripped file: {} ({} bytes)", stripped.getFileName(), content.length - contentStart);
             return stripped;
         }
 
-        // No XML marker found - return original and let OWL API try to parse
-        log.info("No binary prefix detected or file is not XML format");
+        // No known marker found - return original and let OWL API try to parse
+        log.info("No binary prefix detected or file is not a recognized format");
         return filePath;
     }
 
@@ -233,6 +240,228 @@ public class OWLFormatConverter {
             // Stripped file was created - replace original with it
             Files.move(stripped, filePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             log.info("Sanitized file in place: {}", filePath.getFileName());
+        }
+        
+        // Fix malformed RDF/XML structure (embedded elements in opening tag, appended documents)
+        fixMalformedRdfXml(filePath);
+        
+        // Re-serialize with OWL API to fix namespace issues, malformed tags, etc.
+        reserializeWithOwlApi(filePath);
+    }
+    
+    /**
+     * Fix common RDF/XML malformations at the text level before XML parsing.
+     * Handles:
+     * 1. Elements/comments embedded inside the <rdf:RDF ...> opening tag (e.g. Zotero citations)
+     * 2. Duplicate XML documents appended after </rdf:RDF>
+     */
+    private static void fixMalformedRdfXml(Path filePath) throws IOException {
+        String content;
+        try {
+            content = Files.readString(filePath);
+        } catch (java.nio.charset.MalformedInputException e) {
+            // File contains non-UTF-8 bytes (e.g. binary prefix remnants) — read with tolerant charset
+            content = new String(Files.readAllBytes(filePath), java.nio.charset.StandardCharsets.ISO_8859_1);
+        }
+        
+        if (!content.contains("<rdf:RDF")) {
+            return;
+        }
+        
+        String original = content;
+        
+        // Fix 1: Extract content embedded inside the <rdf:RDF ...> opening tag
+        content = extractEmbeddedContentFromRdfTag(content);
+        
+        // Fix 2: Merge duplicate XML documents appended after </rdf:RDF>
+        content = mergeAppendedRdfDocuments(content);
+        
+        if (!content.equals(original)) {
+            log.info("Fixed malformed RDF/XML structure in: {}", filePath.getFileName());
+            Files.writeString(filePath, content);
+        }
+    }
+    
+    /**
+     * Fix <rdf:RDF> opening tag that has XML comments or elements (e.g. citations)
+     * embedded between namespace declarations. Extracts them and places after the tag.
+     */
+    private static String extractEmbeddedContentFromRdfTag(String content) {
+        int rdfStart = content.indexOf("<rdf:RDF");
+        if (rdfStart < 0) return content;
+        
+        String prefix = content.substring(0, rdfStart);
+        String fromRdf = content.substring(rdfStart);
+        int len = fromRdf.length();
+        
+        int i = "<rdf:RDF".length();
+        StringBuilder nsDecls = new StringBuilder();
+        StringBuilder displaced = new StringBuilder();
+        boolean hasDisplaced = false;
+        
+        while (i < len) {
+            // Skip whitespace
+            while (i < len && Character.isWhitespace(fromRdf.charAt(i))) {
+                i++;
+            }
+            if (i >= len) break;
+            
+            char c = fromRdf.charAt(i);
+            
+            // Case 1: xmlns attribute
+            if (fromRdf.startsWith("xmlns", i)) {
+                int eq = fromRdf.indexOf('=', i);
+                if (eq > 0 && eq < i + 80) {
+                    int qStart = fromRdf.indexOf('"', eq);
+                    if (qStart > 0 && qStart < eq + 5) {
+                        int qEnd = fromRdf.indexOf('"', qStart + 1);
+                        if (qEnd > 0) {
+                            nsDecls.append("\t").append(fromRdf, i, qEnd + 1).append("\n");
+                            i = qEnd + 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+            
+            // Case 2: XML comment <!-- ... -->
+            if (fromRdf.startsWith("<!--", i)) {
+                int commentEnd = fromRdf.indexOf("-->", i + 4);
+                if (commentEnd >= 0) {
+                    displaced.append(fromRdf, i, commentEnd + 3).append("\n");
+                    i = commentEnd + 3;
+                    hasDisplaced = true;
+                    continue;
+                }
+            }
+            
+            // Case 3: Element start (not comment, not PI)
+            if (c == '<' && i + 1 < len
+                    && fromRdf.charAt(i + 1) != '!' && fromRdf.charAt(i + 1) != '?') {
+                // Extract tag name
+                int nameStart = i + 1;
+                int nameEnd = nameStart;
+                while (nameEnd < len && !Character.isWhitespace(fromRdf.charAt(nameEnd))
+                        && fromRdf.charAt(nameEnd) != '>' && fromRdf.charAt(nameEnd) != '/') {
+                    nameEnd++;
+                }
+                String tagName = fromRdf.substring(nameStart, nameEnd);
+                
+                // Find matching close tag </tagName>
+                String closeTag = "</" + tagName + ">";
+                int closePos = fromRdf.indexOf(closeTag, i);
+                if (closePos >= 0) {
+                    int elemEnd = closePos + closeTag.length();
+                    displaced.append(fromRdf, i, elemEnd).append("\n");
+                    i = elemEnd;
+                    hasDisplaced = true;
+                    continue;
+                }
+                
+                // Try self-closing />
+                int selfClose = fromRdf.indexOf("/>", i);
+                if (selfClose >= 0 && selfClose < i + 500) {
+                    displaced.append(fromRdf, i, selfClose + 2).append("\n");
+                    i = selfClose + 2;
+                    hasDisplaced = true;
+                    continue;
+                }
+            }
+            
+            // Case 4: Closing > of <rdf:RDF> tag
+            if (c == '>') {
+                if (hasDisplaced) {
+                    log.info("Extracted {} chars of embedded content from <rdf:RDF> opening tag",
+                            displaced.length());
+                    return prefix + "<rdf:RDF\n"
+                            + nsDecls.toString().stripTrailing() + ">\n\n"
+                            + displaced.toString() + "\n"
+                            + fromRdf.substring(i + 1);
+                }
+                return content;
+            }
+            
+            i++;
+        }
+        
+        return content;
+    }
+    
+    /**
+     * Merge content from a second RDF/XML document appended after the first </rdf:RDF>.
+     * This can happen when citation injection appends a separate XML document.
+     */
+    private static String mergeAppendedRdfDocuments(String content) {
+        int firstClose = content.indexOf("</rdf:RDF>");
+        if (firstClose < 0) return content;
+        
+        String afterFirst = content.substring(firstClose + "</rdf:RDF>".length());
+        
+        int secondRdfStart = afterFirst.indexOf("<rdf:RDF");
+        if (secondRdfStart < 0) return content;
+        
+        log.info("Found appended RDF document after </rdf:RDF>, merging content");
+        
+        int secondTagClose = afterFirst.indexOf('>', secondRdfStart + "<rdf:RDF".length());
+        if (secondTagClose < 0) return content;
+        
+        int secondClose = afterFirst.indexOf("</rdf:RDF>", secondTagClose);
+        if (secondClose < 0) return content;
+        
+        String secondBody = afterFirst.substring(secondTagClose + 1, secondClose).trim();
+        if (secondBody.isEmpty()) return content;
+        
+        return content.substring(0, firstClose) + "\n" + secondBody + "\n\n</rdf:RDF>\n";
+    }
+    
+    /**
+     * Load the file with OWL API (which is tolerant of namespace issues) and
+     * re-serialize it as clean RDF/XML. This fixes all namespace declaration problems,
+     * malformed XML comments, and other structural issues.
+     */
+    private static void reserializeWithOwlApi(Path filePath) throws IOException {
+        String content;
+        try {
+            content = Files.readString(filePath);
+        } catch (java.nio.charset.MalformedInputException e) {
+            content = new String(Files.readAllBytes(filePath), java.nio.charset.StandardCharsets.ISO_8859_1);
+        }
+        
+        // Only process files that look like RDF/XML
+        if (!content.contains("<rdf:RDF") && !content.contains("<?xml")) {
+            log.info("File does not look like RDF/XML, skipping OWL API re-serialization");
+            return;
+        }
+        
+        log.info("Re-serializing file with OWL API to fix namespace issues: {}", filePath.getFileName());
+        
+        try {
+            OWLOntologyManager manager = createManagerWithSilentImports();
+            OWLOntology ontology = manager.loadOntologyFromOntologyDocument(filePath.toFile());
+            log.info("OWL API loaded ontology: {} axioms", ontology.getAxiomCount());
+            
+            // Get original format and prefixes
+            OWLDocumentFormat originalFormat = manager.getOntologyFormat(ontology);
+            
+            // Create clean RDF/XML format
+            RDFXMLDocumentFormat rdfXmlFormat = new RDFXMLDocumentFormat();
+            
+            // Copy existing prefixes
+            if (originalFormat != null && originalFormat.isPrefixOWLDocumentFormat()) {
+                PrefixDocumentFormat prefixFormat = originalFormat.asPrefixOWLDocumentFormat();
+                prefixFormat.getPrefixName2PrefixMap().forEach(rdfXmlFormat::setPrefix);
+            }
+            
+            // Write clean RDF/XML back to the file
+            try (OutputStream out = Files.newOutputStream(filePath)) {
+                manager.saveOntology(ontology, rdfXmlFormat, out);
+            }
+            
+            log.info("Successfully re-serialized file as clean RDF/XML: {}", filePath.getFileName());
+            
+        } catch (Exception e) {
+            log.warn("OWL API re-serialization failed (will try original file): {}", e.getMessage());
+            // Don't throw - let the original file be used as-is
         }
     }
 

@@ -2999,6 +2999,9 @@ class OntoCodePanel {
         }
         const nonce = getNonce();
 
+        // Detect if we're in web extension mode (running in browser, not desktop VS Code)
+        const isWebExtension = typeof process === 'undefined' || !process.versions || !process.versions.electron;
+        
         // The VSCode API script that needs to be injected
         const vscodeApiInjectionScript = `
             <script nonce="${nonce}">
@@ -3013,7 +3016,8 @@ class OntoCodePanel {
                     CLOUD_GATEWAY_URL: '${process.env.CLOUD_GATEWAY_URL || 'http://13.218.153.101'}',
                     CLOUD_EDITOR_URL: '${process.env.CLOUD_EDITOR_URL || 'http://13.218.153.101'}',
                     CLOUD_PLUGIN_URL: '${process.env.CLOUD_PLUGIN_URL || 'http://13.218.153.101:8087'}',
-                    DEFAULT_DEPLOYMENT_TYPE: '${process.env.DEFAULT_DEPLOYMENT_TYPE || 'cloud'}'
+                    DEFAULT_DEPLOYMENT_TYPE: '${process.env.DEFAULT_DEPLOYMENT_TYPE || 'cloud'}',
+                    IS_WEB_EXTENSION: ${isWebExtension}
                 };
                 // Fallback for minified bundle expecting a global toggleNode
                 if (typeof window.toggleNode !== 'function') {
@@ -3339,6 +3343,25 @@ class OntoCodePanel {
     private async handleRequestZoteroLibrary(): Promise<void> {
         try {
             console.log('[OntoCode] Handling Zotero library request');
+            
+            // Check if Zotero is configured
+            if (!zoteroApiService.isConfigured()) {
+                console.log('[OntoCode] Zotero not configured, prompting for credentials');
+                
+                // Prompt user to configure Zotero
+                const configured = await zoteroApiService.promptForCredentials();
+                
+                if (!configured) {
+                    // User cancelled configuration
+                    console.log('[OntoCode] User cancelled Zotero configuration');
+                    this.postMessage({
+                        type: 'zoteroLibraryError',
+                        error: 'Zotero configuration cancelled. Please configure Zotero to use citations.'
+                    });
+                    return;
+                }
+            }
+            
             await sci2CodeService.initialize();
             const items = await sci2CodeService.getZoteroLibrary();
             
@@ -3521,12 +3544,15 @@ class OntoCodePanel {
      */
     private async handleInsertCitationToGraphDB(citation: string, format: string, projectId: string, metadata: any): Promise<void> {
         try {
+            const url = `${GATEWAY_URL}/api/citations/${projectId}/insert`;
             console.log('[OntoCode] Inserting citation directly to GraphDB for persistence');
+            console.log('[OntoCode] Gateway URL:', GATEWAY_URL);
+            console.log('[OntoCode] Full URL:', url);
             console.log('[OntoCode] Project:', projectId);
             console.log('[OntoCode] Citation preview:', citation.substring(0, 300));
             
             const response = await axios.post(
-                `${GATEWAY_URL}/api/citations/${projectId}/insert`,
+                url,
                 {
                     citation: citation,
                     format: format,
@@ -3546,9 +3572,18 @@ class OntoCodePanel {
         } catch (error) {
             console.error('[OntoCode] Failed to insert citation to GraphDB:', error);
             if (axios.isAxiosError(error)) {
+                console.error('[OntoCode] HTTP Status:', error.response?.status);
+                console.error('[OntoCode] Response:', error.response?.data);
                 const errorMsg = error.response?.data?.error || error.message;
                 console.error('[OntoCode] GraphDB insertion error:', errorMsg);
-                // Don't show error to user since file upload may have succeeded
+                
+                // Show user-friendly error if backend is not reachable
+                if (error.code === 'ECONNREFUSED' || error.response?.status === 404) {
+                    vscode.window.showWarningMessage(
+                        'Citation backend not available. Make sure all services are running (Gateway on port 80 or 8080, Editor on port 8083).',
+                        'Check Logs'
+                    );
+                }
             }
         }
     }
@@ -3595,6 +3630,24 @@ class OntoCodePanel {
         try {
             console.log('[OntoCode] Uploading modified ontology content for project:', projectId);
             console.log('[OntoCode] Content length:', content.length, 'bytes');
+            console.log('[OntoCode] First 200 chars:', content.substring(0, 200));
+            
+            // Clean content - remove BOM and leading/trailing whitespace that could break XML parsing
+            // let cleanedContent = content;
+            
+            // // Remove BOM (Byte Order Mark) if present
+            // if (cleanedContent.charCodeAt(0) === 0xFEFF) {
+            //     cleanedContent = cleanedContent.substring(1);
+            //     console.log('[OntoCode] Removed BOM from content');
+            // }
+            
+            // // For RDF/XML format, ensure no leading whitespace before XML declaration
+            // if (format === 'rdfxml') {
+            //     cleanedContent = cleanedContent.trimStart();
+            //     console.log('[OntoCode] Trimmed leading whitespace for RDF/XML format');
+            // }
+            
+            // console.log('[OntoCode] Cleaned content - First 200 chars:', cleanedContent.substring(0, 200));
             
             // Get the JWT token for authorization
             const token = await this.getValidJWTToken();
@@ -3615,7 +3668,8 @@ class OntoCodePanel {
             const tempFileName = `ontology_${projectId}_${Date.now()}.${fileExtension}`;
             const tempFilePath = path.join(tmpDir, tempFileName);
             
-            // Write content to temp file
+            // Write cleaned content to temp file (UTF-8 without BOM)
+            // fs.writeFileSync(tempFilePath, cleanedContent, { encoding: 'utf8', flag: 'w' });
             fs.writeFileSync(tempFilePath, content, 'utf8');
             console.log('[OntoCode] Temp file created:', tempFilePath);
             

@@ -317,6 +317,8 @@ public class ProjectLoadController {
 
     private RDFFormat detectFormat(Path file) {
         String fileName = file.getFileName().toString().toLowerCase(Locale.ROOT);
+        
+        // Unambiguous extensions - trust the extension
         if (fileName.endsWith(".ttl") || fileName.endsWith(".turtle")) {
             return RDFFormat.TURTLE;
         } else if (fileName.endsWith(".nt") || fileName.endsWith(".ntriples")) {
@@ -326,7 +328,82 @@ public class ProjectLoadController {
         } else if (fileName.endsWith(".n3")) {
             return RDFFormat.N3;
         }
-        return RDFFormat.RDFXML; // default
+        
+        // Ambiguous extensions (.owl, .rdf) - inspect content
+        if (fileName.endsWith(".owl") || fileName.endsWith(".rdf")) {
+            RDFFormat detectedFormat = detectFormatByContent(file);
+            if (detectedFormat != null) {
+                log.info("Detected format by content for {}: {}", fileName, detectedFormat);
+                return detectedFormat;
+            }
+        }
+        
+        // Default to RDF/XML
+        return RDFFormat.RDFXML;
+    }
+    
+    /**
+     * Detect RDF format by inspecting file content
+     * @param file The file to inspect
+     * @return Detected format or null if unable to detect
+     */
+    private RDFFormat detectFormatByContent(Path file) {
+        try {
+            // Read first 2KB to detect format
+            byte[] header = java.nio.file.Files.readAllBytes(file);
+            int readLength = Math.min(2048, header.length);
+            
+            // Skip UTF-8 BOM if present
+            int offset = 0;
+            if (header.length >= 3 && header[0] == (byte) 0xEF && 
+                header[1] == (byte) 0xBB && header[2] == (byte) 0xBF) {
+                offset = 3;
+            }
+            
+            // Skip leading whitespace
+            while (offset < readLength && (header[offset] == ' ' || header[offset] == '\t' || 
+                   header[offset] == '\n' || header[offset] == '\r')) {
+                offset++;
+            }
+            
+            String content = new String(header, offset, Math.min(readLength - offset, 1024), 
+                                       java.nio.charset.StandardCharsets.UTF_8);
+            String contentLower = content.toLowerCase(Locale.ROOT);
+            
+            // Check for Turtle/N3 markers
+            if (contentLower.startsWith("@prefix") || contentLower.startsWith("@base") ||
+                contentLower.contains("@prefix ") || contentLower.contains("@base ")) {
+                log.info("Detected Turtle format (found @prefix or @base directive)");
+                return RDFFormat.TURTLE;
+            }
+            
+            // Check for N-Triples (subject-predicate-object with full URIs)
+            if (content.matches("(?s)^\\s*<[^>]+>\\s+<[^>]+>\\s+.*")) {
+                log.info("Detected N-Triples format");
+                return RDFFormat.NTRIPLES;
+            }
+            
+            // Check for XML markers
+            if (contentLower.startsWith("<?xml") || contentLower.contains("<rdf:rdf") || 
+                contentLower.contains("<owl:ontology") || contentLower.contains("<ontology")) {
+                log.info("Detected RDF/XML format (found XML markers)");
+                return RDFFormat.RDFXML;
+            }
+            
+            // Check for JSON-LD
+            if (contentLower.trim().startsWith("{") && contentLower.contains("@context")) {
+                log.info("Detected JSON-LD format");
+                return RDFFormat.JSONLD;
+            }
+            
+            // Unable to detect - return null to use default
+            log.warn("Unable to detect format by content, will use default");
+            return null;
+            
+        } catch (Exception e) {
+            log.warn("Failed to detect format by content: {}", e.getMessage());
+            return null;
+        }
     }
 
     @GetMapping("/status/{projectId}")
