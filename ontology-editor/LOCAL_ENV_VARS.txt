@@ -1,0 +1,10 @@
+# Local Development Environment Variables for Jira Integration
+# Copy these to your IDE's Run Configuration as Environment Variables
+
+JIRA_ENABLED=true
+JIRA_CLOUD_URL=https://sindhujap.atlassian.net
+JIRA_USER_EMAIL=sindhujap255@gmail.com
+JIRA_API_TOKEN=ATATT3xFfGF0ykODDx_F8IwTXoxCPI3Vhzv6lsCqTWq4htQ9ySgUOAqYyKDK3jgRuJ9JmtOPW7JVIjD2UY1-yoxfhTuSfYIOAqfipTADbmX_tOE5jyV5ze5W_M1NDHfnHUBG6WoLtWEyyYkJMAMt2fwSLegAMHLd-ODPw41300MIkmXgp0T0s0k=06B297A2
+JIRA_PROJECT_KEY=DEV
+JIRA_EPIC_KEY=DEV-8
+JIRA_ISSUE_TYPE=Task
