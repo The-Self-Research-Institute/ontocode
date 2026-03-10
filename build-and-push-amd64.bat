@@ -64,7 +64,7 @@ docker buildx build --platform linux/amd64 -t %REGISTRY%/ontocode-plugin-init:%V
 if errorlevel 1 goto :error
 
 echo [8/8] Building ontocode-vscode-web...
-docker buildx build --platform linux/amd64 -t sindhujacoretopia/ontocode-vscode-web:latest -f Dockerfile.vscode-extension --push .
+docker buildx build --platform linux/amd64 -t %REGISTRY%/ontocode-vscode-web:%VERSION% -f Dockerfile.vscode-extension --push .
 if errorlevel 1 goto :error
 
 echo.
