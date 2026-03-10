@@ -10,9 +10,12 @@ import self.research.ontology.owlEditor.model.IssueReport;
 import self.research.ontology.owlEditor.service.IssueReportService;
 import self.research.ontology.owlEditor.service.JiraService;
 
+import jakarta.servlet.http.HttpServletRequest;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * REST API controller for issue reporting and Jira integration
@@ -30,11 +33,59 @@ public class IssueReportController {
     }
     
     /**
+     * Extract user information from JWT token in Authorization header
+     */
+    private Map<String, String> extractUserFromToken(HttpServletRequest request) {
+        Map<String, String> userInfo = new HashMap<>();
+        try {
+            String authHeader = request.getHeader("Authorization");
+            log.info("Authorization header: {}", authHeader != null ? "Present (Bearer token)" : "Not present");
+            
+            if (authHeader != null && authHeader.startsWith("Bearer ")) {
+                String token = authHeader.substring(7);
+                String[] parts = token.split("\\.");
+                if (parts.length >= 2) {
+                    String payload = new String(Base64.getUrlDecoder().decode(parts[1]));
+                    log.info("JWT payload decoded successfully");
+                    
+                    ObjectMapper mapper = new ObjectMapper();
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> claims = mapper.readValue(payload, Map.class);
+                    
+                    log.info("JWT claims: {}", claims.keySet());
+                    
+                    // Extract username (usually in 'sub' claim)
+                    if (claims.containsKey("sub")) {
+                        userInfo.put("username", claims.get("sub").toString());
+                        log.info("Extracted username from 'sub': {}", claims.get("sub"));
+                    } else {
+                        log.warn("'sub' claim not found in token");
+                    }
+                    
+                    // Extract email if available
+                    if (claims.containsKey("email")) {
+                        userInfo.put("email", claims.get("email").toString());
+                        log.info("Extracted email: {}", claims.get("email"));
+                    } else {
+                        log.warn("'email' claim not found in token");
+                    }
+                }
+            } else {
+                log.warn("No Bearer token found in Authorization header");
+            }
+        } catch (Exception e) {
+            log.error("Failed to extract user info from JWT token", e);
+        }
+        return userInfo;
+    }
+    
+    /**
      * Submit an issue report
      * Accepts multipart form data with issue details and optional attachments
      */
     @PostMapping(value = "/report", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<Map<String, Object>> reportIssue(
+            HttpServletRequest request,
             @RequestParam("title") String title,
             @RequestParam("description") String description,
             @RequestParam(value = "stepsToReproduce", required = false) String stepsToReproduce,
@@ -48,10 +99,18 @@ public class IssueReportController {
             @RequestParam(value = "vsCodeVersion", required = false) String vsCodeVersion,
             @RequestParam(value = "extensionVersion", required = false) String extensionVersion,
             @RequestParam(value = "issueType", defaultValue = "Task") String issueType,
+            @RequestParam(value = "priority", required = false) String priority,
             @RequestParam(value = "attachments", required = false) List<MultipartFile> attachments
     ) {
         try {
             log.info("Received issue report: {}", title);
+            
+            // Extract user info from JWT token
+            Map<String, String> userInfo = extractUserFromToken(request);
+            String reporterUsername = userInfo.get("username");
+            String reporterEmail = userInfo.get("email");
+            
+            log.info("Reporter: {} ({})", reporterUsername, reporterEmail);
             
             // Build system info
             IssueReport.SystemInfo systemInfo = IssueReport.SystemInfo.builder()
@@ -67,35 +126,19 @@ public class IssueReportController {
                 .description(description)
                 .stepsToReproduce(stepsToReproduce)
                 .userEmail(userEmail)
+                .reporterUsername(reporterUsername)
+                .reporterEmail(reporterEmail)
                 .projectId(projectId)
                 .projectName(projectName)
                 .ontologyFilePath(ontologyFilePath)
                 .errorLogs(errorLogs)
                 .issueType(issueType)
+                .priority(priority)
                 .systemInfo(systemInfo)
                 .build();
             
-            // Validate attachment sizes
-            if (attachments != null) {
-                for (MultipartFile file : attachments) {
-                    if (file.getSize() > 10 * 1024 * 1024) { // 10MB limit
-                        return ResponseEntity.badRequest()
-                            .body(Map.of(
-                                "success", false,
-                                "message", "Attachment " + file.getOriginalFilename() + " exceeds 10MB limit"
-                            ));
-                    }
-                }
-                if (attachments.size() > 5) {
-                    return ResponseEntity.badRequest()
-                        .body(Map.of(
-                            "success", false,
-                            "message", "Maximum 5 attachments allowed"
-                        ));
-                }
-            }
-            
-            // Submit issue
+
+            // Submit issue (no file size or count limits)
             IssueReportService.IssueReportResult result = issueReportService.submitIssueReport(issueReport, attachments);
             
             Map<String, Object> response = new HashMap<>();

@@ -51,8 +51,10 @@ public class IssueReportService {
             // Build full description for Jira
             String fullDescription = buildJiraDescription(issueReport);
             
-            // Determine priority
-            String priority = JiraService.determinePriority(issueReport.getTitle(), issueReport.getDescription());
+            // Determine priority: use provided priority, or auto-determine if not provided
+            String priority = (issueReport.getPriority() != null && !issueReport.getPriority().isEmpty())
+                ? issueReport.getPriority()
+                : JiraService.determinePriority(issueReport.getTitle(), issueReport.getDescription());
             
             // Get issue type from report or use default
             String issueType = (issueReport.getIssueType() != null && !issueReport.getIssueType().isEmpty()) 
@@ -162,16 +164,30 @@ public class IssueReportService {
     private String buildJiraDescription(IssueReport issueReport) {
         StringBuilder sb = new StringBuilder();
         
+        // Add reporter information at the top
+        if (issueReport.getReporterUsername() != null || issueReport.getReporterEmail() != null) {
+            sb.append("*Reported By:* ");
+            if (issueReport.getReporterUsername() != null) {
+                sb.append(issueReport.getReporterUsername());
+                if (issueReport.getReporterEmail() != null) {
+                    sb.append(" (").append(issueReport.getReporterEmail()).append(")");
+                }
+            } else if (issueReport.getReporterEmail() != null) {
+                sb.append(issueReport.getReporterEmail());
+            }
+            sb.append("\n\n");
+        }
+        
         sb.append(issueReport.getDescription()).append("\n\n");
         
         if (issueReport.getStepsToReproduce() != null && !issueReport.getStepsToReproduce().trim().isEmpty()) {
-            sb.append("*Steps to Reproduce:*\n");
+            sb.append("Steps to Reproduce:\n");
             sb.append(issueReport.getStepsToReproduce()).append("\n\n");
         }
         
         if (issueReport.getSystemInfo() != null) {
             IssueReport.SystemInfo sys = issueReport.getSystemInfo();
-            sb.append("*System Information:*\n");
+            sb.append("System Information:\n");
             if (sys.getOsName() != null) {
                 sb.append("OS: ").append(sys.getOsName());
                 if (sys.getOsVersion() != null && !sys.getOsVersion().equals(sys.getOsName())) {
@@ -189,7 +205,7 @@ public class IssueReportService {
         }
         
         if (issueReport.getErrorLogs() != null && !issueReport.getErrorLogs().trim().isEmpty()) {
-            sb.append("*Error Logs:*\n");
+            sb.append("Error Logs:\n");
             sb.append("{code}\n");
             sb.append(issueReport.getErrorLogs());
             sb.append("\n{code}\n");

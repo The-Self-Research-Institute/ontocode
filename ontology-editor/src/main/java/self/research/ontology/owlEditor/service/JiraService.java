@@ -297,12 +297,6 @@ public class JiraService {
             }
         }
         
-        // Labels
-        ArrayNode labels = objectMapper.createArrayNode();
-        labels.add("ontocode");
-        labels.add("auto-reported");
-        fields.set("labels", labels);
-        
         payload.set("fields", fields);
         return payload;
     }
