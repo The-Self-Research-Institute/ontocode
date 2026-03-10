@@ -32,6 +32,10 @@ public class IssueReport {
     
     private String userEmail;
     
+    private String reporterUsername;
+    
+    private String reporterEmail;
+    
     private String projectId;
     
     private String projectName;
@@ -45,6 +49,8 @@ public class IssueReport {
     private String errorLogs;
     
     private String issueType;
+    
+    private String priority;
     
     private Instant createdAt;
     

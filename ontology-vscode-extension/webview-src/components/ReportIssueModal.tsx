@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Bug, Upload, X, AlertCircle, CheckCircle } from 'lucide-react';
+import { Bug, Upload, X, AlertCircle, CheckCircle, FileText, ListOrdered, Tag, Flag, FileCode, Image, File } from 'lucide-react';
+import { useAuth } from '../custom-hook/useAuth';
 
 interface ReportIssueModalProps {
   projectName?: string;
@@ -8,19 +9,35 @@ interface ReportIssueModalProps {
   onClose: () => void;
 }
 
+// Get API base URL based on deployment type
+const getApiBaseUrl = () => {
+  const deploymentType = localStorage.getItem('deploymentType') || 'cloud';
+  const config = (window as any).__ONTOCODE_CONFIG__;
+  
+  if (deploymentType === 'self-hosted') {
+    // For self-hosted, use direct editor service URL (port 8083)
+    return 'http://localhost:8083';
+  } else {
+    // For cloud, use cloud gateway URL (will go through port 80)
+    return config?.CLOUD_GATEWAY_URL || 'http://13.218.153.101';
+  }
+};
+
 export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
   projectName,
   projectId,
   ontologyFilePath,
   onClose
 }) => {
+  const { user } = useAuth();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [stepsToReproduce, setStepsToReproduce] = useState('');
-  const [userEmail, setUserEmail] = useState('');
   const [issueType, setIssueType] = useState('Task');
-  const [includeErrorLogs, setIncludeErrorLogs] = useState(false);
+  const [priority, setPriority] = useState('Medium');
   const [attachments, setAttachments] = useState<File[]>([]);
+  const [filePreviews, setFilePreviews] = useState<Map<string, string>>(new Map());
+  const [isDragging, setIsDragging] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState<{
     success: boolean;
@@ -55,23 +72,111 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files: File[] = Array.from(event.target.files || []);
+    processFiles(files);
+  };
+
+  const processFiles = (files: File[]) => {
+    // Define allowed file types
+    const allowedExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg', '.webp', '.pdf', '.doc', '.docx', '.txt', '.log', '.owl', '.ttl', '.rdf'];
+    const allowedMimeTypes = ['image/', 'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/', 'application/rdf+xml', 'application/x-turtle'];
     
-    // Validate file sizes
-    const invalidFiles = files.filter((f: File) => f.size > 10 * 1024 * 1024); // 10MB
-    if (invalidFiles.length > 0) {
-      alert(`The following files exceed 10MB limit: ${invalidFiles.map((f: File) => f.name).join(', ')}`);
+    // Validate file types
+    const invalidTypeFiles = files.filter((f: File) => {
+      const fileName = f.name.toLowerCase();
+      const fileType = f.type.toLowerCase();
+      
+      const hasValidExtension = allowedExtensions.some(ext => fileName.endsWith(ext));
+      const hasValidMimeType = allowedMimeTypes.some(mime => fileType.startsWith(mime));
+      
+      return !(hasValidExtension || hasValidMimeType);
+    });
+    
+    if (invalidTypeFiles.length > 0) {
+      alert(`The following files have unsupported file types: ${invalidTypeFiles.map((f: File) => f.name).join(', ')}\\n\\nSupported formats: images, PDF, Word documents (.doc, .docx), text files, logs, and ontology files (.owl, .ttl, .rdf)`);
       return;
-    }    // Limit to 5 files total
-    const newAttachments = [...attachments, ...files].slice(0, 5);
+    }
+    
+    // Add all valid files
+    const newAttachments = [...attachments, ...files];
     setAttachments(newAttachments);
     
-    if (newAttachments.length >= 5 && files.length + attachments.length > 5) {
-      alert('Maximum 5 attachments allowed');
+    // Generate previews for image and text-based files
+    files.forEach(file => {
+      const fileName = file.name.toLowerCase();
+      const isTextFile = fileName.endsWith('.txt') || fileName.endsWith('.log') || 
+                         fileName.endsWith('.owl') || fileName.endsWith('.ttl') || fileName.endsWith('.rdf');
+      const isPDF = fileName.endsWith('.pdf');
+      const isWordDoc = fileName.endsWith('.doc') || fileName.endsWith('.docx');
+      
+      if (file.type.startsWith('image/')) {
+        // Image preview - read as data URL
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          if (e.target?.result) {
+            setFilePreviews(prev => new Map(prev).set(file.name, e.target!.result as string));
+          }
+        };
+        reader.readAsDataURL(file);
+      } else if (isTextFile) {
+        // Text file preview - read first 500 characters
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          if (e.target?.result) {
+            const text = e.target.result as string;
+            const preview = text.substring(0, 500);
+            setFilePreviews(prev => new Map(prev).set(file.name, `text:${preview}`));
+          }
+        };
+        reader.readAsText(file);
+      } else if (isPDF) {
+        // PDF preview - mark as PDF type
+        setFilePreviews(prev => new Map(prev).set(file.name, 'pdf:preview'));
+      } else if (isWordDoc) {
+        // Word document preview - mark as Word type
+        setFilePreviews(prev => new Map(prev).set(file.name, 'word:preview'));
+      }
+    });
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only set to false if leaving the drop zone entirely
+    if (e.currentTarget === e.target) {
+      setIsDragging(false);
     }
   };
 
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const droppedFiles: File[] = Array.from(e.dataTransfer.files);
+    processFiles(droppedFiles);
+  };
+
   const removeAttachment = (index: number) => {
+    const fileToRemove = attachments[index];
     setAttachments(attachments.filter((_, i) => i !== index));
+    
+    // Remove preview if exists
+    if (filePreviews.has(fileToRemove.name)) {
+      const newPreviews = new Map(filePreviews);
+      newPreviews.delete(fileToRemove.name);
+      setFilePreviews(newPreviews);
+    }
   };
 
   const handleSubmit = async () => {
@@ -97,11 +202,9 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
         formData.append('stepsToReproduce', stepsToReproduce);
       }
       
-      if (userEmail.trim()) {
-        formData.append('userEmail', userEmail);
-      }
-      
       formData.append('issueType', issueType);
+      
+      formData.append('priority', priority);
       
       if (projectId) {
         formData.append('projectId', projectId);
@@ -122,24 +225,19 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
       formData.append('vsCodeVersion', systemInfo.vsCodeVersion);
       formData.append('extensionVersion', systemInfo.extensionVersion);
 
-      // Add error logs if requested
-      if (includeErrorLogs) {
-        const errorLogs = await getErrorLogs();
-        if (errorLogs) {
-          formData.append('errorLogs', errorLogs);
-        }
-      }
-
       // Add attachments
       attachments.forEach((file) => {
         formData.append('attachments', file);
       });
 
-      // Submit to backend
-      const response = await fetch('http://localhost:8083/api/v1/issues/report', {
+      // Submit to backend - Get token from auth context
+      const token = user?.token;
+      const apiBaseUrl = getApiBaseUrl();
+      const response = await fetch(`${apiBaseUrl}/api/v1/issues/report`, {
         method: 'POST',
         body: formData,
-        credentials: 'include'
+        credentials: 'include',
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
       });
 
       const result = await response.json();
@@ -172,51 +270,69 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
     }
   };
 
-  const getErrorLogs = async (): Promise<string | null> => {
-    try {
-      // Request error logs from extension
-      const response = await new Promise<string>((resolve) => {
-        const handler = (event: MessageEvent) => {
-          if (event.data.type === 'errorLogsResponse') {
-            window.removeEventListener('message', handler);
-            resolve(event.data.logs || '');
-          }
-        };
-        window.addEventListener('message', handler);
-        
-        // Send request to extension
-        (window as any).vscode?.postMessage({
-          type: 'getErrorLogs'
-        });
+  // Get file icon and color based on file type
+  const getFileIconAndColor = (file: File) => {
+    const fileName = file.name.toLowerCase();
+    const fileType = file.type.toLowerCase();
+    
+    if (fileType.startsWith('image/')) {
+      return { icon: Image, color: 'bg-green-100', iconColor: 'text-green-600' };
+    } else if (fileName.endsWith('.pdf')) {
+      return { icon: File, color: 'bg-red-100', iconColor: 'text-red-600' };
+    } else if (fileName.endsWith('.doc') || fileName.endsWith('.docx')) {
+      return { icon: FileText, color: 'bg-blue-100', iconColor: 'text-blue-600' };
+    } else if (fileName.endsWith('.log') || fileName.endsWith('.txt')) {
+      return { icon: FileText, color: 'bg-gray-100', iconColor: 'text-gray-600' };
+    } else if (fileName.endsWith('.owl') || fileName.endsWith('.ttl') || fileName.endsWith('.rdf')) {
+      return { icon: FileCode, color: 'bg-purple-100', iconColor: 'text-purple-600' };
+    }
+    return { icon: FileText, color: 'bg-blue-100', iconColor: 'text-blue-600' };
+  };
 
-        // Timeout after 5 seconds
-        setTimeout(() => {
-          window.removeEventListener('message', handler);
-          resolve('');
-        }, 5000);
-      });
+  // Get priority color
+  const getPriorityColor = (p: string) => {
+    switch(p) {
+      case 'Highest': return 'bg-red-100 text-red-800 border-red-300';
+      case 'High': return 'bg-orange-100 text-orange-800 border-orange-300';
+      case 'Medium': return 'bg-yellow-100 text-yellow-800 border-yellow-300';
+      case 'Low': return 'bg-blue-100 text-blue-800 border-blue-300';
+      case 'Lowest': return 'bg-gray-100 text-gray-800 border-gray-300';
+      default: return 'bg-gray-100 text-gray-800 border-gray-300';
+    }
+  };
 
-      return response;
-    } catch (error) {
-      console.error('Failed to get error logs:', error);
-      return null;
+  // Get issue type icon and color
+  const getIssueTypeStyle = (type: string) => {
+    switch(type) {
+      case 'Bug': return { color: 'bg-red-100 text-red-800 border-red-300', icon: Bug };
+      case 'Task': return { color: 'bg-blue-100 text-blue-800 border-blue-300', icon: ListOrdered };
+      default: return { color: 'bg-purple-100 text-purple-800 border-purple-300', icon: Tag };
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[95vh] overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Bug className="text-purple-600" size={24} />
-            <h2 className="text-xl font-semibold text-gray-900">
-              Report an Issue
-            </h2>
+        <div className="bg-gradient-to-r from-purple-600 to-indigo-600 px-6 py-5 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="bg-white bg-opacity-20 p-2 rounded-lg">
+              <Bug className="text-white" size={28} />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-white">
+                Report an Issue
+              </h2>
+              {projectName && (
+                <p className="text-purple-100 text-sm mt-1">
+                  Project: {projectName}
+                </p>
+              )}
+            </div>
           </div>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600"
+            className="text-white hover:bg-white hover:bg-opacity-20 p-2 rounded-lg transition-colors"
             disabled={submitting}
           >
             <X size={24} />
@@ -225,30 +341,51 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
 
         {/* Success/Error Message */}
         {submitResult && (
-          <div className={`mx-6 mt-4 p-4 rounded-md flex items-start gap-3 ${
+          <div className={`mx-6 mt-6 p-5 rounded-lg flex items-start gap-4 shadow-md ${
             submitResult.success 
-              ? 'bg-green-50 border border-green-200' 
-              : 'bg-red-50 border border-red-200'
+              ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300' 
+              : 'bg-gradient-to-r from-red-50 to-pink-50 border-2 border-red-300'
           }`}>
-            {submitResult.success ? (
-              <CheckCircle className="text-green-600 flex-shrink-0" size={20} />
-            ) : (
-              <AlertCircle className="text-red-600 flex-shrink-0" size={20} />
-            )}
+            <div className={`flex-shrink-0 p-2 rounded-full ${
+              submitResult.success ? 'bg-green-100' : 'bg-red-100'
+            }`}>
+              {submitResult.success ? (
+                <CheckCircle className="text-green-600" size={24} />
+              ) : (
+                <AlertCircle className="text-red-600" size={24} />
+              )}
+            </div>
             <div className="flex-1">
-              <p className={`text-sm font-medium ${
-                submitResult.success ? 'text-green-800' : 'text-red-800'
+              <p className={`text-base font-semibold mb-2 ${
+                submitResult.success ? 'text-green-900' : 'text-red-900'
               }`}>
                 {submitResult.message}
               </p>
+              {submitResult.success && (
+                <div className="flex items-center gap-3 mt-3">
+                  <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold border ${
+                    getIssueTypeStyle(issueType).color
+                  }`}>
+                    {React.createElement(getIssueTypeStyle(issueType).icon, { size: 14 })}
+                    {issueType}
+                  </span>
+                  <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold border ${
+                    getPriorityColor(priority)
+                  }`}>
+                    <Flag size={14} />
+                    {priority}
+                  </span>
+                </div>
+              )}
               {submitResult.jiraUrl && (
                 <a
                   href={submitResult.jiraUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-sm text-purple-600 hover:text-purple-800 underline mt-1 block"
+                  className="inline-flex items-center gap-2 mt-4 px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded-lg hover:bg-purple-700 transition-colors"
                 >
-                  View in Jira →
+                  View in Jira
+                  <span>→</span>
                 </a>
               )}
             </div>
@@ -256,11 +393,66 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
         )}
 
         {/* Content */}
-        <div className="px-6 py-4 space-y-6">
+        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+          {/* Issue Type & Priority Row */}
+          <div className="grid grid-cols-2 gap-4">
+            {/* Issue Type */}
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+                <Tag size={16} className="text-purple-600" />
+                Issue Type <span className="text-red-500">*</span>
+              </label>
+              <div className="relative">
+                <select
+                  value={issueType}
+                  onChange={(e) => setIssueType(e.target.value)}
+                  className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm bg-white text-black appearance-none cursor-pointer transition-all"
+                  disabled={submitting}
+                >
+                  <option value="Bug">🐛 Bug</option>
+                  <option value="Task">✓ Task</option>
+                </select>
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
+                  <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+
+            {/* Priority */}
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+                <Flag size={16} className="text-purple-600" />
+                Priority <span className="text-red-500">*</span>
+              </label>
+              <div className="relative">
+                <select
+                  value={priority}
+                  onChange={(e) => setPriority(e.target.value)}
+                  className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm bg-white text-black appearance-none cursor-pointer transition-all"
+                  disabled={submitting}
+                >
+                  <option value="Highest">🔴 Highest</option>
+                  <option value="High">🟠 High</option>
+                  <option value="Medium">🟡 Medium</option>
+                  <option value="Low">🔵 Low</option>
+                  <option value="Lowest">⚪ Lowest</option>
+                </select>
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
+                  <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Title */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Title *
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+              <FileText size={16} className="text-purple-600" />
+              Title <span className="text-red-500">*</span>
             </label>
             <input
               type="text"
@@ -268,169 +460,218 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Brief summary of the issue"
               maxLength={200}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500 text-sm bg-white text-black placeholder-gray-400"
+              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm bg-white text-black placeholder-gray-400 transition-all"
               disabled={submitting}
             />
-            <p className="text-xs text-gray-500 mt-1">{title.length}/200 characters</p>
+            <div className="flex justify-between items-center">
+              <p className="text-xs text-gray-500">Provide a clear, concise summary</p>
+              <p className={`text-xs font-medium ${
+                title.length > 180 ? 'text-orange-600' : 'text-gray-500'
+              }`}>{title.length}/200</p>
+            </div>
           </div>
 
           {/* Description */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Description *
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+              <FileCode size={16} className="text-purple-600" />
+              Description <span className="text-red-500">*</span>
             </label>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              rows={4}
-              placeholder="Describe the issue in detail..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500 text-sm bg-white text-black placeholder-gray-400"
+              rows={5}
+              placeholder="Describe the issue in detail. Include what you expected vs. what actually happened..."
+              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm bg-white text-black placeholder-gray-400 transition-all resize-none"
               disabled={submitting}
             />
           </div>
 
           {/* Steps to Reproduce */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Steps to Reproduce (Optional)
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+              <ListOrdered size={16} className="text-purple-600" />
+              Steps to Reproduce
+              <span className="text-xs font-normal text-gray-500">(Optional)</span>
             </label>
             <textarea
               value={stepsToReproduce}
               onChange={(e) => setStepsToReproduce(e.target.value)}
               rows={4}
               placeholder="1. Go to...&#10;2. Click on...&#10;3. See error..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500 text-sm bg-white text-black placeholder-gray-400"
+              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm bg-white text-black placeholder-gray-400 transition-all resize-none"
               disabled={submitting}
             />
-          </div>
-
-          {/* Issue Type */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Issue Type *
-            </label>
-            <select
-              value={issueType}
-              onChange={(e) => setIssueType(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500 text-sm bg-white text-black"
-              disabled={submitting}
-            >
-              <option value="Task">Task</option>
-              <option value="Bug">Bug</option>
-              <option value="Story">Story</option>
-              <option value="Sub-task">Sub-task</option>
-            </select>
-            <p className="text-xs text-gray-500 mt-1">Select the type of issue you're reporting</p>
-          </div>
-
-          {/* User Email */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Your Email (Optional)
-            </label>
-            <input
-              type="email"
-              value={userEmail}
-              onChange={(e) => setUserEmail(e.target.value)}
-              placeholder="your.email@example.com"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500 text-sm bg-white text-black placeholder-gray-400"
-              disabled={submitting}
-            />
-            <p className="text-xs text-gray-500 mt-1">We may contact you for follow-up questions</p>
-          </div>
-
-          {/* Error Logs Checkbox */}
-          <div>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={includeErrorLogs}
-                onChange={(e) => setIncludeErrorLogs(e.target.checked)}
-                className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500"
-                disabled={submitting}
-              />
-              <span className="text-sm font-medium text-gray-700">
-                Include recent error logs from extension output
-              </span>
-            </label>
           </div>
 
           {/* File Attachments */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Screenshots/Attachments (Optional)
+          <div className="space-y-3">
+            <label className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+              <Upload size={16} className="text-purple-600" />
+              Attachments
+              <span className="text-xs font-normal text-gray-500">(Optional)</span>
             </label>
-            <div className="space-y-2">
-              {/* Upload Button */}
-              {attachments.length < 5 && (
-                <label className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 cursor-pointer">
-                  <Upload size={16} />
-                  <span>Choose Files</span>
+            <div 
+              className={`border-2 border-dashed rounded-lg transition-all ${
+                isDragging 
+                  ? 'border-purple-500 bg-purple-50' 
+                  : 'border-gray-300 bg-gray-50 hover:bg-gray-100'
+              }`}
+              onDragOver={handleDragOver}
+              onDragEnter={handleDragEnter}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              {/* Upload Button - Vertical centered layout with dynamic sizing */}
+              <label className={`flex flex-col items-center justify-center cursor-pointer transition-all ${
+                attachments.length > 0 ? 'py-3' : 'py-8'
+              }`}>
+                  <div className={`rounded-full transition-all ${
+                    attachments.length > 0 ? 'p-2 mb-2' : 'p-3 mb-3'
+                  } ${
+                    isDragging 
+                      ? 'bg-purple-200 scale-110' 
+                      : 'bg-purple-100'
+                  }`}>
+                    <Upload size={attachments.length > 0 ? 20 : 28} className={`transition-colors ${
+                      isDragging ? 'text-purple-700' : 'text-purple-600'
+                    }`} />
+                  </div>
+                  <span className={`font-medium transition-colors ${
+                    attachments.length > 0 ? 'text-sm mb-1' : 'text-base mb-1'
+                  } ${
+                    isDragging ? 'text-purple-700' : 'text-gray-700'
+                  }`}>
+                    {isDragging ? 'Drop files here' : 'Choose files to upload'}
+                  </span>
+                  <span className={`text-gray-500 transition-all ${
+                    attachments.length > 0 ? 'text-xs mb-1' : 'text-sm mb-3'
+                  }`}>
+                    {isDragging ? 'Release to upload' : 'or drag and drop'}
+                  </span>
+                  
+                  {/* Supported file types */}
+                  <span className={`text-gray-500 transition-all ${
+                    attachments.length > 0 ? 'text-[10px]' : 'text-xs'
+                  }`}>
+                    JPG, PNG, PDF, DOC, DOCX, TXT, .log, .owl, .ttl, .rdf
+                  </span>
+                  
                   <input
                     type="file"
                     multiple
-                    accept="image/*,.pdf,.txt,.log,.owl,.ttl,.rdf"
+                    accept="image/*,.pdf,.doc,.docx,.txt,.log,.owl,.ttl,.rdf"
                     onChange={handleFileSelect}
                     className="hidden"
                     disabled={submitting}
                   />
                 </label>
-              )}
 
               {/* File List */}
               {attachments.length > 0 && (
-                <div className="space-y-1">
-                  {attachments.map((file, index) => (
-                    <div
-                      key={index}
-                      className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded border border-gray-200"
-                    >
-                      <span className="text-sm text-gray-700 truncate">{file.name}</span>
-                      <button
-                        onClick={() => removeAttachment(index)}
-                        className="text-gray-400 hover:text-red-600 ml-2"
-                        disabled={submitting}
+                <div className="border-t border-gray-200 pt-4 px-4 pb-2">
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                  {attachments.map((file, index) => {
+                    const { icon: FileIcon, color, iconColor } = getFileIconAndColor(file);
+                    const preview = filePreviews.get(file.name);
+                    const isImage = file.type.startsWith('image/');
+                    
+                    return (
+                      <div
+                        key={index}
+                        className="relative group bg-white rounded-lg border-2 border-gray-200 hover:border-purple-400 shadow-sm hover:shadow-md transition-all overflow-hidden"
                       >
-                        <X size={16} />
-                      </button>
-                    </div>
-                  ))}
+                        {/* Remove button */}
+                        <button
+                          onClick={() => removeAttachment(index)}
+                          className="absolute top-2 right-2 p-1.5 bg-white rounded-full border border-gray-300 text-gray-400 hover:text-red-600 hover:bg-red-50 hover:border-red-300 transition-colors opacity-0 group-hover:opacity-100 z-10 shadow-md"
+                          disabled={submitting}
+                          title="Remove file"
+                        >
+                          <X size={14} />
+                        </button>
+                        
+                        {/* File thumbnail/icon */}
+                        <div className="w-full aspect-[4/3] flex items-center justify-center p-2 bg-gray-50">
+                          {isImage && preview && !preview.startsWith('text:') && !preview.startsWith('pdf:') && !preview.startsWith('word:') ? (
+                            <img
+                              src={preview}
+                              alt={file.name}
+                              className="w-full h-full object-cover rounded"
+                            />
+                          ) : preview?.startsWith('text:') ? (
+                            <div className="w-full h-full bg-white rounded border border-gray-200 p-2 overflow-hidden">
+                              <pre className="text-[7px] leading-tight text-gray-700 font-mono whitespace-pre-wrap break-all">
+                                {preview.substring(5)}
+                              </pre>
+                            </div>
+                          ) : preview?.startsWith('pdf:') ? (
+                            <div className="w-full h-full bg-gradient-to-br from-red-50 to-red-100 rounded border-2 border-red-200 flex flex-col items-center justify-center p-2">
+                              <FileText size={28} className="text-red-600 mb-1" />
+                              <span className="text-xs font-bold text-red-700">PDF</span>
+                              <span className="text-[7px] text-red-600 mt-0.5">Document</span>
+                            </div>
+                          ) : preview?.startsWith('word:') ? (
+                            <div className="w-full h-full bg-gradient-to-br from-blue-50 to-blue-100 rounded border-2 border-blue-200 flex flex-col items-center justify-center p-2">
+                              <FileText size={28} className="text-blue-600 mb-1" />
+                              <span className="text-xs font-bold text-blue-700">Word</span>
+                              <span className="text-[7px] text-blue-600 mt-0.5">Document</span>
+                            </div>
+                          ) : (
+                            <div className={`${color} p-3 rounded-lg`}>
+                              <FileIcon size={24} className={iconColor} />
+                            </div>
+                          )}
+                        </div>
+                        
+                        {/* File info */}
+                        <div className="p-2 border-t border-gray-100">
+                          {/* File name */}
+                          <p className="text-xs font-medium text-gray-800 text-center truncate w-full" title={file.name}>
+                            {file.name}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  </div>
                 </div>
               )}
-
-              <p className="text-xs text-gray-500">
-                Max 5 files, 10MB each. Supported formats: images, PDF, text, logs, ontology files (.owl, .ttl, .rdf)
-              </p>
             </div>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="border-t border-gray-200 px-6 py-4 flex justify-end gap-3">
-          <button
-            onClick={onClose}
-            disabled={submitting}
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSubmit}
-            disabled={submitting || !title.trim() || !description.trim()}
-            className="px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-          >
-            {submitting ? (
-              <>
-                <span className="animate-spin">⏳</span>
-                <span>Submitting...</span>
-              </>
-            ) : (
-              <>
-                <Bug size={16} />
-                <span>Submit Issue</span>
-              </>
-            )}
-          </button>
+        <div className="border-t-2 border-gray-200 bg-gray-50 px-6 py-5 flex justify-between items-center">
+          <p className="text-xs text-gray-600">
+            <span className="text-red-500">*</span> Required fields
+          </p>
+          <div className="flex gap-3">
+            <button
+              onClick={onClose}
+              disabled={submitting}
+              className="px-6 py-2.5 text-sm font-semibold text-gray-700 bg-white border-2 border-gray-300 rounded-lg hover:bg-gray-50 hover:border-gray-400 disabled:opacity-50 transition-all"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={submitting || !title.trim() || !description.trim()}
+              className="px-6 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-purple-600 to-indigo-600 rounded-lg hover:from-purple-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg hover:shadow-xl transition-all"
+            >
+              {submitting ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                  <span>Submitting...</span>
+                </>
+              ) : (
+                <>
+                  <Bug size={18} />
+                  <span>Submit Issue Report</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -96,12 +96,12 @@ Expected success response:
 1. **Open VS Code Extension**
 2. Click **Help** → **Report Issue** in the top menu
 3. Fill out the issue form:
+   - **Issue Type**: Bug, Task, Story, etc.
+   - **Priority**: Highest, High, Medium, Low, Lowest
    - **Title** (required): Brief summary
    - **Description** (required): Detailed explanation
    - **Steps to Reproduce**: How to trigger the issue
-   - **Email**: Optional contact information
-   - **Screenshots**: Upload up to 5 files (10MB each)
-   - **Include Error Logs**: Checkbox to attach recent errors
+   - **Attachments**: Upload files (images, PDFs, Word documents, text files, logs, ontology files)
 
 4. Click **Submit Issue**
 
@@ -252,9 +252,9 @@ fields.set("customfield_12345", customField);
    - Should be rotated periodically
 
 2. **User Data**:
-   - Email addresses are optional
+   - Reported by info (username/email) automatically extracted from JWT token
    - No sensitive data is sent to Jira by default
-   - Screenshots are scanned (not implemented yet, consider adding)
+   - File attachments are uploaded directly (scanning for malware not implemented yet, consider adding)
 
 3. **Rate Limiting**:
    - Jira Cloud limits: 10 requests/second per user
@@ -342,15 +342,15 @@ Content-Type: multipart/form-data
 
 **Parameters**:
 - `title` (required): Issue title
-- `description` (required): Issue description  
+- `description` (required): Issue description
+- `issueType` (required): Bug, Task, Story, etc.
+- `priority` (required): Highest, High, Medium, Low, Lowest
 - `stepsToReproduce` (optional): Steps to reproduce
-- `userEmail` (optional): Contact email
 - `projectId` (optional): Auto-populated
 - `projectName` (optional): Auto-populated
 - `ontologyFilePath` (optional): Auto-populated
-- `errorLogs` (optional): Recent error logs
 - `osName`, `osVersion`, `vsCodeVersion`, `extensionVersion`: Auto-populated
-- `attachments` (optional): Files (max 5, 10MB each)
+- `attachments` (optional): Unlimited files - images (.jpg, .png, .gif, etc.), PDFs, Word documents (.doc, .docx), text files (.txt, .log), ontology files (.owl, .ttl, .rdf)
 
 **Response**:
 ```json
