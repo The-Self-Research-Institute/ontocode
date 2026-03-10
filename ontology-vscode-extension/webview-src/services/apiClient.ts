@@ -194,8 +194,17 @@ class ApiClient {
 
     // Request interceptor to add auth token
     this.axiosClient.interceptors.request.use((config) => {
+      // Try to get token from localStorage (webview context shares localStorage with the page)
+      // In VS Code webview, the extension updates localStorage when the token changes
       const token = localStorage.getItem('authToken');
-      if (token && config.headers) config.headers.Authorization = `Bearer ${token}`;
+      console.log('[ApiClient] Interceptor - URL:', config.url, '| Token present:', !!token, '| Token length:', token?.length);
+      if (token && config.headers) {
+        config.headers.Authorization = `Bearer ${token}`;
+        console.log('[ApiClient] ✓ Authorization header added');
+      } else {
+        console.warn('[ApiClient] ✗ No token found in localStorage - request will fail if authentication required');
+        console.warn('[ApiClient] localStorage keys:', Object.keys(localStorage));
+      }
       return config;
     });
 

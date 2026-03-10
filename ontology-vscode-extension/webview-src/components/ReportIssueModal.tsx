@@ -236,7 +236,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
       const response = await fetch(`${apiBaseUrl}/api/v1/issues/report`, {
         method: 'POST',
         body: formData,
-        credentials: 'include',
+        // credentials: 'include', // Removed - we use JWT in Authorization header, not cookies
         headers: token ? { 'Authorization': `Bearer ${token}` } : {}
       });
 

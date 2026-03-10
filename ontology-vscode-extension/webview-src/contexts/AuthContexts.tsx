@@ -290,13 +290,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
 
             console.log('[AuthContext] User isAdmin:', isAdmin);
-            console.log('[AuthContext] Saving token...');
+            console.log('[AuthContext] Saving token to localStorage...');
+            
+            // Always save to localStorage for webview API client
+            localStorage.setItem('authToken', token);
+            console.log('[AuthContext] Token saved. Verify:', !!localStorage.getItem('authToken'));
+            
             if (window.vscode) {
-                // VS Code extension mode - save to secure storage
+                // Also save to VS Code secure storage for persistence
                 window.vscode.postMessage({ type: 'saveAuthToken', token });
-            } else {
-                // Browser/Web mode - save to localStorage
-                localStorage.setItem('authToken', token);
             }
             
             // Decode JWT to get user info (for workspace data if present)
@@ -327,10 +329,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     
                     const newToken = roleResponse?.jwt || roleResponse?.token || roleResponse?.data?.jwt || roleResponse?.data?.token;
                     if (newToken) {
+                        // Always save to localStorage for webview API client
+                        localStorage.setItem('authToken', newToken);
+                        console.log('[AuthContext] Updated token saved. Verify:', !!localStorage.getItem('authToken'));
+                        
                         if (window.vscode) {
+                            // Also save to VS Code secure storage
                             window.vscode.postMessage({ type: 'saveAuthToken', token: newToken });
-                        } else {
-                            localStorage.setItem('authToken', newToken);
                         }
                         
                         const roleData = roleResponse?.data || roleResponse;
@@ -411,11 +416,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
             // If we have a token, user is logged in immediately (no email verification)
             if (token) {
-                console.log('[AuthContext] Saving token...');
+                console.log('[AuthContext] Saving token to localStorage...');
+                // Always save to localStorage for webview API client
+                localStorage.setItem('authToken', token);
+                
                 if (window.vscode) {
+                    // Also save to VS Code secure storage
                     window.vscode.postMessage({ type: 'saveAuthToken', token });
-                } else {
-                    localStorage.setItem('authToken', token);
                 }
                 
                 // Decode JWT to get user info
@@ -448,10 +455,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         
                         const newToken = roleResponse?.jwt || roleResponse?.token || roleResponse?.data?.jwt || roleResponse?.data?.token;
                         if (newToken) {
+                            // Always save to localStorage for webview API client
+                            localStorage.setItem('authToken', newToken);
+                            
                             if (window.vscode) {
+                                // Also save to VS Code secure storage
                                 window.vscode.postMessage({ type: 'saveAuthToken', token: newToken });
-                            } else {
-                                localStorage.setItem('authToken', newToken);
                             }
                             
                             const roleData = roleResponse?.data || roleResponse;
@@ -528,10 +537,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
 
         // Save new workspace-scoped token
+        // Always save to localStorage for webview API client
+        localStorage.setItem('authToken', workspaceData.jwt);
+        
         if (window.vscode) {
+            // Also save to VS Code secure storage
             window.vscode.postMessage({ type: 'saveAuthToken', token: workspaceData.jwt });
-        } else {
-            localStorage.setItem('authToken', workspaceData.jwt);
         }
 
         // Decode JWT to get all user info
@@ -613,10 +624,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             // Update token and user state with new role
             const token = response?.jwt || response?.token || response?.data?.jwt || response?.data?.token;
             if (token) {
+                // Always save to localStorage for webview API client
+                localStorage.setItem('authToken', token);
+                
                 if (window.vscode) {
+                    // Also save to VS Code secure storage
                     window.vscode.postMessage({ type: 'saveAuthToken', token });
-                } else {
-                    localStorage.setItem('authToken', token);
                 }
                 
                 const responseData = response?.data || response;

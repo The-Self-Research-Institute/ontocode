@@ -50,7 +50,7 @@ public class GatewayCorsConfig {
                 // Add gateway's CORS headers
                 if (origin != null && !origin.isEmpty()) {
                     headers.add(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-                    headers.add(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true");
+                    headers.add(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "false");
                     headers.add(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS, "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD");
                     headers.add(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS, "*");
                     headers.add(HttpHeaders.ACCESS_CONTROL_MAX_AGE, "3600");
@@ -80,7 +80,7 @@ public class GatewayCorsConfig {
                 headers.add("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD");
                 headers.add("Access-Control-Allow-Headers", "*");
                 headers.add("Access-Control-Max-Age", "3600");
-                headers.add("Access-Control-Allow-Credentials", "true");
+                headers.add("Access-Control-Allow-Credentials", "false");
 
                 response.setStatusCode(HttpStatus.OK);
                 return Mono.empty();
