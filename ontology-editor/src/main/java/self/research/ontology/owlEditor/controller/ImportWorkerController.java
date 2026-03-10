@@ -19,7 +19,7 @@ import java.util.Map;
 @Slf4j
 @RestController
 @RequestMapping("/api/import-worker")
-@CrossOrigin(originPatterns = "*", allowCredentials = "true")
+@CrossOrigin(originPatterns = "*")
 public class ImportWorkerController {
 
     private final GridFSFileService gridFSFileService;

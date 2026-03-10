@@ -23,7 +23,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/issues")
-@CrossOrigin(originPatterns = "*", allowCredentials = "true")
+@CrossOrigin(originPatterns = "*", allowedHeaders = "*", allowCredentials = "false", methods = {RequestMethod.GET, RequestMethod.POST, RequestMethod.PUT, RequestMethod.DELETE, RequestMethod.OPTIONS})
 public class IssueReportController {
     
     private final IssueReportService issueReportService;
