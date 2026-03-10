@@ -104,8 +104,8 @@ class IssueReportService {
     async validateJiraConnection(): Promise<{ success: boolean; message: string }> {
         try {
             const response = await fetch('http://localhost:8083/api/v1/issues/jira/validate', {
-                method: 'GET',
-                credentials: 'include'
+                method: 'GET'
+                // credentials: 'include' // Removed - not needed for JWT auth
             });
 
             const result = await response.json();
