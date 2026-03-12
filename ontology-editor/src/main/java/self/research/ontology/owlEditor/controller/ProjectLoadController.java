@@ -235,6 +235,11 @@ public class ProjectLoadController {
             // get a clean file without needing their own stripping logic.
             OWLFormatConverter.sanitizeFileOnDisk(original);
 
+            // Extract citation-entity mappings from uploaded file for smart repositioning
+            // This must be done BEFORE GraphDB import, as GraphDB will reorganize the content
+            log.info("Extracting citation-entity mappings from uploaded file: {}", filename);
+            storageManager.extractCitationMappingsFromFile(original, actualProjectId);
+
             // FIX: Batch metadata updates into single operation for better performance
             // Use the potentially modified filename
             ProjectStatus status = ProjectStatus.uploaded(filename);
@@ -741,14 +746,15 @@ public class ProjectLoadController {
      * Store code view content in cache to preserve line positions.
      * POST /api/ontology/{projectId}/code-view-cache
      * This is used when the user inserts citations at specific lines.
+     * Optionally accepts citation-entity mappings for smart repositioning.
      */
     @PostMapping("/{projectId}/code-view-cache")
     public ResponseEntity<Map<String, Object>> storeCodeViewCache(
             @PathVariable String projectId,
-            @RequestBody Map<String, String> request) {
+            @RequestBody Map<String, Object> request) {
         try {
-            String content = request.get("content");
-            String format = request.getOrDefault("format", "rdfxml");
+            String content = (String) request.get("content");
+            String format = (String) request.getOrDefault("format", "rdfxml");
             
             if (content == null || content.isEmpty()) {
                 return ResponseEntity.badRequest()
@@ -759,6 +765,20 @@ public class ProjectLoadController {
                      projectId, format, content.length());
             
             storageManager.storeCodeViewCache(projectId, content, format);
+            
+            // Store citation-entity mapping if provided (for smart repositioning)
+            String citationUrn = (String) request.get("citationUrn");
+            String referencedEntity = (String) request.get("referencedEntity");
+            
+            if (citationUrn != null && referencedEntity != null && !referencedEntity.isEmpty()) {
+                try {
+                    storageManager.storeCitationEntityMapping(projectId, citationUrn, referencedEntity);
+                    log.info("Stored citation-entity mapping: {} -> {}", citationUrn, referencedEntity);
+                } catch (Exception e) {
+                    log.warn("Failed to store citation-entity mapping for project: {}", projectId, e);
+                    // Don't fail the whole request, metadata is optional
+                }
+            }
             
             return ResponseEntity.ok(Map.of(
                     "success", true,

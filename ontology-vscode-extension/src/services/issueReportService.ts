@@ -21,10 +21,19 @@ class IssueReportService {
     private outputChannel: vscode.OutputChannel | null = null;
     private errorLogBuffer: string[] = [];
     private readonly MAX_LOG_BUFFER_SIZE = 100;
+    private editorUrl: string = 'http://localhost:8083'; // Default to self-hosted
 
     constructor() {
         // Get or create output channel for logging
         this.outputChannel = vscode.window.createOutputChannel('OntoCode');
+    }
+
+    /**
+     * Update the editor URL based on deployment type
+     */
+    setEditorUrl(url: string): void {
+        this.editorUrl = url;
+        console.log('[IssueReportService] Editor URL updated to:', url);
     }
 
     /**
@@ -103,7 +112,10 @@ class IssueReportService {
      */
     async validateJiraConnection(): Promise<{ success: boolean; message: string }> {
         try {
-            const response = await fetch('http://localhost:8083/api/v1/issues/jira/validate', {
+            const url = `${this.editorUrl}/api/v1/issues/jira/validate`;
+            console.log('[IssueReportService] Validating Jira connection at:', url);
+            
+            const response = await fetch(url, {
                 method: 'GET'
                 // credentials: 'include' // Removed - not needed for JWT auth
             });
