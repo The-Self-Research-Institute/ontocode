@@ -46,7 +46,7 @@
       },
       {
         "command": "ontocode.editLargeFile",
-        "title": "OntoCode: Process Large OWL File",
+        "title": "OntoCode: Edit Ontology File",
         "category": "OntoCode"
       },
       {
@@ -99,7 +99,7 @@
         },
         {
           "command": "ontocode.editLargeFile",
-          "when": "resourceFilename =~ /\\.owl$/i",
+          "when": "resourceFilename =~ /\\.(owl|ttl|rdf)$/i",
           "group": "navigation"
         }
       ]

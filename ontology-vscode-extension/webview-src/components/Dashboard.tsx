@@ -7706,37 +7706,73 @@ const Dashboard: React.FC<DashboardProps> = ({
     const manualCitation = {
       key: `manual_${Date.now()}`,
       title: citationData.title,
-      creators: citationData.authors.split(',').map((author: string) => {
-        const parts = author.trim().split(' ');
-        return {
-          firstName: parts.slice(0, -1).join(' '),
-          lastName: parts[parts.length - 1] || '',
-          creatorType: 'author'
-        };
-      }),
-      date: citationData.year,
-      doi: citationData.doi,
-      url: citationData.url,
-      itemType: citationData.itemType,
-      publicationTitle: citationData.publicationTitle
+      data: {
+        title: citationData.title,
+        creators: citationData.authors.split(',').map((author: string) => {
+          const parts = author.trim().split(' ');
+          return {
+            firstName: parts.slice(0, -1).join(' '),
+            lastName: parts[parts.length - 1] || '',
+            creatorType: 'author'
+          };
+        }),
+        date: citationData.year,
+        doi: citationData.doi,
+        url: citationData.url,
+        itemType: citationData.itemType,
+        publicationTitle: citationData.publicationTitle
+      }
     };
 
-    // Request formatted citation from extension
-    if (window.vscode) {
-      window.vscode.postMessage({
-        type: 'insertManualCitation',
-        citation: manualCitation,
-        format: codeViewFormat === 'turtle' ? 'turtle' : 'rdfxml',
-        projectId: projectId
-      });
+    console.log('[Dashboard] Manual citation created:', manualCitation);
+
+    // Set up for search-based insertion (same flow as Zotero citations)
+    setPendingCitation(manualCitation);
+    setCitationInsertionMode(true);
+    setShowManualCitationDialog(false);
+    
+    console.log('[Dashboard] Citation insertion mode enabled - search for location to insert');
+  }, []);
+
+  // Handle code content changes from editable code view
+  const handleCodeContentChange = useCallback((newContent: string) => {
+    setCodeViewContent(newContent);
+    setHasLocalCodeViewChanges(true);
+    console.log('[Dashboard] Code view content updated via editing');
+  }, []);
+
+  // Handle saving code content to backend
+  const handleSaveCodeContent = useCallback(async (content: string) => {
+    if (!projectId) {
+      console.error('[Dashboard] No projectId available for save');
+      notificationService.error('Save Failed', 'No project selected');
+      return;
     }
 
-    setShowManualCitationDialog(false);
-    // Refresh code view after insertion
-    setTimeout(() => {
-      fetchCodeViewContent(codeViewFormat);
-    }, 1000);
-  }, [projectId, codeViewFormat, fetchCodeViewContent]);
+    try {
+      console.log('[Dashboard] Saving code view content to backend, format:', codeViewFormat, 'size:', content.length);
+      
+      const response = await apiClient.post(
+        `/api/ontology/${projectId}/code-view-cache`,
+        {
+          content: content,
+          format: codeViewFormat
+        }
+      );
+
+      if (response.success) {
+        console.log('[Dashboard] Code view content saved successfully');
+        notificationService.success('Saved', 'Code content saved to backend');
+        setHasLocalCodeViewChanges(false);
+      } else {
+        console.error('[Dashboard] Save failed:', response.error || 'Unknown error');
+        notificationService.error('Save Failed', response.error || 'Failed to save content');
+      }
+    } catch (error: any) {
+      console.error('[Dashboard] Error saving code content:', error);
+      notificationService.error('Save Failed', error.message || 'Failed to save content to backend');
+    }
+  }, [projectId, codeViewFormat]);
 
   // Handle insertion at selected location in code view
   const handleInsertCitationAtLocation = useCallback(async (lineNumber: number) => {
@@ -7770,96 +7806,203 @@ const Dashboard: React.FC<DashboardProps> = ({
       let referencedEntity = '';
       
       // ========== COMPREHENSIVE OWL ELEMENT EXTRACTION ==========
-      // 1. Full URI patterns (all formats)
-      const fullUriMatch = clickedLine.match(/<([^>]+)>/);
-      
-      // 2. Prefixed name patterns (Turtle, Manchester)
-      const prefixedNameMatch = clickedLine.match(/(?:^|\s|,)([a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*)/);
-      
-      // 3. RDF/XML patterns
+      // PRIORITY 1: RDF/XML and OWL/XML attribute patterns (extract URLs first)
       const rdfAboutMatch = clickedLine.match(/rdf:about="([^"]+)"/);
       const rdfIdMatch = clickedLine.match(/rdf:ID="([^"]+)"/);
       const rdfResourceMatch = clickedLine.match(/rdf:resource="([^"]+)"/);
-      
-      // 4. OWL/XML patterns
       const owlXmlIriMatch = clickedLine.match(/\bIRI="([^"]+)"/);
       const owlXmlAbbrevMatch = clickedLine.match(/abbreviatedIRI="([^"]+)"/);
       
-      // 5. Manchester syntax patterns (Class:, Individual:, ObjectProperty:, etc.)
+      // PRIORITY 2: Full URI patterns (all formats) - MUST be a valid URI, not an XML tag
+      // Only match URIs that start with http(s):, urn:, file:, or contain ://
+      const fullUriMatch = clickedLine.match(/<((?:https?|urn|file):[^\s>]+|[^\s>]*:\/\/[^\s>]+)>/);
+      
+      // PRIORITY 3: Prefixed name patterns (Turtle, Manchester) - only if no URL found
+      const prefixedNameMatch = clickedLine.match(/\b([a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]+)\b/);
+      
+      // 4. Manchester syntax patterns (Class:, Individual:, ObjectProperty:, etc.)
       const manchesterDeclMatch = clickedLine.match(/(?:Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):\s*([<:][^\s]+|[a-zA-Z_][a-zA-Z0-9_:-]*)/);
       
-      // 6. Functional syntax patterns - extract from Declaration, ClassAssertion, etc.
+      // 5. Functional syntax patterns - extract from Declaration, ClassAssertion, etc.
       const functionalEntityMatch = clickedLine.match(/(?:Declaration|ClassAssertion|ObjectPropertyAssertion|DataPropertyAssertion|AnnotationAssertion|SubClassOf|EquivalentClasses|DisjointClasses|SubObjectPropertyOf|EquivalentObjectProperties|SubDataPropertyOf|ObjectPropertyDomain|ObjectPropertyRange|DataPropertyDomain|DataPropertyRange|SameIndividual|DifferentIndividuals)\s*\(\s*(?:[^(]*\()?\s*([<][^>]+[>]|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*)/);
       
-      // 7. OWL axiom patterns in Turtle (SubClassOf, EquivalentClass, etc.)
+      // 6. OWL axiom patterns in Turtle (SubClassOf, EquivalentClass, etc.)
       const owlAxiomMatch = clickedLine.match(/(?:owl:equivalentClass|owl:disjointWith|rdfs:subClassOf|rdfs:subPropertyOf|owl:inverseOf|owl:propertyChainAxiom|owl:hasKey)\s+([<][^>]+[>]|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*)/);
       
-      // 8. Property restriction patterns
+      // 7. Property restriction patterns
       const restrictionMatch = clickedLine.match(/(?:owl:onProperty|owl:someValuesFrom|owl:allValuesFrom|owl:hasValue|owl:onClass|owl:onDataRange|owl:minCardinality|owl:maxCardinality|owl:cardinality|owl:minQualifiedCardinality|owl:maxQualifiedCardinality|owl:qualifiedCardinality)\s+([<][^>]+[>]|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*|\d+)/);
       
-      // 9. Annotation patterns
+      // 8. Annotation patterns
       const annotationMatch = clickedLine.match(/(?:rdfs:label|rdfs:comment|rdfs:seeAlso|rdfs:isDefinedBy|owl:versionInfo|dc:title|dc:description|dc:creator|skos:prefLabel|skos:altLabel|skos:definition|skos:example|skos:note)\s+(?:"[^"]*"|([<][^>]+[>]|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*))/);
       
-      // 10. SWRL rule patterns
+      // 9. SWRL rule patterns
       const swrlMatch = clickedLine.match(/(?:swrl:body|swrl:head|swrl:argument1|swrl:argument2|swrl:classPredicate|swrl:propertyPredicate)\s+([<][^>]+[>]|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*)/);
       
-      // 11. RDF/XML OWL element tags
+      // 10. RDF/XML OWL element tags
       const xmlOwlElementMatch = clickedLine.match(/<owl:(Class|ObjectProperty|DatatypeProperty|AnnotationProperty|NamedIndividual|Restriction|AllDifferent|AllDisjointClasses|AllDisjointProperties|NegativePropertyAssertion|Datatype|FunctionalProperty|InverseFunctionalProperty|TransitiveProperty|SymmetricProperty|AsymmetricProperty|ReflexiveProperty|IrreflexiveProperty)/);
       
-      // 12. Import declaration
+      // 11. Import declaration
       const importMatch = clickedLine.match(/(?:owl:imports|Import)\s*\(?\s*([<][^>]+[>]|"[^"]+"|[a-zA-Z_][a-zA-Z0-9_:-]*)/);
       
-      // 13. Datatype patterns
+      // 12. Datatype patterns
       const datatypeMatch = clickedLine.match(/\^\^([<][^>]+[>]|xsd:[a-zA-Z]+|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*)/);
       
       // 14. N-Triples subject pattern
       const ntriplesSubjectMatch = clickedLine.match(/^([<][^>]+[>])\s+[<]/);
       
-      // Priority order for entity extraction (most specific to least specific)
-      if (manchesterDeclMatch) {
-        referencedEntity = manchesterDeclMatch[1].replace(/^[<:]/, '').replace(/>$/, '');
-      } else if (functionalEntityMatch) {
-        referencedEntity = functionalEntityMatch[1].replace(/^</, '').replace(/>$/, '');
-      } else if (rdfAboutMatch) {
+      // Priority order for entity extraction - XML attributes FIRST (most precise for URLs)
+      console.log('[Dashboard] Entity extraction patterns - checking in priority order...');
+      
+      // PRIORITY 1: XML attribute patterns (extract full URLs from rdf:about, IRI, etc.)
+      if (rdfAboutMatch) {
         referencedEntity = rdfAboutMatch[1];
+        console.log('[Dashboard] ✓ Extracted from rdf:about:', referencedEntity);
       } else if (rdfIdMatch) {
         referencedEntity = rdfIdMatch[1];
+        console.log('[Dashboard] ✓ Extracted from rdf:ID:', referencedEntity);
       } else if (owlXmlIriMatch) {
         referencedEntity = owlXmlIriMatch[1];
+        console.log('[Dashboard] ✓ Extracted from IRI attribute:', referencedEntity);
       } else if (owlXmlAbbrevMatch) {
         referencedEntity = owlXmlAbbrevMatch[1];
-      } else if (owlAxiomMatch) {
-        referencedEntity = owlAxiomMatch[1].replace(/^</, '').replace(/>$/, '');
-      } else if (restrictionMatch && !restrictionMatch[1].match(/^\d+$/)) {
-        referencedEntity = restrictionMatch[1].replace(/^</, '').replace(/>$/, '');
-      } else if (annotationMatch && annotationMatch[1]) {
-        referencedEntity = annotationMatch[1].replace(/^</, '').replace(/>$/, '');
-      } else if (swrlMatch) {
-        referencedEntity = swrlMatch[1].replace(/^</, '').replace(/>$/, '');
-      } else if (importMatch) {
-        referencedEntity = importMatch[1].replace(/^[<"]/, '').replace(/[>"]$/, '');
+        console.log('[Dashboard] ✓ Extracted from abbreviatedIRI:', referencedEntity);
       } else if (rdfResourceMatch) {
         referencedEntity = rdfResourceMatch[1];
-      } else if (ntriplesSubjectMatch) {
-        referencedEntity = ntriplesSubjectMatch[1].replace(/^</, '').replace(/>$/, '');
-      } else if (prefixedNameMatch) {
-        referencedEntity = prefixedNameMatch[1];
-      } else if (fullUriMatch) {
+        console.log('[Dashboard] ✓ Extracted from rdf:resource:', referencedEntity);
+      } 
+      // PRIORITY 2: Full URI in angle brackets
+      else if (fullUriMatch) {
         referencedEntity = fullUriMatch[1];
-      } else if (xmlOwlElementMatch) {
+        console.log('[Dashboard] ✓ Extracted full URI from angle brackets:', referencedEntity);
+      }
+      // PRIORITY 3: N-Triples subject (full URI)
+      else if (ntriplesSubjectMatch) {
+        referencedEntity = ntriplesSubjectMatch[1].replace(/^</, '').replace(/>$/, '');
+        console.log('[Dashboard] ✓ Extracted from N-Triples subject:', referencedEntity);
+      }
+      // PRIORITY 4: Format-specific declarations
+      else if (manchesterDeclMatch) {
+        referencedEntity = manchesterDeclMatch[1].replace(/^[<:]/, '').replace(/>$/, '');
+        console.log('[Dashboard] ✓ Extracted from Manchester declaration:', referencedEntity);
+      } else if (functionalEntityMatch) {
+        referencedEntity = functionalEntityMatch[1].replace(/^</, '').replace(/>$/, '');
+        console.log('[Dashboard] ✓ Extracted from Functional syntax:', referencedEntity);
+      }
+      // PRIORITY 5: OWL axioms and properties
+      else if (owlAxiomMatch) {
+        referencedEntity = owlAxiomMatch[1].replace(/^</, '').replace(/>$/, '');
+        console.log('[Dashboard] ✓ Extracted from OWL axiom:', referencedEntity);
+      } else if (restrictionMatch && !restrictionMatch[1].match(/^\d+$/)) {
+        referencedEntity = restrictionMatch[1].replace(/^</, '').replace(/>$/, '');
+        console.log('[Dashboard] ✓ Extracted from restriction:', referencedEntity);
+      } else if (annotationMatch && annotationMatch[1]) {
+        referencedEntity = annotationMatch[1].replace(/^</, '').replace(/>$/, '');
+        console.log('[Dashboard] ✓ Extracted from annotation:', referencedEntity);
+      } else if (swrlMatch) {
+        referencedEntity = swrlMatch[1].replace(/^</, '').replace(/>$/, '');
+        console.log('[Dashboard] ✓ Extracted from SWRL rule:', referencedEntity);
+      } else if (importMatch) {
+        referencedEntity = importMatch[1].replace(/^[<"]/, '').replace(/[>"]$/, '');
+        console.log('[Dashboard] ✓ Extracted from import:', referencedEntity);
+      }
+      // PRIORITY 6: Prefixed names (lowest priority)
+      else if (prefixedNameMatch) {
+        referencedEntity = prefixedNameMatch[1];
+        console.log('[Dashboard] ✓ Extracted prefixed name:', referencedEntity);
+      }
+      // PRIORITY 7: XML element tags (look nearby for entity reference)
+      else if (xmlOwlElementMatch) {
+        console.log('[Dashboard] Found OWL XML element tag, looking for nearby entity...');
         // For OWL element tags, look for rdf:about or rdf:ID on same or nearby lines
         const nearbyLines = lines.slice(Math.max(0, lineNumber - 2), Math.min(lines.length, lineNumber + 3)).join(' ');
         const nearbyAbout = nearbyLines.match(/rdf:about="([^"]+)"/);
         const nearbyId = nearbyLines.match(/rdf:ID="([^"]+)"/);
         if (nearbyAbout) {
           referencedEntity = nearbyAbout[1];
+          console.log('[Dashboard] ✓ Extracted from nearby rdf:about:', referencedEntity);
         } else if (nearbyId) {
           referencedEntity = nearbyId[1];
+          console.log('[Dashboard] ✓ Extracted from nearby rdf:ID:', referencedEntity);
         }
       }
       
-      console.log('[Dashboard] Referenced entity from clicked line:', referencedEntity || '(none detected)');
-      console.log('[Dashboard] Clicked line content:', clickedLine.substring(0, 100) + (clickedLine.length > 100 ? '...' : ''));
+      if (!referencedEntity) {
+        console.log('[Dashboard] ✗ No entity found from primary patterns, trying fallbacks...');
+      }
+      
+      // AGGRESSIVE FALLBACK: If still no entity found, extract any IRI or prefixed name from the line
+      if (!referencedEntity) {
+        // Try to find any full IRI in angle brackets (must be a URL, not an XML tag)
+        // Must start with http(s): or urn: or file: or contain :// to be considered a URI
+        const anyIriMatch = clickedLine.match(/<((?:https?|urn|file):[^\s>]+|[^\s>]*:\/\/[^\s>]+)>/);
+        if (anyIriMatch) {
+          referencedEntity = anyIriMatch[1];
+          console.log('[Dashboard] FALLBACK: Extracted IRI from angle brackets:', referencedEntity);
+        }
+        
+        // Try to find any prefixed name (e.g., ex:Person, foaf:name)
+        if (!referencedEntity) {
+          const anyPrefixedMatch = clickedLine.match(/\b([a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]+)\b/);
+          if (anyPrefixedMatch && !anyPrefixedMatch[1].startsWith('http:') && !anyPrefixedMatch[1].startsWith('https:')) {
+            referencedEntity = anyPrefixedMatch[1];
+            console.log('[Dashboard] FALLBACK: Extracted prefixed name:', referencedEntity);
+          }
+        }
+        
+        // Super aggressive fallback: look at nearby lines for context (URLs only)
+        if (!referencedEntity && lineNumber >= 0) {
+          console.log('[Dashboard] SUPER FALLBACK: Searching nearby lines (±3) for entity URL...');
+          const contextLines = lines.slice(Math.max(0, lineNumber - 3), Math.min(lines.length, lineNumber + 3));
+          for (let i = 0; i < contextLines.length; i++) {
+            const contextLine = contextLines[i];
+            // ONLY try to extract URLs from XML attributes (most precise)
+            const contextAbout = contextLine.match(/rdf:about="([^"]+)"/);
+            const contextIri = contextLine.match(/IRI="([^"]+)"/);
+            const contextResource = contextLine.match(/rdf:resource="([^"]+)"/);
+            
+            if (contextAbout) {
+              referencedEntity = contextAbout[1];
+              console.log(`[Dashboard] SUPER FALLBACK: Found rdf:about in line ${lineNumber - 3 + i}:`, referencedEntity);
+              break;
+            } else if (contextIri) {
+              referencedEntity = contextIri[1];
+              console.log(`[Dashboard] SUPER FALLBACK: Found IRI in line ${lineNumber - 3 + i}:`, referencedEntity);
+              break;
+            } else if (contextResource) {
+              referencedEntity = contextResource[1];
+              console.log(`[Dashboard] SUPER FALLBACK: Found rdf:resource in line ${lineNumber - 3 + i}:`, referencedEntity);
+              break;
+            }
+          }
+          
+          // If still nothing, try angle brackets for URLs
+          if (!referencedEntity) {
+            for (let i = 0; i < contextLines.length; i++) {
+              const contextLine = contextLines[i];
+              // Only match actual URIs, not XML tags
+              const contextIri = contextLine.match(/<((?:https?|urn|file):[^\s>]+|[^\s>]*:\/\/[^\s>]+)>/);
+              if (contextIri) {
+              referencedEntity = contextIri[1];
+              console.log('[Dashboard] SUPER FALLBACK: Found IRI in nearby line:', referencedEntity);
+              break;
+            }
+            // Try prefixed name
+            const contextPrefixed = contextLine.match(/\b([a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*)\b/);
+            if (contextPrefixed && !contextPrefixed[1].startsWith('http:') && !contextPrefixed[1].startsWith('https:')) {
+              referencedEntity = contextPrefixed[1];
+              console.log('[Dashboard] SUPER FALLBACK: Found prefixed name in nearby line:', referencedEntity);
+              break;
+            }
+          }
+        }
+      }
+      } // Close aggressive fallback if (!referencedEntity) block started around line 7936
+      
+      console.log('[Dashboard] ========== ENTITY EXTRACTION DEBUG ==========');
+      console.log('[Dashboard] Clicked line content:', clickedLine);
+      console.log('[Dashboard] Format:', codeViewFormat);
+      console.log('[Dashboard] Referenced entity extracted:', referencedEntity || '(none detected)');
+      console.log('[Dashboard] =============================================');
       
       // Helper function to escape Turtle strings
       const escapeTurtle = (str: string): string => {
@@ -8147,9 +8290,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       console.log('[Dashboard] Citation lines count:', citationLines.length);
       console.log('[Dashboard] Total lines before insertion:', lines.length);
       
-      // For RDF/XML format, ensure insertion is AFTER the root element opening tag
+      // For RDF/XML and OWL/XML formats, ensure insertion is AFTER the root element opening tag
       // to prevent "Content is not allowed in prolog" errors
-      if (codeViewFormat === 'rdfxml') {
+      if (codeViewFormat === 'rdfxml' || codeViewFormat === 'owlxml') {
         // Find the line with the opening <rdf:RDF> or <Ontology> root element
         let rootElementLine = -1;
         for (let i = 0; i < Math.min(50, lines.length); i++) {
@@ -8179,16 +8322,16 @@ const Dashboard: React.FC<DashboardProps> = ({
         if (rootElementLine >= 0 && insertAtIndex <= rootTagCloseLine) {
           // User clicked before or inside the root element opening tag - insert after it
           insertAtIndex = rootTagCloseLine + 1;
-          console.log('[Dashboard] RDF/XML: Adjusted insertion to line', insertAtIndex, 'to respect XML structure');
+          console.log(`[Dashboard] ${codeViewFormat.toUpperCase()}: Adjusted insertion to line`, insertAtIndex, 'to respect XML structure');
         }
         
-        // Also check if trying to insert after the closing </rdf:RDF> tag
+        // Also check if trying to insert after the closing tag
         for (let i = lines.length - 1; i >= Math.max(0, lines.length - 10); i--) {
           const trimmed = lines[i].trim();
           if (trimmed === '</rdf:RDF>' || trimmed === '</Ontology>' || trimmed === '</owl:Ontology>') {
             if (insertAtIndex > i) {
               insertAtIndex = i; // Insert before the closing tag
-              console.log('[Dashboard] RDF/XML: Adjusted insertion to line', insertAtIndex, 'to stay inside root element');
+              console.log(`[Dashboard] ${codeViewFormat.toUpperCase()}: Adjusted insertion to line`, insertAtIndex, 'to stay inside root element');
             }
             break;
           }
@@ -8303,7 +8446,10 @@ const Dashboard: React.FC<DashboardProps> = ({
           if (year) citLines.push(`${uri} <http://purl.org/dc/elements/1.1/date> "${year}"^^<http://www.w3.org/2001/XMLSchema#gYear> .`);
           if (publicationTitle) citLines.push(`${uri} <http://purl.org/dc/elements/1.1/source> "${escNt(publicationTitle)}" .`);
           if (publisher) citLines.push(`${uri} <http://purl.org/dc/elements/1.1/publisher> "${escNt(publisher)}" .`);
-          if (doi) citLines.push(`${uri} <http://purl.org/ontology/bibo/doi> "${escNt(doi)}" .`);
+          if (doi) {
+            citLines.push(`${uri} <http://purl.org/dc/elements/1.1/identifier> "doi:${escNt(doi)}" .`);
+            citLines.push(`${uri} <http://purl.org/ontology/bibo/doi> "${escNt(doi)}" .`);
+          }
           if (isbn) citLines.push(`${uri} <http://purl.org/ontology/bibo/isbn> "${escNt(isbn)}" .`);
           if (url) citLines.push(`${uri} <http://xmlns.com/foaf/0.1/homepage> <${url}> .`);
           if (abstractNote) citLines.push(`${uri} <http://purl.org/dc/elements/1.1/description> "${escNt(abstractNote)}" .`);
@@ -8389,21 +8535,19 @@ const Dashboard: React.FC<DashboardProps> = ({
           return citLines;
         }
 
-        // Clear all existing caches first
-        try {
-          await apiClient.delete(`/api/ontology/${projectId}/code-view-cache`);
-          console.log('[Dashboard] All format caches cleared');
-        } catch (e) {
-          console.warn('[Dashboard] Failed to clear caches:', e);
-        }
-
         // Store modified content for current format (already modified with citation at clicked line)
+        // Note: We do NOT clear caches first - this preserves previously added citations
+        // Also store citation-entity mapping for smart repositioning when exporting from GraphDB
+        const citationUrn = `urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}`;
         try {
           await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
             content: modifiedContent,
-            format: codeViewFormat
+            format: codeViewFormat,
+            citationUrn: citationUrn,
+            referencedEntity: referencedEntity || ''
           });
           console.log('[Dashboard] Current format cache stored:', codeViewFormat);
+          console.log('[Dashboard] Stored citation-entity mapping:', citationUrn, '->', referencedEntity || '(none)');
         } catch (e) {
           console.warn('[Dashboard] Failed to store current format cache:', e);
         }
@@ -8411,126 +8555,199 @@ const Dashboard: React.FC<DashboardProps> = ({
         // Now fetch and update ALL other formats with citation near the same entity
         // Helper to find entity location in content - supports ALL OWL formats
         function findEntityLocation(content: string, entity: string): number {
-          if (!entity) return -1;
+          if (!entity) {
+            console.log('[findEntityLocation] No entity provided');
+            return -1;
+          }
           
           const lines = content.split('\n');
           
           // Extract just the local name from the entity for matching
-          const localName = entity.includes('#') ? entity.split('#').pop() || '' :
-                           entity.includes('/') ? entity.split('/').pop() || '' :
-                           entity.includes(':') ? entity.split(':').pop() || '' : entity;
+          // If entity has a fragment (#), use that; else use last path segment
+          let localName = entity.includes('#') ? entity.split('#').pop() || '' :
+                          entity.includes('/') ? entity.split('/').pop() || '' :
+                          entity.includes(':') && !entity.includes('://') ? entity.split(':').pop() || '' : entity;
           
-          console.log(`[findEntityLocation] Searching for entity: '${entity}', localName: '${localName}'`);
+          // Clean up any trailing quotes or special characters
+          localName = localName.replace(/["'>]+$/, '').replace(/^["'<]+/, '');
+          
+          // Also extract the prefix if it's a prefixed name
+          const prefix = entity.includes(':') && !entity.includes('://') ? entity.split(':')[0] : '';
+          
+          console.log(`[findEntityLocation] ========== SEARCHING FOR ENTITY ==========`);
+          console.log(`[findEntityLocation] Full entity: '${entity}'`);
+          console.log(`[findEntityLocation] Local name: '${localName}'`);
+          console.log(`[findEntityLocation] Prefix: '${prefix || '(none)'}'`);
+          console.log(`[findEntityLocation] Total lines to search: ${lines.length}`);
+          console.log(`[findEntityLocation] =============================================`);
           
           // Escape special regex characters in entity and localName
           const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           const safeEntity = escapeRegex(entity);
           const safeLocalName = escapeRegex(localName);
+          const safePrefix = prefix ? escapeRegex(prefix) : '';
           
-          // Build comprehensive search patterns for ALL formats
-          const patterns: (string | RegExp)[] = [
-            // Full URI patterns
-            entity,
-            `<${entity}>`,
-            `"${entity}"`,
+          // Build comprehensive search patterns for ALL formats - ORDERED BY PRIORITY
+          const patterns: Array<{pattern: string | RegExp, desc: string, priority: number}> = [
+            // HIGHEST PRIORITY (100): Exact full entity match
+            { pattern: entity, desc: 'Exact entity string', priority: 100 },
+            { pattern: `<${entity}>`, desc: 'Entity in angle brackets', priority: 99 },
             
-            // Fragment/path patterns
-            `#${localName}`,
-            `/${localName}`,
-            `/${localName}>`,
-            `#${localName}>`,
+            // HIGH PRIORITY (90-95): Exact entity in XML/RDF attributes
+            { pattern: `rdf:about="${entity}"`, desc: 'RDF about attribute', priority: 95 },
+            { pattern: `rdf:resource="${entity}"`, desc: 'RDF resource attribute', priority: 94 },
+            { pattern: `IRI="${entity}"`, desc: 'OWL/XML IRI attribute', priority: 93 },
+            ...(prefix ? [{ pattern: `abbreviatedIRI="${prefix}:${localName}"`, desc: 'OWL/XML abbreviated IRI', priority: 92 }] : []),
             
-            // Prefixed name patterns (Turtle, Manchester)
-            `:${localName}`,
-            new RegExp(`[a-zA-Z_][a-zA-Z0-9_-]*:${safeLocalName}(?![a-zA-Z0-9_-])`),
+            // MEDIUM-HIGH PRIORITY (80-89): Prefixed name matches
+            ...(prefix ? [{ pattern: new RegExp(`\\b${safePrefix}:${safeLocalName}(?![a-zA-Z0-9_-])`), desc: 'Exact prefixed name', priority: 88 }] : []),
+            { pattern: new RegExp(`\\b[a-zA-Z_][a-zA-Z0-9_-]*:${safeLocalName}(?![a-zA-Z0-9_-])`), desc: 'Any prefix with local name', priority: 85 },
             
-            // RDF/XML patterns
-            `rdf:about="${entity}"`,
-            `rdf:ID="${localName}"`,
-            `rdf:resource="${entity}"`,
-            `rdf:resource="#${localName}"`,
+            // MEDIUM PRIORITY (70-79): Fragment/path patterns for URIs
+            ...(entity.includes('#') || entity.includes('/') ? [
+              { pattern: `#${localName}>`, desc: 'Fragment in angle brackets', priority: 78 },
+              { pattern: `#${localName}`, desc: 'Fragment reference', priority: 77 },
+              { pattern: `/${localName}>`, desc: 'Path in angle brackets', priority: 76 },
+              { pattern: `/${localName}`, desc: 'Path reference', priority: 75 },
+            ] : []),
             
-            // OWL/XML patterns
-            `IRI="${entity}"`,
-            `IRI="#${localName}"`,
-            `abbreviatedIRI="${localName}"`,
-            new RegExp(`abbreviatedIRI="[^"]*:${safeLocalName}"`),
+            // MEDIUM-LOW PRIORITY (60-69): Fragment/local name in attributes
+            { pattern: `rdf:about="#${localName}"`, desc: 'RDF about with fragment', priority: 68 },
+            { pattern: `rdf:ID="${localName}"`, desc: 'RDF ID attribute', priority: 67 },
+            { pattern: `rdf:resource="#${localName}"`, desc: 'RDF resource with fragment', priority: 66 },
+            { pattern: `IRI="#${localName}"`, desc: 'IRI with fragment', priority: 65 },
+            { pattern: new RegExp(`abbreviatedIRI="[^"]*:${safeLocalName}"`), desc: 'Abbreviated IRI any prefix', priority: 64 },
             
-            // Manchester syntax patterns
-            new RegExp(`(?:Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):\\s*<?${safeLocalName}`),
-            new RegExp(`(?:Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):\\s*<?[^\\s]*#${safeLocalName}`),
+            // LOW PRIORITY (40-59): Declaration patterns
+            { pattern: new RegExp(`(?:Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):\\s*<[^>]*${safeLocalName}>`), desc: 'Manchester declaration with IRI', priority: 55 },
+            { pattern: new RegExp(`(?:Class|Individual|ObjectProperty|DataProperty):\\s*[a-zA-Z_][a-zA-Z0-9_-]*:${safeLocalName}(?![a-zA-Z0-9_-])`), desc: 'Manchester declaration prefixed', priority: 54 },
+            { pattern: new RegExp(`Declaration\\s*\\([^)]*<[^>]*${safeLocalName}>`), desc: 'Functional declaration', priority: 53 },
+            { pattern: new RegExp(`(?:NamedIndividual|Class|ObjectProperty|DataProperty)\\s*\\(<[^>]*${safeLocalName}>`), desc: 'Functional construct', priority: 52 },
+            ...(prefix ? [{ pattern: new RegExp(`(?:Declaration|ClassAssertion|SubClassOf)\\s*\\([^)]*${safePrefix}:${safeLocalName}`), desc: 'Functional with prefix', priority: 51 }] : []),
             
-            // Functional syntax patterns
-            new RegExp(`(?:Declaration|ClassAssertion|SubClassOf|EquivalentClasses)\\s*\\([^)]*<[^>]*${safeLocalName}>`),
-            new RegExp(`(?:NamedIndividual|Class|ObjectProperty|DataProperty)\\s*\\(<[^>]*${safeLocalName}>`),
-            
-            // Word boundary match (last resort)
-            new RegExp(`\\b${safeLocalName}\\b`, 'i')
+            // VERY LOW PRIORITY (20-39): N-Triples and word boundary
+            { pattern: new RegExp(`^<[^>]*${safeLocalName}>\\s+<`), desc: 'N-Triples subject', priority: 35 },
+            { pattern: new RegExp(`\\b${safeLocalName}\\b`, 'i'), desc: 'Word boundary match (case-insensitive)', priority: 20 },
           ];
           
-          for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            for (const pattern of patterns) {
+          let bestMatch = -1;
+          let bestMatchPriority = -1;
+          let bestMatchDesc = '';
+          let matchCount = 0;
+          
+          for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+            const line = lines[lineIdx];
+            
+            for (const {pattern, desc, priority} of patterns) {
               const matched = pattern instanceof RegExp ? pattern.test(line) : line.includes(pattern);
               
               if (matched) {
-                console.log(`[findEntityLocation] ✓ Match found at line ${i} using pattern: ${pattern instanceof RegExp ? pattern.source : pattern}`);
-                console.log(`[findEntityLocation] Matched line: ${line.substring(0, 100)}${line.length > 100 ? '...' : ''}`);
+                matchCount++;
+                console.log(`[findEntityLocation] ✓ Match #${matchCount} at line ${lineIdx} (priority ${priority}): ${desc}`);
+                console.log(`[findEntityLocation]   Line preview: ${line.substring(0, 120)}${line.length > 120 ? '...' : ''}`);
                 
-                // Find the end of this entity's definition block based on format detection
-                const isTurtle = line.includes('@prefix') || line.match(/^\s*[<:a-zA-Z].*[;.]$/);
-                const isXml = line.includes('<owl:') || line.includes('<rdf:') || line.includes('<rdfs:') || line.includes('IRI=');
-                const isManchester = line.match(/(?:Class|Individual|ObjectProperty|DataProperty):/);
-                const isFunctional = line.match(/(?:Declaration|ClassAssertion|SubClassOf)\s*\(/);
-                const isNTriples = line.match(/^<[^>]+>\s+<[^>]+>\s+/);
-                
-                // Find the end of this entity's definition block
-                for (let j = i; j < lines.length; j++) {
-                  const checkLine = lines[j];
+                // Keep track of best match (highest priority, or first if same priority)
+                if (priority > bestMatchPriority) {
+                  bestMatch = lineIdx;
+                  bestMatchPriority = priority;
+                  bestMatchDesc = desc;
+                  console.log(`[findEntityLocation]   >>> NEW BEST MATCH (priority ${priority})`);
                   
-                  // Turtle: ends with .
-                  if ((isTurtle || isNTriples) && checkLine.trim().endsWith('.') && !checkLine.trim().startsWith('@')) {
-                    return j + 1;
-                  }
-                  
-                  // XML: closing tag
-                  if (isXml && (checkLine.includes('</owl:') || checkLine.includes('</rdf:') || checkLine.includes('</rdfs:') || checkLine.includes('</Declaration>') || checkLine.includes('</ClassAssertion>'))) {
-                    return j + 1;
-                  }
-                  
-                  // Manchester: next declaration block starts
-                  if (isManchester && j > i && checkLine.match(/^(?:Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):/)) {
-                    return j;
-                  }
-                  
-                  // Functional: closing parenthesis at same indentation
-                  if (isFunctional && j > i && checkLine.match(/^\)/) || (j > i && checkLine.match(/^[A-Z][a-zA-Z]+\s*\(/))) {
-                    return j;
-                  }
-                  
-                  // Blank line after definition
-                  if (j > i && checkLine.trim() === '') {
-                    return j;
-                  }
-                  
-                  // Safety: don't look more than 50 lines ahead
-                  if (j > i + 50) {
-                    return i + 1;
+                  // If we found a very high-priority match (>= 90), use it immediately
+                  if (priority >= 90) {
+                    console.log(`[findEntityLocation] High-priority match found (${priority} >= 90), using immediately`);
+                    const endLine = findEntityBlockEnd(lines, lineIdx);
+                    console.log(`[findEntityLocation] ========== MATCH FOUND ==========`);
+                    console.log(`[findEntityLocation] Line: ${lineIdx}, End: ${endLine}, Reason: ${desc}`);
+                    console.log(`[findEntityLocation] ===================================`);
+                    return endLine;
                   }
                 }
-                return i + 1;
               }
             }
           }
+          
+          // If we found any match, use the best one
+          if (bestMatch >= 0) {
+            const endLine = findEntityBlockEnd(lines, bestMatch);
+            console.log(`[findEntityLocation] ========== BEST MATCH FOUND ==========`);
+            console.log(`[findEntityLocation] Total matches: ${matchCount}`);
+            console.log(`[findEntityLocation] Best match line: ${bestMatch}`);
+            console.log(`[findEntityLocation] Best match priority: ${bestMatchPriority}`);
+            console.log(`[findEntityLocation] Best match reason: ${bestMatchDesc}`);
+            console.log(`[findEntityLocation] Inserting after line: ${endLine}`);
+            console.log(`[findEntityLocation] =====================================`);
+            return endLine;
+          }
+          
+          console.log(`[findEntityLocation] ========== NO MATCH FOUND ==========`);
+          console.log(`[findEntityLocation] Entity '${entity}' not found in ${lines.length} lines`);
+          console.log(`[findEntityLocation] Showing first 10 lines for debugging:`);
+          for (let i = 0; i < Math.min(10, lines.length); i++) {
+            console.log(`[findEntityLocation]   Line ${i}: ${lines[i].substring(0, 100)}`);
+          }
+          console.log(`[findEntityLocation] ===================================`);
+          
           return -1;
+        }
+        
+        // Helper to find the end of an entity's definition block
+        function findEntityBlockEnd(lines: string[], startLine: number): number {
+          const line = lines[startLine];
+          
+          // Detect format based on line content
+          const isTurtle = line.includes('@prefix') || line.match(/^\s*[<:a-zA-Z].*[;.]$/);
+          const isXml = line.includes('<owl:') || line.includes('<rdf:') || line.includes('<rdfs:') || line.includes('IRI=');
+          const isManchester = line.match(/(?:Class|Individual|ObjectProperty|DataProperty):/);
+          const isFunctional = line.match(/(?:Declaration|ClassAssertion|SubClassOf)\s*\(/);
+          const isNTriples = line.match(/^<[^>]+>\s+<[^>]+>\s+/);
+          
+          // Find the end of this entity's definition block
+          for (let j = startLine; j < lines.length; j++) {
+            const checkLine = lines[j];
+            
+            // Turtle: ends with .
+            if ((isTurtle || isNTriples) && checkLine.trim().endsWith('.') && !checkLine.trim().startsWith('@')) {
+              return j + 1;
+            }
+            
+            // XML: closing tag
+            if (isXml && (checkLine.includes('</owl:') || checkLine.includes('</rdf:') || checkLine.includes('</rdfs:') || 
+                         checkLine.includes('</Declaration>') || checkLine.includes('</ClassAssertion>') ||
+                         checkLine.includes('</AnnotationAssertion>') || checkLine.includes('</NamedIndividual>'))) {
+              return j + 1;
+            }
+            
+            // Manchester: next declaration block starts
+            if (isManchester && j > startLine && checkLine.match(/^(?:Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):/)) {
+              return j;
+            }
+            
+            // Functional: closing parenthesis or next declaration
+            if (isFunctional && j > startLine && (checkLine.match(/^\)/) || checkLine.match(/^[A-Z][a-zA-Z]+\s*\(/))) {
+              return j;
+            }
+            
+            // Blank line after definition
+            if (j > startLine && checkLine.trim() === '') {
+              return j;
+            }
+            
+            // Safety: don't look more than 50 lines ahead
+            if (j > startLine + 50) {
+              return startLine + 1;
+            }
+          }
+          
+          return startLine + 1;
         }
         
         for (const fmt of otherFormats) {
           try {
-            // Fetch fresh content from GraphDB for this format
+            // Fetch cached content for this format to preserve existing citations
             const response = await apiClient.get<{ success: boolean; content: string }>(
               `/api/ontology/${projectId}/content`,
-              { format: fmt, forceRefresh: 'true' }
+              { format: fmt, forceRefresh: 'false' }
             );
             
             if (response.success && response.content) {
@@ -8562,21 +8779,23 @@ const Dashboard: React.FC<DashboardProps> = ({
                 if (fmtInsertIndex >= 0) {
                   console.log(`[Dashboard] ✓ Found entity '${referencedEntity}' at line ${fmtInsertIndex} in ${fmt}`);
                 } else {
-                  console.log(`[Dashboard] ✗ Entity '${referencedEntity}' NOT found in ${fmt} (will use proportional positioning)`);
-                  // Show first few lines for debugging
+                  console.log(`[Dashboard] ✗ Entity '${referencedEntity}' NOT found in ${fmt}`);
+                  // Show first few lines and clicked line for debugging
                   console.log(`[Dashboard] First 5 lines of ${fmt}:`, fmtLines.slice(0, 5).join('\n'));
+                  console.log(`[Dashboard] Original clicked line:`, clickedLine.substring(0, 150));
                 }
               }
               
-              // If entity not found, use proportional positioning (same relative position as clicked line)
+              // If entity not found, insert near end of file (safer default than proportional positioning)
               if (fmtInsertIndex < 0) {
-                const proportion = insertAtIndex / lines.length;
-                fmtInsertIndex = Math.floor(proportion * fmtLines.length);
-                console.log(`[Dashboard] No entity detected, using proportional position at line ${fmtInsertIndex} (${Math.round(proportion * 100)}% through file) in ${fmt}`);
+                // Find a safe insertion point near the end
+                // For XML formats, this will be adjusted later to be before closing tags
+                fmtInsertIndex = Math.max(0, fmtLines.length - 5);
+                console.log(`[Dashboard] No entity found - inserting near end of file at line ${fmtInsertIndex} (will be adjusted for XML formats)`);
               }
               
-              // For RDF/XML format, ensure insertion is AFTER the root element opening tag
-              if (fmt === 'rdfxml') {
+              // For RDF/XML and OWL/XML formats, ensure insertion is AFTER the root element opening tag
+              if (fmt === 'rdfxml' || fmt === 'owlxml') {
                 // Find the line with the opening <rdf:RDF> or <Ontology> root element
                 let rootElementLine = -1;
                 for (let i = 0; i < Math.min(50, fmtLines.length); i++) {
@@ -8605,7 +8824,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 
                 if (rootElementLine >= 0 && fmtInsertIndex <= rootTagCloseLine) {
                   fmtInsertIndex = rootTagCloseLine + 1;
-                  console.log(`[Dashboard] RDF/XML ${fmt}: Adjusted insertion to line ${fmtInsertIndex} to respect XML structure`);
+                  console.log(`[Dashboard] ${fmt.toUpperCase()}: Adjusted insertion to line ${fmtInsertIndex} to respect XML structure`);
                 }
                 
                 // Check if trying to insert after the closing tag
@@ -8614,7 +8833,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   if (trimmed === '</rdf:RDF>' || trimmed === '</Ontology>' || trimmed === '</owl:Ontology>') {
                     if (fmtInsertIndex > i) {
                       fmtInsertIndex = i;
-                      console.log(`[Dashboard] RDF/XML ${fmt}: Adjusted insertion to line ${fmtInsertIndex} to stay inside root element`);
+                      console.log(`[Dashboard] ${fmt.toUpperCase()}: Adjusted insertion to line ${fmtInsertIndex} to stay inside root element`);
                     }
                     break;
                   }
@@ -8624,11 +8843,13 @@ const Dashboard: React.FC<DashboardProps> = ({
               // Insert citation at found location
               fmtLines.splice(fmtInsertIndex, 0, ...fmtCitationLines);
               
-              // Store in cache
+              // Store in cache with citation-entity mapping for smart repositioning
               const fmtModifiedContent = fmtLines.join('\n');
               await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
                 content: fmtModifiedContent,
-                format: fmt
+                format: fmt,
+                citationUrn: citationUrn,
+                referencedEntity: referencedEntity || ''
               });
               console.log('[Dashboard] Format cache stored with citation near entity:', fmt);
             }
@@ -8640,48 +8861,24 @@ const Dashboard: React.FC<DashboardProps> = ({
         console.log('[Dashboard] Citation inserted near entity in all formats');
         setHasLocalCodeViewChanges(false);
         
-        // Step 3: Also insert citation into GraphDB directly for persistence
-        // Use the Turtle block helper and add prefixes
-        const graphDbCitation = `@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
-@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
-@prefix owl: <http://www.w3.org/2002/07/owl#> .
-@prefix dc: <http://purl.org/dc/elements/1.1/> .
-@prefix foaf: <http://xmlns.com/foaf/0.1/> .
-@prefix prov: <http://www.w3.org/ns/prov#> .
-@prefix bibo: <http://purl.org/ontology/bibo/> .
-@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+        // Step 3: GraphDB insertion disabled (endpoint not available)
+        // Citations are persisted in code-view-cache for all formats
+        // GraphDB will be updated when user saves/exports the ontology
+        console.log('[Dashboard] Citations stored in cache for all formats, GraphDB will be updated on save/export');
+        
+        console.log('[Dashboard] ========== CITATION INSERTION SUMMARY ==========');
+        console.log('[Dashboard] Current format:', codeViewFormat);
+        console.log('[Dashboard] Inserted at line:', insertAtIndex);
+        console.log('[Dashboard] Referenced entity:', referencedEntity || '(NONE - citations went to default location)');
+        console.log('[Dashboard] Entity was', referencedEntity ? 'FOUND and used for cross-format placement' : 'NOT FOUND - fallback to default location used');
+        console.log('[Dashboard] ================================================');
+        
+        notificationService.success('Citation Inserted', `Added "${title}" - synced to all formats (${allFormats.join(', ')})`);
+        
+        // Step 4: Mark that citation was just inserted so format switches will force refresh
+        setCitationJustInserted(true);
+        console.log('[Dashboard] Citation insertion flag set - next format switch will force refresh');
 
-` + generateTurtleCitationBlock().join('\n');
-        
-        console.log('[Dashboard] Sending citation to GraphDB for persistence');
-        
-        if (window.vscode) {
-          window.vscode.postMessage({
-            type: 'insertCitationToGraphDB',
-            citation: graphDbCitation,
-            format: 'turtle',
-            projectId: projectId,
-            metadata: {
-              title: title,
-              authors: authors,
-              year: year,
-              doi: doi,
-              url: url
-            }
-          });
-        }
-        
-        // Wait for GraphDB insertion
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      console.log('[Dashboard] Full citation persisted at line', insertAtIndex);
-      console.log('[Dashboard] Citation synced: Current format at line', insertAtIndex, ', Other formats near entity:', referencedEntity || 'end of file');
-      notificationService.success('Citation Inserted', `Added "${title}" - synced to all formats (${allFormats.join(', ')})`);
-      
-      // Step 4: Mark that citation was just inserted so format switches will force refresh
-      setCitationJustInserted(true);
-      console.log('[Dashboard] Citation insertion flag set - next format switch will force refresh');
-      
     } catch (error) {
       console.error('[Dashboard] Error inserting citation at location:', error);
       notificationService.error('Citation Error', 'Failed to insert citation at location');
@@ -8702,6 +8899,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       return;
     }
 
+    console.log('[Dashboard] ========================================');
     console.log('[Dashboard] Attempting to remove citation at line:', lineNumber);
     
     const lines = codeViewContent.split('\n');
@@ -8709,24 +8907,32 @@ const Dashboard: React.FC<DashboardProps> = ({
     // Find the citation block boundaries (start and end lines)
     const clickedLine = lines[lineNumber] || '';
     console.log('[Dashboard] Clicked line content:', clickedLine.substring(0, 100));
+    console.log('[Dashboard] Current format:', codeViewFormat);
+    console.log('[Dashboard] Total lines in content:', lines.length);
     
     // Citation detection pattern
     const citationUriPattern = /urn:citation:([a-zA-Z0-9]+)/i;
     
     // Extract citation URI from the clicked line or nearby lines
     let citationUri = '';
-    const searchRange = 15; // Search 15 lines up and down
+    const searchRange = 20; // Search 20 lines up and down
+    console.log('[Dashboard] Searching for citation URI from line', Math.max(0, lineNumber - searchRange), 'to', Math.min(lines.length, lineNumber + searchRange));
+    
     for (let i = Math.max(0, lineNumber - searchRange); i < Math.min(lines.length, lineNumber + searchRange); i++) {
       const match = lines[i].match(citationUriPattern);
       if (match) {
         citationUri = match[1];
         console.log('[Dashboard] Found citation URI at line', i, ':', citationUri);
+        console.log('[Dashboard] Full match:', match[0]);
+        console.log('[Dashboard] Line content:', lines[i].substring(0, 100));
         break;
       }
     }
     
     if (!citationUri) {
-      notificationService.warning('Remove Citation', 'Could not identify the citation to remove. Please click directly on a citation line.');
+      console.warn('[Dashboard] No citation URI found near clicked line');
+      console.warn('[Dashboard] Searched lines', Math.max(0, lineNumber - searchRange), 'to', Math.min(lines.length, lineNumber + searchRange));
+      notificationService.warning('Remove Citation', `Could not identify a citation near line ${lineNumber + 1}. Please click on a line that is part of a citation block (highlighted in red when in removal mode).`);
       return;
     }
     
@@ -8760,24 +8966,35 @@ const Dashboard: React.FC<DashboardProps> = ({
     for (const uriLineNum of citationUriLines) {
       // Find block start (look backwards for comment or opening tag)
       let blockStart = uriLineNum;
-      for (let i = uriLineNum - 1; i >= Math.max(0, uriLineNum - 10); i--) {
+      let foundComment = false;
+      
+      for (let i = uriLineNum - 1; i >= Math.max(0, uriLineNum - 15); i--) {
         const line = lines[i].trim();
         
-        // Check for comment line
+        // Check for comment line (Zotero Citation marker)
         if (line.includes('Zotero Citation') || line.startsWith('###') || line.startsWith('<!--')) {
           blockStart = i;
-          break;
-        }
-        
-        // Check for blank line (previous block end)
-        if (line === '') {
-          // Don't include blank lines before the comment/start
+          foundComment = true;
+          // Continue searching backwards for any blank lines before the comment
+          for (let j = i - 1; j >= Math.max(0, i - 2); j--) {
+            if (lines[j].trim() === '') {
+              blockStart = j;
+            } else {
+              break;
+            }
+          }
           break;
         }
         
         // For XML, check for opening tag
         if (isXmlFormat && (line.startsWith('<Declaration>') || line.startsWith('<owl:NamedIndividual') || line.startsWith('<ClassAssertion>'))) {
           blockStart = i;
+        }
+        
+        // Keep going backwards until we hit non-empty content that's not part of citation
+        if (line !== '' && !line.includes('urn:citation:') && !isXmlFormat) {
+          // Found content that's not part of this citation
+          break;
         }
       }
       
@@ -8863,15 +9080,19 @@ const Dashboard: React.FC<DashboardProps> = ({
     const uniqueLinesToRemove = [...linesToRemove].sort((a, b) => b - a);
     
     if (uniqueLinesToRemove.length === 0) {
+      console.error('[Dashboard] No lines to remove - this should not happen');
       notificationService.warning('Remove Citation', 'Could not find the citation block to remove.');
       return;
     }
     
+    console.log('[Dashboard] ========================================');
     console.log('[Dashboard] Lines to remove (descending):', uniqueLinesToRemove);
-    console.log('[Dashboard] Lines content preview:');
-    uniqueLinesToRemove.slice(0, 5).forEach(idx => {
-      console.log(`  Line ${idx}: ${lines[idx]?.substring(0, 60)}...`);
+    console.log('[Dashboard] Total lines to remove:', uniqueLinesToRemove.length);
+    console.log('[Dashboard] Lines content preview (first 10):');
+    uniqueLinesToRemove.slice(0, 10).forEach(idx => {
+      console.log(`  Line ${idx}: ${lines[idx]?.substring(0, 80)}...`);
     });
+    console.log('[Dashboard] ========================================');
     
     // Confirm removal with user using custom dialog
     const lineCount = uniqueLinesToRemove.length;
@@ -8881,19 +9102,31 @@ const Dashboard: React.FC<DashboardProps> = ({
       message: `Are you sure you want to remove this citation? ${lineCount} line${lineCount !== 1 ? 's' : ''} will be deleted.`,
       onConfirm: async () => {
         try {
-          console.log('[Dashboard] Performing citation removal');
+          console.log('[Dashboard] ========================================');
+          console.log('[Dashboard] User confirmed citation removal');
+          console.log('[Dashboard] Performing citation removal for URI:', citationUri);
+          console.log('[Dashboard] Removing', uniqueLinesToRemove.length, 'lines');
           
           // Remove lines from content (remove from end to start to preserve indices)
           const newLines = [...lines];
+          console.log('[Dashboard] Original line count:', newLines.length);
+          
           for (const lineIdx of uniqueLinesToRemove) {
+            console.log('[Dashboard] Removing line', lineIdx, ':', newLines[lineIdx]?.substring(0, 60));
             newLines.splice(lineIdx, 1);
           }
           
+          console.log('[Dashboard] New line count:', newLines.length);
+          console.log('[Dashboard] Lines removed:', lines.length - newLines.length);
+          
           const modifiedContent = newLines.join('\n');
+          console.log('[Dashboard] Modified content length:', modifiedContent.length, 'characters');
           
           // Update local code view
           setCodeViewContent(modifiedContent);
           setHasLocalCodeViewChanges(true);
+          console.log('[Dashboard] Code view content updated with modified content');
+          console.log('[Dashboard] hasLocalCodeViewChanges set to true');
           
           // Clear all format caches
           try {
@@ -8932,10 +9165,10 @@ const Dashboard: React.FC<DashboardProps> = ({
           
           for (const fmt of otherFormats) {
             try {
-              // Fetch fresh content from GraphDB for this format
+              // Fetch content from cache to preserve other citations
               const response = await apiClient.get<{ success: boolean; content: string }>(
                 `/api/ontology/${projectId}/content`,
-                { format: fmt, forceRefresh: 'true' }
+                { format: fmt, forceRefresh: 'false' }
               );
               
               if (response.success && response.content) {
@@ -9297,10 +9530,20 @@ const Dashboard: React.FC<DashboardProps> = ({
                       setShowCitationPicker(true);
                     }}
                     className="ml-auto px-3 py-1 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 flex items-center gap-1"
-                    title="Insert citation from Zotero or manually"
+                    title="Insert citation from Zotero"
                   >
                     <BookOpen size={16} />
-                    Insert Citation
+                    Zotero Citation
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowManualCitationDialog(true);
+                    }}
+                    className="px-3 py-1 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center gap-1"
+                    title="Add citation manually"
+                  >
+                    <Edit2 size={16} />
+                    Manual Citation
                   </button>
                   <button
                     onClick={() => {
@@ -9397,6 +9640,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                       onInsertCitationAt={handleInsertCitationAtLocation}
                       onRemoveCitationAt={handleRemoveCitationAtLocation}
                       onRequestZoteroCitation={() => setShowCitationPicker(true)}
+                      onContentChange={handleCodeContentChange}
+                      onSaveContent={handleSaveCodeContent}
                     />
                   )}
                 </div>

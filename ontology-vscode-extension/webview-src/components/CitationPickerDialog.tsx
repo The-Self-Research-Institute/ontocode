@@ -1,6 +1,6 @@
 // CitationPickerDialog.tsx
 import React, { useState, useEffect } from 'react';
-import { X, Search, BookOpen, User, Calendar, ExternalLink, Plus, ChevronDown, ChevronRight } from 'lucide-react';
+import { X, Search, BookOpen, User, Calendar, ExternalLink, Plus, ChevronDown, ChevronRight, AlertCircle } from 'lucide-react';
 import { TreeNode } from '@/types';
 
 interface CitationItem {
@@ -40,6 +40,10 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showDoiPrompt, setShowDoiPrompt] = useState(false);
+  const [selectedCitation, setSelectedCitation] = useState<CitationItem | null>(null);
+  const [manualDoi, setManualDoi] = useState('');
+  const [showDoiWarning, setShowDoiWarning] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -114,9 +118,46 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
   };
 
   const handleSelectCitation = (citation: CitationItem) => {
+    // Check if DOI is missing
+    if (!citation.data.doi) {
+      setSelectedCitation(citation);
+      setShowDoiWarning(true);
+      setShowDoiPrompt(true);
+      return;
+    }
+    
+    // DOI exists, proceed with selection
     onSelectCitation(citation);
-    // Close dialog after selection
     onClose();
+  };
+  
+  const handleConfirmWithoutDoi = () => {
+    if (selectedCitation) {
+      onSelectCitation(selectedCitation);
+      setShowDoiPrompt(false);
+      setShowDoiWarning(false);
+      setSelectedCitation(null);
+      onClose();
+    }
+  };
+  
+  const handleAddDoiAndConfirm = () => {
+    if (selectedCitation && manualDoi.trim()) {
+      // Add DOI to citation data
+      const updatedCitation = {
+        ...selectedCitation,
+        data: {
+          ...selectedCitation.data,
+          doi: manualDoi.trim()
+        }
+      };
+      onSelectCitation(updatedCitation);
+      setShowDoiPrompt(false);
+      setShowDoiWarning(false);
+      setSelectedCitation(null);
+      setManualDoi('');
+      onClose();
+    }
   };
 
   const handleManualEntry = () => {
@@ -263,10 +304,15 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
                             {citation.publicationTitle}
                           </p>
                         )}
-                        {citation.doi && (
+                        {citation.data.doi ? (
                           <div className="flex items-center gap-1 text-xs text-blue-600 mt-1">
                             <ExternalLink size={12} />
-                            <span className="truncate">DOI: {citation.doi}</span>
+                            <span className="truncate">DOI: {citation.data.doi}</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1 text-xs text-yellow-600 mt-1">
+                            <AlertCircle size={12} />
+                            <span>No DOI - will prompt to add</span>
                           </div>
                         )}
                       </div>
@@ -294,6 +340,66 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
           )}
         </div>
       </div>
+      
+      {/* DOI Prompt Dialog */}
+      {showDoiPrompt && selectedCitation && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70" onClick={() => setShowDoiPrompt(false)}>
+          <div className="bg-white rounded-lg shadow-2xl p-6 max-w-lg w-full mx-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start gap-3 mb-4">
+              <div className="flex-shrink-0 w-10 h-10 bg-yellow-100 rounded-full flex items-center justify-center">
+                <AlertCircle className="text-yellow-600" size={24} />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-bold text-gray-900 mb-1">DOI Missing</h3>
+                <p className="text-sm text-gray-700 mb-2">
+                  The selected citation <strong>"{selectedCitation.data.title}"</strong> does not have a DOI.
+                </p>
+                <p className="text-sm text-gray-600">
+                  Would you like to add a DOI manually or proceed without it?
+                </p>
+              </div>
+            </div>
+            
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Add DOI (optional):
+              </label>
+              <input
+                type="text"
+                value={manualDoi}
+                onChange={(e) => setManualDoi(e.target.value)}
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter' && manualDoi.trim()) {
+                    handleAddDoiAndConfirm();
+                  }
+                }}
+                placeholder="10.1234/example"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Enter the DOI (e.g., "10.1234/example") or leave blank to skip
+              </p>
+            </div>
+            
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={handleConfirmWithoutDoi}
+                className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg font-medium transition-colors"
+              >
+                Proceed Without DOI
+              </button>
+              {manualDoi.trim() && (
+                <button
+                  onClick={handleAddDoiAndConfirm}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
+                >
+                  Add DOI & Insert
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

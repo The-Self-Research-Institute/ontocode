@@ -2,10 +2,12 @@
 
 import * as vscode from 'vscode';
 import axios, { AxiosError } from 'axios';
+import * as path from 'path';
 import { insertCitationCommand } from './features/citationInsertion';
 import { CitationPickerPanel } from './webview/citationPicker';
 import { sci2CodeService } from './services/sci2CodeService';
 import { zoteroApiService } from './services/zoteroApiService';
+import { issueReportService } from './services/issueReportService';
 // Use web-compatible collaboration manager in browser environment
 import { CollaborationManager } from './collaboration/CollaborationManager.web';
 import { ICollaborationManager } from './collaboration/types';
@@ -112,6 +114,10 @@ async function updateDeploymentUrls(context: vscode.ExtensionContext) {
             GATEWAY_URL = urls.gateway;
             OWL_EDITOR_URL = urls.editor;
             PLUGIN_SERVICE_URL = urls.plugin;
+            
+            // Update issue report service with new editor URL
+            issueReportService.setEditorUrl(OWL_EDITOR_URL);
+            
             console.log(`[OntoCode] Using ${deploymentType} deployment URLs:`, urls);
         } else {
             console.log('[OntoCode] No deployment type stored, using cloud (default)');
@@ -218,6 +224,7 @@ type ExtensionMessage =
   | { type: 'webviewReady' }
   | { type: 'downloadOntology'; url: string; filename: string }
   | { type: 'downloadCurrentOntology' }
+  | { type: 'downloadFile'; content: string; filename: string; format: string }
   | { type: 'fileLoaded'; projectId: string } // File selected from menu
   | { type: 'requestCollaborationStatus' } // Request current collaboration status
   | { type: 'showNotification'; notification: { type: string; title: string; message: string; actions?: string[] } } // System notification
@@ -242,6 +249,9 @@ type DuplicatePromptResult = { action: DuplicatePromptAction; copyName?: string 
 export function activate(context: vscode.ExtensionContext) {
     console.log('OntoCode extension is now active!');
     console.log('[OntoCode] Extension can handle URIs like: vscode://self.ontocode-extension/invite?token=xxx');
+    
+    // Initialize issue report service with default URL
+    issueReportService.setEditorUrl(OWL_EDITOR_URL);
     
     // Load deployment URLs on activation
     updateDeploymentUrls(context).then(() => {
@@ -357,24 +367,25 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         // Fix: Made command handler async to support async panel creation/file upload.
         vscode.commands.registerCommand('ontocode.edit', async () => {
-            // Check if there's an active OWL file first
+            // Check if there's an active ontology file first
             const activeEditor = vscode.window.activeTextEditor;
-            const hasActiveOwl = activeEditor && activeEditor.document.fileName.toLowerCase().endsWith('.owl');
+            const fileName = activeEditor?.document.fileName.toLowerCase() || '';
+            const hasActiveOntology = activeEditor && (fileName.endsWith('.owl') || fileName.endsWith('.ttl') || fileName.endsWith('.rdf'));
             
             // Fix: Use context.extensionUri to get the extension's URI.
-            const panel = await OntoCodePanel.createOrShow(context.extensionUri, context, hasActiveOwl);
+            const panel = await OntoCodePanel.createOrShow(context.extensionUri, context, hasActiveOntology);
             
-            if (hasActiveOwl) {
-                // Upload the active OWL file
+            if (hasActiveOntology) {
+                // Upload the active ontology file
                 panel.setPendingUpload(true);
             } else {
-                // No active OWL file, show file picker
-                console.log('[OntoCode] No active OWL file, prompting user to select one...');
+                // No active ontology file, show file picker
+                console.log('[OntoCode] No active ontology file, prompting user to select one...');
                 const fileUri = await vscode.window.showOpenDialog({
                     canSelectMany: false,
-                    openLabel: 'Open OWL File',
+                    openLabel: 'Open Ontology File',
                     filters: {
-                        'OWL Files': ['owl'],
+                        'Ontology Files': ['owl', 'ttl', 'rdf'],
                         'All Files': ['*']
                     }
                 });
@@ -384,7 +395,7 @@ export function activate(context: vscode.ExtensionContext) {
                     panel.setPendingUpload(false, fileUri[0]);
                 } else {
                     console.log('[OntoCode] User cancelled file selection');
-                    vscode.window.showInformationMessage('Please select an OWL file to edit.');
+                    vscode.window.showInformationMessage('Please select an ontology file (.owl, .ttl, or .rdf) to edit.');
                 }
             }
         }),
@@ -790,6 +801,9 @@ class OntoCodePanel {
                         break;
                     case 'downloadCurrentOntology':
                         this.handleDownloadCurrent();
+                        break;
+                    case 'downloadFile':
+                        this.handleDownloadFile(message.content, message.filename);
                         break;
                     case 'fileLoaded':
                         // User selected a file from the File menu
@@ -1436,7 +1450,8 @@ class OntoCodePanel {
         const token = await (this._context as any).secrets.get(TOKEN_KEY);
         if (!token) {
             console.log('[OntoCode] Not logged in, uploading directly to GraphDB');
-            const projectId = fileName.endsWith('.owl') ? fileName.slice(0, -4) : fileName;
+            const ext = path.extname(fileName);
+            const projectId = ['.owl', '.ttl', '.rdf'].includes(ext.toLowerCase()) ? fileName.slice(0, -ext.length) : fileName;
             this._uploadOntology(projectId, fileName, fileData, undefined, undefined, undefined, importMode, partition);
             return;
         }
@@ -1459,7 +1474,8 @@ class OntoCodePanel {
             });
         } else {
             console.log('[OntoCode] Non-admin user without workspace, uploading directly to GraphDB');
-            const projectId = fileName.endsWith('.owl') ? fileName.slice(0, -4) : fileName;
+            const ext = path.extname(fileName);
+            const projectId = ['.owl', '.ttl', '.rdf'].includes(ext.toLowerCase()) ? fileName.slice(0, -ext.length) : fileName;
             this._uploadOntology(projectId, fileName, fileData, undefined, undefined, undefined, importMode, partition);
         }
     }
@@ -1491,7 +1507,7 @@ class OntoCodePanel {
         const targetEditor = this.findBestOwlEditor();
 
         if (!targetEditor) {
-            vscode.window.showWarningMessage("No active .owl file found. Please open an ontology file and try again.");
+            vscode.window.showWarningMessage("No active ontology file (.owl, .ttl, or .rdf) found. Please open an ontology file and try again.");
             return;
         }
 
@@ -1507,7 +1523,8 @@ class OntoCodePanel {
         const token = await (this._context as any).secrets.get(TOKEN_KEY);
         if (!token) {
             console.log('[OntoCode] Not logged in, uploading directly to GraphDB');
-            const projectId = fileName.endsWith('.owl') ? fileName.slice(0, -4) : fileName;
+            const ext = path.extname(fileName);
+            const projectId = ['.owl', '.ttl', '.rdf'].includes(ext.toLowerCase()) ? fileName.slice(0, -ext.length) : fileName;
             this._uploadOntology(projectId, fileName, fileData);
             return;
         }
@@ -1924,8 +1941,35 @@ class OntoCodePanel {
         try {
             // 4. Prepare the form data for multipart upload
             // Convert Uint8Array to Blob for web extension compatibility
-            const buffer = new Uint8Array(fileData.buffer.byteLength);
+            let buffer = new Uint8Array(fileData.buffer.byteLength);
             buffer.set(new Uint8Array(fileData.buffer));
+
+            // Preprocess RDF/XML files to ensure proper namespace declarations
+            if (fileName.toLowerCase().endsWith('.rdf')) {
+                console.log('[OntoCode] Preprocessing RDF/XML file for namespace declarations...');
+                try {
+                    const fileContent = new TextDecoder('utf-8').decode(buffer);
+                    
+                    // Check if file is missing namespace declarations
+                    const hasRdfRoot = /<rdf:RDF/i.test(fileContent);
+                    const hasDcNamespace = /xmlns:dc=/i.test(fileContent);
+                    const hasBiboNamespace = /xmlns:bibo=/i.test(fileContent);
+                    
+                    // If RDF root exists but missing common namespaces, wrap it
+                    // Or if no RDF root at all (fragment), wrap it
+                    if (!hasRdfRoot || !hasDcNamespace || !hasBiboNamespace) {
+                        console.log('[OntoCode] Adding missing namespace declarations to RDF/XML file');
+                        const wrappedContent = this.wrapRdfXml(fileContent);
+                        buffer = new Uint8Array(new TextEncoder().encode(wrappedContent));
+                        console.log('[OntoCode] ✅ RDF/XML file preprocessed with namespace declarations');
+                    } else {
+                        console.log('[OntoCode] RDF/XML file already has proper namespace declarations');
+                    }
+                } catch (preprocessError) {
+                    console.error('[OntoCode] Failed to preprocess RDF/XML file:', preprocessError);
+                    // Continue with original buffer if preprocessing fails
+                }
+            }
 
             // Optional: Compress file if it's a compressible format and > 1MB
             let dataToUpload = buffer;
@@ -2741,6 +2785,40 @@ class OntoCodePanel {
             }
         } catch (error) {
             console.error('[OntoCode] Download error:', error);
+            vscode.window.showErrorMessage('Failed to save file. See console for details.');
+        }
+    }
+
+    /**
+     * Handle download of file content directly from webview
+     */
+    private async handleDownloadFile(content: string, filename: string) {
+        try {
+            console.log(`[OntoCode] Downloading file: ${filename}, content length: ${content.length}`);
+            
+            // Show save dialog
+            const saveUri = await vscode.window.showSaveDialog({
+                defaultUri: vscode.Uri.file(filename),
+                filters: {
+                    'Ontology Files': ['owl', 'ttl', 'rdf', 'nt', 'omn', 'ofn'],
+                    'All Files': ['*']
+                }
+            });
+
+            if (saveUri) {
+                console.log(`[OntoCode] Saving to: ${saveUri.fsPath}`);
+                // Save file with UTF-8 encoding
+                await vscode.workspace.fs.writeFile(
+                    saveUri, 
+                    new TextEncoder().encode(content)
+                );
+                vscode.window.showInformationMessage(`File saved successfully to ${saveUri.fsPath}`);
+                console.log(`[OntoCode] File saved: ${saveUri.fsPath}, size: ${content.length} bytes`);
+            } else {
+                console.log(`[OntoCode] User cancelled save dialog`);
+            }
+        } catch (error) {
+            console.error('[OntoCode] Download file error:', error);
             vscode.window.showErrorMessage('Failed to save file. See console for details.');
         }
     }
@@ -3756,21 +3834,63 @@ class OntoCodePanel {
         // Remove XML declaration if present
         let fragment = rdfFragment.replace(/<\?xml[^?]*\?>\s*/, '');
         
-        // Build complete RDF/XML document
-        let wrappedRdf = `<?xml version="1.0"?>\n`;
-        wrappedRdf += `<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\n`;
-        wrappedRdf += `         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"\n`;
-        wrappedRdf += `         xmlns:owl="http://www.w3.org/2002/07/owl#"\n`;
-        wrappedRdf += `         xmlns:dc="http://purl.org/dc/elements/1.1/"\n`;
-        wrappedRdf += `         xmlns:dcterms="http://purl.org/dc/terms/"\n`;
-        wrappedRdf += `         xmlns:bibo="http://purl.org/ontology/bibo/"\n`;
-        wrappedRdf += `         xmlns:foaf="http://xmlns.com/foaf/0.1/"\n`;
-        wrappedRdf += `         xmlns:prov="http://www.w3.org/ns/prov#"\n`;
-        wrappedRdf += `         xmlns:xsd="http://www.w3.org/2001/XMLSchema#">\n\n`;
-        wrappedRdf += fragment.trim() + '\n';
-        wrappedRdf += `</rdf:RDF>`;
+        // Check if there's already an rdf:RDF root element
+        const rdfRootMatch = fragment.match(/<rdf:RDF([^>]*)>/i);
         
-        return wrappedRdf;
+        if (rdfRootMatch) {
+            // Extract existing namespaces from the root element
+            const existingAttrs = rdfRootMatch[1];
+            
+            // Define all required namespaces
+            const requiredNamespaces = {
+                'xmlns:rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
+                'xmlns:rdfs': 'http://www.w3.org/2000/01/rdf-schema#',
+                'xmlns:owl': 'http://www.w3.org/2002/07/owl#',
+                'xmlns:dc': 'http://purl.org/dc/elements/1.1/',
+                'xmlns:dcterms': 'http://purl.org/dc/terms/',
+                'xmlns:bibo': 'http://purl.org/ontology/bibo/',
+                'xmlns:foaf': 'http://xmlns.com/foaf/0.1/',
+                'xmlns:prov': 'http://www.w3.org/ns/prov#',
+                'xmlns:xsd': 'http://www.w3.org/2001/XMLSchema#'
+            };
+            
+            // Build new attributes string with all required namespaces
+            let newAttrs = '';
+            for (const [prefix, uri] of Object.entries(requiredNamespaces)) {
+                // Check if this namespace is already declared (case-insensitive)
+                const prefixPattern = new RegExp(prefix.replace(':', '\\:'), 'i');
+                if (!prefixPattern.test(existingAttrs)) {
+                    newAttrs += `\n         ${prefix}="${uri}"`;
+                }
+            }
+            
+            // Replace the opening tag with the enhanced version
+            const enhancedRoot = `<rdf:RDF${existingAttrs}${newAttrs}>`;
+            fragment = fragment.replace(/<rdf:RDF[^>]*>/i, enhancedRoot);
+            
+            // Add XML declaration if not present
+            if (!/<\?xml/i.test(rdfFragment)) {
+                fragment = `<?xml version="1.0"?>\n` + fragment;
+            }
+            
+            return fragment;
+        } else {
+            // No rdf:RDF root found, wrap the entire fragment
+            let wrappedRdf = `<?xml version="1.0"?>\n`;
+            wrappedRdf += `<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\n`;
+            wrappedRdf += `         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"\n`;
+            wrappedRdf += `         xmlns:owl="http://www.w3.org/2002/07/owl#"\n`;
+            wrappedRdf += `         xmlns:dc="http://purl.org/dc/elements/1.1/"\n`;
+            wrappedRdf += `         xmlns:dcterms="http://purl.org/dc/terms/"\n`;
+            wrappedRdf += `         xmlns:bibo="http://purl.org/ontology/bibo/"\n`;
+            wrappedRdf += `         xmlns:foaf="http://xmlns.com/foaf/0.1/"\n`;
+            wrappedRdf += `         xmlns:prov="http://www.w3.org/ns/prov#"\n`;
+            wrappedRdf += `         xmlns:xsd="http://www.w3.org/2001/XMLSchema#">\n\n`;
+            wrappedRdf += fragment.trim() + '\n';
+            wrappedRdf += `</rdf:RDF>`;
+            
+            return wrappedRdf;
+        }
     }
 
     /**
