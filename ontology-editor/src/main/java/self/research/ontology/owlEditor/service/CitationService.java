@@ -260,11 +260,22 @@ public class CitationService {
         try {
             log.info("[CitationService] Deleting citation {} from project: {}", citationIRI, projectId);
 
+            // Delete all triples where citation is the subject OR object
             String sparqlUpdate = String.format("""
-                DELETE WHERE {
+                DELETE {
                   <%s> ?p ?o .
+                  ?s ?p2 <%s> .
                 }
-                """, citationIRI);
+                WHERE {
+                  {
+                    <%s> ?p ?o .
+                  }
+                  UNION
+                  {
+                    ?s ?p2 <%s> .
+                  }
+                }
+                """, citationIRI, citationIRI, citationIRI, citationIRI);
 
             datasetService.execUpdate(projectId, sparqlUpdate);
 

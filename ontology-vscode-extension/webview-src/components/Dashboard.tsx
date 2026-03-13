@@ -7781,6 +7781,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       return;
     }
 
+    // Show loading notification
+    notificationService.info('Inserting Citation', 'Adding citation to all formats...');
+
     let insertAtIndex = 0; // Declare at function scope
     
     try {
@@ -7841,8 +7844,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       // 10. RDF/XML OWL element tags
       const xmlOwlElementMatch = clickedLine.match(/<owl:(Class|ObjectProperty|DatatypeProperty|AnnotationProperty|NamedIndividual|Restriction|AllDifferent|AllDisjointClasses|AllDisjointProperties|NegativePropertyAssertion|Datatype|FunctionalProperty|InverseFunctionalProperty|TransitiveProperty|SymmetricProperty|AsymmetricProperty|ReflexiveProperty|IrreflexiveProperty)/);
       
-      // 11. Import declaration
-      const importMatch = clickedLine.match(/(?:owl:imports|Import)\s*\(?\s*([<][^>]+[>]|"[^"]+"|[a-zA-Z_][a-zA-Z0-9_:-]*)/);
+      // 11. Import declaration - comprehensive pattern for all formats
+      // Matches: owl:imports <URI>, Import(<URI>), Import: <URI>, rdf:resource in owl:imports context
+      const importMatch = clickedLine.match(/(?:owl:imports|Import)\s*[:(]?\s*<([^>]+)>/);
       
       // 12. Datatype patterns
       const datatypeMatch = clickedLine.match(/\^\^([<][^>]+[>]|xsd:[a-zA-Z]+|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*)/);
@@ -7852,6 +7856,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       
       // Priority order for entity extraction - XML attributes FIRST (most precise for URLs)
       console.log('[Dashboard] Entity extraction patterns - checking in priority order...');
+      console.log('[Dashboard] Clicked line:', clickedLine.substring(0, 150));
       
       // PRIORITY 1: XML attribute patterns (extract full URLs from rdf:about, IRI, etc.)
       if (rdfAboutMatch) {
@@ -7870,17 +7875,22 @@ const Dashboard: React.FC<DashboardProps> = ({
         referencedEntity = rdfResourceMatch[1];
         console.log('[Dashboard] ✓ Extracted from rdf:resource:', referencedEntity);
       } 
-      // PRIORITY 2: Full URI in angle brackets
+      // PRIORITY 2: Import declarations (HIGH priority for import lines)
+      else if (importMatch) {
+        referencedEntity = importMatch[1];
+        console.log('[Dashboard] ✓ Extracted from import declaration:', referencedEntity);
+      }
+      // PRIORITY 3: Full URI in angle brackets
       else if (fullUriMatch) {
         referencedEntity = fullUriMatch[1];
         console.log('[Dashboard] ✓ Extracted full URI from angle brackets:', referencedEntity);
       }
-      // PRIORITY 3: N-Triples subject (full URI)
+      // PRIORITY 4: N-Triples subject (full URI)
       else if (ntriplesSubjectMatch) {
         referencedEntity = ntriplesSubjectMatch[1].replace(/^</, '').replace(/>$/, '');
         console.log('[Dashboard] ✓ Extracted from N-Triples subject:', referencedEntity);
       }
-      // PRIORITY 4: Format-specific declarations
+      // PRIORITY 5: Format-specific declarations
       else if (manchesterDeclMatch) {
         referencedEntity = manchesterDeclMatch[1].replace(/^[<:]/, '').replace(/>$/, '');
         console.log('[Dashboard] ✓ Extracted from Manchester declaration:', referencedEntity);
@@ -7888,7 +7898,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         referencedEntity = functionalEntityMatch[1].replace(/^</, '').replace(/>$/, '');
         console.log('[Dashboard] ✓ Extracted from Functional syntax:', referencedEntity);
       }
-      // PRIORITY 5: OWL axioms and properties
+      // PRIORITY 6: OWL axioms and properties
       else if (owlAxiomMatch) {
         referencedEntity = owlAxiomMatch[1].replace(/^</, '').replace(/>$/, '');
         console.log('[Dashboard] ✓ Extracted from OWL axiom:', referencedEntity);
@@ -7901,11 +7911,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       } else if (swrlMatch) {
         referencedEntity = swrlMatch[1].replace(/^</, '').replace(/>$/, '');
         console.log('[Dashboard] ✓ Extracted from SWRL rule:', referencedEntity);
-      } else if (importMatch) {
-        referencedEntity = importMatch[1].replace(/^[<"]/, '').replace(/[>"]$/, '');
-        console.log('[Dashboard] ✓ Extracted from import:', referencedEntity);
       }
-      // PRIORITY 6: Prefixed names (lowest priority)
+      // PRIORITY 7: Prefixed names (lowest priority)
       else if (prefixedNameMatch) {
         referencedEntity = prefixedNameMatch[1];
         console.log('[Dashboard] ✓ Extracted prefixed name:', referencedEntity);
@@ -8878,18 +8885,18 @@ const Dashboard: React.FC<DashboardProps> = ({
         // Step 4: Mark that citation was just inserted so format switches will force refresh
         setCitationJustInserted(true);
         console.log('[Dashboard] Citation insertion flag set - next format switch will force refresh');
-
+        
+       
     } catch (error) {
       console.error('[Dashboard] Error inserting citation at location:', error);
       notificationService.error('Citation Error', 'Failed to insert citation at location');
+      // Reset citation insertion mode and clear flag on error
+      setPendingCitation(null);
+      setCitationInsertionMode(false);
+      setSelectedInsertionLine(null);
+      setCitationJustInserted(false);
+      console.log('[Dashboard] Citation insertion mode reset due to error');
     }
-
-    // Reset citation insertion mode
-    setPendingCitation(null);
-    setCitationInsertionMode(false);
-    setSelectedInsertionLine(null);
-    setCitationJustInserted(false); // Clear flag on error
-    console.log('[Dashboard] Citation insertion mode reset');
   }, [pendingCitation, projectId, codeViewFormat, codeViewContent]);
 
   // Handler for removing citations from the code view
@@ -8898,6 +8905,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       console.warn('[Dashboard] No code view content available for citation removal');
       return;
     }
+
+    // Show loading notification
+    notificationService.info('Removing Citation', 'Scanning for citation and removing from all formats...');
 
     console.log('[Dashboard] ========================================');
     console.log('[Dashboard] Attempting to remove citation at line:', lineNumber);
