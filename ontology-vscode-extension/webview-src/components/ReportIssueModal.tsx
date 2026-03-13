@@ -377,17 +377,6 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
                   </span>
                 </div>
               )}
-              {submitResult.jiraUrl && (
-                <a
-                  href={submitResult.jiraUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 mt-4 px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded-lg hover:bg-purple-700 transition-colors"
-                >
-                  View in Jira
-                  <span>→</span>
-                </a>
-              )}
             </div>
           </div>
         )}
@@ -403,14 +392,21 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
                 Issue Type <span className="text-red-500">*</span>
               </label>
               <div className="relative">
+                <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none flex items-center">
+                  {issueType === 'Bug' ? (
+                    <Bug size={16} className="text-red-600" />
+                  ) : (
+                    <ListOrdered size={16} className="text-blue-600" />
+                  )}
+                </div>
                 <select
                   value={issueType}
                   onChange={(e) => setIssueType(e.target.value)}
-                  className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm bg-white text-black appearance-none cursor-pointer transition-all"
+                  className="w-full pl-11 pr-10 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm bg-white text-black appearance-none cursor-pointer transition-all"
                   disabled={submitting}
                 >
-                  <option value="Bug">🐛 Bug</option>
-                  <option value="Task">✓ Task</option>
+                  <option value="Bug">Bug</option>
+                  <option value="Task">Task</option>
                 </select>
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
                   <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
