@@ -1,4 +1,4 @@
-import React, { createContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import React, { createContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react';
 
 // Types matching the collaboration types from extension
 export interface ActiveUser {
@@ -327,13 +327,13 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
         }));
     }, []);
 
-    const value: CollaborationContextType = {
+    const value: CollaborationContextType = useMemo(() => ({
         state,
         setCurrentProject,
         addNotification,
         removeNotification,
         clearNotifications,
-    };
+    }), [state, setCurrentProject, addNotification, removeNotification, clearNotifications]);
 
     return (
         <CollaborationContext.Provider value={value}>

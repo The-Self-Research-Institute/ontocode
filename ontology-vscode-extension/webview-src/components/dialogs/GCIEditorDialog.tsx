@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Code, X, Info } from 'lucide-react';
 
 interface GCIEditorDialogProps {
@@ -18,13 +18,11 @@ const GCIEditorDialog: React.FC<GCIEditorDialogProps> = ({
   initialSubClass = '', 
   initialSuperClass = '',
   editMode = false,
-  availableClasses = []
+  availableClasses
 }) => {
   const [subClass, setSubClass] = useState(initialSubClass);
   const [superClass, setSuperClass] = useState(initialSuperClass);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [subClassSuggestions, setSubClassSuggestions] = useState<Array<{ id: string; label: string }>>([]);
-  const [superClassSuggestions, setSuperClassSuggestions] = useState<Array<{ id: string; label: string }>>([]);
   const [showSubClassSuggestions, setShowSubClassSuggestions] = useState(false);
   const [showSuperClassSuggestions, setShowSuperClassSuggestions] = useState(false);
 
@@ -37,29 +35,26 @@ const GCIEditorDialog: React.FC<GCIEditorDialogProps> = ({
     }
   }, [isOpen, initialSubClass, initialSuperClass]);
 
-  // Filter suggestions based on input
-  useEffect(() => {
-    if (subClass && availableClasses.length > 0) {
-      const filtered = availableClasses.filter(cls => 
+  // Derive suggestions via useMemo instead of useEffect+setState to avoid
+  // infinite re-render loops when callers pass a new array reference each render.
+  const subClassSuggestions = useMemo(() => {
+    if (subClass && availableClasses && availableClasses.length > 0) {
+      return availableClasses.filter(cls =>
         cls.label.toLowerCase().includes(subClass.toLowerCase()) ||
         cls.id.toLowerCase().includes(subClass.toLowerCase())
       ).slice(0, 10);
-      setSubClassSuggestions(filtered);
-    } else {
-      setSubClassSuggestions([]);
     }
+    return [];
   }, [subClass, availableClasses]);
 
-  useEffect(() => {
-    if (superClass && availableClasses.length > 0) {
-      const filtered = availableClasses.filter(cls => 
+  const superClassSuggestions = useMemo(() => {
+    if (superClass && availableClasses && availableClasses.length > 0) {
+      return availableClasses.filter(cls =>
         cls.label.toLowerCase().includes(superClass.toLowerCase()) ||
         cls.id.toLowerCase().includes(superClass.toLowerCase())
       ).slice(0, 10);
-      setSuperClassSuggestions(filtered);
-    } else {
-      setSuperClassSuggestions([]);
     }
+    return [];
   }, [superClass, availableClasses]);
 
   if (!isOpen) return null;

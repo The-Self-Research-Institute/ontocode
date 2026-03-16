@@ -62,7 +62,6 @@ import { pluginLoader } from '../services/pluginLoader';
 import DLQueryPanel from './DLQueryPanel';
 import CitationPickerDialog from './CitationPickerDialog';
 import ManualCitationDialog from './ManualCitationDialog';
-import ConfirmDialog from './ConfirmDialog';
 
 type TopLevelClass = TreeNode & { hasChildren: boolean };
 
@@ -4473,7 +4472,8 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (collaboration?.setCurrentProject) {
       collaboration.setCurrentProject(projectId);
     }
-  }, [projectId, collaboration]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
   // Track if component is mounted to prevent race conditions
   const isMountedRef = useRef(false);
