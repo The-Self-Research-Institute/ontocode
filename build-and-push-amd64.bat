@@ -2,6 +2,7 @@
 REM Build AMD64-only Docker images (faster, no ARM64)
 REM Use this if you're only deploying to Intel/AMD servers
 REM Usage: build-and-push-amd64.bat [registry] [version]
+REM NOTE: vscode-web build is DISABLED - webapp build is enabled
 
 set REGISTRY=%1
 set VERSION=%2
@@ -14,6 +15,7 @@ echo    Building AMD64-Only OntoCode Images
 echo    Registry: %REGISTRY%
 echo    Version: %VERSION%
 echo    Platform: linux/amd64 ONLY
+echo    Note: vscode-web build DISABLED
 echo ============================================
 echo.
 echo NOTE: This build is faster but will NOT work on
@@ -21,11 +23,12 @@ echo Apple Silicon Macs (M1/M2/M3). Use build-and-push.bat
 echo for multi-platform builds.
 echo.
 
-if not exist "ontology-vscode-extension\docker-entrypoint.sh" (
-    echo ERROR: ontology-vscode-extension\docker-entrypoint.sh not found!
-    pause
-    exit /b 1
-)
+REM Pre-flight checks disabled
+REM if not exist "ontology-vscode-extension\docker-entrypoint.sh" (
+REM     echo ERROR: ontology-vscode-extension\docker-entrypoint.sh not found!
+REM     pause
+REM     exit /b 1
+REM )
 
 echo Setting up buildx...
 docker buildx create --name ontocode-builder --use --driver docker-container 2>nul
@@ -63,9 +66,14 @@ echo [7/8] Building ontocode-plugin-init...
 docker buildx build --platform linux/amd64 -t %REGISTRY%/ontocode-plugin-init:%VERSION% -f Dockerfile.plugin-init --push .
 if errorlevel 1 goto :error
 
-echo [8/8] Building ontocode-vscode-web...
-docker buildx build --platform linux/amd64 -t %REGISTRY%/ontocode-vscode-web:%VERSION% -f Dockerfile.vscode-extension --push .
+echo [8/8] Building ontocode-web (webapp with HTTPS config)...
+docker buildx build --no-cache --platform linux/amd64 -t %REGISTRY%/ontocode-web:%VERSION% -f Dockerfile.webapp --push .
 if errorlevel 1 goto :error
+
+REM DISABLED: ontocode-vscode-web build
+REM echo [8/8] Building ontocode-vscode-web...
+REM docker buildx build --platform linux/amd64 -t %REGISTRY%/ontocode-vscode-web:%VERSION% -f Dockerfile.vscode-extension --push .
+REM if errorlevel 1 goto :error
 
 echo.
 echo Cleaning up buildx builder...
@@ -76,8 +84,23 @@ echo ============================================
 echo    SUCCESS! AMD64 images built and pushed!
 echo ============================================
 echo.
+echo Images built:
+echo   1. ontocode-graphdb
+echo   2. ontocode-auth
+echo   3. ontocode-gateway
+echo   4. ontocode-editor
+echo   5. ontocode-swrl
+echo   6. ontocode-plugin
+echo   7. ontocode-plugin-init
+echo   8. ontocode-web (webapp with HTTPS backend)
+echo.
+echo NOTE: ontocode-vscode-web build is DISABLED
+echo.
 echo To deploy:
 echo   DOCKER_REGISTRY=%REGISTRY% docker compose up -d
+echo.
+echo WEBAPP CONFIGURATION:
+echo   Backend URL: https://ontocodeapi.selfresearch.org
 echo.
 pause
 exit /b 0

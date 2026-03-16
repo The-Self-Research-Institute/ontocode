@@ -278,7 +278,7 @@ const AppContent = () => {
         const config = (window as any).__ONTOCODE_CONFIG__;
         const baseUrl = type === 'self-hosted' 
             ? (config?.SELF_HOSTED_GATEWAY_URL || 'http://localhost:80')
-            : (config?.CLOUD_GATEWAY_URL || 'http://13.218.153.101');
+            : (config?.CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org');
         
         // Notify extension to update API URLs
         if (window.vscode) {
