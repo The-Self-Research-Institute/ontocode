@@ -86,6 +86,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
     const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
     const [workspaceOwnerId, setWorkspaceOwnerId] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
     const [searchQuery, setSearchQuery] = useState('');
     const [showCreateProject, setShowCreateProject] = useState(false);
@@ -189,13 +190,20 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
     const loadData = async () => {
         try {
             setLoading(true);
+            setLoadError(null);
             
             // Load projects for current workspace only
             const projectsResponse = user?.workspaceId 
                 ? await apiClient.get(`/api/projects/my?workspaceId=${user.workspaceId}`)
                 : await apiClient.get(`/api/projects/my`);
             const projectsData = projectsResponse?.data || projectsResponse;
-            setProjects(projectsData?.projects || []);
+            console.log('[ProjectDashboard] Projects API response:', projectsData);
+            const loadedProjects = projectsData?.projects || [];
+            setProjects(loadedProjects);
+            
+            if (loadedProjects.length === 0) {
+                console.log('[ProjectDashboard] No projects returned from API');
+            }
             
             // Load team members from workspace (includes both active and pending members)
             if (user?.workspaceId) {
@@ -238,6 +246,8 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
             
         } catch (error) {
             console.error('Error loading dashboard data:', error);
+            setLoadError('Failed to load projects. Click retry to try again.');
+            showToast('Failed to load projects', 'error');
         } finally {
             setLoading(false);
         }
@@ -576,12 +586,16 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
     };
 
     const filteredProjects = useMemo(() => {
-        console.log('[ProjectDashboard] Recalculating filteredProjects, user?.userId:', user, 'projects:', projects.length);
+        console.log('[ProjectDashboard] Recalculating filteredProjects, user?.userId:', user?.userId, 'projects:', projects.length);
         
         const currentUserId = user?.userId;
         if (!currentUserId) {
-            console.log('[ProjectDashboard] User ID not available yet, returning empty array');
-            return [];
+            console.log('[ProjectDashboard] User ID not available yet, showing all projects as fallback');
+            // Fallback: show all projects instead of empty list when userId is missing
+            return projects.filter(project => 
+                project.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                project.description.toLowerCase().includes(searchQuery.toLowerCase())
+            );
         }
         
         return projects.filter(project => {
@@ -607,6 +621,23 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
                 <div className="text-center">
                     <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4"></div>
                     <p className="text-gray-600">Loading dashboard...</p>
+                </div>
+            </div>
+        );
+    }
+
+    if (loadError) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-gray-50">
+                <div className="text-center">
+                    <XCircle size={48} className="text-red-400 mx-auto mb-4" />
+                    <p className="text-gray-700 mb-4">{loadError}</p>
+                    <button
+                        onClick={loadData}
+                        className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+                    >
+                        Retry
+                    </button>
                 </div>
             </div>
         );
