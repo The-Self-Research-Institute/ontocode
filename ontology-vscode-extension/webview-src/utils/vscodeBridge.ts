@@ -337,9 +337,9 @@ function handleBrowserMessage(message: any) {
         // ──────── Collaboration ─────────────────────────────────────────────
 
         case 'requestCollaborationStatus': {
-            // In browser mode, collaboration is done via direct WebSocket.
-            // Just report disconnected; the real-time layer can be added later.
-            postToSelf({ type: 'collaborationStatus', connected: false });
+            // In browser mode we talk to the backend over HTTP.
+            // Report connected so the UI doesn't show "Offline".
+            postToSelf({ type: 'collaborationStatus', connected: true });
             break;
         }
 

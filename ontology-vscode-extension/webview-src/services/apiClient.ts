@@ -76,11 +76,12 @@ const pending = new Map<
 class ApiClient {
   private static _instance: ApiClient;
   private axiosClient: AxiosInstance | null = null;
-  // In web extension mode, bypass the VS Code proxy due to CSP restrictions
+  // In web extension mode or browser bridge mode, bypass the VS Code proxy
   // Use direct axios/fetch instead
   private isVSCode = typeof window !== 'undefined' && 
                      !!window.vscode && 
-                     !(window as any).__ONTOCODE_CONFIG__?.IS_WEB_EXTENSION;
+                     !(window as any).__ONTOCODE_CONFIG__?.IS_WEB_EXTENSION &&
+                     !(window as any).__ONTOCODE_BROWSER_BRIDGE__;
   private listenerAttached = false;
   private onUnauthorized?: () => void; // Callback for 401 errors
 

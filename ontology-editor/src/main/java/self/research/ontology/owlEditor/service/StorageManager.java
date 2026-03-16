@@ -135,22 +135,40 @@ public class StorageManager {
         Files.createDirectories(exportPath.getParent());
 
         String rdfXmlContent = datasetService.exportDataset(projectId, RDFFormat.RDFXML);
+        if (rdfXmlContent == null || rdfXmlContent.isBlank()) {
+            throw new IOException("No RDF/XML content exported from GraphDB for project: " + projectId);
+        }
+        log.info("Exported {} bytes of RDF/XML from GraphDB for OWL API conversion to {}", rdfXmlContent.length(), format);
+
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
         OWLOntology ontology;
         try (ByteArrayInputStream input = new ByteArrayInputStream(rdfXmlContent.getBytes(StandardCharsets.UTF_8))) {
             ontology = manager.loadOntologyFromOntologyDocument(input);
         } catch (OWLOntologyCreationException e) {
-            throw new IOException("Failed to parse ontology for export: " + projectId, e);
+            log.error("OWL API failed to parse RDF/XML for project {}: {}", projectId, e.getMessage());
+            throw new IOException("Failed to parse ontology for export: " + projectId + " — " + e.getMessage(), e);
         }
 
+        OWLDocumentFormat sourceFormat = manager.getOntologyFormat(ontology);
         OWLDocumentFormat documentFormat = resolveOwlApiFormat(format);
+
+        // Copy prefix mappings from source to target format for readable output
+        if (sourceFormat != null && sourceFormat.isPrefixOWLDocumentFormat()
+                && documentFormat.isPrefixOWLDocumentFormat()) {
+            var sourcePrefixes = sourceFormat.asPrefixOWLDocumentFormat().getPrefixName2PrefixMap();
+            var targetPrefixes = documentFormat.asPrefixOWLDocumentFormat();
+            sourcePrefixes.forEach(targetPrefixes::setPrefix);
+            log.info("Copied {} prefix mappings to {} format", sourcePrefixes.size(), format);
+        }
+
         try (OutputStream outputStream = Files.newOutputStream(exportPath)) {
             manager.saveOntology(ontology, documentFormat, outputStream);
         } catch (OWLOntologyStorageException e) {
-            throw new IOException("Failed to export ontology in format: " + format, e);
+            log.error("OWL API failed to save ontology in {} format for project {}: {}", format, projectId, e.getMessage());
+            throw new IOException("Failed to export ontology in format: " + format + " — " + e.getMessage(), e);
         }
 
-        log.info("Exported ontology to: {}", exportPath);
+        log.info("Exported ontology to: {} ({} bytes)", exportPath, Files.size(exportPath));
         return exportPath;
     }
 

@@ -2850,8 +2850,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     // Notify user that loading has started
     console.log(`Loading ontology "${currentProjectId}"...`);
     console.log('[Dashboard] 🔄 Fetching data for project:', currentProjectId);
-    console.log('[Dashboard] 📊 Collaboration status:', collaboration.state.connected);
-    console.log('[Dashboard] 📂 Admin flow:', isAdminFlow, 'Parent project:', parentProjectId);
+    console.log('[Dashboard]  Admin flow:', isAdminFlow, 'Parent project:', parentProjectId);
     console.log('[Dashboard] 👤 User context:', {
       email: user?.email,
       username: user?.username,
@@ -3308,7 +3307,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     } finally {
       setIsInitialLoading(false);
     }
-  }, [waitForProcessingComplete, applyInstanceCountsToTree, user, collaboration, fetchProjectFiles, resolveUserEmail]); // Include dependencies for proper closure
+  }, [waitForProcessingComplete, applyInstanceCountsToTree, user, fetchProjectFiles, resolveUserEmail]); // collaboration removed - was only used for logging, caused infinite re-render
 
   useEffect(() => {
     if (metadata?.ontologyIRI) {
@@ -7665,7 +7664,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     
     setCodeViewLoading(true);
     try {
-      const response = await apiClient.get<{ success: boolean; content: string; format: string; cached?: boolean }>(
+      const response = await apiClient.get<{ success: boolean; content: string; format: string; cached?: boolean; error?: string }>(
         `/api/ontology/${projectId}/content`,
         { format, forceRefresh: forceRefresh ? 'true' : 'false' }
       );
@@ -7678,10 +7677,16 @@ const Dashboard: React.FC<DashboardProps> = ({
         } else {
           console.log('[Dashboard] Content loaded fresh from GraphDB');
         }
+      } else {
+        console.error('[Dashboard] Code view content fetch returned success=false:', response.error);
+        setCodeViewContent(`// Error loading ${format} content: ${response.error || 'Unknown error'}\n// Try using Turtle or RDF/XML format instead.`);
+        setCodeViewFormat(format);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to fetch code view content:', error);
-      setCodeViewContent('// Error loading ontology content');
+      const msg = error?.message || error?.toString() || 'Unknown error';
+      setCodeViewContent(`// Error loading ${format} content: ${msg}\n// The backend may not support this format for this ontology.\n// Try using Turtle or RDF/XML format instead.`);
+      setCodeViewFormat(format);
     } finally {
       setCodeViewLoading(false);
     }
@@ -12566,14 +12571,13 @@ const Dashboard: React.FC<DashboardProps> = ({
         isOpen={confirmDialog.isOpen}
         title={confirmDialog.title}
         message={confirmDialog.message}
-        confirmText="Delete"
-        cancelText="Cancel"
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
         onConfirm={confirmDialog.onConfirm}
-        onCancel={() => {
+        onClose={() => {
           confirmDialog.onCancel?.();
           setConfirmDialog({ ...confirmDialog, isOpen: false });
         }}
-        variant="danger"
       />
 
     </>
