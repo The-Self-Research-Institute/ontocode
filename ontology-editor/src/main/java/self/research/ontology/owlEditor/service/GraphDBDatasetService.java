@@ -548,12 +548,10 @@ public class GraphDBDatasetService {
                     projectId, rdfFormat, batchSize);
 
                 // Strip binary garbage bytes that may be prepended by the upload pipeline.
-                // OWLFormatConverter handles this for OWL/XML files, but RDF/XML files
-                // come here directly and still need stripping.
+                // This includes BOM, whitespace, or other binary data before content starts.
+                // Apply to ALL formats, not just RDF/XML.
                 CountingInputStream countingStream = new CountingInputStream(inputStream);
-                InputStream cleanedStream = rdfFormat == RDFFormat.RDFXML
-                    ? stripLeadingGarbageRdfXml(countingStream)
-                    : countingStream;
+                InputStream cleanedStream = stripLeadingGarbage(countingStream, rdfFormat);
 
             long t1 = System.nanoTime();
             try (RepositoryConnection conn = repo.getConnection()) {
@@ -591,7 +589,9 @@ public class GraphDBDatasetService {
                     }
 
                     // Parse and upload in batches
+                    log.info("Creating RDF parser for format: {} (class: {})", rdfFormat, rdfFormat.getClass().getName());
                     RDFParser parser = Rio.createParser(rdfFormat);
+                    log.info("Parser created: {} (class: {})", parser, parser.getClass().getName());
                     // PERFORMANCE: Disable expensive validations for large files
                     parser.getParserConfig().set(BasicParserSettings.VERIFY_URI_SYNTAX, false);
                     parser.getParserConfig().set(BasicParserSettings.VERIFY_DATATYPE_VALUES, false);
@@ -683,6 +683,14 @@ public class GraphDBDatasetService {
                     });
 
                     log.info("Parsing RDF file...");
+                    
+                    // Preview first 500 bytes for debugging
+                    cleanedStream.mark(1024);
+                    byte[] preview = cleanedStream.readNBytes(500);
+                    cleanedStream.reset();
+                    String previewStr = new String(preview, java.nio.charset.StandardCharsets.UTF_8);
+                    log.info("Stream content preview (first 500 chars): {}", previewStr);
+                    
                     parser.parse(cleanedStream, finalTargetGraphUri);
                     
                     // Upload remaining triples
@@ -1225,36 +1233,117 @@ public class GraphDBDatasetService {
         return 50000;  // Optimized: default batch
     }
 
-    private InputStream stripLeadingGarbageRdfXml(InputStream inputStream) {
+    private InputStream stripLeadingGarbage(InputStream inputStream, RDFFormat format) {
         try {
             BufferedInputStream buffered = new BufferedInputStream(inputStream, 16 * 1024);
             buffered.mark(16 * 1024);
             byte[] head = buffered.readNBytes(16 * 1024);
-            int xmlStart = -1;
-            for (int i = 0; i < head.length - 5; i++) {
-                if (head[i] == '<' && head[i + 1] == '?' &&
-                        head[i + 2] == 'x' && head[i + 3] == 'm' && head[i + 4] == 'l') {
-                    xmlStart = i;
-                    break;
+            
+            int contentStart = -1;
+            
+            // First, check for UTF-8 BOM (EF BB BF) - common issue with text editors
+            if (head.length >= 3 && head[0] == (byte) 0xEF && head[1] == (byte) 0xBB && head[2] == (byte) 0xBF) {
+                log.info("Detected UTF-8 BOM, will strip 3 bytes");
+                contentStart = 3;
+            }
+            
+            // Check for leading whitespace (spaces, tabs, newlines) before content
+            if (contentStart == -1) {
+                for (int i = 0; i < head.length; i++) {
+                    byte b = head[i];
+                    // Skip whitespace: space (32), tab (9), newline (10), carriage return (13)
+                    if (b != 32 && b != 9 && b != 10 && b != 13) {
+                        if (i > 0) {
+                            contentStart = i;
+                            log.info("Found {} bytes of leading whitespace, will strip", i);
+                        }
+                        break;
+                    }
                 }
             }
-            if (xmlStart == -1) {
+            
+            // For XML-based formats (RDF/XML, OWL/XML), look for XML markers
+            if (format == RDFFormat.RDFXML) {
+                // Look for <?xml declaration
+                if (contentStart == -1 || contentStart > 100) { // Only search if we haven't found content or found too much garbage
+                    for (int i = 0; i < head.length - 5; i++) {
+                        if (head[i] == '<' && head[i + 1] == '?' &&
+                                head[i + 2] == 'x' && head[i + 3] == 'm' && head[i + 4] == 'l') {
+                            contentStart = i;
+                            log.info("Found <?xml declaration at byte offset: {}", i);
+                            break;
+                        }
+                    }
+                }
+                
+                // Look for <rdf:RDF opening tag
+                if (contentStart == -1) {
+                    String headStr = new String(head, 0, Math.min(head.length, 1024), java.nio.charset.StandardCharsets.UTF_8);
+                    int rdfIndex = headStr.indexOf("<rdf:RDF");
+                    if (rdfIndex >= 0) {
+                        contentStart = rdfIndex;
+                        log.info("Found <rdf:RDF tag at character offset: {}", rdfIndex);
+                    }
+                }
+                
+                // Look for <owl:Ontology or <Ontology tags
+                if (contentStart == -1) {
+                    String headStr = new String(head, 0, Math.min(head.length, 1024), java.nio.charset.StandardCharsets.UTF_8);
+                    int owlIndex = headStr.indexOf("<owl:Ontology");
+                    if (owlIndex < 0) {
+                        owlIndex = headStr.indexOf("<Ontology");
+                    }
+                    if (owlIndex >= 0) {
+                        contentStart = owlIndex;
+                        log.info("Found <Ontology tag at character offset: {}", owlIndex);
+                    }
+                }
+            } else if (format == RDFFormat.TURTLE || format == RDFFormat.N3) {
+                // For Turtle/N3, look for @prefix or @base directives
+                if (contentStart == -1 || contentStart > 100) {
+                    String headStr = new String(head, 0, Math.min(head.length, 1024), java.nio.charset.StandardCharsets.UTF_8);
+                    int prefixIndex = headStr.indexOf("@prefix");
+                    if (prefixIndex < 0) {
+                        prefixIndex = headStr.indexOf("@base");
+                    }
+                    if (prefixIndex >= 0 && prefixIndex < 100) { // Only if reasonable
+                        contentStart = prefixIndex;
+                        log.info("Found Turtle directive at character offset: {}", prefixIndex);
+                    }
+                }
+            }
+            
+            // If no content markers found, return original stream
+            if (contentStart == -1) {
+                log.info("No garbage bytes detected, using original stream");
                 buffered.reset();
                 return buffered;
             }
 
-            if (xmlStart == 0) {
+            // If content starts at the beginning, no stripping needed
+            if (contentStart == 0) {
+                log.info("Content starts at byte 0, no stripping needed");
                 buffered.reset();
                 return buffered;
             }
 
-            byte[] trimmed = new byte[head.length - xmlStart];
-            System.arraycopy(head, xmlStart, trimmed, 0, trimmed.length);
+            // Strip the garbage bytes before actual content
+            log.warn("Stripping {} bytes of garbage before {} content", contentStart, format);
+            byte[] trimmed = new byte[head.length - contentStart];
+            System.arraycopy(head, contentStart, trimmed, 0, trimmed.length);
             return new SequenceInputStream(new ByteArrayInputStream(trimmed), buffered);
         } catch (Exception e) {
-            log.warn("Failed to strip leading bytes from RDF/XML stream: {}", e.getMessage());
+            log.warn("Failed to strip leading bytes from {} stream: {}", format, e.getMessage());
             return inputStream;
         }
+    }
+
+    /**
+     * @deprecated Use stripLeadingGarbage instead
+     */
+    @Deprecated
+    private InputStream stripLeadingGarbageRdfXml(InputStream inputStream) {
+        return stripLeadingGarbage(inputStream, RDFFormat.RDFXML);
     }
 
     private IRI resolveNamespaceGraph(ValueFactory valueFactory, String baseGraphUri, Statement st) {

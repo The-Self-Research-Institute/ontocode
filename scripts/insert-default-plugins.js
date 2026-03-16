@@ -45,7 +45,7 @@ const DEFAULT_PLUGINS = [
     pluginId: 'fuzzy-ontology-plugin',
     name: 'Fuzzy Ontology',
     shortDescription: 'Fuzzy ontology editor with modifiers, membership functions, and visual canvas',
-    description: 'Fuzzy ontology editor with 5 fuzzy modifiers (very, more_or_less, slightly, extremely, somewhat), 5 membership functions (singleton, triangular, trapezoidal, Gaussian, sigmoid), visual canvas editor with real-time curve rendering, fuzzy rules with T-norms/T-conorms, and comprehensive SPARQL integration. Features 0.01-precision degree control, effective degree preview, parameter markers, and dark theme UI.',
+    description: 'Fuzzy ontology editor with 5 fuzzy modifiers (extremely, very, slightly, more_or_less, somewhat), 5 membership functions (singleton, triangular, trapezoidal, Gaussian, sigmoid), visual canvas editor with real-time curve rendering, fuzzy rules with T-norms/T-conorms, and comprehensive SPARQL integration. Features 0.01-precision degree control, effective degree preview, parameter markers, and dark theme UI.',
     latestVersion: '1.1.0',
     category: 'Reasoning',
     author: 'OntoCode Team',

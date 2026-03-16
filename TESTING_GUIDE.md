@@ -103,6 +103,247 @@ spring.servlet.multipart.enabled=true
 
 ---
 
+### 3. Report Issue to Jira
+
+**What was fixed:**
+- Fixed CORS policy blocking issue report submissions
+- Removed `credentials: 'include'` from fetch calls to match server's `allowCredentials=false` configuration
+- Fixed JWT authentication header being blocked by CORS preflight
+- Made `validateJiraConnection` use dynamic URLs for cloud deployment
+- Updated issue report service to work with both self-hosted and cloud deployments
+
+**Files modified:**
+- `ontology-vscode-extension/webview-src/components/ReportIssueModal.tsx` - Removed credentials mode
+- `ontology-vscode-extension/src/services/issueReportService.ts` - Dynamic URL support
+- `ontology-vscode-extension/src/extension.ts` - Initialize issue service with correct URL
+- `ontology-gateway/src/main/java/.../GatewayCorsConfig.java` - Fixed CORS credentials
+- `ontology-editor/src/main/java/.../IssueReportController.java` - Fixed CORS annotation
+
+**How to test issue reporting:**
+
+#### Prerequisites:
+1. **Backend must be configured with Jira credentials** in `ontology-editor/src/main/resources/application.properties`:
+   ```properties
+   jira.url=https://<your-domain>.atlassian.net
+   jira.email=<your-email>
+   jira.api.token=<your-api-token>
+   jira.project.key=<project-key>
+   ```
+
+2. **For cloud deployment (EC2):** Services must be running at your cloud gateway URL (e.g., `https://ontocodeapi.selfresearch.org`)
+
+3. **User must be logged in** with valid JWT token
+
+#### Test Case 1: Report Issue from VS Code Web Interface (Cloud Deployment)
+
+**Steps:**
+1. **Open VS Code web interface:**
+   - Navigate to `https://ontocodeapi.selfresearch.org:3000` (or your cloud URL)
+   - Login with your credentials
+
+2. **Clear browser cache** (IMPORTANT - ensures latest code is loaded):
+   - Press `F12` to open DevTools
+   - Go to **Application** tab → **Storage** section
+   - Click **"Clear site data"** button
+   - Perform hard refresh: `Ctrl+Shift+R` (Windows) or `Cmd+Shift+R` (Mac)
+   - Verify new JavaScript bundle loaded (check Network tab for new file hash)
+
+3. **Open issue report modal:**
+   - In the top menu, click **"Help"** → **"Report Issue"**
+   - Or use command palette: `Ctrl+Shift+P` → "OntoCode: Report Issue"
+
+4. **Verify modal opens with pre-filled system info:**
+   - Modal title: "Report Issue to Jira"
+   - Bug icon visible in header
+   - System info automatically collected:
+     - OS Name (e.g., win32, darwin, linux)
+     - OS Version
+     - VS Code Version
+     - Extension Version
+   - Project context (if ontology file is open):
+     - Project Name
+     - Ontology File Path
+
+5. **Fill in required fields:**
+   - **Title** (required): Enter "Test Issue - Authentication Flow"
+   - **Description** (required): Enter detailed description:
+     ```
+     Testing issue reporting functionality after CORS fixes.
+     Verifying that JWT authentication works correctly.
+     ```
+   - **Priority**: Select "Medium"
+   - **Issue Type**: Select "Bug"
+   - **Steps to Reproduce** (optional): Enter step-by-step reproduction
+   - **User Email** (optional): Enter contact email
+
+6. **Add attachments** (optional):
+   - Click "Choose File" or drag-and-drop files
+   - Add screenshots (PNG, JPG)
+   - Add log files (TXT, LOG)
+   - Add ontology files (OWL, RDF, TTL)
+   - **Verify:** File icons appear with correct colors (green for images, yellow for text, etc.)
+   - **Verify:** File size displayed correctly
+   - **Verify:** Remove button (X) works for each attachment
+
+7. **Monitor network request** (DevTools):
+   - Open **Network** tab in DevTools
+   - Keep it open during submission
+
+8. **Submit the issue:**
+   - Click **"Submit Issue"** button
+   - **Verify loading state:** Button shows "Submitting..." with disabled state
+
+9. **Verify network request details:**
+   - Request URL: `https://ontocodeapi.selfresearch.org/api/v1/issues/report`
+   - Method: `POST`
+   - **Critical checks:**
+     - ✅ Request Headers include: `Authorization: Bearer <token>`
+     - ✅ Request does NOT have `Cookie` header
+     - ✅ Preflight OPTIONS request succeeds (200 status)
+     - ✅ Preflight response includes: `Access-Control-Allow-Headers: *`
+     - ✅ Main POST request succeeds (200 status)
+     - ✅ Response headers include: `Access-Control-Allow-Credentials: false`
+
+10. **Verify success response:**
+    - **Expected:** Green success notification appears
+    - **Expected:** Message: "Issue reported successfully!"
+    - **Expected:** Jira issue URL displayed (clickable link)
+    - **Expected:** Modal auto-closes after 3 seconds
+
+11. **Verify Jira issue created:**
+    - Click the Jira URL link (should open in new tab)
+    - **Verify issue contains:**
+      - Title matches your input
+      - Description includes your text
+      - System info section with OS, VS Code version, etc.
+      - Attachments uploaded correctly
+      - Error logs section (if any errors were logged)
+      - Project context (if ontology was open)
+
+#### Test Case 2: Report Issue from Desktop Extension (Self-Hosted)
+
+**Steps:**
+1. **Open VS Code desktop application**
+2. **Open workspace with OntoCode extension installed**
+3. **Start self-hosted services:**
+   ```powershell
+   cd c:\Users\Jeeva\Desktop\ontology\ontocode
+   docker-compose up -d
+   ```
+
+4. **Set deployment type to self-hosted:**
+   - Open Command Palette: `Ctrl+Shift+P`
+   - Run: "OntoCode: Change Deployment Type"
+   - Select: "self-hosted"
+
+5. **Follow steps 3-11 from Test Case 1**, but:
+   - Request URL should be: `http://localhost:8083/api/v1/issues/report`
+   - No browser cache clearing needed (desktop extension reloads automatically)
+
+#### Test Case 3: Error Scenarios
+
+**3.1 Test Unauthorized (No JWT Token):**
+1. Logout from OntoCode
+2. Try to open "Report Issue" modal
+3. **Expected:** Modal should not open OR show login required message
+4. **Expected:** No request sent to backend without auth token
+
+**3.2 Test Missing Required Fields:**
+1. Open issue report modal
+2. Leave "Title" field empty
+3. Click "Submit Issue"
+4. **Expected:** Validation error highlighting title field
+5. **Expected:** Tooltip: "Title is required"
+
+**3.3 Test Backend Unreachable:**
+1. Stop the editor service: `docker-compose stop owl-editor`
+2. Open issue report modal and fill fields
+3. Submit the issue
+4. **Expected:** Error notification: "Network error: Failed to submit issue report"
+5. **Expected:** Modal remains open (doesn't auto-close)
+6. **Expected:** Submit button re-enabled
+7. Restart service: `docker-compose start owl-editor`
+
+**3.4 Test Jira Configuration Invalid:**
+1. Edit `ontology-editor/src/main/resources/application.properties`
+2. Set invalid Jira credentials (wrong API token)
+3. Restart editor service
+4. Submit an issue
+5. **Expected:** Error notification from backend: "Jira authentication failed"
+6. **Expected:** Response status: 401 or 500
+
+**3.5 Test Large Attachments:**
+1. Open issue report modal
+2. Try to attach a file larger than 1GB
+3. **Expected:** Browser may warn or fail to select
+4. **Expected:** If uploaded, backend should reject with "File too large" error
+
+#### Verification Checklist:
+
+- [ ] Issue report modal opens without errors
+- [ ] System information auto-collected correctly
+- [ ] Project context captured when ontology file is open
+- [ ] All form fields editable and validation works
+- [ ] File attachments can be added/removed
+- [ ] File icons display correctly based on type
+- [ ] Submit button shows loading state during submission
+- [ ] JWT token sent in Authorization header (check DevTools)
+- [ ] No CORS errors in console
+- [ ] No credentials mode in fetch request
+- [ ] Preflight OPTIONS request succeeds
+- [ ] Main POST request succeeds
+- [ ] Success notification displays with Jira URL
+- [ ] Modal auto-closes after success
+- [ ] Jira issue created with all details
+- [ ] Attachments uploaded to Jira
+- [ ] Works on both cloud and self-hosted deployments
+- [ ] Error handling works for all error scenarios
+
+#### Backend Logs to Check:
+
+**In `ontology-auth` service logs:**
+```
+[OntoCode] ✓ JWT Token validated successfully
+[JwtAuthenticationFilter] JWT validation SUCCESS
+```
+
+**In `ontology-editor` service logs:**
+```
+[IssueReportController] Received issue report request
+[IssueReportController] Jira issue created: <issue-key>
+```
+
+**In `ontology-gateway` service logs:**
+```
+[CORS] Processing preflight OPTIONS request
+[CORS] CORS headers added: Access-Control-Allow-Credentials=false
+```
+
+#### Common CORS Issues:
+
+**Issue: "Access-Control-Allow-Credentials must be 'true' when credentials mode is 'include'"**
+- **Cause:** Old JavaScript bundle cached in browser
+- **Solution:** Clear browser cache completely:
+  1. F12 → Application → Clear site data
+  2. Hard refresh: Ctrl+Shift+R
+  3. Verify new bundle hash in Network tab
+  4. If still cached, try incognito mode
+
+**Issue: "Authorization header not allowed by Access-Control-Allow-Headers"**
+- **Cause:** Gateway CORS filter not allowing Authorization header
+- **Solution:** Verify `GatewayCorsConfig.java` has:
+  ```java
+  headers.add("Access-Control-Allow-Headers", "*");
+  ```
+
+**Issue: "Request has no credentials mode but server expects cookies"**
+- **Cause:** Mismatch between frontend and backend authentication
+- **Solution:** OntoCode uses JWT in Authorization header, NOT cookies
+  - Frontend should NOT include `credentials: 'include'`
+  - Backend should set `allowCredentials: false`
+
+---
+
 ## Common Issues and Solutions
 
 ### Issue: "File too large" error when uploading

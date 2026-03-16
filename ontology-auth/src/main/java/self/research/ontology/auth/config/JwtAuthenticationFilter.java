@@ -39,11 +39,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         String authHeader = request.getHeader("Authorization");
         
-        log.debug("Processing request: {} {}", request.getMethod(), request.getRequestURI());
-        log.debug("Authorization header present: {}", authHeader != null);
+        log.info("[JWT Filter] Processing: {} {} | Auth header present: {}", 
+                request.getMethod(), request.getRequestURI(), authHeader != null);
 
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             String token = authHeader.substring(7);
+            log.debug("[JWT Filter] Token (first 20 chars): {}...", token.substring(0, Math.min(20, token.length())));
 
             try {
                 // Use Base64 decoding to match JwtUtil
@@ -58,7 +59,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
                 String username = claims.getSubject();
                 
-                log.debug("Extracted username from JWT: {}", username);
+                log.info("[JWT Filter] ✓ Extracted username: {}", username);
 
                 if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
                     UserDetails userDetails = User.builder()
@@ -71,11 +72,17 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                         new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
 
                     SecurityContextHolder.getContext().setAuthentication(authentication);
-                    log.debug("JWT authentication successful for user: {}", username);
+                    log.info("[JWT Filter] ✓ Authentication set for user: {}", username);
+                } else if (SecurityContextHolder.getContext().getAuthentication() != null) {
+                    log.debug("[JWT Filter] Authentication already exists in context");
                 }
             } catch (Exception e) {
-                log.error("JWT authentication failed: {}", e.getMessage());
+                log.error("[JWT Filter] ✗ JWT validation failed: {} - {}", e.getClass().getSimpleName(), e.getMessage());
+                log.debug("[JWT Filter] Full stack trace:", e);
             }
+        } else {
+            log.warn("[JWT Filter] ✗ No valid Authorization header found for {} {}", 
+                    request.getMethod(), request.getRequestURI());
         }
 
         filterChain.doFilter(request, response);

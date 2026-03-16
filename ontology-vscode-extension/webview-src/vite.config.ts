@@ -8,7 +8,7 @@ export default defineConfig(({ mode }) => {
       // Use relative paths for VS Code webview compatibility
       base: './',
       server: {
-        port: 3000,
+        port: 3001,
         host: '0.0.0.0',
       },
       plugins: [react()],
@@ -17,7 +17,14 @@ export default defineConfig(({ mode }) => {
         'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
         // Provide zlib constants as global defines
         'process.env.Z_SYNC_FLUSH': '2',
-        'process.env.Z_NO_FLUSH': '0'
+        'process.env.Z_NO_FLUSH': '0',
+        // Inject runtime config for standalone (browser / cloud) mode
+        // Set VITE_CLOUD_GATEWAY_URL in .env.production to override
+        '__ONTOCODE_CONFIG__': JSON.stringify({
+          IS_WEB_EXTENSION: true,
+          CLOUD_GATEWAY_URL: env.VITE_CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org',
+          SELF_HOSTED_GATEWAY_URL: env.VITE_SELF_HOSTED_GATEWAY_URL || 'http://localhost:80',
+        }),
       },
       resolve: {
         alias: {

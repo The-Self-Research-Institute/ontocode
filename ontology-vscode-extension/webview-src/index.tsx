@@ -50,10 +50,16 @@ import './d3-global';
 // Setup global variables for UMD plugins FIRST (before any other imports that might use React)
 import './setupGlobals';
 
+// Install the browser-mode bridge BEFORE any React component mounts.
+// In VS Code Desktop this is a no-op (window.vscode already exists).
+import { installBrowserBridge } from './utils/vscodeBridge';
+installBrowserBridge();
+
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import { AuthProvider } from './contexts/AuthContexts';
+import ErrorBoundary from './components/ErrorBoundary';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -63,8 +69,10 @@ if (!rootElement) {
 const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
-    <AuthProvider>
-      <App />
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <App />
+      </AuthProvider>
+    </ErrorBoundary>
   </React.StrictMode>
 );

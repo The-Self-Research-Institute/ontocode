@@ -35,8 +35,8 @@ public class EmailService {
      * Send invitation email to the invitee
      */
     public void sendInvitationEmail(self.research.ontology.auth.model.Invitation invitation) {
-        // Generate both web and VS Code extension links
-        String webInvitationLink = baseUrl + "/invite?token=" + invitation.getInvitationToken();
+        // Generate both VS Code extension and webview links using configured base URL
+        String webviewLink = baseUrl + "/?token=" + invitation.getInvitationToken();
         // Use correct extension identifier: publisher.extensionName
         String vscodeInvitationLink = "vscode://self.ontocode-extension/invite?token=" + invitation.getInvitationToken();
         
@@ -100,6 +100,43 @@ public class EmailService {
                         margin: 15px 0;
                         border-left: 4px solid #8B5CF6;
                     }
+                    .token-box {
+                        background-color: #fef3c7;
+                        padding: 15px;
+                        border-radius: 6px;
+                        margin: 15px 0;
+                        border-left: 4px solid #f59e0b;
+                    }
+                    .token-value {
+                        font-family: 'Courier New', monospace;
+                        background: white;
+                        padding: 10px;
+                        border-radius: 4px;
+                        word-break: break-all;
+                        font-size: 13px;
+                        color: #1f2937;
+                        border: 1px solid #d1d5db;
+                        margin: 8px 0;
+                    }
+                    .steps {
+                        background-color: #eff6ff;
+                        padding: 15px;
+                        border-radius: 6px;
+                        margin: 15px 0;
+                        border-left: 4px solid #3b82f6;
+                    }
+                    .step-item {
+                        margin: 8px 0;
+                        padding-left: 10px;
+                    }
+                    .kbd {
+                        background-color: #1f2937;
+                        color: white;
+                        padding: 2px 6px;
+                        border-radius: 3px;
+                        font-family: monospace;
+                        font-size: 12px;
+                    }
                 </style>
             </head>
             <body>
@@ -110,6 +147,12 @@ public class EmailService {
                         <p>OntoCode is a collaborative ontology editor that helps teams create and manage knowledge graphs together.</p>
                         <p>Your assigned role: <span class="badge">%s</span></p>
                         
+                        <div class="token-box">
+                            <strong>🔑 Your Invitation Token:</strong>
+                            <div class="token-value">%s</div>
+                            <p style="margin: 8px 0 0 0; font-size: 12px; color: #92400e;">Copy this token to accept the invitation via VS Code Command Palette</p>
+                        </div>
+                        
                         <div class="info-box">
                             <strong>🎯 Choose how to accept:</strong>
                             <p style="margin: 10px 0 5px 0; font-size: 14px;">For the best experience with VS Code integration:</p>
@@ -118,14 +161,27 @@ public class EmailService {
                         <div class="options">
                             <a href="%s" class="button" style="color: white; text-decoration: none;">🚀 Open in VS Code</a>
                             <br>
-                            <a href="%s" class="button button-secondary" style="color: white; text-decoration: none;">🌐 Open in Browser</a>
+                            <a href="%s" class="button button-secondary" style="color: white; text-decoration: none;">🌐 Open in Webview</a>
+                        </div>
+                        
+                        <div class="steps">
+                            <strong>📋 Alternative: Manual Setup via Command Palette</strong>
+                            <p style="margin: 10px 0 5px 0; font-size: 13px;">If the buttons don't work, follow these steps in VS Code:</p>
+                            <ol style="margin: 8px 0; padding-left: 20px; font-size: 13px;">
+                                <li class="step-item">Open VS Code</li>
+                                <li class="step-item">Press <span class="kbd">Ctrl+Shift+P</span> (Windows/Linux) or <span class="kbd">Cmd+Shift+P</span> (Mac)</li>
+                                <li class="step-item">Type: <strong>OntoCode: Test Invitation Flow</strong></li>
+                                <li class="step-item">Paste your invitation token (shown above)</li>
+                                <li class="step-item">Press Enter to accept the invitation</li>
+                            </ol>
                         </div>
                         
                         <div style="background-color: #f9fafb; padding: 15px; border-radius: 6px; margin: 20px 0;">
-                            <p style="margin: 0 0 10px 0; font-size: 13px; color: #6b7280;"><strong>Note:</strong> If the button doesn't work, copy and paste this link into your browser:</p>
-                            <p style="margin: 5px 0; font-size: 12px; word-break: break-all; color: #4b5563; font-family: monospace; background: white; padding: 8px; border-radius: 4px;">%s</p>
-                            <p style="margin: 10px 0 0 0; font-size: 12px; color: #6b7280;">Or use this VS Code link (if you have VS Code installed):</p>
-                            <p style="margin: 5px 0; font-size: 12px; word-break: break-all; color: #4b5563; font-family: monospace; background: white; padding: 8px; border-radius: 4px;">%s</p>
+                            <p style="margin: 0 0 10px 0; font-size: 13px; color: #6b7280;"><strong>Direct Links:</strong></p>
+                            <p style="margin: 5px 0 2px 0; font-size: 11px; color: #6b7280;">Webview Link:</p>
+                            <p style="margin: 0 0 10px 0; font-size: 12px; word-break: break-all; color: #4b5563; font-family: monospace; background: white; padding: 8px; border-radius: 4px;">%s</p>
+                            <p style="margin: 5px 0 2px 0; font-size: 11px; color: #6b7280;">VS Code Deep Link:</p>
+                            <p style="margin: 0; font-size: 12px; word-break: break-all; color: #4b5563; font-family: monospace; background: white; padding: 8px; border-radius: 4px;">%s</p>
                         </div>
                         
                         <p class="footer">
@@ -140,16 +196,17 @@ public class EmailService {
             invitation.getInvitedByEmail(),
             invitation.getWorkspaceName(),
             invitation.getRole(),
+            invitation.getInvitationToken(),
             vscodeInvitationLink,
-            webInvitationLink,
-            webInvitationLink,
+            webviewLink,
+            webviewLink,
             vscodeInvitationLink,
             invitation.getExpiresAt().toString()
         );
 
         try {
             log.info("📧 Preparing to send invitation email to: {}", invitation.getInviteeEmail());
-            log.info("📧 Web invitation link: {}", webInvitationLink);
+            log.info("📧 Webview link: {}", webviewLink);
             log.info("📧 VS Code invitation link: {}", vscodeInvitationLink);
             log.info("📧 From email: {}", fromEmail);
             

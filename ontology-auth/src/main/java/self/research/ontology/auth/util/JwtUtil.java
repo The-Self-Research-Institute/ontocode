@@ -49,6 +49,10 @@ public class JwtUtil {
     }
 
     public String generateToken(UserDetails userDetails, String email) {
+        return generateToken(userDetails, email, null);
+    }
+
+    public String generateToken(UserDetails userDetails, String email, String userId) {
         Map<String, Object> claims = new HashMap<>();
         // Add roles to claims
         List<String> roles = userDetails.getAuthorities().stream()
@@ -59,6 +63,10 @@ public class JwtUtil {
         claims.put("email", email);
         // Add isAdmin flag for easy frontend checking
         claims.put("isAdmin", roles.contains("ROLE_ADMIN"));
+        // Add userId to claims so frontend always has it
+        if (userId != null) {
+            claims.put("userId", userId);
+        }
         return createToken(claims, userDetails.getUsername());
     }
 

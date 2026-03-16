@@ -1,7 +1,8 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from './custom-hook/useAuth';
-import { updateBaseUrl } from './services/apiClient';
+import apiClient, { updateBaseUrl } from './services/apiClient';
+import { openOntologyFile, fileContentToBase64 } from './utils/fileAccess';
 import { CollaborationProvider } from './contexts/CollaborationContext';
 import { EntityPreferencesProvider } from './contexts/EntityPreferencesContext';
 import { ThemeProvider } from './contexts/ThemeContext';
@@ -35,9 +36,12 @@ const AppContent = () => {
     const shouldShowWorkspaceSelection = (): boolean => {
         if (!user || user.workspaceId) return false;
         
+        // If user explicitly skipped workspace selection, don't show it
+        if (!needsWorkspaceSelection) return false;
+        
         const storedDeploymentType = localStorage.getItem('deploymentType') as 'self-hosted' | 'cloud' | null;
         
-        // Cloud users always need workspace selection if they don't have one
+        // Cloud users always need workspace selection if they don't have one (unless they skipped)
         if (storedDeploymentType === 'cloud') {
             return true;
         }
@@ -63,12 +67,47 @@ const AppContent = () => {
         const token = params.get('token') || params.get('invite');
         const email = params.get('email');
 
-        if (token) {
-            console.log('[App] Found invitation token in URL:', token);
-            setInviteToken(token);
-            if (email) {
-                setInviteEmail(email);
+        // Also check parent window URL (for test-web environment)
+        let parentToken: string | null = null;
+        let parentEmail: string | null = null;
+        try {
+            if (window.parent && window.parent !== window) {
+                const parentParams = new URLSearchParams(window.parent.location.search);
+                parentToken = parentParams.get('token') || parentParams.get('invite');
+                parentEmail = parentParams.get('email');
+                console.log('[App] Checked parent window for token:', !!parentToken, 'email:', !!parentEmail);
             }
+        } catch (e) {
+            // Cross-origin access blocked, ignore
+            console.log('[App] Cannot access parent window (cross-origin)');
+        }
+
+        // Also check window.location.hash for invitation parameters (vscode-test-web format)
+        let hashToken: string | null = null;
+        let hashEmail: string | null = null;
+        try {
+            if (window.location.hash) {
+                const hashPart = window.location.hash.substring(1); // Remove the '#'
+                const hashParams = new URLSearchParams(hashPart);
+                hashToken = hashParams.get('token') || hashParams.get('invite');
+                hashEmail = hashParams.get('email');
+                console.log('[App] Checked URL hash for token:', !!hashToken, 'email:', !!hashEmail);
+            }
+        } catch (e) {
+            console.log('[App] Error parsing hash:', e);
+        }
+
+        const finalToken = token || parentToken || hashToken;
+        const finalEmail = email || parentEmail || hashEmail;
+
+        if (finalToken) {
+            console.log('[App] 📧 Found invitation token in URL, setting state');
+            setInviteToken(finalToken);
+            if (finalEmail) {
+                setInviteEmail(finalEmail);
+            }
+        } else {
+            console.log('[App] No invitation token found in URL parameters, search, hash, or parent window');
         }
     }, []);
 
@@ -85,9 +124,18 @@ const AppContent = () => {
                     fileContent: message.fileContent,
                     fileSize: message.fileSize
                 });
+            } else if (message.type === 'clearInvitationState') {
+                console.log('[App] 🧹 Clearing existing invitation state for new invitation');
+                setInviteToken(null);
+                setInviteEmail(null);
+                setShowAuthForInvitation(false);
             } else if (message.type === 'invitationToken') {
-                console.log('[App] 📧 Received invitation token from extension:', message.token);
+                console.log('[App] 📧 Received invitation token from extension:', message.token?.substring(0, 20) + '...');
+                console.log('[App] Current state - inviteToken:', !!inviteToken, 'showAuthForInvitation:', showAuthForInvitation);
+                // Reset any auth-related state that might block showing the invitation page
+                setShowAuthForInvitation(false);
                 setInviteToken(message.token);
+                console.log('[App] 📧 Invitation token state updated, page should show now');
             } else if (message.type === 'showSubscriptionPlans') {
                 console.log('[App] 📋 Showing subscription plans page');
                 setShowSubscriptionPlan(true);
@@ -96,6 +144,36 @@ const AppContent = () => {
 
         window.addEventListener('message', handleMessage);
         return () => window.removeEventListener('message', handleMessage);
+    }, []);
+
+    // Browser-mode: upload a file directly via the API (no extension proxy needed)
+    const uploadFileBrowserMode = useCallback(async (
+        projectId: string,
+        fileName: string,
+        fileContent: string,
+        fileSize: number
+    ) => {
+        try {
+            const base64Content = fileContentToBase64(fileContent);
+            await apiClient.post(`/api/projects/${projectId}/files`, {
+                fileName,
+                fileData: `data:application/rdf+xml;base64,${base64Content}`,
+                fileSize,
+                fileType: 'owl'
+            });
+            console.log('[App] ✅ Browser upload complete:', fileName);
+        } catch (err) {
+            console.error('[App] ❌ Browser upload failed:', err);
+        }
+    }, []);
+
+    // Open a local file in browser/cloud/Electron mode (no VS Code extension)
+    const handleOpenLocalFile = useCallback(async () => {
+        const fileData = await openOntologyFile();
+        if (fileData) {
+            console.log('[App] 📂 File picked in browser mode:', fileData.fileName);
+            setPendingFile(fileData);
+        }
     }, []);
 
     // Auto-upload for self-hosted users (no workspace)
@@ -112,12 +190,15 @@ const AppContent = () => {
                     fileContent: pendingFile.fileContent,
                     skipDuplicateCheck: false
                 });
+            } else {
+                // Browser / cloud / Electron: upload directly via API
+                uploadFileBrowserMode(projectId, pendingFile.fileName, pendingFile.fileContent, pendingFile.fileSize);
             }
             
             // Clear pending file after triggering upload
             setPendingFile(null);
         }
-    }, [user, pendingFile]);
+    }, [user, pendingFile, uploadFileBrowserMode]);
 
     const toggleFormView = () => setIsLoginView(!isLoginView);
 
@@ -141,8 +222,11 @@ const AppContent = () => {
                     fileContent: pendingFile.fileContent,
                     fileSize: pendingFile.fileSize
                 });
+            } else {
+                // Browser / cloud / Electron: upload directly via API
+                uploadFileBrowserMode(projectId, pendingFile.fileName, pendingFile.fileContent, pendingFile.fileSize);
             }
-            // Clear pending file immediately after sending upload message
+            // Clear pending file immediately after triggering upload
             setPendingFile(null);
         }
 
@@ -194,7 +278,7 @@ const AppContent = () => {
         const config = (window as any).__ONTOCODE_CONFIG__;
         const baseUrl = type === 'self-hosted' 
             ? (config?.SELF_HOSTED_GATEWAY_URL || 'http://localhost:80')
-            : (config?.CLOUD_GATEWAY_URL || 'http://13.218.153.101');
+            : (config?.CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org');
         
         // Notify extension to update API URLs
         if (window.vscode) {
@@ -318,6 +402,7 @@ const AppContent = () => {
     // Show invitation acceptance page if there's an invite token (whether logged in or not)
     // But if user clicked login/signup, show auth form first
     if (inviteToken && !showAuthForInvitation) {
+        console.log('[App] 🎫 Rendering InviteAcceptPage with token:', inviteToken.substring(0, 20) + '...');
         return (
             <InviteAcceptPage
                 token={inviteToken}
@@ -327,6 +412,11 @@ const AppContent = () => {
                 onError={handleInvitationError}
             />
         );
+    }
+
+    // Debug: Log why we're not showing invitation page
+    if (inviteToken) {
+        console.log('[App] ⚠️ Have invite token but not showing InviteAcceptPage. showAuthForInvitation:', showAuthForInvitation);
     }
 
     // Show deployment selector BEFORE login if user hasn't selected deployment type yet
@@ -343,8 +433,10 @@ const AppContent = () => {
                 onWorkspaceSelected={handleWorkspaceSelected}
                 onSkipWorkspace={() => {
                     console.log('[App] User chose to continue without workspace');
+                    console.log('[App] Current needsWorkspaceSelection:', needsWorkspaceSelection);
                     // Update auth context to skip workspace selection
                     selectWorkspace({ skipWorkspace: true });
+                    console.log('[App] Workspace selection skipped, should proceed to editor');
                 }}
                 onLogout={handleLogout}
             />
@@ -369,7 +461,7 @@ const AppContent = () => {
     // Show only when no file is selected AND (no project selected OR has pending file to upload)
     if (user && user.workspaceId && !showSubscriptionPlan && !selectedFileId && (!selectedProjectId || pendingFile)) {
         console.log('[App] Routing to ProjectDashboard - isAdmin:', user.isAdmin, 'selectedFileId:', selectedFileId, 'selectedProjectId:', selectedProjectId, 'pendingFile:', !!pendingFile);
-        return <ProjectDashboard onSelectProject={handleProjectSelected} pendingFile={pendingFile} />;
+        return <ProjectDashboard onSelectProject={handleProjectSelected} pendingFile={pendingFile} onOpenLocalFile={(window as any).__ONTOCODE_BROWSER_BRIDGE__ ? handleOpenLocalFile : undefined} />;
     }
 
     // Show Project Library when a project is selected but no file is selected

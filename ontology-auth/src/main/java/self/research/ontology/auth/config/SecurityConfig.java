@@ -72,6 +72,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/**").permitAll() // Allow public access to auth endpoints
                         .requestMatchers("/api/invitations/details/**").permitAll() // Allow public access to view invitation details
                         .requestMatchers("/api/invitations/request-resend/**").permitAll() // Allow public access to request invitation resend
+                        .requestMatchers("/invite").permitAll() // Allow public access to web invitation redirect page
                         .requestMatchers("/error").permitAll()
                         .requestMatchers("/actuator/**").permitAll() // Allow actuator endpoints for health checks
                         .anyRequest().authenticated() // All other requests require authentication
@@ -100,6 +101,8 @@ public class SecurityConfig {
             "https://localhost:*",            // Local development over HTTPS
             "http://ec2-13-218-153-101.compute-1.amazonaws.com:*",
             "https://ec2-13-218-153-101.compute-1.amazonaws.com:*",
+            "https://ontocodeapi.selfresearch.org:*", // Production API URL
+            "https://ontocode.selfresearch.org:*",
             "vscode-webview://*",             // VS Code webview
             "vscode-webview-resource://*",
             "https://*.vscode-cdn.net",       // VS Code CDN

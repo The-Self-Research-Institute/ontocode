@@ -22,9 +22,9 @@ This extension uses environment variables to configure deployment URLs. This all
    SELF_HOSTED_PLUGIN_URL=http://localhost:8087
 
    # Cloud Deployment URLs
-   CLOUD_GATEWAY_URL=http://13.218.153.101
-   CLOUD_EDITOR_URL=http://13.218.153.101
-   CLOUD_PLUGIN_URL=http://13.218.153.101:8087
+   CLOUD_GATEWAY_URL=https://ontocodeapi.selfresearch.org
+   CLOUD_EDITOR_URL=https://ontocodeapi.selfresearch.org
+   CLOUD_PLUGIN_URL=https://ontocodeapi.selfresearch.org:8087
 
    # Default Deployment Type (self-hosted or cloud)
    DEFAULT_DEPLOYMENT_TYPE=cloud
@@ -43,9 +43,9 @@ This extension uses environment variables to configure deployment URLs. This all
 | `SELF_HOSTED_GATEWAY_URL` | Gateway URL for self-hosted deployment | `http://localhost:80` |
 | `SELF_HOSTED_EDITOR_URL` | Editor URL for self-hosted deployment | `http://localhost:80` |
 | `SELF_HOSTED_PLUGIN_URL` | Plugin service URL for self-hosted deployment | `http://localhost:8087` |
-| `CLOUD_GATEWAY_URL` | Gateway URL for cloud deployment | `http://13.218.153.101` |
-| `CLOUD_EDITOR_URL` | Editor URL for cloud deployment | `http://13.218.153.101` |
-| `CLOUD_PLUGIN_URL` | Plugin service URL for cloud deployment | `http://13.218.153.101:8087` |
+| `CLOUD_GATEWAY_URL` | Gateway URL for cloud deployment | `https://ontocodeapi.selfresearch.org` |
+| `CLOUD_EDITOR_URL` | Editor URL for cloud deployment | `https://ontocodeapi.selfresearch.org` |
+| `CLOUD_PLUGIN_URL` | Plugin service URL for cloud deployment | `https://ontocodeapi.selfresearch.org:8087` |
 | `DEFAULT_DEPLOYMENT_TYPE` | Default deployment selection | `cloud` |
 
 ## How It Works

@@ -1412,9 +1412,11 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
   // Load ontology schema and generate dynamic templates
   const loadOntologySchema = useCallback(async () => {
     try {
+      console.log('[SWRL] Loading ontology schema for project:', projectId);
       const res = await apiClient.get<{ classes: string[], objectProperties: string[], dataProperties: string[] }>(
         `/api/ontology/${projectId}/schema`
       );
+      console.log('[SWRL] Schema loaded:', res);
       setOntologySchema(res);
       
       // Generate dynamic templates based on actual ontology
@@ -1547,12 +1549,14 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
       }
       
       // Limit templates to avoid overwhelming UI
+      console.log('[SWRL] Generated', generated.length, 'dynamic templates');
       setDynamicTemplates(generated.slice(0, 20));
+      console.log('[SWRL] Set', Math.min(generated.length, 20), 'dynamic templates');
     } catch (e) {
-      console.error('Failed to load ontology schema:', e);
+      console.error('[SWRL] Failed to load ontology schema:', e);
       setDynamicTemplates([]);
     }
-  }, [projectId]);
+  }, [projectId, apiClient]);
 
   useEffect(() => { loadOntologySchema(); }, [loadOntologySchema]);
 

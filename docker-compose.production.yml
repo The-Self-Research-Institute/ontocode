@@ -180,6 +180,13 @@ services:
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
       EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
+      JIRA_ENABLED: ${JIRA_ENABLED:-true}
+      JIRA_CLOUD_URL: ${JIRA_CLOUD_URL:-https://coretopia.atlassian.net}
+      JIRA_USER_EMAIL: ${JIRA_USER_EMAIL:-sindhuja@coretopia.com}
+      JIRA_API_TOKEN: ${JIRA_API_TOKEN:-ATATT3xFfGF0fhZLilL7hxxMAXQcjCEQXmkcVVMIk50av6aSqaDwoY6HOqhuriEGAL7uSwL3oFh6p4n9Vssrq6u67kAKi6nxUAICruIUtJDTKyUhM0ibNyq-S3DJVM88v-VkOX5jYc-yCCjIH7hQ9NYNWbQQLnPJngbbCLGOuzii6WkIL9s4G7g=6CEB1011}
+      JIRA_PROJECT_KEY: ${JIRA_PROJECT_KEY:-TSRI}
+      JIRA_EPIC_KEY: ${JIRA_EPIC_KEY:-TSRI-103}
+      JIRA_ISSUE_TYPE: ${JIRA_ISSUE_TYPE:-Task}
     depends_on:
       - mongo
       - graphdb
@@ -286,6 +293,27 @@ services:
       timeout: 10s
       retries: 5
       start_period: 40s
+
+  # Standalone React Web App (browser-mode OntoCode)
+  webapp:
+    build:
+      context: .
+      dockerfile: Dockerfile.webapp
+    image: ontocode-webapp:latest
+    container_name: ontocode-webapp
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    depends_on:
+      - gateway
+    networks:
+      - ontology-net
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
 
 volumes:
   mongo-data:

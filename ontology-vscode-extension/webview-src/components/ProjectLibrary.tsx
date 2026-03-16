@@ -274,6 +274,21 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                 const existing = checkData.existingFile || {};
                 const existingFileId = existing.fileId || existing.id || null;
                 const existingFileName = existing.fileName || file.name;
+                
+                // Check deployment type
+                const deploymentType = localStorage.getItem('deploymentType') as 'self-hosted' | 'cloud' | null;
+                const isCloudDeployment = deploymentType === 'cloud';
+                
+                if (isCloudDeployment) {
+                    // Cloud deployment: auto-open existing file
+                    console.log('[ProjectLibrary] ☁️ Cloud deployment: auto-opening existing file');
+                    if (existingFileId) {
+                        onFileSelect(existingFileId, existingFileName);
+                    }
+                    return;
+                }
+                
+                // Self-hosted: show dialog
                 const dotIndex = file.name.lastIndexOf('.');
                 const baseName = dotIndex > 0 ? file.name.substring(0, dotIndex) : file.name;
                 const extension = dotIndex > 0 ? file.name.substring(dotIndex) : '';

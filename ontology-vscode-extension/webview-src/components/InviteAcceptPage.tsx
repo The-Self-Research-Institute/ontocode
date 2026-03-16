@@ -90,12 +90,23 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
             }
         } catch (err: any) {
             console.error('[InviteAcceptPage] Error loading invitation:', err);
-            // Handle error message from various sources
-            const errorMsg = err?.error || err?.response?.data?.error || err?.message || 'Failed to load invitation details';
-            if (errorMsg.toLowerCase().includes('expired')) {
-                setIsExpired(true);
+            
+            // Handle 404 specifically - invitation not found
+            if (err?.status === 404 || err?.response?.status === 404) {
+                setError('This invitation link is invalid or has been removed. Please contact the workspace owner to request a new invitation.');
+            } else if (err?.code === 'ECONNREFUSED' || err?.code === 'ERR_NETWORK' || err?.message?.includes('Network Error') || err?.message?.includes('Failed to fetch')) {
+                // Network/connection error - backend not available
+                setError('Unable to connect to the server. Please make sure the OntoCode services are running and try again.');
+            } else if (err?.code === 'TIMEOUT' || err?.message?.includes('timeout')) {
+                setError('Connection timed out. Please check your network connection and try again.');
+            } else {
+                // Handle error message from various sources
+                const errorMsg = err?.error || err?.response?.data?.error || err?.message || 'Failed to load invitation details';
+                if (errorMsg.toLowerCase().includes('expired')) {
+                    setIsExpired(true);
+                }
+                setError(errorMsg);
             }
-            setError(errorMsg);
         } finally {
             setLoading(false);
         }
