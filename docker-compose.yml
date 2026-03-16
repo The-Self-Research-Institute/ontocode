@@ -225,33 +225,54 @@ services:
     networks:
       - ontology-net
 
-  # VS Code Web Extension (Self-Contained)
-  vscode-web:
-    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-vscode-web:${VERSION:-latest}
-    container_name: ontocode-vscode-web
+  # VS Code Web Extension (Self-Contained) - DISABLED
+  # vscode-web:
+  #   image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-vscode-web:${VERSION:-latest}
+  #   container_name: ontocode-vscode-web
+  #   restart: unless-stopped
+  #   ports:
+  #     - "3000:3000"
+  #   volumes:
+  #     # Mount local workspace for file editing
+  #     - ${WORKSPACE_PATH:-./data/projects}:/workspace/projects
+  #   environment:
+  #     VSCODE_WEB_HOST: 0.0.0.0
+  #     VSCODE_WEB_PORT: 3000
+  #     # OntoCode API endpoints
+  #     ONTOCODE_API_URL: http://gateway:80
+  #     AUTH_SERVICE_URL: http://auth:8086
+  #   depends_on:
+  #     - gateway
+  #     - auth
+  #   networks:
+  #     - ontology-net
+  #   healthcheck:
+  #     test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/"]
+  #     interval: 15s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 40s
+
+  # Web Application (React Frontend)
+  webapp:
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-web:${VERSION:-latest}
+    container_name: ontocode-web
     restart: unless-stopped
     ports:
-      - "3000:3000"
-    volumes:
-      # Mount local workspace for file editing
-      - ${WORKSPACE_PATH:-./data/projects}:/workspace/projects
+      - "3000:3001"
     environment:
-      VSCODE_WEB_HOST: 0.0.0.0
-      VSCODE_WEB_PORT: 3000
-      # OntoCode API endpoints
       ONTOCODE_API_URL: http://gateway:80
-      AUTH_SERVICE_URL: http://auth:8086
     depends_on:
       - gateway
       - auth
     networks:
       - ontology-net
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 40s
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
 volumes:
   mongo-data:
