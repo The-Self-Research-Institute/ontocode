@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Loader2, Plus, Users, Crown, Building2, ChevronRight, Settings, Trash } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Loader2, Plus, Users, Crown, Building2, ChevronRight, Settings, Trash, AlertTriangle } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import SubscriptionPlanSelection from './SubscriptionPlanSelection';
 import { 
@@ -58,6 +58,25 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
     const [deletingWorkspace, setDeletingWorkspace] = useState<string | null>(null);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [workspaceToDelete, setWorkspaceToDelete] = useState<{ id: string; name: string } | null>(null);
+
+    // In-app confirm dialog state (replaces window.confirm)
+    const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; confirmLabel: string } | null>(null);
+    const confirmResolveRef = useRef<((value: boolean) => void) | null>(null);
+
+    const showConfirmDialog = useCallback((title: string, message: string, confirmLabel = 'OK'): Promise<boolean> => {
+        return new Promise<boolean>((resolve) => {
+            confirmResolveRef.current = resolve;
+            setConfirmDialog({ title, message, confirmLabel });
+        });
+    }, []);
+
+    const handleConfirmDialogResponse = useCallback((accepted: boolean) => {
+        setConfirmDialog(null);
+        if (confirmResolveRef.current) {
+            confirmResolveRef.current(accepted);
+            confirmResolveRef.current = null;
+        }
+    }, []);
 
     useEffect(() => {
         loadWorkspaces();
@@ -205,10 +224,10 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
             
             if (checkResponse?.data?.exists || checkResponse?.exists) {
                 const data = checkResponse?.data || checkResponse;
-                const shouldContinue = window.confirm(
-                    `A workspace named "${newWorkspaceName.trim()}" already exists.\n\n` +
-                    `Would you like to create a workspace with a different name instead?\n\n` +
-                    `Click OK to rename, or Cancel to abort.`
+                const shouldContinue = await showConfirmDialog(
+                    'Workspace Already Exists',
+                    `A workspace named "${newWorkspaceName.trim()}" already exists. Would you like to create a workspace with a different name instead?`,
+                    'Rename'
                 );
                 
                 if (!shouldContinue) {
@@ -234,8 +253,10 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                 }
                 
                 // Show the new name to user
-                const confirmNewName = window.confirm(
-                    `New workspace name will be: "${uniqueName}"\n\nClick OK to create, or Cancel to abort.`
+                const confirmNewName = await showConfirmDialog(
+                    'Confirm New Name',
+                    `New workspace name will be: "${uniqueName}"`,
+                    'Create'
                 );
                 
                 if (!confirmNewName) {
@@ -611,6 +632,41 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                         }}
                         onLogout={onLogout}
                     />
+                </div>
+            )}
+
+            {/* In-App Confirm Dialog (replaces window.confirm) */}
+            {confirmDialog && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                    <div className="bg-slate-800 border border-white/20 rounded-2xl shadow-2xl p-8 w-full max-w-md">
+                        <div className="text-center mb-6">
+                            <div className="w-16 h-16 bg-amber-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <AlertTriangle size={32} className="text-amber-400" />
+                            </div>
+                            <h3 className="text-2xl font-bold text-white mb-2">
+                                {confirmDialog.title}
+                            </h3>
+                            <p className="text-gray-300">
+                                {confirmDialog.message}
+                            </p>
+                        </div>
+                        <div className="flex space-x-3">
+                            <button
+                                type="button"
+                                onClick={() => handleConfirmDialogResponse(false)}
+                                className="flex-1 px-4 py-3 bg-white/5 border border-white/20 text-white font-medium rounded-lg hover:bg-white/10 transition-all"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => handleConfirmDialogResponse(true)}
+                                className="flex-1 px-4 py-3 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition-all"
+                            >
+                                {confirmDialog.confirmLabel}
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
 

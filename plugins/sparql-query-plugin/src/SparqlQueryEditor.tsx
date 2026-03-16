@@ -11,7 +11,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, Trash2, Play, Save, Loader2, ChevronDown, ChevronRight, Download, Database, Code, Table, FileText, RefreshCw, Copy, Check } from 'lucide-react';
-import type { SparqlQuery, SparqlQueryResult, OntologyPrefix, PluginContext, SparqlQueryEditorProps } from './types';
+import type { SparqlQuery, SparqlQueryResult, OntologyPrefix, PluginContext, SparqlQueryEditorProps, SparqlBinding } from './types';
 
 // SPARQL Keywords for basic syntax highlighting
 const SPARQL_KEYWORDS = [
@@ -100,6 +100,7 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
   const [resultsHeight, setResultsHeight] = useState(400);
   const [isResizing, setIsResizing] = useState(false);
   const [activeTab, setActiveTab] = useState<'editor' | 'results'>('editor');
+  const [selectedSample, setSelectedSample] = useState('');
 
   // Fetch saved queries from backend
   const fetchQueries = useCallback(async () => {
@@ -140,6 +141,8 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
     setQueryName(sample.name);
     setResults(null);
     setError(null);
+    // Reset dropdown after a brief delay to show the selection
+    setTimeout(() => setSelectedSample(''), 300);
   };
 
   const handleSaveQuery = async () => {
@@ -215,10 +218,16 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
       const transformedResults: SparqlQueryResult = {
         head: response.head,
         results: {
-          bindings: (response.results as any[]).map((row: Record<string, string>) => {
-            const binding: Record<string, { value: string }> = {};
-            for (const [key, value] of Object.entries(row)) {
-              binding[key] = { value: value || '' };
+          bindings: (response.results?.bindings || []).map((row: Record<string, any>) => {
+            const binding: SparqlBinding = {};
+            for (const [key, val] of Object.entries(row)) {
+              // Handle both simple string values and SparqlBinding objects
+              binding[key] = {
+                type: val?.type || 'literal',
+                value: (typeof val === 'string' ? val : val?.value) || '',
+                datatype: val?.datatype,
+                'xml:lang': val?.['xml:lang']
+              };
             }
             return binding;
           })
@@ -366,13 +375,16 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
         </div>
         <div className="flex items-center gap-2">
           <select
+            value={selectedSample}
             onChange={(e) => {
-              const sample = SAMPLE_QUERIES.find(s => s.name === e.target.value);
-              if (sample) handleLoadSample(sample);
-              e.target.value = '';
+              const selectedValue = e.target.value;
+              setSelectedSample(selectedValue); // Show selection in dropdown
+              const sample = SAMPLE_QUERIES.find(s => s.name === selectedValue);
+              if (sample) {
+                handleLoadSample(sample);
+              }
             }}
             className="text-sm rounded px-2 py-1.5 theme-input"
-            defaultValue=""
           >
             <option value="">Load sample query...</option>
             {SAMPLE_QUERIES.map((s, i) => (

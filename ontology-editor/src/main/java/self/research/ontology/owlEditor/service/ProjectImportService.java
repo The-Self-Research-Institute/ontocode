@@ -19,6 +19,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
@@ -185,8 +186,18 @@ public class ProjectImportService {
         try {
             stage = "detect-format";
             RDFFormat format = detectFormat(owlFile);
-            log.info("[Import {}] Detected RDF format: {}", projectId, format);
-
+            log.info("[Import {}] Detected RDF format: {} (name: {}, defaultFileExtension: {})", 
+                    projectId, format, format.getName(), format.getDefaultFileExtension());
+            
+            // Sanitize the file to fix malformed XML before import
+            stage = "sanitize";
+            try {
+                OWLFormatConverter.sanitizeFileOnDisk(owlFile);
+                log.info("[Import {}] File sanitization completed", projectId);
+            } catch (Exception sanitizeEx) {
+                log.warn("[Import {}] File sanitization failed: {}", projectId, sanitizeEx.getMessage());
+                // Continue anyway - sanitization is best-effort
+            }
 
             stage = "bulk-load";
             log.info("[Import {}] Loading data into GraphDB", projectId);
@@ -419,7 +430,9 @@ public class ProjectImportService {
     }
 
     private RDFFormat detectFormat(Path file) {
-        String fileName = file.getFileName().toString().toLowerCase();
+        String fileName = file.getFileName().toString().toLowerCase(Locale.ROOT);
+        
+        // Unambiguous extensions - trust the extension
         if (fileName.endsWith(".ttl") || fileName.endsWith(".turtle")) {
             return RDFFormat.TURTLE;
         } else if (fileName.endsWith(".nt") || fileName.endsWith(".ntriples")) {
@@ -429,9 +442,85 @@ public class ProjectImportService {
         } else if (fileName.endsWith(".n3")) {
             return RDFFormat.N3;
         }
-        // For .owl/.xml files, RDF4J handles both RDF/XML and OWL/XML as RDFXML format
-        // The RDF4J parser's lenient mode will correctly handle OWL/XML syntax
-        return RDFFormat.RDFXML; // default for .owl and .xml files
+        
+        // For all other files (.owl, .rdf, .xml, or no extension), inspect content
+        RDFFormat detectedFormat = detectFormatByContent(file);
+        if (detectedFormat != null) {
+            log.info("[Format Detection] Detected format by content for {}: {}", fileName, detectedFormat);
+            return detectedFormat;
+        }
+        
+        // Final fallback to RDF/XML
+        log.warn("[Format Detection] Unable to detect format for {}, defaulting to RDF/XML", fileName);
+        return RDFFormat.RDFXML;
+    }
+    
+    /**
+     * Detect RDF format by inspecting file content
+     * @param file The file to inspect
+     * @return Detected format or null if unable to detect
+     */
+    private RDFFormat detectFormatByContent(Path file) {
+        try {
+            // Read first 2KB to detect format
+            byte[] header = java.nio.file.Files.readAllBytes(file);
+            int readLength = Math.min(2048, header.length);
+            
+            // Skip UTF-8 BOM if present
+            int offset = 0;
+            if (header.length >= 3 && header[0] == (byte) 0xEF && 
+                header[1] == (byte) 0xBB && header[2] == (byte) 0xBF) {
+                offset = 3;
+                log.info("[Format Detection] Skipped UTF-8 BOM");
+            }
+            
+            // Skip leading whitespace
+            while (offset < readLength && (header[offset] == ' ' || header[offset] == '\t' || 
+                   header[offset] == '\n' || header[offset] == '\r')) {
+                offset++;
+            }
+            
+            String content = new String(header, offset, Math.min(readLength - offset, 1024), 
+                                       java.nio.charset.StandardCharsets.UTF_8);
+            String contentLower = content.toLowerCase(Locale.ROOT);
+            
+            log.info("[Format Detection] File content preview (first 200 chars): {}", 
+                    content.substring(0, Math.min(200, content.length())));
+            
+            // Check for XML markers FIRST (before N-Triples check which has a loose regex)
+            if (contentLower.startsWith("<?xml") || contentLower.contains("<rdf:rdf") || 
+                contentLower.contains("<owl:ontology") || contentLower.contains("<ontology")) {
+                log.info("[Format Detection] Detected RDF/XML format (found XML markers)");
+                return RDFFormat.RDFXML;
+            }
+            
+            // Check for Turtle/N3 markers
+            if (contentLower.startsWith("@prefix") || contentLower.startsWith("@base") ||
+                contentLower.contains("@prefix ") || contentLower.contains("@base ")) {
+                log.info("[Format Detection] Detected Turtle format (found @prefix or @base directive)");
+                return RDFFormat.TURTLE;
+            }
+            
+            // Check for N-Triples (subject-predicate-object with full URIs starting with http:// or https://)
+            if (content.matches("(?s)^\\s*<https?://[^>]+>\\s+<[^>]+>\\s+.*")) {
+                log.info("[Format Detection] Detected N-Triples format");
+                return RDFFormat.NTRIPLES;
+            }
+            
+            // Check for JSON-LD
+            if (contentLower.trim().startsWith("{") && contentLower.contains("@context")) {
+                log.info("[Format Detection] Detected JSON-LD format");
+                return RDFFormat.JSONLD;
+            }
+            
+            // Unable to detect - return null to use default
+            log.warn("[Format Detection] Unable to detect format by content, will use default RDF/XML");
+            return null;
+            
+        } catch (Exception e) {
+            log.warn("[Format Detection] Failed to detect format by content: {}", e.getMessage());
+            return null;
+        }
     }
 
     /**

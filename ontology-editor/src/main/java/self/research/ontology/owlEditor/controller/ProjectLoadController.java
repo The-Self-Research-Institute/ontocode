@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -234,6 +235,11 @@ public class ProjectLoadController {
             // get a clean file without needing their own stripping logic.
             OWLFormatConverter.sanitizeFileOnDisk(original);
 
+            // Extract citation-entity mappings from uploaded file for smart repositioning
+            // This must be done BEFORE GraphDB import, as GraphDB will reorganize the content
+            log.info("Extracting citation-entity mappings from uploaded file: {}", filename);
+            storageManager.extractCitationMappingsFromFile(original, actualProjectId);
+
             // FIX: Batch metadata updates into single operation for better performance
             // Use the potentially modified filename
             ProjectStatus status = ProjectStatus.uploaded(filename);
@@ -316,6 +322,8 @@ public class ProjectLoadController {
 
     private RDFFormat detectFormat(Path file) {
         String fileName = file.getFileName().toString().toLowerCase(Locale.ROOT);
+        
+        // Unambiguous extensions - trust the extension
         if (fileName.endsWith(".ttl") || fileName.endsWith(".turtle")) {
             return RDFFormat.TURTLE;
         } else if (fileName.endsWith(".nt") || fileName.endsWith(".ntriples")) {
@@ -325,7 +333,82 @@ public class ProjectLoadController {
         } else if (fileName.endsWith(".n3")) {
             return RDFFormat.N3;
         }
-        return RDFFormat.RDFXML; // default
+        
+        // Ambiguous extensions (.owl, .rdf) - inspect content
+        if (fileName.endsWith(".owl") || fileName.endsWith(".rdf")) {
+            RDFFormat detectedFormat = detectFormatByContent(file);
+            if (detectedFormat != null) {
+                log.info("Detected format by content for {}: {}", fileName, detectedFormat);
+                return detectedFormat;
+            }
+        }
+        
+        // Default to RDF/XML
+        return RDFFormat.RDFXML;
+    }
+    
+    /**
+     * Detect RDF format by inspecting file content
+     * @param file The file to inspect
+     * @return Detected format or null if unable to detect
+     */
+    private RDFFormat detectFormatByContent(Path file) {
+        try {
+            // Read first 2KB to detect format
+            byte[] header = java.nio.file.Files.readAllBytes(file);
+            int readLength = Math.min(2048, header.length);
+            
+            // Skip UTF-8 BOM if present
+            int offset = 0;
+            if (header.length >= 3 && header[0] == (byte) 0xEF && 
+                header[1] == (byte) 0xBB && header[2] == (byte) 0xBF) {
+                offset = 3;
+            }
+            
+            // Skip leading whitespace
+            while (offset < readLength && (header[offset] == ' ' || header[offset] == '\t' || 
+                   header[offset] == '\n' || header[offset] == '\r')) {
+                offset++;
+            }
+            
+            String content = new String(header, offset, Math.min(readLength - offset, 1024), 
+                                       java.nio.charset.StandardCharsets.UTF_8);
+            String contentLower = content.toLowerCase(Locale.ROOT);
+            
+            // Check for Turtle/N3 markers
+            if (contentLower.startsWith("@prefix") || contentLower.startsWith("@base") ||
+                contentLower.contains("@prefix ") || contentLower.contains("@base ")) {
+                log.info("Detected Turtle format (found @prefix or @base directive)");
+                return RDFFormat.TURTLE;
+            }
+            
+            // Check for N-Triples (subject-predicate-object with full URIs)
+            if (content.matches("(?s)^\\s*<[^>]+>\\s+<[^>]+>\\s+.*")) {
+                log.info("Detected N-Triples format");
+                return RDFFormat.NTRIPLES;
+            }
+            
+            // Check for XML markers
+            if (contentLower.startsWith("<?xml") || contentLower.contains("<rdf:rdf") || 
+                contentLower.contains("<owl:ontology") || contentLower.contains("<ontology")) {
+                log.info("Detected RDF/XML format (found XML markers)");
+                return RDFFormat.RDFXML;
+            }
+            
+            // Check for JSON-LD
+            if (contentLower.trim().startsWith("{") && contentLower.contains("@context")) {
+                log.info("Detected JSON-LD format");
+                return RDFFormat.JSONLD;
+            }
+            
+            // Unable to detect - return null to use default
+            log.warn("Unable to detect format by content, will use default");
+            return null;
+            
+        } catch (Exception e) {
+            log.warn("Failed to detect format by content: {}", e.getMessage());
+            return null;
+        }
     }
 
     @GetMapping("/status/{projectId}")
@@ -340,7 +423,24 @@ public class ProjectLoadController {
     public ResponseEntity<Resource> export(@PathVariable String projectId,
                                            @RequestParam(defaultValue = "rdfxml") String format) {
         try {
-            Path exportPath = storageManager.exportOntology(projectId, format);
+            Path exportPath;
+            
+            // Check for cached code view content first (preserves citation line positions)
+            Optional<String> cachedContent = storageManager.getCodeViewCache(projectId, format);
+            if (cachedContent.isPresent()) {
+                log.info("[EXPORT] Using cached code view content to preserve citation positions for project: {}, format: {}", 
+                         projectId, format);
+                
+                // Write cached content to temporary export file
+                String extension = storageManager.extensionFor(format);
+                exportPath = storageManager.projectDir(projectId).resolve("ontology.export." + extension);
+                Files.writeString(exportPath, cachedContent.get());
+            } else {
+                // No cache - export from GraphDB (default behavior)
+                log.info("[EXPORT] No cache found, exporting from GraphDB for project: {}, format: {}", projectId, format);
+                exportPath = storageManager.exportOntology(projectId, format);
+            }
+            
             InputStreamResource resource = new InputStreamResource(Files.newInputStream(exportPath));
             return ResponseEntity.ok()
                     .contentType(MediaType.APPLICATION_OCTET_STREAM)
@@ -601,11 +701,27 @@ public class ProjectLoadController {
     @GetMapping("/{projectId}/content")
     public ResponseEntity<Map<String, Object>> getOntologyContent(
             @PathVariable String projectId,
-            @RequestParam(defaultValue = "rdfxml") String format) {
+            @RequestParam(defaultValue = "rdfxml") String format,
+            @RequestParam(defaultValue = "false") boolean forceRefresh) {
         try {
-            log.info("Fetching ontology content for project: {} in format: {}", projectId, format);
+            log.info("Fetching ontology content for project: {} in format: {}, forceRefresh: {}", projectId, format, forceRefresh);
             
-            // Export the ontology in the requested format
+            // Check for cached code view content first (preserves line positions)
+            if (!forceRefresh) {
+                Optional<String> cachedContent = storageManager.getCodeViewCache(projectId, format);
+                if (cachedContent.isPresent()) {
+                    log.info("Returning cached code view content for project: {} in format: {}", projectId, format);
+                    return ResponseEntity.ok(Map.of(
+                            "success", true,
+                            "content", cachedContent.get(),
+                            "format", format,
+                            "projectId", projectId,
+                            "cached", true
+                    ));
+                }
+            }
+            
+            // No cache or force refresh - export from GraphDB
             Path exportPath = storageManager.exportOntology(projectId, format);
             String content = Files.readString(exportPath);
             
@@ -613,7 +729,8 @@ public class ProjectLoadController {
                     "success", true,
                     "content", content,
                     "format", format,
-                    "projectId", projectId
+                    "projectId", projectId,
+                    "cached", false
             ));
         } catch (Exception e) {
             log.error("Failed to get ontology content for project: {}", projectId, e);
@@ -621,6 +738,93 @@ public class ProjectLoadController {
                     .body(Map.of(
                             "success", false,
                             "error", "Failed to get ontology content: " + e.getMessage()
+                    ));
+        }
+    }
+
+    /**
+     * Store code view content in cache to preserve line positions.
+     * POST /api/ontology/{projectId}/code-view-cache
+     * This is used when the user inserts citations at specific lines.
+     * Optionally accepts citation-entity mappings for smart repositioning.
+     */
+    @PostMapping("/{projectId}/code-view-cache")
+    public ResponseEntity<Map<String, Object>> storeCodeViewCache(
+            @PathVariable String projectId,
+            @RequestBody Map<String, Object> request) {
+        try {
+            String content = (String) request.get("content");
+            String format = (String) request.getOrDefault("format", "rdfxml");
+            
+            if (content == null || content.isEmpty()) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("success", false, "error", "Content is required"));
+            }
+            
+            log.info("Storing code view cache for project: {} in format: {}, size: {} bytes", 
+                     projectId, format, content.length());
+            
+            storageManager.storeCodeViewCache(projectId, content, format);
+            
+            // Store citation-entity mapping if provided (for smart repositioning)
+            String citationUrn = (String) request.get("citationUrn");
+            String referencedEntity = (String) request.get("referencedEntity");
+            
+            if (citationUrn != null && referencedEntity != null && !referencedEntity.isEmpty()) {
+                try {
+                    storageManager.storeCitationEntityMapping(projectId, citationUrn, referencedEntity);
+                    log.info("Stored citation-entity mapping: {} -> {}", citationUrn, referencedEntity);
+                } catch (Exception e) {
+                    log.warn("Failed to store citation-entity mapping for project: {}", projectId, e);
+                    // Don't fail the whole request, metadata is optional
+                }
+            }
+            
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "projectId", projectId,
+                    "format", format,
+                    "message", "Code view cache stored successfully"
+            ));
+        } catch (Exception e) {
+            log.error("Failed to store code view cache for project: {}", projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of(
+                            "success", false,
+                            "error", "Failed to store code view cache: " + e.getMessage()
+                    ));
+        }
+    }
+
+    /**
+     * Clear code view cache for a project.
+     * DELETE /api/ontology/{projectId}/code-view-cache
+     * Optionally specify format to clear only specific format cache.
+     */
+    @DeleteMapping("/{projectId}/code-view-cache")
+    public ResponseEntity<Map<String, Object>> clearCodeViewCache(
+            @PathVariable String projectId,
+            @RequestParam(required = false) String format) {
+        try {
+            log.info("Clearing code view cache for project: {}, format: {}", projectId, format);
+            
+            if (format != null && !format.isEmpty()) {
+                storageManager.clearCodeViewCacheFormat(projectId, format);
+            } else {
+                storageManager.clearCodeViewCache(projectId);
+            }
+            
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "projectId", projectId,
+                    "message", "Code view cache cleared successfully"
+            ));
+        } catch (Exception e) {
+            log.error("Failed to clear code view cache for project: {}", projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of(
+                            "success", false,
+                            "error", "Failed to clear code view cache: " + e.getMessage()
                     ));
         }
     }

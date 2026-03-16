@@ -22,7 +22,7 @@ const getBaseUrlForDeployment = (deploymentType: string) => {
     // For testing: Cloud URL pointing to localhost===================>
     return deploymentType === 'self-hosted' 
         ? 'http://localhost:80'
-        : 'http://13.218.153.101';
+        : 'https://ontocodeapi.selfresearch.org';
 };
 
 // Get initial base URL
@@ -76,7 +76,12 @@ const pending = new Map<
 class ApiClient {
   private static _instance: ApiClient;
   private axiosClient: AxiosInstance | null = null;
-  private isVSCode = typeof window !== 'undefined' && !!window.vscode; //
+  // In web extension mode or browser bridge mode, bypass the VS Code proxy
+  // Use direct axios/fetch instead
+  private isVSCode = typeof window !== 'undefined' && 
+                     !!window.vscode && 
+                     !(window as any).__ONTOCODE_CONFIG__?.IS_WEB_EXTENSION &&
+                     !(window as any).__ONTOCODE_BROWSER_BRIDGE__;
   private listenerAttached = false;
   private onUnauthorized?: () => void; // Callback for 401 errors
 
@@ -93,11 +98,16 @@ class ApiClient {
   }
 
   private constructor() {
+    console.log('[ApiClient] Initializing - isVSCode:', this.isVSCode, 
+                'IS_WEB_EXTENSION:', (window as any).__ONTOCODE_CONFIG__?.IS_WEB_EXTENSION);
+    
     if (this.isVSCode) {
-      // If in VS Code, set up the message listener
+      // If in VS Code desktop, set up the message listener for proxy
+      console.log('[ApiClient] Using VS Code extension proxy for API requests');
       this.attachVSCodeListener();
     } else {
-      // If in browser, set up a standard Axios client
+      // If in browser or web extension, set up a standard Axios client
+      console.log('[ApiClient] Using direct axios for API requests (baseURL:', BASE_URL, ')');
       this.setupAxios();
     }
   }
@@ -174,19 +184,26 @@ class ApiClient {
     this.axiosClient = axios.create({
       baseURL: BASE_URL,
       headers: { 
-        'Content-Type': 'application/json',
-        'Accept-Encoding': 'identity' // Disable compression
+        'Content-Type': 'application/json'
       },
       timeout: TIMEOUT,
       maxContentLength: Infinity,
-      maxBodyLength: Infinity,
-      decompress: false // Disable automatic decompression to avoid zlib
+      maxBodyLength: Infinity
     });
 
     // Request interceptor to add auth token
     this.axiosClient.interceptors.request.use((config) => {
+      // Try to get token from localStorage (webview context shares localStorage with the page)
+      // In VS Code webview, the extension updates localStorage when the token changes
       const token = localStorage.getItem('authToken');
-      if (token && config.headers) config.headers.Authorization = `Bearer ${token}`;
+      console.log('[ApiClient] Interceptor - URL:', config.url, '| Token present:', !!token, '| Token length:', token?.length);
+      if (token && config.headers) {
+        config.headers.Authorization = `Bearer ${token}`;
+        console.log('[ApiClient] ✓ Authorization header added');
+      } else {
+        console.warn('[ApiClient] ✗ No token found in localStorage - request will fail if authentication required');
+        console.warn('[ApiClient] localStorage keys:', Object.keys(localStorage));
+      }
       return config;
     });
 

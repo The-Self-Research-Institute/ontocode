@@ -15,6 +15,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.plugins.service.ReasonerService;
 import self.research.ontology.plugins.service.ReasonerType;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.http.HttpStatus;
 
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -41,11 +44,19 @@ public class ReasonerController {
     @Autowired
     private ReasonerService reasonerService;
 
+    @Value("${ontology.editor.url:http://owl-editor:8082}")
+    private String editorServiceUrl;
+
+    private final RestTemplate restTemplate = new RestTemplate();
+
     // Cache for loaded ontologies
     private final Map<String, OWLOntology> ontologyCache = new HashMap<>();
 
     /**
-     * Load ontology from GridFS
+     * Load ontology from multiple sources in priority order:
+     * 1. Editor service (for ontologies being edited)
+     * 2. GridFS (for uploaded ontologies)
+     * 3. Local filesystem (development fallback)
      */
     private OWLOntology loadOntology(String projectId) throws Exception {
         log.info("Loading ontology for project: {}", projectId);
@@ -55,7 +66,14 @@ public class ReasonerController {
             return ontologyCache.get(projectId);
         }
 
-        // Try metadata.projectId first, then fall back to filename to match ontology-editor storage
+        // 1. Try editor service first (for ontologies being edited in the IDE)
+        OWLOntology editorOntology = loadOntologyFromEditorService(projectId);
+        if (editorOntology != null) {
+            ontologyCache.put(projectId, editorOntology);
+            return editorOntology;
+        }
+
+        // 2. Try GridFS (for uploaded ontologies)
         GridFSFile file = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(projectId)));
         if (file == null) {
             log.warn("File not found with metadata.projectId={}, trying filename", projectId);
@@ -74,15 +92,43 @@ public class ReasonerController {
             }
         }
 
-        // Fallback: try loading from local filesystem (dev convenience)
+        // 3. Fallback: try loading from local filesystem (dev convenience)
         OWLOntology filesystemOntology = loadOntologyFromFilesystem(projectId);
         if (filesystemOntology != null) {
             ontologyCache.put(projectId, filesystemOntology);
             return filesystemOntology;
         }
 
-        log.error("Ontology file not found for project: {} (GridFS + filesystem)", projectId);
-        throw new RuntimeException("Ontology file not found for project: " + projectId);
+        log.error("Ontology file not found for project: {} (tried: editor service, GridFS, filesystem)", projectId);
+        throw new RuntimeException("Ontology file not found for project: " + projectId + 
+            ". Make sure the ontology is either being edited in the IDE or has been uploaded to the system.");
+    }
+
+    /**
+     * Fetch ontology from the editor service API
+     */
+    private OWLOntology loadOntologyFromEditorService(String projectId) {
+        try {
+            String url = editorServiceUrl + "/api/ontology-file/" + projectId;
+            log.info("Fetching ontology from editor service: {}", url);
+            
+            ResponseEntity<byte[]> response = restTemplate.getForEntity(url, byte[].class);
+            
+            if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
+                try (InputStream inputStream = new java.io.ByteArrayInputStream(response.getBody())) {
+                    OWLOntology ontology = loadOntologyFromStream(projectId, inputStream, "editor service");
+                    if (ontology != null) {
+                        log.info("Successfully loaded ontology from editor service");
+                        return ontology;
+                    }
+                }
+            } else {
+                log.warn("Editor service returned status {} for project {}", response.getStatusCode(), projectId);
+            }
+        } catch (Exception e) {
+            log.warn("Could not fetch ontology from editor service for project {}: {}", projectId, e.getMessage());
+        }
+        return null;
     }
 
     private OWLOntology loadOntologyFromStream(String projectId, InputStream inputStream, String sourceDescription) {
@@ -261,6 +307,15 @@ public class ReasonerController {
             
         } catch (Exception e) {
             log.error("Error during realization", e);
+            if (e.getMessage() != null && e.getMessage().contains("Ontology file not found")) {
+                return ResponseEntity.status(404).body(Map.of(
+                    "success", false,
+                    "error", e.getMessage(),
+                    "errorType", "ONTOLOGY_NOT_FOUND",
+                    "projectId", projectId,
+                    "suggestion", "Please upload an ontology file for this project. Use /api/reasoner/diagnose/" + projectId + " to investigate."
+                ));
+            }
             return ResponseEntity.status(500).body(Map.of(
                 "success", false,
                 "error", e.getMessage()
@@ -294,6 +349,15 @@ public class ReasonerController {
             
         } catch (Exception e) {
             log.error("Error explaining inconsistency", e);
+            if (e.getMessage() != null && e.getMessage().contains("Ontology file not found")) {
+                return ResponseEntity.status(404).body(Map.of(
+                    "success", false,
+                    "error", e.getMessage(),
+                    "errorType", "ONTOLOGY_NOT_FOUND",
+                    "projectId", projectId,
+                    "suggestion", "Please upload an ontology file for this project. Use /api/reasoner/diagnose/" + projectId + " to investigate."
+                ));
+            }
             return ResponseEntity.status(500).body(Map.of(
                 "success", false,
                 "error", e.getMessage()
@@ -339,6 +403,15 @@ public class ReasonerController {
             
         } catch (Exception e) {
             log.error("Error getting inferred axioms", e);
+            if (e.getMessage() != null && e.getMessage().contains("Ontology file not found")) {
+                return ResponseEntity.status(404).body(Map.of(
+                    "success", false,
+                    "error", e.getMessage(),
+                    "errorType", "ONTOLOGY_NOT_FOUND",
+                    "projectId", projectId,
+                    "suggestion", "Please upload an ontology file for this project. Use /api/reasoner/diagnose/" + projectId + " to investigate."
+                ));
+            }
             return ResponseEntity.status(500).body(Map.of(
                 "success", false,
                 "error", e.getMessage()
@@ -367,6 +440,15 @@ public class ReasonerController {
             
         } catch (Exception e) {
             log.error("Error getting reasoner stats", e);
+            if (e.getMessage() != null && e.getMessage().contains("Ontology file not found")) {
+                return ResponseEntity.status(404).body(Map.of(
+                    "success", false,
+                    "error", e.getMessage(),
+                    "errorType", "ONTOLOGY_NOT_FOUND",
+                    "projectId", projectId,
+                    "suggestion", "Please upload an ontology file for this project. Use /api/reasoner/diagnose/" + projectId + " to investigate."
+                ));
+            }
             return ResponseEntity.status(500).body(Map.of(
                 "success", false,
                 "error", e.getMessage()
@@ -394,6 +476,109 @@ public class ReasonerController {
             return ResponseEntity.status(500).body(Map.of(
                 "success", false,
                 "error", e.getMessage()
+            ));
+        }
+    }
+
+    /**
+     * Diagnostic endpoint to check GridFS file storage status
+     * GET /api/reasoner/diagnose/{projectId}
+     */
+    @GetMapping("/diagnose/{projectId}")
+    public ResponseEntity<Map<String, Object>> diagnoseFileStorage(@PathVariable String projectId) {
+        try {
+            Map<String, Object> diagnosis = new HashMap<>();
+            diagnosis.put("projectId", projectId);
+            diagnosis.put("timestamp", new java.util.Date());
+            
+            // Check GridFS by metadata.projectId
+            GridFSFile fileByMetadata = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(projectId)));
+            if (fileByMetadata != null) {
+                diagnosis.put("foundInGridFS", true);
+                diagnosis.put("searchMethod", "metadata.projectId");
+                diagnosis.put("gridfsFileId", fileByMetadata.getObjectId().toString());
+                diagnosis.put("filename", fileByMetadata.getFilename());
+                diagnosis.put("uploadDate", fileByMetadata.getUploadDate());
+                diagnosis.put("length", fileByMetadata.getLength());
+                diagnosis.put("metadata", fileByMetadata.getMetadata());
+                diagnosis.put("status", "OK - File found in GridFS");
+            } else {
+                // Try by filename
+                GridFSFile fileByFilename = gridfs.findOne(new Query(Criteria.where("filename").is(projectId + ".owl")));
+                if (fileByFilename != null) {
+                    diagnosis.put("foundInGridFS", true);
+                    diagnosis.put("searchMethod", "filename");
+                    diagnosis.put("gridfsFileId", fileByFilename.getObjectId().toString());
+                    diagnosis.put("filename", fileByFilename.getFilename());
+                    diagnosis.put("uploadDate", fileByFilename.getUploadDate());
+                    diagnosis.put("length", fileByFilename.getLength());
+                    diagnosis.put("metadata", fileByFilename.getMetadata());
+                    diagnosis.put("warning", "File found by filename only, not by metadata.projectId");
+                } else {
+                    diagnosis.put("foundInGridFS", false);
+                    diagnosis.put("status", "ERROR - File not found in GridFS");
+                }
+            }
+            
+            // Check filesystem fallback locations
+            List<Map<String, Object>> filesystemChecks = new ArrayList<>();
+            List<Path> candidateFiles = Arrays.asList(
+                Paths.get("..", "ontology-editor", "data", "projects", projectId, "ontology.current.owl"),
+                Paths.get("..", "ontology-editor", "data", "projects", projectId, "ontology.original.owl"),
+                Paths.get("ontology-editor", "data", "projects", projectId, "ontology.current.owl"),
+                Paths.get(projectId + ".owl")
+            );
+            
+            for (Path candidate : candidateFiles) {
+                Path absolute = candidate.toAbsolutePath().normalize();
+                Map<String, Object> fileCheck = new HashMap<>();
+                fileCheck.put("path", absolute.toString());
+                fileCheck.put("exists", Files.exists(absolute));
+                if (Files.exists(absolute)) {
+                    fileCheck.put("size", Files.size(absolute));
+                    fileCheck.put("lastModified", Files.getLastModifiedTime(absolute).toString());
+                }
+                filesystemChecks.add(fileCheck);
+            }
+            diagnosis.put("filesystemFallback", filesystemChecks);
+            
+            // Check if cached
+            diagnosis.put("cachedInMemory", ontologyCache.containsKey(projectId));
+            
+            // List recent GridFS files for reference
+            List<Map<String, Object>> recentFiles = new ArrayList<>();
+            gridfs.find(new Query().limit(10))
+                .sort(new org.bson.Document("uploadDate", -1))
+                .forEach(file -> {
+                    Map<String, Object> fileInfo = new HashMap<>();
+                    fileInfo.put("filename", file.getFilename());
+                    fileInfo.put("uploadDate", file.getUploadDate());
+                    fileInfo.put("fileId", file.getObjectId().toString());
+                    if (file.getMetadata() != null) {
+                        fileInfo.put("metadata", file.getMetadata());
+                    }
+                    recentFiles.add(fileInfo);
+                });
+            diagnosis.put("recentGridFSFiles", recentFiles);
+            
+            // Provide suggestions
+            List<String> suggestions = new ArrayList<>();
+            if (!diagnosis.containsKey("foundInGridFS") || !(Boolean) diagnosis.get("foundInGridFS")) {
+                suggestions.add("File not found in GridFS - the upload may have failed or the file was deleted");
+                suggestions.add("Check if the project was copied without copying the ontology file");
+                suggestions.add("Try re-uploading the ontology file or copying from the original project");
+                suggestions.add("Check MongoDB GridFS collections: db.fs.files and db.fs.chunks");
+            }
+            diagnosis.put("suggestions", suggestions);
+            
+            return ResponseEntity.ok(diagnosis);
+            
+        } catch (Exception e) {
+            log.error("Error diagnosing file storage for project: {}", projectId, e);
+            return ResponseEntity.status(500).body(Map.of(
+                "success", false,
+                "error", e.getMessage(),
+                "projectId", projectId
             ));
         }
     }

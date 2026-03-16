@@ -26,22 +26,25 @@ RUN --mount=type=cache,target=/root/.m2 \
         clean package -pl ontology-editor -DskipTests -B -ntp
 
 # Runtime stage
-FROM eclipse-temurin:21-jre-alpine
+FROM eclipse-temurin:21-jre
 
 WORKDIR /app
 
 # Add non-root user for security
-RUN addgroup -g 1000 appuser && \
-    adduser -D -u 1000 -G appuser appuser
+RUN if ! getent group 1000 >/dev/null; then groupadd -g 1000 appuser; else echo "Group 1000 already exists"; fi && \
+    if ! getent passwd 1000 >/dev/null; then useradd -u 1000 -g 1000 -m -s /bin/bash appuser; else echo "User 1000 already exists"; fi
+
+# Install wget for health checks
+RUN apt-get update && apt-get install -y wget && rm -rf /var/lib/apt/lists/*
 
 # Create directories for data and logs
 RUN mkdir -p /app/data /app/logs && \
-    chown -R appuser:appuser /app
+    chown -R 1000:1000 /app
 
 # Copy the built JAR (spring-boot:repackage creates executable JAR)
 COPY --from=build /build/ontology-editor/target/*.jar app.jar
 
-USER appuser
+USER 1000
 
 # Expose editor port
 EXPOSE 8083

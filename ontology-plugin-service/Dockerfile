@@ -1,4 +1,4 @@
-FROM eclipse-temurin:21-jdk-alpine AS build
+FROM maven:3.9-eclipse-temurin-21 AS build
 
 WORKDIR /app
 
@@ -9,12 +9,14 @@ COPY pom.xml .
 COPY src ./src
 
 # Build the application
-RUN apk add --no-cache maven && \
-    mvn clean package -DskipTests
+RUN mvn clean package -DskipTests
 
-FROM eclipse-temurin:21-jre-alpine
+FROM eclipse-temurin:21-jre
 
 WORKDIR /app
+
+# Install wget for health checks
+RUN apt-get update && apt-get install -y wget && rm -rf /var/lib/apt/lists/*
 
 # Copy the built JAR from build stage
 COPY --from=build /app/target/*.jar app.jar

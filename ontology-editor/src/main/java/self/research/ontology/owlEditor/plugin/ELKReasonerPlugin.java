@@ -12,6 +12,7 @@ import java.util.HashMap;
 /**
  * ELK Reasoner Plugin
  * Provides ELK reasoning capabilities (fast, scalable EL reasoner)
+ * Using elk-owlapi version 0.4.3 compatible with OWL API 5.x
  */
 public class ELKReasonerPlugin implements ReasonerPlugin {
 
@@ -27,7 +28,7 @@ public class ELKReasonerPlugin implements ReasonerPlugin {
         metadata = new PluginMetadata();
         metadata.setId("elk-reasoner");
         metadata.setName("ELK Reasoner");
-        metadata.setVersion("0.5.0");
+        metadata.setVersion("0.4.3");
         metadata.setDescription("Fast and scalable EL reasoner. Optimized for large ontologies with EL expressivity.");
         metadata.setAuthor("OntoCode Team");
         metadata.setAuthorEmail("support@ontocode.dev");
@@ -48,7 +49,7 @@ public class ELKReasonerPlugin implements ReasonerPlugin {
     public void initialize() throws PluginException {
         try {
             reasonerFactory = new ElkReasonerFactory();
-            log.info("ELK Reasoner Plugin initialized");
+            log.info("ELK Reasoner Plugin initialized (version 0.4.3)");
         } catch (Exception e) {
             throw new PluginException("Failed to initialize ELK reasoner", e);
         }

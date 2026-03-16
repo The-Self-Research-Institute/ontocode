@@ -27,7 +27,7 @@ interface Sci2CodeAPI {
 
 class Sci2CodeService {
   private api: Sci2CodeAPI | null = null;
-  private extensionId = 'SelfResearchInstitute.sci2code'; // IMPORTANT: Update with actual extension ID
+  private extensionId = 'self.ontocode-extension'; // Use OntoCode's own extension ID
   private initializationAttempted = false;
 
   async initialize(): Promise<boolean> {
@@ -210,29 +210,64 @@ class Sci2CodeService {
     const year = item.date ? (item.date.match(/\d{4}/)?.[0] || '') : '';
     
     if (format === 'turtle') {
-      let ttl = `###  Manual Citation: ${item.title}\n`;
-      ttl += `:${key} rdf:type owl:NamedIndividual ,\n`;
+      let ttl = `@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n`;
+      ttl += `@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n`;
+      ttl += `@prefix owl: <http://www.w3.org/2002/07/owl#> .\n`;
+      ttl += `@prefix dc: <http://purl.org/dc/elements/1.1/> .\n`;
+      ttl += `@prefix foaf: <http://xmlns.com/foaf/0.1/> .\n`;
+      ttl += `@prefix prov: <http://www.w3.org/ns/prov#> .\n`;
+      ttl += `@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n`;
+      ttl += `###  Manual Citation: ${item.title}\n`;
+      ttl += `<urn:citation:${key}> rdf:type owl:NamedIndividual ,\n`;
       ttl += `         prov:Entity ;\n`;
-      ttl += `    dc:title "${item.title}" ;\n`;
-      ttl += `    dc:creator "${authors}" ;\n`;
+      ttl += `    dc:title "${this.escapeTurtle(item.title)}" ;\n`;
+      ttl += `    dc:creator "${this.escapeTurtle(authors)}" ;\n`;
       if (year) ttl += `    dc:date "${year}"^^xsd:gYear ;\n`;
-      if (item.doi) ttl += `    dc:identifier "doi:${item.doi}" ;\n`;
+      if (item.doi) ttl += `    dc:identifier "doi:${this.escapeTurtle(item.doi)}" ;\n`;
       if (item.url) ttl += `    foaf:homepage <${item.url}> ;\n`;
       ttl += `    rdfs:comment "Manually added citation" .\n`;
       return ttl;
     } else {
-      let xml = `    <!-- Manual Citation: ${item.title} -->\n`;
-      xml += `    <owl:NamedIndividual rdf:about="&ont;${key}">\n`;
+      // Generate complete RDF/XML document with proper namespace declarations
+      let xml = `<?xml version="1.0"?>\n`;
+      xml += `<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\n`;
+      xml += `         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"\n`;
+      xml += `         xmlns:owl="http://www.w3.org/2002/07/owl#"\n`;
+      xml += `         xmlns:dc="http://purl.org/dc/elements/1.1/"\n`;
+      xml += `         xmlns:foaf="http://xmlns.com/foaf/0.1/"\n`;
+      xml += `         xmlns:prov="http://www.w3.org/ns/prov#"\n`;
+      xml += `         xmlns:xsd="http://www.w3.org/2001/XMLSchema#">\n\n`;
+      xml += `    <!-- Manual Citation: ${this.escapeXml(item.title)} -->\n`;
+      xml += `    <owl:NamedIndividual rdf:about="urn:citation:${key}">\n`;
       xml += `        <rdf:type rdf:resource="http://www.w3.org/ns/prov#Entity"/>\n`;
-      xml += `        <dc:title>${item.title}</dc:title>\n`;
-      xml += `        <dc:creator>${authors}</dc:creator>\n`;
-      if (year) xml += `        <dc:date rdf:datatype="&xsd;gYear">${year}</dc:date>\n`;
-      if (item.doi) xml += `        <dc:identifier>doi:${item.doi}</dc:identifier>\n`;
-      if (item.url) xml += `        <foaf:homepage rdf:resource="${item.url}"/>\n`;
+      xml += `        <dc:title>${this.escapeXml(item.title)}</dc:title>\n`;
+      xml += `        <dc:creator>${this.escapeXml(authors)}</dc:creator>\n`;
+      if (year) xml += `        <dc:date rdf:datatype="http://www.w3.org/2001/XMLSchema#gYear">${year}</dc:date>\n`;
+      if (item.doi) xml += `        <dc:identifier>doi:${this.escapeXml(item.doi)}</dc:identifier>\n`;
+      if (item.url) xml += `        <foaf:homepage rdf:resource="${this.escapeXml(item.url)}"/>\n`;
       xml += `        <rdfs:comment>Manually added citation</rdfs:comment>\n`;
       xml += `    </owl:NamedIndividual>\n`;
+      xml += `</rdf:RDF>`;
       return xml;
     }
+  }
+
+  private escapeTurtle(str: string): string {
+    return str
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, '\\n')
+      .replace(/\r/g, '\\r')
+      .replace(/\t/g, '\\t');
+  }
+
+  private escapeXml(str: string): string {
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
   }
 
   isAvailable(): boolean {

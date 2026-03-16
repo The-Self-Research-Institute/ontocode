@@ -117,6 +117,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         if (window.vscode) {
             window.vscode.postMessage({ type: 'logout' });
+        } else {
+            // Clear localStorage in browser/web mode
+            localStorage.removeItem('authToken');
         }
         console.log('[AuthContext]  Logout successful');
     }, []);
@@ -133,10 +136,54 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (window.vscode) {
             window.vscode.postMessage({ type: 'requestAuthToken' });
         } else {
-            console.warn("Not in a VSCode webview environment. Authentication will not persist.");
+            // Browser/Web mode - check localStorage directly
+            console.log('[AuthContext] Browser mode - checking localStorage for auth token');
+            const token = localStorage.getItem('authToken');
+            
+            if (token) {
+                // Check if token is expired
+                if (isTokenExpired(token)) {
+                    console.log('[AuthContext] Stored token is expired, clearing');
+                    localStorage.removeItem('authToken');
+                    setLoading(false);
+                    return;
+                }
+                
+                // Decode JWT to get user info
+                const userInfo = decodeToken(token);
+                const deploymentType = getStoredDeploymentType();
+                
+                // Cloud users are always admins
+                const isAdmin = deploymentType === 'cloud' ? true : (userInfo.isAdmin || false);
+                
+                const requiresWorkspace = shouldRequireWorkspaceSelection(
+                    deploymentType,
+                    isAdmin,
+                    userInfo.workspaceId
+                );
+
+                // Persist user state from token
+                setUser({ 
+                    token: token,
+                    userId: userInfo.userId,
+                    username: userInfo.username, 
+                    email: userInfo.email,
+                    roles: userInfo.roles,
+                    isAdmin: isAdmin,
+                    workspaceId: userInfo.workspaceId,
+                    workspaceName: userInfo.workspaceName,
+                    workspaceRole: userInfo.workspaceRole,
+                    subscriptionPlan: userInfo.subscriptionPlan
+                });
+
+                // Workspace selection based on deployment choice and role
+                setNeedsWorkspaceSelection(requiresWorkspace);
+                setSessionExpiredMessage(null);
+            }
+            
             setLoading(false);
         }
-    }, []);
+    }, [logout]);
 
     useEffect(() => {
         requestTokenFromVSCode();
@@ -243,8 +290,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
 
             console.log('[AuthContext] User isAdmin:', isAdmin);
-            console.log('[AuthContext] Saving token to VS Code...');
+            console.log('[AuthContext] Saving token to localStorage...');
+            
+            // Always save to localStorage for webview API client
+            localStorage.setItem('authToken', token);
+            console.log('[AuthContext] Token saved. Verify:', !!localStorage.getItem('authToken'));
+            
             if (window.vscode) {
+                // Also save to VS Code secure storage for persistence
                 window.vscode.postMessage({ type: 'saveAuthToken', token });
             }
             
@@ -276,7 +329,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     
                     const newToken = roleResponse?.jwt || roleResponse?.token || roleResponse?.data?.jwt || roleResponse?.data?.token;
                     if (newToken) {
+                        // Always save to localStorage for webview API client
+                        localStorage.setItem('authToken', newToken);
+                        console.log('[AuthContext] Updated token saved. Verify:', !!localStorage.getItem('authToken'));
+                        
                         if (window.vscode) {
+                            // Also save to VS Code secure storage
                             window.vscode.postMessage({ type: 'saveAuthToken', token: newToken });
                         }
                         
@@ -358,8 +416,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
             // If we have a token, user is logged in immediately (no email verification)
             if (token) {
-                console.log('[AuthContext] Saving token to VS Code...');
+                console.log('[AuthContext] Saving token to localStorage...');
+                // Always save to localStorage for webview API client
+                localStorage.setItem('authToken', token);
+                
                 if (window.vscode) {
+                    // Also save to VS Code secure storage
                     window.vscode.postMessage({ type: 'saveAuthToken', token });
                 }
                 
@@ -393,7 +455,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         
                         const newToken = roleResponse?.jwt || roleResponse?.token || roleResponse?.data?.jwt || roleResponse?.data?.token;
                         if (newToken) {
+                            // Always save to localStorage for webview API client
+                            localStorage.setItem('authToken', newToken);
+                            
                             if (window.vscode) {
+                                // Also save to VS Code secure storage
                                 window.vscode.postMessage({ type: 'saveAuthToken', token: newToken });
                             }
                             
@@ -461,8 +527,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // Handle skip workspace case - user continues without workspace
         if (workspaceData.skipWorkspace) {
             console.log('[AuthContext] User skipped workspace selection, continuing to editor');
+            console.log('[AuthContext] Setting needsWorkspaceSelection to false');
             setNeedsWorkspaceSelection(false);
             // User stays logged in but without workspace context
+            // The editor will work in non-workspace mode
             return;
         }
         
@@ -471,7 +539,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
 
         // Save new workspace-scoped token
+        // Always save to localStorage for webview API client
+        localStorage.setItem('authToken', workspaceData.jwt);
+        
         if (window.vscode) {
+            // Also save to VS Code secure storage
             window.vscode.postMessage({ type: 'saveAuthToken', token: workspaceData.jwt });
         }
 
@@ -520,7 +592,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         try {
             // Update the workspace subscription plan
             const response = await apiClient.patch(`/api/workspaces/${user.workspaceId}/subscription`, {
-                plan: planId
+                subscriptionPlan: planId
             });
 
             // Update user context with new workspace subscription plan
@@ -554,7 +626,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             // Update token and user state with new role
             const token = response?.jwt || response?.token || response?.data?.jwt || response?.data?.token;
             if (token) {
+                // Always save to localStorage for webview API client
+                localStorage.setItem('authToken', token);
+                
                 if (window.vscode) {
+                    // Also save to VS Code secure storage
                     window.vscode.postMessage({ type: 'saveAuthToken', token });
                 }
                 

@@ -49,7 +49,7 @@
       },
       {
         "command": "ontocode.editLargeFile",
-        "title": "OntoCode: Process Large OWL File",
+        "title": "OntoCode: Edit Ontology File",
         "category": "OntoCode"
       },
       {
@@ -65,6 +65,26 @@
       {
         "command": "ontocode.showCollaborationStatus",
         "title": "OntoCode: Show Collaboration Status",
+        "category": "OntoCode"
+      },
+      {
+        "command": "ontocode.configureZotero",
+        "title": "OntoCode: Configure Zotero Integration",
+        "category": "OntoCode"
+      },
+      {
+        "command": "ontocode.testZoteroConnection",
+        "title": "OntoCode: Test Zotero Connection",
+        "category": "OntoCode"
+      },
+      {
+        "command": "ontocode.testInvitationFlow",
+        "title": "OntoCode: Test Invitation Flow",
+        "category": "OntoCode"
+      },
+      {
+        "command": "ontocode.openWebview",
+        "title": "Open WebView",
         "category": "OntoCode"
       }
     ],
@@ -87,7 +107,7 @@
         },
         {
           "command": "ontocode.editLargeFile",
-          "when": "resourceFilename =~ /\\.owl$/i",
+          "when": "resourceFilename =~ /\\.(owl|ttl|rdf)$/i",
           "group": "navigation"
         }
       ]
@@ -112,7 +132,38 @@
         ],
         "configuration": "./language-configuration.json"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "OntoCode",
+      "properties": {
+        "ontocode.zotero.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Your Zotero API key (get from https://www.zotero.org/settings/keys)",
+          "markdownDescription": "Your Zotero API key. Get one from [Zotero Settings](https://www.zotero.org/settings/keys)"
+        },
+        "ontocode.zotero.userId": {
+          "type": "string",
+          "default": "",
+          "description": "Your Zotero user ID (found in API key page)",
+          "markdownDescription": "Your Zotero user ID. Found on your [API keys page](https://www.zotero.org/settings/keys)"
+        },
+        "ontocode.zotero.libraryType": {
+          "type": "string",
+          "enum": [
+            "user",
+            "group"
+          ],
+          "default": "user",
+          "description": "Type of Zotero library (user or group)"
+        },
+        "ontocode.zotero.groupId": {
+          "type": "string",
+          "default": "",
+          "description": "Group ID if using a group library"
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run bundle:extension",
@@ -123,7 +174,9 @@
     "test": "node ./out/test/runTest.js",
     "build-webview": "cd webview-src && npm run build",
     "compile-web": "webpack --config webpack.config.js --mode development --watch",
-    "test-web": "npm run bundle:web && vscode-test-web --browserType=chromium --extensionDevelopmentPath=./ ../",
+    "test-web": "npm run bundle:web && vscode-test-web --browserType=chromium --extensionDevelopmentPath=./ ./workspace",
+    "test-web:server": "npm run bundle:web && vscode-test-web --browserType=none --port=3000 --host=0.0.0.0 --extensionDevelopmentPath=./ ./workspace",
+    "test-web:dev": "vscode-test-web --browserType=chromium --port=3000 --extensionDevelopmentPath=./ ./workspace",
     "dev-webview": "cd webview-src && npm run dev",
     "bundle:extension": "webpack --config webpack.extension.js --mode production",
     "bundle:webview": "cd webview-src && npm run build",
@@ -144,20 +197,20 @@
     "@types/vscode": "^1.74.0",
     "@typescript-eslint/eslint-plugin": "^5.45.0",
     "@typescript-eslint/parser": "^5.45.0",
-    "@vscode/test-web": "^0.0.75",
+    "@vscode/test-web": "^0.0.80",
     "assert": "^2.1.0",
-    "pako": "^2.1.0",
     "buffer": "^6.0.3",
     "copy-webpack-plugin": "^12.0.2",
     "cross-env": "^10.1.0",
     "css-loader": "^7.1.2",
     "css-minimizer-webpack-plugin": "^7.0.4",
     "eslint": "^8.28.0",
-    "readable-stream": "^2.3.8",
     "html-webpack-plugin": "^5.6.5",
     "https-browserify": "^1.0.0",
     "mini-css-extract-plugin": "^2.9.4",
+    "pako": "^2.1.0",
     "process": "^0.11.10",
+    "readable-stream": "^2.3.8",
     "stream-browserify": "^3.0.0",
     "stream-http": "^3.2.0",
     "style-loader": "^4.0.0",
@@ -166,18 +219,17 @@
     "typescript": "^4.9.4",
     "url": "^0.11.4",
     "util": "^0.12.5",
+    "vsce": "^2.15.0",
     "webpack": "^5.103.0",
     "webpack-bundle-analyzer": "^5.0.1",
-    "webpack-cli": "^6.0.1",
-    "vsce": "^2.15.0"
+    "webpack-cli": "^6.0.1"
   },
   "dependencies": {
-    "-": "^0.0.1",
     "@stomp/stompjs": "^7.0.0",
-    "axios": "^1.10.0",
+    "axios": "^1.13.6",
     "crypto-browserify": "^3.12.1",
     "dotenv": "^16.4.5",
-    "form-data": "^4.0.3",
+    "form-data": "^4.0.5",
     "fs-extra": "^11.1.0",
     "lucide-react": "^0.525.0",
     "path-browserify": "^1.0.1",
