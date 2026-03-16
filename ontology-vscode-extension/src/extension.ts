@@ -128,6 +128,13 @@ async function updateDeploymentUrls(context: vscode.ExtensionContext) {
 }
 
 /**
+ * Check if running in web extension context (vscode-web)
+ */
+function isWebExtensionContext(): boolean {
+    return typeof process === 'undefined' || !process.versions || !process.versions.electron;
+}
+
+/**
  * Parse JWT token to extract user information
  * @param token JWT token string
  * @returns Decoded token payload or null if invalid
@@ -367,6 +374,9 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         // Fix: Made command handler async to support async panel creation/file upload.
         vscode.commands.registerCommand('ontocode.edit', async () => {
+            const isWeb = isWebExtensionContext();
+            console.log(`[OntoCode] Edit command triggered (Web mode: ${isWeb})`);
+            
             // Check if there's an active ontology file first
             const activeEditor = vscode.window.activeTextEditor;
             const fileName = activeEditor?.document.fileName.toLowerCase() || '';
@@ -391,11 +401,16 @@ export function activate(context: vscode.ExtensionContext) {
                 });
                 
                 if (fileUri && fileUri[0]) {
-                    console.log('[OntoCode] User selected file:', fileUri[0].fsPath);
-                    panel.setPendingUpload(false, fileUri[0]);
+                    const selectedUri = fileUri[0];
+                    console.log('[OntoCode] User selected file:', selectedUri.toString());
+                    console.log('[OntoCode] File URI scheme:', selectedUri.scheme);
+                    panel.setPendingUpload(false, selectedUri);
                 } else {
                     console.log('[OntoCode] User cancelled file selection');
-                    vscode.window.showInformationMessage('Please select an ontology file (.owl, .ttl, or .rdf) to edit.');
+                    // Only show message in desktop mode - web users understand file picker cancellation
+                    if (!isWeb) {
+                        vscode.window.showInformationMessage('Please select an ontology file (.owl, .ttl, or .rdf) to edit.');
+                    }
                 }
             }
         }),
@@ -1060,6 +1075,9 @@ class OntoCodePanel {
     }
 
     private async handleOpenLocalFile(projectId?: string | null, importMode?: string, partition?: string) {
+        const isWeb = isWebExtensionContext();
+        console.log(`[OntoCode] Opening file dialog... (Web mode: ${isWeb})`);
+        
         const fileUri = await vscode.window.showOpenDialog({
             canSelectMany: false,
             openLabel: 'Open Ontology File',
@@ -1070,9 +1088,11 @@ class OntoCodePanel {
         });
 
         if (fileUri && fileUri[0]) {
-            console.log('[OntoCode] User selected local file from webview:', fileUri[0].fsPath);
+            const selectedUri = fileUri[0];
+            console.log('[OntoCode] User selected local file from webview:', selectedUri.toString());
+            console.log('[OntoCode] File URI scheme:', selectedUri.scheme);
             if (!projectId) {
-                this.setPendingUpload(false, fileUri[0], importMode, partition);
+                this.setPendingUpload(false, selectedUri, importMode, partition);
                 return;
             }
 
@@ -1083,8 +1103,8 @@ class OntoCodePanel {
                 return;
             }
 
-            const fileData = await (vscode.workspace as any).fs.readFile(fileUri[0]);
-            const fileName = fileUri[0].path.substring(fileUri[0].path.lastIndexOf('/') + 1);
+            const fileData = await (vscode.workspace as any).fs.readFile(selectedUri);
+            const fileName = selectedUri.path.substring(selectedUri.path.lastIndexOf('/') + 1);
             const fileSize = fileData.length;
             const base64Content = uint8ArrayToBase64(fileData);
 
@@ -1257,7 +1277,7 @@ class OntoCodePanel {
             }
         } else {
             console.log('[OntoCode] User cancelled local file selection from webview');
-            vscode.window.showInformationMessage('Please select an ontology file to open.');
+            // Don't show intrusive message when user cancels - they know what they did
         }
     }
     
@@ -1440,10 +1460,12 @@ class OntoCodePanel {
 
     /**
      * Handles uploading a large file from a file URI (e.g., from the Explorer context menu).
+     * Works in both desktop VS Code and vscode-web.
      */
     // Fix: Refactored to use async vscode.workspace.fs.readFile instead of node 'fs'.
     public async triggerLargeFileUpload(fileUri: vscode.Uri, importMode?: string, partition?: string) {
-        console.log(`[OntoCode] Triggering large file upload for: ${fileUri.fsPath}`);
+        console.log(`[OntoCode] Triggering large file upload for: ${fileUri.toString()}`);
+        console.log(`[OntoCode] URI scheme: ${fileUri.scheme}, path: ${fileUri.path}`);
         const fullPath = fileUri.path;
         const fileName = fullPath.substring(fullPath.lastIndexOf('/') + 1);
         // Fix: Cast workspace to `any` to access the `fs` property, bypassing outdated type definitions.
