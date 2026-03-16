@@ -87,7 +87,7 @@ function checkBackend() {
     const deploymentType = localStorage.getItem('deploymentType');
     console.log('📍 Deployment type:', deploymentType || 'cloud (default)');
     
-    const baseUrl = deploymentType === 'self-hosted' ? 'http://localhost:80' : 'http://13.218.153.101';
+    const baseUrl = deploymentType === 'self-hosted' ? 'http://localhost:80' : 'https://ontocodeapi.selfresearch.org';
     console.log('🌐 Base URL:', baseUrl);
     
     // Test connectivity

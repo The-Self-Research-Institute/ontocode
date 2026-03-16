@@ -15,16 +15,17 @@ echo "   Building Multi-Platform OntoCode Images"
 echo "   Registry: $REGISTRY"
 echo "   Version: $VERSION"
 echo "   Platforms: linux/amd64, linux/arm64"
+echo "   Note: vscode-web build DISABLED"
 echo "============================================"
 echo
 
-# Pre-flight: ensure docker-entrypoint.sh exists for vscode-web
-if [ ! -f "ontology-vscode-extension/docker-entrypoint.sh" ]; then
-    echo "ERROR: ontology-vscode-extension/docker-entrypoint.sh not found!"
-    echo "This file is required to patch the Extension Host CSP at runtime."
-    echo "Please restore it before building."
-    exit 1
-fi
+# Pre-flight checks disabled - vscode-web build is disabled
+# if [ ! -f "ontology-vscode-extension/docker-entrypoint.sh" ]; then
+#     echo "ERROR: ontology-vscode-extension/docker-entrypoint.sh not found!"
+#     echo "This file is required to patch the Extension Host CSP at runtime."
+#     echo "Please restore it before building."
+#     exit 1
+# fi
 
 echo "Setting up buildx for multi-platform builds..."
 docker buildx create --name ontocode-builder --use --driver docker-container 2>/dev/null || docker buildx use ontocode-builder
@@ -138,8 +139,23 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-echo "[8/8] Building ontocode-vscode-web (with CSP entrypoint)..."
-docker buildx build --platform linux/amd64,linux/arm64 -t $REGISTRY/ontocode-vscode-web:$VERSION -f Dockerfile.vscode-extension --push .
+# DISABLED: ontocode-vscode-web build
+# echo "[8/9] Building ontocode-vscode-web (with CSP entrypoint)..."
+# docker buildx build --platform linux/amd64,linux/arm64 -t $REGISTRY/ontocode-vscode-web:$VERSION -f Dockerfile.vscode-extension --push .
+# if [ $? -ne 0 ]; then
+#     echo
+#     echo "Cleaning up buildx builder..."
+#     docker buildx rm ontocode-builder 2>/dev/null
+#     echo
+#     echo "============================================"
+#     echo "   BUILD FAILED! See error above."
+#     echo "============================================"
+#     echo
+#     exit 1
+# fi
+
+echo "[8/8] Building ontocode-web (webapp with HTTPS config)..."
+docker buildx build --no-cache --platform linux/amd64,linux/arm64 -t $REGISTRY/ontocode-web:$VERSION -f Dockerfile.webapp --push .
 if [ $? -ne 0 ]; then
     echo
     echo "Cleaning up buildx builder..."
@@ -158,14 +174,26 @@ docker buildx rm ontocode-builder 2>/dev/null
 echo
 
 echo "============================================"
-echo "   SUCCESS! All images built and pushed!"
+echo "   SUCCESS! All 8 images built and pushed!"
 echo "============================================"
 echo
 echo "Multi-platform support:"
 echo "  * Intel/AMD (linux/amd64)"
 echo "  * Apple Silicon M1/M2/M3 (linux/arm64)"
 echo
-echo "Mac users can now run:"
+echo "Images built:"
+echo "  1. ontocode-graphdb - GraphDB triple store"
+echo "  2. ontocode-auth - Authentication service"
+echo "  3. ontocode-gateway - API gateway"
+echo "  4. ontocode-editor - Ontology editor service"
+echo "  5. ontocode-swrl - SWRL reasoner service"
+echo "  6. ontocode-plugin - Plugin runtime service"
+echo "  7. ontocode-plugin-init - Plugin initializer"
+echo "  8. ontocode-web - React webapp (with HTTPS backend)"
+echo
+echo "NOTE: ontocode-vscode-web build is DISABLED"
+echo
+echo "To deploy:"
 echo "  DOCKER_REGISTRY=$REGISTRY docker compose up -d"
 echo
 echo "Or create .env file with:"
@@ -175,7 +203,7 @@ echo
 echo "Then run:"
 echo "  docker compose up -d"
 echo
-echo "NOTE: The vscode-web container automatically patches"
-echo "the Extension Host CSP at startup via docker-entrypoint.sh"
-echo "to allow HTTP connections to external API servers."
+echo "WEBAPP CONFIGURATION:"
+echo "  Backend URL: https://ontocodeapi.selfresearch.org"
+echo "  Frontend: https://ontocode.selfresearch.org"
 echo

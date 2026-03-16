@@ -130,7 +130,7 @@ spring.servlet.multipart.enabled=true
    jira.project.key=<project-key>
    ```
 
-2. **For cloud deployment (EC2):** Services must be running at your cloud gateway URL (e.g., `http://13.218.153.101`)
+2. **For cloud deployment (EC2):** Services must be running at your cloud gateway URL (e.g., `https://ontocodeapi.selfresearch.org`)
 
 3. **User must be logged in** with valid JWT token
 
@@ -138,7 +138,7 @@ spring.servlet.multipart.enabled=true
 
 **Steps:**
 1. **Open VS Code web interface:**
-   - Navigate to `http://13.218.153.101:3000` (or your cloud URL)
+   - Navigate to `https://ontocodeapi.selfresearch.org:3000` (or your cloud URL)
    - Login with your credentials
 
 2. **Clear browser cache** (IMPORTANT - ensures latest code is loaded):
@@ -194,7 +194,7 @@ spring.servlet.multipart.enabled=true
    - **Verify loading state:** Button shows "Submitting..." with disabled state
 
 9. **Verify network request details:**
-   - Request URL: `http://13.218.153.101/api/v1/issues/report`
+   - Request URL: `https://ontocodeapi.selfresearch.org/api/v1/issues/report`
    - Method: `POST`
    - **Critical checks:**
      - ✅ Request Headers include: `Authorization: Bearer <token>`

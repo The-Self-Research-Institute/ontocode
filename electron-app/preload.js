@@ -30,7 +30,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 // The cloud gateway URL can be overridden via the DeploymentSelector in-app.
 window.__ONTOCODE_CONFIG__ = {
     IS_WEB_EXTENSION: true,
-    CLOUD_GATEWAY_URL: process.env.CLOUD_GATEWAY_URL || 'http://13.218.153.101',
+    CLOUD_GATEWAY_URL: process.env.CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org',
     SELF_HOSTED_GATEWAY_URL: process.env.SELF_HOSTED_GATEWAY_URL || 'http://localhost:80',
 };
 

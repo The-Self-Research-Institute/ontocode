@@ -6157,7 +6157,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         const token = localStorage.getItem('authToken');
         const resolvedEmail = resolveUserEmail();
         // Use deployment-aware URL
-        const uploadBaseUrl = window.API_BASE_URL || (localStorage.getItem('deploymentType') === 'self-hosted' ? 'http://localhost:80' : 'http://13.218.153.101');
+        const uploadBaseUrl = window.API_BASE_URL || (localStorage.getItem('deploymentType') === 'self-hosted' ? 'http://localhost:80' : 'https://ontocodeapi.selfresearch.org');
         const query = new URLSearchParams();
         query.set('ownerEmail', resolvedEmail || '');
         query.set('importMode', importMode);
@@ -9714,7 +9714,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             projectId={projectId}
             context={{
               projectId,
-              apiBaseUrl: (window as any).API_BASE_URL || (localStorage.getItem('deploymentType') === 'self-hosted' ? 'http://localhost:80' : 'http://13.218.153.101'),
+              apiBaseUrl: (window as any).API_BASE_URL || (localStorage.getItem('deploymentType') === 'self-hosted' ? 'http://localhost:80' : 'https://ontocodeapi.selfresearch.org'),
               permissions: {
                 canEdit: !readonlyMode,
                 canDelete: !readonlyMode,
@@ -11125,7 +11125,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const getApiBaseUrl = () => {
     if (window.API_BASE_URL) return window.API_BASE_URL;
     const deployType = localStorage.getItem('deploymentType');
-    return deployType === 'self-hosted' ? 'http://localhost:80' : 'http://13.218.153.101';
+    return deployType === 'self-hosted' ? 'http://localhost:80' : 'https://ontocodeapi.selfresearch.org';
   };
   const apiBaseUrl = getApiBaseUrl();
 
