@@ -117,6 +117,16 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
     return match ? match[0] : '';
   };
 
+  const normalizeDoiUrl = (doi: string): string => {
+    if (!doi) return '';
+    // If DOI already has http:// or https://, use it as-is
+    if (doi.startsWith('http://') || doi.startsWith('https://')) {
+      return doi;
+    }
+    // Otherwise, prepend https://doi.org/
+    return `https://doi.org/${doi}`;
+  };
+
   const handleSelectCitation = (citation: CitationItem) => {
     // Check if DOI is missing
     if (!citation.data.doi) {
@@ -305,10 +315,16 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
                           </p>
                         )}
                         {citation.data.doi ? (
-                          <div className="flex items-center gap-1 text-xs text-blue-600 mt-1">
+                          <a
+                            href={normalizeDoiUrl(citation.data.doi)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 mt-1 hover:underline"
+                            onClick={(e) => e.stopPropagation()}
+                          >
                             <ExternalLink size={12} />
-                            <span className="truncate">DOI: {citation.data.doi}</span>
-                          </div>
+                            <span className="truncate">DOI: {citation.data.doi.replace(/^https?:\/\/(dx\.)?doi\.org\//, '')}</span>
+                          </a>
                         ) : (
                           <div className="flex items-center gap-1 text-xs text-yellow-600 mt-1">
                             <AlertCircle size={12} />
