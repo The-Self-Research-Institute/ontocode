@@ -35,9 +35,12 @@ const AppContent = () => {
     const shouldShowWorkspaceSelection = (): boolean => {
         if (!user || user.workspaceId) return false;
         
+        // If user explicitly skipped workspace selection, don't show it
+        if (!needsWorkspaceSelection) return false;
+        
         const storedDeploymentType = localStorage.getItem('deploymentType') as 'self-hosted' | 'cloud' | null;
         
-        // Cloud users always need workspace selection if they don't have one
+        // Cloud users always need workspace selection if they don't have one (unless they skipped)
         if (storedDeploymentType === 'cloud') {
             return true;
         }
@@ -393,8 +396,10 @@ const AppContent = () => {
                 onWorkspaceSelected={handleWorkspaceSelected}
                 onSkipWorkspace={() => {
                     console.log('[App] User chose to continue without workspace');
+                    console.log('[App] Current needsWorkspaceSelection:', needsWorkspaceSelection);
                     // Update auth context to skip workspace selection
                     selectWorkspace({ skipWorkspace: true });
+                    console.log('[App] Workspace selection skipped, should proceed to editor');
                 }}
                 onLogout={handleLogout}
             />

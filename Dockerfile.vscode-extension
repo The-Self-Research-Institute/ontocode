@@ -90,7 +90,9 @@ RUN dos2unix /entrypoint.sh 2>/dev/null || sed -i 's/\r$//' /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Create directory for workspace data (will be mounted via volume)
-RUN mkdir -p /workspace/projects
+# Ensure proper permissions for the workspace folder
+RUN mkdir -p /workspace/projects && \
+    chmod -R 755 /workspace
 
 # Expose port for VS Code web server
 EXPOSE 3000
