@@ -1,7 +1,8 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from './custom-hook/useAuth';
-import { updateBaseUrl } from './services/apiClient';
+import apiClient, { updateBaseUrl } from './services/apiClient';
+import { openOntologyFile, fileContentToBase64 } from './utils/fileAccess';
 import { CollaborationProvider } from './contexts/CollaborationContext';
 import { EntityPreferencesProvider } from './contexts/EntityPreferencesContext';
 import { ThemeProvider } from './contexts/ThemeContext';
@@ -142,6 +143,36 @@ const AppContent = () => {
         return () => window.removeEventListener('message', handleMessage);
     }, []);
 
+    // Browser-mode: upload a file directly via the API (no extension proxy needed)
+    const uploadFileBrowserMode = useCallback(async (
+        projectId: string,
+        fileName: string,
+        fileContent: string,
+        fileSize: number
+    ) => {
+        try {
+            const base64Content = fileContentToBase64(fileContent);
+            await apiClient.post(`/api/projects/${projectId}/files`, {
+                fileName,
+                fileData: `data:application/rdf+xml;base64,${base64Content}`,
+                fileSize,
+                fileType: 'owl'
+            });
+            console.log('[App] ✅ Browser upload complete:', fileName);
+        } catch (err) {
+            console.error('[App] ❌ Browser upload failed:', err);
+        }
+    }, []);
+
+    // Open a local file in browser/cloud/Electron mode (no VS Code extension)
+    const handleOpenLocalFile = useCallback(async () => {
+        const fileData = await openOntologyFile();
+        if (fileData) {
+            console.log('[App] 📂 File picked in browser mode:', fileData.fileName);
+            setPendingFile(fileData);
+        }
+    }, []);
+
     // Auto-upload for self-hosted users (no workspace)
     useEffect(() => {
         if (user && !user.workspaceId && pendingFile) {
@@ -156,12 +187,15 @@ const AppContent = () => {
                     fileContent: pendingFile.fileContent,
                     skipDuplicateCheck: false
                 });
+            } else {
+                // Browser / cloud / Electron: upload directly via API
+                uploadFileBrowserMode(projectId, pendingFile.fileName, pendingFile.fileContent, pendingFile.fileSize);
             }
             
             // Clear pending file after triggering upload
             setPendingFile(null);
         }
-    }, [user, pendingFile]);
+    }, [user, pendingFile, uploadFileBrowserMode]);
 
     const toggleFormView = () => setIsLoginView(!isLoginView);
 
@@ -185,8 +219,11 @@ const AppContent = () => {
                     fileContent: pendingFile.fileContent,
                     fileSize: pendingFile.fileSize
                 });
+            } else {
+                // Browser / cloud / Electron: upload directly via API
+                uploadFileBrowserMode(projectId, pendingFile.fileName, pendingFile.fileContent, pendingFile.fileSize);
             }
-            // Clear pending file immediately after sending upload message
+            // Clear pending file immediately after triggering upload
             setPendingFile(null);
         }
 
@@ -419,7 +456,7 @@ const AppContent = () => {
     // Show only when no file is selected AND (no project selected OR has pending file to upload)
     if (user && user.workspaceId && !showSubscriptionPlan && !selectedFileId && (!selectedProjectId || pendingFile)) {
         console.log('[App] Routing to ProjectDashboard - isAdmin:', user.isAdmin, 'selectedFileId:', selectedFileId, 'selectedProjectId:', selectedProjectId, 'pendingFile:', !!pendingFile);
-        return <ProjectDashboard onSelectProject={handleProjectSelected} pendingFile={pendingFile} />;
+        return <ProjectDashboard onSelectProject={handleProjectSelected} pendingFile={pendingFile} onOpenLocalFile={(window as any).__ONTOCODE_BROWSER_BRIDGE__ ? handleOpenLocalFile : undefined} />;
     }
 
     // Show Project Library when a project is selected but no file is selected

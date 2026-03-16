@@ -461,6 +461,9 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('ontocode.testZoteroConnection', async () => {
             await zoteroApiService.testConnection();
         }),
+        vscode.commands.registerCommand('ontocode.openWebview', async () => {
+            await OntoCodePanel.createOrShow(context.extensionUri, context, false);
+        }),
         vscode.commands.registerCommand('ontocode.testInvitationFlow', async () => {
             const token = await vscode.window.showInputBox({
                 prompt: 'Enter invitation token to test',

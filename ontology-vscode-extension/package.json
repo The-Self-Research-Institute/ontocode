@@ -81,6 +81,11 @@
         "command": "ontocode.testInvitationFlow",
         "title": "OntoCode: Test Invitation Flow",
         "category": "OntoCode"
+      },
+      {
+        "command": "ontocode.openWebview",
+        "title": "Open WebView",
+        "category": "OntoCode"
       }
     ],
     "menus": {

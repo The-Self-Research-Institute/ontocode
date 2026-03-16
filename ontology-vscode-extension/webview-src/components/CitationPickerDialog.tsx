@@ -1,7 +1,8 @@
 // CitationPickerDialog.tsx
 import React, { useState, useEffect } from 'react';
-import { X, Search, BookOpen, User, Calendar, ExternalLink, Plus, ChevronDown, ChevronRight, AlertCircle } from 'lucide-react';
+import { X, Search, BookOpen, User, Calendar, ExternalLink, Plus, ChevronDown, ChevronRight, AlertCircle, Settings } from 'lucide-react';
 import { TreeNode } from '@/types';
+import ZoteroSettingsDialog from './ZoteroSettingsDialog';
 
 interface CitationItem {
   key: string;
@@ -43,6 +44,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
   const [showDoiPrompt, setShowDoiPrompt] = useState(false);
   const [selectedCitation, setSelectedCitation] = useState<CitationItem | null>(null);
   const [manualDoi, setManualDoi] = useState('');
+  const [showZoteroSettings, setShowZoteroSettings] = useState(false);
   const [showDoiWarning, setShowDoiWarning] = useState(false);
 
   useEffect(() => {
@@ -185,12 +187,21 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
             <BookOpen className="text-purple-600" size={24} />
             <h2 className="text-xl font-bold text-gray-800">Insert Citation</h2>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
-          >
-            <X size={20} className="text-gray-500" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setShowZoteroSettings(true)}
+              className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
+              title="Zotero Settings"
+            >
+              <Settings size={20} className="text-gray-500" />
+            </button>
+            <button
+              onClick={onClose}
+              className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <X size={20} className="text-gray-500" />
+            </button>
+          </div>
         </div>
 
         {/* Manual Entry Option */}
@@ -242,13 +253,22 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
             <div className="flex items-center justify-center py-12">
               <div className="text-center">
                 <div className="text-red-500 mb-2">⚠️</div>
-                <p className="text-red-600">{error}</p>
-                <button
-                  onClick={loadCitations}
-                  className="mt-4 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
-                >
-                  Retry
-                </button>
+                <p className="text-red-600">{error === 'ZOTERO_NOT_CONFIGURED' ? 'Zotero is not configured yet.' : error}</p>
+                {error === 'ZOTERO_NOT_CONFIGURED' ? (
+                  <button
+                    onClick={() => setShowZoteroSettings(true)}
+                    className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 inline-flex items-center gap-2"
+                  >
+                    <Settings size={16} /> Configure Zotero
+                  </button>
+                ) : (
+                  <button
+                    onClick={loadCitations}
+                    className="mt-4 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
+                  >
+                    Retry
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -415,6 +435,16 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {showZoteroSettings && (
+        <ZoteroSettingsDialog
+          isOpen={showZoteroSettings}
+          onClose={() => {
+            setShowZoteroSettings(false);
+            loadCitations();
+          }}
+        />
       )}
     </div>
   );

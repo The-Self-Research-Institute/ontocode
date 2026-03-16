@@ -76,9 +76,10 @@ interface TeamMember {
 interface ProjectDashboardProps {
     onSelectProject: (projectId: string, projectName: string) => void;
     pendingFile?: { fileName: string; fileContent: string; fileSize: number } | null;
+    onOpenLocalFile?: () => void;
 }
 
-const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pendingFile }) => {
+const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pendingFile, onOpenLocalFile }) => {
     const { user, logout, switchWorkspace } = useAuth();
     const subscription = useSubscription();
     const [projects, setProjects] = useState<Project[]>([]);
@@ -632,6 +633,27 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
                     >
                         <X size={16} />
                     </button>
+                </div>
+            )}
+
+            {/* Browser-mode: open a local file when there is no pending file */}
+            {!pendingFile && onOpenLocalFile && (
+                <div className="bg-gradient-to-r from-indigo-600 to-blue-600 text-white px-4 py-3 flex-shrink-0">
+                    <div className="max-w-7xl mx-auto flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <FolderOpen size={22} className="flex-shrink-0" />
+                            <div>
+                                <p className="font-semibold text-sm">Open a local ontology file</p>
+                                <p className="text-xs text-indigo-100">Pick a .owl / .rdf / .ttl file from your computer</p>
+                            </div>
+                        </div>
+                        <button
+                            onClick={onOpenLocalFile}
+                            className="px-4 py-1.5 bg-white text-indigo-700 font-semibold text-sm rounded-lg hover:bg-indigo-50 transition-colors"
+                        >
+                            Browse…
+                        </button>
+                    </div>
                 </div>
             )}
 
