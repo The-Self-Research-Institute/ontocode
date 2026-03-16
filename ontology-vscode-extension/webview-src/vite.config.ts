@@ -22,7 +22,7 @@ export default defineConfig(({ mode }) => {
         // Set VITE_CLOUD_GATEWAY_URL in .env.production to override
         '__ONTOCODE_CONFIG__': JSON.stringify({
           IS_WEB_EXTENSION: true,
-          CLOUD_GATEWAY_URL: env.VITE_CLOUD_GATEWAY_URL || 'http://13.218.153.101',
+          CLOUD_GATEWAY_URL: env.VITE_CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org',
           SELF_HOSTED_GATEWAY_URL: env.VITE_SELF_HOSTED_GATEWAY_URL || 'http://localhost:80',
         }),
       },

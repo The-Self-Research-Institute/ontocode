@@ -22,7 +22,7 @@ const getBaseUrlForDeployment = (deploymentType: string) => {
     // For testing: Cloud URL pointing to localhost===================>
     return deploymentType === 'self-hosted' 
         ? 'http://localhost:80'
-        : 'http://13.218.153.101';
+        : 'https://ontocodeapi.selfresearch.org';
 };
 
 // Get initial base URL

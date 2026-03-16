@@ -90,9 +90,9 @@ function getUrlsForDeployment(deploymentType: 'self-hosted' | 'cloud'): { gatewa
         };
     } else {
         return {
-            gateway: process.env.CLOUD_GATEWAY_URL || 'http://13.218.153.101',
-            editor: process.env.CLOUD_EDITOR_URL || 'http://13.218.153.101',
-            plugin: process.env.CLOUD_PLUGIN_URL || 'http://13.218.153.101:8087'
+            gateway: process.env.CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org',
+            editor: process.env.CLOUD_EDITOR_URL || 'https://ontocodeapi.selfresearch.org',
+            plugin: process.env.CLOUD_PLUGIN_URL || 'https://ontocodeapi.selfresearch.org:8087'
         };
     }
 }
@@ -3116,9 +3116,9 @@ class OntoCodePanel {
                     SELF_HOSTED_GATEWAY_URL: '${process.env.SELF_HOSTED_GATEWAY_URL || 'http://localhost:80'}',
                     SELF_HOSTED_EDITOR_URL: '${process.env.SELF_HOSTED_EDITOR_URL || 'http://localhost:80'}',
                     SELF_HOSTED_PLUGIN_URL: '${process.env.SELF_HOSTED_PLUGIN_URL || 'http://localhost:8087'}',
-                    CLOUD_GATEWAY_URL: '${process.env.CLOUD_GATEWAY_URL || 'http://13.218.153.101'}',
-                    CLOUD_EDITOR_URL: '${process.env.CLOUD_EDITOR_URL || 'http://13.218.153.101'}',
-                    CLOUD_PLUGIN_URL: '${process.env.CLOUD_PLUGIN_URL || 'http://13.218.153.101:8087'}',
+                    CLOUD_GATEWAY_URL: '${process.env.CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org'}',
+                    CLOUD_EDITOR_URL: '${process.env.CLOUD_EDITOR_URL || 'https://ontocodeapi.selfresearch.org'}',
+                    CLOUD_PLUGIN_URL: '${process.env.CLOUD_PLUGIN_URL || 'https://ontocodeapi.selfresearch.org:8087'}',
                     DEFAULT_DEPLOYMENT_TYPE: '${process.env.DEFAULT_DEPLOYMENT_TYPE || 'cloud'}',
                     IS_WEB_EXTENSION: ${isWebExtension}
                 };
@@ -3158,7 +3158,7 @@ class OntoCodePanel {
                 script-src 'nonce-${nonce}' https://cdn.tailwindcss.com https://unpkg.com https://aistudiocdn.com ${webview.cspSource} 'unsafe-eval' ${GATEWAY_URL} ${PLUGIN_SERVICE_URL} http://localhost:* http://127.0.0.1:*;
                 style-src ${webview.cspSource} 'unsafe-inline' https://unpkg.com https://cdn.tailwindcss.com;
                 font-src ${webview.cspSource} https://unpkg.com data:; 
-                connect-src 'self' http://13.218.153.101 https: wss: http://13.218.153.101:* ws://13.218.153.101:* http://localhost:* http://127.0.0.1:* ${GATEWAY_URL} ${PLUGIN_SERVICE_URL};
+                connect-src 'self' https://ontocodeapi.selfresearch.org https: wss: https://ontocodeapi.selfresearch.org:* ws://13.218.153.101:* http://localhost:* http://127.0.0.1:* ${GATEWAY_URL} ${PLUGIN_SERVICE_URL};
             ">
             ${vscodeApiInjectionScript}`
         );
