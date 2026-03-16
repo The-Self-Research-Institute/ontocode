@@ -527,8 +527,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // Handle skip workspace case - user continues without workspace
         if (workspaceData.skipWorkspace) {
             console.log('[AuthContext] User skipped workspace selection, continuing to editor');
+            console.log('[AuthContext] Setting needsWorkspaceSelection to false');
             setNeedsWorkspaceSelection(false);
             // User stays logged in but without workspace context
+            // The editor will work in non-workspace mode
             return;
         }
         
