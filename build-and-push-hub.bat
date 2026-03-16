@@ -6,6 +6,7 @@ echo ==============================================
 echo Building and Pushing OntoCode Multi-Platform Images
 echo Docker User: %DOCKER_USER%
 echo Platforms: linux/amd64, linux/arm64 (Mac M1/M2/M3 compatible)
+echo Note: vscode-web build DISABLED
 echo ==============================================
 echo.
 
@@ -23,8 +24,12 @@ echo 3. Building and Pushing Multi-Platform Images...
 echo    This may take a while as images are built for both Intel and ARM architectures...
 echo.
 
-echo Building vscode-web...
-docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.vscode-extension -t %DOCKER_USER%/ontocode-vscode-web:latest --push .
+REM DISABLED: vscode-web build
+REM echo Building vscode-web...
+REM docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.vscode-extension -t %DOCKER_USER%/ontocode-vscode-web:latest --push .
+
+echo Building webapp...
+docker buildx build --no-cache --platform linux/amd64,linux/arm64 -f Dockerfile.webapp -t %DOCKER_USER%/ontocode-web:latest --push .
 echo Building graphdb...
 docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.graphdb -t %DOCKER_USER%/ontocode-graphdb:latest --push .
 echo Building gateway...
@@ -56,11 +61,11 @@ echo   ✓ Intel/AMD (linux/amd64)
 echo   ✓ Apple Silicon M1/M2/M3 (linux/arm64)
 echo.
 echo Users can now run on any platform:
-echo   docker pull %DOCKER_USER%/ontocode-vscode-web:latest
+echo   docker pull %DOCKER_USER%/ontocode-web:latest
 echo   docker compose up -d
 echo.
 echo Images available:
-echo   - %DOCKER_USER%/ontocode-vscode-web:latest
+echo   - %DOCKER_USER%/ontocode-web:latest (webapp with HTTPS backend)
 echo   - %DOCKER_USER%/ontocode-graphdb:latest
 echo   - %DOCKER_USER%/ontocode-gateway:latest
 echo   - %DOCKER_USER%/ontocode-editor:latest
@@ -68,5 +73,10 @@ echo   - %DOCKER_USER%/ontocode-auth:latest
 echo   - %DOCKER_USER%/ontocode-plugin-service:latest
 echo   - %DOCKER_USER%/ontocode-plugin-init:latest
 echo   - %DOCKER_USER%/ontocode-swrl:latest
+echo.
+echo NOTE: ontocode-vscode-web build is DISABLED
+echo.
+echo WEBAPP CONFIGURATION:
+echo   Backend URL: https://ontocodeapi.selfresearch.org
 echo ==============================================
 pause

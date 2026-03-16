@@ -101,6 +101,8 @@ public class SecurityConfig {
             "https://localhost:*",            // Local development over HTTPS
             "http://ec2-13-218-153-101.compute-1.amazonaws.com:*",
             "https://ec2-13-218-153-101.compute-1.amazonaws.com:*",
+            "https://ontocodeapi.selfresearch.org:*", // Production API URL
+            "https://ontocode.selfresearch.org:*",
             "vscode-webview://*",             // VS Code webview
             "vscode-webview-resource://*",
             "https://*.vscode-cdn.net",       // VS Code CDN

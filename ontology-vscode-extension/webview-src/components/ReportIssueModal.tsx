@@ -19,7 +19,7 @@ const getApiBaseUrl = () => {
     return 'http://localhost:8083';
   } else {
     // For cloud, use cloud gateway URL (will go through port 80)
-    return config?.CLOUD_GATEWAY_URL || 'http://13.218.153.101';
+    return config?.CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org';
   }
 };
 
