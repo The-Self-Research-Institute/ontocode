@@ -259,7 +259,7 @@ services:
     container_name: ontocode-web
     restart: unless-stopped
     ports:
-      - "3000:3001"
+      - "3000:3000"
     environment:
       ONTOCODE_API_URL: http://gateway:80
     depends_on:
@@ -268,7 +268,7 @@ services:
     networks:
       - ontology-net
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/"]
       interval: 30s
       timeout: 5s
       retries: 3
