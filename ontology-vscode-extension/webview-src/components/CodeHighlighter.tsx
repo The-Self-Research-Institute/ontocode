@@ -919,7 +919,6 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
           )}
         </div>
         
-        {onRequestZoteroCitation && <button onClick={onRequestZoteroCitation} className="px-2 py-1 text-xs bg-green-600 hover:bg-green-700 text-white rounded flex items-center gap-1" title="Insert Zotero citation"><BookOpen className="w-3 h-3" />Zotero</button>}
       </div>
 
       {/* Search Results Panel */}
@@ -1078,15 +1077,15 @@ function highlightTurtleLine(line: string): string {
       console.log('🔗 DOI PATTERN MATCHED in Turtle:', { doiValue, fullMatch: _match });
       // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith('http') ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, '')}`;
-      const displayValue = doiValue.replace(/^https?:\/\/doi\.org\//, '').replace(/^doi:/, '');
-      return `${store(`<span style="color:#9cdcfe">bibo</span>`)}:${store(`<span style="color:#dcdcaa">doi</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">&quot;${displayValue}&quot;</a>`)}`;
+      const displayValue = doiUrl; // Show full URL
+      return `${store(`<span style="color:#9cdcfe">bibo</span>`)}:${store(`<span style="color:#dcdcaa">doi</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI'),2000);" title="Click to open DOI: ${doiUrl}">&quot;${displayValue}&quot;</a>`)}`;
     })
     .replace(/(dc:identifier\s+)&quot;doi:(.+?)&quot;/gi, (_match, property, doiValue) => {
       console.log('🔗 DOI PATTERN MATCHED in dc:identifier:', { doiValue, fullMatch: _match });
       // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith('http') ? doiValue : `https://doi.org/${doiValue}`;
-      const displayValue = doiValue.replace(/^https?:\/\/doi\.org\//, '');
-      return `${store(`<span style="color:#9cdcfe">dc</span>`)}:${store(`<span style="color:#dcdcaa">identifier</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">&quot;doi:${displayValue}&quot;</a>`)}`;
+      const displayValue = doiUrl; // Show full URL
+      return `${store(`<span style="color:#9cdcfe">dc</span>`)}:${store(`<span style="color:#dcdcaa">identifier</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI'),2000);" title="Click to open DOI: ${doiUrl}">&quot;${displayValue}&quot;</a>`)}`;
     })
     .replace(/("(?:[^"\\]|\\.)*")/g, (match) => store(`<span style="color:#ce9178">${match}</span>`))
     .replace(/(\^\^)/g, (match) => store(`<span style="color:#d4d4d4">${match}</span>`))
@@ -1124,7 +1123,7 @@ function highlightRDFXMLLine(line: string): string {
       console.log('🔗 DOI PATTERN MATCHED in RDF/XML bibo:doi:', { doiValue, fullMatch: _match });
       // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith('http') ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, '')}`;
-      const displayValue = doiValue.replace(/^https?:\/\/doi\.org\//, '').replace(/^doi:/, '');
+      const displayValue = doiUrl; // Show full URL
       // Extract tag parts for proper highlighting
       const openTagMatch = open.match(/(&lt;)(bibo)(:)(doi)(\s+[^&gt;]*)?(&gt;)/i);
       if (openTagMatch) {
@@ -1139,7 +1138,7 @@ function highlightRDFXMLLine(line: string): string {
       console.log('🔗 DOI PATTERN MATCHED in RDF/XML dc:identifier:', { doiValue, fullMatch: _match });
       // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith('http') ? doiValue : `https://doi.org/${doiValue}`;
-      const displayValue = doiValue.replace(/^https?:\/\/doi\.org\//, '');
+      const displayValue = doiUrl; // Show full URL
       const openTag = `${store(`<span style="color:#808080">&lt;</span>`)}${store(`<span style="color:#569cd6">dc</span>`)}:${store(`<span style="color:#4ec9b0">identifier</span>`)}${store(`<span style="color:#808080">&gt;</span>`)}`;
       const closeTag = `${store(`<span style="color:#808080">&lt;/</span>`)}${store(`<span style="color:#569cd6">dc</span>`)}:${store(`<span style="color:#4ec9b0">identifier</span>`)}${store(`<span style="color:#808080">&gt;</span>`)}`;
       return `${openTag}${store(`<span style="color:#ce9178">doi:</span>`)}${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">${displayValue}</a>`)}${closeTag}`;
@@ -1148,7 +1147,7 @@ function highlightRDFXMLLine(line: string): string {
       console.log('🔗 DOI PATTERN MATCHED in RDF/XML bibo:doi attribute:', { doiValue, fullMatch: _match });
       // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith('http') ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, '')}`;
-      const displayValue = doiValue.replace(/^https?:\/\/doi\.org\//, '').replace(/^doi:/, '');
+      const displayValue = doiUrl; // Show full URL
       return `${store(`<span style="color:#9cdcfe">${attr}</span>`)}=${openQuote}${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">${displayValue}</a>`)}${closeQuote}`;
     })
     .replace(/=(&quot;[^&quot;]*&quot;)/g, (_match, value) => `=${store(`<span style="color:#ce9178">${value}</span>`)}`)
@@ -1197,7 +1196,7 @@ function highlightOWLXMLLine(line: string): string {
       console.log('🔗 DOI PATTERN MATCHED in OWL/XML Literal:', { doiPrefix, doiValue, fullMatch: _match });
       const fullDoiValue = (doiPrefix || '') + doiValue;
       const doiUrl = fullDoiValue.startsWith('http') ? fullDoiValue : `https://doi.org/${doiValue}`;
-      const displayValue = doiValue;
+      const displayValue = doiUrl; // Show full URL
       const open = `${openTag}${store(`<span style="color:#808080">&gt;</span>`)}`;
       const close = store(`<span style="color:#808080">${closeTag}</span>`);
       const prefix = doiPrefix ? store(`<span style="color:#ce9178">${doiPrefix}</span>`) : '';
@@ -1254,14 +1253,13 @@ function highlightNTriplesLine(line: string): string {
       console.log('🔗 DOI PATTERN MATCHED in N-Triples (Turtle style) bibo:doi:', { doiValue, fullMatch: _match });
       // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith('http') ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, '')}`;
-      const displayValue = doiValue.replace(/^https?:\/\/doi\.org\//, '').replace(/^doi:/, '');
+      const displayValue = doiUrl; // Show full URL
       return `${store(`<span style="color:#4ec9b0">${predicate}</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">&quot;${displayValue}&quot;</a>`)}`;
     })
     .replace(/(dc:identifier)\s+&quot;doi:(.+?)&quot;/gi, (_match, predicate, doiValue) => {
-      console.log('🔗 DOI PATTERN MATCHED in N-Triples (Turtle style) dc:identifier:', { doiValue, fullMatch: _match });
       // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith('http') ? doiValue : `https://doi.org/${doiValue}`;
-      const displayValue = doiValue.replace(/^https?:\/\/doi\.org\//, '');
+      const displayValue = doiUrl; // Show full URL
       return `${store(`<span style="color:#4ec9b0">${predicate}</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">&quot;doi:${displayValue}&quot;</a>`)}`;
     })
     // Handle true N-Triples format with full URIs (complete triple: subject predicate object)
@@ -1269,14 +1267,14 @@ function highlightNTriplesLine(line: string): string {
       console.log('🔗 DOI PATTERN MATCHED in N-Triples (URI style) bibo:doi:', { subject, predicate, doiValue, fullMatch: _match });
       // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith('http') ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, '')}`;
-      const displayValue = doiValue.replace(/^https?:\/\/doi\.org\//, '').replace(/^doi:/, '');
+      const displayValue = doiUrl; // Show full URL
       return `${store(`<span style="color:#4ec9b0">${subject}</span>`)} ${store(`<span style="color:#4ec9b0">${predicate}</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">&quot;${displayValue}&quot;</a>`)}`;
     })
     .replace(/(&lt;.+?&gt;)\s+(&lt;.+?\/identifier&gt;)\s+&quot;doi:(.+?)&quot;/g, (_match, subject, predicate, doiValue) => {
       console.log('🔗 DOI PATTERN MATCHED in N-Triples (URI style) dc:identifier:', { subject, predicate, doiValue, fullMatch: _match });
       // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith('http') ? doiValue : `https://doi.org/${doiValue}`;
-      const displayValue = doiValue.replace(/^https?:\/\/doi\.org\//, '');
+      const displayValue = doiUrl; // Show full URL
       return `${store(`<span style="color:#4ec9b0">${subject}</span>`)} ${store(`<span style="color:#4ec9b0">${predicate}</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">&quot;doi:${displayValue}&quot;</a>`)}`;
     })
     .replace(/(&lt;[^&gt;]+&gt;)/g, (match) => store(`<span style="color:#4ec9b0">${match}</span>`))
@@ -1321,14 +1319,14 @@ function highlightOWLLine(line: string): string {
     .replace(/(AnnotationAssertion\()(&lt;.+?bibo\/doi&gt;)\s+(&lt;.+?&gt;)\s+&quot;(.+?)&quot;\)/gi, (_match, funcOpen, predicate, subject, doiValue) => {
       console.log('🔗 DOI PATTERN MATCHED in Functional syntax bibo/doi:', { predicate, subject, doiValue, fullMatch: _match });
       const doiUrl = doiValue.startsWith('http') ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, '')}`;
-      const displayValue = doiValue.replace(/^https?:\/\/doi\.org\//, '').replace(/^doi:/, '');
+      const displayValue = doiUrl; // Show full URL
       return `${store(`<span style="color:#dcdcaa">${funcOpen}</span>`)}${store(`<span style="color:#4ec9b0">${predicate}</span>`)} ${store(`<span style="color:#4ec9b0">${subject}</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">&quot;${displayValue}&quot;</a>`)}${store(`<span style="color:#dcdcaa">)</span>`)}`;
     })
     // Functional syntax: AnnotationAssertion(<http://.../identifier> <subject> "doi:value")
     .replace(/(AnnotationAssertion\()(&lt;.+?\/identifier&gt;)\s+(&lt;.+?&gt;)\s+&quot;doi:(.+?)&quot;\)/gi, (_match, funcOpen, predicate, subject, doiValue) => {
       console.log('🔗 DOI PATTERN MATCHED in Functional syntax identifier:', { predicate, subject, doiValue, fullMatch: _match });
       const doiUrl = doiValue.startsWith('http') ? doiValue : `https://doi.org/${doiValue}`;
-      const displayValue = doiValue.replace(/^https?:\/\/doi\.org\//, '');
+      const displayValue = doiUrl; // Show full URL
       return `${store(`<span style="color:#dcdcaa">${funcOpen}</span>`)}${store(`<span style="color:#4ec9b0">${predicate}</span>`)} ${store(`<span style="color:#4ec9b0">${subject}</span>`)} ${store(`<span style="color:#ce9178">&quot;doi:</span>`)}${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">${displayValue}</a>`)}${store(`<span style="color:#ce9178">&quot;</span>`)}${store(`<span style="color:#dcdcaa">)</span>`)}`;
     })
     // Manchester/Functional syntax DOI handling (prefixed names)
@@ -1336,14 +1334,14 @@ function highlightOWLLine(line: string): string {
       console.log('🔗 DOI PATTERN MATCHED in Manchester/Functional bibo:doi:', { doiValue, fullMatch: _match });
       // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith('http') ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, '')}`;
-      const displayValue = doiValue.replace(/^https?:\/\/doi\.org\//, '').replace(/^doi:/, '');
+      const displayValue = doiUrl; // Show full URL
       return `${store(`<span style="color:#9cdcfe">bibo</span>`)}:${store(`<span style="color:#dcdcaa">doi</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">&quot;${displayValue}&quot;</a>`)}`;
     })
     .replace(/(dc:identifier\s+)&quot;doi:(.+?)&quot;/gi, (_match, property, doiValue) => {
       console.log('🔗 DOI PATTERN MATCHED in Manchester/Functional dc:identifier:', { doiValue, fullMatch: _match });
       // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith('http') ? doiValue : `https://doi.org/${doiValue}`;
-      const displayValue = doiValue.replace(/^https?:\/\/doi\.org\//, '');
+      const displayValue = doiUrl; // Show full URL
       return `${store(`<span style="color:#9cdcfe">dc</span>`)}:${store(`<span style="color:#dcdcaa">identifier</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">&quot;doi:${displayValue}&quot;</a>`)}`;
     })
     .replace(/=(&quot;[^&quot;]*&quot;)/g, (_match, value) => `=${store(`<span style="color:#ce9178">${value}</span>`)}`)

@@ -30,6 +30,9 @@
   ],
   "main": "./dist/extension.js",
   "browser": "./dist/web/extension.js",
+  "extensionDependencies": [
+    "SelfResearchInstitute.sci2code"
+  ],
   "contributes": {
     "webviews": [
       {
@@ -166,7 +169,9 @@
     "test": "node ./out/test/runTest.js",
     "build-webview": "cd webview-src && npm run build",
     "compile-web": "webpack --config webpack.config.js --mode development --watch",
-    "test-web": "npm run bundle:web && vscode-test-web --browserType=chromium --extensionDevelopmentPath=./ ../",
+    "test-web": "npm run bundle:web && vscode-test-web --browserType=chromium --extensionDevelopmentPath=./ .",
+    "test-web:server": "npm run bundle:web && vscode-test-web --browserType=none --port=3000 --host=0.0.0.0 --extensionDevelopmentPath=./ .",
+    "test-web:dev": "vscode-test-web --browserType=chromium --port=3000 --extensionDevelopmentPath=./ .",
     "dev-webview": "cd webview-src && npm run dev",
     "bundle:extension": "webpack --config webpack.extension.js --mode production",
     "bundle:webview": "cd webview-src && npm run build",
