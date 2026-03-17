@@ -112,9 +112,11 @@ public class ProjectLoadController {
                                                       @RequestParam(required = false) String action,
                                                       @RequestParam(required = false) String importMode,
                                                       @RequestParam(required = false) String partition,
+                                                      @RequestParam(required = false) String workspaceId,
+                                                      @RequestParam(required = false) String parentProjectId,
                                                       @RequestParam(required = false, defaultValue = "false") boolean compressed) {
-        log.info("[ProjectLoadController] Upload request - projectId: {}, filename: {}, ownerEmail: {}, action: {}, compressed: {}",
-            projectId, file.getOriginalFilename(), ownerEmail, action, compressed);
+        log.info("[ProjectLoadController] Upload request - projectId: {}, filename: {}, ownerEmail: {}, workspaceId: {}, parentProjectId: {}, action: {}, compressed: {}",
+            projectId, file.getOriginalFilename(), ownerEmail, workspaceId, parentProjectId, action, compressed);
         try {
             // VALIDATION: Check file size (max 300MB)
             long maxSize = 300 * 1024 * 1024; // 300MB
@@ -243,7 +245,7 @@ public class ProjectLoadController {
             // FIX: Batch metadata updates into single operation for better performance
             // Use the potentially modified filename
             ProjectStatus status = ProjectStatus.uploaded(filename);
-            metadataService.updateProjectMetadata(actualProjectId, status, gridfsFileId, ownerEmail);
+            metadataService.updateProjectMetadata(actualProjectId, status, gridfsFileId, ownerEmail, workspaceId, parentProjectId);
 
             ImportOptions options = resolveImportOptions(importMode, partition);
             importWorkerDispatcher.dispatch(actualProjectId, original, ownerEmail, filename, gridfsFileId, options);

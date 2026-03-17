@@ -1,5 +1,5 @@
 ﻿
-import React, { createContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import React, { createContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import apiClient from '../services/apiClient';
 
 interface User {
@@ -106,10 +106,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
     const [needsWorkspaceSelection, setNeedsWorkspaceSelection] = useState(false);
-    const [sessionExpiredMessage, setSessionExpiredMessage] = useState<string | null>(null);
-
+    const [sessionExpiredMessage, setSessionExpiredMessage] = useState<string | null>(null);    
+    // Flag to ignore workspace restoration when switching workspaces
+    const ignoringWorkspaceRef = useRef(false);
     const logout = useCallback((showExpiredMessage = false) => {
         console.log('[AuthContext] Logging out...');
+        
+        // Remember last workspace for auto-selection on next login
+        if (user?.workspaceId) {
+            localStorage.setItem('lastWorkspaceId', user.workspaceId);
+            console.log('[AuthContext] Saved last workspace for auto-login:', user.workspaceId);
+        }
+        
         setUser(null);
         setNeedsWorkspaceSelection(false);
         if (showExpiredMessage) {
@@ -118,11 +126,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (window.vscode) {
             window.vscode.postMessage({ type: 'logout' });
         } else {
-            // Clear localStorage in browser/web mode
+            // Clear localStorage in browser/web mode (but keep lastWorkspaceId)
             localStorage.removeItem('authToken');
         }
         console.log('[AuthContext]  Logout successful');
-    }, []);
+    }, [user?.workspaceId]);
 
     // Register unauthorized callback with apiClient
     useEffect(() => {
@@ -200,6 +208,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             setLoading(false);
                             return;
                         }
+                        
+                        // If we're switching workspaces, ignore workspace info from token
+                        if (ignoringWorkspaceRef.current) {
+                            console.log('[AuthContext] 🚫 Ignoring workspace from storedAuthToken (switching workspaces)');
+                            // Keep token but don't restore workspace
+                            localStorage.setItem('authToken', message.token);
+                            ignoringWorkspaceRef.current = false; // Reset flag
+                            setLoading(false);
+                            return;
+                        }
+                        
                         // Decode JWT to get user info
                         const userInfo = decodeToken(message.token);
                         const deploymentType = getStoredDeploymentType();
@@ -304,7 +323,57 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             // Decode JWT to get user info (for workspace data if present)
             const userInfo = decodeToken(token);
             
-            // Set user data
+            // Auto-select last workspace if available and user doesn't have workspace in JWT
+            const lastWorkspaceId = localStorage.getItem('lastWorkspaceId');
+            console.log('[AuthContext] Checking auto-select: lastWorkspaceId=', lastWorkspaceId, 'userInfo.workspaceId=', userInfo.workspaceId, 'deploymentType=', deploymentType, 'isAdmin=', isAdmin);
+            
+            if (!userInfo.workspaceId && lastWorkspaceId && (deploymentType === 'cloud' || isAdmin)) {
+                console.log('[AuthContext] 🔄 Auto-selecting last workspace after login:', lastWorkspaceId);
+                try {
+                    const selectResponse = await apiClient.post(`/api/workspaces/${lastWorkspaceId}/select`);
+                    console.log('[AuthContext] 📥 Workspace select response:', selectResponse);
+                    
+                    if (selectResponse.jwt) {
+                        console.log('[AuthContext] ✅ Auto-selected workspace successfully');
+                        // Update with workspace-scoped token
+                        localStorage.setItem('authToken', selectResponse.jwt);
+                        if (window.vscode) {
+                            window.vscode.postMessage({ type: 'saveAuthToken', token: selectResponse.jwt });
+                        }
+                        
+                        const wsUserInfo = decodeToken(selectResponse.jwt);
+                        const userData = { 
+                            token: selectResponse.jwt,
+                            userId: wsUserInfo.userId || userInfo.userId,
+                            username: wsUserInfo.username || username, 
+                            email: wsUserInfo.email || email,
+                            roles: wsUserInfo.roles || roles,
+                            isAdmin: wsUserInfo.isAdmin || isAdmin,
+                            workspaceId: selectResponse.workspaceId,
+                            workspaceName: selectResponse.workspaceName,
+                            workspaceRole: selectResponse.role,
+                            subscriptionPlan: selectResponse.subscriptionPlan || wsUserInfo.subscriptionPlan
+                        };
+                        console.log('[AuthContext] 👤 Setting user with workspace:', userData);
+                        setUser(userData);
+                        setNeedsWorkspaceSelection(false);
+                        setSessionExpiredMessage(null);
+                        console.log('[AuthContext] ✅ Login complete with auto-selected workspace');
+                        // Skip the role update flow since we have workspace-scoped token
+                        return;
+                    } else {
+                        console.warn('[AuthContext] ⚠️ No JWT in workspace select response');
+                    }
+                } catch (wsError: any) {
+                    console.error('[AuthContext] ❌ Failed to auto-select workspace:', wsError);
+                    console.error('[AuthContext] Error details:', wsError?.message, wsError?.status, wsError?.data);
+                    // Fall through to normal login flow without workspace
+                }
+            } else {
+                console.log('[AuthContext] ℹ️ Skipping auto-select (already has workspace or no last workspace)');
+            }
+            
+            // Set user data (either workspace wasn't auto-selected, or user already has workspace in JWT)
             setUser({ 
                 token,
                 userId: userInfo.userId,
@@ -522,12 +591,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     const selectWorkspace = (workspaceData: any) => {
-        console.log('[AuthContext] Workspace selected:', workspaceData);
+        console.log('[AuthContext] 📥 selectWorkspace called with:', workspaceData);
+        console.log('[AuthContext] Current user before selection:', user);
         
         // Handle skip workspace case - user continues without workspace
         if (workspaceData.skipWorkspace) {
-            console.log('[AuthContext] User skipped workspace selection, continuing to editor');
+            console.log('[AuthContext] ✅ User skipped workspace selection, continuing to editor');
             console.log('[AuthContext] Setting needsWorkspaceSelection to false');
+            console.log('[AuthContext] User will proceed to editor without workspace context');
+            
+            // Set flag to ignore workspace restoration from next storedAuthToken message
+            ignoringWorkspaceRef.current = true;
+            console.log('[AuthContext] 🚫 Set ignoringWorkspaceRef to prevent workspace restoration');
+            
             setNeedsWorkspaceSelection(false);
             // User stays logged in but without workspace context
             // The editor will work in non-workspace mode
@@ -535,7 +611,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         
         if (!workspaceData.jwt) {
+            console.error('[AuthContext] ❌ No JWT in workspaceData:', workspaceData);
             throw new Error('No token received from workspace selection');
+        }
+
+        // Save workspace ID for auto-selection on next login
+        if (workspaceData.workspaceId) {
+            localStorage.setItem('lastWorkspaceId', workspaceData.workspaceId);
+            console.log('[AuthContext] 💾 Saved workspace for future auto-login:', workspaceData.workspaceId);
         }
 
         // Save new workspace-scoped token
@@ -571,17 +654,32 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     const switchWorkspace = () => {
-        console.log('[AuthContext] Switching workspace - going back to workspace selection');
-        // Clear workspace-specific data but keep the user logged in
-        if (user) {
-            setUser({
-                ...user,
-                workspaceId: undefined,
-                workspaceName: undefined,
-                workspaceRole: undefined
-            });
+        console.log('[AuthContext] 🔄 switchWorkspace called');
+        console.log('[AuthContext] Current user:', user);
+        console.log('[AuthContext] Current needsWorkspaceSelection:', needsWorkspaceSelection);
+        
+        if (!user) {
+            console.warn('[AuthContext] No user to switch workspace for');
+            return;
         }
+
+        // Set flag to ignore workspace restoration from next storedAuthToken message
+        ignoringWorkspaceRef.current = true;
+        console.log('[AuthContext] 🚫 Set ignoringWorkspaceRef to prevent workspace restoration');
+        
+        // Clear workspace-specific data but keep the user logged in with token
+        const updatedUser = {
+            ...user,
+            workspaceId: undefined,
+            workspaceName: undefined,
+            workspaceRole: undefined
+        };
+        console.log('[AuthContext] Setting user to (no workspace):', updatedUser);
+        setUser(updatedUser);
+        
+        console.log('[AuthContext] Setting needsWorkspaceSelection to true');
         setNeedsWorkspaceSelection(true);
+        console.log('[AuthContext] ✅ Workspace switch initiated - should show workspace selection');
     };
 
     const updateSubscriptionPlan = async (planId: string) => {

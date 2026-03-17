@@ -689,6 +689,7 @@ class OntoCodePanel {
 
     private async shouldUseWorkspaceFlow(tokenData?: { workspaceId?: string | null; isAdmin?: boolean }): Promise<boolean> {
         const deploymentType = await this.getStoredDeploymentType();
+        console.log(tokenData,"token"); 
         if (deploymentType === 'self-hosted') {
             return false;
         }
@@ -698,7 +699,7 @@ class OntoCodePanel {
 
         const hasWorkspace = tokenData?.workspaceId !== undefined && tokenData?.workspaceId !== null && tokenData?.workspaceId !== '';
         const isAdmin = tokenData?.isAdmin === true;
-        return isAdmin || hasWorkspace;
+        return isAdmin;
     }
 
     // Fix: Made createOrShow async to handle async webview content loading.
@@ -2073,6 +2074,14 @@ class OntoCodePanel {
                 } catch (tokenError) {
                     console.error('[OntoCode] ❌ Could not extract email from token:', tokenError);
                 }
+            }
+            
+            // Add workspaceId if user is in a workspace
+            if (workspaceId) {
+                formData.append('workspaceId', workspaceId);
+                console.log(`[OntoCode] ✅ Adding workspaceId: ${workspaceId}`);
+            } else {
+                console.log(`[OntoCode] ⚠️ No workspaceId - user not in workspace mode`);
             }
             
             const headers = {

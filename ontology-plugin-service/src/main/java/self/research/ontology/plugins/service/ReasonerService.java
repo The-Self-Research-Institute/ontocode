@@ -5,7 +5,7 @@ import org.semanticweb.owlapi.reasoner.*;
 import org.semanticweb.owlapi.reasoner.structural.StructuralReasonerFactory;
 import openllet.owlapi.OpenlletReasonerFactory;
 import org.semanticweb.HermiT.ReasonerFactory;
-import org.semanticweb.elk.owlapi.ElkReasonerFactory;
+// import org.semanticweb.elk.owlapi.ElkReasonerFactory; // Temporarily disabled
 import uk.ac.manchester.cs.jfact.JFactFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -70,18 +70,19 @@ public class ReasonerService {
                     log.info("Using FaCT++ (JFact) reasoner");
                     return new JFactFactory().createReasoner(ontology, config);
                     
-                case ELK:
-                    // ELK - Fast and scalable EL reasoner
-                    // Note: ELK only supports EL profile of OWL, not full OWL 2 DL
-                    log.info("Using ELK (Consequence-based) reasoner - Note: EL profile only");
-                    try {
-                        OWLReasoner elkReasoner = new ElkReasonerFactory().createReasoner(ontology, config);
-                        log.info("ELK reasoner created successfully");
-                        return elkReasoner;
-                    } catch (Exception e) {
-                        log.error("Failed to create ELK reasoner - may be due to unsupported OWL constructs", e);
-                        throw e; // Will be caught by outer try-catch and fallback to Structural
-                    }
+                // Temporarily disabled ELK reasoner due to compatibility issues
+                // case ELK:
+                //     // ELK - Fast and scalable EL reasoner
+                //     // Note: ELK only supports EL profile of OWL, not full OWL 2 DL
+                //     log.info("Using ELK (Consequence-based) reasoner - Note: EL profile only");
+                //     try {
+                //         OWLReasoner elkReasoner = new ElkReasonerFactory().createReasoner(ontology, config);
+                //         log.info("ELK reasoner created successfully");
+                //         return elkReasoner;
+                //     } catch (Exception e) {
+                //         log.error("Failed to create ELK reasoner - may be due to unsupported OWL constructs", e);
+                //         throw e; // Will be caught by outer try-catch and fallback to Structural
+                //     }
                     
                 case STRUCTURAL:
                 default:
@@ -296,30 +297,44 @@ public class ReasonerService {
             results.put("unsatisfiableClasses", unsatisfiableList);
             
             // Build property hierarchies
+            // NOTE: ELK reasoner doesn't support property hierarchy inference
             List<Map<String, Object>> objectPropertyHierarchy = new ArrayList<>();
-            try {
-                OWLObjectProperty topObjectProp = df.getOWLTopObjectProperty();
-                Set<OWLObjectProperty> processedObjProps = new HashSet<>();
-                buildObjectPropertyHierarchy(reasoner, ontology, topObjectProp, objectPropertyHierarchy, processedObjProps, 0);
-                
-                // Fallback to asserted properties if inferred hierarchy is empty
-                if (objectPropertyHierarchy.isEmpty()) {
-                    log.info("Inferred object property hierarchy empty, falling back to asserted properties");
-                    for (OWLObjectProperty prop : ontology.getObjectPropertiesInSignature()) {
-                        if (!prop.isOWLTopObjectProperty() && !prop.isOWLBottomObjectProperty()) {
-                            Map<String, Object> node = new HashMap<>();
-                            node.put("iri", prop.getIRI().toString());
-                            node.put("label", getLabel(prop, ontology));
-                            node.put("depth", 0);
-                            node.put("childrenCount", 0);
-                            objectPropertyHierarchy.add(node);
-                        }
+            if (type == ReasonerType.ELK) {
+                // For ELK, directly provide asserted properties (no inference support)
+                log.info("ELK: Providing asserted object properties (no hierarchy inference support)");
+                for (OWLObjectProperty prop : ontology.getObjectPropertiesInSignature()) {
+                    if (!prop.isOWLTopObjectProperty() && !prop.isOWLBottomObjectProperty()) {
+                        Map<String, Object> node = new HashMap<>();
+                        node.put("iri", prop.getIRI().toString());
+                        node.put("label", getLabel(prop, ontology));
+                        node.put("depth", 0);
+                        node.put("childrenCount", 0);
+                        objectPropertyHierarchy.add(node);
                     }
                 }
-            } catch (Exception e) {
-                if (type == ReasonerType.ELK) {
-                    log.warn("ELK: Error building object property hierarchy - falling back to asserted properties", e);
-                    // For ELK, provide basic fallback
+            } else {
+                try {
+                    OWLObjectProperty topObjectProp = df.getOWLTopObjectProperty();
+                    Set<OWLObjectProperty> processedObjProps = new HashSet<>();
+                    buildObjectPropertyHierarchy(reasoner, ontology, topObjectProp, objectPropertyHierarchy, processedObjProps, 0);
+                    
+                    // Fallback to asserted properties if inferred hierarchy is empty
+                    if (objectPropertyHierarchy.isEmpty()) {
+                        log.info("Inferred object property hierarchy empty, falling back to asserted properties");
+                        for (OWLObjectProperty prop : ontology.getObjectPropertiesInSignature()) {
+                            if (!prop.isOWLTopObjectProperty() && !prop.isOWLBottomObjectProperty()) {
+                                Map<String, Object> node = new HashMap<>();
+                                node.put("iri", prop.getIRI().toString());
+                                node.put("label", getLabel(prop, ontology));
+                                node.put("depth", 0);
+                                node.put("childrenCount", 0);
+                                objectPropertyHierarchy.add(node);
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    log.error("Error building object property hierarchy, falling back to asserted properties", e);
+                    // Fallback to asserted properties
                     for (OWLObjectProperty prop : ontology.getObjectPropertiesInSignature()) {
                         if (!prop.isOWLTopObjectProperty() && !prop.isOWLBottomObjectProperty()) {
                             Map<String, Object> node = new HashMap<>();
@@ -330,36 +345,47 @@ public class ReasonerService {
                             objectPropertyHierarchy.add(node);
                         }
                     }
-                } else {
-                    log.error("Error building object property hierarchy", e);
                 }
             }
             results.put("objectPropertyHierarchy", objectPropertyHierarchy);
 
             List<Map<String, Object>> dataPropertyHierarchy = new ArrayList<>();
-            try {
-                OWLDataProperty topDataProp = df.getOWLTopDataProperty();
-                Set<OWLDataProperty> processedDataProps = new HashSet<>();
-                buildDataPropertyHierarchy(reasoner, ontology, topDataProp, dataPropertyHierarchy, processedDataProps, 0);
-                
-                // Fallback to asserted properties if inferred hierarchy is empty
-                if (dataPropertyHierarchy.isEmpty()) {
-                    log.info("Inferred data property hierarchy empty, falling back to asserted properties");
-                    for (OWLDataProperty prop : ontology.getDataPropertiesInSignature()) {
-                        if (!prop.isOWLTopDataProperty() && !prop.isOWLBottomDataProperty()) {
-                            Map<String, Object> node = new HashMap<>();
-                            node.put("iri", prop.getIRI().toString());
-                            node.put("label", getLabel(prop, ontology));
-                            node.put("depth", 0);
-                            node.put("childrenCount", 0);
-                            dataPropertyHierarchy.add(node);
-                        }
+            if (type == ReasonerType.ELK) {
+                // For ELK, directly provide asserted properties (no inference support)
+                log.info("ELK: Providing asserted data properties (no hierarchy inference support)");
+                for (OWLDataProperty prop : ontology.getDataPropertiesInSignature()) {
+                    if (!prop.isOWLTopDataProperty() && !prop.isOWLBottomDataProperty()) {
+                        Map<String, Object> node = new HashMap<>();
+                        node.put("iri", prop.getIRI().toString());
+                        node.put("label", getLabel(prop, ontology));
+                        node.put("depth", 0);
+                        node.put("childrenCount", 0);
+                        dataPropertyHierarchy.add(node);
                     }
                 }
-            } catch (Exception e) {
-                if (type == ReasonerType.ELK) {
-                    log.warn("ELK: Error building data property hierarchy - falling back to asserted properties", e);
-                    // For ELK, provide basic fallback
+            } else {
+                try {
+                    OWLDataProperty topDataProp = df.getOWLTopDataProperty();
+                    Set<OWLDataProperty> processedDataProps = new HashSet<>();
+                    buildDataPropertyHierarchy(reasoner, ontology, topDataProp, dataPropertyHierarchy, processedDataProps, 0);
+                    
+                    // Fallback to asserted properties if inferred hierarchy is empty
+                    if (dataPropertyHierarchy.isEmpty()) {
+                        log.info("Inferred data property hierarchy empty, falling back to asserted properties");
+                        for (OWLDataProperty prop : ontology.getDataPropertiesInSignature()) {
+                            if (!prop.isOWLTopDataProperty() && !prop.isOWLBottomDataProperty()) {
+                                Map<String, Object> node = new HashMap<>();
+                                node.put("iri", prop.getIRI().toString());
+                                node.put("label", getLabel(prop, ontology));
+                                node.put("depth", 0);
+                                node.put("childrenCount", 0);
+                                dataPropertyHierarchy.add(node);
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    log.error("Error building data property hierarchy, falling back to asserted properties", e);
+                    // Fallback to asserted properties
                     for (OWLDataProperty prop : ontology.getDataPropertiesInSignature()) {
                         if (!prop.isOWLTopDataProperty() && !prop.isOWLBottomDataProperty()) {
                             Map<String, Object> node = new HashMap<>();
@@ -370,8 +396,6 @@ public class ReasonerService {
                             dataPropertyHierarchy.add(node);
                         }
                     }
-                } else {
-                    log.error("Error building data property hierarchy", e);
                 }
             }
             results.put("dataPropertyHierarchy", dataPropertyHierarchy);

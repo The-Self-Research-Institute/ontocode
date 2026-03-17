@@ -14,12 +14,11 @@ const getBaseUrlForDeployment = (deploymentType: string) => {
     // Use environment config if available (injected by extension)
     const config = (window as any).__ONTOCODE_CONFIG__;
     if (config) {
-        return deploymentType === 'self-hosted'
-            ? config.SELF_HOSTED_GATEWAY_URL
-            : config.CLOUD_GATEWAY_URL;
+        return deploymentType === 'cloud'
+            ? config.CLOUD_GATEWAY_URL
+            : config.SELF_HOSTED_GATEWAY_URL;
     }
     // Fallback to hardcoded values
-    // For testing: Cloud URL pointing to localhost===================>
     return deploymentType === 'self-hosted' 
         ? 'http://localhost:80'
         : 'https://ontocodeapi.selfresearch.org';
@@ -28,11 +27,23 @@ const getBaseUrlForDeployment = (deploymentType: string) => {
 // Get initial base URL
 let BASE_URL = getBaseUrlForDeployment(getStoredDeploymentType());
 
+// Set window.API_BASE_URL for plugins (UMD bundles that don't have access to this module)
+if (typeof window !== 'undefined') {
+    (window as any).API_BASE_URL = BASE_URL;
+}
+
 // Allow updating base URL dynamically
 export const updateBaseUrl = (deploymentType: 'self-hosted' | 'cloud') => {
     BASE_URL = getBaseUrlForDeployment(deploymentType);
+    // Update window.API_BASE_URL as well for plugins
+    if (typeof window !== 'undefined') {
+        (window as any).API_BASE_URL = BASE_URL;
+    }
     console.log('[ApiClient] Base URL updated to:', BASE_URL);
 };
+
+// Expose current base URL for WebSocket connection
+export const getBaseUrl = () => BASE_URL;
 
 const TIMEOUT = 600_000; // Allow up to 10 minutes for heavy ontology operations (increased for large files)
 

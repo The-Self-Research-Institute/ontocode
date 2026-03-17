@@ -80,7 +80,14 @@ interface ProjectDashboardProps {
 }
 
 const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pendingFile, onOpenLocalFile }) => {
-    const { user, logout, switchWorkspace } = useAuth();
+    const { user, logout, switchWorkspace, updateSubscriptionPlan } = useAuth();
+    console.log('[ProjectDashboard] Rendered with user:', { 
+        email: user?.email, 
+        workspaceId: user?.workspaceId, 
+        workspaceName: user?.workspaceName 
+    });
+    console.log('[ProjectDashboard] switchWorkspace function:', typeof switchWorkspace);
+    
     const subscription = useSubscription();
     const [projects, setProjects] = useState<Project[]>([]);
     const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
@@ -134,21 +141,22 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
     const handleUpgradePlan = async (planId: string) => {
         setUpgradingPlan(true);
         try {
-            // Update workspace subscription plan via API
-            await apiClient.patch(`/api/workspaces/${user?.workspaceId}/subscription`, {
-                subscriptionPlan: planId
-            });
-
-            // Close modal first
+            // Convert plan ID to uppercase (backend expects FREE, PRO, ENTERPRISE)
+            const upperCasePlan = planId.toUpperCase();
+            console.log('[ProjectDashboard] Upgrading plan from', subscription.plan, 'to', upperCasePlan);
+            
+            // Update subscription plan (this calls the API and updates user state)
+            await updateSubscriptionPlan(upperCasePlan);
+            
+            // Close modal
             setShowPlanDetails(false);
             
             // Show success toast
-            showToast(`Successfully upgraded to ${planId.toUpperCase()} plan! Refreshing...`, 'success');
+            showToast(`Successfully upgraded to ${upperCasePlan} plan!`, 'success');
             
-            // Wait a bit for toast to be visible, then reload to get updated user data
-            setTimeout(() => {
-                window.location.reload();
-            }, 1500);
+            // Reload data to update subscription limits and workspace info
+            await loadData();
+            
         } catch (error: any) {
             console.error('Failed to upgrade workspace plan:', error);
             showToast(error?.response?.data?.error || 'Failed to upgrade plan. Please try again.', 'error');
@@ -197,8 +205,12 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
                 ? await apiClient.get(`/api/projects/my?workspaceId=${user.workspaceId}`)
                 : await apiClient.get(`/api/projects/my`);
             const projectsData = projectsResponse?.data || projectsResponse;
-            console.log('[ProjectDashboard] Projects API response:', projectsData);
+            console.log('[ProjectDashboard] Projects API response:', JSON.stringify(projectsData, null, 2));
             const loadedProjects = projectsData?.projects || [];
+            console.log('[ProjectDashboard] Loaded projects:', loadedProjects.length, loadedProjects.map((p: any) => ({
+                name: p.name, memberCount: p.memberCount, fileCount: p.fileCount, 
+                members: p.members?.length, files: p.files?.length
+            })));
             setProjects(loadedProjects);
             
             if (loadedProjects.length === 0) {
@@ -586,34 +598,15 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
     };
 
     const filteredProjects = useMemo(() => {
-        console.log('[ProjectDashboard] Recalculating filteredProjects, user?.userId:', user?.userId, 'projects:', projects.length);
+        console.log('[ProjectDashboard] Recalculating filteredProjects, projects:', projects.length);
         
-        const currentUserId = user?.userId;
-        if (!currentUserId) {
-            console.log('[ProjectDashboard] User ID not available yet, showing all projects as fallback');
-            // Fallback: show all projects instead of empty list when userId is missing
-            return projects.filter(project => 
-                project.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                project.description.toLowerCase().includes(searchQuery.toLowerCase())
-            );
-        }
-        
-        return projects.filter(project => {
-            // Only show projects where the current user is a member or owner
-            const isProjectMember = project.members?.some(member => member.userId === currentUserId) || 
-                                    project.ownerId === currentUserId;
-            console.log(`[ProjectDashboard] Checking project ${project.name} - ownerId: ${project.ownerId}, userId: ${currentUserId}, members:`, project.members?.map(m => m.userId), 'isProjectMember:', isProjectMember);
-            
-            if (!isProjectMember) {
-                console.log(`[ProjectDashboard] Filtering out project ${project.name} - user not a member`);
-                return false;
-            }
-            
-            // Apply search filter
-            return project.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                   project.description.toLowerCase().includes(searchQuery.toLowerCase());
-        });
-    }, [projects, user?.userId, searchQuery]);
+        // Backend already returns only projects the user has access to
+        // (workspace-based or member-based), so just apply search filter
+        return projects.filter(project => 
+            project.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            project.description.toLowerCase().includes(searchQuery.toLowerCase())
+        );
+    }, [projects, searchQuery]);
 
     if (loading) {
         return (
@@ -720,7 +713,10 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
                                 Welcome, {user?.username}
                                 {user?.workspaceName && (
                                     <button 
-                                        onClick={switchWorkspace}
+                                        onClick={() => {
+                                            console.log('[ProjectDashboard] 🔘 Switch workspace button clicked (inline)');
+                                            switchWorkspace();
+                                        }}
                                         className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs hover:bg-purple-200 transition-colors inline-flex items-center gap-1"
                                         title="Click to switch workspace"
                                     >
@@ -747,7 +743,10 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
                                 {subscription.plan.toUpperCase()}
                             </button>
                             <button
-                                onClick={switchWorkspace}
+                                onClick={() => {
+                                    console.log('[ProjectDashboard] 🔘 Switch workspace button clicked (main button)');
+                                    switchWorkspace();
+                                }}
                                 className="flex items-center gap-2 px-3 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
                                 title="Switch Workspace"
                             >

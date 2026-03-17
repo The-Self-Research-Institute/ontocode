@@ -153,19 +153,29 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
 
     const handleSelectWorkspace = async (workspaceId: string) => {
         try {
+            console.log('[WorkspaceSelection] 🎯 Selecting workspace:', workspaceId);
             setSelecting(true);
             setError('');
             
             const response = await apiClient.post(`/api/workspaces/${workspaceId}/select`);
-            console.log('[WorkspaceSelection] Select workspace response:', response);
+            console.log('[WorkspaceSelection] 📥 Select workspace response:', response);
+            console.log('[WorkspaceSelection] Response type:', typeof response);
+            console.log('[WorkspaceSelection] Response keys:', response ? Object.keys(response) : 'null');
             
             // Handle both direct response (VS Code proxy) and response.data (axios browser) formats
             const data = response?.data || response;
+            console.log('[WorkspaceSelection] 📦 Extracted data:', data);
+            
             if (data?.jwt) {
+                console.log('[WorkspaceSelection] ✅ JWT found, calling onWorkspaceSelected');
                 onWorkspaceSelected(data);
+            } else {
+                console.error('[WorkspaceSelection] ❌ No JWT in response data:', data);
+                setError('No authentication token received from server');
             }
         } catch (err: any) {
-            console.error('Error selecting workspace:', err);
+            console.error('[WorkspaceSelection] ❌ Error selecting workspace:', err);
+            console.error('[WorkspaceSelection] Error details:', err?.message, err?.status, err?.data);
             setError(err.response?.data?.error || err.message || 'Failed to select workspace');
         } finally {
             setSelecting(false);

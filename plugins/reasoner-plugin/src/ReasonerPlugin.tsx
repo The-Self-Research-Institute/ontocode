@@ -21,7 +21,9 @@ import {
   Loader,
   RefreshCw,
   Download,
-  Info
+  Info,
+  ChevronDown,
+  ChevronRight
 } from 'lucide-react';
 
 import type {
@@ -357,7 +359,7 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
                   <option value="hermit">HermiT (Hypertableau)</option>
                   <option value="pellet">Pellet</option>
                   <option value="fact++">FaCT++</option>
-                  <option value="elk">ELK</option>
+                  {/* <option value="elk">ELK</option> */}
                 </select>
               </div>
 
@@ -466,10 +468,10 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
                     <span style={styles.helpLabel}>FaCT++</span>
                     <span style={styles.helpValue}>Fast for large TBoxes, optimized for classification</span>
                   </div>
-                  <div style={styles.helpRow}>
+                  {/* <div style={styles.helpRow}>
                     <span style={styles.helpLabel}>ELK</span>
                     <span style={styles.helpValue}>Extremely fast for EL++ profile ontologies</span>
-                  </div>
+                  </div> */}
                 </div>
 
                 <h4 style={styles.helpTitle}>💡 Tips</h4>

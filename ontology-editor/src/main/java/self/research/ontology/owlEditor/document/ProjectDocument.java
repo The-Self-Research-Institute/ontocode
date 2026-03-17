@@ -14,6 +14,8 @@ public class ProjectDocument {
     private String name;
     private String filename;
     private String ownerEmail;
+    private String projectId;  // Parent project ID (for files belonging to a project)
+    private String workspaceId;  // Parent workspace ID
     private String gridfsFileId;  // GridFS file ID mapping
     private String status;
     private String statusMessage;
@@ -63,6 +65,22 @@ public class ProjectDocument {
     
     public void setOwnerEmail(String ownerEmail) {
         this.ownerEmail = ownerEmail;
+    }
+    
+    public String getProjectId() {
+        return projectId;
+    }
+    
+    public void setProjectId(String projectId) {
+        this.projectId = projectId;
+    }
+    
+    public String getWorkspaceId() {
+        return workspaceId;
+    }
+    
+    public void setWorkspaceId(String workspaceId) {
+        this.workspaceId = workspaceId;
     }
     
     public String getGridfsFileId() {
