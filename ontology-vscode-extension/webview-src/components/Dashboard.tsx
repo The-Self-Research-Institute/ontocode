@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, Square, DatabaseZap, Upload, FolderOpen, Sparkles, Clock, Users, Download, RefreshCw, AlertCircle, Puzzle, Zap, BookOpen, Brain, Network, GitMerge, Palette, Edit2, Plus, Globe, Link as LinkIcon, Hash, X, FileCode, Info, Crown, Rocket, Bug
 } from "lucide-react";
-import apiClient from "../services/apiClient";
+import apiClient, { getBaseUrl } from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
 import { draftTrackingService } from "../services/draftTrackingService";
 import { notificationService } from "../services/notificationService";
@@ -1060,7 +1060,8 @@ const OpenFileDialog = ({
     importMode,
     partitionStrategy,
     onImportModeChange,
-    onPartitionStrategyChange
+    onPartitionStrategyChange,
+    isWorkspaceMode
   }: {
     isOpen: boolean;
     onClose: () => void;
@@ -1078,10 +1079,13 @@ const OpenFileDialog = ({
     partitionStrategy: 'none' | 'namespace';
     onImportModeChange: (mode: 'full' | 'incremental' | 'diff') => void;
     onPartitionStrategyChange: (strategy: 'none' | 'namespace') => void;
+    isWorkspaceMode?: boolean;
   }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const canOpenLocalFile = typeof window !== 'undefined' && !!(window as any).vscode;
   const usingProjectFiles = !!parentProjectId;
+  
+  // Backend now filters to only return files (not projects), so just pass through
   const primaryFiles = usingProjectFiles ? (projectFiles || []) : myFiles;
   const secondaryFiles = usingProjectFiles ? [] : sharedFiles;
     const handleOpenLocalFile = () => {
@@ -1131,36 +1135,25 @@ const OpenFileDialog = ({
           </div>
         </div>
         <div className="flex-1 overflow-y-auto">
-          {primaryFiles.length > 0 && (
+          {filteredFiles.length > 0 ? (
             <div className="p-3">
-              <div className="flex items-center gap-2 px-2 py-1.5 mb-2">
-                {usingProjectFiles ? (
-                  <FolderOpen size={14} className="text-purple-600" />
-                ) : (
-                  <User size={14} className="text-purple-600" />
-                )}
-                <span className="text-xs font-semibold text-purple-800">
-                  {usingProjectFiles ? 'Project Files' : 'My Files'} ({primaryFiles.filter(f => !searchQuery || f.filename.toLowerCase().includes(searchQuery.toLowerCase())).length})
-                </span>
-              </div>
               <div className="space-y-0.5">
-                {primaryFiles.filter(f => !searchQuery || (f.filename && f.filename.toLowerCase().includes(searchQuery.toLowerCase()))).map((file) => {
+                {filteredFiles.map((file) => {
                   const fileProjectId = file.projectId || file.id || (file.filename ? file.filename.replace(/\.[^/.]+$/, '') : '');
                   const isActiveById = currentFileId ? file.id === currentFileId : false;
                   const isActiveByName = currentFileName ? file.filename === currentFileName : false;
-                  // Also check if projectId matches (for free mode where projectId IS the file identifier)
                   const isActiveByProjectId = currentProjectId ? (fileProjectId === currentProjectId || file.filename === currentProjectId) : false;
                   const isActive = isActiveById || isActiveByName || isActiveByProjectId;
+                  const isSharedFile = sharedFiles.some(sf => sf.id === file.id);
+                  
                   return (
                     <div
                       key={file.id}
                       onClick={() => {
                         if (!isActive) {
-                          // If we have a parent project (admin flow), load the file from project
                           if (parentProjectId && onLoadProjectFile) {
                             onLoadProjectFile(file.id, file.filename);
                           } else {
-                            // Normal flow - switch to existing ontology project
                             onSwitchFile(fileProjectId);
                           }
                         }
@@ -1171,7 +1164,7 @@ const OpenFileDialog = ({
                         : 'hover-overlay border border-transparent'
                         }`}
                     >
-                      <FileText size={18} className="text-accent" />
+                      <FileText size={18} className={isSharedFile ? "text-blue-500" : "text-accent"} />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="text-xs font-medium text-gray-900 truncate">{file.filename}</span>
@@ -1182,7 +1175,7 @@ const OpenFileDialog = ({
                           )}
                         </div>
                       </div>
-                      {!usingProjectFiles && onDeleteFile && fileProjectId && (
+                      {!usingProjectFiles && onDeleteFile && fileProjectId && !isSharedFile && (
                         <button
                           onClick={(event) => {
                             event.stopPropagation();
@@ -1199,68 +1192,10 @@ const OpenFileDialog = ({
                 })}
               </div>
             </div>
-          )}
-          {!usingProjectFiles && (
-            <div className="p-3 border-t border-gray-100">
-              <div className="flex items-center gap-2 px-2 py-1.5 mb-2">
-                <Share2 size={14} className="text-blue-600" />
-                <span className="text-xs font-semibold text-blue-800">Shared With Me ({sharedFiles.filter(f => !searchQuery || f.filename.toLowerCase().includes(searchQuery.toLowerCase())).length})</span>
-              </div>
-              {sharedFiles.length > 0 ? (
-                <div className="space-y-0.5">
-                  {sharedFiles.filter(f => !searchQuery || (f.filename && f.filename.toLowerCase().includes(searchQuery.toLowerCase()))).map((file) => {
-                    const fileProjectId = file.projectId || file.id || (file.filename ? file.filename.replace(/\.[^/.]+$/, '') : '');
-                    const isActiveById = currentFileId ? file.id === currentFileId : false;
-                    const isActiveByName = currentFileName ? file.filename === currentFileName : false;
-                    const isActive = isActiveById || isActiveByName || (!currentFileId && !currentFileName && fileProjectId === currentProjectId);
-                    return (
-                      <div
-                        key={file.id}
-                        onClick={() => {
-                          if (!isActive) {
-                            onSwitchFile(fileProjectId);
-                          }
-                          onClose();
-                        }}
-                        className={`flex items-center gap-3 p-2 px-3 rounded-md cursor-pointer transition-all ${isActive
-                          ? 'bg-blue-50 border border-blue-300'
-                          : 'hover:bg-gray-50 border border-transparent'
-                          }`}
-                      >
-                        <FileText size={18} className="text-blue-500" />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium text-gray-900 truncate">{file.filename}</span>
-                            {isActive && (
-                              <span className="px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-semibold rounded">
-                                ACTIVE
-                              </span>
-                            )}
-                          </div>
-                          {file.sharedBy && (
-                            <div className="text-[10px] text-gray-500 mt-0.5">
-                              Shared by {file.sharedBy}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-4 text-gray-400">
-                  <Share2 size={20} className="mb-1.5 opacity-50" />
-                  <p className="text-[10px]">No shared files</p>
-                </div>
-              )}
-            </div>
-          )}
-          {filteredFiles.length === 0 && (
+          ) : (
             <div className="flex flex-col items-center justify-center py-12 text-gray-400">
               <Search size={40} className="mb-3 opacity-30" />
-              <p className="text-base font-medium text-gray-600 mb-1">
-                {usingProjectFiles ? 'No project files found' : 'No ontology files found'}
-              </p>
+              <p className="text-base font-medium text-gray-600 mb-1">No files found</p>
               <p className="text-xs text-gray-500 max-w-xs text-center">
                 {searchQuery
                   ? `No files match "${searchQuery}". Try a different search.`
@@ -4163,22 +4098,33 @@ const Dashboard: React.FC<DashboardProps> = ({
       const isWorkspaceMode = !!user?.workspaceId;
       const primaryEndpoint = isWorkspaceMode ? '/api/projects' : '/api/ontology/projects';
       const fallbackEndpoint = isWorkspaceMode ? '/api/ontology/projects' : '/api/projects';
-      const projectsUrl = resolvedEmail
-        ? `${primaryEndpoint}?userEmail=${encodeURIComponent(resolvedEmail)}`
+      const params = new URLSearchParams();
+      if (resolvedEmail) {
+        params.set('userEmail', resolvedEmail);
+      }
+      const projectsUrl = params.toString()
+        ? `${primaryEndpoint}?${params.toString()}`
         : primaryEndpoint;
-      console.log('[Dashboard] 📂 Fetching projects for user email:', resolvedEmail || '(none)', 'workspaceMode:', isWorkspaceMode);
+      console.log('[Dashboard] 📂 fetchProjects called');
+      console.log('[Dashboard] 📂 User:', { email: user?.email, workspaceId: user?.workspaceId, isWorkspaceMode });
+      console.log('[Dashboard] 📂 Fetching from:', projectsUrl);
+      console.log('[Dashboard] 📂 resolvedEmail:', resolvedEmail);
+      
       let response;
       try {
         response = await apiClient.get<any>(projectsUrl);
+        console.log('[Dashboard] 📥 Primary endpoint response:', response);
       } catch (error: any) {
+        console.error('[Dashboard] ❌ Primary endpoint error:', error);
         const status = error?.status || error?.response?.status;
         const allowFallback = primaryEndpoint === '/api/projects';
         if (status === 404 && fallbackEndpoint !== primaryEndpoint && allowFallback) {
           const fallbackUrl = resolvedEmail
             ? `${fallbackEndpoint}?userEmail=${encodeURIComponent(resolvedEmail)}`
             : fallbackEndpoint;
-          console.warn('[Dashboard] Projects endpoint missing, falling back to:', fallbackUrl);
+          console.warn('[Dashboard] ⚠️ Projects endpoint missing, falling back to:', fallbackUrl);
           response = await apiClient.get<any>(fallbackUrl);
+          console.log('[Dashboard] 📥 Fallback endpoint response:', response);
         } else {
           throw error;
         }
@@ -4411,6 +4357,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     // Always fetch user's files for the OpenFileDialog
     // This populates myFiles and sharedFiles based on user email
+    console.log('[Dashboard] 🔍 useEffect triggered - user.email:', user?.email, 'user.workspaceId:', user?.workspaceId);
     console.log('[Dashboard] ✅ Fetching all projects for user email:', resolvedEmail || '(none)');
     fetchProjects();
 
@@ -6156,11 +6103,17 @@ const Dashboard: React.FC<DashboardProps> = ({
         const token = localStorage.getItem('authToken');
         const resolvedEmail = resolveUserEmail();
         // Use deployment-aware URL
-        const uploadBaseUrl = window.API_BASE_URL || (localStorage.getItem('deploymentType') === 'self-hosted' ? 'http://localhost:80' : 'https://ontocodeapi.selfresearch.org');
+        const uploadBaseUrl = getBaseUrl();
         const query = new URLSearchParams();
         query.set('ownerEmail', resolvedEmail || '');
         query.set('importMode', importMode);
         query.set('partition', partitionStrategy);
+        if (user?.workspaceId) {
+          query.set('workspaceId', user.workspaceId);
+        }
+        if (initialProjectId) {
+          query.set('parentProjectId', initialProjectId);
+        }
         const uploadResponse = await fetch(`${uploadBaseUrl}/api/ontology/upload/${ontologyProjectId}?${query.toString()}`, {
           method: 'POST',
           headers: token ? { 'Authorization': `Bearer ${token}` } : {},
@@ -7554,19 +7507,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     return () => window.removeEventListener('graph-view:delete-class', handleGraphDelete as EventListener);
   }, [findClassNodeById, handleDeleteItem, projectId, showNotification]);
 
-  useEffect(() => {
-    const handleShowCollaboration = (event: Event) => {
-      const custom = event as CustomEvent<{ projectId?: string }>;
-      const detail = custom.detail;
-      if (detail?.projectId && projectId && detail.projectId !== projectId) {
-        return;
-      }
-      setShowCollaborationPanel(true);
-    };
 
-    window.addEventListener('graph-view:show-collaboration', handleShowCollaboration as EventListener);
-    return () => window.removeEventListener('graph-view:show-collaboration', handleShowCollaboration as EventListener);
-  }, [projectId]);
 
   // Keyboard shortcuts (Protégé-style) - must be after handleAddItem and handleDeleteItem
   useEffect(() => {
@@ -9719,7 +9660,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             projectId={projectId}
             context={{
               projectId,
-              apiBaseUrl: (window as any).API_BASE_URL || (localStorage.getItem('deploymentType') === 'self-hosted' ? 'http://localhost:80' : 'https://ontocodeapi.selfresearch.org'),
+              apiBaseUrl: getBaseUrl(),
               permissions: {
                 canEdit: !readonlyMode,
                 canDelete: !readonlyMode,
@@ -9859,7 +9800,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           return (
             <PluginComponent
               projectId={projectId || ''}
-              apiBaseUrl={window.API_BASE_URL}
+              apiBaseUrl={getBaseUrl()}
               selectedReasoner={selectedReasoner}
               isReasonerRunning={isReasonerRunning}
               isReasonerLoading={isReasonerLoading}
@@ -11127,12 +11068,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // #region Main Render
   // Define apiBaseUrl for plugin usage - use deployment-aware fallback
-  const getApiBaseUrl = () => {
-    if (window.API_BASE_URL) return window.API_BASE_URL;
-    const deployType = localStorage.getItem('deploymentType');
-    return deployType === 'self-hosted' ? 'http://localhost:80' : 'https://ontocodeapi.selfresearch.org';
-  };
-  const apiBaseUrl = getApiBaseUrl();
+  const apiBaseUrl = getBaseUrl();
 
   const ALL_MAIN_TABS: Record<string, { label: string, icon: React.ElementType }> = {
     ActiveOntology: { label: "Active ontology", icon: FileText },
@@ -11673,6 +11609,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         partitionStrategy={partitionStrategy}
         onImportModeChange={setImportMode}
         onPartitionStrategyChange={setPartitionStrategy}
+        isWorkspaceMode={!!user?.workspaceId}
       />
       <DuplicateFileDialog
         isOpen={duplicatePrompt.isOpen}

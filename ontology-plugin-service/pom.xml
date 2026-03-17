@@ -106,13 +106,6 @@
             <version>2.6.5</version>
         </dependency>
 
-        <!-- ELK Reasoner - Fast and scalable EL reasoner -->
-        <dependency>
-            <groupId>org.semanticweb.elk</groupId>
-            <artifactId>elk-owlapi</artifactId>
-            <version>0.4.3</version>
-        </dependency>
-
         <!-- FaCT++ Reasoner (via JFact - Java port) -->
         <dependency>
             <groupId>net.sourceforge.owlapi</groupId>

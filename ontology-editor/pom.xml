@@ -153,13 +153,6 @@
             <version>2.15.1</version>
         </dependency>
 
-        <!-- ELK Reasoner - Fast and scalable EL reasoner -->
-        <dependency>
-            <groupId>org.semanticweb.elk</groupId>
-            <artifactId>elk-owlapi</artifactId>
-            <version>0.4.3</version>
-        </dependency>
-
         <dependency>
             <groupId>com.fasterxml.jackson.datatype</groupId>
             <artifactId>jackson-datatype-jsr310</artifactId>

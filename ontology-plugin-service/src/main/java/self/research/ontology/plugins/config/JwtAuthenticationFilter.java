@@ -2,6 +2,7 @@ package self.research.ontology.plugins.config;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -19,7 +20,6 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import javax.crypto.SecretKey;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 
 @Slf4j
@@ -40,7 +40,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String token = authHeader.substring(7);
 
             try {
-                SecretKey key = Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
+                // Decode base64-encoded secret (same as auth service)
+                byte[] keyBytes = Decoders.BASE64.decode(jwtSecret);
+                SecretKey key = Keys.hmacShaKeyFor(keyBytes);
 
                 Claims claims = Jwts.parser()
                     .verifyWith(key)

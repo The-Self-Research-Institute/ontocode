@@ -1,6 +1,23 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import apiClient from './apiClient';
 
+/**
+ * Resolve the API base URL for plugin service calls.
+ * In VS Code Desktop, window.API_BASE_URL is injected by the extension host.
+ * In standalone browser mode (npm run dev), fall back to the gateway URL
+ * based on deployment type, matching apiClient behavior.
+ */
+function getPluginApiBaseUrl(): string {
+  if (window.API_BASE_URL) return window.API_BASE_URL;
+  const config = (window as any).__ONTOCODE_CONFIG__;
+  const deploymentType = localStorage.getItem('deploymentType') || 'cloud';
+  if (deploymentType === 'cloud') {
+    return config?.CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org';
+  }
+  return config?.SELF_HOSTED_GATEWAY_URL || 'http://localhost:80';
+
+}
+
 export interface PluginManifest {
   name: string;
   displayName: string;
@@ -64,7 +81,7 @@ class PluginLoaderService {
         }
         
         try {
-          const manifestResponse = await fetch(`${window.API_BASE_URL}/api/plugins/${pluginId}`, {
+          const manifestResponse = await fetch(`${getPluginApiBaseUrl()}/api/plugins/${pluginId}`, {
             method: 'GET',
             headers
           });
@@ -108,7 +125,7 @@ class PluginLoaderService {
           headers['Authorization'] = `Bearer ${token}`;
         }
         
-        const response = await fetch(`${window.API_BASE_URL}/api/plugins/${pluginId}/download`, {
+        const response = await fetch(`${getPluginApiBaseUrl()}/api/plugins/${pluginId}/download`, {
           method: 'GET',
           headers
         });
@@ -124,7 +141,7 @@ class PluginLoaderService {
           headers2['Authorization'] = `Bearer ${token2}`;
         }
         
-        const manifestResponse = await fetch(`${window.API_BASE_URL}/api/plugins/${pluginId}`, {
+        const manifestResponse = await fetch(`${getPluginApiBaseUrl()}/api/plugins/${pluginId}`, {
           method: 'GET',
           headers: headers2
         });
@@ -158,7 +175,7 @@ class PluginLoaderService {
           trackHeaders['Authorization'] = `Bearer ${trackToken}`;
         }
         
-        await fetch(`${window.API_BASE_URL}/api/plugins/${pluginId}/install?version=${manifest.version}`, {
+        await fetch(`${getPluginApiBaseUrl()}/api/plugins/${pluginId}/install?version=${manifest.version}`, {
           method: 'POST',
           headers: trackHeaders
         });
@@ -192,7 +209,7 @@ class PluginLoaderService {
           uninstallHeaders['Authorization'] = `Bearer ${uninstallToken}`;
         }
         
-        await fetch(`${window.API_BASE_URL}/api/plugins/${pluginId}/uninstall`, {
+        await fetch(`${getPluginApiBaseUrl()}/api/plugins/${pluginId}/uninstall`, {
           method: 'POST',
           headers: uninstallHeaders
         });
@@ -222,7 +239,7 @@ class PluginLoaderService {
 
     try {
       // Download and dynamically load the plugin bundle
-      const bundleUrl = `${(window as any).API_BASE_URL}/api/plugins/${pluginId}/download`;
+      const bundleUrl = `${getPluginApiBaseUrl()}/api/plugins/${pluginId}/download`;
       
       console.log(`[PluginLoader] 📥 Loading plugin bundle from ${bundleUrl}`);
       
@@ -429,7 +446,7 @@ class PluginLoaderService {
         headers['Authorization'] = `Bearer ${token}`;
       }
       
-      const response = await fetch(`${window.API_BASE_URL}/api/plugins/${pluginId}/ratings`, {
+      const response = await fetch(`${getPluginApiBaseUrl()}/api/plugins/${pluginId}/ratings`, {
         method: 'GET',
         headers
       });
@@ -456,7 +473,7 @@ class PluginLoaderService {
         headers['Authorization'] = `Bearer ${token}`;
       }
       
-      const response = await fetch(`${window.API_BASE_URL}/api/plugins/${pluginId}/stats`, {
+      const response = await fetch(`${getPluginApiBaseUrl()}/api/plugins/${pluginId}/stats`, {
         method: 'GET',
         headers
       });

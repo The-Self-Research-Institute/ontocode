@@ -24,6 +24,18 @@ import { Download, Trash2, Search, Package, X, Star } from 'lucide-react';
 import { pluginLoader } from '../services/pluginLoader';
 import { RatingModal } from './RatingModal';
 
+// Resolve API base URL with browser-mode fallback
+function getPluginApiBaseUrl(): string {
+  if ((window as any).API_BASE_URL) return (window as any).API_BASE_URL;
+  const config = (window as any).__ONTOCODE_CONFIG__;
+  const deploymentType = localStorage.getItem('deploymentType') || 'cloud';
+  if (deploymentType === 'cloud') {
+    return config?.CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org';
+  }
+  return config?.SELF_HOSTED_GATEWAY_URL || 'http://localhost:80';
+
+}
+
 // =============================================================================
 // TYPE DEFINITIONS
 // =============================================================================
@@ -154,7 +166,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
       }
 
       // Fetch plugins list via gateway
-      const apiBaseUrl = (window as any).API_BASE_URL || 'http://localhost:8087';
+      const apiBaseUrl = getPluginApiBaseUrl();
       console.log('[PluginMarketplace] Fetching from:', `${apiBaseUrl}/api/plugins?size=50`);
       const response = await fetch(`${apiBaseUrl}/api/plugins?size=50`, { headers });
       
@@ -237,7 +249,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
         headers['Authorization'] = `Bearer ${token}`;
       }
 
-      const apiBaseUrl = (window as any).API_BASE_URL || 'http://localhost:8087';
+      const apiBaseUrl = getPluginApiBaseUrl();
       const statsResponse = await fetch(
         `${apiBaseUrl}/api/plugins/${pluginId}/stats`, 
         { headers }

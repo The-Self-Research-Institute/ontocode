@@ -19,6 +19,8 @@ import { Loader2 } from 'lucide-react';
 
 const AppContent = () => {
     const { user, loading, needsWorkspaceSelection, selectWorkspace, logout, updateSubscriptionPlan, updateUserRole } = useAuth();
+    console.log('[App] 🔄 AppContent render - user:', user?.email, 'workspaceId:', user?.workspaceId, 'needsWorkspaceSelection:', needsWorkspaceSelection);
+    
     const [isLoginView, setIsLoginView] = useState(true);
     const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
     const [selectedProjectName, setSelectedProjectName] = useState<string>('');
@@ -34,10 +36,28 @@ const AppContent = () => {
 
     // Helper to check if workspace selection is required
     const shouldShowWorkspaceSelection = (): boolean => {
-        if (!user || user.workspaceId) return false;
+        console.log('[App] shouldShowWorkspaceSelection check:', {
+            hasUser: !!user,
+            userWorkspaceId: user?.workspaceId,
+            needsWorkspaceSelection,
+            deploymentType: localStorage.getItem('deploymentType')
+        });
+        
+        if (!user) {
+            console.log('[App] Returning false - no user');
+            return false;
+        }
+        
+        if (user.workspaceId) {
+            console.log('[App] Returning false - user already has workspace');
+            return false;
+        }
         
         // If user explicitly skipped workspace selection, don't show it
-        if (!needsWorkspaceSelection) return false;
+        if (!needsWorkspaceSelection) {
+            console.log('[App] Returning false - needsWorkspaceSelection is false');
+            return false;
+        }
         
         const storedDeploymentType = localStorage.getItem('deploymentType') as 'self-hosted' | 'cloud' | null;
         
@@ -425,18 +445,23 @@ const AppContent = () => {
     }
 
     // Show workspace selection if user is logged in but hasn't selected a workspace
-    if (user && shouldShowWorkspaceSelection()) {
+    const showWorkspaceSelectionScreen = user && shouldShowWorkspaceSelection();
+    console.log('[App] Render decision - showWorkspaceSelectionScreen:', showWorkspaceSelectionScreen);
+    
+    if (showWorkspaceSelectionScreen) {
+        console.log('[App] 🎨 Rendering WorkspaceSelection component');
         return (
             <WorkspaceSelection
                 username={user.username}
                 isAdmin={user.isAdmin || false}
                 onWorkspaceSelected={handleWorkspaceSelected}
                 onSkipWorkspace={() => {
-                    console.log('[App] User chose to continue without workspace');
+                    console.log('[App] 🚀 User chose to continue without workspace');
                     console.log('[App] Current needsWorkspaceSelection:', needsWorkspaceSelection);
+                    console.log('[App] Current user:', { email: user?.email, workspaceId: user?.workspaceId });
                     // Update auth context to skip workspace selection
                     selectWorkspace({ skipWorkspace: true });
-                    console.log('[App] Workspace selection skipped, should proceed to editor');
+                    console.log('[App] ✅ Workspace selection skipped, should proceed to editor');
                 }}
                 onLogout={handleLogout}
             />
@@ -459,8 +484,19 @@ const AppContent = () => {
 
     // Show Project Dashboard for workspace members (both admins and non-admins)
     // Show only when no file is selected AND (no project selected OR has pending file to upload)
-    if (user && user.workspaceId && !showSubscriptionPlan && !selectedFileId && (!selectedProjectId || pendingFile)) {
-        console.log('[App] Routing to ProjectDashboard - isAdmin:', user.isAdmin, 'selectedFileId:', selectedFileId, 'selectedProjectId:', selectedProjectId, 'pendingFile:', !!pendingFile);
+    const showProjectDashboard = user && user.workspaceId && !showSubscriptionPlan && !selectedFileId && (!selectedProjectId || pendingFile);
+    console.log('[App] ProjectDashboard check:', {
+        hasUser: !!user,
+        hasWorkspaceId: !!user?.workspaceId,
+        showSubscriptionPlan,
+        selectedFileId,
+        selectedProjectId,
+        hasPendingFile: !!pendingFile,
+        shouldShow: showProjectDashboard
+    });
+    
+    if (showProjectDashboard) {
+        console.log('[App] 🎨 Routing to ProjectDashboard - isAdmin:', user.isAdmin, 'selectedFileId:', selectedFileId, 'selectedProjectId:', selectedProjectId, 'pendingFile:', !!pendingFile);
         return <ProjectDashboard onSelectProject={handleProjectSelected} pendingFile={pendingFile} onOpenLocalFile={(window as any).__ONTOCODE_BROWSER_BRIDGE__ ? handleOpenLocalFile : undefined} />;
     }
 

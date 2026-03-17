@@ -1,4 +1,7 @@
-import React, { createContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react';
+import React, { createContext, useState, useEffect, useCallback, useMemo, useRef, ReactNode } from 'react';
+import { Client, StompSubscription } from '@stomp/stompjs';
+import { getBaseUrl } from '../services/apiClient';
+import { useAuth } from '../custom-hook/useAuth';
 
 // Types matching the collaboration types from extension
 export interface ActiveUser {
@@ -47,6 +50,12 @@ interface CollaborationContextType {
 
 export const CollaborationContext = createContext<CollaborationContextType | undefined>(undefined);
 
+// Detect browser mode (not running inside VS Code webview)
+const isBrowserMode = () => {
+    return typeof window !== 'undefined' && 
+           (!window.vscode || (window as any).__ONTOCODE_CONFIG__?.IS_WEB_EXTENSION);
+};
+
 export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [state, setState] = useState<CollaborationState>({
         connected: false,
@@ -56,7 +65,178 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
         notifications: [],
     });
 
-    // Listen to messages from the VS Code extension
+    const { user } = useAuth();
+    const stompClientRef = useRef<Client | null>(null);
+    const subscriptionsRef = useRef<Map<string, StompSubscription>>(new Map());
+    const currentProjectRef = useRef<string | null>(null);
+
+    // ─── Browser-mode: direct STOMP/WebSocket connection ───
+    useEffect(() => {
+        if (!isBrowserMode() || !user?.token) return;
+
+        const baseUrl = getBaseUrl();
+        const wsUrl = new URL('/ws/websocket', baseUrl).toString().replace(/^http/, 'ws');
+        console.log('[CollaborationContext] 🌐 Browser mode — connecting WebSocket:', wsUrl);
+
+        const client = new Client({
+            brokerURL: wsUrl,
+            debug: () => {},
+            reconnectDelay: 2000,
+            heartbeatIncoming: 4000,
+            heartbeatOutgoing: 4000,
+            onConnect: () => {
+                console.log('[CollaborationContext] ✅ WebSocket connected');
+                setState(prev => ({ ...prev, connected: true }));
+
+                // Subscribe to share notifications for this user
+                if (user.email) {
+                    const sub = client.subscribe(`/topic/shares/${user.email}`, (msg) => {
+                        try {
+                            const notification = JSON.parse(msg.body);
+                            console.log('[CollaborationContext] 📨 Share notification:', notification);
+                            window.dispatchEvent(new CustomEvent('fileShared', { detail: notification }));
+                        } catch (e) { console.error('[CollaborationContext] Share parse error:', e); }
+                    });
+                    subscriptionsRef.current.set('shares', sub);
+                }
+
+                // If we already have a project selected, join it
+                if (currentProjectRef.current) {
+                    joinProjectTopics(client, currentProjectRef.current);
+                }
+            },
+            onDisconnect: () => {
+                console.log('[CollaborationContext] ❌ WebSocket disconnected');
+                setState(prev => ({ ...prev, connected: false }));
+            },
+            onWebSocketError: (e) => {
+                console.error('[CollaborationContext] WebSocket error:', e);
+            },
+        });
+
+        stompClientRef.current = client;
+        client.activate();
+
+        return () => {
+            // Send USER_LEFT if in a project
+            if (currentProjectRef.current && client.connected) {
+                client.publish({
+                    destination: `/app/collab/${currentProjectRef.current}/presence`,
+                    body: JSON.stringify({
+                        type: 'USER_LEFT',
+                        projectId: currentProjectRef.current,
+                        userId: user.userId || user.username,
+                        username: user.username,
+                        timestamp: Date.now(),
+                    }),
+                });
+            }
+            subscriptionsRef.current.forEach(sub => sub.unsubscribe());
+            subscriptionsRef.current.clear();
+            client.deactivate();
+            stompClientRef.current = null;
+        };
+    }, [user?.token]);
+
+    // Helper: subscribe to project-specific STOMP topics
+    const joinProjectTopics = useCallback((client: Client, projectId: string) => {
+        // Clear previous project subscriptions (keep shares)
+        subscriptionsRef.current.forEach((sub, key) => {
+            if (key !== 'shares') { sub.unsubscribe(); subscriptionsRef.current.delete(key); }
+        });
+
+        const userId = user?.userId || user?.username || '';
+        const username = user?.username || '';
+
+        // Edits
+        const editSub = client.subscribe(`/topic/ontology/${projectId}`, (msg) => {
+            try {
+                const edit = JSON.parse(msg.body);
+                if (edit.userId === userId) return; // ignore own edits
+                console.log('[CollaborationContext] 📝 Remote edit:', edit);
+                handleRemoteEdit(edit);
+            } catch (e) { console.error('[CollaborationContext] Edit parse error:', e); }
+        });
+        subscriptionsRef.current.set('edit', editSub);
+
+        // Presence
+        const presenceSub = client.subscribe(`/topic/presence/${projectId}`, (msg) => {
+            try {
+                const presence = JSON.parse(msg.body);
+                console.log('[CollaborationContext] 👥 Presence:', presence);
+                handlePresenceUpdate(presence);
+            } catch (e) { console.error('[CollaborationContext] Presence parse error:', e); }
+        });
+        subscriptionsRef.current.set('presence', presenceSub);
+
+        // Locks
+        const lockSub = client.subscribe(`/topic/locks/${projectId}`, (msg) => {
+            try {
+                const lock = JSON.parse(msg.body);
+                console.log('[CollaborationContext] 🔒 Lock:', lock);
+                handleLockUpdate(lock);
+            } catch (e) { console.error('[CollaborationContext] Lock parse error:', e); }
+        });
+        subscriptionsRef.current.set('locks', lockSub);
+
+        // Import status
+        const importSub = client.subscribe(`/topic/import/${projectId}`, (msg) => {
+            try {
+                const status = JSON.parse(msg.body);
+                console.log('[CollaborationContext] 📦 Import status:', status);
+                window.dispatchEvent(new CustomEvent('importStatusUpdate', { detail: status }));
+            } catch (e) { console.error('[CollaborationContext] Import parse error:', e); }
+        });
+        subscriptionsRef.current.set('import', importSub);
+
+        // Cursors
+        const cursorSub = client.subscribe(`/topic/cursor/${projectId}`, (msg) => {
+            try {
+                const cursor = JSON.parse(msg.body);
+                if (cursor.userId === userId) return;
+                window.dispatchEvent(new CustomEvent('remoteCursorUpdate', { detail: cursor }));
+            } catch (e) { console.error('[CollaborationContext] Cursor parse error:', e); }
+        });
+        subscriptionsRef.current.set('cursor', cursorSub);
+
+        // Send USER_JOINED presence
+        client.publish({
+            destination: `/app/collab/${projectId}/presence`,
+            body: JSON.stringify({
+                type: 'USER_JOINED',
+                projectId,
+                userId,
+                username,
+                timestamp: Date.now(),
+            }),
+        });
+
+        // Fetch existing active users
+        const baseUrl = getBaseUrl();
+        fetch(`${baseUrl}/api/collab-graph/${projectId}/active-users`)
+            .then(res => res.ok ? res.json() : null)
+            .then(data => {
+                if (data?.users) {
+                    data.users.forEach((u: any) => {
+                        if (u.userId !== userId) {
+                            handlePresenceUpdate({
+                                type: 'USER_ACTIVE',
+                                userId: u.userId,
+                                username: u.username,
+                                color: u.color,
+                                timestamp: u.lastActivity,
+                                projectId,
+                            });
+                        }
+                    });
+                }
+            })
+            .catch(e => console.error('[CollaborationContext] Failed to fetch active users:', e));
+
+        console.log(`[CollaborationContext] 🔗 Joined project topics: ${projectId}`);
+    }, [user]);
+
+    // ─── VS Code mode: message bridge ───
     useEffect(() => {
         const handleMessage = (event: MessageEvent) => {
             const message = event.data;
@@ -321,11 +501,24 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
     }, []);
 
     const setCurrentProject = useCallback((projectId: string | null) => {
+        currentProjectRef.current = projectId;
         setState(prev => ({
             ...prev,
             currentProjectId: projectId,
         }));
-    }, []);
+
+        // Browser mode: join/leave project topics via direct WebSocket
+        if (isBrowserMode() && stompClientRef.current?.connected) {
+            if (projectId) {
+                joinProjectTopics(stompClientRef.current, projectId);
+            } else {
+                // Leave: unsubscribe project topics (keep shares)
+                subscriptionsRef.current.forEach((sub, key) => {
+                    if (key !== 'shares') { sub.unsubscribe(); subscriptionsRef.current.delete(key); }
+                });
+            }
+        }
+    }, [joinProjectTopics]);
 
     const value: CollaborationContextType = useMemo(() => ({
         state,
