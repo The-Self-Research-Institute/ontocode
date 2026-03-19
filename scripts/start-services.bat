@@ -90,7 +90,7 @@ echo %GREEN%Build successful!%NC%
 :: ========================================
 echo.
 echo %BLUE%[3/8] Starting Auth Service...%NC%
-start "Ontology Auth Service" cmd /k "cd /d %~dp0..\ontology-auth && set JAVA_HOME=%JAVA21_HOME%&& %MVN_CMD% spring-boot:run -Dspring-boot.run.profiles=dev"
+start "Ontology Auth Service" cmd /k "cd /d %~dp0..\ontology-auth && set JAVA_HOME=%JAVA21_HOME%&& set OIDC_ENABLED=true&& set OIDC_BASE_URL=http://localhost:8086&& set OIDC_KEYCLOAK_ENABLED=true&& set OIDC_KEYCLOAK_CLIENT_ID=ontocode-auth&& set OIDC_KEYCLOAK_CLIENT_SECRET=EB1BJMfcQo6j1E1PNab92I27Vo5XRvcM&& set OIDC_KEYCLOAK_ISSUER_URI=http://localhost:9080/realms/ontocode&& %MVN_CMD% spring-boot:run -Dspring-boot.run.profiles=dev"
 timeout /t 10 /nobreak >nul
 
 :: Health check for Auth

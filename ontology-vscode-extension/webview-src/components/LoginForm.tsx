@@ -1,19 +1,23 @@
 
 import React, { useState } from 'react';
 import { useAuth } from '../custom-hook/useAuth';
+import { getBaseUrl } from '../services/apiClient';
 import { Loader2, Eye, EyeOff, ArrowLeft } from 'lucide-react';
 
 interface LoginFormProps {
     onToggleForm: () => void;
     prefillEmail?: string;
     onBackToInvitation?: () => void;
+    oidcError?: string | null;
+    onClearOidcError?: () => void;
 }
 
-const LoginForm = ({ onToggleForm, prefillEmail, onBackToInvitation }: LoginFormProps) => {
+const LoginForm = ({ onToggleForm, prefillEmail, onBackToInvitation, oidcError, onClearOidcError }: LoginFormProps) => {
     const [username, setUsername] = useState(prefillEmail || '');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
+    const [isOidcLoading, setIsOidcLoading] = useState(false);
     const [error, setError] = useState('');
     const { login, sessionExpiredMessage } = useAuth();
 
@@ -50,6 +54,31 @@ const LoginForm = ({ onToggleForm, prefillEmail, onBackToInvitation }: LoginForm
                 {sessionExpiredMessage && (
                     <div className="bg-amber-500/10 border border-amber-400/30 text-amber-400 px-4 py-3 rounded-lg mb-6 text-sm backdrop-blur-sm">
                         {sessionExpiredMessage}
+                    </div>
+                )}
+
+                {oidcError && (
+                    <div className="bg-red-500/10 border border-red-400/30 text-red-400 px-4 py-3 rounded-lg mb-6 text-sm backdrop-blur-sm">
+                        <div className="flex items-start justify-between">
+                            <div>
+                                <strong>Keycloak Login Failed</strong>
+                                <p className="mt-1">{oidcError}</p>
+                                <p className="mt-2 text-xs text-red-300">
+                                    Make sure backend services are running:
+                                    <br />
+                                    <code className="text-xs">docker-compose -f docker-compose.keycloak.yml up -d</code>
+                                </p>
+                            </div>
+                            {onClearOidcError && (
+                                <button
+                                    onClick={onClearOidcError}
+                                    className="text-red-400 hover:text-red-300 ml-2"
+                                    aria-label="Dismiss"
+                                >
+                                    ✕
+                                </button>
+                            )}
+                        </div>
                     </div>
                 )}
 
@@ -114,6 +143,69 @@ const LoginForm = ({ onToggleForm, prefillEmail, onBackToInvitation }: LoginForm
                         {isLoading ? <Loader2 className="animate-spin" /> : 'Sign In'}
                     </button>
                 </form>
+                
+                <div className="my-6 flex items-center">
+                    <div className="flex-1 border-t border-white/20"></div>
+                    <span className="px-4 text-sm text-gray-400">or</span>
+                    <div className="flex-1 border-t border-white/20"></div>
+                </div>
+
+                <button
+                    type="button"
+                    onClick={async () => {
+                        console.log('[LoginForm] Keycloak login button clicked');
+                        if (onClearOidcError) onClearOidcError();
+
+                        if (typeof window !== 'undefined' && (window as any).vscode) {
+                            // VS Code extension mode: delegate to extension
+                            (window as any).vscode.postMessage({ type: 'loginWithOidc' });
+                        } else {
+                            // Browser / dev mode: open a popup with embedded_view=true.
+                            // The backend success page posts {type:'oidc-token', token} via
+                            // window.opener back to this tab — no redirect_uri involved, so
+                            // there is zero chance of VS Code being opened from browser mode.
+                            setIsOidcLoading(true);
+                            try {
+                                const baseUrl = getBaseUrl();
+                                const res = await fetch(`${baseUrl}/api/auth/oidc/providers`);
+                                const data = await res.json();
+                                const provider = data?.providers?.[0];
+                                if (provider?.authUrl) {
+                                    const authUrl = `${baseUrl}${provider.authUrl}?embedded_view=true`;
+                                    const popup = window.open(
+                                        authUrl,
+                                        'keycloak-login',
+                                        'width=520,height=660,top=100,left=100,resizable=yes,scrollbars=yes'
+                                    );
+                                    if (!popup) {
+                                        // Popup was blocked — fall back to redirect_uri approach.
+                                        // App.tsx picks up ?token= on load and updates state.
+                                        const callbackUrl = window.location.origin + window.location.pathname;
+                                        window.location.href = `${baseUrl}${provider.authUrl}?redirect_uri=${encodeURIComponent(callbackUrl)}`;
+                                    }
+                                } else {
+                                    setError('No OIDC providers available. Make sure backend services are running.');
+                                }
+                            } catch (err) {
+                                console.error('[LoginForm] Failed to fetch OIDC providers:', err);
+                                setError('Could not reach the backend. Make sure backend services are running.');
+                            } finally {
+                                setIsOidcLoading(false);
+                            }
+                        }
+                    }}
+                    disabled={isLoading || isOidcLoading}
+                    className="w-full flex items-center justify-center gap-3 py-3 px-4 bg-white/10 border border-white/20 rounded-lg text-sm font-medium text-white hover:bg-white/15 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    {isOidcLoading ? (
+                        <Loader2 className="animate-spin w-5 h-5" />
+                    ) : (
+                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 20C7.59 20 4 16.41 4 12C4 7.59 7.59 4 12 4C16.41 4 20 7.59 20 12C20 16.41 16.41 20 12 20ZM12 6C9.24 6 7 8.24 7 11H9C9 9.34 10.34 8 12 8C13.66 8 15 9.34 15 11C15 12.66 13.66 14 12 14H11V16H13C14.66 16 16 17.34 16 19C16 20.66 14.66 22 13 22H11C9.34 22 8 20.66 8 19H6C6 21.76 8.24 24 11 24H13C15.76 24 18 21.76 18 19C18 17.62 17.35 16.4 16.35 15.6C17.35 14.8 18 13.58 18 12.2C18 9.88 16.12 8 13.8 8H12.2C9.88 8 8 9.88 8 12.2C8 13.58 8.65 14.8 9.65 15.6C8.65 16.4 8 17.62 8 19C8 20.66 9.34 22 11 22V20C10.34 20 9 19.66 9 19C9 17.34 10.34 16 12 16C13.66 16 15 17.34 15 19C15 19.66 13.66 20 13 20V22C14.66 22 16 20.66 16 19C16 17.34 14.66 16 13 16H12C10.34 16 9 14.66 9 13C9 11.34 10.34 10 12 10C13.66 10 15 11.34 15 13C15 14.66 13.66 16 12 16V18C14.66 18 17 15.66 17 13C17 10.34 14.66 8 12 8Z" fill="currentColor"/>
+                        </svg>
+                    )}
+                    {isOidcLoading ? 'Redirecting to Keycloak...' : 'Sign in with Keycloak'}
+                </button>
                 
                 <div className="mt-8 text-center space-y-3">
                     <p className="text-gray-400 text-sm">

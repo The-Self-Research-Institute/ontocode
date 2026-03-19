@@ -1,0 +1,545 @@
+/* =============================================================
+   OntoCode Keycloak Theme - Enhanced UI  (v2)
+   ============================================================= */
+@import url('https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600&family=Roboto:wght@400;500&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* Brand: aligned with ontocode-logo.svg gradient #667eea → #764ba2 */
+  --oc-primary:      #667eea;
+  --oc-primary-dk:   #5558c4;
+  --oc-primary-lt:   #f0edff;
+  --oc-bg:           #f4f5fb;
+  --oc-surface:      #ffffff;
+  --oc-border:       #dadce0;
+  --oc-border-focus: #667eea;
+  --oc-text:         #202124;
+  --oc-muted:        #5f6368;
+  --oc-error:        #d93025;
+  --oc-success:      #188038;
+  --oc-warning:      #e37400;
+  --oc-radius:       8px;
+  --oc-radius-lg:    24px;
+  --oc-shadow-card:  0 4px 28px rgba(102,126,234,.12), 0 1px 4px rgba(0,0,0,.06);
+  --oc-shadow:       0 2px 6px rgba(0,0,0,.06), 0 0 0 1px rgba(0,0,0,.04);
+  --oc-font:         'Google Sans', 'Segoe UI', Roboto, Arial, sans-serif;
+  --oc-transition:   .18s cubic-bezier(.4,0,.2,1);
+}
+
+/* ── Base ─────────────────────────────────────────────────── */
+html, body {
+  height: 100%;
+  font-family: var(--oc-font);
+  background-color: var(--oc-bg);
+  color: var(--oc-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Page ─────────────────────────────────────────────────── */
+.oc-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  background:
+    radial-gradient(ellipse at 20% 10%, rgba(102,126,234,.08) 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 90%, rgba(118,75,162,.07) 0%, transparent 60%),
+    var(--oc-bg);
+}
+
+/* ── Card ─────────────────────────────────────────────────── */
+.oc-card {
+  width: 100%;
+  max-width: 464px;
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+  border-radius: var(--oc-radius-lg);
+  padding: 52px 44px 40px;
+  box-shadow: var(--oc-shadow-card);
+  animation: oc-fade-in .3s ease both;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Gradient accent bar at top of card */
+.oc-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+  z-index: 1;
+}
+
+body:has(#kc-register-form) .oc-card { max-width: 580px; }
+
+@keyframes oc-fade-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Logo ─────────────────────────────────────────────────── */
+.oc-logo { text-align: center; margin-bottom: 24px; }
+.oc-logo img {
+  height: 44px;
+  width: auto;
+  filter: drop-shadow(0 2px 5px rgba(102,126,234,.22));
+}
+
+/* ── Title / Subtitle ─────────────────────────────────────── */
+.oc-title {
+  font-size: 26px;
+  font-weight: 400;
+  text-align: center;
+  color: var(--oc-text);
+  margin-bottom: 6px;
+  letter-spacing: -.3px;
+}
+
+.oc-subtitle {
+  font-size: 15px;
+  color: var(--oc-muted);
+  text-align: center;
+  margin-bottom: 36px;
+  line-height: 1.5;
+}
+
+/* ── Section label (register) ─────────────────────────────── */
+.oc-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .7px;
+  text-transform: uppercase;
+  color: var(--oc-muted);
+  margin: 4px 0 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.oc-section-label::before,
+.oc-section-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--oc-border);
+}
+
+/* ── Alerts ───────────────────────────────────────────────── */
+.oc-alert,
+.pf-c-alert, .alert, .alert-error, .pf-m-danger {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px 16px;
+  border-radius: var(--oc-radius);
+  font-size: 14px;
+  line-height: 1.5;
+  margin-bottom: 24px;
+  border-width: 1px;
+  border-style: solid;
+}
+
+.oc-alert--error,
+.pf-c-alert, .alert, .alert-error, .pf-m-danger {
+  background: #fdf2f1;
+  color: #c5221f;
+  border-color: #f0bfbc;
+}
+
+.oc-alert--warning { background: #fef7e0; color: var(--oc-warning); border-color: #f9d77f; }
+.oc-alert--success { background: #e6f4ea; color: var(--oc-success); border-color: #b7dfbb; }
+.oc-alert--info    { background: #eef1fd; color: var(--oc-primary); border-color: #c9d0f5; }
+
+/* ── Form groups ──────────────────────────────────────────── */
+.pf-c-form__group, .form-group { margin-bottom: 20px; }
+
+.pf-c-form__label, label {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--oc-text);
+  letter-spacing: .1px;
+}
+
+/* ── Input icon wrapper (username, email, etc.) ───────────── */
+.oc-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.oc-input-icon {
+  position: absolute;
+  left: 14px;
+  width: 18px;
+  height: 18px;
+  opacity: .4;
+  pointer-events: none;
+  transition: opacity var(--oc-transition);
+}
+
+.oc-input-wrap:focus-within .oc-input-icon { opacity: .8; }
+
+.oc-input-wrap .pf-c-form-control,
+.oc-input-wrap input[type=text],
+.oc-input-wrap input[type=password],
+.oc-input-wrap input[type=email] {
+  padding-left: 42px;
+}
+
+/* ── Inputs ───────────────────────────────────────────────── */
+.pf-c-form-control,
+input[type=text],
+input[type=password],
+input[type=email],
+select {
+  width: 100%;
+  height: 52px;
+  padding: 0 16px;
+  border: 1.5px solid var(--oc-border);
+  border-radius: var(--oc-radius);
+  background: var(--oc-surface);
+  background-image: none !important;
+  color: var(--oc-text);
+  font-size: 15px;
+  font-family: var(--oc-font);
+  transition: border-color var(--oc-transition), box-shadow var(--oc-transition), background var(--oc-transition);
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.pf-c-form-control:hover,
+input[type=text]:hover,
+input[type=password]:hover,
+input[type=email]:hover { border-color: #adb2ba; }
+
+.pf-c-form-control:focus,
+input[type=text]:focus,
+input[type=password]:focus,
+input[type=email]:focus,
+select:focus {
+  outline: none;
+  border-color: var(--oc-border-focus);
+  box-shadow: 0 0 0 3px rgba(102,126,234,.18);
+  background: #fdfeff;
+}
+
+.pf-c-form-control[aria-invalid=true],
+input[aria-invalid=true] {
+  border-color: var(--oc-error);
+  box-shadow: 0 0 0 3px rgba(217,48,37,.12);
+}
+
+/* ── Old pf-c-input-group (kept for any non-password uses) ── */
+.pf-c-input-group { display: flex; width: 100%; }
+
+.pf-c-input-group .pf-c-form-control,
+.pf-c-input-group input {
+  flex: 1 1 auto;
+  border-radius: var(--oc-radius) 0 0 var(--oc-radius);
+  min-width: 0;
+  border-right: none;
+}
+
+.pf-c-input-group .pf-c-button {
+  flex: 0 0 50px;
+  width: 50px;
+  height: 52px;
+  border: 1.5px solid var(--oc-border);
+  border-left: none;
+  border-radius: 0 var(--oc-radius) var(--oc-radius) 0;
+  background: #f8f9fa;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--oc-transition), color var(--oc-transition);
+  color: var(--oc-muted);
+}
+
+.pf-c-input-group .pf-c-button:hover { background: #e8eaed; color: var(--oc-text); }
+.pf-c-input-group .pf-c-button::before,
+.pf-c-input-group .pf-c-button::after { display: none !important; }
+
+/* ── Password field: icon-left + full-radius + overlay toggle */
+.oc-pwd-group {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+/* The lock SVG icon sits at the left */
+.oc-pwd-group .oc-input-icon {
+  position: absolute;
+  left: 14px;
+  z-index: 2;
+  pointer-events: none;
+  width: 18px;
+  height: 18px;
+  opacity: .4;
+  transition: opacity var(--oc-transition);
+}
+
+.oc-pwd-group:focus-within .oc-input-icon { opacity: .8; }
+
+/* The password input fills the full width with padding on both sides */
+.oc-pwd-group input[type=password] {
+  flex: 1;
+  width: 100%;
+  border-radius: var(--oc-radius) !important;
+  padding-left: 42px;
+  padding-right: 52px;
+  border-right: 1.5px solid var(--oc-border) !important;
+}
+
+.oc-pwd-group input[type=password]:focus {
+  border-right-color: var(--oc-border-focus) !important;
+}
+
+/* Show/hide toggle button overlaid on the right */
+.oc-pwd-toggle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 50px;
+  height: 100%;
+  border: none !important;
+  border-radius: 0 var(--oc-radius) var(--oc-radius) 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  cursor: pointer;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  color: var(--oc-muted);
+  z-index: 2;
+  transition: background var(--oc-transition), color var(--oc-transition);
+  padding: 0 !important;
+}
+
+.oc-pwd-toggle:hover {
+  background: rgba(0,0,0,.05) !important;
+  color: var(--oc-text);
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.oc-pwd-toggle:active {
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.oc-pwd-toggle::before,
+.oc-pwd-toggle::after { display: none !important; }
+
+#password, #password-confirm { pointer-events: auto !important; }
+
+/* ── Field error / helper text ────────────────────────────── */
+.pf-c-form__helper-text,
+.kcInputErrorMessage,
+span[aria-live=polite] {
+  display: block;
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--oc-error);
+  line-height: 1.4;
+}
+
+/* ── Login options row ────────────────────────────────────── */
+.oc-login-options {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 4px 0 28px;
+  font-size: 14px;
+}
+
+.oc-remember-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--oc-muted);
+  cursor: pointer;
+  user-select: none;
+}
+.oc-remember-label:hover { color: var(--oc-text); }
+
+.oc-forgot-link {
+  color: var(--oc-primary);
+  font-weight: 500;
+  font-size: 13px;
+  text-decoration: none;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background var(--oc-transition);
+}
+.oc-forgot-link:hover { background: var(--oc-primary-lt); text-decoration: none; }
+
+/* ── Primary button ───────────────────────────────────────── */
+.oc-btn-primary,
+#kc-login,
+button[type=submit],
+input[type=submit],
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 50px;
+  padding: 0 32px;
+  border: none;
+  border-radius: var(--oc-radius);
+  background: linear-gradient(135deg, #7b8ef7 0%, var(--oc-primary) 60%, #764ba2 100%);
+  color: #fff;
+  font-family: var(--oc-font);
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: .2px;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(102,126,234,.38);
+  transition: box-shadow var(--oc-transition), transform var(--oc-transition), filter var(--oc-transition);
+}
+
+.oc-btn-primary:hover,
+#kc-login:hover,
+button[type=submit]:hover,
+input[type=submit]:hover,
+.btn-primary:hover {
+  filter: brightness(1.08);
+  box-shadow: 0 4px 18px rgba(102,126,234,.50);
+  transform: translateY(-1px);
+}
+
+.oc-btn-primary:active,
+button[type=submit]:active,
+input[type=submit]:active {
+  transform: translateY(0);
+  filter: brightness(.97);
+  box-shadow: 0 2px 8px rgba(102,126,234,.30);
+}
+
+/* ── Submit row ───────────────────────────────────────────── */
+.oc-submit-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  margin-top: 32px;
+  gap: 12px;
+}
+
+.oc-submit-row .oc-btn-primary,
+.oc-submit-row input[type=submit],
+.oc-submit-row button[type=submit] { width: auto; min-width: 120px; }
+
+body:has(#kc-register-form) .oc-submit-row { justify-content: stretch; }
+body:has(#kc-register-form) .oc-submit-row button,
+body:has(#kc-register-form) .oc-submit-row input[type=submit] { width: 100%; }
+
+/* ── Footer inside card ───────────────────────────────────── */
+.oc-footer {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--oc-border);
+}
+
+.oc-footer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.oc-footer-label { font-size: 13px; color: var(--oc-muted); }
+.oc-footer-spacer { flex: 1; }
+
+/* ── "Create account" outlined button ────────────────────── */
+.oc-create-account {
+  display: inline-flex;
+  align-items: center;
+  height: 38px;
+  padding: 0 18px;
+  border: 1.5px solid var(--oc-primary);
+  border-radius: var(--oc-radius);
+  background: transparent;
+  color: var(--oc-primary);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  letter-spacing: .2px;
+  transition: background var(--oc-transition), box-shadow var(--oc-transition);
+}
+
+.oc-create-account:hover {
+  background: var(--oc-primary-lt);
+  box-shadow: 0 2px 8px rgba(102,126,234,.20);
+  text-decoration: none;
+}
+
+/* ── Two-col grid ─────────────────────────────────────────── */
+.oc-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 20px;
+}
+
+/* ── Back to login ────────────────────────────────────────── */
+.oc-back-to-login {
+  margin-top: 28px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--oc-muted);
+}
+
+.oc-back-to-login a {
+  color: var(--oc-primary);
+  font-weight: 500;
+  text-decoration: none;
+  padding: 3px 6px;
+  border-radius: 4px;
+  transition: background var(--oc-transition);
+}
+.oc-back-to-login a:hover { background: var(--oc-primary-lt); text-decoration: none; }
+
+/* ── Locale switcher ──────────────────────────────────────── */
+.oc-locale { text-align: right; margin-bottom: 20px; }
+.oc-locale select {
+  height: auto; padding: 5px 10px; font-size: 13px;
+  width: auto; min-height: auto; border-radius: 4px; cursor: pointer;
+}
+
+/* ── Checkboxes ───────────────────────────────────────────── */
+input[type=checkbox], input[type=radio] {
+  width: 16px; height: 16px;
+  min-height: auto;
+  appearance: auto; -webkit-appearance: auto;
+  background-image: none !important;
+  accent-color: var(--oc-primary);
+  cursor: pointer;
+}
+
+/* ── Generic links ────────────────────────────────────────── */
+a { color: var(--oc-primary); text-decoration: none; font-weight: 500; }
+a:hover { text-decoration: underline; }
+
+/* ── Responsive ───────────────────────────────────────────── */
+@media (max-width: 520px) {
+  .oc-page { padding: 16px 12px; align-items: flex-start; padding-top: 48px; }
+  .oc-card {
+    padding: 36px 24px 28px;
+    border-radius: 16px;
+    max-width: 100% !important;
+    box-shadow: var(--oc-shadow);
+  }
+  .oc-two-col { grid-template-columns: 1fr; }
+  .oc-login-options { flex-direction: column; align-items: flex-start; gap: 14px; }
+  .oc-footer-row { flex-direction: column; align-items: stretch; gap: 12px; }
+  .oc-create-account { text-align: center; justify-content: center; }
+  .oc-submit-row { justify-content: stretch; }
+  .oc-submit-row .oc-btn-primary,
+  .oc-submit-row input[type=submit],
+  .oc-submit-row button[type=submit] { width: 100%; }
+}

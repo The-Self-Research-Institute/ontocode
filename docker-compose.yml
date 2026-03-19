@@ -109,6 +109,76 @@ services:
         fi
         echo "=== Init Complete ==="
 
+  # Keycloak Database
+  keycloak-db:
+    image: postgres:15-alpine
+    container_name: ontocode-keycloak-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak_password
+    volumes:
+      - keycloak-postgres-data:/var/lib/postgresql/data
+    networks:
+      - ontology-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Keycloak Identity Provider
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: ontocode-keycloak
+    restart: unless-stopped
+    command: start-dev --spi-theme-static-max-age=-1 --spi-theme-cache-themes=false --spi-theme-cache-templates=false --spi-security-headers-default-content-security-policy="frame-src *; frame-ancestors *; object-src 'none';"
+    ports:
+      - "9080:8080"
+    environment:
+      # Admin credentials
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      # Database configuration
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak_password
+      # Hostname / proxy settings
+      KC_HOSTNAME: localhost
+      KC_HOSTNAME_PORT: "9080"
+      KC_HOSTNAME_URL: http://localhost:9080
+      KC_HOSTNAME_ADMIN_URL: http://localhost:9080
+      KC_PROXY_HEADERS: xforwarded
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      # Theme caching (disabled for dev)
+      KC_SPI_THEME_CACHE_THEMES: "false"
+      KC_SPI_THEME_CACHE_TEMPLATES: "false"
+      KC_SPI_THEME_STATIC_MAX_AGE: "-1"
+      # Health + management
+      KC_HTTP_MANAGEMENT_PORT: "9000"
+      KC_HEALTH_ENABLED: "true"
+      # Allow embedding in VS Code webview / cross-origin iframes
+      KC_SPI_SECURITY_HEADERS_DEFAULT_X_FRAME_OPTIONS: ""
+      KC_SPI_SECURITY_HEADERS_DEFAULT_CONTENT_SECURITY_POLICY: "frame-src *; frame-ancestors *; object-src 'none';"
+    volumes:
+      - ./keycloak-themes:/opt/keycloak/themes
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    networks:
+      - ontology-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health/ready || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
   # Authentication Service
   auth:
     image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-auth:${VERSION:-latest}
@@ -121,8 +191,17 @@ services:
       JWT_SECRET: ${JWT_SECRET:-b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==}
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      # OIDC Configuration
+      OIDC_ENABLED: ${OIDC_ENABLED:-false}
+      OIDC_BASE_URL: ${OIDC_BASE_URL:-http://localhost:8086}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-ontocode-auth}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
+      KEYCLOAK_ISSUER_URI: ${KEYCLOAK_ISSUER_URI:-http://keycloak:8080/realms/ontocode}
+      OIDC_ALLOWED_REDIRECT_ORIGINS: ${OIDC_ALLOWED_REDIRECT_ORIGINS:-http://localhost:3001,http://localhost:80}
     depends_on:
       mongo:
+        condition: service_healthy
+      keycloak:
         condition: service_healthy
     networks:
       - ontology-net
@@ -277,6 +356,7 @@ services:
 volumes:
   mongo-data:
   graphdb-data:
+  keycloak-postgres-data:
 
 networks:
   ontology-net:

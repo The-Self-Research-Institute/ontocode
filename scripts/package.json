@@ -2,6 +2,10 @@
   "name": "ontocode-scripts",
   "version": "1.0.0",
   "description": "Database cleanup and plugin management scripts for OntoCode",
+  "private": true,
+  "engines": {
+    "node": ">=16.0.0"
+  },
   "scripts": {
     "clear-all": "node clear-databases.js",
     "clear-mongo": "node clear-mongodb.js",

@@ -23,6 +23,7 @@
     "onCommand:ontocode.edit",
     "onCommand:ontocode.editLargeFile",
     "onCommand:ontocode.logout",
+    "onCommand:ontocode.loginWithOidc",
     "onCommand:ontocode.insertCitation",
     "onCommand:ontocode.showCollaborationStatus",
     "onLanguage:owl",
@@ -55,6 +56,11 @@
       {
         "command": "ontocode.logout",
         "title": "OntoCode: Logout",
+        "category": "OntoCode"
+      },
+      {
+        "command": "ontocode.loginWithOidc",
+        "title": "OntoCode: Login with OIDC/SSO",
         "category": "OntoCode"
       },
       {

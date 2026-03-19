@@ -9,7 +9,7 @@
  * The real VS Code extension handles 32 inbound message types.  
  * This bridge covers ALL 27 types the webview actually sends:
  *
- *  Auth:         requestAuthToken, saveAuthToken, logout
+ *  Auth:         requestAuthToken, saveAuthToken, logout, loginWithOidc
  *  Lifecycle:    webviewReady, fileLoaded, setApiBaseUrl
  *  File I/O:     downloadOntology, downloadFile, downloadCurrentOntology,
  *                openLocalFile, importLocalFile
@@ -70,6 +70,73 @@ function handleBrowserMessage(message: any) {
         case 'logout': {
             localStorage.removeItem('authToken');
             postToSelf({ type: 'loggedOut' });
+            break;
+        }
+
+        case 'loginWithOidc': {
+            (async () => {
+                try {
+                    const oidcMode = message?.mode === 'signup' ? 'signup' : 'signin';
+                    const deploymentType = localStorage.getItem('deploymentType') || 'cloud';
+                    const config = (window as any).__ONTOCODE_CONFIG__;
+                    const baseUrl = deploymentType === 'self-hosted'
+                        ? (config?.SELF_HOSTED_GATEWAY_URL || 'http://localhost:80')
+                        : (config?.CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org');
+
+                    const providersResp = await fetch(`${baseUrl}/api/auth/oidc/providers`);
+                    if (!providersResp.ok) {
+                        throw new Error(`OIDC providers endpoint returned ${providersResp.status}`);
+                    }
+
+                    const providersData = await providersResp.json().catch(() => ({}));
+                    const providers = Array.isArray(providersData?.providers) ? providersData.providers : [];
+
+                    if (!providersData?.enabled || providers.length === 0) {
+                        postToSelf({
+                            type: 'oidcLoginError',
+                            error: 'OIDC login is not enabled on the server. Please use username/password login.',
+                        });
+                        return;
+                    }
+
+                    const provider = providers[0];
+                    const authPath = provider?.authUrl;
+                    if (!authPath || typeof authPath !== 'string') {
+                        postToSelf({
+                            type: 'oidcLoginError',
+                            error: 'OIDC provider configuration is invalid (missing authUrl).',
+                        });
+                        return;
+                    }
+
+                    // Backward compatibility: older auth service versions return
+                    // /oauth2/authorization/{provider}, which bypasses gateway routing.
+                    // Rewrite to the gateway-safe endpoint under /api/auth/**.
+                    let resolvedAuthPath = authPath;
+                    const legacyMatch = authPath.match(/^\/oauth2\/authorization\/([^/?#]+)(.*)$/);
+                    if (legacyMatch) {
+                        resolvedAuthPath = `/api/auth/oidc/authorize/${legacyMatch[1]}${legacyMatch[2] || ''}`;
+                    }
+
+                    const authUrl = /^https?:\/\//i.test(resolvedAuthPath)
+                        ? resolvedAuthPath
+                        : `${baseUrl}${resolvedAuthPath}`;
+
+                    // Return to current page after OIDC success so app can finalize login.
+                    const currentUrl = window.location.origin + window.location.pathname + window.location.hash;
+                    const registrationParam = oidcMode === 'signup' ? '&kc_action=register' : '';
+                    const authUrlWithRedirect = `${authUrl}${authUrl.includes('?') ? '&' : '?'}redirect_uri=${encodeURIComponent(currentUrl)}${registrationParam}`;
+
+                    // Browser mode: navigate to auth URL to continue the OIDC flow.
+                    window.location.assign(authUrlWithRedirect);
+                } catch (err: any) {
+                    console.error('[BrowserBridge] loginWithOidc failed:', err);
+                    postToSelf({
+                        type: 'oidcLoginError',
+                        error: err?.message || 'Could not start OIDC login. Ensure auth services are running.',
+                    });
+                }
+            })();
             break;
         }
 

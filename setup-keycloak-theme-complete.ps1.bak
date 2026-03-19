@@ -1,0 +1,322 @@
+﻿# Complete OntoCode Keycloak Theme Setup
+# This script performs a full automated installation and configuration
+
+param(
+    [string]$RealmName = "ontocode",
+    [string]$ThemeName = "ontocode",
+    [string]$AdminUser = "admin",
+    [string]$AdminPassword = "admin",
+    [string]$KeycloakUrl = "http://localhost:9080"
+)
+
+$ErrorActionPreference = "Stop"
+
+Write-Host ""
+Write-Host "===================================================" -ForegroundColor Cyan
+Write-Host "  OntoCode Keycloak Theme - Complete Setup" -ForegroundColor Cyan
+Write-Host "===================================================" -ForegroundColor Cyan
+Write-Host ""
+
+function Write-Step {
+    param([string]$Message)
+    Write-Host ">> $Message" -ForegroundColor Yellow
+}
+
+function Write-Success {
+    param([string]$Message)
+    Write-Host "  [OK] $Message" -ForegroundColor Green
+}
+
+function Write-Error {
+    param([string]$Message)
+    Write-Host "  [ERROR] $Message" -ForegroundColor Red
+}
+
+function Write-Info {
+    param([string]$Message)
+    Write-Host "  [INFO] $Message" -ForegroundColor Cyan
+}
+
+# Step 1: Verify Docker
+Write-Step "Step 1/6: Verifying Docker..."
+try {
+    docker ps | Out-Null
+    Write-Success "Docker is running"
+} catch {
+    Write-Error "Docker is not running"
+    Write-Info "Please start Docker Desktop and try again"
+    exit 1
+}
+
+# Step 2: Verify Theme Files
+Write-Step "Step 2/6: Verifying theme files..."
+$themeBase = "keycloak-themes\ontocode"
+$requiredPaths = @(
+    "$themeBase\login\theme.properties",
+    "$themeBase\login\resources\css\ontocode.css",
+    "$themeBase\account\theme.properties",
+    "$themeBase\email\theme.properties"
+)
+
+$missingFiles = @()
+foreach ($path in $requiredPaths) {
+    if (-not (Test-Path $path)) {
+        $missingFiles += $path
+    }
+}
+
+if ($missingFiles.Count -gt 0) {
+    Write-Error "Missing theme files:"
+    foreach ($file in $missingFiles) {
+        Write-Host "    - $file" -ForegroundColor Red
+    }
+    exit 1
+}
+Write-Success "All theme files present"
+
+# Step 3: Check Docker Compose Configuration
+Write-Step "Step 3/6: Verifying Docker Compose configuration..."
+if (-not (Test-Path "docker-compose.keycloak.yml")) {
+    Write-Error "docker-compose.keycloak.yml not found"
+    exit 1
+}
+
+$composeContent = Get-Content "docker-compose.keycloak.yml" -Raw
+if ($composeContent -match "keycloak-themes:/opt/keycloak/themes") {
+    Write-Success "Volume mount configured correctly"
+} else {
+    Write-Error "Volume mount not found in docker-compose.keycloak.yml"
+    Write-Info "Please add: - ./keycloak-themes:/opt/keycloak/themes"
+    exit 1
+}
+
+# Step 4: Start/Restart Keycloak
+Write-Step "Step 4/6: Starting Keycloak..."
+
+# Check if container exists
+$containerExists = docker ps -a --filter "name=ontocode-keycloak" --format "{{.Names}}"
+if ($containerExists) {
+    Write-Info "Restarting existing Keycloak container..."
+    docker-compose -f docker-compose.keycloak.yml restart keycloak | Out-Null
+} else {
+    Write-Info "Starting Keycloak for the first time..."
+    docker-compose -f docker-compose.keycloak.yml up -d keycloak | Out-Null
+}
+
+Write-Info "Waiting for Keycloak to be ready (this may take 30-60 seconds)..."
+$maxAttempts = 60
+$attempt = 0
+$ready = $false
+
+while (-not $ready -and $attempt -lt $maxAttempts) {
+    $attempt++
+    
+    if ($attempt % 5 -eq 0) {
+        Write-Host "  Attempt $attempt/$maxAttempts..." -NoNewline
+    }
+    
+    try {
+        $response = Invoke-WebRequest -Uri "$KeycloakUrl/health/ready" -Method Get -TimeoutSec 2 -ErrorAction SilentlyContinue
+        if ($response.StatusCode -eq 200) {
+            $ready = $true
+            if ($attempt % 5 -eq 0) {
+                Write-Host " Ready!" -ForegroundColor Green
+            }
+        }
+    } catch {
+        if ($attempt % 5 -eq 0) {
+            Write-Host " Not ready" -ForegroundColor Yellow
+        }
+        Start-Sleep -Seconds 2
+    }
+}
+
+if (-not $ready) {
+    Write-Error "Keycloak did not start within expected time"
+    Write-Info "Check logs: docker logs ontocode-keycloak"
+    exit 1
+}
+Write-Success "Keycloak is ready"
+
+# Step 5: Verify Theme in Container
+Write-Step "Step 5/6: Verifying theme in Keycloak container..."
+try {
+    $themeCheck = docker exec ontocode-keycloak ls /opt/keycloak/themes/ontocode 2>&1
+    if ($themeCheck -match "login") {
+        Write-Success "Theme files mounted correctly in container"
+    } else {
+        Write-Error "Theme files not found in container"
+        Write-Info "Volume mount may not be working correctly"
+        exit 1
+    }
+} catch {
+    Write-Error "Could not verify theme in container"
+    exit 1
+}
+
+# Step 6: Configure Realm with Theme
+Write-Step "Step 6/6: Applying theme to realm..."
+
+# Authenticate
+Write-Info "Authenticating with Keycloak..."
+try {
+    $authBody = @{
+        username = $AdminUser
+        password = $AdminPassword
+        grant_type = "password"
+        client_id = "admin-cli"
+    }
+    
+    $authResponse = Invoke-RestMethod -Uri "$KeycloakUrl/realms/master/protocol/openid-connect/token" `
+        -Method Post -Body $authBody -ContentType "application/x-www-form-urlencoded"
+    
+    $accessToken = $authResponse.access_token
+    Write-Success "Authenticated successfully"
+} catch {
+    Write-Error "Authentication failed: $($_.Exception.Message)"
+    Write-Info "Please verify admin credentials"
+    exit 1
+}
+
+$headers = @{
+    Authorization = "Bearer $accessToken"
+    "Content-Type" = "application/json"
+}
+
+# Check if realm exists
+Write-Info "Checking for realm '$RealmName'..."
+try {
+    $realm = Invoke-RestMethod -Uri "$KeycloakUrl/admin/realms/$RealmName" `
+        -Method Get -Headers $headers -ErrorAction SilentlyContinue
+    Write-Success "Realm '$RealmName' exists"
+    $realmExists = $true
+} catch {
+    $realmExists = $false
+    Write-Info "Realm '$RealmName' not found"
+    
+    Write-Host ""
+    Write-Host "  Would you like to create the realm? (Y/N): " -NoNewline -ForegroundColor Yellow
+    $createRealm = Read-Host
+    
+    if ($createRealm -eq "Y" -or $createRealm -eq "y") {
+        Write-Info "Creating realm '$RealmName'..."
+        
+        $realmConfig = @{
+            realm = $RealmName
+            enabled = $true
+            displayName = "OntoCode"
+            displayNameHtml = "<div class='kc-logo-text'><span>OntoCode</span></div>"
+            loginTheme = $ThemeName
+            accountTheme = $ThemeName
+            emailTheme = $ThemeName
+            internationalizationEnabled = $true
+            supportedLocales = @("en", "es", "fr", "de")
+            defaultLocale = "en"
+        } | ConvertTo-Json
+        
+        try {
+            Invoke-RestMethod -Uri "$KeycloakUrl/admin/realms" `
+                -Method Post -Headers $headers -Body $realmConfig | Out-Null
+            Write-Success "Realm created successfully"
+        } catch {
+            Write-Error "Failed to create realm: $($_.Exception.Message)"
+            exit 1
+        }
+    } else {
+        Write-Info "Exiting without creating realm"
+        exit 0
+    }
+}
+
+# Apply theme to realm
+Write-Info "Applying OntoCode theme to realm..."
+$themeConfig = @{
+    loginTheme = $ThemeName
+    accountTheme = $ThemeName
+    emailTheme = $ThemeName
+} | ConvertTo-Json
+
+try {
+    Invoke-RestMethod -Uri "$KeycloakUrl/admin/realms/$RealmName" `
+        -Method Put -Headers $headers -Body $themeConfig | Out-Null
+    Write-Success "Theme applied successfully"
+} catch {
+    Write-Error "Failed to apply theme: $($_.Exception.Message)"
+    exit 1
+}
+
+# Verify configuration
+Write-Info "Verifying theme configuration..."
+$updatedRealm = Invoke-RestMethod -Uri "$KeycloakUrl/admin/realms/$RealmName" `
+    -Method Get -Headers $headers
+
+Write-Host ""
+Write-Host "  Current Theme Configuration:" -ForegroundColor Cyan
+Write-Host "  - Login Theme:   $($updatedRealm.loginTheme)" -ForegroundColor White
+Write-Host "  - Account Theme: $($updatedRealm.accountTheme)" -ForegroundColor White
+Write-Host "  - Email Theme:   $($updatedRealm.emailTheme)" -ForegroundColor White
+
+if ($updatedRealm.loginTheme -eq $ThemeName) {
+    Write-Success "Theme configuration verified!"
+} else {
+    Write-Error "Theme verification failed"
+}
+
+# Success Summary
+Write-Host ""
+Write-Host "===================================================" -ForegroundColor Green
+Write-Host "  Setup Complete!" -ForegroundColor Green
+Write-Host "===================================================" -ForegroundColor Green
+Write-Host ""
+
+Write-Host "â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•" -ForegroundColor Cyan
+Write-Host "  Test URLs:" -ForegroundColor Yellow
+Write-Host "â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•" -ForegroundColor Cyan
+Write-Host ""
+
+$loginUrl = "$KeycloakUrl/realms/$RealmName/protocol/openid-connect/auth?client_id=ontocode-auth`&redirect_uri=$KeycloakUrl/`&response_type=code`&scope=openid"
+$accountUrl = "$KeycloakUrl/realms/$RealmName/account"
+$adminUrl = "$KeycloakUrl/admin"
+
+Write-Host "  1. Admin Console:" -ForegroundColor White
+Write-Host "     $adminUrl" -ForegroundColor Cyan
+Write-Host ""
+
+Write-Host "  2. Account Management:" -ForegroundColor White
+Write-Host "     $accountUrl" -ForegroundColor Cyan
+Write-Host ""
+
+Write-Host "  3. Login Page (OIDC):" -ForegroundColor White
+Write-Host "     $loginUrl" -ForegroundColor Cyan
+Write-Host ""
+
+Write-Host "â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•" -ForegroundColor Cyan
+Write-Host "  Next Steps:" -ForegroundColor Yellow
+Write-Host "â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•" -ForegroundColor Cyan
+Write-Host ""
+
+Write-Host "  1. Create OIDC Client (if not exists):" -ForegroundColor White
+Write-Host "     - Open: $adminUrl" -ForegroundColor Cyan
+Write-Host "     - Login: $AdminUser / $AdminPassword" -ForegroundColor Cyan
+Write-Host "     - Navigate: Clients -> Create Client" -ForegroundColor Cyan
+Write-Host "     - Client ID: ontocode-auth" -ForegroundColor Cyan
+Write-Host "     - Client Type: OpenID Connect" -ForegroundColor Cyan
+Write-Host "     - Valid Redirect URIs:" -ForegroundColor Cyan
+Write-Host "       * http://localhost:*/*" -ForegroundColor Cyan
+Write-Host "       * vscode://self.ontocode-extension/*" -ForegroundColor Cyan
+Write-Host ""
+
+Write-Host "  2. Test in VS Code Extension:" -ForegroundColor White
+Write-Host "     - Open OntoCode extension" -ForegroundColor Cyan
+Write-Host "     - Click OIDC Login" -ForegroundColor Cyan
+Write-Host "     - Login page should show OntoCode branding" -ForegroundColor Cyan
+Write-Host ""
+
+Write-Host "  3. Test in Browser:" -ForegroundColor White
+Write-Host "     - Open any of the URLs above" -ForegroundColor Cyan
+Write-Host "     - Theme should use OntoCode colors and logo" -ForegroundColor Cyan
+Write-Host ""
+
+Write-Host "â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•" -ForegroundColor Cyan
+Write-Host ""
+

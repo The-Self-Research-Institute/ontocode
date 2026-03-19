@@ -8,6 +8,7 @@ import { CitationPickerPanel } from './webview/citationPicker';
 import { sci2CodeService } from './services/sci2CodeService';
 import { zoteroApiService } from './services/zoteroApiService';
 import { issueReportService } from './services/issueReportService';
+import { oidcAuthService } from './services/oidcAuthService';
 // Use web-compatible collaboration manager in browser environment
 import { CollaborationManager } from './collaboration/CollaborationManager.web';
 import { ICollaborationManager } from './collaboration/types';
@@ -208,6 +209,9 @@ type WebviewMessage =
   | { type: 'pendingFileUpload'; fileName: string; fileContent: string; fileSize: number; importMode?: string; partition?: string }
   | { type: 'uploadProgress'; projectId: string; percent: number; loaded: number; total: number; message: string }
   | { type: 'showSubscriptionPlans' }
+  // OIDC messages
+  | { type: 'oidcLoginSuccess'; token: string; username?: string; email?: string }
+  | { type: 'oidcLoginError'; error: string }
   // Citation messages
   | { type: 'zoteroLibraryData'; items: any[] }
   | { type: 'zoteroLibraryError'; error: string }
@@ -241,6 +245,7 @@ type ExtensionMessage =
   | { type: 'uploadOntology'; projectId: string; fileName: string; fileContent: string; ownerEmail?: string; skipDuplicateCheck?: boolean; importMode?: string; partition?: string } // Upload ontology from webview (admin flow)
   | { type: 'uploadFileToProject'; projectId: string; fileName: string; fileContent: string; fileSize: number }
   | { type: 'showSubscriptionPlans' } // Request to show subscription plans page
+    | { type: 'loginWithOidc'; mode?: 'signin' | 'signup' } // Request OIDC login/signup flow
   | { type: 'setApiBaseUrl'; url: string; deploymentType?: 'self-hosted' | 'cloud' }
   | { type: 'requestZoteroLibrary' } // Request Zotero library
   | { type: 'insertCitation'; citationKey: string; format: 'turtle' | 'rdfxml'; projectId: string; lineNumber?: number } // Insert citation from Zotero
@@ -263,6 +268,8 @@ export function activate(context: vscode.ExtensionContext) {
     // Load deployment URLs on activation
     updateDeploymentUrls(context).then(() => {
         console.log('[OntoCode] Deployment URLs loaded');
+        // Sync oidcAuthService with the resolved GATEWAY_URL
+        oidcAuthService.setGatewayUrl(GATEWAY_URL);
     });
 
     // Check for invitation token in URL (for test-web environment)
@@ -293,7 +300,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
     }
 
-    // Register URI handler for invitation links
+    // Register URI handler for invitation links and OIDC callback
     const uriHandler = vscode.window.registerUriHandler({
         handleUri: async (uri: vscode.Uri) => {
             console.log('[OntoCode] ========== URI HANDLER TRIGGERED ==========');
@@ -309,7 +316,37 @@ export function activate(context: vscode.ExtensionContext) {
             console.log('[OntoCode] Checking path:', path);
             console.log('[OntoCode] Token present:', !!token);
             
-            if (path === '/invite' || path === '/invitation') {
+            // Handle OIDC callback
+            if (path === '/oidc-callback' || path === '/oauth2/callback') {
+                console.log('[OntoCode] Processing OIDC callback');
+                if (token) {
+                    try {
+                        // Notify the OIDC service about the callback
+                        oidcAuthService.handleOAuthCallback(token);
+                        console.log('[OntoCode] OIDC callback processed successfully');
+                    } catch (error: any) {
+                        console.error('[OntoCode] Error processing OIDC callback:', error);
+                        vscode.window.showErrorMessage(`OIDC login failed: ${error.message}`);
+                    }
+                } else {
+                    const code = query.get('code');
+                    const error = query.get('error');
+                    
+                    if (error) {
+                        console.error('[OntoCode] OIDC error:', error);
+                        vscode.window.showErrorMessage(`OIDC authentication failed: ${error}`);
+                        oidcAuthService.handleOAuthCallback(null, error);
+                    } else if (code) {
+                        console.log('[OntoCode] Received authorization code, exchanging for token...');
+                        oidcAuthService.handleOAuthCallback(null, null, code);
+                    } else {
+                        console.error('[OntoCode] No token or code in OIDC callback!');
+                        vscode.window.showErrorMessage('Invalid OIDC callback: missing token or code');
+                    }
+                }
+            }
+            // Handle invitation links
+            else if (path === '/invite' || path === '/invitation') {
                 if (token) {
                     console.log('[OntoCode] Processing invitation token:', token.substring(0, 20) + '...');
                     
@@ -432,6 +469,52 @@ export function activate(context: vscode.ExtensionContext) {
                 OntoCodePanel.currentPanel.dispose();
             }
             vscode.window.showInformationMessage('You have been successfully logged out.');
+        }),
+        vscode.commands.registerCommand('ontocode.loginWithOidc', async () => {
+            console.log('[OntoCode] OIDC Login command triggered');
+            
+            try {
+                // Update OIDC service gateway URL based on current deployment
+                oidcAuthService.setGatewayUrl(GATEWAY_URL);
+                
+                // Check if OIDC is available
+                const isAvailable = await oidcAuthService.isOidcAvailable();
+                if (!isAvailable) {
+                    vscode.window.showWarningMessage('OIDC authentication is not enabled on the server.');
+                    return;
+                }
+                
+                // Show provider selection and initiate login with embedded webview
+                const result = await oidcAuthService.login(context.extensionUri);
+                
+                if (result) {
+                    console.log('[OntoCode] OIDC login successful for user:', result.username);
+                    
+                    // Store the token
+                    await (context as any).secrets.store(TOKEN_KEY, result.token);
+                    
+                    // Show success message
+                    vscode.window.showInformationMessage(
+                        `Successfully logged in with ${result.oidcProvider} as ${result.name || result.username}!`
+                    );
+                    
+                    // Create or show the OntoCode panel
+                    const panel = await OntoCodePanel.createOrShow(context.extensionUri, context, false);
+                    
+                    // Notify the webview about the new token
+                    if (panel.isWebviewReady()) {
+                        panel.postMessage({ 
+                            type: 'storedAuthToken', 
+                            token: result.token 
+                        });
+                    }
+                } else {
+                    console.log('[OntoCode] OIDC login cancelled or failed');
+                }
+            } catch (error: any) {
+                console.error('[OntoCode] OIDC login error:', error);
+                vscode.window.showErrorMessage(`OIDC login failed: ${error.message}`);
+            }
         }),
         vscode.commands.registerCommand('ontocode.showCollaborationStatus', async () => {
             console.log('[OntoCode] 📊 Showing collaboration status...');
@@ -904,6 +987,61 @@ class OntoCodePanel {
                         console.log('[OntoCode] 📋 Showing subscription plans');
                         this.postMessage({ type: 'showSubscriptionPlans' });
                         break;
+                    case 'loginWithOidc':
+                        // Handle OIDC login request from webview
+                        console.log('[OntoCode] 🔐 OIDC login requested from webview');
+                        try {
+                            const oidcMode = (message as any).mode === 'signup' ? 'signup' : 'signin';
+
+                            // Always use the full backend flow via the gateway.
+                            // oidcAuthService.login() / selectProvider() already handles the case
+                            // where the backend is unreachable by offering loginDirectToKeycloak
+                            // as a fallback — no need for a pre-flight health check here.
+                            oidcAuthService.setGatewayUrl(GATEWAY_URL);
+
+                            let result;
+                            if (oidcMode === 'signup') {
+                                const providers = await oidcAuthService.getEnabledProviders();
+                                const provider = providers.providers?.[0];
+                                if (provider) {
+                                    const sep = provider.authUrl.includes('?') ? '&' : '?';
+                                    result = await oidcAuthService.login(this._context.extensionUri, {
+                                        ...provider,
+                                        authUrl: `${provider.authUrl}${sep}kc_action=register`
+                                    });
+                                } else {
+                                    result = await oidcAuthService.login(this._context.extensionUri);
+                                }
+                            } else {
+                                result = await oidcAuthService.login(this._context.extensionUri);
+                            }
+                            
+                            if (result && result.token) {
+                                console.log('[OntoCode] ✅ OIDC login successful');
+                                // Save token to secrets
+                                await (this._context as any).secrets.store(TOKEN_KEY, result.token);
+                                // Notify webview of successful login
+                                this.postMessage({ 
+                                    type: 'oidcLoginSuccess', 
+                                    token: result.token,
+                                    username: result.username,
+                                    email: result.email
+                                });
+                            } else {
+                                console.log('[OntoCode] ❌ OIDC login cancelled or failed');
+                                this.postMessage({ 
+                                    type: 'oidcLoginError', 
+                                    error: 'Login was cancelled or failed'
+                                });
+                            }
+                        } catch (error: any) {
+                            console.error('[OntoCode] ❌ OIDC login error:', error);
+                            this.postMessage({ 
+                                type: 'oidcLoginError', 
+                                error: error.message || 'OIDC login failed'
+                            });
+                        }
+                        break;
                     case 'setApiBaseUrl':
                         // Handle deployment type selection and update URLs
                         console.log('[OntoCode] 🔧 Setting API base URL:', message.url);
@@ -1335,12 +1473,6 @@ class OntoCodePanel {
                     break;
                 case 'apiPatch':
                     response = await axios.patch(fullUrl, (message as any).body, axiosConfig);
-                    break;
-                case 'apiPut':
-                    response = await axios.put(fullUrl, message.body, axiosConfig);
-                    break;
-                case 'apiPatch':
-                    response = await axios.patch(fullUrl, message.body, axiosConfig);
                     break;
                 case 'apiDelete':
                     response = await axios.delete(fullUrl, { ...axiosConfig, params: (message as any).params });

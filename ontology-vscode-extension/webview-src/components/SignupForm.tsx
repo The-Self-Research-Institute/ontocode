@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../custom-hook/useAuth';
 import { Loader2, Eye, EyeOff, ArrowLeft } from 'lucide-react';
+import { getBaseUrl } from '../services/apiClient';
 
 interface SignupFormProps {
     onToggleForm: () => void;
@@ -17,6 +18,7 @@ const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation }: SignupFo
     const [showPassword, setShowPassword] = useState(false);
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
+    const [isOidcLoading, setIsOidcLoading] = useState(false);
     const [error, setError] = useState('');
     const [successMessage, setSuccessMessage] = useState('');
     const { signup } = useAuth();
@@ -168,6 +170,62 @@ const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation }: SignupFo
                          {isLoading ? <Loader2 className="animate-spin" /> : 'Sign Up'}
                     </button>
                 </form>
+
+                <div className="my-6 flex items-center">
+                    <div className="flex-1 border-t border-white/20"></div>
+                    <span className="px-4 text-sm text-gray-400">or</span>
+                    <div className="flex-1 border-t border-white/20"></div>
+                </div>
+
+                <button
+                    type="button"
+                    onClick={async () => {
+                        if (typeof window !== 'undefined' && (window as any).vscode) {
+                            (window as any).vscode.postMessage({ type: 'loginWithOidc', mode: 'signup' });
+                        } else {
+                            // Browser / dev mode: open a popup with embedded_view=true and kc_action=register.
+                            setIsOidcLoading(true);
+                            try {
+                                const baseUrl = getBaseUrl();
+                                const res = await fetch(`${baseUrl}/api/auth/oidc/providers`);
+                                const data = await res.json();
+                                const provider = data?.providers?.[0];
+                                if (provider?.authUrl) {
+                                    const sep = provider.authUrl.includes('?') ? '&' : '?';
+                                    const authUrl = `${baseUrl}${provider.authUrl}${sep}kc_action=register&embedded_view=true`;
+                                    const popup = window.open(
+                                        authUrl,
+                                        'keycloak-signup',
+                                        'width=520,height=660,top=100,left=100,resizable=yes,scrollbars=yes'
+                                    );
+                                    if (!popup) {
+                                        // Popup blocked — fall back to redirect_uri approach.
+                                        const callbackUrl = window.location.origin + window.location.pathname;
+                                        window.location.href = `${baseUrl}${provider.authUrl}${sep}kc_action=register&redirect_uri=${encodeURIComponent(callbackUrl)}`;
+                                    }
+                                } else {
+                                    setError('No OIDC providers available. Make sure backend services are running.');
+                                }
+                            } catch (err) {
+                                console.error('[SignupForm] Failed to fetch OIDC providers:', err);
+                                setError('Could not reach the backend. Make sure backend services are running.');
+                            } finally {
+                                setIsOidcLoading(false);
+                            }
+                        }
+                    }}
+                    disabled={isLoading || isOidcLoading}
+                    className="w-full flex items-center justify-center gap-3 py-3 px-4 bg-white/10 border border-white/20 rounded-lg text-sm font-medium text-white hover:bg-white/15 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    {isOidcLoading ? (
+                        <Loader2 className="animate-spin w-5 h-5" />
+                    ) : (
+                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 20C7.59 20 4 16.41 4 12C4 7.59 7.59 4 12 4C16.41 4 20 7.59 20 12C20 16.41 16.41 20 12 20ZM12 6C9.24 6 7 8.24 7 11H9C9 9.34 10.34 8 12 8C13.66 8 15 9.34 15 11C15 12.66 13.66 14 12 14H11V16H13C14.66 16 16 17.34 16 19C16 20.66 14.66 22 13 22H11C9.34 22 8 20.66 8 19H6C6 21.76 8.24 24 11 24H13C15.76 24 18 21.76 18 19C18 17.62 17.35 16.4 16.35 15.6C17.35 14.8 18 13.58 18 12.2C18 9.88 16.12 8 13.8 8H12.2C9.88 8 8 9.88 8 12.2C8 13.58 8.65 14.8 9.65 15.6C8.65 16.4 8 17.62 8 19C8 20.66 9.34 22 11 22V20C10.34 20 9 19.66 9 19C9 17.34 10.34 16 12 16C13.66 16 15 17.34 15 19C15 19.66 13.66 20 13 20V22C14.66 22 16 20.66 16 19C16 17.34 14.66 16 13 16H12C10.34 16 9 14.66 9 13C9 11.34 10.34 10 12 10C13.66 10 15 11.34 15 13C15 14.66 13.66 16 12 16V18C14.66 18 17 15.66 17 13C17 10.34 14.66 8 12 8Z" fill="currentColor"/>
+                        </svg>
+                    )}
+                    {isOidcLoading ? 'Redirecting to Keycloak...' : 'Sign up with Keycloak'}
+                </button>
 
                 <div className="mt-8 text-center space-y-3">
                     <p className="text-gray-400 text-sm">

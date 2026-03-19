@@ -33,6 +33,7 @@ const AppContent = () => {
     const [showAuthForInvitation, setShowAuthForInvitation] = useState(false); // Show login/signup form while keeping invite token
     const [needsDeploymentSelection, setNeedsDeploymentSelection] = useState(false);
     const [deploymentType, setDeploymentType] = useState<'self-hosted' | 'cloud' | null>(null);
+    const [oidcError, setOidcError] = useState<string | null>(null);
 
     // Helper to check if workspace selection is required
     const shouldShowWorkspaceSelection = (): boolean => {
@@ -82,9 +83,54 @@ const AppContent = () => {
     }, []);
 
     useEffect(() => {
+        // Handle OIDC callback token first (browser mode login redirect)
+        const directParams = new URLSearchParams(window.location.search);
+        const oidcToken = directParams.get('authToken') || directParams.get('token');
+        const looksLikeJwt = !!oidcToken && oidcToken.split('.').length === 3;
+
+        if (looksLikeJwt) {
+            const cleanUrl = `${window.location.origin}${window.location.pathname}${window.location.hash}`;
+
+            if (window.opener) {
+                // ── Popup callback path ──────────────────────────────────────────
+                // This tab is the popup that was opened by the main localhost:3001 tab.
+                // Relay the token back to the opener and close this popup.
+                // The opener's App.tsx listens for the 'oidc-token' message and
+                // updates state there — the user never leaves the main tab.
+                console.log('[App] 🔐 Popup callback: relaying token to opener and closing');
+                try {
+                    // Use '*' as targetOrigin because in cloud the popup is served from
+                    // https://ontocodeapi.selfresearch.org (API) and the opener is at
+                    // https://ontocode.selfresearch.org (frontend) — different origins.
+                    window.opener.postMessage(
+                        { type: 'oidc-token', token: oidcToken },
+                        '*'
+                    );
+                } catch (_) { /* opener may have been closed */ }
+                window.history.replaceState({}, document.title, cleanUrl);
+                setTimeout(() => window.close(), 200);
+                return;
+            }
+
+            // ── Full-page redirect path (popup was blocked) ──────────────────────
+            // The main tab itself was redirected back with ?token=. Update state
+            // directly without any further navigation.
+            console.log('[App] 🔐 Found OIDC token in URL (redirect fallback), completing login');
+            localStorage.setItem('authToken', oidcToken!);
+            if (window.vscode) {
+                window.vscode.postMessage({ type: 'saveAuthToken', token: oidcToken });
+            }
+            setOidcError(null);
+            window.history.replaceState({}, document.title, cleanUrl);
+            window.dispatchEvent(new MessageEvent('message', {
+                data: { type: 'storedAuthToken', token: oidcToken }
+            }));
+            return;
+        }
+
         // Check for invitation parameters in URL
         const params = new URLSearchParams(window.location.search);
-        const token = params.get('token') || params.get('invite');
+        const token = params.get('invite');
         const email = params.get('email');
 
         // Also check parent window URL (for test-web environment)
@@ -93,7 +139,7 @@ const AppContent = () => {
         try {
             if (window.parent && window.parent !== window) {
                 const parentParams = new URLSearchParams(window.parent.location.search);
-                parentToken = parentParams.get('token') || parentParams.get('invite');
+                parentToken = parentParams.get('invite');
                 parentEmail = parentParams.get('email');
                 console.log('[App] Checked parent window for token:', !!parentToken, 'email:', !!parentEmail);
             }
@@ -109,7 +155,7 @@ const AppContent = () => {
             if (window.location.hash) {
                 const hashPart = window.location.hash.substring(1); // Remove the '#'
                 const hashParams = new URLSearchParams(hashPart);
-                hashToken = hashParams.get('token') || hashParams.get('invite');
+                hashToken = hashParams.get('invite');
                 hashEmail = hashParams.get('email');
                 console.log('[App] Checked URL hash for token:', !!hashToken, 'email:', !!hashEmail);
             }
@@ -159,6 +205,34 @@ const AppContent = () => {
             } else if (message.type === 'showSubscriptionPlans') {
                 console.log('[App] 📋 Showing subscription plans page');
                 setShowSubscriptionPlan(true);
+            } else if (message.type === 'oidc-token') {
+                // Received from popup (browser dev mode) after Keycloak login
+                console.log('[App] 🔐 OIDC token received from popup');
+                const popupToken = message.token;
+                if (popupToken) {
+                    localStorage.setItem('authToken', popupToken);
+                    setOidcError(null);
+                    window.dispatchEvent(new MessageEvent('message', {
+                        data: { type: 'storedAuthToken', token: popupToken }
+                    }));
+                }
+            } else if (message.type === 'oidcLoginSuccess') {
+                console.log('[App] 🔐 OIDC login successful, token received');
+                // Clear any previous error
+                setOidcError(null);
+                // Store token in localStorage for webview access
+                if (message.token) {
+                    localStorage.setItem('authToken', message.token);
+                    // Dispatch storedAuthToken so AuthContext sets the user state immediately
+                    // without a page reload (which is unreliable in VS Code webviews)
+                    window.dispatchEvent(new MessageEvent('message', {
+                        data: { type: 'storedAuthToken', token: message.token }
+                    }));
+                }
+            } else if (message.type === 'oidcLoginError') {
+                console.error('[App] ❌ OIDC login failed:', message.error);
+                // Set error state to display in UI instead of using blocked alert()
+                setOidcError(message.error || 'Login was cancelled or failed');
             }
         };
 
@@ -540,6 +614,8 @@ const AppContent = () => {
                 onToggleForm={toggleFormView}
                 prefillEmail={inviteEmail || undefined}
                 onBackToInvitation={inviteToken ? handleBackToInvitation : undefined}
+                oidcError={oidcError}
+                onClearOidcError={() => setOidcError(null)}
             />
         ) : (
             <SignupForm

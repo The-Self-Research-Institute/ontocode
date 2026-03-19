@@ -26,15 +26,22 @@ public class User {
     @Indexed(unique = true)
     private String email;
 
-    @NotBlank(message = "Password is required")
+    // Password is optional for OIDC users
     @Pattern(
         regexp = "^(?=.*[0-9])(?=.*[a-z])(?=.*[A-Z])(?=.*[@#$%^&+=!])(?=\\S+$).{8,}$",
         message = "Password must contain at least 8 characters, one uppercase, one lowercase, one number, and one special character"
     )
     private String password;
+    
+    // Display name
+    private String name;
 
     private Set<String> roles = new HashSet<>();
     private boolean enabled = false;
+    private boolean emailVerified = false;
+
+    // OIDC provider (keycloak) - null for local users
+    private String oidcProvider;
 
     // Email verification
     private String verificationToken;
@@ -226,5 +233,38 @@ public class User {
 
     public void setLastLoginAt(LocalDateTime lastLoginAt) {
         this.lastLoginAt = lastLoginAt;
+    }
+    
+    public String getName() {
+        return name;
+    }
+    
+    public void setName(String name) {
+        this.name = name;
+    }
+    
+    public boolean isEmailVerified() {
+        return emailVerified;
+    }
+    
+    public void setEmailVerified(boolean emailVerified) {
+        this.emailVerified = emailVerified;
+    }
+    
+    public String getOidcProvider() {
+        return oidcProvider;
+    }
+    
+    public void setOidcProvider(String oidcProvider) {
+        this.oidcProvider = oidcProvider;
+    }
+    
+    // Convenience method for lastLogin (alias)
+    public void setLastLogin(LocalDateTime lastLogin) {
+        this.lastLoginAt = lastLogin;
+    }
+    
+    public LocalDateTime getLastLogin() {
+        return this.lastLoginAt;
     }
 }

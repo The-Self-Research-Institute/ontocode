@@ -130,8 +130,21 @@ services:
       JWT_SECRET: ${JWT_SECRET:-b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==}
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      # ── OIDC / Keycloak ─────────────────────────────────────────────────────
+      # Keycloak runs in the same docker-compose stack; access it via internal
+      # service name 'keycloak' on port 8080 (mapped to host 9080).
+      KEYCLOAK_ISSUER_URI: ${KEYCLOAK_ISSUER_URI:-http://keycloak:8080/realms/ontocode}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-ontocode-auth}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-0xivMjiXwQmseChmTxGh4bhJfIiDRfjX}
+      # Frontend origin allowed in redirect_uri (used for OIDC open-redirect protection)
+      OIDC_ALLOWED_REDIRECT_ORIGINS: ${OIDC_ALLOWED_REDIRECT_ORIGINS:-https://ontocode.selfresearch.org,http://localhost:3001}
+      # Base URL of this auth service (included in invitation/reset-password emails)
+      BASE_URL: ${BASE_URL:-https://ontocode.selfresearch.org}
+      OIDC_BASE_URL: ${OIDC_BASE_URL:-https://ontocodeapi.selfresearch.org}
     depends_on:
       mongo:
+        condition: service_healthy
+      keycloak:
         condition: service_healthy
     networks:
       - ontology-net
@@ -315,9 +328,71 @@ services:
       retries: 5
       start_period: 10s
 
+  # ==================== Keycloak SSO ====================
+  keycloak-db:
+    image: postgres:15-alpine
+    container_name: ontocode-keycloak-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak_password}
+    volumes:
+      - keycloak-postgres-data:/var/lib/postgresql/data
+    networks:
+      - ontology-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: ontocode-keycloak
+    restart: unless-stopped
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak_password}
+      # Cloud hostname — Keycloak issues tokens with this base URL.
+      # Must match KEYCLOAK_ISSUER_URI used by the auth service.
+      # Externally accessed via reverse-proxy at https://ontocodeapi.selfresearch.org/auth
+      KC_HOSTNAME_URL: ${KC_HOSTNAME_URL:-https://ontocodeapi.selfresearch.org/auth}
+      KC_HOSTNAME_ADMIN_URL: ${KC_HOSTNAME_ADMIN_URL:-https://ontocodeapi.selfresearch.org/auth}
+      KC_PROXY_HEADERS: xforwarded
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_MANAGEMENT_PORT: "9000"
+      KC_HEALTH_ENABLED: "true"
+      # Allow embedding in VS Code webview / browser popup
+      KC_SPI_SECURITY_HEADERS_DEFAULT_X_FRAME_OPTIONS: ""
+      KC_SPI_SECURITY_HEADERS_DEFAULT_CONTENT_SECURITY_POLICY: "frame-src *; frame-ancestors *; object-src 'none';"
+    command: start --spi-security-headers-default-content-security-policy="frame-src *; frame-ancestors *; object-src 'none';"
+    ports:
+      - "9080:8080"
+    volumes:
+      - ./keycloak-themes:/opt/keycloak/themes
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    networks:
+      - ontology-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health/ready || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
 volumes:
   mongo-data:
   graphdb-data:
+  keycloak-postgres-data:
 
 networks:
   ontology-net:

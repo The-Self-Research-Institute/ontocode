@@ -1,0 +1,258 @@
+version: '3.8'
+
+# OntoCode with Keycloak OIDC Authentication
+# This docker-compose file includes Keycloak for SSO authentication
+
+services:
+  # ==================== Keycloak SSO ====================
+  keycloak-db:
+    image: postgres:15-alpine
+    container_name: ontocode-keycloak-db
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak_password
+    volumes:
+      - keycloak-postgres-data:/var/lib/postgresql/data
+    networks:
+      - ontocode-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: ontocode-keycloak
+    environment:
+      # Admin credentials
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      
+      # Database configuration
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak_password
+      
+      # Development settings (disable for production)
+      KC_HOSTNAME: localhost
+      KC_HOSTNAME_PORT: "9080"
+      KC_HOSTNAME_URL: http://localhost:9080
+      KC_HOSTNAME_ADMIN_URL: http://localhost:9080
+      KC_PROXY_HEADERS: xforwarded
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_SPI_THEME_CACHE_THEMES: "false"
+      KC_SPI_THEME_CACHE_TEMPLATES: "false"
+      KC_SPI_THEME_STATIC_MAX_AGE: "-1"
+      
+      # Allow embedding in VS Code webview (Required for iframe login)
+      # This disables X-Frame-Options to allow embedding
+      KC_HTTP_MANAGEMENT_PORT: "9000"
+      KC_HEALTH_ENABLED: "true"
+      # Disable X-Frame-Options so the VS Code webview iframe can embed the Keycloak login page.
+      # Without this, Keycloak sends X-Frame-Options: SAMEORIGIN which blocks cross-origin iframes.
+      KC_SPI_SECURITY_HEADERS_DEFAULT_X_FRAME_OPTIONS: ""
+      KC_SPI_SECURITY_HEADERS_DEFAULT_CONTENT_SECURITY_POLICY: "frame-src *; frame-ancestors *; object-src 'none';"
+    command: start-dev --spi-theme-static-max-age=-1 --spi-theme-cache-themes=false --spi-theme-cache-templates=false --spi-security-headers-default-content-security-policy="frame-src *; frame-ancestors *; object-src 'none';"
+    ports:
+      - "9080:8080"
+    volumes:
+      # Mount custom OntoCode theme
+      - ./keycloak-themes:/opt/keycloak/themes
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    networks:
+      - ontocode-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health/ready || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ==================== MongoDB ====================
+  mongodb:
+    image: mongo:7.0
+    container_name: ontocode-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: rootpassword
+      MONGO_INITDB_DATABASE: ontocode
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb-data:/data/db
+    networks:
+      - ontocode-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==================== GraphDB ====================
+  graphdb:
+    image: ontotext/graphdb:10.5.1
+    container_name: ontocode-graphdb
+    environment:
+      GDB_JAVA_OPTS: >-
+        -Xmx2g -Xms1g
+        -Dgraphdb.home=/opt/graphdb/home
+        -Dgraphdb.workbench.cors.enable=true
+        -Dgraphdb.workbench.cors.origin=*
+    ports:
+      - "7200:7200"
+    volumes:
+      - graphdb-data:/opt/graphdb/home
+    networks:
+      - ontocode-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7200/rest/monitor/infrastructure"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ==================== Auth Service ====================
+  ontology-auth:
+    build:
+      context: .
+      dockerfile: Dockerfile.auth
+    container_name: ontocode-auth
+    environment:
+      # MongoDB Configuration
+      MONGODB_URI: mongodb://root:rootpassword@mongodb:27017/ontocode?authSource=admin
+      
+      # JWT Configuration
+      JWT_SECRET: b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==
+      JWT_EXPIRATION: 31536000000
+      
+      # Admin Configuration
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      ADMIN_EMAIL: admin@ontocode.local
+      
+      # OIDC Configuration
+      OIDC_ENABLED: "true"
+      OIDC_BASE_URL: http://localhost:8086
+      OIDC_AUTO_PROVISION: "true"
+      OIDC_DEFAULT_ROLES: ROLE_USER
+      
+      # Keycloak Configuration
+      OIDC_KEYCLOAK_ENABLED: "true"
+      OIDC_KEYCLOAK_CLIENT_ID: ontocode-auth
+      OIDC_KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-0xivMjiXwQmseChmTxGh4bhJfIiDRfjX}
+      OIDC_KEYCLOAK_ISSUER_URI: http://keycloak:8080/realms/ontocode
+      
+      # Email Configuration (optional)
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+    ports:
+      - "8086:8086"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    networks:
+      - ontocode-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ==================== Editor Service ====================
+  ontology-editor:
+    build:
+      context: .
+      dockerfile: Dockerfile.editor
+    container_name: ontocode-editor
+    environment:
+      SPRING_DATA_MONGODB_URI: mongodb://root:rootpassword@mongodb:27017/ontocode?authSource=admin
+      GRAPHDB_URL: http://graphdb:7200
+      GRAPHDB_REPOSITORY: ontocode
+      JWT_SECRET: b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==
+    ports:
+      - "8083:8083"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      graphdb:
+        condition: service_healthy
+    networks:
+      - ontocode-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ==================== Gateway Service ====================
+  ontology-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    container_name: ontocode-gateway
+    environment:
+      AUTH_SERVICE_URL: http://ontology-auth:8086
+      EDITOR_SERVICE_URL: http://ontology-editor:8083
+      PLUGIN_SERVICE_URL: http://ontology-plugin-service:8087
+    ports:
+      - "80:80"
+    depends_on:
+      ontology-auth:
+        condition: service_healthy
+      ontology-editor:
+        condition: service_healthy
+    networks:
+      - ontocode-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ==================== Plugin Service ====================
+  ontology-plugin-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.plugin
+    container_name: ontocode-plugin-service
+    environment:
+      SPRING_DATA_MONGODB_URI: mongodb://root:rootpassword@mongodb:27017/ontocode?authSource=admin
+      JWT_SECRET: b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==
+    ports:
+      - "8087:8087"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - ontocode-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8087/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  mongodb-data:
+    driver: local
+  graphdb-data:
+    driver: local
+  keycloak-postgres-data:
+    driver: local
+
+networks:
+  ontocode-network:
+    driver: bridge
