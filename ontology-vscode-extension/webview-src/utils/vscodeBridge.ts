@@ -127,7 +127,24 @@ function handleBrowserMessage(message: any) {
         case 'openLocalFile': {
             (async () => {
                 const fileData = await openOntologyFile();
-                if (fileData) {
+                if (!fileData) return;
+
+                if (message.projectId) {
+                    // Project context is known — hand off directly to the uploadOntology
+                    // handler so the full upload + GraphDB polling flow runs immediately.
+                    // (Without this, projectId is dropped and the upload never starts when
+                    // the user is already inside a project dashboard.)
+                    handleBrowserMessage({
+                        type: 'uploadOntology',
+                        projectId: message.projectId,
+                        fileName: fileData.fileName,
+                        fileContent: fileContentToBase64(fileData.fileContent),
+                        importMode: message.importMode,
+                        partition: message.partition,
+                    });
+                } else {
+                    // No project context yet — store as pending so the user can pick
+                    // a project and the upload will trigger via handleProjectSelected.
                     postToSelf({
                         type: 'pendingFileUpload',
                         fileName: fileData.fileName,
@@ -162,6 +179,14 @@ function handleBrowserMessage(message: any) {
 
         case 'uploadOntology': {
             (async () => {
+                // Hoist so the catch block can reference it for error reporting
+                const uploadProjectId = message.projectId
+                    || (message.fileName || '').replace(/\.(owl|rdf|ttl|n3|nt|jsonld)$/i, '');
+
+                // ── Notify Dashboard to open progress dialog immediately ──
+                // (mirrors what the VS Code extension sends right after file selection)
+                postToSelf({ type: 'showLoading', projectId: uploadProjectId });
+
                 try {
                     const token = localStorage.getItem('authToken');
                     const deploymentType = localStorage.getItem('deploymentType') || 'cloud';
@@ -169,9 +194,6 @@ function handleBrowserMessage(message: any) {
                     const baseUrl = deploymentType === 'self-hosted'
                         ? (config?.SELF_HOSTED_GATEWAY_URL || 'http://localhost:80')
                         : (config?.CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org');
-
-                    // Match extension: use filename (without extension) as projectId
-                    const uploadProjectId = message.fileName.replace(/\.(owl|rdf|ttl|n3|nt|jsonld)$/i, '');
 
                     // Decode base64 → Blob
                     const byteString = atob(message.fileContent);
@@ -202,9 +224,14 @@ function handleBrowserMessage(message: any) {
 
                     if (resp.ok && responseData.success !== false) {
                         // Backend may return a different projectId on replace
-                        const actualProjectId = responseData.projectId || message.projectId;
+                        const actualProjectId = responseData.projectId || uploadProjectId;
                         const actualFilename = responseData.filename || message.fileName;
                         console.log('[BrowserBridge] uploadOntology accepted, actualProjectId:', actualProjectId, 'polling for completion...');
+
+                        // If the server assigned a different projectId, update the Dashboard
+                        if (actualProjectId !== uploadProjectId) {
+                            postToSelf({ type: 'showLoading', projectId: actualProjectId });
+                        }
 
                         // Poll /api/ontology/status until COMPLETED (GraphDB processes async)
                         const maxAttempts = 60;
@@ -274,7 +301,7 @@ function handleBrowserMessage(message: any) {
                         console.log('[BrowserBridge] uploadOntology duplicate detected');
                         postToSelf({
                             type: 'importFailed',
-                            projectId: responseData.projectId || message.projectId,
+                            projectId: responseData.projectId || uploadProjectId,
                             error: responseData.error,
                             isDuplicate: true,
                             filename: responseData.filename || message.fileName,
@@ -283,13 +310,13 @@ function handleBrowserMessage(message: any) {
                         console.error('[BrowserBridge] uploadOntology failed:', responseData.error || responseText);
                         postToSelf({
                             type: 'importFailed',
-                            projectId: message.projectId,
+                            projectId: uploadProjectId,
                             error: responseData.error || responseText,
                         });
                     }
                 } catch (err: any) {
                     console.error('[BrowserBridge] uploadOntology error:', err);
-                    postToSelf({ type: 'importFailed', projectId: message.projectId, error: err?.message || 'Upload failed' });
+                    postToSelf({ type: 'importFailed', projectId: uploadProjectId, error: err?.message || 'Upload failed' });
                 }
             })();
             break;

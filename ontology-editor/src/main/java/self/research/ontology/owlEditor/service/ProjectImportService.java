@@ -265,7 +265,11 @@ public class ProjectImportService {
             log.info("[Import {}] Starting bulkLoadChunked: file={}, format={}, size={} bytes, converted={}",
                     projectId, fileToLoad.getFileName(), format, actualFileSize, converted);
 
+            // Track re-serialized fallback file for cleanup
+            Path[] owlApiFallbackFile = { null };
+
             try (InputStream in = Files.newInputStream(fileToLoad)) {
+                try {
                 datasetService.bulkLoadChunked(projectId, in, format, actualFileSize, options, progress -> {
                     long totalBytes = progress.getTotalBytes();
                     long bytesRead = progress.getBytesRead();
@@ -311,8 +315,42 @@ public class ProjectImportService {
                         }
                     }
                 });
+                } catch (RuntimeException bulkEx) {
+                    // If this is an XML structural error (unclosed elements, unescaped characters,
+                    // etc.) and we haven't already run OWL API conversion, try it as a fallback.
+                    // This covers large files like DOID where sanitizeFileOnDisk's
+                    // reserializeWithOwlApi may have silently failed.
+                    if (isXmlStructuralError(bulkEx) && format == RDFFormat.RDFXML) {
+                        log.warn("[Import {}] Bulk load failed with XML structural error — retrying after OWL API re-serialization. Error: {}",
+                                projectId, bulkEx.getMessage());
+                        Path sourceForConversion = fileToLoad;
+                        try {
+                            Path reserialised = OWLFormatConverter.convertToRDFXML(sourceForConversion);
+                            owlApiFallbackFile[0] = reserialised;
+                            long reserialisedSize = Files.size(reserialised);
+                            log.info("[Import {}] OWL API re-serialization successful ({} bytes), retrying bulk load",
+                                    projectId, reserialisedSize);
+                            try (InputStream retryIn = Files.newInputStream(reserialised)) {
+                                datasetService.bulkLoadChunked(projectId, retryIn, RDFFormat.RDFXML,
+                                        reserialisedSize, options, null);
+                            }
+                        } catch (Exception retryEx) {
+                            log.error("[Import {}] Bulk load retry after OWL API re-serialization also failed",
+                                    projectId, retryEx);
+                            throw new RuntimeException(
+                                    "Chunked bulk load failed even after OWL API re-serialization: " + retryEx.getMessage(),
+                                    retryEx);
+                        }
+                    } else {
+                        throw bulkEx;
+                    }
+                }
             } finally {
-                // Clean up converted file if it was created
+                // Clean up any OWL API fallback file
+                if (owlApiFallbackFile[0] != null) {
+                    try { Files.deleteIfExists(owlApiFallbackFile[0]); } catch (Exception ignored) {}
+                }
+                // Clean up format-converted file if it was created
                 if (converted && fileToLoad != null && !fileToLoad.equals(owlFile)) {
                     try {
                         Files.deleteIfExists(fileToLoad);
@@ -561,6 +599,46 @@ public class ProjectImportService {
             }
         } catch (Exception e) {
             log.warn("Failed to detect OWL/XML format: {}", e.getMessage());
+        }
+        return false;
+    }
+
+    /**
+     * Returns true when {@code ex} (or any cause in its chain) is a SAX parse
+     * exception indicating the XML is structurally broken — e.g. unclosed
+     * elements, unescaped angle-brackets in text nodes, duplicate root elements.
+     *
+     * This is intentionally narrower than "any parse error": namespace-not-bound
+     * errors are also SAX errors but are handled by a separate namespace-injection
+     * step, so we exclude them here.
+     */
+    private boolean isXmlStructuralError(Throwable ex) {
+        Throwable t = ex;
+        while (t != null) {
+            String msg = t.getMessage();
+            if (msg != null) {
+                String lower = msg.toLowerCase(Locale.ROOT);
+                // SAX well-formedness errors
+                if (lower.contains("must be terminated") ||
+                    lower.contains("end-tag") ||
+                    lower.contains("end tag") ||
+                    lower.contains("unexpected end of file") ||
+                    lower.contains("premature end of file") ||
+                    lower.contains("content is not allowed in prolog") ||
+                    lower.contains("invalid xml") ||
+                    lower.contains("illegalstateexception") ||
+                    lower.contains("illegal state")) {
+                    return true;
+                }
+                // RDF4J wraps the SAX error — check class names too
+                if (t.getClass().getName().contains("SAXParseException")) {
+                    boolean isNamespaceError = lower.contains("prefix") && (lower.contains("bound") || lower.contains("not bound"));
+                    if (!isNamespaceError) {
+                        return true;
+                    }
+                }
+            }
+            t = t.getCause();
         }
         return false;
     }

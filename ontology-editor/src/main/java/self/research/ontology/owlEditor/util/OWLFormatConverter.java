@@ -9,7 +9,11 @@ import org.slf4j.LoggerFactory;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Utility to convert OWL ontologies from various formats to RDF/XML
@@ -275,11 +279,83 @@ public class OWLFormatConverter {
         
         // Fix 2: Merge duplicate XML documents appended after </rdf:RDF>
         content = mergeAppendedRdfDocuments(content);
-        
+
+        // Fix 3: Inject missing common namespace declarations (e.g. xmlns:dc, xmlns:skos)
+        // These are required for well-formed XML; their absence causes SAX parser errors like
+        // "The prefix 'dc' for element 'dc:title' is not bound".
+        content = injectMissingNamespaces(content);
+
         if (!content.equals(original)) {
             log.info("Fixed malformed RDF/XML structure in: {}", filePath.getFileName());
             Files.writeString(filePath, content);
         }
+    }
+
+    /**
+     * Inject missing common namespace declarations into an RDF/XML document.
+     * Scans for namespace prefix usage (e.g. {@code dc:title}) and adds the corresponding
+     * {@code xmlns:prefix} attribute to the {@code <rdf:RDF>} root element when absent.
+     * This makes the document well-formed so XML/RDF parsers do not reject it.
+     */
+    static String injectMissingNamespaces(String content) {
+        if (!content.contains("<rdf:RDF")) {
+            return content;
+        }
+
+        // Well-known prefix → namespace URI mappings
+        Map<String, String> knownNamespaces = new LinkedHashMap<>();
+        knownNamespaces.put("rdf",     "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
+        knownNamespaces.put("rdfs",    "http://www.w3.org/2000/01/rdf-schema#");
+        knownNamespaces.put("owl",     "http://www.w3.org/2002/07/owl#");
+        knownNamespaces.put("xsd",     "http://www.w3.org/2001/XMLSchema#");
+        knownNamespaces.put("dc",      "http://purl.org/dc/elements/1.1/");
+        knownNamespaces.put("dcterms", "http://purl.org/dc/terms/");
+        knownNamespaces.put("bibo",    "http://purl.org/ontology/bibo/");
+        knownNamespaces.put("foaf",    "http://xmlns.com/foaf/0.1/");
+        knownNamespaces.put("skos",    "http://www.w3.org/2004/02/skos/core#");
+        knownNamespaces.put("prov",    "http://www.w3.org/ns/prov#");
+        knownNamespaces.put("schema",  "http://schema.org/");
+        knownNamespaces.put("vann",    "http://purl.org/vocab/vann/");
+        knownNamespaces.put("cc",      "http://creativecommons.org/ns#");
+        knownNamespaces.put("doap",    "http://usefulinc.com/ns/doap#");
+
+        List<String> toInject = new ArrayList<>();
+        for (Map.Entry<String, String> entry : knownNamespaces.entrySet()) {
+            String prefix = entry.getKey();
+            // Used as an element prefix (<dc:title>) or attribute prefix (dc:type="...")
+            boolean isUsed = content.contains("<" + prefix + ":")
+                    || content.contains(" " + prefix + ":");
+            if (!isUsed) continue;
+            // Already declared in some ancestor element
+            boolean isDeclared = content.contains("xmlns:" + prefix + "=");
+            if (!isDeclared) {
+                toInject.add(prefix);
+            }
+        }
+
+        if (toInject.isEmpty()) {
+            return content;
+        }
+
+        log.info("Injecting missing XML namespace declarations: {}", toInject);
+
+        int rdfTagStart = content.indexOf("<rdf:RDF");
+        int rdfTagEnd   = content.indexOf('>', rdfTagStart);
+        if (rdfTagStart < 0 || rdfTagEnd < 0) {
+            return content;
+        }
+
+        // Insert before the closing '>' (or '/>' for self-closing tags)
+        boolean selfClosing = content.charAt(rdfTagEnd - 1) == '/';
+        int insertPos = selfClosing ? rdfTagEnd - 1 : rdfTagEnd;
+
+        StringBuilder injection = new StringBuilder();
+        for (String prefix : toInject) {
+            injection.append("\n         xmlns:").append(prefix)
+                     .append("=\"").append(knownNamespaces.get(prefix)).append("\"");
+        }
+
+        return content.substring(0, insertPos) + injection + content.substring(insertPos);
     }
     
     /**
