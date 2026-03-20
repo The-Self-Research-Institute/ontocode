@@ -1320,15 +1320,41 @@ class OntoCodePanel {
             const fullUrl = `${GATEWAY_URL}${url}`;
             console.log(`[Proxy] ${type.replace('api', '').toUpperCase()}: ${fullUrl}`, isPublicEndpoint ? '(public)' : '(authenticated)');
 
-            // Set a timeout for requests (300 seconds for large ontologies and workspace operations)
-            const axiosConfig = { headers, timeout: 300_000 };
+            // Set a timeout for requests (600 seconds for large file uploads)
+            const axiosConfig: any = { headers, timeout: 600_000 };
+
+            // Detect multipart upload requests reconstructed from webview FormData
+            const body = (message as any).body;
+            let postBody = body;
+            if (type === 'apiPost' && body && body._isMultipart) {
+                const FormData = require('form-data');
+                const form = new FormData();
+                // Reconstruct the file from the transferred byte array
+                if (body._fileBuffer && body._fileFieldName) {
+                    const buf = Buffer.from(body._fileBuffer);
+                    form.append(body._fileFieldName, buf, {
+                        filename: body._originalFileName || 'upload',
+                        contentType: body.fileType || 'application/octet-stream',
+                    });
+                }
+                // Append remaining string fields
+                for (const [k, v] of Object.entries(body)) {
+                    if (k.startsWith('_') || k === 'file') continue;
+                    form.append(k, String(v));
+                }
+                postBody = form;
+                // Override headers for multipart
+                axiosConfig.headers = { ...headers, ...form.getHeaders() };
+                axiosConfig.maxContentLength = Infinity;
+                axiosConfig.maxBodyLength = Infinity;
+            }
 
             switch (type) {
                 case 'apiGet':
                     response = await axios.get(fullUrl, { ...axiosConfig, params: (message as any).params });
                     break;
                 case 'apiPost':
-                    response = await axios.post(fullUrl, (message as any).body, axiosConfig);
+                    response = await axios.post(fullUrl, postBody, axiosConfig);
                     break;
                 case 'apiPut':
                     response = await axios.put(fullUrl, (message as any).body, axiosConfig);
@@ -3875,17 +3901,31 @@ class OntoCodePanel {
             // Extract existing namespaces from the root element
             const existingAttrs = rdfRootMatch[1];
             
-            // Define all required namespaces
-            const requiredNamespaces = {
+            // Define all well-known namespaces (synced with OWLFormatConverter.java)
+            const requiredNamespaces: Record<string, string> = {
                 'xmlns:rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
                 'xmlns:rdfs': 'http://www.w3.org/2000/01/rdf-schema#',
                 'xmlns:owl': 'http://www.w3.org/2002/07/owl#',
+                'xmlns:xsd': 'http://www.w3.org/2001/XMLSchema#',
                 'xmlns:dc': 'http://purl.org/dc/elements/1.1/',
                 'xmlns:dcterms': 'http://purl.org/dc/terms/',
+                'xmlns:terms': 'http://purl.org/dc/terms/',
                 'xmlns:bibo': 'http://purl.org/ontology/bibo/',
                 'xmlns:foaf': 'http://xmlns.com/foaf/0.1/',
+                'xmlns:skos': 'http://www.w3.org/2004/02/skos/core#',
                 'xmlns:prov': 'http://www.w3.org/ns/prov#',
-                'xmlns:xsd': 'http://www.w3.org/2001/XMLSchema#'
+                'xmlns:schema': 'http://schema.org/',
+                'xmlns:vann': 'http://purl.org/vocab/vann/',
+                'xmlns:cc': 'http://creativecommons.org/ns#',
+                'xmlns:doap': 'http://usefulinc.com/ns/doap#',
+                'xmlns:obo': 'http://purl.obolibrary.org/obo/',
+                'xmlns:oboInOwl': 'http://www.geneontology.org/formats/oboInOwl#',
+                'xmlns:swrl': 'http://www.w3.org/2003/11/swrl#',
+                'xmlns:swrlb': 'http://www.w3.org/2003/11/swrlb#',
+                'xmlns:sio': 'http://semanticscience.org/resource/',
+                'xmlns:sh': 'http://www.w3.org/ns/shacl#',
+                'xmlns:dcat': 'http://www.w3.org/ns/dcat#',
+                'xmlns:void': 'http://rdfs.org/ns/void#',
             };
             
             // Build new attributes string with all required namespaces
@@ -3895,6 +3935,68 @@ class OntoCodePanel {
                 const prefixPattern = new RegExp(prefix.replace(':', '\\:'), 'i');
                 if (!prefixPattern.test(existingAttrs)) {
                     newAttrs += `\n         ${prefix}="${uri}"`;
+                }
+            }
+
+            // ── Dynamic resolution for custom/unknown prefixes ──
+            const allDeclaredPrefixes = new Set<string>();
+            // Collect already-declared prefixes from existing attrs + known list
+            const declaredMatch = (existingAttrs + newAttrs).matchAll(/xmlns:([a-zA-Z][a-zA-Z0-9_-]*)\s*=/gi);
+            for (const m of declaredMatch) allDeclaredPrefixes.add(m[1]);
+
+            // Scan content for all used prefixes
+            const usedPrefixRegex = /(?:<|\s)([a-zA-Z][a-zA-Z0-9_-]*):[a-zA-Z]/g;
+            let usedMatch;
+            const undeclaredPrefixes = new Set<string>();
+            while ((usedMatch = usedPrefixRegex.exec(fragment)) !== null) {
+                const p = usedMatch[1];
+                if (p === 'xmlns' || p === 'xml') continue;
+                if (!allDeclaredPrefixes.has(p)) undeclaredPrefixes.add(p);
+            }
+
+            if (undeclaredPrefixes.size > 0) {
+                // Extract xml:base, ontology IRI, or default namespace for fallback
+                const xmlBaseMatch = fragment.match(/xml:base\s*=\s*"([^"]+)"/);
+                const ontologyMatch = fragment.match(/<owl:Ontology\s+rdf:about\s*=\s*"([^"]+)"/);
+                const defaultNsMatch = fragment.match(/<rdf:RDF[^>]*\sxmlns\s*=\s*"([^"]+)"/);
+                const xmlBase = xmlBaseMatch?.[1];
+                const ontologyIri = ontologyMatch?.[1];
+                const defaultNs = defaultNsMatch?.[1];
+
+                for (const prefix of undeclaredPrefixes) {
+                    let resolvedUri: string | null = null;
+
+                    // Strategy A: Match prefix:LocalName against full URIs in rdf:about/resource
+                    const localNameRegex = new RegExp(`(?:<|\\s)${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:([a-zA-Z][a-zA-Z0-9_.-]*)`, 'g');
+                    const localNames: string[] = [];
+                    let lnMatch;
+                    while ((lnMatch = localNameRegex.exec(fragment)) !== null) {
+                        if (!localNames.includes(lnMatch[1])) localNames.push(lnMatch[1]);
+                    }
+                    for (const localName of localNames) {
+                        const escaped = localName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                        const uriRegex = new RegExp(`(?:rdf:about|rdf:resource|rdf:datatype)\\s*=\\s*"([^"]+[#/])${escaped}"`, 'i');
+                        const uriMatch = fragment.match(uriRegex);
+                        if (uriMatch) {
+                            resolvedUri = uriMatch[1];
+                            break;
+                        }
+                    }
+
+                    // Strategy B: Derive from xml:base / ontology IRI / default namespace
+                    if (!resolvedUri) {
+                        const base = xmlBase || ontologyIri || defaultNs;
+                        if (base) {
+                            resolvedUri = base.endsWith('#') || base.endsWith('/') ? base : base + '#';
+                        }
+                    }
+
+                    if (resolvedUri) {
+                        newAttrs += `\n         xmlns:${prefix}="${resolvedUri}"`;
+                        console.log(`[wrapRdfXml] Dynamically resolved custom prefix '${prefix}' → '${resolvedUri}'`);
+                    } else {
+                        console.warn(`[wrapRdfXml] Cannot resolve custom prefix '${prefix}' — no matching URIs or document base found`);
+                    }
                 }
             }
             
@@ -3909,17 +4011,66 @@ class OntoCodePanel {
             
             return fragment;
         } else {
-            // No rdf:RDF root found, wrap the entire fragment
+            // No rdf:RDF root found, wrap the entire fragment with all well-known namespaces
+            const defaultNs: Record<string, string> = {
+                'xmlns:rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
+                'xmlns:rdfs': 'http://www.w3.org/2000/01/rdf-schema#',
+                'xmlns:owl': 'http://www.w3.org/2002/07/owl#',
+                'xmlns:xsd': 'http://www.w3.org/2001/XMLSchema#',
+                'xmlns:dc': 'http://purl.org/dc/elements/1.1/',
+                'xmlns:dcterms': 'http://purl.org/dc/terms/',
+                'xmlns:bibo': 'http://purl.org/ontology/bibo/',
+                'xmlns:foaf': 'http://xmlns.com/foaf/0.1/',
+                'xmlns:skos': 'http://www.w3.org/2004/02/skos/core#',
+                'xmlns:prov': 'http://www.w3.org/ns/prov#',
+                'xmlns:obo': 'http://purl.obolibrary.org/obo/',
+                'xmlns:oboInOwl': 'http://www.geneontology.org/formats/oboInOwl#',
+            };
+
+            // ── Dynamic resolution for custom prefixes in bare fragments ──
+            const declaredPrefixNames = new Set(Object.keys(defaultNs).map(k => k.replace('xmlns:', '')));
+            const usedPrefixRegex = /(?:<|\s)([a-zA-Z][a-zA-Z0-9_-]*):[a-zA-Z]/g;
+            let usedMatch;
+            while ((usedMatch = usedPrefixRegex.exec(fragment)) !== null) {
+                const p = usedMatch[1];
+                if (p === 'xmlns' || p === 'xml' || declaredPrefixNames.has(p)) continue;
+
+                // Already resolved this prefix
+                if (defaultNs[`xmlns:${p}`]) continue;
+
+                let resolvedUri: string | null = null;
+
+                // Strategy A: Match against full URIs in the content
+                const localNameRegex = new RegExp(`(?:<|\\s)${p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:([a-zA-Z][a-zA-Z0-9_.-]*)`, 'g');
+                const localNames: string[] = [];
+                let lnMatch;
+                while ((lnMatch = localNameRegex.exec(fragment)) !== null) {
+                    if (!localNames.includes(lnMatch[1])) localNames.push(lnMatch[1]);
+                }
+                for (const localName of localNames) {
+                    const escaped = localName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    const uriRegex = new RegExp(`(?:rdf:about|rdf:resource|rdf:datatype)\\s*=\\s*"([^"]+[#/])${escaped}"`, 'i');
+                    const uriMatch = fragment.match(uriRegex);
+                    if (uriMatch) {
+                        resolvedUri = uriMatch[1];
+                        break;
+                    }
+                }
+
+                if (resolvedUri) {
+                    defaultNs[`xmlns:${p}`] = resolvedUri;
+                    console.log(`[wrapRdfXml] Dynamically resolved custom prefix '${p}' → '${resolvedUri}'`);
+                } else {
+                    console.warn(`[wrapRdfXml] Cannot resolve custom prefix '${p}' in bare fragment`);
+                }
+            }
+
             let wrappedRdf = `<?xml version="1.0"?>\n`;
-            wrappedRdf += `<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\n`;
-            wrappedRdf += `         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"\n`;
-            wrappedRdf += `         xmlns:owl="http://www.w3.org/2002/07/owl#"\n`;
-            wrappedRdf += `         xmlns:dc="http://purl.org/dc/elements/1.1/"\n`;
-            wrappedRdf += `         xmlns:dcterms="http://purl.org/dc/terms/"\n`;
-            wrappedRdf += `         xmlns:bibo="http://purl.org/ontology/bibo/"\n`;
-            wrappedRdf += `         xmlns:foaf="http://xmlns.com/foaf/0.1/"\n`;
-            wrappedRdf += `         xmlns:prov="http://www.w3.org/ns/prov#"\n`;
-            wrappedRdf += `         xmlns:xsd="http://www.w3.org/2001/XMLSchema#">\n\n`;
+            wrappedRdf += `<rdf:RDF`;
+            for (const [prefix, uri] of Object.entries(defaultNs)) {
+                wrappedRdf += `\n         ${prefix}="${uri}"`;
+            }
+            wrappedRdf += `>\n\n`;
             wrappedRdf += fragment.trim() + '\n';
             wrappedRdf += `</rdf:RDF>`;
             

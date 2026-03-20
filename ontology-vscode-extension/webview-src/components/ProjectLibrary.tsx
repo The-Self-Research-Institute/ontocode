@@ -11,7 +11,8 @@ import {
     Trash2,
     Clock,
     User,
-    Folder
+    Folder,
+    Code2
 } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import { useAuth } from '../custom-hook/useAuth';
@@ -21,6 +22,7 @@ interface ProjectLibraryProps {
     projectName: string;
     onBack: () => void;
     onFileSelect: (fileId: string, fileName: string) => void;
+    onOpenEditor?: () => void;
 }
 
 interface FileItem {
@@ -36,7 +38,8 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     projectId, 
     projectName, 
     onBack,
-    onFileSelect 
+    onFileSelect,
+    onOpenEditor
 }) => {
     const isMountedRef = useRef(true);
     const [files, setFiles] = useState<FileItem[]>([]);
@@ -140,46 +143,29 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                 showToast(`Processing large file: ${targetFileName}...`, 'success');
             }
             
-            // Convert file to base64 for message passing
-            const reader = new FileReader();
+            setUploadProgress(10); // Starting upload
             
-            // Track reading progress
-            reader.onprogress = (e) => {
-                if (e.lengthComputable) {
-                    const progress = Math.round((e.loaded / e.total) * 50); // 0-50% for reading
-                    setUploadProgress(progress);
-                }
-            };
+            console.log('[ProjectLibrary] Uploading file via multipart...');
             
-            const base64Promise = new Promise<string>((resolve, reject) => {
-                reader.onload = () => resolve(reader.result as string);
-                reader.onerror = reject;
-                reader.readAsDataURL(file);
-            });
-            
-            const base64Data = await base64Promise;
-            setUploadProgress(50); // Reading complete
-            
-            console.log('[ProjectLibrary] File read complete, uploading to server...');
-            
-            const uploadPayload: any = {
-                fileName: targetFileName,
-                fileData: base64Data,
-                fileSize: file.size,
-                fileType: file.type || 'application/rdf+xml'
-            };
-
+            // Build multipart FormData — streams the file directly, no base64 encoding
+            const formData = new FormData();
+            formData.append('file', file, targetFileName);
+            formData.append('fileName', targetFileName);
+            formData.append('fileType', file.type || 'application/rdf+xml');
             if (replaceFileId) {
-                uploadPayload.replaceFileId = replaceFileId;
+                formData.append('replaceFileId', replaceFileId);
             }
             
-            // Send as JSON with timeout for large files
-            const uploadResponse = await apiClient.post(`/api/projects/${projectId}/files`, uploadPayload, {
-                timeout: 300000, // 5 minute timeout for large files
+            // Send as multipart/form-data
+            const uploadResponse = await apiClient.post(`/api/projects/${projectId}/files`, formData, {
+                timeout: 600000, // 10 minute timeout for very large files
+                headers: {
+                    'Content-Type': 'multipart/form-data',
+                },
                 onUploadProgress: (progressEvent) => {
                     if (progressEvent.total) {
-                        const uploadPercent = Math.round((progressEvent.loaded / progressEvent.total) * 50);
-                        setUploadProgress(50 + uploadPercent); // 50-100% for uploading
+                        const uploadPercent = Math.round((progressEvent.loaded / progressEvent.total) * 90);
+                        setUploadProgress(10 + uploadPercent); // 10-100% for uploading
                     }
                 }
             });
@@ -251,10 +237,10 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         // Reset input so selecting same file again triggers change
         event.target.value = '';
 
-        // Validate file size (max 300MB)
-        const maxSize = 300 * 1024 * 1024; // 300MB
+        // Validate file size (max 1GB)
+        const maxSize = 1024 * 1024 * 1024; // 1GB
         if (file.size > maxSize) {
-            showToast(`File too large. Maximum size is 300MB. Your file is ${(file.size / (1024 * 1024)).toFixed(1)}MB`, 'error');
+            showToast(`File too large. Maximum size is 1GB. Your file is ${(file.size / (1024 * 1024)).toFixed(1)}MB`, 'error');
             return;
         }
 
@@ -277,7 +263,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                 
                 // Check deployment type
                 const deploymentType = localStorage.getItem('deploymentType') as 'self-hosted' | 'cloud' | null;
-                const isCloudDeployment = deploymentType === 'cloud';
+                const isCloudDeployment = deploymentType === 'cloud'; // Default to cloud if not set
                 
                 if (isCloudDeployment) {
                     // Cloud deployment: auto-open existing file
@@ -438,17 +424,28 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                             </div>
                         </div>
 
-                        <label className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors cursor-pointer flex items-center gap-2">
-                            <Upload size={18} />
-                            {uploading ? 'Uploading...' : 'Upload File'}
-                            <input
-                                type="file"
-                                onChange={handleFileUpload}
-                                className="hidden"
-                                accept=".owl,.rdf,.ttl,.n3"
-                                disabled={uploading}
-                            />
-                        </label>
+                        <div className="flex items-center gap-3">
+                            {onOpenEditor && (
+                                <button
+                                    onClick={onOpenEditor}
+                                    className="px-2.5 py-1.5 text-xs text-blue-600 border border-blue-300 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors flex items-center gap-1.5 font-medium"
+                                >
+                                    <Code2 size={14} />
+                                    Editor
+                                </button>
+                            )}
+                            <label className="px-4 py-2.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors cursor-pointer flex items-center gap-2 font-medium">
+                                <Upload size={18} />
+                                {uploading ? 'Uploading...' : 'Upload File'}
+                                <input
+                                    type="file"
+                                    onChange={handleFileUpload}
+                                    className="hidden"
+                                    accept=".owl,.rdf,.ttl,.n3"
+                                    disabled={uploading}
+                                />
+                            </label>
+                        </div>
                     </div>
 
                     <div className="flex items-center gap-4">

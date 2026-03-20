@@ -124,7 +124,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                             </span>
                         </h1>
                         <p className="text-gray-300 text-sm">
-                            Welcome, <span className="font-semibold text-white">{username}</span> • Workspace: <span className="font-medium text-purple-300">{workspaceName}</span>
+                            Welcome, <span className="font-semibold text-purple-300">{username}</span> • Workspace: <span className="font-medium text-purple-300">{workspaceName}</span>
                         </p>
                     </div>
                     <button

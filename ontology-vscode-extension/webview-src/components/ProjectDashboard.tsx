@@ -28,7 +28,9 @@ import {
     Loader2,
     Crown,
     Zap,
-    Sparkles
+    Sparkles,
+    Code2,
+    ArrowLeft
 } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import { useAuth } from '../custom-hook/useAuth';
@@ -77,9 +79,10 @@ interface ProjectDashboardProps {
     onSelectProject: (projectId: string, projectName: string) => void;
     pendingFile?: { fileName: string; fileContent: string; fileSize: number } | null;
     onOpenLocalFile?: () => void;
+    onOpenEditor?: () => void;
 }
 
-const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pendingFile, onOpenLocalFile }) => {
+const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pendingFile, onOpenLocalFile, onOpenEditor }) => {
     const { user, logout, switchWorkspace, updateSubscriptionPlan } = useAuth();
     console.log('[ProjectDashboard] Rendered with user:', { 
         email: user?.email, 
@@ -707,7 +710,18 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
             <header className="bg-white border-b border-gray-200 flex-shrink-0">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="flex justify-between items-center py-4">
-                        <div>
+                        <div className="flex items-center gap-3">
+                            <button
+                                onClick={() => {
+                                    console.log('[ProjectDashboard] 🔙 Back to workspace clicked');
+                                    switchWorkspace();
+                                }}
+                                className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                                title="Back to Workspace"
+                            >
+                                <ArrowLeft size={20} />
+                            </button>
+                            <div>
                             <h1 className="text-2xl font-bold text-gray-900">OntoCode</h1>
                             <p className="text-sm text-gray-500">
                                 Welcome, {user?.username}
@@ -725,6 +739,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
                                     </button>
                                 )}
                             </p>
+                            </div>
                         </div>
                         <div className="flex items-center gap-3">
                             {/* Workspace Subscription Plan Badge */}
@@ -755,11 +770,22 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({ onSelectProject, pe
                             </button>
                                 <button
                                     onClick={() => setShowCreateProject(true)}
-                                    className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+                                    className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg transition-all hover:shadow-lg cursor-pointer bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600"
+                                    title="Create New Project"
                                 >
-                                    <Plus size={20} />
+                                    <Plus size={14} />
                                     New Project
                                 </button>
+                            {onOpenEditor && (
+                                <button
+                                    onClick={onOpenEditor}
+                                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-blue-600 border border-blue-300 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors font-medium"
+                                    title="Open OntoCode Editor"
+                                >
+                                    <Code2 size={14} />
+                                    Editor
+                                </button>
+                            )}
                             <button
                                 onClick={() => setShowSettings(true)}
                                 className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg"

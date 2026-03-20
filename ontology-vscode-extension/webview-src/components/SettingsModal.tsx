@@ -74,10 +74,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
 
     const tabs = [
         { id: 'profile', label: 'Profile', icon: User },
-        { id: 'notifications', label: 'Notifications', icon: Bell },
+        // { id: 'notifications', label: 'Notifications', icon: Bell },
         { id: 'security', label: 'Security', icon: Lock },
-        { id: 'appearance', label: 'Appearance', icon: Palette },
-        { id: 'preferences', label: 'Preferences', icon: Globe }
+        // { id: 'appearance', label: 'Appearance', icon: Palette },
+        // { id: 'preferences', label: 'Preferences', icon: Globe }
     ];
 
     const showMessage = (type: 'success' | 'error', text: string) => {
@@ -251,6 +251,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                             </div>
                         )}
 
+                        {/* Notifications tab - commented out
                         {activeTab === 'notifications' && (
                             <div className="space-y-6">
                                 <div>
@@ -284,6 +285,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                                 </div>
                             </div>
                         )}
+                        */}
 
                         {activeTab === 'security' && (
                             <div className="space-y-6">
@@ -339,6 +341,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                             </div>
                         )}
 
+                        {/* Appearance tab - commented out
                         {activeTab === 'appearance' && (
                             <div className="space-y-6">
                                 <div>
@@ -362,7 +365,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                                 </div>
                             </div>
                         )}
+                        */}
 
+                        {/* Preferences tab - commented out
                         {activeTab === 'preferences' && (
                             <div className="space-y-6">
                                 <div>
@@ -387,6 +392,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                                 </div>
                             </div>
                         )}
+                        */}
                     </div>
                 </div>
 

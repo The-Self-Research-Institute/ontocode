@@ -12,8 +12,12 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Utility to convert OWL ontologies from various formats to RDF/XML
@@ -295,7 +299,8 @@ public class OWLFormatConverter {
      * Inject missing common namespace declarations into an RDF/XML document.
      * Scans for namespace prefix usage (e.g. {@code dc:title}) and adds the corresponding
      * {@code xmlns:prefix} attribute to the {@code <rdf:RDF>} root element when absent.
-     * This makes the document well-formed so XML/RDF parsers do not reject it.
+     * For unknown prefixes not in the well-known list, logs a warning and skips them
+     * so the rest of the namespaces are still injected correctly.
      */
     static String injectMissingNamespaces(String content) {
         if (!content.contains("<rdf:RDF")) {
@@ -304,32 +309,147 @@ public class OWLFormatConverter {
 
         // Well-known prefix → namespace URI mappings
         Map<String, String> knownNamespaces = new LinkedHashMap<>();
-        knownNamespaces.put("rdf",     "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
-        knownNamespaces.put("rdfs",    "http://www.w3.org/2000/01/rdf-schema#");
-        knownNamespaces.put("owl",     "http://www.w3.org/2002/07/owl#");
-        knownNamespaces.put("xsd",     "http://www.w3.org/2001/XMLSchema#");
-        knownNamespaces.put("dc",      "http://purl.org/dc/elements/1.1/");
-        knownNamespaces.put("dcterms", "http://purl.org/dc/terms/");
-        knownNamespaces.put("bibo",    "http://purl.org/ontology/bibo/");
-        knownNamespaces.put("foaf",    "http://xmlns.com/foaf/0.1/");
-        knownNamespaces.put("skos",    "http://www.w3.org/2004/02/skos/core#");
-        knownNamespaces.put("prov",    "http://www.w3.org/ns/prov#");
-        knownNamespaces.put("schema",  "http://schema.org/");
-        knownNamespaces.put("vann",    "http://purl.org/vocab/vann/");
-        knownNamespaces.put("cc",      "http://creativecommons.org/ns#");
-        knownNamespaces.put("doap",    "http://usefulinc.com/ns/doap#");
+        // W3C core
+        knownNamespaces.put("rdf",       "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
+        knownNamespaces.put("rdfs",      "http://www.w3.org/2000/01/rdf-schema#");
+        knownNamespaces.put("owl",       "http://www.w3.org/2002/07/owl#");
+        knownNamespaces.put("xsd",       "http://www.w3.org/2001/XMLSchema#");
+        knownNamespaces.put("xml",       "http://www.w3.org/XML/1998/namespace");
+        // Dublin Core & metadata
+        knownNamespaces.put("dc",        "http://purl.org/dc/elements/1.1/");
+        knownNamespaces.put("dcterms",   "http://purl.org/dc/terms/");
+        knownNamespaces.put("terms",     "http://purl.org/dc/terms/");
+        // Bibliographic & scholarly
+        knownNamespaces.put("bibo",      "http://purl.org/ontology/bibo/");
+        knownNamespaces.put("foaf",      "http://xmlns.com/foaf/0.1/");
+        knownNamespaces.put("skos",      "http://www.w3.org/2004/02/skos/core#");
+        knownNamespaces.put("prov",      "http://www.w3.org/ns/prov#");
+        knownNamespaces.put("schema",    "http://schema.org/");
+        knownNamespaces.put("vann",      "http://purl.org/vocab/vann/");
+        knownNamespaces.put("cc",        "http://creativecommons.org/ns#");
+        knownNamespaces.put("doap",      "http://usefulinc.com/ns/doap#");
+        // OBO Foundry / biomedical
+        knownNamespaces.put("obo",       "http://purl.obolibrary.org/obo/");
+        knownNamespaces.put("oboInOwl",  "http://www.geneontology.org/formats/oboInOwl#");
+        // SWRL
+        knownNamespaces.put("swrl",      "http://www.w3.org/2003/11/swrl#");
+        knownNamespaces.put("swrlb",     "http://www.w3.org/2003/11/swrlb#");
+        // Semantic science & other common
+        knownNamespaces.put("sio",       "http://semanticscience.org/resource/");
+        knownNamespaces.put("sh",        "http://www.w3.org/ns/shacl#");
+        knownNamespaces.put("dcat",      "http://www.w3.org/ns/dcat#");
+        knownNamespaces.put("void",      "http://rdfs.org/ns/void#");
+        knownNamespaces.put("org",       "http://www.w3.org/ns/org#");
+        knownNamespaces.put("time",      "http://www.w3.org/2006/time#");
+        knownNamespaces.put("geo",       "http://www.opengis.net/ont/geosparql#");
+        knownNamespaces.put("ssn",       "http://www.w3.org/ns/ssn/");
+        knownNamespaces.put("sosa",      "http://www.w3.org/ns/sosa/");
+        knownNamespaces.put("faldo",     "http://biohackathon.org/resource/faldo#");
+
+        // Collect all undeclared prefixes used in the document
+        // Scan for patterns like <prefix:local or  prefix:attr=
+        Pattern prefixUsage = Pattern.compile("(?:<|\\s)([a-zA-Z][a-zA-Z0-9_-]*):[a-zA-Z]");
+        Matcher matcher = prefixUsage.matcher(content);
+        Map<String, Boolean> usedPrefixes = new LinkedHashMap<>();
+        while (matcher.find()) {
+            String prefix = matcher.group(1);
+            if ("xmlns".equals(prefix) || "xml".equals(prefix)) continue;
+            usedPrefixes.put(prefix, true);
+        }
 
         List<String> toInject = new ArrayList<>();
-        for (Map.Entry<String, String> entry : knownNamespaces.entrySet()) {
-            String prefix = entry.getKey();
-            // Used as an element prefix (<dc:title>) or attribute prefix (dc:type="...")
-            boolean isUsed = content.contains("<" + prefix + ":")
-                    || content.contains(" " + prefix + ":");
-            if (!isUsed) continue;
-            // Already declared in some ancestor element
+        List<String> unknownPrefixes = new ArrayList<>();
+
+        for (String prefix : usedPrefixes.keySet()) {
             boolean isDeclared = content.contains("xmlns:" + prefix + "=");
-            if (!isDeclared) {
+            if (isDeclared) continue;
+
+            if (knownNamespaces.containsKey(prefix)) {
                 toInject.add(prefix);
+            } else {
+                unknownPrefixes.add(prefix);
+            }
+        }
+
+        // ── Dynamic resolution for unknown/custom prefixes ──
+        if (!unknownPrefixes.isEmpty()) {
+            // 1. Extract xml:base from the document
+            String xmlBase = null;
+            Matcher xmlBaseMatcher = Pattern.compile("xml:base\\s*=\\s*\"([^\"]+)\"").matcher(content);
+            if (xmlBaseMatcher.find()) {
+                xmlBase = xmlBaseMatcher.group(1);
+            }
+
+            // 2. Extract ontology IRI from <owl:Ontology rdf:about="...">
+            String ontologyIri = null;
+            Matcher ontologyMatcher = Pattern.compile(
+                    "<owl:Ontology\\s+rdf:about\\s*=\\s*\"([^\"]+)\"").matcher(content);
+            if (ontologyMatcher.find()) {
+                ontologyIri = ontologyMatcher.group(1);
+            }
+
+            // 3. Extract default namespace (xmlns="...")
+            String defaultNs = null;
+            Matcher defaultNsMatcher = Pattern.compile(
+                    "<rdf:RDF[^>]*\\sxmlns\\s*=\\s*\"([^\"]+)\"").matcher(content);
+            if (defaultNsMatcher.find()) {
+                defaultNs = defaultNsMatcher.group(1);
+            }
+
+            List<String> resolved = new ArrayList<>();
+
+            for (String prefix : unknownPrefixes) {
+                String resolvedUri = null;
+
+                // Strategy A: Find full URIs in rdf:about/resource/datatype that match
+                // local names used with this prefix. E.g. pizza:Margherita and
+                // rdf:about="http://example.org/pizza#Margherita" → pizza → http://example.org/pizza#
+                Set<String> localNames = new LinkedHashSet<>();
+                Matcher lnMatcher = Pattern.compile(
+                        "(?:<|\\s)" + Pattern.quote(prefix) + ":([a-zA-Z][a-zA-Z0-9_.-]*)").matcher(content);
+                while (lnMatcher.find()) {
+                    localNames.add(lnMatcher.group(1));
+                }
+
+                for (String localName : localNames) {
+                    Matcher uriMatcher = Pattern.compile(
+                            "(?:rdf:about|rdf:resource|rdf:datatype)\\s*=\\s*\"([^\"]+[#/])"
+                                    + Pattern.quote(localName) + "\"").matcher(content);
+                    if (uriMatcher.find()) {
+                        resolvedUri = uriMatcher.group(1);
+                        break;
+                    }
+                }
+
+                // Strategy B: Use xml:base, ontology IRI, or default namespace as base
+                if (resolvedUri == null) {
+                    String base = xmlBase != null ? xmlBase
+                            : (ontologyIri != null ? ontologyIri : defaultNs);
+                    if (base != null) {
+                        // Derive namespace: base + prefix fragment
+                        if (base.endsWith("#") || base.endsWith("/")) {
+                            resolvedUri = base;
+                        } else {
+                            resolvedUri = base + "#";
+                        }
+                    }
+                }
+
+                if (resolvedUri != null) {
+                    knownNamespaces.put(prefix, resolvedUri);
+                    toInject.add(prefix);
+                    resolved.add(prefix);
+                    log.info("Dynamically resolved custom namespace prefix '{}' → '{}'", prefix, resolvedUri);
+                }
+            }
+
+            // Remove resolved ones from unknown list
+            unknownPrefixes.removeAll(resolved);
+
+            if (!unknownPrefixes.isEmpty()) {
+                log.warn("Undeclared namespace prefixes could not be resolved (no matching URIs, " +
+                         "xml:base, or ontology IRI found — these may cause SAX parser errors): {}",
+                         unknownPrefixes);
             }
         }
 

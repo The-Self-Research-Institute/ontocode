@@ -218,6 +218,41 @@ public class ProjectService {
     }
 
     /**
+     * Update a member's role in a project
+     */
+    public Project updateMemberRole(String projectId, String userId, String targetUserId, String newRole) {
+        Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
+        if (projectOpt.isEmpty()) {
+            throw new IllegalArgumentException("Project not found");
+        }
+
+        Project project = projectOpt.get();
+
+        // Only project owner or workspace owner can update roles
+        if (!canManageProject(project, userId)) {
+            throw new SecurityException("Only project owner or workspace owner can update member roles");
+        }
+
+        // Cannot change the owner's role
+        if (project.getOwnerId().equals(targetUserId)) {
+            throw new IllegalArgumentException("Cannot change the project owner's role");
+        }
+
+        // Validate role
+        if (!List.of("ADMIN", "EDITOR", "VIEWER").contains(newRole)) {
+            throw new IllegalArgumentException("Invalid role. Must be ADMIN, EDITOR, or VIEWER");
+        }
+
+        Project.ProjectMember member = project.getMember(targetUserId);
+        if (member == null) {
+            throw new IllegalArgumentException("User is not a member of this project");
+        }
+
+        member.setRole(newRole);
+        return projectRepository.save(project);
+    }
+
+    /**
      * Remove a member from a project
      */
     public Project removeMember(String projectId, String userId, String targetUserId) {

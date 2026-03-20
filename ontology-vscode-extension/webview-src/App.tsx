@@ -497,7 +497,11 @@ const AppContent = () => {
     
     if (showProjectDashboard) {
         console.log('[App] 🎨 Routing to ProjectDashboard - isAdmin:', user.isAdmin, 'selectedFileId:', selectedFileId, 'selectedProjectId:', selectedProjectId, 'pendingFile:', !!pendingFile);
-        return <ProjectDashboard onSelectProject={handleProjectSelected} pendingFile={pendingFile} onOpenLocalFile={(window as any).__ONTOCODE_BROWSER_BRIDGE__ ? handleOpenLocalFile : undefined} />;
+        return <ProjectDashboard onSelectProject={handleProjectSelected} pendingFile={pendingFile} onOpenLocalFile={(window as any).__ONTOCODE_BROWSER_BRIDGE__ ? handleOpenLocalFile : undefined} onOpenEditor={() => {
+            console.log('[App] Opening editor from Project Dashboard (no project/file)');
+            setSelectedFileId('__editor__');
+            setSelectedFileName('');
+        }} />;
     }
 
     // Show Project Library when a project is selected but no file is selected
@@ -510,6 +514,11 @@ const AppContent = () => {
                 projectName={selectedProjectName}
                 onBack={handleBackToProjects}
                 onFileSelect={handleFileSelected}
+                onOpenEditor={() => {
+                    console.log('[App] Opening editor without file for project:', selectedProjectId);
+                    setSelectedFileId('__editor__');
+                    setSelectedFileName('');
+                }}
             />
         );
     }
@@ -535,17 +544,24 @@ const AppContent = () => {
             setShowAuthForInvitation(false);
         };
 
+        const handleBackToWelcome = () => {
+            setDeploymentType(null);
+            localStorage.removeItem('deploymentType');
+        };
+
         return isLoginView ? (
             <LoginForm
                 onToggleForm={toggleFormView}
                 prefillEmail={inviteEmail || undefined}
                 onBackToInvitation={inviteToken ? handleBackToInvitation : undefined}
+                onBackToWelcome={handleBackToWelcome}
             />
         ) : (
             <SignupForm
                 onToggleForm={toggleFormView}
                 prefillEmail={inviteEmail || undefined}
                 onBackToInvitation={inviteToken ? handleBackToInvitation : undefined}
+                onBackToWelcome={handleBackToWelcome}
             />
         );
     }
