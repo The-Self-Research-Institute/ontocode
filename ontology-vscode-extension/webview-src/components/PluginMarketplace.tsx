@@ -31,8 +31,9 @@ function getPluginApiBaseUrl(): string {
   const deploymentType = localStorage.getItem('deploymentType') || 'cloud';
   if (deploymentType === 'cloud') {
     return config?.CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org';
+  } else {
+    return config?.SELF_HOSTED_GATEWAY_URL || 'http://localhost:80';
   }
-  return config?.SELF_HOSTED_GATEWAY_URL || 'http://localhost:80';
 
 }
 

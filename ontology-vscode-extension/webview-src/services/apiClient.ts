@@ -255,7 +255,24 @@ class ApiClient {
   async post<T = any>(url: string, body?: any, config?: AxiosRequestConfig): Promise<T> {
     let data: T;
     if (this.isVSCode) {
-      data = await this.postViaVSCode<T>({ type: 'apiPost', url, body, headers: config?.headers });
+      // FormData cannot be serialized through postMessage — convert to transferable format
+      if (body instanceof FormData) {
+        const fileEntry = body.get('file') as File | null;
+        const msgBody: Record<string, any> = {};
+        body.forEach((val: FormDataEntryValue, key: string) => {
+          if (key !== 'file') msgBody[key] = val;
+        });
+        if (fileEntry) {
+          const buf = await fileEntry.arrayBuffer();
+          msgBody._fileBuffer = Array.from(new Uint8Array(buf));
+          msgBody._fileFieldName = 'file';
+          msgBody._originalFileName = fileEntry.name;
+        }
+        msgBody._isMultipart = true;
+        data = await this.postViaVSCode<T>({ type: 'apiPost', url, body: msgBody, headers: config?.headers });
+      } else {
+        data = await this.postViaVSCode<T>({ type: 'apiPost', url, body, headers: config?.headers });
+      }
     } else {
       const resp = await this.axiosClient!.post(url, body, config);
       data = resp.data as T;

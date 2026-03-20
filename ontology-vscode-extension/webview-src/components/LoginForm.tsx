@@ -7,9 +7,10 @@ interface LoginFormProps {
     onToggleForm: () => void;
     prefillEmail?: string;
     onBackToInvitation?: () => void;
+    onBackToWelcome?: () => void;
 }
 
-const LoginForm = ({ onToggleForm, prefillEmail, onBackToInvitation }: LoginFormProps) => {
+const LoginForm = ({ onToggleForm, prefillEmail, onBackToInvitation, onBackToWelcome }: LoginFormProps) => {
     const [username, setUsername] = useState(prefillEmail || '');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
@@ -129,6 +130,15 @@ const LoginForm = ({ onToggleForm, prefillEmail, onBackToInvitation }: LoginForm
                         >
                             <ArrowLeft size={16} />
                             Back to Invitation
+                        </button>
+                    )}
+                    {onBackToWelcome && (
+                        <button 
+                            onClick={onBackToWelcome}
+                            className="flex items-center justify-center gap-2 w-full text-gray-400 hover:text-gray-300 text-sm"
+                        >
+                            <ArrowLeft size={16} />
+                            Back to Welcome
                         </button>
                     )}
                 </div>

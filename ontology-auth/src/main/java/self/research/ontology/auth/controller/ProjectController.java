@@ -1,12 +1,19 @@
 package self.research.ontology.auth.controller;
 
 import jakarta.validation.Valid;
+import org.bson.types.ObjectId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.mongodb.gridfs.GridFsTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.gridfs.GridFsResource;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import self.research.ontology.auth.model.FileMetadata;
 import self.research.ontology.auth.model.Project;
 import self.research.ontology.auth.model.User;
@@ -17,6 +24,7 @@ import self.research.ontology.auth.service.ProjectService;
 import self.research.ontology.auth.util.JwtUtil;
 import jakarta.servlet.http.HttpServletRequest;
 
+import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -33,14 +41,16 @@ public class ProjectController {
     private final JwtUtil jwtUtil;
     private final self.research.ontology.auth.service.WorkspaceService workspaceService;
     private final self.research.ontology.auth.repository.ProjectRepository projectRepository;
+    private final GridFsTemplate gridFsTemplate;
 
-    public ProjectController(ProjectService projectService, UserRepository userRepository, FileMetadataRepository fileMetadataRepository, JwtUtil jwtUtil, self.research.ontology.auth.service.WorkspaceService workspaceService, self.research.ontology.auth.repository.ProjectRepository projectRepository) {
+    public ProjectController(ProjectService projectService, UserRepository userRepository, FileMetadataRepository fileMetadataRepository, JwtUtil jwtUtil, self.research.ontology.auth.service.WorkspaceService workspaceService, self.research.ontology.auth.repository.ProjectRepository projectRepository, GridFsTemplate gridFsTemplate) {
         this.projectService = projectService;
         this.userRepository = userRepository;
         this.fileMetadataRepository = fileMetadataRepository;
         this.jwtUtil = jwtUtil;
         this.workspaceService = workspaceService;
         this.projectRepository = projectRepository;
+        this.gridFsTemplate = gridFsTemplate;
     }
 
     /**
@@ -338,13 +348,11 @@ public class ProjectController {
             
             List<Project> projects;
             
-            // Check if user has ROLE_USER (invited user) or no workspace - use user-based storage
-            boolean isRoleUser = user.getRoles().contains("ROLE_USER") && !user.getRoles().contains("ROLE_ADMIN");
+            // Check if user has no workspace - use user-based storage
             boolean hasNoWorkspace = effectiveWorkspaceId == null || effectiveWorkspaceId.isEmpty();
             
-            if (isRoleUser || hasNoWorkspace) {
-                log.info("[getMyProjects] User {} is ROLE_USER({}) or has no workspace({}) - fetching user-based projects", 
-                    username, isRoleUser, hasNoWorkspace);
+            if (hasNoWorkspace) {
+                log.info("[getMyProjects] User {} has no workspace - fetching user-based projects", username);
                 // Get user's own projects (not workspace-based)
                 projects = projectService.getUserProjects(user.getId());
                 log.info("[getMyProjects] User-based projects found: {}", projects.size());
@@ -387,7 +395,7 @@ public class ProjectController {
             return ResponseEntity.ok(Map.of(
                 "projects", projectDTOs,
                 "count", projectDTOs.size(),
-                "isUserBased", isRoleUser || hasNoWorkspace
+                "isUserBased", hasNoWorkspace
             ));
         } catch (Exception e) {
             log.error("Error fetching user projects", e);
@@ -564,6 +572,44 @@ public class ProjectController {
             return ResponseEntity.status(403).body(Map.of("error", e.getMessage()));
         } catch (Exception e) {
             log.error("Error adding member", e);
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * Update a member's role in a project
+     */
+    @PatchMapping("/{projectId}/members/{memberId}/role")
+    public ResponseEntity<?> updateMemberRole(
+            @PathVariable String projectId,
+            @PathVariable String memberId,
+            @Valid @RequestBody UpdateMemberRoleRequest request) {
+        try {
+            String username = getCurrentUsername();
+            Optional<User> userOpt = userRepository.findByUsername(username);
+
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            }
+
+            User user = userOpt.get();
+
+            Project project = projectService.updateMemberRole(
+                projectId,
+                user.getId(),
+                memberId,
+                request.role
+            );
+
+            return ResponseEntity.ok(Map.of(
+                "message", "Member role updated successfully",
+                "project", convertToDTO(project)
+            ));
+        } catch (SecurityException e) {
+            log.error("Security error updating member role", e);
+            return ResponseEntity.status(403).body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            log.error("Error updating member role", e);
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
@@ -811,12 +857,33 @@ public class ProjectController {
                 return ResponseEntity.status(403).body(Map.of("error", "File does not belong to this project"));
             }
 
+            // Retrieve content from GridFS (new storage) or fall back to legacy inline base64
+            String base64Content;
+            if (fileMeta.getGridfsId() != null && !fileMeta.getGridfsId().isEmpty()) {
+                try {
+                    GridFsResource resource = gridFsTemplate.getResource(
+                            gridFsTemplate.findOne(Query.query(Criteria.where("_id").is(new ObjectId(fileMeta.getGridfsId())))));
+                    byte[] bytes = resource.getInputStream().readAllBytes();
+                    base64Content = "data:" + fileMeta.getFileType() + ";base64,"
+                            + java.util.Base64.getEncoder().encodeToString(bytes);
+                } catch (Exception gridfsEx) {
+                    log.error("Error reading file from GridFS (id={}): {}", fileMeta.getGridfsId(), gridfsEx.getMessage());
+                    return ResponseEntity.internalServerError().body(Map.of("error", "Could not read file content from storage"));
+                }
+            } else {
+                // Legacy: file content stored inline (will be null for purged documents)
+                base64Content = fileMeta.getBase64Data();
+                if (base64Content == null) {
+                    return ResponseEntity.status(404).body(Map.of("error", "File content not available"));
+                }
+            }
+
             return ResponseEntity.ok(Map.of(
                 "id", fileMeta.getFileId(),
                 "name", fileMeta.getFileName(),
-                "content", fileMeta.getBase64Data(),
-                "type", fileMeta.getFileType(),
-                "size", fileMeta.getFileSize()
+                "content", base64Content,
+                "type", fileMeta.getFileType() != null ? fileMeta.getFileType() : "application/rdf+xml",
+                "size", fileMeta.getFileSize() != null ? fileMeta.getFileSize() : 0
             ));
         } catch (Exception e) {
             log.error("Error getting file content", e);
@@ -878,12 +945,15 @@ public class ProjectController {
     }
 
     /**
-     * Upload a file to a project
+     * Upload a file to a project (multipart streaming — no base64, no full memory buffering)
      */
-    @PostMapping("/{projectId}/files")
+    @PostMapping(value = "/{projectId}/files", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<?> uploadFile(
             @PathVariable String projectId,
-            @RequestBody Map<String, Object> fileData) {
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("fileName") String fileName,
+            @RequestParam(value = "replaceFileId", required = false) String replaceFileId,
+            @RequestParam(value = "fileType", required = false, defaultValue = "application/rdf+xml") String fileType) {
         try {
             String username = getCurrentUsername();
             Optional<User> userOpt = userRepository.findByUsername(username);
@@ -894,17 +964,12 @@ public class ProjectController {
 
             User user = userOpt.get();
             
-            // Extract file data from JSON
-            String fileName = (String) fileData.get("fileName");
-            String base64Data = (String) fileData.get("fileData");
-            String replaceFileId = (String) fileData.get("replaceFileId"); // Optional: file ID to replace
-            
             // Validate file
             if (fileName == null || fileName.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "File name is required"));
             }
             
-            if (base64Data == null || base64Data.isEmpty()) {
+            if (file.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "File data is required"));
             }
             
@@ -936,7 +1001,7 @@ public class ProjectController {
             
             // Calculate current storage usage for workspace
             long currentStorageBytes = calculateWorkspaceStorageUsage(workspaceId);
-            long newFileSize = ((Number) fileData.getOrDefault("fileSize", 0)).longValue();
+            long newFileSize = file.getSize();
             
             // If replacing, subtract old file size
             if (replaceFileId != null && !replaceFileId.isEmpty()) {
@@ -973,6 +1038,11 @@ public class ProjectController {
             // If replaceFileId is provided, delete the old file first
             if (replaceFileId != null && !replaceFileId.isEmpty()) {
                 try {
+                    Optional<FileMetadata> oldFileMeta = fileMetadataRepository.findById(replaceFileId);
+                    if (oldFileMeta.isPresent() && oldFileMeta.get().getGridfsId() != null) {
+                        gridFsTemplate.delete(Query.query(Criteria.where("_id").is(new ObjectId(oldFileMeta.get().getGridfsId()))));
+                        log.info("Deleted old GridFS object during replace: {}", oldFileMeta.get().getGridfsId());
+                    }
                     projectService.removeFile(projectId, user.getId(), replaceFileId);
                     fileMetadataRepository.deleteById(replaceFileId);
                     log.info("Replaced existing file: {} with ID: {}", fileName, replaceFileId);
@@ -985,12 +1055,21 @@ public class ProjectController {
             // Generate file ID and save metadata
             String fileId = UUID.randomUUID().toString();
             
+            // Stream file directly to GridFS — no base64, no full byte[] in memory
+            String contentType = fileType;
+            String gridfsId;
+            try (InputStream inputStream = file.getInputStream()) {
+                ObjectId gridfsObjectId = gridFsTemplate.store(inputStream, fileName, contentType);
+                gridfsId = gridfsObjectId.toString();
+                log.info("Stored file in GridFS: {} (objectId={}, size={})", fileName, gridfsId, newFileSize);
+            }
+            
             // Save file metadata
             FileMetadata fileMetadata = new FileMetadata(fileId, fileName, projectId, project.getWorkspaceId());
-            fileMetadata.setFileSize(((Number) fileData.getOrDefault("fileSize", 0)).longValue());
-            fileMetadata.setFileType((String) fileData.getOrDefault("fileType", "application/rdf+xml"));
+            fileMetadata.setFileSize(newFileSize);
+            fileMetadata.setFileType(contentType);
             fileMetadata.setExtension(extension);
-            fileMetadata.setBase64Data(base64Data); // Store base64 data temporarily
+            fileMetadata.setGridfsId(gridfsId);
             fileMetadata.setUploadedBy(user.getId());
             fileMetadata.setUploaderEmail(user.getEmail());
             fileMetadata.setUploaderUsername(user.getUsername());
@@ -999,10 +1078,7 @@ public class ProjectController {
             
             // Add file metadata to project
             Project.FileMetadataInfo projectFileInfo = new Project.FileMetadataInfo(
-                fileId, fileName, 
-                ((Number) fileData.getOrDefault("fileSize", 0)).longValue(),
-                (String) fileData.getOrDefault("fileType", "application/rdf+xml"),
-                extension
+                fileId, fileName, newFileSize, contentType, extension
             );
             projectFileInfo.setUploadedBy(user.getId());
             projectFileInfo.setUploaderUsername(user.getUsername());
@@ -1061,6 +1137,15 @@ public class ProjectController {
                 fileMeta.setDeletedBy(user.getId());
                 fileMeta.setStatus("DELETED");
                 fileMetadataRepository.save(fileMeta);
+                // Remove binary from GridFS to free storage space
+                if (fileMeta.getGridfsId() != null && !fileMeta.getGridfsId().isEmpty()) {
+                    try {
+                        gridFsTemplate.delete(Query.query(Criteria.where("_id").is(new ObjectId(fileMeta.getGridfsId()))));
+                        log.info("Deleted GridFS object: {}", fileMeta.getGridfsId());
+                    } catch (Exception gridfsEx) {
+                        log.warn("Could not delete GridFS object {}: {}", fileMeta.getGridfsId(), gridfsEx.getMessage());
+                    }
+                }
             }
             
             // Soft delete file in project
@@ -1194,6 +1279,10 @@ public class ProjectController {
     public static class AddMemberRequest {
         public String username;
         public String role; // EDITOR, VIEWER
+    }
+
+    public static class UpdateMemberRoleRequest {
+        public String role; // ADMIN, EDITOR, VIEWER
     }
     
     /**

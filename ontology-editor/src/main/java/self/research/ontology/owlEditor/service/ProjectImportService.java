@@ -12,15 +12,24 @@ import self.research.ontology.owlEditor.model.ProjectStatus;
 import self.research.ontology.owlEditor.model.collaboration.ImportStatusMessage;
 import self.research.ontology.owlEditor.util.OWLFormatConverter;
 
+import org.eclipse.rdf4j.query.BindingSet;
+import org.eclipse.rdf4j.query.TupleQueryResult;
+
 import java.io.BufferedInputStream;
 import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -382,6 +391,15 @@ public class ProjectImportService {
 
             owlParsingExecutor.execute(() -> {
                 try {
+                    // Resolve owl:imports BEFORE computing metadata so counts include imported triples.
+                    // Wrapped in its own try-catch so a network failure doesn't abort metadata indexing.
+                    try {
+                        resolveOwlImports(projectId, filename);
+                    } catch (Exception importResolutionEx) {
+                        log.warn("[Import {}] owl:imports resolution failed (continuing): {}",
+                                projectId, importResolutionEx.getMessage());
+                    }
+
                     log.info("[Import {}] Computing metadata", projectId);
                     long metadataStart = System.nanoTime();
                     Map<String, Object> meta = indexService.computeMetadata(projectId);
@@ -643,6 +661,151 @@ public class ProjectImportService {
         return false;
     }
 
+
+    /**
+     * Detect and load any {@code owl:imports} that are declared in the project's named graph
+     * but whose content has not yet been loaded.  Iterates transitively up to
+     * {@code MAX_IMPORT_DEPTH} levels.  Uses INCREMENTAL mode so the existing graph triples
+     * are preserved.  Import failures are logged as warnings and do not abort the import.
+     */
+    private void resolveOwlImports(String projectId, String filename) {
+        final int MAX_IMPORT_DEPTH = 3;
+        final int MAX_IMPORTS_TOTAL = 20;
+        Set<String> loaded = new LinkedHashSet<>();
+        Set<String> toProcess = new LinkedHashSet<>();
+
+        ImportOptions appendOptions = ImportOptions.builder()
+                .mode(ImportOptions.ImportMode.INCREMENTAL)
+                .partitionStrategy(ImportOptions.PartitionStrategy.NONE)
+                .build();
+
+        // Seed with direct imports from the main ontology
+        toProcess.addAll(queryOwlImports(projectId));
+
+        if (toProcess.isEmpty()) {
+            log.info("[Import {}] No owl:imports statements found.", projectId);
+            return;
+        }
+
+        log.info("[Import {}] Resolving {} owl:imports: {}", projectId, toProcess.size(), toProcess);
+
+        for (int depth = 0; depth < MAX_IMPORT_DEPTH && !toProcess.isEmpty(); depth++) {
+            Set<String> nextRound = new LinkedHashSet<>();
+            for (String importUri : toProcess) {
+                if (loaded.size() >= MAX_IMPORTS_TOTAL) {
+                    log.warn("[Import {}] Reached max import limit ({}), stopping", projectId, MAX_IMPORTS_TOTAL);
+                    break;
+                }
+                if (loaded.contains(importUri)) {
+                    continue;
+                }
+                loaded.add(importUri);
+
+                if (!importUri.startsWith("http://") && !importUri.startsWith("https://")) {
+                    log.info("[Import {}] Skipping non-HTTP import: {}", projectId, importUri);
+                    continue;
+                }
+
+                try {
+                    sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
+                            "PROCESSING", "Resolving import: " + importUri, filename,
+                            Map.of("progress", 96, "stage", "resolving-imports"));
+
+                    log.info("[Import {}] Downloading import (depth {}): {}", projectId, depth, importUri);
+                    Path importTempFile = downloadToTemp(importUri);
+                    if (importTempFile == null) {
+                        continue; // failed – warning already logged
+                    }
+                    try {
+                        try {
+                            OWLFormatConverter.sanitizeFileOnDisk(importTempFile);
+                        } catch (Exception sanitizeEx) {
+                            log.warn("[Import {}] Sanitization of import {} failed: {}",
+                                    projectId, importUri, sanitizeEx.getMessage());
+                        }
+                        RDFFormat importFormat = detectFormat(importTempFile);
+                        long importSize = Files.size(importTempFile);
+                        try (InputStream importIn = Files.newInputStream(importTempFile)) {
+                            datasetService.bulkLoadChunked(projectId, importIn, importFormat,
+                                    importSize, appendOptions, null);
+                        }
+                        log.info("[Import {}] Loaded import: {}", projectId, importUri);
+                        // Collect transitive imports from the newly loaded content
+                        nextRound.addAll(queryOwlImports(projectId));
+                    } finally {
+                        Files.deleteIfExists(importTempFile);
+                    }
+                } catch (Exception importEx) {
+                    log.warn("[Import {}] Could not load import {}: {}",
+                            projectId, importUri, importEx.getMessage());
+                }
+            }
+            // Only process imports that weren't already loaded
+            nextRound.removeAll(loaded);
+            toProcess = nextRound;
+        }
+
+        if (!loaded.isEmpty()) {
+            log.info("[Import {}] Resolved {} owl:imports", projectId, loaded.size());
+        }
+    }
+
+    /** Query the project graph for all {@code owl:imports} object values. */
+    private List<String> queryOwlImports(String projectId) {
+        List<String> uris = new ArrayList<>();
+        try {
+            TupleQueryResult result = datasetService.execSelect(projectId,
+                    "SELECT DISTINCT ?importUri WHERE { " +
+                    "?onto <http://www.w3.org/2002/07/owl#imports> ?importUri . }");
+            while (result.hasNext()) {
+                BindingSet bs = result.next();
+                if (bs.hasBinding("importUri")) {
+                    uris.add(bs.getValue("importUri").stringValue());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[Import] Failed to query owl:imports: {}", e.getMessage());
+        }
+        return uris;
+    }
+
+    /**
+     * Download the resource at {@code uri} to a temp file and return its path.
+     * Returns {@code null} and logs a warning if the download fails.
+     */
+    private Path downloadToTemp(String uri) {
+        try {
+            java.net.URL url = URI.create(uri).toURL();
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(15_000);   // 15 s
+            conn.setReadTimeout(600_000);     // 10 min for large imports
+            conn.setRequestProperty("Accept",
+                    "application/rdf+xml, text/turtle, application/n-triples, */*");
+            conn.connect();
+            int code = conn.getResponseCode();
+            if (code < 200 || code >= 300) {
+                log.warn("[Import] HTTP {} fetching import: {}", code, uri);
+                conn.disconnect();
+                return null;
+            }
+            // Derive a sensible filename from the URI
+            String uriPath = URI.create(uri).getPath();
+            String leaf = uriPath.substring(uriPath.lastIndexOf('/') + 1);
+            if (leaf.isBlank()) leaf = "import";
+            String suffix = leaf.contains(".") ? leaf.substring(leaf.lastIndexOf('.')) : ".owl";
+            Path tmp = Files.createTempFile("owl-import-", suffix);
+            try (InputStream is = conn.getInputStream()) {
+                Files.copy(is, tmp, StandardCopyOption.REPLACE_EXISTING);
+            } finally {
+                conn.disconnect();
+            }
+            log.info("[Import] Downloaded {} -> {} ({} bytes)", uri, tmp.getFileName(), Files.size(tmp));
+            return tmp;
+        } catch (Exception e) {
+            log.warn("[Import] Download failed for {}: {}", uri, e.getMessage());
+            return null;
+        }
+    }
 
     private String extensionFor(RDFFormat format) {
         if (format == null) {

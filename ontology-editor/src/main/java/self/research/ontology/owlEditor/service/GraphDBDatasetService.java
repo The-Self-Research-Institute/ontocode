@@ -1033,24 +1033,72 @@ public class GraphDBDatasetService {
     }
     
     /**
-     * Get prefix mappings from the dataset
+     * Get prefix mappings from the dataset.
+     * Only returns prefixes whose namespace URIs are actually used in the ontology triples,
+     * filtering out well-known prefixes injected during import that the OWL file doesn't use.
      */
     public Map<String, String> getPrefixes(String projectId) {
         Map<String, String> prefixes = new HashMap<>();
         
         try (RepositoryConnection conn = getRepository().getConnection()) {
             
-            // GraphDB typically stores prefixes in the repository namespace
+            // Collect all registered namespaces
+            Map<String, String> allNamespaces = new HashMap<>();
             for (org.eclipse.rdf4j.model.Namespace ns : conn.getNamespaces()) {
                 String prefix = ns.getPrefix();
-                // Normalize: ensure it ends with a colon for consistency with OWL API
                 if (!prefix.endsWith(":") && !prefix.isEmpty()) {
                     prefix += ":";
                 } else if (prefix.isEmpty()) {
-                    prefix = ":"; // Default prefix
+                    prefix = ":";
                 }
-                prefixes.put(prefix, ns.getName());
+                allNamespaces.put(prefix, ns.getName());
             }
+
+            // Query for all namespace URIs actually used in triples (subjects, predicates, objects)
+            String sparql = "SELECT DISTINCT ?ns WHERE { " +
+                    "{ ?s ?p ?o . BIND(REPLACE(STR(?s), '(.*[#/])[^#/]*$', '$1') AS ?ns) " +
+                    "  FILTER(isIRI(?s)) } " +
+                    "UNION " +
+                    "{ ?s ?p ?o . BIND(REPLACE(STR(?p), '(.*[#/])[^#/]*$', '$1') AS ?ns) } " +
+                    "UNION " +
+                    "{ ?s ?p ?o . BIND(REPLACE(STR(?o), '(.*[#/])[^#/]*$', '$1') AS ?ns) " +
+                    "  FILTER(isIRI(?o)) } " +
+                    "}";
+
+            java.util.Set<String> usedNamespaceUris = new java.util.HashSet<>();
+            try (TupleQueryResult result = conn.prepareTupleQuery(sparql).evaluate()) {
+                while (result.hasNext()) {
+                    BindingSet bs = result.next();
+                    if (bs.hasBinding("ns") && bs.getValue("ns") != null) {
+                        usedNamespaceUris.add(bs.getValue("ns").stringValue());
+                    }
+                }
+            } catch (Exception sparqlEx) {
+                // If SPARQL fails (e.g., regex not supported), fall back to returning all
+                log.warn("SPARQL namespace-usage query failed, returning all registered prefixes: {}",
+                         sparqlEx.getMessage());
+                prefixes.putAll(allNamespaces);
+                return prefixes;
+            }
+
+            // Filter: keep only namespaces whose URI is actually referenced in triples
+            // Always keep rdf:, rdfs:, owl:, xsd: as they're fundamental
+            java.util.Set<String> alwaysKeep = java.util.Set.of(
+                    "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+                    "http://www.w3.org/2000/01/rdf-schema#",
+                    "http://www.w3.org/2002/07/owl#",
+                    "http://www.w3.org/2001/XMLSchema#"
+            );
+
+            for (Map.Entry<String, String> entry : allNamespaces.entrySet()) {
+                String nsUri = entry.getValue();
+                if (alwaysKeep.contains(nsUri) || usedNamespaceUris.contains(nsUri)) {
+                    prefixes.put(entry.getKey(), nsUri);
+                }
+            }
+
+            log.debug("Filtered prefixes for project {}: {} out of {} total",
+                    projectId, prefixes.size(), allNamespaces.size());
             
         } catch (Exception e) {
             log.error("Failed to get prefixes for project: {}", projectId, e);

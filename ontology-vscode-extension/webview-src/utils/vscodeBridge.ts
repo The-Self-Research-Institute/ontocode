@@ -48,6 +48,130 @@ function triggerBlobDownload(content: string | Blob, filename: string) {
     URL.revokeObjectURL(url);
 }
 
+// ── Helper: Inject missing namespace declarations (including custom) ────────
+function injectDynamicNamespaces(content: string): string {
+    if (!content.includes('<rdf:RDF')) return content;
+
+    // Well-known prefix → namespace URI (synced with OWLFormatConverter.java)
+    const knownNs: Record<string, string> = {
+        rdf: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
+        rdfs: 'http://www.w3.org/2000/01/rdf-schema#',
+        owl: 'http://www.w3.org/2002/07/owl#',
+        xsd: 'http://www.w3.org/2001/XMLSchema#',
+        dc: 'http://purl.org/dc/elements/1.1/',
+        dcterms: 'http://purl.org/dc/terms/',
+        terms: 'http://purl.org/dc/terms/',
+        bibo: 'http://purl.org/ontology/bibo/',
+        foaf: 'http://xmlns.com/foaf/0.1/',
+        skos: 'http://www.w3.org/2004/02/skos/core#',
+        prov: 'http://www.w3.org/ns/prov#',
+        schema: 'http://schema.org/',
+        vann: 'http://purl.org/vocab/vann/',
+        cc: 'http://creativecommons.org/ns#',
+        doap: 'http://usefulinc.com/ns/doap#',
+        obo: 'http://purl.obolibrary.org/obo/',
+        oboInOwl: 'http://www.geneontology.org/formats/oboInOwl#',
+        swrl: 'http://www.w3.org/2003/11/swrl#',
+        swrlb: 'http://www.w3.org/2003/11/swrlb#',
+        sio: 'http://semanticscience.org/resource/',
+        sh: 'http://www.w3.org/ns/shacl#',
+        dcat: 'http://www.w3.org/ns/dcat#',
+        void: 'http://rdfs.org/ns/void#',
+        org: 'http://www.w3.org/ns/org#',
+        time: 'http://www.w3.org/2006/time#',
+        geo: 'http://www.opengis.net/ont/geosparql#',
+        ssn: 'http://www.w3.org/ns/ssn/',
+        sosa: 'http://www.w3.org/ns/sosa/',
+        faldo: 'http://biohackathon.org/resource/faldo#',
+    };
+
+    // Scan for all used prefixes
+    const usedPrefixes = new Set<string>();
+    const usedRegex = /(?:<|\s)([a-zA-Z][a-zA-Z0-9_-]*):[a-zA-Z]/g;
+    let m;
+    while ((m = usedRegex.exec(content)) !== null) {
+        const p = m[1];
+        if (p !== 'xmlns' && p !== 'xml') usedPrefixes.add(p);
+    }
+
+    // Find undeclared prefixes
+    const toInject: Array<{ prefix: string; uri: string }> = [];
+    const unresolved: string[] = [];
+
+    // Extract document context for dynamic resolution
+    const xmlBaseMatch = content.match(/xml:base\s*=\s*"([^"]+)"/);
+    const ontologyMatch = content.match(/<owl:Ontology\s+rdf:about\s*=\s*"([^"]+)"/);
+    const defaultNsMatch = content.match(/<rdf:RDF[^>]*\sxmlns\s*=\s*"([^"]+)"/);
+    const xmlBase = xmlBaseMatch?.[1];
+    const ontologyIri = ontologyMatch?.[1];
+    const defaultNs = defaultNsMatch?.[1];
+
+    for (const prefix of usedPrefixes) {
+        if (content.includes(`xmlns:${prefix}=`)) continue; // already declared
+
+        if (knownNs[prefix]) {
+            toInject.push({ prefix, uri: knownNs[prefix] });
+            continue;
+        }
+
+        // Dynamic resolution for custom prefixes
+        let resolvedUri: string | null = null;
+
+        // Strategy A: Match prefix:LocalName against full URIs
+        const lnRegex = new RegExp(`(?:<|\\s)${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:([a-zA-Z][a-zA-Z0-9_.-]*)`, 'g');
+        const localNames: string[] = [];
+        let lnMatch;
+        while ((lnMatch = lnRegex.exec(content)) !== null) {
+            if (!localNames.includes(lnMatch[1])) localNames.push(lnMatch[1]);
+        }
+        for (const localName of localNames) {
+            const escaped = localName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const uriRegex = new RegExp(`(?:rdf:about|rdf:resource|rdf:datatype)\\s*=\\s*"([^"]+[#/])${escaped}"`, 'i');
+            const uriMatch = content.match(uriRegex);
+            if (uriMatch) {
+                resolvedUri = uriMatch[1];
+                break;
+            }
+        }
+
+        // Strategy B: Derive from xml:base / ontology IRI / default namespace
+        if (!resolvedUri) {
+            const base = xmlBase || ontologyIri || defaultNs;
+            if (base) {
+                resolvedUri = base.endsWith('#') || base.endsWith('/') ? base : base + '#';
+            }
+        }
+
+        if (resolvedUri) {
+            toInject.push({ prefix, uri: resolvedUri });
+            console.log(`[BrowserBridge] Dynamically resolved prefix '${prefix}' → '${resolvedUri}'`);
+        } else {
+            unresolved.push(prefix);
+        }
+    }
+
+    if (unresolved.length > 0) {
+        console.warn(`[BrowserBridge] Unresolved namespace prefixes (may cause parse errors): ${unresolved.join(', ')}`);
+    }
+
+    if (toInject.length === 0) return content;
+
+    console.log(`[BrowserBridge] Injecting ${toInject.length} namespace declarations: ${toInject.map(t => t.prefix).join(', ')}`);
+
+    const rdfTagStart = content.indexOf('<rdf:RDF');
+    const rdfTagEnd = content.indexOf('>', rdfTagStart);
+    if (rdfTagStart < 0 || rdfTagEnd < 0) return content;
+
+    const selfClosing = content[rdfTagEnd - 1] === '/';
+    const insertPos = selfClosing ? rdfTagEnd - 1 : rdfTagEnd;
+
+    const injection = toInject
+        .map(({ prefix, uri }) => `\n         xmlns:${prefix}="${uri}"`)
+        .join('');
+
+    return content.substring(0, insertPos) + injection + content.substring(insertPos);
+}
+
 // ── The bridge itself ───────────────────────────────────────────────────────
 function handleBrowserMessage(message: any) {
     switch (message.type) {
@@ -195,11 +319,18 @@ function handleBrowserMessage(message: any) {
                         ? (config?.SELF_HOSTED_GATEWAY_URL || 'http://localhost:80')
                         : (config?.CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org');
 
-                    // Decode base64 → Blob
+                    // Decode base64 → text for namespace injection
                     const byteString = atob(message.fileContent);
                     const bytes = new Uint8Array(byteString.length);
                     for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i);
-                    const blob = new Blob([bytes], { type: 'application/rdf+xml' });
+                    let fileText = new TextDecoder().decode(bytes);
+
+                    // ── Dynamic namespace injection for RDF/XML files ──
+                    if (fileText.includes('<rdf:RDF')) {
+                        fileText = injectDynamicNamespaces(fileText);
+                    }
+
+                    const blob = new Blob([fileText], { type: 'application/rdf+xml' });
                     const formData = new FormData();
                     formData.append('file', blob, message.fileName);
 
