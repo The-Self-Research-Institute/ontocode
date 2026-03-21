@@ -27,6 +27,7 @@ import apiClient from '../services/apiClient';
 import { notificationService } from '../services/notificationService';
 import { openOntologyFile, fileContentToBase64 } from './fileAccess';
 import { sci2CodeBrowserService } from '../services/sci2CodeBrowserService';
+import { getGatewayUrl } from '../config/deploymentConfig';
 
 // ── Helper: dispatch a synthetic MessageEvent so listener code sees it ──────
 function postToSelf(data: Record<string, any>) {
@@ -313,11 +314,7 @@ function handleBrowserMessage(message: any) {
 
                 try {
                     const token = localStorage.getItem('authToken');
-                    const deploymentType = localStorage.getItem('deploymentType') || 'cloud';
-                    const config = (window as any).__ONTOCODE_CONFIG__;
-                    const baseUrl = deploymentType === 'self-hosted'
-                        ? (config?.SELF_HOSTED_GATEWAY_URL || 'http://localhost:80')
-                        : (config?.CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org');
+                    const baseUrl = getGatewayUrl();
 
                     // Decode base64 → text for namespace injection
                     const byteString = atob(message.fileContent);
@@ -458,11 +455,10 @@ function handleBrowserMessage(message: any) {
                 try {
                     await apiClient.post(`/api/projects/${message.projectId}/files`, {
                         fileName: message.fileName,
-                        fileData: `data:application/rdf+xml;base64,${
-                            /^[A-Za-z0-9+/=]+$/.test(message.fileContent)
+                        fileData: `data:application/rdf+xml;base64,${/^[A-Za-z0-9+/=]+$/.test(message.fileContent)
                                 ? message.fileContent
                                 : fileContentToBase64(message.fileContent)
-                        }`,
+                            }`,
                         fileSize: message.fileSize,
                         fileType: 'owl',
                     });
@@ -597,7 +593,7 @@ function handleBrowserMessage(message: any) {
                             ? message.citation.authors.split(',').map((a: string) => {
                                 const parts = a.trim().split(' ');
                                 return { firstName: parts.slice(0, -1).join(' '), lastName: parts[parts.length - 1] || '', creatorType: 'author' };
-                              })
+                            })
                             : message.metadata?.creators || [],
                         date: message.citation?.year || message.metadata?.date || '',
                         doi: message.citation?.doi || message.metadata?.doi,
