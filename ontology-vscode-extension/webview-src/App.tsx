@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from './custom-hook/useAuth';
 import apiClient, { updateBaseUrl } from './services/apiClient';
 import { openOntologyFile, fileContentToBase64 } from './utils/fileAccess';
+import { getGatewayUrl } from './config/deploymentConfig';
 import { CollaborationProvider } from './contexts/CollaborationContext';
 import { EntityPreferencesProvider } from './contexts/EntityPreferencesContext';
 import { ThemeProvider } from './contexts/ThemeContext';
@@ -294,11 +295,8 @@ const AppContent = () => {
         updateBaseUrl(type);
         console.log('[App] API client base URL updated for deployment type:', type);
         
-        // Update API base URL using environment config
-        const config = (window as any).__ONTOCODE_CONFIG__;
-        const baseUrl = type === 'self-hosted' 
-            ? (config?.SELF_HOSTED_GATEWAY_URL || 'http://localhost:80')
-            : (config?.CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org');
+        // Get the API base URL from centralized config
+        const baseUrl = getGatewayUrl(type);
         
         // Notify extension to update API URLs
         if (window.vscode) {

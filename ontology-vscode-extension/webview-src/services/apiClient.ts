@@ -1,45 +1,25 @@
 // services/apiClient.ts
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from 'axios';
+import { getGatewayUrl, getStoredDeploymentType, type DeploymentType } from '../config/deploymentConfig';
 
-// Get base URL from localStorage or default to cloud
-const getStoredDeploymentType = () => {
-    try {
-        return localStorage.getItem('deploymentType') || 'cloud';
-    } catch {
-        return 'cloud';
-    }
-};
-
-const getBaseUrlForDeployment = (deploymentType: string) => {
-    // Use environment config if available (injected by extension)
-    const config = (window as any).__ONTOCODE_CONFIG__;
-    if (config) {
-        return deploymentType === 'cloud'
-            ? config.CLOUD_GATEWAY_URL
-            : config.SELF_HOSTED_GATEWAY_URL;
-    }
-    // Fallback to hardcoded values
-    return deploymentType === 'self-hosted' 
-        ? 'http://localhost:80'
-        : 'https://ontocodeapi.selfresearch.org';
-};
-
-// Get initial base URL
-let BASE_URL = getBaseUrlForDeployment(getStoredDeploymentType());
+// Get initial base URL from centralized config
+let BASE_URL = getGatewayUrl();
 
 // Set window.API_BASE_URL for plugins (UMD bundles that don't have access to this module)
 if (typeof window !== 'undefined') {
-    (window as any).API_BASE_URL = BASE_URL;
+  (window as any).API_BASE_URL = BASE_URL;
 }
 
 // Allow updating base URL dynamically
-export const updateBaseUrl = (deploymentType: 'self-hosted' | 'cloud') => {
-    BASE_URL = getBaseUrlForDeployment(deploymentType);
-    // Update window.API_BASE_URL as well for plugins
-    if (typeof window !== 'undefined') {
-        (window as any).API_BASE_URL = BASE_URL;
-    }
-    console.log('[ApiClient] Base URL updated to:', BASE_URL);
+export const updateBaseUrl = (deploymentType: DeploymentType) => {
+  BASE_URL = getGatewayUrl(deploymentType);
+  // Update window.API_BASE_URL as well for plugins
+  if (typeof window !== 'undefined') {
+    (window as any).API_BASE_URL = BASE_URL;
+  }
+  // Update the axios instance's baseURL so subsequent requests use the new URL
+  ApiClient.getInstance().updateAxiosBaseUrl(BASE_URL);
+  console.log('[ApiClient] Base URL updated to:', BASE_URL);
 };
 
 // Expose current base URL for WebSocket connection
@@ -89,10 +69,10 @@ class ApiClient {
   private axiosClient: AxiosInstance | null = null;
   // In web extension mode or browser bridge mode, bypass the VS Code proxy
   // Use direct axios/fetch instead
-  private isVSCode = typeof window !== 'undefined' && 
-                     !!window.vscode && 
-                     !(window as any).__ONTOCODE_CONFIG__?.IS_WEB_EXTENSION &&
-                     !(window as any).__ONTOCODE_BROWSER_BRIDGE__;
+  private isVSCode = typeof window !== 'undefined' &&
+    !!window.vscode &&
+    !(window as any).__ONTOCODE_CONFIG__?.IS_WEB_EXTENSION &&
+    !(window as any).__ONTOCODE_BROWSER_BRIDGE__;
   private listenerAttached = false;
   private onUnauthorized?: () => void; // Callback for 401 errors
 
@@ -108,10 +88,20 @@ class ApiClient {
     this.onUnauthorized = callback;
   }
 
+  /**
+   * Update the axios instance's baseURL when deployment type changes
+   */
+  updateAxiosBaseUrl(newBaseUrl: string) {
+    if (this.axiosClient) {
+      this.axiosClient.defaults.baseURL = newBaseUrl;
+      console.log('[ApiClient] Axios baseURL updated to:', newBaseUrl);
+    }
+  }
+
   private constructor() {
-    console.log('[ApiClient] Initializing - isVSCode:', this.isVSCode, 
-                'IS_WEB_EXTENSION:', (window as any).__ONTOCODE_CONFIG__?.IS_WEB_EXTENSION);
-    
+    console.log('[ApiClient] Initializing - isVSCode:', this.isVSCode,
+      'IS_WEB_EXTENSION:', (window as any).__ONTOCODE_CONFIG__?.IS_WEB_EXTENSION);
+
     if (this.isVSCode) {
       // If in VS Code desktop, set up the message listener for proxy
       console.log('[ApiClient] Using VS Code extension proxy for API requests');
@@ -159,7 +149,7 @@ class ApiClient {
    * Sends a request to the extension proxy and waits for an 'apiResponse' message.
    *
    */
-  private postViaVSCode<T>(payload: { type: string; url: string; [k: string]: any }): Promise<T> {
+  private postViaVSCode<T>(payload: { type: string; url: string;[k: string]: any }): Promise<T> {
     return new Promise((resolve, reject) => {
       if (!window.vscode) {
         reject(new ApiError('No VSCode webview detected', 0, null, 'VSCODE_NOT_AVAILABLE'));
@@ -194,7 +184,7 @@ class ApiClient {
   private setupAxios() {
     this.axiosClient = axios.create({
       baseURL: BASE_URL,
-      headers: { 
+      headers: {
         'Content-Type': 'application/json'
       },
       timeout: TIMEOUT,
@@ -227,13 +217,13 @@ class ApiClient {
           (data && (data.message || data.error)) ||
           (typeof data === 'string' ? data : undefined) ||
           (err.response?.status === 401 ? 'Unauthorized' : err.message || 'Unexpected error');
-        
+
         // Check for 401 Unauthorized
         if (err.response?.status === 401 && this.onUnauthorized) {
           console.log('[ApiClient] 401 Unauthorized - Token expired');
           this.onUnauthorized();
         }
-        
+
         throw new ApiError(msg, err.response?.status, data, err.code);
       }
     );
