@@ -34,23 +34,45 @@ public class OntologyMetadataService {
 
     /**
      * Get all metadata for an ontology
+     * Uses cached metadata from MongoDB if available to avoid expensive GraphDB queries
      */
     public Map<String, Object> getMetadata(String projectId) {
         Map<String, Object> metadata = new HashMap<>();
         
-        // 1. Get base metadata from MongoDB
-        projectMetadataService.readMeta(projectId).ifPresent(metadata::putAll);
-
+        // 1. Check if cached metadata exists and is valid
+        Optional<Map<String, Object>> cachedMetadata = projectMetadataService.readMeta(projectId);
+        
+        if (cachedMetadata.isPresent() && !cachedMetadata.get().isEmpty()) {
+            Map<String, Object> cached = cachedMetadata.get();
+            
+            // Check if cache contains comprehensive data (has counts or classCount)
+            if (cached.containsKey("counts") || cached.containsKey("classCount") || cached.containsKey("cacheComplete")) {
+                log.info("⚡ Using cached metadata for project {} (fast path, skipping GraphDB queries)", projectId);
+                metadata.putAll(cached);
+                
+                // Always include fresh filename and status from MongoDB
+                projectMetadataService.readStatus(projectId).ifPresent(status -> {
+                    metadata.put("filename", status.filename());
+                    metadata.put("projectStatus", status.status());
+                });
+                
+                return metadata;
+            }
+        }
+        
+        // 2. Cache miss or incomplete - compute from GraphDB (slow path)
+        log.info("📊 Computing fresh metadata for project {} (slow path, querying GraphDB)", projectId);
+        
         // Include filename and status from project metadata for UI context
         projectMetadataService.readStatus(projectId).ifPresent(status -> {
             metadata.put("filename", status.filename());
             metadata.put("projectStatus", status.status());
         });
         
-        // 2. Merge with dynamic metrics from GraphDB
+        // Merge with dynamic metrics from GraphDB
         metadata.putAll(getDynamicMetrics(projectId));
         
-        // 3. Get ontology IRI and version IRI
+        // Get ontology IRI and version IRI
         String ontologyIri = getOntologyIri(projectId);
         metadata.put("ontologyIRI", ontologyIri);
         
@@ -66,11 +88,21 @@ public class OntologyMetadataService {
             }
         }
         
-        // 4. Add other metadata components
+        // Add other metadata components
         metadata.put("prefixes", getPrefixes(projectId));
         metadata.put("annotations", getOntologyAnnotations(projectId));
         metadata.put("imports", getOntologyImports(projectId));
         metadata.put("axioms", getGeneralClassAxioms(projectId));
+        
+        // Save to cache for future fast loading
+        try {
+            metadata.put("cacheComplete", true);
+            metadata.put("cachedAt", java.time.Instant.now().toString());
+            projectMetadataService.writeMeta(projectId, new HashMap<>(metadata));
+            log.info("💾 Saved metadata to MongoDB cache for project {}", projectId);
+        } catch (Exception e) {
+            log.warn("Failed to cache metadata for project {}: {}", projectId, e.getMessage());
+        }
         
         return metadata;
     }

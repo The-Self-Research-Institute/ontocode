@@ -1228,6 +1228,19 @@ const OpenFileDialog = ({
     onClose();
   };
 
+  const handleCreateNewFile = () => {
+    if (!canOpenLocalFile || !window.vscode) {
+      return;
+    }
+    window.vscode.postMessage({
+      type: "createNewFile",
+      projectId: parentProjectId || undefined,
+      importMode,
+      partition: partitionStrategy,
+    });
+    onClose();
+  };
+
   // console.log('[OpenFileDialog] Rendered with myFiles:', myFiles.length, 'sharedFiles:', sharedFiles.length, 'isOpen:', isOpen);
   // console.log('[OpenFileDialog] myFiles data:', myFiles);
   // console.log('[OpenFileDialog] sharedFiles data:', sharedFiles);
@@ -1381,6 +1394,18 @@ const OpenFileDialog = ({
               <div className="text-[10px] text-amber-600 mt-1">Diff mode does not support namespace partitioning.</div>
             )}
           </div>
+          <button
+            onClick={handleCreateNewFile}
+            disabled={!canOpenLocalFile}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs rounded-md border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{
+              borderColor: "var(--color-border)",
+              color: "var(--color-text)",
+            }}
+          >
+            <Plus size={14} />
+            Create New File
+          </button>
           <button
             onClick={handleOpenLocalFile}
             disabled={!canOpenLocalFile}
@@ -1713,7 +1738,7 @@ const DetailsPanel = ({
             // Reload individuals from backend
             if (projectId) {
               apiClient
-                .get<any>(`/api/ontology/individuals/${projectId}`)
+                .get<any>(`/api/ontology/individuals/${encodeURIComponent(projectId)}`)
                 .then((res) => {
                   setIndividuals(
                     Array.isArray(res?.data) ? res.data : Array.isArray(res?.individuals) ? res.individuals : [],
@@ -1889,6 +1914,13 @@ const Dashboard: React.FC<DashboardProps> = ({
     [user?.email, user?.username], // collaboration.addNotification is stable, no need to include
   );
   const [projectId, setProjectId] = useState<string | null>(initialProjectId || null);
+
+  // Helper function to encode project ID for use in URL paths
+  // Handles hierarchical project IDs like "project-123/file-456"
+  const encodeProjectId = (id: string | null | undefined): string => {
+    if (!id) return '';
+    return encodeURIComponent(id);
+  };
   const [availableProjects, setAvailableProjects] = useState<any[]>([]);
   const [showProjectSelector, setShowProjectSelector] = useState(false);
   const [metadata, setMetadata] = useState<OntologyMetadata | null>(null);
@@ -2597,7 +2629,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     console.log("[Dashboard] Loading full inferred class hierarchy...");
     try {
       const response = await apiClient.get<any>(
-        `/api/ontology/${projectId}/reasoner/inferred-class-hierarchy?reasonerType=${selectedReasoner}`,
+        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-class-hierarchy?reasonerType=${selectedReasoner}`,
       );
       const payload = response?.data || response;
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
@@ -2640,7 +2672,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     console.log("[Dashboard] Loading inferred object property hierarchy...");
     try {
       const res = await apiClient.get<any>(
-        `/api/ontology/${projectId}/reasoner/inferred-object-property-hierarchy?reasonerType=${selectedReasoner}`,
+        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-object-property-hierarchy?reasonerType=${selectedReasoner}`,
       );
       const payload = res?.data || res;
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
@@ -2661,7 +2693,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     console.log("[Dashboard] Loading inferred data property hierarchy...");
     try {
       const res = await apiClient.get<any>(
-        `/api/ontology/${projectId}/reasoner/inferred-data-property-hierarchy?reasonerType=${selectedReasoner}`,
+        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-data-property-hierarchy?reasonerType=${selectedReasoner}`,
       );
       const payload = res?.data || res;
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
@@ -2683,7 +2715,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     console.log("[Dashboard] Loading inferred annotation property hierarchy...");
     try {
       const res = await apiClient.get<any>(
-        `/api/ontology/${projectId}/reasoner/inferred-annotation-property-hierarchy?reasonerType=${selectedReasoner}`,
+        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-annotation-property-hierarchy?reasonerType=${selectedReasoner}`,
       );
       const payload = res?.data || res;
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
@@ -2704,7 +2736,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     console.log("[Dashboard] Loading inferred datatypes...");
     try {
       const res = await apiClient.get<any>(
-        `/api/ontology/${projectId}/reasoner/inferred-datatypes?reasonerType=${selectedReasoner}`,
+        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-datatypes?reasonerType=${selectedReasoner}`,
       );
       const payload = res?.data || res;
       const datatypes = payload?.datatypes || payload?.data?.datatypes || [];
@@ -2721,7 +2753,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     console.log("[Dashboard] Loading inferred individuals...");
     try {
       const res = await apiClient.get<any>(
-        `/api/ontology/${projectId}/reasoner/inferred-individuals?reasonerType=${selectedReasoner}`,
+        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-individuals?reasonerType=${selectedReasoner}`,
       );
       const payload = res?.data || res;
       const individuals = payload?.individuals || payload?.data?.individuals || [];
@@ -3055,7 +3087,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const waitForProcessingComplete = useCallback(
     async (currentProjectId: string): Promise<{ ready: boolean; error?: string; status?: string }> => {
       try {
-        const statusRes = await apiClient.get<any>(`/api/ontology/status/${currentProjectId}`);
+        const statusRes = await apiClient.get<any>(`/api/ontology/status/${encodeProjectId(currentProjectId)}`);
         const status = statusRes?.data?.status || statusRes?.status;
 
         console.log(`[Dashboard] Project ${currentProjectId} status:`, status);
@@ -3143,19 +3175,20 @@ const Dashboard: React.FC<DashboardProps> = ({
         console.log("[Dashboard] File processing complete, fetching ontology data...");
         console.log("[Dashboard] 📡 Loading data from GraphDB database for:", currentProjectId);
 
+        // Encode project ID for use in URL paths (handles slashes in hierarchical project IDs)
+        const encodedProjectId = encodeURIComponent(currentProjectId);
+
         // Fetch data in background
+        // Metadata endpoint now returns comprehensive cached data (annotations, imports, axioms, prefixes)
+        // so we don't need to make separate calls for those
         const dataFetchPromise = Promise.all([
-          apiClient.get<any>(`/api/ontology/metadata/${currentProjectId}`),
-          apiClient.get<any>(`/api/ontology/classes/top-level/${currentProjectId}`),
-          apiClient.get<any>(`/api/ontology/classes/instance-counts/${currentProjectId}`).catch(() => null),
-          apiClient.get<any>(`/api/ontology/properties/${currentProjectId}`),
-          apiClient.get<any>(`/api/ontology/individuals/${currentProjectId}`),
-          apiClient.get<any>(`/api/ontology/annotation-properties/${currentProjectId}`),
-          apiClient.get<any>(`/api/ontology/datatypes/${currentProjectId}`),
-          apiClient.get<any>(`/api/ontology/metadata/${currentProjectId}/imports`),
-          apiClient.get<any>(`/api/ontology/ontology/gci/${currentProjectId}?limit=200`),
-          apiClient.get<any>(`/api/ontology/metadata/${currentProjectId}/annotations`),
-          apiClient.get<any>(`/api/ontology/ontology/prefixes/${currentProjectId}`),
+          apiClient.get<any>(`/api/ontology/metadata/${encodedProjectId}`),
+          apiClient.get<any>(`/api/ontology/classes/top-level/${encodedProjectId}`),
+          apiClient.get<any>(`/api/ontology/classes/instance-counts/${encodedProjectId}`).catch(() => null),
+          apiClient.get<any>(`/api/ontology/properties/${encodedProjectId}`),
+          apiClient.get<any>(`/api/ontology/individuals/${encodedProjectId}`),
+          apiClient.get<any>(`/api/ontology/annotation-properties/${encodedProjectId}`),
+          apiClient.get<any>(`/api/ontology/datatypes/${encodedProjectId}`),
         ]);
 
         // Allow UI to be responsive immediately if not waiting
@@ -3174,10 +3207,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           individualsRes,
           annotationPropsRes,
           datatypesRes,
-          importsRes,
-          gciRes,
-          ontologyAnnotationsRes,
-          prefixesRes,
         ] = await dataFetchPromise;
 
         console.log("[Dashboard] ✅ Data loaded from GraphDB database successfully!");
@@ -3222,9 +3251,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           setClassInstanceCounts(instanceCountsData);
         }
 
-        const importsPayload = importsRes?.data || importsRes;
-        const importsData = importsPayload?.data || importsPayload || [];
-        const validImportsData = Array.isArray(importsData) ? importsData : [];
+        // Use imports from metadata response (already extracted above)
+        const validImportsData = Array.isArray(imports) ? imports : [];
         console.log("[Dashboard] 📥 Initial imports loaded:", validImportsData);
         console.log(
           "[Dashboard] Local imports found:",
@@ -3232,11 +3260,10 @@ const Dashboard: React.FC<DashboardProps> = ({
         );
         setOntologyImports(validImportsData);
 
-        const gciPayload = gciRes?.data || gciRes;
-        const gciData = gciPayload?.data || gciPayload || [];
+        // Use GCI axioms from metadata response (already extracted above)
         // Map backend fields to frontend expected structure
-        const mappedGciData = Array.isArray(gciData)
-          ? gciData.map((axiom: any) => ({
+        const mappedGciData = Array.isArray(gciAxioms)
+          ? gciAxioms.map((axiom: any) => ({
               value: axiom.value,
               subClass: axiom.subClass || "",
               superClass: axiom.superClass || "",
@@ -3248,16 +3275,15 @@ const Dashboard: React.FC<DashboardProps> = ({
           : [];
         setGeneralClassAxioms(mappedGciData);
 
-        const ontologyAnnotationsPayload = ontologyAnnotationsRes?.data || ontologyAnnotationsRes;
-        const ontologyAnnotationsData = ontologyAnnotationsPayload?.data || ontologyAnnotationsPayload || [];
+        // Use annotations from metadata response (already extracted above as annotationsData)
         // Filter out invalid annotations and ensure all have required fields
-        const validAnnotations = (Array.isArray(ontologyAnnotationsData) ? ontologyAnnotationsData : []).filter(
-          (ann) => ann && ann.propertyIri && ann.value !== undefined,
+        const validAnnotations = (Array.isArray(annotationsData) ? annotationsData : []).filter(
+          (ann) => ann && (ann.propertyIri || ann.property) && ann.value !== undefined,
         );
         setOntologyAnnotations(validAnnotations);
 
-        const prefixesPayload = prefixesRes?.data || prefixesRes;
-        const prefixesData = prefixesPayload?.data || prefixesPayload || {};
+        // Use prefixes from metadata response (already in metadataData.prefixes)
+        const prefixesData = metadataData?.prefixes || {};
         const prefixList = Object.entries(prefixesData).map(([prefix, namespace]) => ({
           // Ensure prefix has a colon for display if it's not empty
           // If it's empty, it's the default namespace, show as ":"
@@ -3622,7 +3648,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!projectId) return;
     try {
       console.log("[Dashboard] 🔄 Refreshing ontology annotations for project:", projectId);
-      const response = await apiClient.get<any>(`/api/ontology/metadata/${projectId}/annotations`);
+      const response = await apiClient.get<any>(`/api/ontology/metadata/${encodeProjectId(projectId)}/annotations`);
       const payload = response?.data || response;
       const data = payload?.data || payload || [];
       console.log("[Dashboard] 📥 Raw annotations data received:", data);
@@ -3649,7 +3675,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const refreshOntologyImports = async () => {
     if (!projectId) return;
     try {
-      const response = await apiClient.get<any>(`/api/ontology/metadata/${projectId}/imports`);
+      const response = await apiClient.get<any>(`/api/ontology/metadata/${encodeProjectId(projectId)}/imports`);
       const payload = response?.data || response;
       const data = payload?.data || payload || [];
       const validImports = Array.isArray(data) ? data : [];
@@ -3675,7 +3701,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const refreshPrefixes = async () => {
     if (!projectId) return;
     try {
-      const response = await apiClient.get<any>(`/api/ontology/ontology/prefixes/${projectId}`);
+      const response = await apiClient.get<any>(`/api/ontology/ontology/prefixes/${encodeProjectId(projectId)}`);
       const payload = response?.data || response;
       const data = payload?.data || payload || {};
       const list = Object.entries(data).map(([prefix, namespace]) => ({
@@ -3693,7 +3719,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleSaveOntologyId = async () => {
     if (!projectId || !ontologyIriDraft.trim()) return;
     try {
-      await apiClient.put(`/api/ontology/ontology/id/${projectId}`, {
+      await apiClient.put(`/api/ontology/ontology/id/${encodeProjectId(projectId)}`, {
         ontologyIRI: ontologyIriDraft.trim(),
         versionIRI: versionIriDraft.trim() || null,
       });
@@ -5051,6 +5077,12 @@ const Dashboard: React.FC<DashboardProps> = ({
           break;
         }
         case "openProjectFile":
+          // Refresh file list in workspace mode to ensure new files are shown
+          if (initialProjectId) {
+            console.log("[Dashboard] Refreshing file list before opening project file");
+            fetchProjectFiles(initialProjectId);
+          }
+          
           if (initialProjectId && message.projectId && message.projectId !== initialProjectId) {
             console.warn(
               "[Dashboard] openProjectFile project mismatch:",
@@ -5070,9 +5102,14 @@ const Dashboard: React.FC<DashboardProps> = ({
           break;
         case "fileReady":
         case "fileLoaded":
+          // Always refresh file list in workspace mode when a fileReady message is received
+          if (initialProjectId) {
+            console.log("[Dashboard] File list refresh triggered by fileReady, initialProjectId:", initialProjectId, "message.projectId:", message.projectId);
+            fetchProjectFiles(initialProjectId);
+          }
+          
           if (initialProjectId && message.projectId === initialProjectId) {
             console.log("[Dashboard] File list updated for project, skipping ontology load:", message.projectId);
-            fetchProjectFiles(initialProjectId);
             fetchProjects();
             break;
           }
@@ -5090,21 +5127,28 @@ const Dashboard: React.FC<DashboardProps> = ({
             // userLoadingChoice.current = null;
             // setShowLoadingChoice(true);
 
-            loadingPromiseRef.current = fetchData(message.projectId, false, initialProjectId)
-              .then(() => {
-                console.log("[Dashboard] Loading completed for:", message.projectId);
-                setShowLoadingChoice(false);
-                setShowQueueStatus(false);
-                setTimeout(() => fetchProjects(), 300);
-              })
-              .catch((error) => {
-                console.error("[Dashboard] Failed to load ontology:", error);
-                notificationService.error(
-                  "Load Failed",
-                  `Could not load "${message.projectId}". The file may still be processing.`,
-                );
-                setShowLoadingChoice(false);
-              });
+            // Check if we're already loading this project to avoid duplicate fetches
+            if (loadingPromiseRef.current) {
+              console.log("[Dashboard] Already loading, skipping duplicate fetchData call");
+            } else {
+              loadingPromiseRef.current = fetchData(message.projectId, false, initialProjectId)
+                .then(() => {
+                  console.log("[Dashboard] Loading completed for:", message.projectId);
+                  setShowLoadingChoice(false);
+                  setShowQueueStatus(false);
+                  setTimeout(() => fetchProjects(), 300);
+                  loadingPromiseRef.current = null;
+                })
+                .catch((error) => {
+                  console.error("[Dashboard] Failed to load ontology:", error);
+                  notificationService.error(
+                    "Load Failed",
+                    `Could not load "${message.projectId}". The file may still be processing.`,
+                  );
+                  setShowLoadingChoice(false);
+                  loadingPromiseRef.current = null;
+                });
+            }
             break;
           }
           // Show loading choice dialog
@@ -5112,7 +5156,15 @@ const Dashboard: React.FC<DashboardProps> = ({
           // Don't clear isExpectingFileReady here - let IMPORT_COMPLETED handler do it
           setHasUserSelectedFile(true);
           hasUserSelectedFileRef.current = true;
-          setProjectId(message.projectId);
+          // Only update projectId if it's different (ignoring timestamp suffixes)
+          const currentBaseId = projectId?.replace(/-\d+$/, '');
+          const newBaseId = message.projectId?.replace(/-\d+$/, '');
+          if (currentBaseId !== newBaseId) {
+            console.log("[Dashboard] Updating projectId from", projectId, "to", message.projectId);
+            setProjectId(message.projectId);
+          } else {
+            console.log("[Dashboard] ProjectId essentially same, keeping current:", projectId);
+          }
           // In free mode, projectId IS the file identifier, so set activeFileName for ACTIVE badge
           // Extract filename from projectId if it looks like a filename (has extension)
           const projId = message.projectId || "";
@@ -5128,26 +5180,32 @@ const Dashboard: React.FC<DashboardProps> = ({
           userLoadingChoice.current = null; // Reset choice for new loading
           setShowLoadingChoice(true);
 
-          // Start loading in background and store the promise
-          loadingPromiseRef.current = fetchData(message.projectId, false)
-            .then(() => {
-              console.log("[Dashboard] Loading completed for:", message.projectId);
-              // Close loading dialog immediately on success
-              setShowLoadingChoice(false);
-              setShowQueueStatus(false);
-              // Refresh projects list
-              setTimeout(() => fetchProjects(), 300);
-              // Dialog will auto-close via importStatusUpdate message when IMPORT_COMPLETED
-            })
-            .catch((error) => {
-              console.error("[Dashboard] Failed to load ontology:", error);
-              notificationService.error(
-                "Load Failed",
-                `Could not load "${message.projectId}". The file may still be processing.`,
-              );
-              setShowLoadingChoice(false);
-              // Dialog will auto-close via importStatusUpdate message when IMPORT_FAILED
-            });
+          // Start loading in background and store the promise (only if not already loading)
+          if (loadingPromiseRef.current) {
+            console.log("[Dashboard] Already loading, skipping duplicate fetchData call");
+          } else {
+            loadingPromiseRef.current = fetchData(message.projectId, false)
+              .then(() => {
+                console.log("[Dashboard] Loading completed for:", message.projectId);
+                // Close loading dialog immediately on success
+                setShowLoadingChoice(false);
+                setShowQueueStatus(false);
+                // Refresh projects list
+                setTimeout(() => fetchProjects(), 300);
+                loadingPromiseRef.current = null;
+                // Dialog will auto-close via importStatusUpdate message when IMPORT_COMPLETED
+              })
+              .catch((error) => {
+                console.error("[Dashboard] Failed to load ontology:", error);
+                notificationService.error(
+                  "Load Failed",
+                  `Could not load "${message.projectId}". The file may still be processing.`,
+                );
+                setShowLoadingChoice(false);
+                loadingPromiseRef.current = null;
+                // Dialog will auto-close via importStatusUpdate message when IMPORT_FAILED
+              });
+          }
           break;
         case "loadingFailed":
           setIsInitialLoading(false);
@@ -5215,10 +5273,26 @@ const Dashboard: React.FC<DashboardProps> = ({
             if (isCurrentProject || isPendingImport) {
               console.log("[Dashboard] Should auto-load:", isPendingImport ? "pending import" : "current project");
 
+              // Prevent duplicate fetchData if already loading
+              if (loadingPromiseRef.current) {
+                console.log("[Dashboard] Already loading, skipping duplicate fetchData from IMPORT_COMPLETED");
+                // Just clear the pending import ref and return
+                pendingImportProjectIdRef.current = null;
+                return;
+              }
+
               // For new uploads, always switch to the newly imported project
               if (isPendingImport) {
                 console.log("[Dashboard] Setting projectId to:", message.status.projectId);
-                setProjectId(message.status.projectId);
+                // Only update projectId if it's actually different (ignoring timestamp suffix)
+                const currentBaseId = projectId?.replace(/-\d+$/, '');
+                const newBaseId = message.status.projectId?.replace(/-\d+$/, '');
+                if (currentBaseId !== newBaseId) {
+                  console.log("[Dashboard] ProjectId is different, updating from", projectId, "to", message.status.projectId);
+                  setProjectId(message.status.projectId);
+                } else {
+                  console.log("[Dashboard] ProjectId is essentially the same (ignoring timestamp), skipping update");
+                }
                 setLoadingProjectName(message.status.projectId);
                 // In free mode, mark the new file as active immediately
                 if (!initialProjectId) {
@@ -5608,7 +5682,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     classHierarchyRefreshInFlight.current = true;
     lastClassHierarchyRefreshAt.current = now;
     try {
-      const topLevelRes = await apiClient.get<any>(`/api/ontology/classes/top-level/${projectId}`);
+      const topLevelRes = await apiClient.get<any>(`/api/ontology/classes/top-level/${encodeProjectId(projectId)}`);
 
       let classes: any[] = [];
       if (Array.isArray(topLevelRes?.classes)) {
@@ -5835,7 +5909,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           console.log("[Dashboard] 🔗 Refreshing properties due to property edit");
           // Trigger refresh of properties
           apiClient
-            .get(`/api/ontology/properties/${projectId}`)
+            .get(`/api/ontology/properties/${encodeProjectId(projectId)}`)
             .then((response) => {
               const allProps = Array.isArray(response.data)
                 ? response.data
@@ -6608,9 +6682,11 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         console.log("[Dashboard] 📥 File content retrieved, uploading to ontology editor...");
 
-        // Create a unique project ID for this file (remove extension and add timestamp)
-        const baseFileName = fileName.replace(/\.[^/.]+$/, "");
-        const ontologyProjectId = `${baseFileName}-${Date.now()}`;
+        // Use hierarchical naming: project--fileId
+        // This organizes all files under their MongoDB project in GraphDB
+        // e.g., http://ontocode.org/project/project-123--file-456
+        // Note: Using -- instead of / to avoid URL encoding issues (%2F blocked by gateway)
+        const ontologyProjectId = `${initialProjectId}--${fileId}`;
 
         // Extract pure base64 data (remove data URL prefix if present)
         const base64Data = fileContent.content.includes(",") ? fileContent.content.split(",")[1] : fileContent.content;
@@ -6629,7 +6705,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             fileName: fileName,
             fileContent: base64Data,
             ownerEmail: resolvedEmail || undefined,
-            skipDuplicateCheck: true,
+            skipDuplicateCheck: false, // Enable duplicate check to avoid re-importing existing files
             importMode,
             partition: partitionStrategy,
           });

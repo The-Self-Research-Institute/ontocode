@@ -49,6 +49,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.zip.GZIPInputStream;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -105,7 +106,7 @@ public class ProjectLoadController {
         this.importWorkerDispatcher = importWorkerDispatcher;
     }
 
-    @PostMapping("/upload/{projectId}")
+    @PostMapping("/upload/{projectId:.+}")  // Allow slashes in path variable
     public ResponseEntity<Map<String, Object>> upload(@PathVariable String projectId,
                                                       @RequestParam("file") MultipartFile file,
                                                       @RequestParam(required = false) String ownerEmail,
@@ -133,8 +134,13 @@ public class ProjectLoadController {
             boolean isReplacement = false;
             String filename = file.getOriginalFilename();
             
+            // Skip duplicate check for hierarchical project IDs (files from project library)
+            // Hierarchical IDs like "proj-123--file-456" are already unique
+            // Note: Using -- separator to avoid URL encoding issues with / (%2F)
+            boolean isHierarchicalId = projectId.contains("--");
+            
             // Check for duplicate filename and handle based on action parameter
-            if (ownerEmail != null && !ownerEmail.isEmpty()) {
+            if (!isHierarchicalId && ownerEmail != null && !ownerEmail.isEmpty()) {
                 // First, check if filename conflicts with shared files
                 if (shareService.isFilenameInSharedFiles(filename, ownerEmail)) {
                     log.warn("Upload blocked - filename conflicts with shared file: {} for user: {}", filename, ownerEmail);
@@ -413,7 +419,7 @@ public class ProjectLoadController {
         }
     }
 
-    @GetMapping("/status/{projectId}")
+    @GetMapping("/status/{projectId:.+}")  // Allow slashes in path variable
     public ResponseEntity<Map<String, Object>> status(@PathVariable String projectId) {
         return metadataService.readStatus(projectId)
                 .map(status -> ResponseEntity.ok(Map.of("success", true, "data", status)))
@@ -421,7 +427,7 @@ public class ProjectLoadController {
                         .body(Map.of("success", false, "error", "Project not found")));
     }
 
-    @GetMapping("/export/{projectId}")
+    @GetMapping("/export/{projectId:.+}")
     public ResponseEntity<Resource> export(@PathVariable String projectId,
                                            @RequestParam(defaultValue = "rdfxml") String format) {
         try {
@@ -455,7 +461,7 @@ public class ProjectLoadController {
         }
     }
 
-    @PostMapping("/reload/{projectId}")
+    @PostMapping("/reload/{projectId:.+}")
     public ResponseEntity<Map<String, Object>> reload(@PathVariable String projectId) {
         try {
             log.info("[RELOAD] Reloading project {} from saved file", projectId);
@@ -481,7 +487,7 @@ public class ProjectLoadController {
         }
     }
 
-    @PostMapping("/save/{projectId}")
+    @PostMapping("/save/{projectId:.+}")
     public ResponseEntity<Map<String, Object>> save(
             @PathVariable String projectId,
             @RequestParam(required = false) String userId,
@@ -695,12 +701,76 @@ public class ProjectLoadController {
     }
 
     /**
+     * Check if a file/ontology is already loaded into GraphDB for a specific project
+     * This endpoint helps prevent duplicate data being loaded into the same project graph
+     * @param projectId The project ID
+     * @param fileName The file name to check
+     * @param fileId Optional file ID
+     * @return Map with exists boolean and details about existing data
+     */
+    @GetMapping("/{projectId:.+}/graphdb/check")
+    public ResponseEntity<Map<String, Object>> checkGraphDBDuplicate(
+            @PathVariable String projectId,
+            @RequestParam String fileName,
+            @RequestParam(required = false) String fileId) {
+        try {
+            log.info("[CHECK-GRAPHDB-DUPLICATE] Checking GraphDB for project: {}, fileName: {}, fileId: {}", 
+                projectId, fileName, fileId);
+            
+            // Call the GraphDB service to check if file is already loaded
+            Map<String, Object> checkResult = datasetService.checkFileExistsInGraphDB(projectId, fileName, fileId);
+            
+            boolean exists = (Boolean) checkResult.getOrDefault("exists", false);
+            boolean checkFailed = (Boolean) checkResult.getOrDefault("checkFailed", false);
+            
+            if (checkFailed) {
+                log.warn("[CHECK-GRAPHDB-DUPLICATE] Check failed: {}", checkResult.get("error"));
+                return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "exists", false,
+                    "checkSkipped", true,
+                    "message", "GraphDB check could not be performed, proceeding with caution"
+                ));
+            }
+            
+            if (exists) {
+                log.info("[CHECK-GRAPHDB-DUPLICATE] Found existing data in GraphDB - graphSize: {}", 
+                    checkResult.get("graphSize"));
+                return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "exists", true,
+                    "projectId", projectId,
+                    "fileName", fileName,
+                    "graphSize", checkResult.getOrDefault("graphSize", 0),
+                    "ontologyIRIs", checkResult.getOrDefault("ontologyIRIs", List.of()),
+                    "message", checkResult.getOrDefault("message", "Data already exists in GraphDB")
+                ));
+            }
+            
+            log.info("[CHECK-GRAPHDB-DUPLICATE] No existing data found in GraphDB");
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "exists", false,
+                "message", "No existing data in GraphDB, file can be loaded"
+            ));
+            
+        } catch (Exception e) {
+            log.error("[CHECK-GRAPHDB-DUPLICATE] Error checking GraphDB duplicate", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of(
+                        "success", false,
+                        "error", "Failed to check GraphDB: " + e.getMessage()
+                    ));
+        }
+    }
+
+    /**
      * Get ontology content in specified format for code view
      * @param projectId The project ID
      * @param format The format (turtle, rdfxml, ntriples, jsonld, owlxml, manchester, functional) - defaults to rdfxml
      * @return Ontology content as plain text
      */
-    @GetMapping("/{projectId}/content")
+    @GetMapping("/{projectId:.+}/content")
     public ResponseEntity<Map<String, Object>> getOntologyContent(
             @PathVariable String projectId,
             @RequestParam(defaultValue = "rdfxml") String format,
@@ -750,7 +820,7 @@ public class ProjectLoadController {
      * This is used when the user inserts citations at specific lines.
      * Optionally accepts citation-entity mappings for smart repositioning.
      */
-    @PostMapping("/{projectId}/code-view-cache")
+    @PostMapping("/{projectId:.+}/code-view-cache")
     public ResponseEntity<Map<String, Object>> storeCodeViewCache(
             @PathVariable String projectId,
             @RequestBody Map<String, Object> request) {
@@ -803,7 +873,7 @@ public class ProjectLoadController {
      * DELETE /api/ontology/{projectId}/code-view-cache
      * Optionally specify format to clear only specific format cache.
      */
-    @DeleteMapping("/{projectId}/code-view-cache")
+    @DeleteMapping("/{projectId:.+}/code-view-cache")
     public ResponseEntity<Map<String, Object>> clearCodeViewCache(
             @PathVariable String projectId,
             @RequestParam(required = false) String format) {
@@ -834,7 +904,7 @@ public class ProjectLoadController {
     /**
      * Get the last modified timestamp for a project (for sync checking)
      */
-    @GetMapping("/metadata/{projectId}/timestamp")
+    @GetMapping("/metadata/{projectId:.+}/timestamp")
     public ResponseEntity<Map<String, Object>> getProjectTimestamp(@PathVariable String projectId) {
         try {
             log.debug("Fetching timestamp for project: {}", projectId);

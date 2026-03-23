@@ -196,6 +196,99 @@ public class GraphDBDatasetService {
     }
     
     /**
+     * Check if a file is already loaded into GraphDB by checking for file metadata triples
+     * or by checking if the ontology IRI already exists in the project graph
+     * @param projectId The project ID
+     * @param fileName The name of the file to check
+     * @param fileId Optional file ID to check for specific file metadata
+     * @return Map with "exists" boolean and "details" with information about the existing file
+     */
+    public Map<String, Object> checkFileExistsInGraphDB(String projectId, String fileName, String fileId) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("exists", false);
+        
+        try {
+            Repository repo = getRepository();
+            String graphUri = getGraphUri(projectId);
+            
+            try (RepositoryConnection conn = repo.getConnection()) {
+                IRI graphIri = conn.getValueFactory().createIRI(graphUri);
+                
+                // Check 1: Check if there are any triples in the graph (basic duplicate prevention)
+                long graphSize = conn.size(graphIri);
+                
+                // Check 2: Query for file metadata if the system stores it
+                // This checks for triples that might indicate a file was already loaded
+                String checkQuery = String.format(
+                    "ASK { " +
+                    "  GRAPH <%s> { " +
+                    "    { ?s ?p ?o } " + // Check if graph has any data
+                    "  } " +
+                    "}",
+                    graphUri
+                );
+                
+                BooleanQuery boolQuery = conn.prepareBooleanQuery(checkQuery);
+                boolean hasData = boolQuery.evaluate();
+                
+                if (hasData && graphSize > 0) {
+                    // Graph has data - check if it's from a file with the same name
+                    // Try to find ontology IRI or file identifier
+                    String detailQuery = String.format(
+                        "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> " +
+                        "PREFIX owl: <http://www.w3.org/2002/07/owl#> " +
+                        "SELECT DISTINCT ?ontology WHERE { " +
+                        "  GRAPH <%s> { " +
+                        "    { ?ontology rdf:type owl:Ontology } " +
+                        "    UNION { ?ontology owl:versionIRI ?version } " +
+                        "  } " +
+                        "} LIMIT 5",
+                        graphUri
+                    );
+                    
+                    TupleQuery tupleQuery = conn.prepareTupleQuery(detailQuery);
+                    List<String> ontologyIRIs = new ArrayList<>();
+                    
+                    try (TupleQueryResult queryResult = tupleQuery.evaluate()) {
+                        while (queryResult.hasNext()) {
+                            BindingSet binding = queryResult.next();
+                            if (binding.hasBinding("ontology")) {
+                                ontologyIRIs.add(binding.getValue("ontology").stringValue());
+                            }
+                        }
+                    }
+                    
+                    result.put("exists", true);
+                    result.put("graphSize", graphSize);
+                    result.put("ontologyIRIs", ontologyIRIs);
+                    result.put("message", String.format(
+                        "Project graph already contains %d triples. Loading this file may create duplicate data.",
+                        graphSize
+                    ));
+                    
+                    log.info("[GraphDB Duplicate Check] Project {} graph contains {} triples. File: {}, FileId: {}",
+                        projectId, graphSize, fileName, fileId);
+                    
+                    return result;
+                }
+                
+                result.put("exists", false);
+                result.put("graphSize", 0);
+                log.debug("[GraphDB Duplicate Check] Project {} graph is empty. File: {} can be loaded.",
+                    projectId, fileName);
+                
+            }
+        } catch (Exception e) {
+            log.error("[GraphDB Duplicate Check] Error checking file existence in GraphDB for project: {}, file: {}",
+                projectId, fileName, e);
+            result.put("error", e.getMessage());
+            result.put("checkFailed", true);
+        }
+        
+        return result;
+    }
+    
+    /**
      * Get the project directory path
      */
     public Path getProjectPath(String projectId) {

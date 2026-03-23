@@ -6,13 +6,13 @@
  * a preload bridge, or VS Code Web), this shim ensures every `postMessage`
  * the app fires still works without breaking.
  *
- * The real VS Code extension handles 32 inbound message types.  
- * This bridge covers ALL 27 types the webview actually sends:
+ * The real VS Code extension handles 33 inbound message types.  
+ * This bridge covers ALL 28 types the webview actually sends:
  *
  *  Auth:         requestAuthToken, saveAuthToken, logout
  *  Lifecycle:    webviewReady, fileLoaded, setApiBaseUrl
  *  File I/O:     downloadOntology, downloadFile, downloadCurrentOntology,
- *                openLocalFile, importLocalFile
+ *                openLocalFile, createNewFile, importLocalFile
  *  Upload:       uploadOntology, uploadFileToProject, uploadOntologyContent
  *  API proxy:    apiGet, apiPost, apiPut, apiPatch, apiDelete, proxyRequest
  *  Collab:       requestCollaborationStatus, cursorMoved, broadcastCursor
@@ -300,6 +300,115 @@ function handleBrowserMessage(message: any) {
             break;
         }
 
+        case 'createNewFile': {
+            (async () => {
+                let fileName = '';
+                let validFileName = false;
+
+                // Validate file extension
+                const validExtensions = ['.owl', '.rdf', '.ttl', '.n3', '.nt', '.jsonld'];
+
+                // Loop until user provides valid unique filename or cancels
+                while (!validFileName) {
+                    // Prompt user for file name
+                    fileName = prompt('Enter a name for the new ontology file:', fileName || 'my-ontology.owl');
+                    if (!fileName) {
+                        console.log('[BrowserBridge] User cancelled new file creation');
+                        return;
+                    }
+
+                    const trimmedFileName = fileName.trim();
+                    if (!trimmedFileName) {
+                        alert('File name is required.');
+                        continue;
+                    }
+
+                    // Validate file extension
+                    const hasValidExtension = validExtensions.some(ext => trimmedFileName.toLowerCase().endsWith(ext));
+
+                    if (!hasValidExtension) {
+                        alert('File must have a valid ontology extension (.owl, .rdf, .ttl, .n3, .nt, .jsonld)');
+                        continue;
+                    }
+
+                    fileName = trimmedFileName;
+
+                    // Check for duplicates if in project context
+                    if (message.projectId) {
+                        const token = localStorage.getItem('authToken');
+                        const baseUrl = getGatewayUrl();
+
+                        try {
+                            const checkUrl = `${baseUrl}/api/projects/${message.projectId}/files/check?fileName=${encodeURIComponent(fileName)}`;
+                            const checkResp = await fetch(checkUrl, {
+                                headers: token ? { Authorization: `Bearer ${token}` } : {},
+                            });
+                            const checkData = await checkResp.json().catch(() => ({}));
+
+                            if (checkData.exists) {
+                                const retry = confirm(`A file named "${fileName}" already exists in this project.\n\nClick OK to choose a different name, or Cancel to abort.`);
+                                if (!retry) {
+                                    console.log('[BrowserBridge] User cancelled after duplicate detected');
+                                    return;
+                                }
+                                continue; // Ask for new name
+                            }
+                        } catch (checkError) {
+                            console.warn('[BrowserBridge] Failed to check for duplicate:', checkError);
+                            // Continue with upload if check fails
+                        }
+                    }
+
+                    validFileName = true;
+                }
+
+                // Create minimal empty ontology content with owl:Thing
+                const ontologyIRI = `http://example.org/ontologies/${fileName.replace(/\.[^/.]+$/, '')}`;
+                const emptyOntologyContent = `<?xml version="1.0"?>
+<rdf:RDF xmlns="${ontologyIRI}#"
+     xml:base="${ontologyIRI}"
+     xmlns:owl="http://www.w3.org/2002/07/owl#"
+     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:xml="http://www.w3.org/XML/1998/namespace"
+     xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
+    <owl:Ontology rdf:about="${ontologyIRI}"/>
+    
+    <!-- Classes -->
+    <owl:Class rdf:about="http://www.w3.org/2002/07/owl#Thing"/>
+</rdf:RDF>`;
+
+                const fileContentBase64 = fileContentToBase64(emptyOntologyContent);
+                const fileSize = new Blob([emptyOntologyContent]).size;
+
+                console.log(`[BrowserBridge] Creating new file: ${fileName} (${fileSize} bytes)`);
+
+                if (message.projectId) {
+                    // Project context is known — upload directly with skipDuplicateCheck since we already checked
+                    handleBrowserMessage({
+                        type: 'uploadOntology',
+                        projectId: message.projectId,
+                        fileName: fileName,
+                        fileContent: fileContentBase64,
+                        importMode: message.importMode,
+                        partition: message.partition,
+                        skipDuplicateCheck: true, // We already checked above
+                    });
+                } else {
+                    // No project context yet — store as pending
+                    postToSelf({
+                        type: 'pendingFileUpload',
+                        fileName: fileName,
+                        fileContent: fileContentBase64,
+                        fileSize: fileSize,
+                        importMode: message.importMode,
+                        partition: message.partition,
+                    });
+                }
+            })();
+            break;
+        }
+
         // ──────── Upload ────────────────────────────────────────────────────
 
         case 'uploadOntology': {
@@ -308,13 +417,63 @@ function handleBrowserMessage(message: any) {
                 const uploadProjectId = message.projectId
                     || (message.fileName || '').replace(/\.(owl|rdf|ttl|n3|nt|jsonld)$/i, '');
 
-                // ── Notify Dashboard to open progress dialog immediately ──
+                // ── Notify Dashboard to open progress dialog immediately (but allow cancellation if duplicate) ──
                 // (mirrors what the VS Code extension sends right after file selection)
                 postToSelf({ type: 'showLoading', projectId: uploadProjectId });
 
                 try {
                     const token = localStorage.getItem('authToken');
                     const baseUrl = getGatewayUrl();
+
+                    // ── Check for duplicate BEFORE uploading (if not explicitly skipping) ──
+                    if (!message.skipDuplicateCheck) {
+                        console.log('[BrowserBridge] Checking for duplicate file before upload:', message.fileName);
+                        try {
+                            const checkUrl = `${baseUrl}/api/ontology/check-duplicate?filename=${encodeURIComponent(message.fileName)}${message.ownerEmail ? `&ownerEmail=${encodeURIComponent(message.ownerEmail)}` : ''}`;
+                            const checkResp = await fetch(checkUrl, {
+                                headers: token ? { Authorization: `Bearer ${token}` } : {},
+                            });
+                            const checkData = await checkResp.json().catch(() => ({}));
+
+                            console.log('[BrowserBridge] Duplicate check result:', checkData);
+
+                            if (checkData.isDuplicate) {
+                                console.log('[BrowserBridge] Duplicate detected! File already exists:', checkData);
+                                const existingProjectId = checkData.projectId || uploadProjectId;
+
+                                // Cancel the loading state
+                                postToSelf({ type: 'loadingComplete' });
+
+                                // Notify that duplicate exists - open the existing file instead
+                                postToSelf({
+                                    type: 'fileReady',
+                                    projectId: existingProjectId,
+                                });
+
+                                // Show success message indicating file already exists
+                                postToSelf({
+                                    type: 'importStatusUpdate',
+                                    status: {
+                                        type: 'IMPORT_COMPLETED',
+                                        projectId: existingProjectId,
+                                        status: 'COMPLETED',
+                                        progress: 100,
+                                        filename: message.fileName,
+                                        message: `File "${message.fileName}" already exists. Opening existing file...`,
+                                    },
+                                });
+
+                                return; // Stop the upload process
+                            }
+
+                            console.log('[BrowserBridge] No duplicate found, proceeding with upload');
+                        } catch (checkErr) {
+                            console.warn('[BrowserBridge] Duplicate check failed, continuing with upload:', checkErr);
+                            // Continue with upload if check fails
+                        }
+                    } else {
+                        console.log('[BrowserBridge] Skipping duplicate check (skipDuplicateCheck=true)');
+                    }
 
                     // Decode base64 → text for namespace injection
                     const byteString = atob(message.fileContent);
@@ -456,8 +615,8 @@ function handleBrowserMessage(message: any) {
                     await apiClient.post(`/api/projects/${message.projectId}/files`, {
                         fileName: message.fileName,
                         fileData: `data:application/rdf+xml;base64,${/^[A-Za-z0-9+/=]+$/.test(message.fileContent)
-                                ? message.fileContent
-                                : fileContentToBase64(message.fileContent)
+                            ? message.fileContent
+                            : fileContentToBase64(message.fileContent)
                             }`,
                         fileSize: message.fileSize,
                         fileType: 'owl',
