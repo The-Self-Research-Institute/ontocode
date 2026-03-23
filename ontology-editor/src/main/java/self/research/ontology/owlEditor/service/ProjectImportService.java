@@ -371,26 +371,38 @@ public class ProjectImportService {
             }
             log.info("[Import {}] GraphDB bulk load completed in {} ms", projectId, elapsedMillis(bulkLoadStart));
 
-            Map<String, Object> postLoadMeta = new HashMap<>();
-            postLoadMeta.put("progress", 95);
-            postLoadMeta.put("stage", "graphdb-load-complete");
-            sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
-                    "PROCESSING", "GraphDB load finished, computing metadata", filename, postLoadMeta);
-
-            // Copy file
+            // Copy file to current location
             stage = "persist-copy";
             Path current = storageManager.resolveProjectFile(projectId, "ontology.current." + extensionFor(format));
             Files.createDirectories(current.getParent());
             Files.copy(owlFile, current, StandardCopyOption.REPLACE_EXISTING);
 
-            // Compute metadata
+            // ⚡ PERFORMANCE OPTIMIZATION: Mark import as COMPLETED immediately after GraphDB load
+            // This allows frontend to start using the ontology without waiting for metadata indexing
+            long durationMs = elapsedMillis(importStart);
+            metadataService.writeStatus(projectId, ProjectStatus.completed(filename));
+            
+            // Send IMPORT_COMPLETED notification NOW so frontend can start working
+            Map<String, Object> completionMeta = new HashMap<>();
+            completionMeta.put("stage", "graphdb-load-complete");
+            completionMeta.put("durationMs", durationMs);
+            completionMeta.put("message", "Ontology loaded and ready to use. Metadata indexing continues in background.");
+            sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_COMPLETED,
+                    "COMPLETED", "Ontology loaded successfully", filename, completionMeta);
+            
+            log.info("✅ [Import {}] Marked as COMPLETED after {} ms. Metadata indexing continues in background.", 
+                    projectId, durationMs);
+
+            // Compute metadata asynchronously in background (non-blocking)
             stage = "indexing";
-            metadataService.writeStatus(projectId, ProjectStatus.indexing(filename));
             sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
-                    "PROCESSING", "Indexing and metadata computation started", filename, Map.of("stage", "indexing"));
+                    "PROCESSING", "Background: Computing metadata and statistics", filename, 
+                    Map.of("stage", "background-indexing", "progress", 100));
 
             owlParsingExecutor.execute(() -> {
                 try {
+                    log.info("[Import {}] 🔄 Background task: Starting metadata indexing", projectId);
+                    
                     // Resolve owl:imports BEFORE computing metadata so counts include imported triples.
                     // Wrapped in its own try-catch so a network failure doesn't abort metadata indexing.
                     try {
@@ -400,40 +412,46 @@ public class ProjectImportService {
                                 projectId, importResolutionEx.getMessage());
                     }
 
-                    log.info("[Import {}] Computing metadata", projectId);
+                    log.info("[Import {}] Computing metadata statistics...", projectId);
                     long metadataStart = System.nanoTime();
                     Map<String, Object> meta = indexService.computeMetadata(projectId);
                     Integer classCount = toInteger(meta.get("classCount"));
                     Integer annotationCount = toInteger(meta.get("annotationPropertyCount"));
-                    long durationMs = elapsedMillis(importStart);
+                    long totalDurationMs = elapsedMillis(importStart);
 
                     Map<String, Object> importMetrics = new HashMap<>();
                     importMetrics.put("fileSizeBytes", fileSizeBytes);
                     importMetrics.put("classCount", classCount);
                     importMetrics.put("annotationCount", annotationCount);
-                    importMetrics.put("durationMs", durationMs);
+                    importMetrics.put("durationMs", totalDurationMs);
                     importMetrics.put("importedAt", java.time.Instant.now().toString());
                     meta.put("importMetrics", importMetrics);
-                    log.info("[Import {}] Metadata computed in {} ms", projectId, elapsedMillis(metadataStart));
+                    
+                    long metadataComputeMs = elapsedMillis(metadataStart);
+                    log.info("[Import {}] ✅ Metadata computed in {} ms", projectId, metadataComputeMs);
                     metadataService.writeMeta(projectId, meta);
 
-                    timeEstimator.recordSample(fileSizeBytes, classCount, annotationCount, durationMs);
+                    timeEstimator.recordSample(fileSizeBytes, classCount, annotationCount, totalDurationMs);
 
-                    // Update status
-                    metadataService.writeStatus(projectId, ProjectStatus.completed(filename));
-                    log.info("Completed import for project {} in {} ms", projectId, durationMs);
+                    log.info("✅ [Import {}] Background indexing complete. Total time: {} ms (GraphDB: {} ms, Metadata: {} ms)", 
+                            projectId, totalDurationMs, totalDurationMs - metadataComputeMs, metadataComputeMs);
 
-                    // Notify: Import completed
-                    Map<String, Object> metadata = new HashMap<>();
-                    metadata.put("tripleCount", meta.get("tripleCount"));
-                    metadata.put("classCount", meta.get("classCount"));
-                    sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_COMPLETED,
-                            "COMPLETED", "Import completed successfully", filename, metadata);
+                    // Optional: Send notification that metadata is ready (frontend can refresh statistics)
+                    Map<String, Object> metaReadyNotif = new HashMap<>();
+                    metaReadyNotif.put("tripleCount", meta.get("tripleCount"));
+                    metaReadyNotif.put("classCount", meta.get("classCount"));
+                    metaReadyNotif.put("stage", "metadata-ready");
+                    sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
+                            "METADATA_READY", "Metadata indexing complete", filename, metaReadyNotif);
+                            
                 } catch (Exception e) {
-                    log.error("Metadata indexing failed for {}", projectId, e);
-                    metadataService.writeStatus(projectId, ProjectStatus.error(filename, e.getMessage()));
-                    sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_FAILED,
-                            "ERROR", "Indexing failed: " + e.getMessage(), filename, Map.of("error", e.getMessage()));
+                    log.error("❌ [Import {}] Background metadata indexing failed (ontology still usable): {}", 
+                            projectId, e.getMessage(), e);
+                    // Note: We don't change status to ERROR here since the ontology is already loaded and usable
+                    // Just log the error and notify about metadata issue
+                    sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
+                            "METADATA_ERROR", "Metadata indexing failed: " + e.getMessage(), 
+                            filename, Map.of("error", e.getMessage(), "stage", "metadata-error"));
                 }
             });
 

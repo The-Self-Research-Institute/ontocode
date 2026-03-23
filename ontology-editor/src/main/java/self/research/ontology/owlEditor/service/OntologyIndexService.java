@@ -231,6 +231,8 @@ public class OntologyIndexService {
         meta.put("counts", counts);
         meta.put("prefixes", datasetService.getPrefixes(projectId));
         meta.put("lastUpdated", Instant.now().toString());
+        meta.put("cacheComplete", true);  // Mark cache as complete for fast loading
+        meta.put("cachedAt", Instant.now().toString());
         
         // Add ontology identity
         if (ontologyIri != null) {
@@ -245,6 +247,9 @@ public class OntologyIndexService {
         
         // Add ontology imports
         meta.put("imports", metadataService.getOntologyImports(projectId));
+        
+        // Add general class axioms
+        meta.put("axioms", metadataService.getGeneralClassAxioms(projectId));
         
         // Add axiom counts for Protégé-like display
         meta.put("axiomCount", (int) counts.getOrDefault("triples", 0));

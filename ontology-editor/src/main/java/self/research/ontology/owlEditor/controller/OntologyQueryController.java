@@ -31,14 +31,14 @@ public class OntologyQueryController {
         this.ontologyMetadataService = ontologyMetadataService;
     }
 
-    @GetMapping("/classes/top-level/{projectId}")
+    @GetMapping("/classes/top-level/{projectId:.+}")
     public ResponseEntity<?> topLevel(@PathVariable String projectId,
                                       @RequestParam(defaultValue = "1000") int limit) {
         return ResponseEntity.ok(Map.of("success", true, "classes",
                 queryService.topLevelClasses(projectId, limit)));
     }
 
-    @GetMapping("/classes/children/{projectId}")
+    @GetMapping("/classes/children/{projectId:.+}")
     public ResponseEntity<?> children(@PathVariable String projectId,
                                       @RequestParam String parentIri,
                                       @RequestParam(defaultValue = "1000") int limit,
@@ -46,7 +46,7 @@ public class OntologyQueryController {
         return ResponseEntity.ok(queryService.children(projectId, parentIri, limit, offset));
     }
 
-    @GetMapping("/properties/{projectId}")
+    @GetMapping("/properties/{projectId:.+}")
     public ResponseEntity<?> properties(@PathVariable String projectId,
                                         @RequestParam(required = false) String type,
                                         @RequestParam(defaultValue = "100") int limit,
@@ -55,7 +55,7 @@ public class OntologyQueryController {
                 queryService.properties(projectId, type, limit, offset)));
     }
 
-    @GetMapping("/individuals/{projectId}")
+    @GetMapping("/individuals/{projectId:.+}")
     public ResponseEntity<?> individuals(@PathVariable String projectId,
                                          @RequestParam(defaultValue = "50") int limit,
                                          @RequestParam(defaultValue = "0") int offset) {
@@ -66,7 +66,7 @@ public class OntologyQueryController {
         ));
     }
 
-    @GetMapping("/annotation-properties/{projectId}")
+    @GetMapping("/annotation-properties/{projectId:.+}")
     public ResponseEntity<?> annotationProperties(@PathVariable String projectId,
                                                   @RequestParam(defaultValue = "100") int limit,
                                                   @RequestParam(defaultValue = "0") int offset) {
@@ -81,7 +81,7 @@ public class OntologyQueryController {
                 queryService.annotationPropertyUsage(projectId, propertyIri)));
     }
 
-    @GetMapping("/datatypes/{projectId}")
+    @GetMapping("/datatypes/{projectId:.+}")
     public ResponseEntity<?> datatypes(@PathVariable String projectId,
                                        @RequestParam(defaultValue = "100") int limit,
                                        @RequestParam(defaultValue = "0") int offset) {
@@ -130,7 +130,7 @@ public class OntologyQueryController {
         return ResponseEntity.ok(queryService.getClassInstances(projectId, classIri));
     }
 
-    @GetMapping("/classes/instance-counts/{projectId}")
+    @GetMapping("/classes/instance-counts/{projectId:.+}")
     public ResponseEntity<?> classInstanceCounts(@PathVariable String projectId) {
         return ResponseEntity.ok(Map.of(
                 "success", true,
