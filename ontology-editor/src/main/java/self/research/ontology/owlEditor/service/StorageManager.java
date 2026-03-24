@@ -10,8 +10,10 @@ import org.semanticweb.owlapi.formats.TurtleDocumentFormat;
 import org.semanticweb.owlapi.model.OWLDocumentFormat;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyCreationException;
+import org.semanticweb.owlapi.model.OWLOntologyLoaderConfiguration;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.semanticweb.owlapi.model.OWLOntologyStorageException;
+import org.semanticweb.owlapi.model.MissingImportHandlingStrategy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -141,6 +143,10 @@ public class StorageManager {
         log.info("Exported {} bytes of RDF/XML from GraphDB for OWL API conversion to {}", rdfXmlContent.length(), format);
 
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        // Configure to silently skip unresolvable owl:imports (avoids UnknownHostException)
+        OWLOntologyLoaderConfiguration loaderConfig = new OWLOntologyLoaderConfiguration()
+                .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT);
+        manager.setOntologyLoaderConfiguration(loaderConfig);
         OWLOntology ontology;
         try (ByteArrayInputStream input = new ByteArrayInputStream(rdfXmlContent.getBytes(StandardCharsets.UTF_8))) {
             ontology = manager.loadOntologyFromOntologyDocument(input);

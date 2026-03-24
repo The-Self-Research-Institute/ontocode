@@ -755,10 +755,10 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                         console.log("[ProjectDashboard] 🔘 Switch workspace button clicked (inline)");
                         switchWorkspace();
                       }}
-                      className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs hover:bg-purple-200 transition-colors inline-flex items-center gap-1"
+                      className="ml-2 px-2.5 py-0.5 bg-gradient-to-r from-purple-50 to-indigo-50 text-purple-700 border border-purple-200 rounded-full text-xs hover:from-purple-100 hover:to-indigo-100 hover:border-purple-300 hover:shadow-sm transition-all inline-flex items-center gap-1.5 font-medium"
                       title="Click to switch workspace"
                     >
-                      <Building2 size={12} />
+                      <Building2 size={11} />
                       {user.workspaceName}
                     </button>
                   )}
@@ -792,10 +792,10 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                   console.log("[ProjectDashboard] 🔘 Switch workspace button clicked (main button)");
                   switchWorkspace();
                 }}
-                className="flex items-center gap-2 px-3 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg transition-all hover:shadow-lg cursor-pointer bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:from-indigo-600 hover:to-purple-600"
                 title="Switch Workspace"
               >
-                <Building2 size={20} />
+                <Building2 size={14} />
                 <span className="hidden sm:inline">Switch Workspace</span>
               </button>
               <button

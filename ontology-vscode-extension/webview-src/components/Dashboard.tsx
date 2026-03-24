@@ -9906,16 +9906,48 @@ const Dashboard: React.FC<DashboardProps> = ({
           return startLine + 1;
         }
 
+        const succeededFormats: string[] = [codeViewFormat];
+        const failedFormats: string[] = [];
+
         for (const fmt of otherFormats) {
           try {
             // Fetch cached content for this format to preserve existing citations
-            const response = await apiClient.get<{ success: boolean; content: string }>(
-              `/api/ontology/${projectId}/content`,
-              { format: fmt, forceRefresh: "false" },
-            );
+            let fmtContent: string | null = null;
+            try {
+              const response = await apiClient.get<{ success: boolean; content: string }>(
+                `/api/ontology/${projectId}/content`,
+                { format: fmt, forceRefresh: "false" },
+              );
+              if (response.success && response.content) {
+                fmtContent = response.content;
+              }
+            } catch (fetchError) {
+              console.warn(
+                `[Dashboard] Could not fetch ${fmt} content from server, will generate minimal document:`,
+                fetchError,
+              );
+            }
 
-            if (response.success && response.content) {
-              const fmtLines = response.content.split("\n");
+            // If we couldn't get format content, generate a minimal skeleton
+            if (!fmtContent) {
+              console.log(`[Dashboard] Generating minimal ${fmt} skeleton for citation storage`);
+              if (fmt === "turtle") {
+                fmtContent = `@prefix owl: <http://www.w3.org/2002/07/owl#> .\n@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n@prefix dc: <http://purl.org/dc/elements/1.1/> .\n@prefix bibo: <http://purl.org/ontology/bibo/> .\n\n`;
+              } else if (fmt === "rdfxml") {
+                fmtContent = `<?xml version="1.0"?>\n<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\n    xmlns:owl="http://www.w3.org/2002/07/owl#"\n    xmlns:dc="http://purl.org/dc/elements/1.1/"\n    xmlns:bibo="http://purl.org/ontology/bibo/">\n\n</rdf:RDF>\n`;
+              } else if (fmt === "owlxml") {
+                fmtContent = `<?xml version="1.0"?>\n<Ontology xmlns="http://www.w3.org/2002/07/owl#"\n    xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n\n</Ontology>\n`;
+              } else if (fmt === "manchester") {
+                fmtContent = `Prefix: owl: <http://www.w3.org/2002/07/owl#>\nPrefix: dc: <http://purl.org/dc/elements/1.1/>\nPrefix: bibo: <http://purl.org/ontology/bibo/>\n\nOntology:\n\n`;
+              } else if (fmt === "functional") {
+                fmtContent = `Prefix(owl:=<http://www.w3.org/2002/07/owl#>)\nPrefix(dc:=<http://purl.org/dc/elements/1.1/>)\nPrefix(bibo:=<http://purl.org/ontology/bibo/>)\n\nOntology(\n\n)\n`;
+              } else if (fmt === "ntriples") {
+                fmtContent = ``;
+              }
+            }
+
+            if (fmtContent !== null) {
+              const fmtLines = fmtContent.split("\n");
 
               console.log(
                 `[Dashboard] Processing format ${fmt}: ${fmtLines.length} lines, searching for entity: '${referencedEntity || "(none)"}'`,
@@ -9941,7 +9973,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               let fmtInsertIndex = -1;
               if (referencedEntity) {
                 console.log(`[Dashboard] Searching for entity '${referencedEntity}' in ${fmt} format...`);
-                fmtInsertIndex = findEntityLocation(response.content, referencedEntity);
+                fmtInsertIndex = findEntityLocation(fmtContent, referencedEntity);
                 if (fmtInsertIndex >= 0) {
                   console.log(`[Dashboard] ✓ Found entity '${referencedEntity}' at line ${fmtInsertIndex} in ${fmt}`);
                 } else {
@@ -10027,13 +10059,18 @@ const Dashboard: React.FC<DashboardProps> = ({
                 referencedEntity: referencedEntity || "",
               });
               console.log("[Dashboard] Format cache stored with citation near entity:", fmt);
+              succeededFormats.push(fmt);
             }
           } catch (fmtError) {
             console.warn(`[Dashboard] Failed to update format ${fmt}:`, fmtError);
+            failedFormats.push(fmt);
           }
         }
 
-        console.log("[Dashboard] Citation inserted near entity in all formats");
+        if (failedFormats.length > 0) {
+          console.warn(`[Dashboard] Citation sync failed for formats: ${failedFormats.join(", ")}`);
+        }
+        console.log(`[Dashboard] Citation inserted in formats: ${succeededFormats.join(", ")}`);
         setHasLocalCodeViewChanges(false);
 
         // Step 3: GraphDB insertion disabled (endpoint not available)
@@ -10058,12 +10095,14 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         notificationService.success(
           "Citation Inserted",
-          `Added "${title}" - synced to all formats (${allFormats.join(", ")})`,
+          failedFormats.length === 0
+            ? `Added "${title}" - synced to all formats (${succeededFormats.join(", ")})`
+            : `Added "${title}" - synced to ${succeededFormats.join(", ")}${failedFormats.length > 0 ? `. Could not sync: ${failedFormats.join(", ")} (will sync when format is loaded)` : ""}`,
         );
 
-        // Step 4: Mark that citation was just inserted so format switches will force refresh
+        // Step 4: Mark that citation was just inserted so format switches will reload from cache
         setCitationJustInserted(true);
-        console.log("[Dashboard] Citation insertion flag set - next format switch will force refresh");
+        console.log("[Dashboard] Citation insertion flag set - next format switch will reload from cache");
 
         // Step 5: Reset citation insertion mode after successful insertion
         setPendingCitation(null);
@@ -10349,15 +10388,8 @@ const Dashboard: React.FC<DashboardProps> = ({
             console.log("[Dashboard] Code view content updated with modified content");
             console.log("[Dashboard] hasLocalCodeViewChanges set to true");
 
-            // Clear all format caches
-            try {
-              await apiClient.delete(`/api/ontology/${projectId}/code-view-cache`);
-              console.log("[Dashboard] All format caches cleared for removal");
-            } catch (e) {
-              console.warn("[Dashboard] Failed to clear caches:", e);
-            }
-
-            // Store modified content for current format
+            // Store modified content for current format cache
+            // (Don't clear all caches — other format caches are needed for cross-format removal below)
             try {
               await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
                 content: modifiedContent,
@@ -10703,7 +10735,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 <div className="mb-4 flex gap-2 flex-wrap flex-shrink-0">
                   <button
                     onClick={() => {
-                      fetchCodeViewContent("turtle", citationJustInserted, citationJustInserted);
+                      fetchCodeViewContent("turtle", false, citationJustInserted);
                       setCitationJustInserted(false);
                     }}
                     className={`px-3 py-1 text-sm rounded-md ${
@@ -10716,7 +10748,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   </button>
                   <button
                     onClick={() => {
-                      fetchCodeViewContent("rdfxml", citationJustInserted, citationJustInserted);
+                      fetchCodeViewContent("rdfxml", false, citationJustInserted);
                       setCitationJustInserted(false);
                     }}
                     className={`px-3 py-1 text-sm rounded-md ${
@@ -10729,7 +10761,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   </button>
                   <button
                     onClick={() => {
-                      fetchCodeViewContent("ntriples", citationJustInserted, citationJustInserted);
+                      fetchCodeViewContent("ntriples", false, citationJustInserted);
                       setCitationJustInserted(false);
                     }}
                     className={`px-3 py-1 text-sm rounded-md ${
@@ -10742,7 +10774,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   </button>
                   <button
                     onClick={() => {
-                      fetchCodeViewContent("owlxml", citationJustInserted, citationJustInserted);
+                      fetchCodeViewContent("owlxml", false, citationJustInserted);
                       setCitationJustInserted(false);
                     }}
                     className={`px-3 py-1 text-sm rounded-md ${
@@ -10755,7 +10787,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   </button>
                   <button
                     onClick={() => {
-                      fetchCodeViewContent("manchester", citationJustInserted, citationJustInserted);
+                      fetchCodeViewContent("manchester", false, citationJustInserted);
                       setCitationJustInserted(false);
                     }}
                     className={`px-3 py-1 text-sm rounded-md ${
@@ -10768,7 +10800,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   </button>
                   <button
                     onClick={() => {
-                      fetchCodeViewContent("functional", citationJustInserted, citationJustInserted);
+                      fetchCodeViewContent("functional", false, citationJustInserted);
                       setCitationJustInserted(false);
                     }}
                     className={`px-3 py-1 text-sm rounded-md ${
