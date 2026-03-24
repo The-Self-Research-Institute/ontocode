@@ -8695,14 +8695,47 @@ const Dashboard: React.FC<DashboardProps> = ({
           content.length,
         );
 
-        const response = await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
-          content: content,
-          format: codeViewFormat,
-        });
+        // Try the save-and-sync endpoint first (reimports into GraphDB, clears other format caches)
+        let response: any;
+        let synced = false;
+        try {
+          response = await apiClient.post(`/api/ontology/${projectId}/code-view-save`, {
+            content: content,
+            format: codeViewFormat,
+          });
+          synced = response.success;
+        } catch (syncError: any) {
+          console.warn(
+            "[Dashboard] code-view-save endpoint not available, falling back to cache-only save:",
+            syncError.message,
+          );
+        }
+
+        if (!synced) {
+          // Fallback: save to cache only (old endpoint)
+          response = await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+            content: content,
+            format: codeViewFormat,
+          });
+          // Also clear other format caches so they re-export fresh when switched to
+          const allFormats = ["turtle", "rdfxml", "ntriples", "owlxml", "manchester", "functional"] as const;
+          for (const fmt of allFormats) {
+            if (fmt !== codeViewFormat) {
+              try {
+                await apiClient.delete(`/api/ontology/${projectId}/code-view-cache`, { format: fmt });
+              } catch {
+                /* ignore */
+              }
+            }
+          }
+        }
 
         if (response.success) {
-          console.log("[Dashboard] Code view content saved successfully");
-          notificationService.success("Saved", "Code content saved to backend");
+          console.log("[Dashboard] Code view content saved successfully, synced:", synced);
+          notificationService.success(
+            "Saved",
+            synced ? "Code content saved and synced across all formats" : "Code content saved",
+          );
           setHasLocalCodeViewChanges(false);
         } else {
           console.error("[Dashboard] Save failed:", response.error || "Unknown error");

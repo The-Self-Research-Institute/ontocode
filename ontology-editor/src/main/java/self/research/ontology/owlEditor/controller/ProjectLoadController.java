@@ -43,11 +43,13 @@ import self.research.ontology.owlEditor.util.OWLFormatConverter;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.ByteArrayInputStream;
 import java.io.OutputStream;
 import java.io.PushbackInputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.nio.charset.StandardCharsets;
 import java.util.zip.GZIPInputStream;
 import java.util.List;
 import java.util.Map;
@@ -897,6 +899,108 @@ public class ProjectLoadController {
                     .body(Map.of(
                             "success", false,
                             "error", "Failed to clear code view cache: " + e.getMessage()
+                    ));
+        }
+    }
+
+    /**
+     * Save code view content and sync across all formats.
+     * Reimports the edited content into GraphDB and clears all format caches
+     * so other formats re-export fresh from the updated GraphDB.
+     * POST /api/ontology/{projectId}/code-view-save
+     */
+    @PostMapping("/{projectId:.+}/code-view-save")
+    public ResponseEntity<Map<String, Object>> saveCodeViewAndSync(
+            @PathVariable String projectId,
+            @RequestBody Map<String, Object> request) {
+        try {
+            String content = (String) request.get("content");
+            String format = (String) request.getOrDefault("format", "turtle");
+
+            if (content == null || content.isEmpty()) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("success", false, "error", "Content is required"));
+            }
+
+            log.info("[CODE-VIEW-SAVE] Saving and syncing code view for project: {} in format: {}, size: {} bytes",
+                     projectId, format, content.length());
+
+            // Step 1: Determine the RDF format for GraphDB import
+            boolean isOwlApiFormat = format.equalsIgnoreCase("owlxml")
+                    || format.equalsIgnoreCase("manchester")
+                    || format.equalsIgnoreCase("manchestersyntax")
+                    || format.equalsIgnoreCase("functional")
+                    || format.equalsIgnoreCase("functionalsyntax");
+
+            RDFFormat rdfFormat;
+            byte[] importBytes;
+
+            if (isOwlApiFormat) {
+                // OWL API formats need conversion to RDF/XML before GraphDB import
+                String ext = storageManager.extensionFor(format);
+                Path tempFile = Files.createTempFile("codeview-", "." + ext);
+                try {
+                    Files.writeString(tempFile, content, StandardCharsets.UTF_8);
+                    Path convertedFile = OWLFormatConverter.convertToRDFXML(tempFile);
+                    importBytes = Files.readAllBytes(convertedFile);
+                    Files.deleteIfExists(convertedFile);
+                } finally {
+                    Files.deleteIfExists(tempFile);
+                }
+                rdfFormat = RDFFormat.RDFXML;
+                log.info("[CODE-VIEW-SAVE] Converted {} to RDF/XML ({} bytes)", format, importBytes.length);
+            } else {
+                // Standard RDF formats — write to temp file and sanitize (like import pipeline)
+                String ext = storageManager.extensionFor(format);
+                Path tempFile = Files.createTempFile("codeview-", "." + ext);
+                try {
+                    Files.writeString(tempFile, content, StandardCharsets.UTF_8);
+                    // Sanitize: fixes malformed RDF/XML, missing namespaces, re-serializes via OWL API
+                    // Safe for all formats — skips non-RDF/XML files automatically
+                    try {
+                        OWLFormatConverter.sanitizeFileOnDisk(tempFile);
+                        log.info("[CODE-VIEW-SAVE] Sanitization completed for format: {}", format);
+                    } catch (Exception sanitizeEx) {
+                        log.warn("[CODE-VIEW-SAVE] Sanitization failed (continuing with original): {}", sanitizeEx.getMessage());
+                    }
+                    importBytes = Files.readAllBytes(tempFile);
+                } finally {
+                    Files.deleteIfExists(tempFile);
+                }
+                rdfFormat = switch (format.toLowerCase()) {
+                    case "turtle", "ttl" -> RDFFormat.TURTLE;
+                    case "ntriples", "nt" -> RDFFormat.NTRIPLES;
+                    default -> RDFFormat.RDFXML;
+                };
+            }
+
+            // Step 2: Reimport into GraphDB
+            log.info("[CODE-VIEW-SAVE] Reimporting {} bytes into GraphDB as {}", importBytes.length, rdfFormat);
+            try (InputStream is = new ByteArrayInputStream(importBytes)) {
+                datasetService.bulkLoadChunked(projectId, is, rdfFormat);
+            }
+            log.info("[CODE-VIEW-SAVE] GraphDB reimport complete");
+
+            // Step 3: Clear ALL code-view caches (stale after reimport)
+            storageManager.clearCodeViewCache(projectId);
+            log.info("[CODE-VIEW-SAVE] All format caches cleared");
+
+            // Step 4: Store the saved format's cache (preserves the user's edited content)
+            storageManager.storeCodeViewCache(projectId, content, format);
+            log.info("[CODE-VIEW-SAVE] Current format cache restored");
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "projectId", projectId,
+                    "format", format,
+                    "message", "Code view saved and synced across all formats"
+            ));
+        } catch (Exception e) {
+            log.error("[CODE-VIEW-SAVE] Failed for project: {}", projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of(
+                            "success", false,
+                            "error", "Failed to save and sync code view: " + e.getMessage()
                     ));
         }
     }
