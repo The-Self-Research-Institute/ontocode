@@ -98,55 +98,67 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       if (message.type === "fileReady" || message.type === "importStatusUpdate") {
         console.log(
           "[ProjectLibrary] 📋 Received import completion message:",
-          "projectId:", message.projectId,
-          "uploadedFileId:", message.uploadedFileId,
-          "uploadedFileName:", message.uploadedFileName
+          "projectId:",
+          message.projectId,
+          "uploadedFileId:",
+          message.uploadedFileId,
+          "uploadedFileName:",
+          message.uploadedFileName,
         );
 
         // Check if the message is for this project
         if (message.projectId === projectId || message.status?.status === "COMPLETED") {
           console.log("[ProjectLibrary] 📋 Refetching files after import completion");
           console.log("[ProjectLibrary] 📋 Current files count before refresh:", files.length);
-          
+
           // Retry mechanism to ensure newly uploaded file appears in list
           const fetchWithRetry = async (retries = 3, delay = 1000) => {
             for (let attempt = 1; attempt <= retries; attempt++) {
               console.log(`[ProjectLibrary] 📋 Fetch attempt ${attempt}/${retries}...`);
               const fetchedFiles = await loadFiles();
-              
+
               // If we're looking for a specific uploaded file, verify it's in the list
               if (message.uploadedFileId || message.uploadedFileName) {
                 let found = false;
-                
+
                 // First try to match by fileId if available
                 if (message.uploadedFileId) {
-                  found = fetchedFiles.some(f => f.id === message.uploadedFileId);
-                  console.log(`[ProjectLibrary] 📋 Looking for file ID ${message.uploadedFileId} in ${fetchedFiles.length} files, found: ${found}`);
+                  found = fetchedFiles.some((f) => f.id === message.uploadedFileId);
+                  console.log(
+                    `[ProjectLibrary] 📋 Looking for file ID ${message.uploadedFileId} in ${fetchedFiles.length} files, found: ${found}`,
+                  );
                 }
-                
+
                 // If not found by ID or no ID, try to match by filename
                 if (!found && message.uploadedFileName) {
                   const normalizedTarget = message.uploadedFileName.toLowerCase();
-                  const matchedFile = fetchedFiles.find(f => f.name.toLowerCase() === normalizedTarget);
+                  const matchedFile = fetchedFiles.find((f) => f.name.toLowerCase() === normalizedTarget);
                   found = !!matchedFile;
-                  console.log(`[ProjectLibrary] 📋 Looking for filename "${message.uploadedFileName}" in ${fetchedFiles.length} files, found: ${found}`);
+                  console.log(
+                    `[ProjectLibrary] 📋 Looking for filename "${message.uploadedFileName}" in ${fetchedFiles.length} files, found: ${found}`,
+                  );
                   if (matchedFile) {
                     console.log(`[ProjectLibrary] 📋 Matched file by name - ID: ${matchedFile.id}`);
                   } else {
-                    console.log(`[ProjectLibrary] 📋 Available filenames:`, fetchedFiles.map(f => f.name));
+                    console.log(
+                      `[ProjectLibrary] 📋 Available filenames:`,
+                      fetchedFiles.map((f) => f.name),
+                    );
                   }
                 }
-                
+
                 if (found) {
                   console.log(`[ProjectLibrary] ✅ File found in list after ${attempt} attempt(s)!`);
                   return true;
                 }
-                
+
                 if (attempt < retries) {
                   console.log(`[ProjectLibrary] ⏳ File not found, waiting ${delay}ms before retry ${attempt + 1}...`);
-                  await new Promise(resolve => setTimeout(resolve, delay));
+                  await new Promise((resolve) => setTimeout(resolve, delay));
                 } else {
-                  console.warn(`[ProjectLibrary] ⚠️ File ${message.uploadedFileName || message.uploadedFileId} not found after ${retries} attempts`);
+                  console.warn(
+                    `[ProjectLibrary] ⚠️ File ${message.uploadedFileName || message.uploadedFileId} not found after ${retries} attempts`,
+                  );
                   console.warn(`[ProjectLibrary] ⚠️ This may indicate a database synchronization delay`);
                   return false;
                 }
@@ -158,7 +170,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             }
             return false;
           };
-          
+
           fetchWithRetry();
         }
       }
@@ -341,10 +353,10 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         `/api/projects/${projectId}/files/check?fileName=${encodeURIComponent(file.name)}`,
       );
       console.log("[ProjectLibrary] Duplicate check raw response:", JSON.stringify(checkResponse));
-      
+
       const checkData = (checkResponse as any)?.data || checkResponse;
       console.log("[ProjectLibrary] Parsed check data:", JSON.stringify(checkData));
-      
+
       if (checkData?.exists === true) {
         const existing = checkData.existingFile || {};
         const existingFileId = existing.fileId || existing.id || null;
@@ -362,7 +374,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
           return; // Stop upload process
         }
       }
-      
+
       console.log("[ProjectLibrary] No duplicate found (exists=" + checkData?.exists + "), proceeding with upload");
     } catch (error: any) {
       // If check fails, log detailed error but continue with upload for backward compatibility console.error("[ProjectLibrary] Duplicate check failed with error:", error);
@@ -457,9 +469,9 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                   Editor
                 </button>
               )}
-              <label className="px-4 py-2.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors cursor-pointer flex items-center gap-2 font-medium">
-                <Upload size={18} />
-                {uploading ? "Uploading..." : "Upload File"}
+              <label className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-all hover:shadow-lg cursor-pointer bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600">
+                <Upload size={18} className={uploading ? "animate-bounce" : ""} style={{ color: "white" }} />
+                <span style={{ color: "white" }}>{uploading ? "Uploading..." : "Upload File"}</span>
                 <input
                   type="file"
                   onChange={handleFileUpload}
@@ -542,6 +554,22 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             <p className="text-gray-600 mb-6">
               {searchQuery ? "Try a different search query" : "Upload your first ontology file to get started"}
             </p>
+            {!searchQuery && (
+              <div className="flex flex-col items-center gap-4">
+                <label className="group flex items-center gap-3 px-8 py-4 text-lg font-semibold rounded-xl transition-all hover:shadow-lg cursor-pointer bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600">
+                  <Upload size={24} className="group-hover:animate-bounce" style={{ color: "white" }} />
+                  <span style={{ color: "white" }}>Upload Your First File</span>
+                  <input
+                    type="file"
+                    onChange={handleFileUpload}
+                    className="hidden"
+                    accept=".owl,.rdf,.ttl,.n3"
+                    disabled={uploading}
+                  />
+                </label>
+                <p className="text-sm text-gray-500">Supported formats: .owl, .rdf, .ttl, .n3 (up to 1GB)</p>
+              </div>
+            )}
           </div>
         ) : viewMode === "grid" ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">

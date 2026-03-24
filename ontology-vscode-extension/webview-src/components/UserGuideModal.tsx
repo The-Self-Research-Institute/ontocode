@@ -14,6 +14,9 @@ import {
   CheckCircle,
   XCircle,
   Users,
+  Share2,
+  Bug,
+  Code,
 } from "lucide-react";
 
 interface UserGuideModalProps {
@@ -29,6 +32,9 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
     project: false,
     assignMembers: false,
     createFile: false,
+    collaboration: false,
+    reportIssue: false,
+    codeView: false,
   });
 
   if (!isOpen) return null;
@@ -50,6 +56,9 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
       project: newValue,
       assignMembers: newValue,
       createFile: newValue,
+      collaboration: newValue,
+      reportIssue: newValue,
+      codeView: newValue,
     });
   };
 
@@ -62,6 +71,9 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
       "section-project": "project",
       "section-assign": "assignMembers",
       "section-file": "createFile",
+      "section-collaboration": "collaboration",
+      "section-report": "reportIssue",
+      "section-codeview": "codeView",
     };
 
     // Collapse all sections and expand only the clicked one
@@ -74,6 +86,9 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
         project: false,
         assignMembers: false,
         createFile: false,
+        collaboration: false,
+        reportIssue: false,
+        codeView: false,
         [sectionKey]: true,
       });
     }
@@ -138,11 +153,23 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
               </div>
               <div style={styles.tocItem} onClick={() => scrollToSection("section-assign")}>
                 <Users size={18} style={{ color: "#ec4899" }} />
-                <span>5. Assign Members</span>
+                <span>5. Assign Project Members</span>
               </div>
               <div style={styles.tocItem} onClick={() => scrollToSection("section-file")}>
                 <FileText size={18} style={{ color: "#3b82f6" }} />
-                <span>6. Create a File</span>
+                <span>6. Create a New File</span>
+              </div>
+              <div style={styles.tocItem} onClick={() => scrollToSection("section-collaboration")}>
+                <Share2 size={18} style={{ color: "#8b5cf6" }} />
+                <span>7. Collaboration</span>
+              </div>
+              <div style={styles.tocItem} onClick={() => scrollToSection("section-report")}>
+                <Bug size={18} style={{ color: "#ef4444" }} />
+                <span>8. Report an Issue</span>
+              </div>
+              <div style={styles.tocItem} onClick={() => scrollToSection("section-codeview")}>
+                <Code size={18} style={{ color: "#06b6d4" }} />
+                <span>9. Code View</span>
               </div>
             </div>
           </div>
@@ -845,6 +872,571 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                       and <strong>Open File dialog</strong> when already browsing for files.
                     </p>
                   </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Section 7: Collaboration */}
+          <div id="section-collaboration" style={styles.section}>
+            <button onClick={() => toggleSection("collaboration")} style={styles.sectionHeader}>
+              {expandedSections.collaboration ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
+              <Share2 size={20} style={{ color: "#8b5cf6" }} />
+              <span style={styles.sectionTitle}>7. Collaboration</span>
+            </button>
+
+            {expandedSections.collaboration && (
+              <div style={styles.sectionContent}>
+                <div style={styles.subsection}>
+                  <h4 style={styles.subsectionTitle}>
+                    <CheckCircle size={16} style={{ color: "#10b981" }} />
+                    Positive Cases (Recommended)
+                  </h4>
+
+                  <div style={{ marginBottom: "20px", paddingLeft: "12px", borderLeft: "3px solid #8b5cf6" }}>
+                    <h5 style={{ fontSize: "14px", fontWeight: "600", color: "#1f2937", marginBottom: "8px" }}>
+                      👥 Real-Time Presence & Cursors
+                    </h5>
+                    <ul style={styles.list}>
+                      <li>
+                        <strong>See Who's Online:</strong> The Collaboration panel (bottom-right corner) shows all
+                        active users in your project with colored avatars and their last activity time
+                      </li>
+                      <li>
+                        <strong>Live Cursors:</strong> See collaborators' mouse positions on the canvas in real time —
+                        each user gets a unique colored cursor with their name label
+                      </li>
+                      <li>
+                        <strong>Connection Status:</strong> A green "Live" badge confirms you're connected to the
+                        collaboration server; gray "Offline" means you're disconnected
+                      </li>
+                      <li>
+                        <strong>Cursor Position Tracking:</strong> The Active Users list shows which ontology node each
+                        collaborator is currently viewing
+                      </li>
+                    </ul>
+                  </div>
+
+                  <div style={{ marginBottom: "20px", paddingLeft: "12px", borderLeft: "3px solid #06b6d4" }}>
+                    <h5 style={{ fontSize: "14px", fontWeight: "600", color: "#1f2937", marginBottom: "8px" }}>
+                      ✏️ Collaborative Editing
+                    </h5>
+                    <ul style={styles.list}>
+                      <li>
+                        <strong>Real-Time Sync:</strong> All ontology changes (classes, properties, annotations,
+                        individuals, axioms, SWRL rules) are propagated to all collaborators instantly
+                      </li>
+                    </ul>
+                  </div>
+
+                  <div style={{ marginBottom: "20px", paddingLeft: "12px", borderLeft: "3px solid #10b981" }}>
+                    <h5 style={{ fontSize: "14px", fontWeight: "600", color: "#1f2937", marginBottom: "8px" }}>
+                      📋 Change Tracking & Activity Feed
+                    </h5>
+                    <ul style={styles.list}>
+                      <li>
+                        <strong>Activity Feed:</strong> The Collaboration panel displays a scrollable list of recent
+                        changes with color-coded indicators — green for additions, red for deletions, blue for edits
+                      </li>
+                      <li>
+                        <strong>Diff View:</strong> Edit entries show old → new value differences so you can see exactly
+                        what changed
+                      </li>
+                      <li>
+                        <strong>Author & Timestamp:</strong> Every change entry shows who made it and when
+                      </li>
+                      <li>
+                        <strong>Auto-Refresh:</strong> The activity feed refreshes automatically every 30 seconds and
+                        can be manually refreshed
+                      </li>
+                    </ul>
+                  </div>
+
+                  <div style={{ paddingLeft: "12px", borderLeft: "3px solid #f59e0b" }}>
+                    <h5 style={{ fontSize: "14px", fontWeight: "600", color: "#1f2937", marginBottom: "8px" }}>
+                      🔧 Collaboration Panel
+                    </h5>
+                    <ul style={styles.list}>
+                      <li>
+                        <strong>Draggable Panel:</strong> The Collaboration panel can be dragged to any position on
+                        screen — your preferred position is saved across sessions
+                      </li>
+                      <li>
+                        <strong>Expand/Collapse:</strong> Click or double-click the panel header to toggle between
+                        compact and expanded views
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+
+                <div style={styles.subsection}>
+                  <h4 style={styles.subsectionTitle}>
+                    <XCircle size={16} style={{ color: "#ef4444" }} />
+                    Negative Cases (What to Avoid)
+                  </h4>
+                  <ul style={styles.list}>
+                    <li>
+                      <strong>Don't edit simultaneously without checking presence:</strong> Always check who's online
+                      before making major changes to avoid unintended overwrites
+                    </li>
+                    <li>
+                      <strong>Don't ignore the Offline indicator:</strong> If the connection badge shows "Offline", your
+                      changes won't be visible to others until reconnected
+                    </li>
+                  </ul>
+                </div>
+
+                <div style={styles.subsection}>
+                  <h4 style={styles.subsectionTitle}>
+                    <AlertCircle size={16} style={{ color: "#f59e0b" }} />
+                    Possibilities
+                  </h4>
+                  <ul style={styles.list}>
+                    <li>
+                      <strong>Auto-Reconnect:</strong> If your connection drops, OntoCode automatically reconnects and
+                      re-syncs your collaboration session
+                    </li>
+                    <li>
+                      <strong>Multi-User Scaling:</strong> Multiple team members can work on the same ontology project
+                      simultaneously with real-time visibility
+                    </li>
+                    <li>
+                      <strong>Import Progress:</strong> When a collaborator imports an ontology, you'll see real-time
+                      progress updates
+                    </li>
+                    <li>
+                      <strong>Cross-Platform:</strong> Collaboration works both in VS Code (via the extension) and in
+                      the browser-based editor
+                    </li>
+                  </ul>
+                </div>
+
+                <div
+                  style={{
+                    padding: "12px",
+                    backgroundColor: "#f5f3ff",
+                    borderRadius: "6px",
+                    borderLeft: "4px solid #8b5cf6",
+                  }}
+                >
+                  <p style={{ fontSize: "13px", color: "#4c1d95", margin: 0 }}>
+                    <strong>🎯 Recommendation:</strong> Keep the Collaboration panel visible while working in a team.
+                    Check the <strong>Active Users</strong> list before making large-scale changes, and use the{" "}
+                    <strong>Activity Feed</strong> to stay informed of recent modifications by your collaborators.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Section 8: Report an Issue */}
+          <div id="section-report" style={styles.section}>
+            <button onClick={() => toggleSection("reportIssue")} style={styles.sectionHeader}>
+              {expandedSections.reportIssue ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
+              <Bug size={20} style={{ color: "#ef4444" }} />
+              <span style={styles.sectionTitle}>8. How to Report an Issue</span>
+            </button>
+
+            {expandedSections.reportIssue && (
+              <div style={styles.sectionContent}>
+                <div style={styles.subsection}>
+                  <h4 style={styles.subsectionTitle}>
+                    <CheckCircle size={16} style={{ color: "#10b981" }} />
+                    Positive Cases (Recommended)
+                  </h4>
+
+                  <div style={{ marginBottom: "20px", paddingLeft: "12px", borderLeft: "3px solid #ef4444" }}>
+                    <h5 style={{ fontSize: "14px", fontWeight: "600", color: "#1f2937", marginBottom: "8px" }}>
+                      🐛 Opening the Report Issue Dialog
+                    </h5>
+                    <ul style={styles.list}>
+                      <li>
+                        <strong>From Help Menu:</strong> Click <strong>Help</strong> in the top menu bar, then select{" "}
+                        <strong>Report Issue</strong> to open the issue reporting form
+                      </li>
+                      <li>
+                        <strong>Project Context:</strong> The dialog automatically captures your current project name,
+                        project ID, and active file path to provide context with your report
+                      </li>
+                      <li>
+                        <strong>System Info:</strong> Your OS, VS Code version, and extension version are automatically
+                        collected — no need to enter them manually
+                      </li>
+                    </ul>
+                  </div>
+
+                  <div style={{ marginBottom: "20px", paddingLeft: "12px", borderLeft: "3px solid #8b5cf6" }}>
+                    <h5 style={{ fontSize: "14px", fontWeight: "600", color: "#1f2937", marginBottom: "8px" }}>
+                      📝 Filling Out the Form
+                    </h5>
+                    <ul style={styles.list}>
+                      <li>
+                        <strong>Issue Type:</strong> Choose <strong>Bug</strong> for something broken or{" "}
+                        <strong>Task</strong> for a feature request or improvement
+                      </li>
+                      <li>
+                        <strong>Priority:</strong> Select from Highest, High, Medium, Low, or Lowest to indicate urgency
+                      </li>
+                      <li>
+                        <strong>Title:</strong> Provide a clear, concise summary of the issue (up to 200 characters)
+                      </li>
+                      <li>
+                        <strong>Description:</strong> Describe the issue in detail — include what you expected vs. what
+                        actually happened
+                      </li>
+                      <li>
+                        <strong>Steps to Reproduce:</strong> (Optional) List the exact steps to recreate the issue, e.g.
+                        "1. Go to... 2. Click on... 3. See error..."
+                      </li>
+                    </ul>
+                  </div>
+
+                  <div style={{ marginBottom: "20px", paddingLeft: "12px", borderLeft: "3px solid #10b981" }}>
+                    <h5 style={{ fontSize: "14px", fontWeight: "600", color: "#1f2937", marginBottom: "8px" }}>
+                      📎 Attaching Files
+                    </h5>
+                    <ul style={styles.list}>
+                      <li>
+                        <strong>Drag & Drop:</strong> Drag files directly onto the attachment area to upload them
+                      </li>
+                      <li>
+                        <strong>File Browser:</strong> Click "Choose files to upload" to select files from your computer
+                      </li>
+                      <li>
+                        <strong>Supported Formats:</strong> Images (JPG, PNG, GIF, SVG, WebP), documents (PDF, DOC,
+                        DOCX, TXT), logs (.log), and ontology files (.owl, .ttl, .rdf)
+                      </li>
+                      <li>
+                        <strong>Preview:</strong> Attached images and text files show a preview thumbnail — you can
+                        remove any attachment by hovering and clicking the remove button
+                      </li>
+                    </ul>
+                  </div>
+
+                  <div style={{ paddingLeft: "12px", borderLeft: "3px solid #f59e0b" }}>
+                    <h5 style={{ fontSize: "14px", fontWeight: "600", color: "#1f2937", marginBottom: "8px" }}>
+                      ✅ Submitting the Report
+                    </h5>
+                    <ul style={styles.list}>
+                      <li>
+                        <strong>Submit:</strong> Click <strong>Submit Issue Report</strong> — the button is disabled
+                        until both Title and Description are filled in
+                      </li>
+                      <li>
+                        <strong>Confirmation:</strong> A success message appears with the issue type and priority
+                        badges. The dialog closes automatically after 3 seconds
+                      </li>
+                      <li>
+                        <strong>Jira Integration:</strong> If enabled, your report is automatically created as a Jira
+                        ticket with all attachments uploaded
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+
+                <div style={styles.subsection}>
+                  <h4 style={styles.subsectionTitle}>
+                    <XCircle size={16} style={{ color: "#ef4444" }} />
+                    Negative Cases (What to Avoid)
+                  </h4>
+                  <ul style={styles.list}>
+                    <li>
+                      <strong>Don't leave Title or Description empty:</strong> Both are required fields — the submit
+                      button won't be enabled without them
+                    </li>
+                    <li>
+                      <strong>Don't use vague titles:</strong> "It's broken" is unhelpful — instead, describe what
+                      specifically failed (e.g., "Class creation fails when name contains special characters")
+                    </li>
+                    <li>
+                      <strong>Don't attach unsupported file types:</strong> Only images, documents, text/log files, and
+                      ontology files are accepted
+                    </li>
+                    <li>
+                      <strong>Don't skip steps to reproduce:</strong> Even though optional, including reproduction steps
+                      greatly helps the team diagnose and fix the issue faster
+                    </li>
+                  </ul>
+                </div>
+
+                <div style={styles.subsection}>
+                  <h4 style={styles.subsectionTitle}>
+                    <AlertCircle size={16} style={{ color: "#f59e0b" }} />
+                    Possibilities
+                  </h4>
+                  <ul style={styles.list}>
+                    <li>
+                      <strong>Offline Fallback:</strong> If the Jira connection is unavailable, your report is saved
+                      locally and the team is notified
+                    </li>
+                    <li>
+                      <strong>Multiple Attachments:</strong> You can attach several files at once — screenshots, log
+                      files, and ontology files can all be included in a single report
+                    </li>
+                    <li>
+                      <strong>Priority Auto-Detection:</strong> If you don't set a priority, the system can
+                      automatically determine one based on the issue content
+                    </li>
+                    <li>
+                      <strong>Cross-Platform:</strong> Report issues from both VS Code and the browser-based editor —
+                      system information is collected automatically in both environments
+                    </li>
+                  </ul>
+                </div>
+
+                <div
+                  style={{
+                    padding: "12px",
+                    backgroundColor: "#fef2f2",
+                    borderRadius: "6px",
+                    borderLeft: "4px solid #ef4444",
+                  }}
+                >
+                  <p style={{ fontSize: "13px", color: "#991b1b", margin: 0 }}>
+                    <strong>🎯 Recommendation:</strong> Always include <strong>Steps to Reproduce</strong> and attach a{" "}
+                    <strong>screenshot</strong> when reporting bugs. The more detail you provide, the faster the issue
+                    can be resolved.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Section 9: Code View */}
+          <div id="section-codeview" style={styles.section}>
+            <button onClick={() => toggleSection("codeView")} style={styles.sectionHeader}>
+              {expandedSections.codeView ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
+              <Code size={20} style={{ color: "#06b6d4" }} />
+              <span style={styles.sectionTitle}>9. Code View</span>
+            </button>
+
+            {expandedSections.codeView && (
+              <div style={styles.sectionContent}>
+                <div style={styles.subsection}>
+                  <h4 style={styles.subsectionTitle}>
+                    <CheckCircle size={16} style={{ color: "#10b981" }} />
+                    Positive Cases (Recommended)
+                  </h4>
+
+                  <div style={{ marginBottom: "20px", paddingLeft: "12px", borderLeft: "3px solid #06b6d4" }}>
+                    <h5 style={{ fontSize: "14px", fontWeight: "600", color: "#1f2937", marginBottom: "8px" }}>
+                      📄 Accessing & Switching Formats
+                    </h5>
+                    <ul style={styles.list}>
+                      <li>
+                        <strong>Open Code View:</strong> Click the <strong>CodeView</strong> tab in the main navigation
+                        to view your ontology as serialized code
+                      </li>
+                      <li>
+                        <strong>Six Formats Available:</strong> Switch between <strong>Turtle</strong> (.ttl),{" "}
+                        <strong>RDF/XML</strong> (.rdf), <strong>N-Triples</strong> (.nt), <strong>OWL/XML</strong>{" "}
+                        (.owl), <strong>Manchester</strong> (.omn), and <strong>Functional</strong> (.ofn) using the
+                        format buttons in the toolbar
+                      </li>
+                      <li>
+                        <strong>Active Format:</strong> The currently selected format button is highlighted in purple —
+                        click any other format to switch instantly
+                      </li>
+                      <li>
+                        <strong>Syntax Highlighting:</strong> Each format has specialized color-coding — keywords in
+                        blue, URIs in teal, strings in tan, comments in green, and XML tags in their respective colors
+                      </li>
+                    </ul>
+                  </div>
+
+                  <div style={{ marginBottom: "20px", paddingLeft: "12px", borderLeft: "3px solid #8b5cf6" }}>
+                    <h5 style={{ fontSize: "14px", fontWeight: "600", color: "#1f2937", marginBottom: "8px" }}>
+                      ✏️ View Mode vs Edit Mode
+                    </h5>
+                    <ul style={styles.list}>
+                      <li>
+                        <strong>View Mode (Default):</strong> Read-only display with line numbers and syntax
+                        highlighting — ideal for examining your ontology structure
+                      </li>
+                      <li>
+                        <strong>Edit Mode:</strong> Click the <strong>Edit</strong> button to enable direct code editing
+                        with a textarea editor, line numbers gutter, and fold indicators
+                      </li>
+                      <li>
+                        <strong>Cursor Position:</strong> In edit mode, a status indicator at the bottom-right shows
+                        your current line and column (e.g., "Ln 42, Col 15")
+                      </li>
+                      <li>
+                        <strong>Auto-Indentation:</strong> Press Tab to insert 4 spaces for consistent code formatting
+                      </li>
+                      <li>
+                        <strong>Switch Back:</strong> Click <strong>View</strong> to return to read-only mode
+                      </li>
+                    </ul>
+                  </div>
+
+                  <div style={{ marginBottom: "20px", paddingLeft: "12px", borderLeft: "3px solid #10b981" }}>
+                    <h5 style={{ fontSize: "14px", fontWeight: "600", color: "#1f2937", marginBottom: "8px" }}>
+                      🔍 Search & Navigation
+                    </h5>
+                    <ul style={styles.list}>
+                      <li>
+                        <strong>Search Bar:</strong> Type text to search through the code — matches are highlighted in
+                        amber with a match counter (e.g., "3 of 12")
+                      </li>
+                      <li>
+                        <strong>Navigate Matches:</strong> Use the Previous/Next arrows (or Enter / Shift+Enter) to jump
+                        between search results
+                      </li>
+                      <li>
+                        <strong>Case Sensitivity:</strong> Toggle the "Aa" button to enable or disable case-sensitive
+                        searching
+                      </li>
+                      <li>
+                        <strong>Search Results Panel:</strong> Expand the results panel to see all matches with line
+                        numbers and code previews — click any result to jump directly to that line
+                      </li>
+                      <li>
+                        <strong>Go to Line:</strong> Enter a line number in the "Go to:" field and press Go or Enter to
+                        jump to a specific line
+                      </li>
+                    </ul>
+                  </div>
+
+                  <div style={{ marginBottom: "20px", paddingLeft: "12px", borderLeft: "3px solid #f59e0b" }}>
+                    <h5 style={{ fontSize: "14px", fontWeight: "600", color: "#1f2937", marginBottom: "8px" }}>
+                      📁 Code Folding
+                    </h5>
+                    <ul style={styles.list}>
+                      <li>
+                        <strong>Fold Indicators:</strong> Foldable regions (bracket pairs, XML tags) show arrow
+                        indicators (▶/▼) in the gutter — click to collapse or expand
+                      </li>
+                      <li>
+                        <strong>Collapsed Summary:</strong> Folded regions display "⋯ N lines" to show how many lines
+                        are hidden
+                      </li>
+                      <li>
+                        <strong>Works in Both Modes:</strong> Code folding is available in view mode and edit mode —
+                        entering edit mode automatically expands all folds
+                      </li>
+                    </ul>
+                  </div>
+
+                  <div style={{ marginBottom: "20px", paddingLeft: "12px", borderLeft: "3px solid #ec4899" }}>
+                    <h5 style={{ fontSize: "14px", fontWeight: "600", color: "#1f2937", marginBottom: "8px" }}>
+                      📚 Citation Management (Zotero Integration)
+                    </h5>
+                    <ul style={styles.list}>
+                      <li>
+                        <strong>Insert from Zotero:</strong> Click <strong>📚 Zotero Citation</strong> in the toolbar to
+                        browse your Zotero library and select a citation — then click on a code line to insert it at
+                        that location
+                      </li>
+                      <li>
+                        <strong>Manual Citation:</strong> Click <strong>✏️ Manual Citation</strong> to enter citation
+                        metadata manually (Title, Authors, Year, DOI, etc.) and insert it into the code
+                      </li>
+                      <li>
+                        <strong>Insertion Mode:</strong> A blue banner indicates insertion mode is active — use the
+                        search to find the right location, then click a line number to place the citation
+                      </li>
+                      <li>
+                        <strong>Cross-Format Sync:</strong> Citations are automatically inserted across all six formats
+                        simultaneously
+                      </li>
+                      <li>
+                        <strong>Remove Citations:</strong> Click <strong>🗑️ Remove Citation</strong> — citation blocks
+                        are highlighted in red. Click any highlighted line to remove the entire citation block from all
+                        formats
+                      </li>
+                      <li>
+                        <strong>DOI Links:</strong> DOI values in citations are automatically rendered as clickable
+                        hyperlinks
+                      </li>
+                    </ul>
+                  </div>
+
+                  <div style={{ paddingLeft: "12px", borderLeft: "3px solid #3b82f6" }}>
+                    <h5 style={{ fontSize: "14px", fontWeight: "600", color: "#1f2937", marginBottom: "8px" }}>
+                      💾 Copy, Download & Word Wrap
+                    </h5>
+                    <ul style={styles.list}>
+                      <li>
+                        <strong>Copy All:</strong> Click the copy button to copy the entire ontology code in the current
+                        format to your clipboard
+                      </li>
+                      <li>
+                        <strong>Download:</strong> Click the download button to save the ontology as a file in the
+                        current format (e.g., ontology.ttl, ontology.rdf)
+                      </li>
+                      <li>
+                        <strong>Word Wrap:</strong> Toggle word wrap on/off to control whether long lines wrap to the
+                        visible width or scroll horizontally
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+
+                <div style={styles.subsection}>
+                  <h4 style={styles.subsectionTitle}>
+                    <XCircle size={16} style={{ color: "#ef4444" }} />
+                    Negative Cases (What to Avoid)
+                  </h4>
+                  <ul style={styles.list}>
+                    <li>
+                      <strong>Don't edit while in citation mode:</strong> Edit mode is disabled when citation insertion
+                      or removal mode is active — cancel citation mode first
+                    </li>
+                    <li>
+                      <strong>Don't switch formats with unsaved edits:</strong> Switching formats discards any
+                      uncommitted edit-mode changes — save your work before switching
+                    </li>
+                    <li>
+                      <strong>Don't remove citations by deleting lines manually:</strong> Use the Remove Citation mode
+                      instead, which ensures the citation is properly removed from all formats
+                    </li>
+                    <li>
+                      <strong>Don't search extremely large ontologies without patience:</strong> Searching files with
+                      10,000+ lines may take a moment — a progress bar will show the search status
+                    </li>
+                  </ul>
+                </div>
+
+                <div style={styles.subsection}>
+                  <h4 style={styles.subsectionTitle}>
+                    <AlertCircle size={16} style={{ color: "#f59e0b" }} />
+                    Possibilities
+                  </h4>
+                  <ul style={styles.list}>
+                    <li>
+                      <strong>Progressive Loading:</strong> Large ontologies load the first 500 lines initially — click
+                      "Load More" at the bottom to load additional content in chunks
+                    </li>
+                    <li>
+                      <strong>Format Comparison:</strong> Quickly switch between formats to compare how the same
+                      ontology is represented in different serializations
+                    </li>
+                    <li>
+                      <strong>Citation Highlighting:</strong> Lines containing DOI citations are highlighted with a
+                      green background tint for easy identification
+                    </li>
+                    <li>
+                      <strong>Clickable Line Numbers:</strong> In citation modes, line numbers become clickable targets
+                      — green for DOI lines, red for citation blocks in removal mode
+                    </li>
+                  </ul>
+                </div>
+
+                <div
+                  style={{
+                    padding: "12px",
+                    backgroundColor: "#ecfeff",
+                    borderRadius: "6px",
+                    borderLeft: "4px solid #06b6d4",
+                  }}
+                >
+                  <p style={{ fontSize: "13px", color: "#164e63", margin: 0 }}>
+                    <strong>🎯 Recommendation:</strong> Use <strong>Turtle</strong> format for the most human-readable
+                    view of your ontology. Use the <strong>Search</strong> feature to quickly locate entities, and
+                    leverage <strong>Code Folding</strong> to collapse large sections when navigating complex
+                    ontologies.
+                  </p>
                 </div>
               </div>
             )}
