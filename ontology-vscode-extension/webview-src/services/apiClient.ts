@@ -264,7 +264,12 @@ class ApiClient {
         data = await this.postViaVSCode<T>({ type: 'apiPost', url, body, headers: config?.headers });
       }
     } else {
-      const resp = await this.axiosClient!.post(url, body, config);
+      // When sending FormData, remove the default Content-Type so axios/browser
+      // can auto-set multipart/form-data with the correct boundary.
+      const postConfig = body instanceof FormData
+        ? { ...config, headers: { ...config?.headers, 'Content-Type': undefined } }
+        : config;
+      const resp = await this.axiosClient!.post(url, body, postConfig);
       data = resp.data as T;
     }
     return data;

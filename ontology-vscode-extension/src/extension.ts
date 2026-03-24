@@ -185,7 +185,7 @@ type WebviewMessage =
     | { type: 'loggedOut' }
     | { type: 'showLogin' }
     | { type: 'showLoading'; projectId: string }
-    | { type: 'fileReady'; projectId: string }
+    | { type: 'fileReady'; projectId: string; uploadedFileId?: string; uploadedFileName?: string }
     | { type: 'openProjectFile'; projectId: string; fileId: string; fileName: string }
     | { type: 'loadingFailed'; error: string }
     | { type: 'importFailed'; projectId: string; error: string }
@@ -221,6 +221,7 @@ type ExtensionMessage =
     | { type: 'logout' }
     | { type: 'openLocalFile'; projectId?: string | null; importMode?: string; partition?: string }
     | { type: 'createNewFile'; projectId?: string | null; importMode?: string; partition?: string }
+    | { type: 'createNewFileWithName'; fileName: string; projectId?: string | null; importMode?: string; partition?: string }
     | { type: 'duplicateFilePromptResponse'; requestId: string; action: 'open_existing' | 'replace' | 'create_copy' | 'cancel'; copyName?: string }
     // Fix: Added message types for API requests to the proxy
     | { type: 'apiGet'; requestId: string; url: string; params?: Record<string, unknown> }
@@ -804,6 +805,9 @@ class OntoCodePanel {
                     case 'createNewFile':
                         await this.handleCreateNewFile(message.projectId || null, message.importMode, message.partition);
                         break;
+                    case 'createNewFileWithName':
+                        await this.handleCreateNewFileWithName(message.fileName, message.projectId || null, message.importMode, message.partition);
+                        break;
                     case 'duplicateFilePromptResponse':
                         this.handleDuplicatePromptResponse(message);
                         break;
@@ -1282,6 +1286,129 @@ class OntoCodePanel {
         } else {
             console.log('[OntoCode] User cancelled local file selection from webview');
             // Don't show intrusive message when user cancels - they know what they did
+        }
+    }
+
+    private async handleCreateNewFileWithName(fileName: string, projectId?: string | null, importMode?: string, partition?: string): Promise<void> {
+        const isWeb = isWebExtensionContext();
+        console.log(`[OntoCode] 📝 Creating new file with name: ${fileName} (Web mode: ${isWeb}, Project ID: ${projectId || 'none'})`);
+
+        // Validate filename
+        if (!fileName || !isSupportedOntologyExtension(fileName)) {
+            console.error('[OntoCode] ❌ Invalid filename provided:', fileName);
+            vscode.window.showErrorMessage('Invalid ontology filename. Must have a valid extension (.owl, .rdf, .ttl, .n3, .nt, .jsonld)');
+            return;
+        }
+
+        console.log(`[OntoCode] ✅ File name validated: ${fileName}`);
+
+        // Create minimal empty ontology content with owl:Thing as starting class
+        const ontologyIRI = `http://example.org/ontologies/${fileName.replace(/\.[^/.]+$/, '')}`;
+        console.log(`[OntoCode] 🔗 Generated ontology IRI: ${ontologyIRI}`);
+
+        const emptyOntologyContent = `<?xml version="1.0"?>
+<rdf:RDF xmlns="${ontologyIRI}#"
+     xml:base="${ontologyIRI}"
+     xmlns:owl="http://www.w3.org/2002/07/owl#"
+     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:xml="http://www.w3.org/XML/1998/namespace"
+     xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
+    <owl:Ontology rdf:about="${ontologyIRI}"/>
+    
+    <!-- Classes -->
+    <owl:Class rdf:about="http://www.w3.org/2002/07/owl#Thing"/>
+</rdf:RDF>`;
+
+        const fileContent = Buffer.from(emptyOntologyContent, 'utf-8');
+        const fileSize = fileContent.length;
+        const base64Content = uint8ArrayToBase64(fileContent);
+        console.log(`[OntoCode] 📄 Created ontology content (${fileSize} bytes)`);
+
+        // Handle non-workspace mode (no project ID)
+        if (!projectId) {
+            console.log('[OntoCode] 💾 No project context - saving to local filesystem');
+            const saveUri = await vscode.window.showSaveDialog({
+                defaultUri: vscode.Uri.file(fileName),
+                saveLabel: 'Save New Ontology File',
+                filters: {
+                    'Ontology Files': ['owl', 'rdf', 'ttl', 'n3', 'nt', 'jsonld'],
+                    'All Files': ['*']
+                }
+            });
+
+            if (saveUri) {
+                await vscode.workspace.fs.writeFile(saveUri, fileContent);
+                console.log('[OntoCode] ✅ New file saved to:', saveUri.toString());
+                this.setPendingUpload(false, saveUri, importMode, partition);
+                vscode.window.showInformationMessage(`File "${fileName}" created successfully!`);
+            } else {
+                console.log('[OntoCode] ❌ User cancelled save dialog');
+            }
+            return;
+        }
+
+        // Handle workspace mode - upload to project
+        console.log(`[OntoCode] 📤 Workspace mode - uploading to project: ${projectId}`);
+
+        const token = await (this._context as any).secrets.get(TOKEN_KEY);
+        if (!token) {
+            console.error('[OntoCode] ❌ No authentication token found');
+            vscode.window.showErrorMessage('You must be logged in to create a project file.');
+            this.postMessage({ type: 'showLogin' });
+            return;
+        }
+
+        // Check for duplicate files in self-hosted deployments
+        const deploymentType = await this.getStoredDeploymentType();
+        const isCloudDeployment = deploymentType === 'cloud';
+        console.log(`[OntoCode] 🔍 Deployment type: ${deploymentType}`);
+
+        if (!isCloudDeployment) {
+            // For self-hosted: check for duplicates and auto-rename if needed
+            try {
+                const checkUrl = `${GATEWAY_URL}/api/projects/${projectId}/files/check?fileName=${encodeURIComponent(fileName)}`;
+                console.log(`[OntoCode] 🔍 Checking for duplicates: ${checkUrl}`);
+
+                const checkResponse = await axios.get(checkUrl, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (checkResponse.data?.exists) {
+                    console.log(`[OntoCode] ⚠️ Duplicate file detected: ${fileName}`);
+
+                    // Auto-generate a unique name by adding timestamp
+                    const timestamp = new Date().getTime();
+                    const baseName = fileName.replace(/\.[^/.]+$/, '');
+                    const extension = fileName.substring(fileName.lastIndexOf('.'));
+                    const newFileName = `${baseName}-${timestamp}${extension}`;
+
+                    console.log(`[OntoCode] 🔄 Auto-renaming to avoid duplicate: ${newFileName}`);
+                    // Recursively call with new name
+                    return this.handleCreateNewFileWithName(newFileName, projectId, importMode, partition);
+                }
+
+                console.log('[OntoCode] ✅ No duplicate found - proceeding with upload');
+            } catch (checkError: any) {
+                console.warn('[OntoCode] ⚠️ Failed to check for duplicate file:', checkError?.message || checkError);
+                // Continue with upload if check fails
+            }
+        } else {
+            console.log('[OntoCode] ☁️ Cloud deployment - skipping duplicate check');
+        }
+
+        // Upload the new file to the project
+        console.log(`[OntoCode] 📤 Uploading new file to project...`);
+        const uploadResult = await this.handleUploadFileToProject(projectId, fileName, base64Content, fileSize, {
+            skipDuplicateCheck: isCloudDeployment,
+            openAfterUpload: true
+        });
+
+        if (uploadResult) {
+            console.log(`[OntoCode] ✅ New file "${fileName}" created and uploaded successfully!`);
+            vscode.window.showInformationMessage(`New file "${fileName}" created successfully!`);
+        } else {
+            console.error(`[OntoCode] ❌ Failed to upload new file "${fileName}"`);
         }
     }
 
@@ -2831,16 +2958,18 @@ class OntoCodePanel {
 
                 console.log(`[OntoCode] 📋 File uploaded - ID: ${uploadedFileId}, Name: ${uploadedFileName}`);
 
-                // Small delay to ensure backend has saved to database
-                await new Promise(resolve => setTimeout(resolve, 500));
+                // Longer delay to ensure backend has saved to database (increased from 500ms to 1000ms)
+                console.log(`[OntoCode] ⏳ Waiting 1 second for database commit...`);
+                await new Promise(resolve => setTimeout(resolve, 1000));
 
                 // Send fileReady to trigger file list refresh
-                this.postMessage({ type: 'fileReady', projectId: projectId });
-                console.log(`[OntoCode] 📤 Sent fileReady message for project: ${projectId}`);
+                this.postMessage({ type: 'fileReady', projectId: projectId, uploadedFileId, uploadedFileName });
+                console.log(`[OntoCode] 📤 Sent fileReady message for project: ${projectId}, fileId: ${uploadedFileId}`);
 
                 if (options?.openAfterUpload && uploadedFileId) {
-                    // Another small delay before opening to ensure file list is refreshed
-                    await new Promise(resolve => setTimeout(resolve, 300));
+                    // Another delay before opening to ensure file list is refreshed (increased to 500ms)
+                    console.log(`[OntoCode] ⏳ Waiting 500ms before opening file...`);
+                    await new Promise(resolve => setTimeout(resolve, 500));
 
                     console.log(`[OntoCode] 📂 Opening newly created file: ${uploadedFileName}`);
                     this.postMessage({

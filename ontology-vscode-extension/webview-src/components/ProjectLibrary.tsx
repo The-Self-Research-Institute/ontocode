@@ -13,6 +13,7 @@ import {
   User,
   Folder,
   Code2,
+  Plus,
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import { useAuth } from "../custom-hook/useAuth";
@@ -68,6 +69,16 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     setTimeout(() => setToast({ show: false, message: "", type: "success" }), 3000);
   };
 
+  const handleCreateNewFile = () => {
+    console.log("[ProjectLibrary] 📝 Creating new file for project:", projectId);
+    if (window.vscode) {
+      window.vscode.postMessage({
+        type: "createNewFile",
+        projectId: projectId,
+      });
+    }
+  };
+
   useEffect(() => {
     loadFiles();
   }, [projectId]);
@@ -80,17 +91,75 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
 
   // Listen for file import completion messages from extension
   useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
+    const handleMessage = async (event: MessageEvent) => {
       const message = event.data;
 
       // Refetch files when import completes or file is ready
       if (message.type === "fileReady" || message.type === "importStatusUpdate") {
-        console.log("[ProjectLibrary] Received import completion message:", message);
+        console.log(
+          "[ProjectLibrary] 📋 Received import completion message:",
+          "projectId:", message.projectId,
+          "uploadedFileId:", message.uploadedFileId,
+          "uploadedFileName:", message.uploadedFileName
+        );
 
         // Check if the message is for this project
         if (message.projectId === projectId || message.status?.status === "COMPLETED") {
-          console.log("[ProjectLibrary] Refetching files after import completion");
-          loadFiles();
+          console.log("[ProjectLibrary] 📋 Refetching files after import completion");
+          console.log("[ProjectLibrary] 📋 Current files count before refresh:", files.length);
+          
+          // Retry mechanism to ensure newly uploaded file appears in list
+          const fetchWithRetry = async (retries = 3, delay = 1000) => {
+            for (let attempt = 1; attempt <= retries; attempt++) {
+              console.log(`[ProjectLibrary] 📋 Fetch attempt ${attempt}/${retries}...`);
+              const fetchedFiles = await loadFiles();
+              
+              // If we're looking for a specific uploaded file, verify it's in the list
+              if (message.uploadedFileId || message.uploadedFileName) {
+                let found = false;
+                
+                // First try to match by fileId if available
+                if (message.uploadedFileId) {
+                  found = fetchedFiles.some(f => f.id === message.uploadedFileId);
+                  console.log(`[ProjectLibrary] 📋 Looking for file ID ${message.uploadedFileId} in ${fetchedFiles.length} files, found: ${found}`);
+                }
+                
+                // If not found by ID or no ID, try to match by filename
+                if (!found && message.uploadedFileName) {
+                  const normalizedTarget = message.uploadedFileName.toLowerCase();
+                  const matchedFile = fetchedFiles.find(f => f.name.toLowerCase() === normalizedTarget);
+                  found = !!matchedFile;
+                  console.log(`[ProjectLibrary] 📋 Looking for filename "${message.uploadedFileName}" in ${fetchedFiles.length} files, found: ${found}`);
+                  if (matchedFile) {
+                    console.log(`[ProjectLibrary] 📋 Matched file by name - ID: ${matchedFile.id}`);
+                  } else {
+                    console.log(`[ProjectLibrary] 📋 Available filenames:`, fetchedFiles.map(f => f.name));
+                  }
+                }
+                
+                if (found) {
+                  console.log(`[ProjectLibrary] ✅ File found in list after ${attempt} attempt(s)!`);
+                  return true;
+                }
+                
+                if (attempt < retries) {
+                  console.log(`[ProjectLibrary] ⏳ File not found, waiting ${delay}ms before retry ${attempt + 1}...`);
+                  await new Promise(resolve => setTimeout(resolve, delay));
+                } else {
+                  console.warn(`[ProjectLibrary] ⚠️ File ${message.uploadedFileName || message.uploadedFileId} not found after ${retries} attempts`);
+                  console.warn(`[ProjectLibrary] ⚠️ This may indicate a database synchronization delay`);
+                  return false;
+                }
+              } else {
+                // No specific file to look for, just refresh once
+                console.log("[ProjectLibrary] ✅ File list refreshed (no specific file verification)");
+                return true;
+              }
+            }
+            return false;
+          };
+          
+          fetchWithRetry();
         }
       }
     };
@@ -108,7 +177,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     }
   }, [openMenuFileId]);
 
-  const loadFiles = async () => {
+  const loadFiles = async (): Promise<FileItem[]> => {
     try {
       setLoading(true);
       const response = await apiClient.get(`/api/projects/${projectId}/files`);
@@ -118,11 +187,14 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       const fileList = response?.files || response?.data || [];
       console.log("[ProjectLibrary] Parsed file list:", fileList);
 
-      setFiles(Array.isArray(fileList) ? fileList : []);
+      const filesArray = Array.isArray(fileList) ? fileList : [];
+      setFiles(filesArray);
+      return filesArray;
     } catch (error) {
       console.error("Error loading files:", error);
       showToast("Failed to load files", "error");
       setFiles([]);
+      return [];
     } finally {
       setLoading(false);
     }
@@ -282,13 +354,8 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         console.log("[ProjectLibrary] Existing file object:", JSON.stringify(existing));
 
         if (existingFileId) {
-          showToast(`File "${existingFileName}" already exists. Opening existing file...`, "success");
-          // Wait a moment before opening to ensure toast is visible and state updates
-          setTimeout(() => {
-            console.log("[ProjectLibrary] Opening existing file:", existingFileId);
-            onFileSelect(existingFileId, existingFileName);
-          }, 500);
-          return; // Stop upload process
+          showToast(`File "${existingFileName}" already exists in this project.`, "error");
+          return; // Stop upload process — stay on ProjectLibrary
         } else {
           console.error("[ProjectLibrary] Duplicate exists but no file ID found. Full response:", checkData);
           showToast(`File "${file.name}" already exists but cannot be opened. Please contact support.`, "error");
@@ -373,6 +440,14 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             </div>
 
             <div className="flex items-center gap-3">
+              <button
+                onClick={handleCreateNewFile}
+                className="px-2.5 py-1.5 text-xs text-green-600 border border-green-300 bg-green-50 rounded-md hover:bg-green-100 transition-colors flex items-center gap-1.5 font-medium"
+                title="Create a new ontology file"
+              >
+                <Plus size={14} />
+                New File
+              </button>
               {onOpenEditor && (
                 <button
                   onClick={onOpenEditor}

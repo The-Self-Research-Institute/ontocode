@@ -34,6 +34,20 @@ function postToSelf(data: Record<string, any>) {
     window.dispatchEvent(new MessageEvent('message', { data }));
 }
 
+// ── Helper: extract email from JWT auth token ───────────────────────────────
+function getOwnerEmailFromToken(): string | undefined {
+    try {
+        const token = localStorage.getItem('authToken');
+        if (!token) return undefined;
+        const parts = token.split('.');
+        if (parts.length !== 3) return undefined;
+        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+        return payload.email || undefined;
+    } catch {
+        return undefined;
+    }
+}
+
 // ── Helper: Blob download (shared by downloadOntology & downloadFile) ───────
 function triggerBlobDownload(content: string | Blob, filename: string) {
     const blob = content instanceof Blob
@@ -300,6 +314,104 @@ function handleBrowserMessage(message: any) {
             break;
         }
 
+        case 'createNewFileWithName': {
+            (async () => {
+                let fileName = message.fileName;
+
+                // Validate file extension
+                const validExtensions = ['.owl', '.rdf', '.ttl', '.n3', '.nt', '.jsonld'];
+                const hasValidExtension = validExtensions.some(ext => fileName.toLowerCase().endsWith(ext));
+
+                if (!hasValidExtension) {
+                    console.error('[BrowserBridge] Invalid file extension:', fileName);
+                    alert('File must have a valid ontology extension (.owl, .rdf, .ttl, .n3, .nt, .jsonld)');
+                    return;
+                }
+
+                // Check for duplicates if in project context and auto-rename if needed
+                if (message.projectId) {
+                    const token = localStorage.getItem('authToken');
+                    const baseUrl = getGatewayUrl();
+
+                    try {
+                        const checkUrl = `${baseUrl}/api/projects/${message.projectId}/files/check?fileName=${encodeURIComponent(fileName)}`;
+                        const checkResp = await fetch(checkUrl, {
+                            headers: token ? { Authorization: `Bearer ${token}` } : {},
+                        });
+                        const checkData = await checkResp.json().catch(() => ({}));
+
+                        if (checkData.exists) {
+                            console.log('[BrowserBridge] Duplicate detected for:', fileName);
+                            notificationService.error('File Exists', `A file named "${fileName}" already exists in this project.`);
+                            return;
+                        }
+                    } catch (checkError) {
+                        console.warn('[BrowserBridge] Failed to check for duplicate:', checkError);
+                        // Continue with upload if check fails
+                    }
+                }
+
+                // Create minimal empty ontology content with owl:Thing
+                const ontologyIRI = `http://example.org/ontologies/${fileName.replace(/\.[^/.]+$/, '')}`;
+                const emptyOntologyContent = `<?xml version="1.0"?>
+<rdf:RDF xmlns="${ontologyIRI}#"
+     xml:base="${ontologyIRI}"
+     xmlns:owl="http://www.w3.org/2002/07/owl#"
+     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:xml="http://www.w3.org/XML/1998/namespace"
+     xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
+    <owl:Ontology rdf:about="${ontologyIRI}"/>
+    
+    <!-- Classes -->
+    <owl:Class rdf:about="http://www.w3.org/2002/07/owl#Thing"/>
+</rdf:RDF>`;
+
+                const fileContentBase64 = fileContentToBase64(emptyOntologyContent);
+                const fileSize = new Blob([emptyOntologyContent]).size;
+
+                console.log(`[BrowserBridge] Creating new file: ${fileName} (${fileSize} bytes)`);
+
+                if (message.projectId) {
+                    // Upload directly to project files endpoint using multipart/form-data
+                    try {
+                        postToSelf({ type: 'showLoading', projectId: message.projectId });
+                        const fileBlob = new Blob([emptyOntologyContent], { type: 'application/rdf+xml' });
+                        const formData = new FormData();
+                        formData.append('file', fileBlob, fileName);
+                        formData.append('fileName', fileName);
+                        formData.append('fileType', 'owl');
+                        const respData: any = await apiClient.post(`/api/projects/${message.projectId}/files`, formData);
+                        const uploadedFileId = respData?.fileId || respData?.id;
+                        const uploadedFileName = respData?.filename || fileName;
+                        console.log(`[BrowserBridge] createNewFileWithName success - fileId: ${uploadedFileId}, fileName: ${uploadedFileName}`);
+                        postToSelf({
+                            type: 'fileReady',
+                            projectId: message.projectId,
+                            uploadedFileId,
+                            uploadedFileName,
+                        });
+                    } catch (err: any) {
+                        console.error('[BrowserBridge] createNewFileWithName upload error:', err);
+                        notificationService.error('Upload Failed', err?.message || 'File creation failed');
+                        postToSelf({ type: 'hideLoading', projectId: message.projectId });
+                    }
+                } else {
+                    // No project context — upload directly to GraphDB as standalone ontology
+                    const standaloneProjectId = fileName.replace(/\.(owl|rdf|ttl|n3|nt|jsonld)$/i, '');
+                    console.log('[BrowserBridge] No project context, uploading as standalone:', standaloneProjectId);
+                    handleBrowserMessage({
+                        type: 'uploadOntology',
+                        projectId: standaloneProjectId,
+                        fileName: fileName,
+                        fileContent: fileContentBase64,
+                        ownerEmail: getOwnerEmailFromToken(),
+                    });
+                }
+            })();
+            break;
+        }
+
         case 'createNewFile': {
             (async () => {
                 let fileName = '';
@@ -384,25 +496,39 @@ function handleBrowserMessage(message: any) {
                 console.log(`[BrowserBridge] Creating new file: ${fileName} (${fileSize} bytes)`);
 
                 if (message.projectId) {
-                    // Project context is known — upload directly with skipDuplicateCheck since we already checked
+                    // Upload directly to project files endpoint using multipart/form-data
+                    try {
+                        postToSelf({ type: 'showLoading', projectId: message.projectId });
+                        const fileBlob = new Blob([emptyOntologyContent], { type: 'application/rdf+xml' });
+                        const formData = new FormData();
+                        formData.append('file', fileBlob, fileName);
+                        formData.append('fileName', fileName);
+                        formData.append('fileType', 'owl');
+                        const respData: any = await apiClient.post(`/api/projects/${message.projectId}/files`, formData);
+                        const uploadedFileId = respData?.fileId || respData?.id;
+                        const uploadedFileName = respData?.filename || fileName;
+                        console.log(`[BrowserBridge] createNewFile success - fileId: ${uploadedFileId}, fileName: ${uploadedFileName}`);
+                        postToSelf({
+                            type: 'fileReady',
+                            projectId: message.projectId,
+                            uploadedFileId,
+                            uploadedFileName,
+                        });
+                    } catch (err: any) {
+                        console.error('[BrowserBridge] createNewFile upload error:', err);
+                        notificationService.error('Upload Failed', err?.message || 'File creation failed');
+                        postToSelf({ type: 'hideLoading', projectId: message.projectId });
+                    }
+                } else {
+                    // No project context — upload directly to GraphDB as standalone ontology
+                    const standaloneProjectId = fileName.replace(/\.(owl|rdf|ttl|n3|nt|jsonld)$/i, '');
+                    console.log('[BrowserBridge] No project context, uploading as standalone:', standaloneProjectId);
                     handleBrowserMessage({
                         type: 'uploadOntology',
-                        projectId: message.projectId,
+                        projectId: standaloneProjectId,
                         fileName: fileName,
                         fileContent: fileContentBase64,
-                        importMode: message.importMode,
-                        partition: message.partition,
-                        skipDuplicateCheck: true, // We already checked above
-                    });
-                } else {
-                    // No project context yet — store as pending
-                    postToSelf({
-                        type: 'pendingFileUpload',
-                        fileName: fileName,
-                        fileContent: fileContentBase64,
-                        fileSize: fileSize,
-                        importMode: message.importMode,
-                        partition: message.partition,
+                        ownerEmail: getOwnerEmailFromToken(),
                     });
                 }
             })();
@@ -440,6 +566,8 @@ function handleBrowserMessage(message: any) {
                             if (checkData.isDuplicate) {
                                 console.log('[BrowserBridge] Duplicate detected! File already exists:', checkData);
                                 const existingProjectId = checkData.projectId || uploadProjectId;
+                                const existingFileId = checkData.existingFile?.fileId || checkData.existingFile?.id;
+                                const existingFileName = checkData.existingFile?.fileName || message.fileName;
 
                                 // Cancel the loading state
                                 postToSelf({ type: 'loadingComplete' });
@@ -448,6 +576,8 @@ function handleBrowserMessage(message: any) {
                                 postToSelf({
                                     type: 'fileReady',
                                     projectId: existingProjectId,
+                                    uploadedFileId: existingFileId,
+                                    uploadedFileName: existingFileName,
                                 });
 
                                 // Show success message indicating file already exists
@@ -513,7 +643,8 @@ function handleBrowserMessage(message: any) {
                         // Backend may return a different projectId on replace
                         const actualProjectId = responseData.projectId || uploadProjectId;
                         const actualFilename = responseData.filename || message.fileName;
-                        console.log('[BrowserBridge] uploadOntology accepted, actualProjectId:', actualProjectId, 'polling for completion...');
+                        const actualFileId = responseData.fileId || responseData.id;
+                        console.log('[BrowserBridge] uploadOntology accepted, actualProjectId:', actualProjectId, 'fileId:', actualFileId, 'polling for completion...');
 
                         // If the server assigned a different projectId, update the Dashboard
                         if (actualProjectId !== uploadProjectId) {
@@ -540,11 +671,61 @@ function handleBrowserMessage(message: any) {
                                     const statusData = await statusResp.json().catch(() => ({}));
                                     const payload = statusData?.data || statusData;
                                     const status = payload?.status;
-                                    console.log(`[BrowserBridge] Status poll #${attempt}: ${status}`);
+                                    console.log(`[BrowserBridge] Status poll #${attempt}: ${status}`, payload);
 
                                     if (status === 'COMPLETED') {
+                                        // Try to get fileId from status response or upload response
+                                        let fileId = actualFileId || payload?.fileId || payload?.id;
+
+                                        // If still no fileId, fetch the file list and find by name
+                                        if (!fileId) {
+                                            console.log('[BrowserBridge] No fileId in response, waiting 1 second before fetching file list...');
+                                            await new Promise(r => setTimeout(r, 1000)); // Wait for database sync
+
+                                            console.log('[BrowserBridge] Fetching file list to find newly created file...');
+                                            try {
+                                                const filesResp = await fetch(
+                                                    `${baseUrl}/api/projects/${encodeURIComponent(actualProjectId)}/files`,
+                                                    { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+                                                );
+                                                const filesData = await filesResp.json().catch(() => ({}));
+                                                const filesList = filesData?.files || filesData?.data || [];
+                                                console.log('[BrowserBridge] Fetched file list count:', filesList.length);
+                                                console.log('[BrowserBridge] Looking for filename:', actualFilename);
+                                                console.log('[BrowserBridge] File list details:', filesList.map((f: any) => ({
+                                                    id: f.id || f.fileId,
+                                                    name: f.name || f.filename || f.fileName,
+                                                    uploadedAt: f.uploadedAt
+                                                })));
+
+                                                // Find the file by name (case-insensitive, check multiple properties)
+                                                const normalizedTarget = actualFilename.toLowerCase();
+                                                const matchedFile = filesList.find((f: any) => {
+                                                    const fileName = f.name || f.filename || f.fileName || '';
+                                                    return fileName.toLowerCase() === normalizedTarget;
+                                                });
+
+                                                if (matchedFile) {
+                                                    fileId = matchedFile.id || matchedFile.fileId;
+                                                    console.log('[BrowserBridge] ✅ Found file by name:', actualFilename, 'ID:', fileId);
+                                                } else {
+                                                    console.warn('[BrowserBridge] ⚠️ Could not find file in list by name:', actualFilename);
+                                                    console.warn('[BrowserBridge] ⚠️ Available filenames:', filesList.map((f: any) => f.name || f.filename || f.fileName));
+                                                }
+                                            } catch (fetchErr) {
+                                                console.warn('[BrowserBridge] Failed to fetch file list:', fetchErr);
+                                            }
+                                        }
+
+                                        console.log('[BrowserBridge] Sending fileReady with fileId:', fileId);
+
                                         // Mirror extension: send fileReady first (triggers fetchData in Dashboard)
-                                        postToSelf({ type: 'fileReady', projectId: actualProjectId });
+                                        postToSelf({
+                                            type: 'fileReady',
+                                            projectId: actualProjectId,
+                                            uploadedFileId: fileId,
+                                            uploadedFileName: actualFilename
+                                        });
                                         // Also send importStatusUpdate for status tracking UI
                                         postToSelf({
                                             type: 'importStatusUpdate',
@@ -612,15 +793,21 @@ function handleBrowserMessage(message: any) {
         case 'uploadFileToProject': {
             (async () => {
                 try {
-                    await apiClient.post(`/api/projects/${message.projectId}/files`, {
-                        fileName: message.fileName,
-                        fileData: `data:application/rdf+xml;base64,${/^[A-Za-z0-9+/=]+$/.test(message.fileContent)
-                            ? message.fileContent
-                            : fileContentToBase64(message.fileContent)
-                            }`,
-                        fileSize: message.fileSize,
-                        fileType: 'owl',
-                    });
+                    // Convert content to binary Blob for multipart upload
+                    let contentStr = message.fileContent;
+                    if (/^[A-Za-z0-9+/=]+$/.test(contentStr)) {
+                        // base64 → binary string → Uint8Array
+                        const binaryStr = atob(contentStr);
+                        const bytes = new Uint8Array(binaryStr.length);
+                        for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+                        contentStr = new TextDecoder().decode(bytes);
+                    }
+                    const fileBlob = new Blob([contentStr], { type: 'application/rdf+xml' });
+                    const formData = new FormData();
+                    formData.append('file', fileBlob, message.fileName);
+                    formData.append('fileName', message.fileName);
+                    formData.append('fileType', 'owl');
+                    await apiClient.post(`/api/projects/${message.projectId}/files`, formData);
                     console.log('[BrowserBridge] uploadFileToProject success');
                 } catch (err: any) {
                     console.error('[BrowserBridge] uploadFileToProject error:', err);

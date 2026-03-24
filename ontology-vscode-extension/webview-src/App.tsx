@@ -496,7 +496,7 @@ const AppContent = () => {
     if (showProjectDashboard) {
         console.log('[App] 🎨 Routing to ProjectDashboard - isAdmin:', user.isAdmin, 'selectedFileId:', selectedFileId, 'selectedProjectId:', selectedProjectId, 'pendingFile:', !!pendingFile);
         return <ProjectDashboard onSelectProject={handleProjectSelected} pendingFile={pendingFile} onOpenLocalFile={(window as any).__ONTOCODE_BROWSER_BRIDGE__ ? handleOpenLocalFile : undefined} onOpenEditor={() => {
-            console.log('[App] Opening editor from Project Dashboard (no project/file)');
+            console.log('[App] Opening editor from Project Dashboard (no file)');
             setSelectedFileId('__editor__');
             setSelectedFileName('');
         }} />;
