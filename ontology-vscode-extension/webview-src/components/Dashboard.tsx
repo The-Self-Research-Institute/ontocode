@@ -85,6 +85,7 @@ import ToastNotification from "./ToastNotification";
 import { CollaborativeCursors } from "./CollaborativeCursor";
 import ShareDialog from "./ShareDialog";
 import { ReportIssueModal } from "./ReportIssueModal";
+import { UserGuideModal } from "./UserGuideModal";
 import ThemeSettings from "./ThemeSettings";
 // ImportProgressToast removed per user request
 import { QueueStatusIndicator, GlobalQueueStats } from "./QueueStatusIndicator";
@@ -770,6 +771,7 @@ const TopMenuBar = ({
   onOpenPluginMarketplace,
   onOpenHistory,
   onReportIssue,
+  onOpenUserGuide,
   syncMode,
   onToggleSyncMode,
   isReasonerRunning,
@@ -799,6 +801,7 @@ const TopMenuBar = ({
   onOpenPluginMarketplace: () => void;
   onOpenHistory: () => void;
   onReportIssue: () => void;
+  onOpenUserGuide: () => void;
   syncMode: "private" | "public";
   onToggleSyncMode: () => void;
   isReasonerRunning?: boolean;
@@ -1042,6 +1045,16 @@ const TopMenuBar = ({
                 // )
                 item === "Help" ? (
                   <div className="py-1">
+                    <button
+                      onClick={() => {
+                        onOpenUserGuide();
+                        setOpenMenu(null);
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                    >
+                      <BookOpen size={14} />
+                      User Guide
+                    </button>
                     <button
                       onClick={() => {
                         onReportIssue();
@@ -1289,7 +1302,7 @@ const OpenFileDialog = ({
         <div className="p-4 border-b" style={{ borderColor: "var(--color-border)" }}>
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
-              {usingProjectFiles ? `Project Files (${filteredFiles.length})` : 'Open File'}
+              {usingProjectFiles ? `Project Files (${filteredFiles.length})` : "Open File"}
             </h3>
           </div>
           <div className="flex items-center gap-2">
@@ -2084,7 +2097,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         console.log("[Dashboard] ✅ File menu updated with project files (listOfFiles only)");
         console.log("[Dashboard] ✅ projectFiles state updated with", projectFiles.length, "files");
-        
+
         return projectFiles; // Return the files for verification
       } else if (filesResponse && filesResponse.files === undefined) {
         // Maybe files are at a different level or API returned error
@@ -2320,6 +2333,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isCurrentFileShared, setIsCurrentFileShared] = useState(false);
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
   const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
+  const [isUserGuideOpen, setIsUserGuideOpen] = useState(false);
   const [showCollaborationPanel, setShowCollaborationPanel] = useState(false);
 
   const [visibleMainTabs, setVisibleMainTabs] = useState([
@@ -5181,27 +5195,32 @@ const Dashboard: React.FC<DashboardProps> = ({
               message.uploadedFileName,
             );
             console.log("[Dashboard] 📋 Current projectFiles count before refresh:", projectFiles.length);
-            
+
             // Retry mechanism to ensure newly uploaded file appears in list
             const fetchWithRetry = async (retries = 3, delay = 1000) => {
               for (let attempt = 1; attempt <= retries; attempt++) {
                 console.log(`[Dashboard] 📋 Fetch attempt ${attempt}/${retries}...`);
                 const fetchedFiles = await fetchProjectFiles(initialProjectId);
-                
+
                 // If we're looking for a specific uploaded file, verify it's in the list
                 if (message.uploadedFileId) {
-                  const found = fetchedFiles.some(f => f.id === message.uploadedFileId);
-                  console.log(`[Dashboard] 📋 Looking for file ${message.uploadedFileId} (${message.uploadedFileName}) in ${fetchedFiles.length} files, found: ${found}`);
-                  console.log(`[Dashboard] 📋 File IDs in list:`, fetchedFiles.map(f => f.id));
-                  
+                  const found = fetchedFiles.some((f) => f.id === message.uploadedFileId);
+                  console.log(
+                    `[Dashboard] 📋 Looking for file ${message.uploadedFileId} (${message.uploadedFileName}) in ${fetchedFiles.length} files, found: ${found}`,
+                  );
+                  console.log(
+                    `[Dashboard] 📋 File IDs in list:`,
+                    fetchedFiles.map((f) => f.id),
+                  );
+
                   if (found) {
                     console.log(`[Dashboard] ✅ File found in list after ${attempt} attempt(s)!`);
                     return true;
                   }
-                  
+
                   if (attempt < retries) {
                     console.log(`[Dashboard] ⏳ File not found, waiting ${delay}ms before retry ${attempt + 1}...`);
-                    await new Promise(resolve => setTimeout(resolve, delay));
+                    await new Promise((resolve) => setTimeout(resolve, delay));
                   } else {
                     console.warn(`[Dashboard] ⚠️ File ${message.uploadedFileId} not found after ${retries} attempts`);
                     console.warn(`[Dashboard] ⚠️ This may indicate a database synchronization delay`);
@@ -5215,7 +5234,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               }
               return false;
             };
-            
+
             fetchWithRetry()
               .then((success) => {
                 console.log("[Dashboard] ✅ File list refresh complete, success:", success);
@@ -13293,6 +13312,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           onOpenPluginMarketplace={() => setShowPluginMarketplace(true)}
           onOpenHistory={() => setIsHistoryPanelOpen(true)}
           onReportIssue={() => setIsReportIssueModalOpen(true)}
+          onOpenUserGuide={() => setIsUserGuideOpen(true)}
           syncMode={syncMode}
           onToggleSyncMode={() => {
             const newMode = syncMode === "public" ? "private" : "public";
@@ -13877,6 +13897,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           onClose={() => setIsReportIssueModalOpen(false)}
         />
       )}
+
+      {/* User Guide Modal */}
+      <UserGuideModal isOpen={isUserGuideOpen} onClose={() => setIsUserGuideOpen(false)} />
 
       {/* Toast Notifications */}
       <div className="fixed top-4 right-4 z-[9999] space-y-2">
