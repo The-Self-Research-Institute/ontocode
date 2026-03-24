@@ -1189,6 +1189,7 @@ const OpenFileDialog = ({
   onImportModeChange,
   onPartitionStrategyChange,
   isWorkspaceMode,
+  onRefresh,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -1207,6 +1208,7 @@ const OpenFileDialog = ({
   onImportModeChange: (mode: "full" | "incremental" | "diff") => void;
   onPartitionStrategyChange: (strategy: "none" | "namespace") => void;
   isWorkspaceMode?: boolean;
+  onRefresh?: () => void;
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const canOpenLocalFile = typeof window !== "undefined" && !!(window as any).vscode;
@@ -1215,6 +1217,28 @@ const OpenFileDialog = ({
   // Backend now filters to only return files (not projects), so just pass through
   const primaryFiles = usingProjectFiles ? projectFiles || [] : myFiles;
   const secondaryFiles = usingProjectFiles ? [] : sharedFiles;
+
+  // Track when projectFiles prop changes
+  useEffect(() => {
+    if (usingProjectFiles) {
+      console.log("[OpenFileDialog] 🔄 projectFiles prop changed:", {
+        count: projectFiles?.length || 0,
+        files: projectFiles?.map((f) => f.filename),
+      });
+    }
+  }, [projectFiles, usingProjectFiles]);
+
+  // Debug logging to track file list updates
+  console.log("[OpenFileDialog] Rendering with:", {
+    usingProjectFiles,
+    parentProjectId,
+    projectFilesCount: projectFiles?.length || 0,
+    myFilesCount: myFiles?.length || 0,
+    primaryFilesCount: primaryFiles.length,
+    isOpen,
+  });
+  console.log("[OpenFileDialog] Project files:", projectFiles);
+
   const handleOpenLocalFile = () => {
     if (!canOpenLocalFile || !window.vscode) {
       return;
@@ -1232,13 +1256,17 @@ const OpenFileDialog = ({
     if (!canOpenLocalFile || !window.vscode) {
       return;
     }
+    console.log("[OpenFileDialog] 📝 Creating new file, keeping dialog open for refresh");
+    console.log("[OpenFileDialog] 📝 Current project files count:", projectFiles?.length || 0);
+    console.log("[OpenFileDialog] 📝 parentProjectId:", parentProjectId);
     window.vscode.postMessage({
       type: "createNewFile",
       projectId: parentProjectId || undefined,
       importMode,
       partition: partitionStrategy,
     });
-    onClose();
+    // Don't close dialog - let it stay open so user can see the new file appear
+    // onClose();
   };
 
   // console.log('[OpenFileDialog] Rendered with myFiles:', myFiles.length, 'sharedFiles:', sharedFiles.length, 'isOpen:', isOpen);
@@ -1259,24 +1287,47 @@ const OpenFileDialog = ({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="p-4 border-b" style={{ borderColor: "var(--color-border)" }}>
-          <div className="relative">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search files..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              autoFocus
-              className="w-full pl-10 pr-3 py-2 border rounded-lg focus:ring-2 text-sm"
-              style={
-                {
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
+              {usingProjectFiles ? `Project Files (${filteredFiles.length})` : 'Open File'}
+            </h3>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search files..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                autoFocus
+                className="w-full pl-10 pr-3 py-2 border rounded-lg focus:ring-2 text-sm"
+                style={
+                  {
+                    borderColor: "var(--color-border)",
+                    backgroundColor: "var(--color-surface)",
+                    color: "var(--color-text)",
+                    "--tw-ring-color": "var(--color-primary)",
+                  } as React.CSSProperties
+                }
+              />
+            </div>
+            {usingProjectFiles && onRefresh && (
+              <button
+                onClick={() => {
+                  console.log("[OpenFileDialog] 🔄 Manual refresh clicked");
+                  onRefresh();
+                }}
+                className="p-2 rounded-md border hover:bg-gray-50 transition-colors"
+                style={{
                   borderColor: "var(--color-border)",
-                  backgroundColor: "var(--color-surface)",
                   color: "var(--color-text)",
-                  "--tw-ring-color": "var(--color-primary)",
-                } as React.CSSProperties
-              }
-            />
+                }}
+                title="Refresh file list"
+              >
+                <RefreshCw size={16} />
+              </button>
+            )}
           </div>
         </div>
         <div className="flex-1 overflow-y-auto">
@@ -1918,7 +1969,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   // Helper function to encode project ID for use in URL paths
   // Handles hierarchical project IDs like "project-123/file-456"
   const encodeProjectId = (id: string | null | undefined): string => {
-    if (!id) return '';
+    if (!id) return "";
     return encodeURIComponent(id);
   };
   const [availableProjects, setAvailableProjects] = useState<any[]>([]);
@@ -1991,8 +2042,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, [expandedNodes]);
 
   // Fetch files for the currently selected project
-  const fetchProjectFiles = useCallback(async (currentProjectId: string) => {
-    if (!currentProjectId) return;
+  const fetchProjectFiles = useCallback(async (currentProjectId: string): Promise<FileInfo[]> => {
+    if (!currentProjectId) return [];
 
     try {
       console.log("[Dashboard] 📂 Fetching files for project:", currentProjectId);
@@ -2017,8 +2068,14 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         console.log(`[Dashboard] 📋 Mapped ${projectFiles.length} project files`);
         console.log("[Dashboard] 📋 Mapped project files:", projectFiles);
+        console.log(
+          "[Dashboard] 📋 File details:",
+          projectFiles.map((f) => ({ id: f.id, name: f.filename })),
+        );
 
+        console.log("[Dashboard] 📋 About to call setProjectFiles with", projectFiles.length, "files");
         setProjectFiles(projectFiles);
+        console.log("[Dashboard] ✅ setProjectFiles called");
 
         // Only update listOfFiles for backward compatibility
         // Do NOT overwrite myFiles/sharedFiles - those are user-specific and should be
@@ -2026,6 +2083,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         setListOfFiles(projectFiles);
 
         console.log("[Dashboard] ✅ File menu updated with project files (listOfFiles only)");
+        console.log("[Dashboard] ✅ projectFiles state updated with", projectFiles.length, "files");
+        
+        return projectFiles; // Return the files for verification
       } else if (filesResponse && filesResponse.files === undefined) {
         // Maybe files are at a different level or API returned error
         console.log("[Dashboard] ⚠️ Response has no files array:", filesResponse);
@@ -2043,23 +2103,27 @@ const Dashboard: React.FC<DashboardProps> = ({
 
           // Only update listOfFiles, not myFiles/sharedFiles
           setListOfFiles(projectFiles);
+          return projectFiles; // Return the files
         } else {
           console.log("[Dashboard] ⚠️ Unable to parse files from response, clearing file menu");
           // setMyFiles([]);
           // setSharedFiles([]);
           setProjectFiles([]);
           setListOfFiles([]);
+          return []; // Return empty array
         }
       } else {
         console.log("[Dashboard] ℹ️ No files found in project or empty response");
         // Don't clear myFiles/sharedFiles - they contain user's files from fetchProjects
         setProjectFiles([]);
         setListOfFiles([]);
+        return []; // Return empty array
       }
     } catch (error: any) {
       console.error("[Dashboard] ❌ Failed to fetch project files:", error);
       console.error("[Dashboard] ❌ Error details:", error?.response?.data || error?.message || error);
       // Don't clear the file menu on error - keep showing projects list
+      return []; // Return empty array on error
     }
   }, []);
   const [searchQuery, setSearchQuery] = useState("");
@@ -5079,10 +5143,12 @@ const Dashboard: React.FC<DashboardProps> = ({
         case "openProjectFile":
           // Refresh file list in workspace mode to ensure new files are shown
           if (initialProjectId) {
-            console.log("[Dashboard] Refreshing file list before opening project file");
-            fetchProjectFiles(initialProjectId);
+            console.log("[Dashboard] 📋 Refreshing file list before opening project file");
+            fetchProjectFiles(initialProjectId).then(() => {
+              console.log("[Dashboard] ✅ File list refreshed, proceeding to open file");
+            });
           }
-          
+
           if (initialProjectId && message.projectId && message.projectId !== initialProjectId) {
             console.warn(
               "[Dashboard] openProjectFile project mismatch:",
@@ -5104,10 +5170,64 @@ const Dashboard: React.FC<DashboardProps> = ({
         case "fileLoaded":
           // Always refresh file list in workspace mode when a fileReady message is received
           if (initialProjectId) {
-            console.log("[Dashboard] File list refresh triggered by fileReady, initialProjectId:", initialProjectId, "message.projectId:", message.projectId);
-            fetchProjectFiles(initialProjectId);
+            console.log(
+              "[Dashboard] 📋 File list refresh triggered by fileReady, initialProjectId:",
+              initialProjectId,
+              "message.projectId:",
+              message.projectId,
+              "uploadedFileId:",
+              message.uploadedFileId,
+              "uploadedFileName:",
+              message.uploadedFileName,
+            );
+            console.log("[Dashboard] 📋 Current projectFiles count before refresh:", projectFiles.length);
+            
+            // Retry mechanism to ensure newly uploaded file appears in list
+            const fetchWithRetry = async (retries = 3, delay = 1000) => {
+              for (let attempt = 1; attempt <= retries; attempt++) {
+                console.log(`[Dashboard] 📋 Fetch attempt ${attempt}/${retries}...`);
+                const fetchedFiles = await fetchProjectFiles(initialProjectId);
+                
+                // If we're looking for a specific uploaded file, verify it's in the list
+                if (message.uploadedFileId) {
+                  const found = fetchedFiles.some(f => f.id === message.uploadedFileId);
+                  console.log(`[Dashboard] 📋 Looking for file ${message.uploadedFileId} (${message.uploadedFileName}) in ${fetchedFiles.length} files, found: ${found}`);
+                  console.log(`[Dashboard] 📋 File IDs in list:`, fetchedFiles.map(f => f.id));
+                  
+                  if (found) {
+                    console.log(`[Dashboard] ✅ File found in list after ${attempt} attempt(s)!`);
+                    return true;
+                  }
+                  
+                  if (attempt < retries) {
+                    console.log(`[Dashboard] ⏳ File not found, waiting ${delay}ms before retry ${attempt + 1}...`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                  } else {
+                    console.warn(`[Dashboard] ⚠️ File ${message.uploadedFileId} not found after ${retries} attempts`);
+                    console.warn(`[Dashboard] ⚠️ This may indicate a database synchronization delay`);
+                    return false;
+                  }
+                } else {
+                  // No specific file to look for, just refresh once
+                  console.log("[Dashboard] ✅ File list refreshed (no specific file verification)");
+                  return true;
+                }
+              }
+              return false;
+            };
+            
+            fetchWithRetry()
+              .then((success) => {
+                console.log("[Dashboard] ✅ File list refresh complete, success:", success);
+                console.log("[Dashboard] 📋 ProjectFiles count after refresh:", projectFiles.length);
+              })
+              .catch((err) => {
+                console.error("[Dashboard] ❌ Failed to refresh file list:", err);
+              });
+          } else {
+            console.log("[Dashboard] ⚠️ fileReady received but no initialProjectId, cannot refresh");
           }
-          
+
           if (initialProjectId && message.projectId === initialProjectId) {
             console.log("[Dashboard] File list updated for project, skipping ontology load:", message.projectId);
             fetchProjects();
@@ -5136,6 +5256,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   console.log("[Dashboard] Loading completed for:", message.projectId);
                   setShowLoadingChoice(false);
                   setShowQueueStatus(false);
+                  setIsInitialLoading(false);
                   setTimeout(() => fetchProjects(), 300);
                   loadingPromiseRef.current = null;
                 })
@@ -5146,6 +5267,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                     `Could not load "${message.projectId}". The file may still be processing.`,
                   );
                   setShowLoadingChoice(false);
+                  setIsInitialLoading(false);
                   loadingPromiseRef.current = null;
                 });
             }
@@ -5157,8 +5279,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           setHasUserSelectedFile(true);
           hasUserSelectedFileRef.current = true;
           // Only update projectId if it's different (ignoring timestamp suffixes)
-          const currentBaseId = projectId?.replace(/-\d+$/, '');
-          const newBaseId = message.projectId?.replace(/-\d+$/, '');
+          const currentBaseId = projectId?.replace(/-\d+$/, "");
+          const newBaseId = message.projectId?.replace(/-\d+$/, "");
           if (currentBaseId !== newBaseId) {
             console.log("[Dashboard] Updating projectId from", projectId, "to", message.projectId);
             setProjectId(message.projectId);
@@ -5285,10 +5407,15 @@ const Dashboard: React.FC<DashboardProps> = ({
               if (isPendingImport) {
                 console.log("[Dashboard] Setting projectId to:", message.status.projectId);
                 // Only update projectId if it's actually different (ignoring timestamp suffix)
-                const currentBaseId = projectId?.replace(/-\d+$/, '');
-                const newBaseId = message.status.projectId?.replace(/-\d+$/, '');
+                const currentBaseId = projectId?.replace(/-\d+$/, "");
+                const newBaseId = message.status.projectId?.replace(/-\d+$/, "");
                 if (currentBaseId !== newBaseId) {
-                  console.log("[Dashboard] ProjectId is different, updating from", projectId, "to", message.status.projectId);
+                  console.log(
+                    "[Dashboard] ProjectId is different, updating from",
+                    projectId,
+                    "to",
+                    message.status.projectId,
+                  );
                   setProjectId(message.status.projectId);
                 } else {
                   console.log("[Dashboard] ProjectId is essentially the same (ignoring timestamp), skipping update");
@@ -13060,6 +13187,8 @@ const Dashboard: React.FC<DashboardProps> = ({
             myFiles.length,
             "sharedFiles:",
             sharedFiles.length,
+            "projectFiles:",
+            projectFiles.length,
           );
           setShowOpenDialog(false);
         }}
@@ -13078,6 +13207,14 @@ const Dashboard: React.FC<DashboardProps> = ({
         onImportModeChange={setImportMode}
         onPartitionStrategyChange={setPartitionStrategy}
         isWorkspaceMode={!!user?.workspaceId}
+        onRefresh={
+          initialProjectId
+            ? () => {
+                console.log("[Dashboard] 🔄 Refresh triggered from OpenFileDialog");
+                fetchProjectFiles(initialProjectId);
+              }
+            : undefined
+        }
       />
       <DuplicateFileDialog
         isOpen={duplicatePrompt.isOpen}
