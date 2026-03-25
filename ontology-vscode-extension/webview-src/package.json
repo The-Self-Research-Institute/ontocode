@@ -18,11 +18,13 @@
     "path": "^0.12.7",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "sockjs-client": "^1.6.1",
     "vis-network": "latest",
     "vscode": "^1.1.37"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
+    "@types/sockjs-client": "^1.5.4",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
