@@ -53,7 +53,12 @@ export const CollaborationContext = createContext<CollaborationContextType | und
 
 // Detect browser mode (not running inside VS Code webview)
 const isBrowserMode = () => {
-  return typeof window !== "undefined" && (!window.vscode || (window as any).__ONTOCODE_CONFIG__?.IS_WEB_EXTENSION);
+  return (
+    typeof window !== "undefined" &&
+    (!window.vscode ||
+      (window as any).__ONTOCODE_CONFIG__?.IS_WEB_EXTENSION ||
+      (window as any).__ONTOCODE_BROWSER_BRIDGE__)
+  );
 };
 
 export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
