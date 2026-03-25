@@ -3606,16 +3606,24 @@ const Dashboard: React.FC<DashboardProps> = ({
             // A file is shared if:
             // 1. It's in sharedFiles list (shared WITH me by someone else)
             // 2. It's in myFiles and has sharedWith array (shared BY me with others)
+            // 3. It's in myFiles and has project members > 1 (team collaboration)
             const isSharedWithMe = sharedProjectsList.some((f: any) => f.id === currentProjectId);
             const isSharedByMe = myProjectsList.some(
               (f: any) => f.id === currentProjectId && f.sharedWith && f.sharedWith.length > 0,
             );
-            const isShared = isSharedWithMe || isSharedByMe;
+            const hasProjectMembers = myProjectsList.some(
+              (f: any) =>
+                f.id === currentProjectId &&
+                ((f.memberCount && f.memberCount > 1) ||
+                  (f.members && f.members.length > 1)),
+            );
+            const isShared = isSharedWithMe || isSharedByMe || hasProjectMembers;
             setIsCurrentFileShared(isShared);
 
             console.log("[Dashboard] 📊 File shared status:", isShared, "for project:", currentProjectId);
             console.log("[Dashboard] 📥 Shared WITH me:", isSharedWithMe);
             console.log("[Dashboard] 📤 Shared BY me:", isSharedByMe);
+            console.log("[Dashboard] 👥 Has project members:", hasProjectMembers);
             console.log(
               "[Dashboard] 📋 Shared files list:",
               sharedProjectsList.map((f: any) => f.id),
