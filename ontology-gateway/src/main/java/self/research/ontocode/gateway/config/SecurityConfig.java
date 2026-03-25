@@ -15,6 +15,7 @@ public class SecurityConfig {
     @Bean
     public SecurityWebFilterChain springSecurityFilterChain(ServerHttpSecurity http) {
         http
+                .cors(cors -> cors.disable()) // CORS handled by Spring Cloud Gateway global config
                 .csrf(csrf -> csrf.disable())
 
                 .exceptionHandling(exceptionHandling ->
