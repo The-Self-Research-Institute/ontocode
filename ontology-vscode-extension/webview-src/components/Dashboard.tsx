@@ -1045,6 +1045,7 @@ const TopMenuBar = ({
                 // )
                 item === "Help" ? (
                   <div className="py-1">
+                    {localStorage.getItem("deploymentType") !== "self-hosted" && (
                     <button
                       onClick={() => {
                         onOpenUserGuide();
@@ -1055,6 +1056,7 @@ const TopMenuBar = ({
                       <BookOpen size={14} />
                       User Guide
                     </button>
+                    )}
                     <button
                       onClick={() => {
                         onReportIssue();
@@ -1241,17 +1243,6 @@ const OpenFileDialog = ({
     }
   }, [projectFiles, usingProjectFiles]);
 
-  // Debug logging to track file list updates
-  console.log("[OpenFileDialog] Rendering with:", {
-    usingProjectFiles,
-    parentProjectId,
-    projectFilesCount: projectFiles?.length || 0,
-    myFilesCount: myFiles?.length || 0,
-    primaryFilesCount: primaryFiles.length,
-    isOpen,
-  });
-  console.log("[OpenFileDialog] Project files:", projectFiles);
-
   const handleOpenLocalFile = () => {
     if (!canOpenLocalFile || !window.vscode) {
       return;
@@ -1269,9 +1260,7 @@ const OpenFileDialog = ({
     if (!canOpenLocalFile || !window.vscode) {
       return;
     }
-    console.log("[OpenFileDialog] 📝 Creating new file, keeping dialog open for refresh");
-    console.log("[OpenFileDialog] 📝 Current project files count:", projectFiles?.length || 0);
-    console.log("[OpenFileDialog] 📝 parentProjectId:", parentProjectId);
+   
     window.vscode.postMessage({
       type: "createNewFile",
       projectId: parentProjectId || undefined,
@@ -13963,8 +13952,10 @@ const Dashboard: React.FC<DashboardProps> = ({
         />
       )}
 
-      {/* User Guide Modal */}
-      <UserGuideModal isOpen={isUserGuideOpen} onClose={() => setIsUserGuideOpen(false)} />
+      {/* User Guide Modal - only in cloud mode */}
+      {isCloudDeployment && (
+        <UserGuideModal isOpen={isUserGuideOpen} onClose={() => setIsUserGuideOpen(false)} />
+      )}
 
       {/* Toast Notifications */}
       <div className="fixed top-4 right-4 z-[9999] space-y-2">

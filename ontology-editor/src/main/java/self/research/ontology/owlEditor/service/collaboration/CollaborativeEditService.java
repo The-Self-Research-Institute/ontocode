@@ -313,19 +313,32 @@ public class CollaborativeEditService {
             case "deleteClass" -> EditOperation.OperationType.CLASS_DELETED;
             case "updateClassLabel" -> EditOperation.OperationType.CLASS_MODIFIED;
             case "renameClass" -> EditOperation.OperationType.CLASS_RENAMED;
-            case "createObjectProperty", "createDataProperty", "createProperty" -> EditOperation.OperationType.PROPERTY_ADDED;
-            case "deleteObjectProperty", "deleteDataProperty", "deleteProperty" -> EditOperation.OperationType.PROPERTY_DELETED;
+            case "createObjectProperty", "createDataProperty", "createProperty", "createAnnotationProperty" -> EditOperation.OperationType.PROPERTY_ADDED;
+            case "deleteObjectProperty", "deleteDataProperty", "deleteProperty", "deleteAnnotationProperty" -> EditOperation.OperationType.PROPERTY_DELETED;
             case "addAnnotation" -> EditOperation.OperationType.ANNOTATION_ADDED;
             case "updateAnnotation" -> EditOperation.OperationType.ANNOTATION_MODIFIED;
             case "deleteAnnotation" -> EditOperation.OperationType.ANNOTATION_DELETED;
             case "createIndividual" -> EditOperation.OperationType.INDIVIDUAL_ADDED;
             case "deleteIndividual" -> EditOperation.OperationType.INDIVIDUAL_DELETED;
+            case "addClassAssertion", "addObjectPropertyAssertion", "addDataPropertyAssertion",
+                 "addNegativeObjectPropertyAssertion", "addNegativeDataPropertyAssertion" -> EditOperation.OperationType.INDIVIDUAL_MODIFIED;
+            case "removeClassAssertion", "deleteObjectPropertyAssertion", "deleteDataPropertyAssertion",
+                 "deleteNegativeObjectPropertyAssertion", "deleteNegativeDataPropertyAssertion" -> EditOperation.OperationType.INDIVIDUAL_MODIFIED;
             case "addSubClass", "addSubClassOf" -> EditOperation.OperationType.SUBCLASS_ADDED;
-            case "removeSubClass", "deleteSubClassOf" -> EditOperation.OperationType.SUBCLASS_REMOVED;
+            case "removeSubClass", "deleteSubClassOf", "updateSubClassOf" -> EditOperation.OperationType.SUBCLASS_REMOVED;
+            case "addPropertyDomain" -> EditOperation.OperationType.PROPERTY_DOMAIN_ADDED;
+            case "deletePropertyDomain" -> EditOperation.OperationType.PROPERTY_DOMAIN_REMOVED;
+            case "addPropertyRange" -> EditOperation.OperationType.PROPERTY_RANGE_ADDED;
+            case "deletePropertyRange" -> EditOperation.OperationType.PROPERTY_RANGE_REMOVED;
+            case "addSubPropertyOf", "deleteSubPropertyOf", "addInverseProperty", "deleteInverseProperty",
+                 "addPropertyChain", "deletePropertyChain", "addCharacteristic", "deleteCharacteristic" -> EditOperation.OperationType.PROPERTY_MODIFIED;
             case "addDisjointWith" -> EditOperation.OperationType.DISJOINT_ADDED;
-            case "deleteDisjointWith" -> EditOperation.OperationType.DISJOINT_REMOVED;
+            case "deleteDisjointWith", "updateDisjointWith" -> EditOperation.OperationType.DISJOINT_REMOVED;
             case "addEquivalentClass" -> EditOperation.OperationType.EQUIVALENT_ADDED;
-            case "deleteEquivalentClass" -> EditOperation.OperationType.EQUIVALENT_REMOVED;
+            case "deleteEquivalentClass", "updateEquivalentClass" -> EditOperation.OperationType.EQUIVALENT_REMOVED;
+            case "addDisjointProperty", "deleteDisjointProperty", "addEquivalentProperty", "deleteEquivalentProperty" -> EditOperation.OperationType.PROPERTY_MODIFIED;
+            case "createDatatype" -> EditOperation.OperationType.CLASS_ADDED;
+            case "deleteDatatype" -> EditOperation.OperationType.CLASS_DELETED;
             default -> null;
         };
     }

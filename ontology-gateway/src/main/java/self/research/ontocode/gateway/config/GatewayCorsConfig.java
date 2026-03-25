@@ -53,6 +53,7 @@ public class GatewayCorsConfig {
                     headers.add(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "false");
                     headers.add(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS, "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD");
                     headers.add(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS, "*");
+                    headers.add(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, "*");
                     headers.add(HttpHeaders.ACCESS_CONTROL_MAX_AGE, "3600");
                 }
             }));

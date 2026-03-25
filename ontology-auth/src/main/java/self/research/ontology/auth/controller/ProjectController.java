@@ -916,13 +916,13 @@ public class ProjectController {
             
             Project project = projectOpt.get();
             
-            // Check if file with same name exists in metadata
-            boolean exists = project.getFiles().stream()
+            // Check if file with same name exists in active (non-deleted) files
+            boolean exists = project.getActiveFiles().stream()
                     .anyMatch(file -> file.getFileName().equals(fileName));
             
             if (exists) {
                 // Find the existing file details
-                Project.FileMetadataInfo existingFile = project.getFiles().stream()
+                Project.FileMetadataInfo existingFile = project.getActiveFiles().stream()
                         .filter(file -> file.getFileName().equals(fileName))
                         .findFirst()
                         .orElse(null);
