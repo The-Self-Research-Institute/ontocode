@@ -21,7 +21,7 @@ export class CollaborationManager implements ICollaborationManager {
     private reconnectAttempts = 0;
     private maxReconnectAttempts = 10;
     private reconnectDelay = 1000; // Start with 1 second
-    
+
     // Event handlers
     private onEditReceived?: (edit: EditOperation) => void;
     private onPresenceUpdate?: (presence: PresenceMessage) => void;
@@ -54,47 +54,61 @@ export class CollaborationManager implements ICollaborationManager {
             try {
                 // Convert http/https URL to ws/wss
                 const wsUrl = new URL('/ws/websocket', this.serverUrl).toString().replace(/^http/, 'ws');
-                
+
                 console.log('[CollaborationManager] Connecting to WebSocket:', wsUrl);
-                
+
+                // In Node.js (VS Code desktop extension host), there is no global WebSocket.
+                // Use the 'ws' package as the WebSocket implementation.
+                let webSocketFactory: (() => any) | undefined;
+                if (typeof globalThis.WebSocket === 'undefined') {
+                    try {
+                        // eslint-disable-next-line @typescript-eslint/no-var-requires
+                        const WS = require('ws');
+                        webSocketFactory = () => new WS(wsUrl);
+                        console.log('[CollaborationManager] Using ws package for Node.js WebSocket');
+                    } catch {
+                        console.error('[CollaborationManager] No WebSocket implementation available');
+                    }
+                }
+
                 // Create STOMP client with native WebSocket
                 this.client = new Client({
-                    // Use native WebSocket (browser-compatible)
-                    brokerURL: wsUrl,
-                    
+                    // Use webSocketFactory for Node.js, brokerURL for browsers
+                    ...(webSocketFactory ? { webSocketFactory } : { brokerURL: wsUrl }),
+
                     connectHeaders: {
                         // Add authentication headers here if needed
                     },
-                    
+
                     // Disable verbose STOMP debug logging
-                    debug: () => {},
-                    
+                    debug: () => { },
+
                     reconnectDelay: this.reconnectDelay,
-                    
+
                     heartbeatIncoming: 4000,
                     heartbeatOutgoing: 4000,
-                    
+
                     onConnect: () => {
                         console.log('[CollaborationManager] ✅ WebSocket connected successfully');
                         this.state.connected = true;
                         this.reconnectAttempts = 0;
                         this.reconnectDelay = 1000;
-                        
+
                         console.log('[CollaborationManager] Connection state updated to:', this.state.connected);
-                        
+
                         if (this.onConnectionChange) {
                             console.log('[CollaborationManager] Calling onConnectionChange(true) callback');
                             this.onConnectionChange(true);
                         } else {
                             console.warn('[CollaborationManager] ⚠️  No onConnectionChange callback registered!');
                         }
-                        
+
                         // Process any pending edits
                         this.processPendingEdits();
-                        
+
                         resolve();
                     },
-                    
+
                     onStompError: (frame: any) => {
                         console.error('STOMP error:', frame);
                         const error = `STOMP error: ${frame.headers['message'] || 'Unknown error'}`;
@@ -103,7 +117,7 @@ export class CollaborationManager implements ICollaborationManager {
                         }
                         reject(new Error(error));
                     },
-                    
+
                     onWebSocketError: (event: any) => {
                         console.error('WebSocket error:', event);
                         const error = 'WebSocket connection error';
@@ -111,22 +125,22 @@ export class CollaborationManager implements ICollaborationManager {
                             this.onError(error);
                         }
                     },
-                    
+
                     onDisconnect: () => {
                         console.log('WebSocket disconnected');
                         this.state.connected = false;
-                        
+
                         if (this.onConnectionChange) {
                             this.onConnectionChange(false);
                         }
-                        
+
                         // Attempt reconnection with exponential backoff
                         this.attemptReconnect();
                     }
                 });
-                
+
                 this.client.activate();
-                
+
             } catch (error) {
                 console.error('Failed to create WebSocket client:', error);
                 reject(error);
@@ -142,17 +156,17 @@ export class CollaborationManager implements ICollaborationManager {
             // Send USER_LEFT presence message
             await this.sendPresence(PresenceType.USER_LEFT);
         }
-        
+
         // Unsubscribe from all topics
         this.subscriptions.forEach(sub => sub.unsubscribe());
         this.subscriptions.clear();
-        
+
         // Deactivate client
         if (this.client) {
             await this.client.deactivate();
             this.client = null;
         }
-        
+
         this.state.connected = false;
         this.state.projectId = null;
         this.state.activeUsers.clear();
@@ -166,27 +180,27 @@ export class CollaborationManager implements ICollaborationManager {
         if (!this.client || !this.state.connected) {
             throw new Error('Not connected to server');
         }
-        
+
         // Leave current project if any
         if (this.state.projectId && this.state.projectId !== projectId) {
             await this.leaveProject();
         }
-        
+
         this.state.projectId = projectId;
-        
+
         // Subscribe to project topics FIRST (before sending join message)
         this.subscribeToEdit(projectId);
         this.subscribeToPresence(projectId);
         this.subscribeToLocks(projectId);
         this.subscribeToImportStatus(projectId);
         this.subscribeToCursors(projectId);
-        
+
         // Wait a bit for subscriptions to be established
         await new Promise(resolve => setTimeout(resolve, 100));
-        
+
         // Send USER_JOINED presence (will be broadcast back to us)
         await this.sendPresence(PresenceType.USER_JOINED);
-        
+
         // Fetch currently active users in this project
         try {
             const response = await fetch(`${this.serverUrl}/api/collab-graph/${projectId}/active-users`);
@@ -209,7 +223,7 @@ export class CollaborationManager implements ICollaborationManager {
                         }
                     });
                     console.log(`Loaded ${data.users.length - 1} existing active users`);
-                    
+
                     // Notify handler of the initial user list
                     if (this.onPresenceUpdate) {
                         data.users.forEach((user: any) => {
@@ -231,7 +245,7 @@ export class CollaborationManager implements ICollaborationManager {
         } catch (error) {
             console.error('Failed to fetch active users:', error);
         }
-        
+
         console.log(`Joined project: ${projectId}`);
     }
 
@@ -240,18 +254,18 @@ export class CollaborationManager implements ICollaborationManager {
      */
     async leaveProject(): Promise<void> {
         if (!this.state.projectId) return;
-        
+
         // Send USER_LEFT presence
         await this.sendPresence(PresenceType.USER_LEFT);
-        
+
         // Unsubscribe from all topics
         this.subscriptions.forEach(sub => sub.unsubscribe());
         this.subscriptions.clear();
-        
+
         this.state.projectId = null;
         this.state.activeUsers.clear();
         this.state.locks.clear();
-        
+
         console.log('Left project');
     }
 
@@ -270,18 +284,18 @@ export class CollaborationManager implements ICollaborationManager {
             console.warn('Queued edit for later (disconnected)');
             return;
         }
-        
+
         if (!this.state.projectId) {
             throw new Error('Not in a project');
         }
-        
+
         const operation: EditOperation = {
             ...edit,
             userId: this.userId,
             username: this.username,
             timestamp: Date.now()
         };
-        
+
         this.client.publish({
             destination: `/app/collab/${this.state.projectId}/edit`,
             body: JSON.stringify(operation)
@@ -295,7 +309,7 @@ export class CollaborationManager implements ICollaborationManager {
         if (!this.client || !this.state.connected || !this.state.projectId) {
             return;
         }
-        
+
         const message: PresenceMessage = {
             type,
             projectId: this.state.projectId,
@@ -304,7 +318,7 @@ export class CollaborationManager implements ICollaborationManager {
             timestamp: Date.now(),
             ...data
         };
-        
+
         this.client.publish({
             destination: `/app/collab/${this.state.projectId}/presence`,
             body: JSON.stringify(message)
@@ -318,7 +332,7 @@ export class CollaborationManager implements ICollaborationManager {
         if (!this.client || !this.state.connected || !this.state.projectId) {
             throw new Error('Not connected or not in a project');
         }
-        
+
         const message: LockMessage = {
             type: LockType.LOCK_REQUEST,
             projectId: this.state.projectId,
@@ -327,7 +341,7 @@ export class CollaborationManager implements ICollaborationManager {
             username: this.username,
             timestamp: Date.now()
         };
-        
+
         this.client.publish({
             destination: `/app/collab/${this.state.projectId}/lock`,
             body: JSON.stringify(message)
@@ -341,7 +355,7 @@ export class CollaborationManager implements ICollaborationManager {
         if (!this.client || !this.state.connected || !this.state.projectId) {
             return;
         }
-        
+
         const message: LockMessage = {
             type: LockType.LOCK_RELEASED,
             projectId: this.state.projectId,
@@ -350,12 +364,12 @@ export class CollaborationManager implements ICollaborationManager {
             username: this.username,
             timestamp: Date.now()
         };
-        
+
         this.client.publish({
             destination: `/app/collab/${this.state.projectId}/lock`,
             body: JSON.stringify(message)
         });
-        
+
         // Remove from local state
         this.state.locks.delete(nodeId);
     }
@@ -401,18 +415,18 @@ export class CollaborationManager implements ICollaborationManager {
 
     private subscribeToEdit(projectId: string): void {
         if (!this.client) return;
-        
+
         const subscription = this.client.subscribe(
             `/topic/ontology/${projectId}`,
             (message: any) => {
                 try {
                     const edit: EditOperation = JSON.parse(message.body);
-                    
+
                     // Ignore our own edits
                     if (edit.userId === this.userId) return;
-                    
+
                     console.log('Received edit:', edit);
-                    
+
                     if (this.onEditReceived) {
                         this.onEditReceived(edit);
                     }
@@ -421,21 +435,21 @@ export class CollaborationManager implements ICollaborationManager {
                 }
             }
         );
-        
+
         this.subscriptions.set('edit', subscription);
     }
 
     private subscribeToPresence(projectId: string): void {
         if (!this.client) return;
-        
+
         const subscription = this.client.subscribe(
             `/topic/presence/${projectId}`,
             (message: any) => {
                 try {
                     const presence: PresenceMessage = JSON.parse(message.body);
-                    
+
                     console.log('Presence update:', presence);
-                    
+
                     // Update active users
                     if (presence.type === PresenceType.USER_JOINED) {
                         this.state.activeUsers.set(presence.userId, {
@@ -458,7 +472,7 @@ export class CollaborationManager implements ICollaborationManager {
                             user.selectedNodes = presence.selectedNodes;
                         }
                     }
-                    
+
                     if (this.onPresenceUpdate) {
                         this.onPresenceUpdate(presence);
                     }
@@ -467,28 +481,28 @@ export class CollaborationManager implements ICollaborationManager {
                 }
             }
         );
-        
+
         this.subscriptions.set('presence', subscription);
     }
 
     private subscribeToLocks(projectId: string): void {
         if (!this.client) return;
-        
+
         const subscription = this.client.subscribe(
             `/topic/locks/${projectId}`,
             (message: any) => {
                 try {
                     const lock: LockMessage = JSON.parse(message.body);
-                    
+
                     console.log('Lock update:', lock);
-                    
+
                     // Update locks state
                     if (lock.type === LockType.LOCK_ACQUIRED) {
                         this.state.locks.set(lock.nodeId, lock);
                     } else if (lock.type === LockType.LOCK_RELEASED || lock.type === LockType.LOCK_EXPIRED) {
                         this.state.locks.delete(lock.nodeId);
                     }
-                    
+
                     if (this.onLockUpdate) {
                         this.onLockUpdate(lock);
                     }
@@ -497,7 +511,7 @@ export class CollaborationManager implements ICollaborationManager {
                 }
             }
         );
-        
+
         this.subscriptions.set('locks', subscription);
     }
 
@@ -611,12 +625,12 @@ export class CollaborationManager implements ICollaborationManager {
 
     private processPendingEdits(): void {
         if (this.state.pendingEdits.length === 0) return;
-        
+
         console.log(`Processing ${this.state.pendingEdits.length} pending edits`);
-        
+
         const edits = [...this.state.pendingEdits];
         this.state.pendingEdits = [];
-        
+
         edits.forEach(edit => {
             this.sendEdit(edit).catch(error => {
                 console.error('Failed to send pending edit:', error);
@@ -632,14 +646,14 @@ export class CollaborationManager implements ICollaborationManager {
             }
             return;
         }
-        
+
         this.reconnectAttempts++;
-        
+
         // Exponential backoff
         this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000); // Max 30 seconds
-        
+
         console.log(`Reconnecting in ${this.reconnectDelay}ms (attempt ${this.reconnectAttempts})`);
-        
+
         setTimeout(() => {
             if (this.client) {
                 this.client.activate();
