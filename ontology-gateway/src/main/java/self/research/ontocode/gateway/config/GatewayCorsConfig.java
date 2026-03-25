@@ -1,25 +1,17 @@
 package self.research.ontocode.gateway.config;
 
-import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.Ordered;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.http.server.reactive.ServerHttpResponse;
-import org.springframework.web.cors.CorsConfiguration;
-import org.springframework.web.cors.reactive.CorsWebFilter;
-import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
 import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebFilter;
 import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
-
-import java.util.Arrays;
-import java.util.Collections;
 
 @Configuration
 public class GatewayCorsConfig {
@@ -34,6 +26,14 @@ public class GatewayCorsConfig {
         return (exchange, chain) -> {
             return chain.filter(exchange).then(Mono.fromRunnable(() -> {
                 ServerHttpResponse response = exchange.getResponse();
+
+                // Skip CORS modification for WebSocket upgrade responses and
+                // already-committed responses (prevents breaking WS handshake)
+                if (response.isCommitted()
+                        || response.getStatusCode() == HttpStatus.SWITCHING_PROTOCOLS) {
+                    return;
+                }
+
                 HttpHeaders headers = response.getHeaders();
                 
                 // Get the origin from request
@@ -50,12 +50,14 @@ public class GatewayCorsConfig {
                 // Add gateway's CORS headers
                 if (origin != null && !origin.isEmpty()) {
                     headers.add(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-                    headers.add(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "false");
-                    headers.add(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS, "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD");
-                    headers.add(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS, "*");
-                    headers.add(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, "*");
-                    headers.add(HttpHeaders.ACCESS_CONTROL_MAX_AGE, "3600");
+                } else {
+                    headers.add(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "*");
                 }
+                headers.add(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "false");
+                headers.add(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS, "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD");
+                headers.add(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS, "*");
+                headers.add(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, "*");
+                headers.add(HttpHeaders.ACCESS_CONTROL_MAX_AGE, "3600");
             }));
         };
     }
