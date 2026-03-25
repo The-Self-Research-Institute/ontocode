@@ -32,8 +32,9 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         // Register the /ws endpoint for WebSocket connections
         // Enable SockJS fallback for browsers that don't support WebSocket
         registry.addEndpoint("/ws")
-                .setAllowedOriginPatterns("*") // Configure properly in production
-                .withSockJS();
+                .setAllowedOriginPatterns("*")
+                .withSockJS()
+                .setSessionCookieNeeded(false);
         
         // Also register without SockJS for native WebSocket clients
         registry.addEndpoint("/ws")
