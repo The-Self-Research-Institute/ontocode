@@ -3480,7 +3480,7 @@ class OntoCodePanel {
                 script-src 'nonce-${nonce}' https://cdn.tailwindcss.com https://unpkg.com https://aistudiocdn.com ${webview.cspSource} 'unsafe-eval' ${GATEWAY_URL} ${PLUGIN_SERVICE_URL} http://localhost:* http://127.0.0.1:*;
                 style-src ${webview.cspSource} 'unsafe-inline' https://unpkg.com https://cdn.tailwindcss.com;
                 font-src ${webview.cspSource} https://unpkg.com data:; 
-                connect-src 'self' https://ontocodeapi.selfresearch.org https: wss: https://ontocodeapi.selfresearch.org:* ws://13.218.153.101:* http://localhost:* http://127.0.0.1:* ${GATEWAY_URL} ${PLUGIN_SERVICE_URL};
+                connect-src 'self' https://ontocodeapi.selfresearch.org https://ontocode.selfresearch.org https: wss: https://ontocodeapi.selfresearch.org:* ws://13.218.153.101:* http://localhost:* http://127.0.0.1:* ${GATEWAY_URL} ${PLUGIN_SERVICE_URL};
             ">
             ${vscodeApiInjectionScript}`
         );
