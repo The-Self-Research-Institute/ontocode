@@ -911,16 +911,35 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                       onClick={() => onSelectProject(project.projectId, project.name)}
                       className={`
                                         border border-gray-200 rounded-lg p-4 cursor-pointer
-                                        hover:border-purple-400 hover:shadow-md transition-all
-                                        ${viewMode === "list" ? "flex items-center justify-between" : ""}
+                                        hover:border-purple-400 hover:shadow-md transition-all flex
+                                        ${viewMode === "list" ? "items-center" : "items-start"}
                                     `}
                     >
-                      <div className="flex-1">
-                        <div className="flex items-start justify-between mb-2">
-                          <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-                            <FolderOpen size={20} className="text-purple-600" />
-                            {project.name}
-                          </h3>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold text-gray-900 flex items-center gap-2 mb-2">
+                          <FolderOpen size={20} className="text-purple-600 flex-shrink-0" />
+                          <span className="truncate">{project.name}</span>
+                        </h3>
+                        <p className="text-sm text-gray-600 mb-3 line-clamp-2">
+                          {project.description || "No description"}
+                        </p>
+                        <div className="flex items-center gap-4 text-xs text-gray-500">
+                          <span className="flex items-center gap-1">
+                            <Users size={14} />
+                            {project.memberCount} members
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <FolderOpen size={14} />
+                            {project.fileCount} files
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Calendar size={14} />
+                            {new Date(project.updatedAt).toLocaleDateString()}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                        {(project.ownerId === user?.userId || isWorkspaceOwner) && (
                           <div className="relative">
                             <button
                               onClick={(e) => {
@@ -969,26 +988,9 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                               </div>
                             )}
                           </div>
-                        </div>
-                        <p className="text-sm text-gray-600 mb-3 line-clamp-2">
-                          {project.description || "No description"}
-                        </p>
-                        <div className="flex items-center gap-4 text-xs text-gray-500">
-                          <span className="flex items-center gap-1">
-                            <Users size={14} />
-                            {project.memberCount} members
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <FolderOpen size={14} />
-                            {project.fileCount} files
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <Calendar size={14} />
-                            {new Date(project.updatedAt).toLocaleDateString()}
-                          </span>
-                        </div>
+                        )}
+                        {viewMode === "list" && <ChevronRight size={20} className="text-gray-400" />}
                       </div>
-                      {viewMode === "list" && <ChevronRight size={20} className="text-gray-400 ml-4" />}
                     </div>
                   ))}
                 </div>
