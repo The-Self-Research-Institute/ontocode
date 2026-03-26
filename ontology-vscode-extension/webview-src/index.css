@@ -171,6 +171,29 @@
   scrollbar-color: #6b7280 #374151;
 }
 
+/* Workspace selection scrollbar — matches purple glassmorphism UI */
+.workspace-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(168, 85, 247, 0.4) transparent;
+}
+
+.workspace-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.workspace-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.workspace-scroll::-webkit-scrollbar-thumb {
+  background: rgba(168, 85, 247, 0.3);
+  border-radius: 3px;
+}
+
+.workspace-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(168, 85, 247, 0.5);
+}
+
 /* Dark mode body background */
 .dark body {
   background-color: var(--bg);
@@ -563,7 +586,8 @@ body,
   margin: 0;
   padding: 0;
   height: 100%;
-  overflow: hidden;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Dark mode background */

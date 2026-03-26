@@ -9,9 +9,11 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.auth.model.Invitation;
+import self.research.ontology.auth.model.Project;
 import self.research.ontology.auth.model.User;
 import self.research.ontology.auth.model.Workspace;
 import self.research.ontology.auth.repository.InvitationRepository;
+import self.research.ontology.auth.repository.ProjectRepository;
 import self.research.ontology.auth.repository.UserRepository;
 import self.research.ontology.auth.repository.WorkspaceRepository;
 import self.research.ontology.auth.service.InvitationService;
@@ -31,6 +33,7 @@ public class InvitationController {
     private final InvitationRepository invitationRepository;
     private final UserRepository userRepository;
     private final WorkspaceRepository workspaceRepository;
+    private final ProjectRepository projectRepository;
     
     @Value("${app.base-url:http://localhost:8082}")
     private String baseUrl;
@@ -38,11 +41,13 @@ public class InvitationController {
     public InvitationController(InvitationService invitationService,
                                InvitationRepository invitationRepository,
                                UserRepository userRepository,
-                               WorkspaceRepository workspaceRepository) {
+                               WorkspaceRepository workspaceRepository,
+                               ProjectRepository projectRepository) {
         this.invitationService = invitationService;
         this.invitationRepository = invitationRepository;
         this.userRepository = userRepository;
         this.workspaceRepository = workspaceRepository;
+        this.projectRepository = projectRepository;
     }
 
     /**
@@ -243,6 +248,24 @@ public class InvitationController {
             
             // Accept the invitation (marks it as ACCEPTED)
             Invitation acceptedInvitation = invitationService.acceptInvitation(token, user.getId());
+
+            // Auto-add new member to all active projects in the workspace
+            try {
+                List<Project> workspaceProjects = projectRepository.findActiveByWorkspaceId(workspace.getWorkspaceId());
+                for (Project project : workspaceProjects) {
+                    boolean alreadyMember = project.getMembers().stream()
+                            .anyMatch(m -> user.getId().equals(m.getUserId()));
+                    boolean isOwner = user.getId().equals(project.getOwnerId());
+                    if (!alreadyMember && !isOwner) {
+                        project.addMember(user.getId(), user.getUsername(), user.getEmail(), "VIEWER");
+                        projectRepository.save(project);
+                        log.info("Auto-added user {} to project {} in workspace {}",
+                                user.getUsername(), project.getName(), workspace.getWorkspaceId());
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("Failed to auto-add user {} to workspace projects: {}", user.getUsername(), e.getMessage());
+            }
 
             return ResponseEntity.ok(Map.of(
                 "message", "Invitation accepted successfully",
