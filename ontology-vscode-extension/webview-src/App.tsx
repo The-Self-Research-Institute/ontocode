@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useAuth } from "./custom-hook/useAuth";
 import apiClient, { updateBaseUrl } from "./services/apiClient";
 import { openOntologyFile, fileContentToBase64 } from "./utils/fileAccess";
@@ -16,6 +16,7 @@ import ProjectLibrary from "./components/ProjectLibrary";
 import SubscriptionPlanSelection from "./components/SubscriptionPlanSelection";
 import InviteAcceptPage from "./components/InviteAcceptPage";
 import { Loader2 } from "lucide-react";
+import { useRouter, RouteState } from "./hooks/useRouter";
 
 const AppContent = () => {
   const { user, loading, needsWorkspaceSelection, selectWorkspace, logout, updateSubscriptionPlan, updateUserRole } =
@@ -43,15 +44,24 @@ const AppContent = () => {
   const [showAuthForInvitation, setShowAuthForInvitation] = useState(false); // Show login/signup form while keeping invite token
   const [needsDeploymentSelection, setNeedsDeploymentSelection] = useState(false);
   const [deploymentType, setDeploymentType] = useState<"self-hosted" | "cloud" | null>(null);
+  const [forceShowWorkspace, setForceShowWorkspace] = useState(false);
+  const [restoredRoute, setRestoredRoute] = useState<RouteState | null>(null);
 
   // Helper to check if workspace selection is required
-  const shouldShowWorkspaceSelection = (): boolean => {
+  const shouldShowWorkspaceSelection = useCallback((): boolean => {
     console.log("[App] shouldShowWorkspaceSelection check:", {
       hasUser: !!user,
       userWorkspaceId: user?.workspaceId,
       needsWorkspaceSelection,
+      forceShowWorkspace,
       deploymentType: localStorage.getItem("deploymentType"),
     });
+
+    // Force show workspace if explicitly navigated to workspace route
+    if (forceShowWorkspace) {
+      console.log("[App] Returning true - forceShowWorkspace is set");
+      return true;
+    }
 
     if (!user) {
       console.log("[App] Returning false - no user");
@@ -78,7 +88,219 @@ const AppContent = () => {
 
     // Fall back to needsWorkspaceSelection from auth context
     return needsWorkspaceSelection;
-  };
+  }, [user, needsWorkspaceSelection, forceShowWorkspace]);
+
+  // Determine current route based on state
+  const currentRoute: RouteState = useMemo(() => {
+    // If we have a restored route from navigation (back/forward), use it
+    if (restoredRoute) {
+      console.log("[App] Using restored route:", restoredRoute.view);
+      return restoredRoute;
+    }
+
+    // Otherwise, calculate route based on current application state
+    if (inviteToken && !showAuthForInvitation) {
+      return { view: "invitation", inviteToken, showAuthForInvitation };
+    }
+    if (!user && !deploymentType) {
+      return { view: "deployment", deploymentType };
+    }
+    if (user && shouldShowWorkspaceSelection()) {
+      return { view: "workspace" };
+    }
+    if (user && user.isAdmin && user.workspaceId && showSubscriptionPlan) {
+      return { view: "subscription", showSubscriptionPlan };
+    }
+    if (user && user.workspaceId && !showSubscriptionPlan && !selectedFileId && (!selectedProjectId || pendingFile)) {
+      return { view: "projectDashboard", projectId: selectedProjectId, projectName: selectedProjectName };
+    }
+    if (user && user.workspaceId && selectedProjectId && !selectedFileId) {
+      return { view: "projectLibrary", projectId: selectedProjectId, projectName: selectedProjectName };
+    }
+    if (user && selectedFileId) {
+      return {
+        view: "dashboard",
+        projectId: selectedProjectId,
+        projectName: selectedProjectName,
+        fileId: selectedFileId,
+        fileName: selectedFileName,
+      };
+    }
+    if (user && !user.workspaceId) {
+      return { view: "dashboard" };
+    }
+    // Login/Signup view
+    return {
+      view: isLoginView ? "login" : "signup",
+      isLoginView,
+      inviteToken,
+      showAuthForInvitation,
+    };
+  }, [
+    restoredRoute,
+    user,
+    deploymentType,
+    selectedProjectId,
+    selectedProjectName,
+    selectedFileId,
+    selectedFileName,
+    isLoginView,
+    inviteToken,
+    showAuthForInvitation,
+    showSubscriptionPlan,
+    pendingFile,
+    shouldShowWorkspaceSelection,
+  ]);
+
+  // Handle route change from browser back/forward or programmatic navigation
+  const handleRouteChange = useCallback((route: RouteState, fromBrowserNav: boolean = false) => {
+    console.log("[App] Handling route change:", route.view, "fromBrowserNav:", fromBrowserNav);
+
+    // Create a mutable copy of the route to update with restored IDs
+    const updatedRoute = { ...route };
+
+    // Only set restored route if this is from browser back/forward navigation
+    if (fromBrowserNav) {
+      // When navigating back, try to restore IDs from names using sessionStorage cache
+      try {
+        if (updatedRoute.projectName && !updatedRoute.projectId) {
+          const cachedMappings = JSON.parse(sessionStorage.getItem("project_name_id_map") || "{}");
+          const projectId = cachedMappings[updatedRoute.projectName];
+          if (projectId) {
+            updatedRoute.projectId = projectId;
+            console.log("[App] Restored projectId from cache:", projectId);
+          }
+        }
+        if (updatedRoute.fileName && !updatedRoute.fileId) {
+          const cachedMappings = JSON.parse(sessionStorage.getItem("file_name_id_map") || "{}");
+          const fileId = cachedMappings[updatedRoute.fileName];
+          if (fileId) {
+            updatedRoute.fileId = fileId;
+            console.log("[App] Restored fileId from cache:", fileId);
+          }
+        }
+      } catch (e) {
+        console.warn("[App] Failed to restore IDs from cache:", e);
+      }
+
+      // Set the restored route AFTER updating IDs
+      setRestoredRoute(updatedRoute);
+    } else {
+      setRestoredRoute(null);
+
+      // When navigating forward, cache the name→ID mappings to sessionStorage
+      try {
+        if (updatedRoute.projectName && updatedRoute.projectId) {
+          const cachedMappings = JSON.parse(sessionStorage.getItem("project_name_id_map") || "{}");
+          cachedMappings[updatedRoute.projectName] = updatedRoute.projectId;
+          sessionStorage.setItem("project_name_id_map", JSON.stringify(cachedMappings));
+        }
+        if (updatedRoute.fileName && updatedRoute.fileId) {
+          const cachedMappings = JSON.parse(sessionStorage.getItem("file_name_id_map") || "{}");
+          cachedMappings[updatedRoute.fileName] = updatedRoute.fileId;
+          sessionStorage.setItem("file_name_id_map", JSON.stringify(cachedMappings));
+        }
+      } catch (e) {
+        console.warn("[App] Failed to cache name→ID mappings:", e);
+      }
+    }
+
+    // Update deployment type
+    if (updatedRoute.deploymentType !== undefined) {
+      setDeploymentType(updatedRoute.deploymentType as "self-hosted" | "cloud" | null);
+    }
+
+    // Update project selection
+    if (updatedRoute.projectId !== undefined) {
+      setSelectedProjectId(updatedRoute.projectId);
+    }
+    if (updatedRoute.projectName !== undefined) {
+      setSelectedProjectName(updatedRoute.projectName);
+    }
+    // Explicitly clear project when navigating to dashboard
+    if (updatedRoute.view === "projectDashboard") {
+      if (updatedRoute.projectId === undefined || updatedRoute.projectId === null) {
+        setSelectedProjectId(null);
+        setSelectedProjectName("");
+      }
+    }
+
+    // Update file selection
+    if (updatedRoute.fileId !== undefined) {
+      setSelectedFileId(updatedRoute.fileId);
+    }
+    if (updatedRoute.fileName !== undefined) {
+      setSelectedFileName(updatedRoute.fileName);
+    }
+    // Clear file selection when navigating to project views
+    if (updatedRoute.view === "projectDashboard" || updatedRoute.view === "projectLibrary") {
+      if (updatedRoute.fileId === undefined || updatedRoute.fileId === null) {
+        setSelectedFileId(null);
+        setSelectedFileName("");
+      }
+    }
+
+    // Update login/signup view
+    if (updatedRoute.isLoginView !== undefined) {
+      setIsLoginView(updatedRoute.isLoginView);
+    }
+
+    // Update invitation state
+    if (updatedRoute.inviteToken !== undefined) {
+      setInviteToken(updatedRoute.inviteToken);
+    }
+    if (updatedRoute.showAuthForInvitation !== undefined) {
+      setShowAuthForInvitation(updatedRoute.showAuthForInvitation);
+    }
+
+    // Update subscription plan view
+    if (updatedRoute.showSubscriptionPlan !== undefined) {
+      setShowSubscriptionPlan(updatedRoute.showSubscriptionPlan);
+    }
+
+    // Update view-specific flags
+    if (updatedRoute.view === "workspace") {
+      setForceShowWorkspace(true);
+    } else if (updatedRoute.view === "deployment") {
+      setForceShowWorkspace(false);
+      if (!updatedRoute.deploymentType) {
+        setDeploymentType(null);
+      }
+    } else {
+      setForceShowWorkspace(false);
+    }
+  }, []);
+
+  // Initialize router
+  const { clearHistory, navigateTo, goBack, goForward } = useRouter(currentRoute, handleRouteChange);
+
+  // Clear restoredRoute after it has been used in the render cycle
+  // This ensures we go back to computing routes from state after handling browser navigation
+  useEffect(() => {
+    if (restoredRoute) {
+      // Use a timeout to ensure the route has been fully processed
+      const timer = setTimeout(() => {
+        console.log("[App] Clearing restored route after processing");
+        setRestoredRoute(null);
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [restoredRoute]);
+
+  // Clear history when entering workspace view to prevent back navigation
+  // Use a ref to track if we've already cleared history for workspace to avoid repeated clears
+  const hasWorkspaceClearedHistoryRef = useRef(false);
+  
+  useEffect(() => {
+    if (currentRoute.view === "workspace" && !hasWorkspaceClearedHistoryRef.current) {
+      console.log("[App] Entered workspace view - clearing navigation history");
+      clearHistory();
+      hasWorkspaceClearedHistoryRef.current = true;
+    } else if (currentRoute.view !== "workspace") {
+      // Reset the flag when leaving workspace view
+      hasWorkspaceClearedHistoryRef.current = false;
+    }
+  }, [currentRoute.view, clearHistory]);
 
   // Send webviewReady on mount to ensure extension knows webview is loaded
   useEffect(() => {
@@ -92,10 +314,23 @@ const AppContent = () => {
   }, []);
 
   useEffect(() => {
-    // Check for invitation parameters in URL
+    // Check for invitation parameters in URL (query params and hash-based routes)
     const params = new URLSearchParams(window.location.search);
-    const token = params.get("token") || params.get("invite");
-    const email = params.get("email");
+    let token = params.get("token") || params.get("invite");
+    let email = params.get("email");
+
+    // Check hash-based route for invitation (e.g., #/invitation?token=xxx)
+    if (window.location.hash) {
+      const hashPart = window.location.hash.substring(1); // Remove the '#'
+      const [path, queryString] = hashPart.split("?");
+
+      if (path.startsWith("/invitation") && queryString) {
+        const hashParams = new URLSearchParams(queryString);
+        token = token || hashParams.get("token") || hashParams.get("invite");
+        email = email || hashParams.get("email");
+        console.log("[App] Found invitation in hash route:", !!token, "email:", !!email);
+      }
+    }
 
     // Also check parent window URL (for test-web environment)
     let parentToken: string | null = null;
@@ -112,23 +347,8 @@ const AppContent = () => {
       console.log("[App] Cannot access parent window (cross-origin)");
     }
 
-    // Also check window.location.hash for invitation parameters (vscode-test-web format)
-    let hashToken: string | null = null;
-    let hashEmail: string | null = null;
-    try {
-      if (window.location.hash) {
-        const hashPart = window.location.hash.substring(1); // Remove the '#'
-        const hashParams = new URLSearchParams(hashPart);
-        hashToken = hashParams.get("token") || hashParams.get("invite");
-        hashEmail = hashParams.get("email");
-        console.log("[App] Checked URL hash for token:", !!hashToken, "email:", !!hashEmail);
-      }
-    } catch (e) {
-      console.log("[App] Error parsing hash:", e);
-    }
-
-    const finalToken = token || parentToken || hashToken;
-    const finalEmail = email || parentEmail || hashEmail;
+    const finalToken = token || parentToken;
+    const finalEmail = email || parentEmail;
 
     if (finalToken) {
       console.log("[App] 📧 Found invitation token in URL, setting state");
@@ -233,10 +453,19 @@ const AppContent = () => {
     }
   }, [user, pendingFile, uploadFileBrowserMode]);
 
-  const toggleFormView = () => setIsLoginView(!isLoginView);
+  const toggleFormView = () => {
+    // Navigate using router to update browser history
+    navigateTo({
+      view: isLoginView ? "signup" : "login",
+      isLoginView: !isLoginView,
+    });
+  };
 
   const handleWorkspaceSelected = (workspaceData: any) => {
     selectWorkspace(workspaceData);
+    setForceShowWorkspace(false); // Reset after workspace selection
+    // Clear history to prevent back navigation to workspace selection
+    clearHistory();
     // Subscription plan is now selected during workspace creation
     // No need to show separate subscription plan screen
   };
@@ -263,22 +492,37 @@ const AppContent = () => {
       setPendingFile(null);
     }
 
-    setSelectedProjectId(projectId);
-    setSelectedProjectName(projectName);
+    // Navigate using router to update browser history
+    navigateTo({
+      view: "projectLibrary",
+      projectId: projectId,
+      projectName: projectName,
+      fileId: null,
+      fileName: "",
+    });
   };
 
   const handleBackToProjects = () => {
-    setSelectedProjectId(null);
-    setSelectedProjectName("");
-    setSelectedFileId(null);
-    setSelectedFileName("");
+    // Navigate using router to update browser history
+    navigateTo({
+      view: "projectDashboard",
+      projectId: null,
+      projectName: "",
+      fileId: null,
+      fileName: "",
+    });
   };
 
   const handleFileSelected = (fileId: string, fileName: string) => {
     console.log("[App] File selected:", fileId, fileName);
-    // Update file selection - the key prop on Dashboard will force remount
-    setSelectedFileId(fileId);
-    setSelectedFileName(fileName);
+    // Navigate using router to update browser history
+    navigateTo({
+      view: "dashboard",
+      projectId: selectedProjectId, // Preserve current project
+      projectName: selectedProjectName,
+      fileId: fileId,
+      fileName: fileName,
+    });
   };
 
   const handlePlanSelected = async (planId: string) => {
@@ -333,7 +577,7 @@ const AppContent = () => {
   };
 
   const handleLogout = () => {
-    // Reset all navigation state before logout
+    // Reset all route state before logout
     setSelectedProjectId(null);
     setSelectedProjectName("");
     setSelectedFileId(null);
@@ -341,20 +585,33 @@ const AppContent = () => {
     setShowSubscriptionPlan(false);
     setInviteToken(null);
     setInviteEmail(null);
+    setForceShowWorkspace(false); // Reset workspace view state
+    // Clear route history
+    clearHistory();
     // Keep deployment type so user doesn't need to select again
     logout();
   };
 
   const handleBackToProjectDashboard = () => {
-    setSelectedProjectId(null);
-    setSelectedProjectName("");
-    setSelectedFileId(null);
-    setSelectedFileName("");
+    // Navigate using router to update browser history
+    navigateTo({
+      view: "projectDashboard",
+      projectId: null,
+      projectName: "",
+      fileId: null,
+      fileName: "",
+    });
   };
 
   const handleBackToProjectLibrary = () => {
-    setSelectedFileId(null);
-    setSelectedFileName("");
+    // Navigate using router to update browser history
+    navigateTo({
+      view: "projectLibrary",
+      projectId: selectedProjectId, // Preserve current project
+      projectName: selectedProjectName,
+      fileId: null,
+      fileName: "",
+    });
   };
 
   const handleInvitationAccepted = (workspaceData?: any) => {
@@ -485,6 +742,9 @@ const AppContent = () => {
           console.log("[App] Current user:", { email: user?.email, workspaceId: user?.workspaceId });
           // Update auth context to skip workspace selection
           selectWorkspace({ skipWorkspace: true });
+          setForceShowWorkspace(false); // Reset after skipping
+          // Clear history to prevent back navigation to workspace selection
+          clearHistory();
           console.log("[App] ✅ Workspace selection skipped, should proceed to editor");
         }}
         onLogout={handleLogout}
@@ -591,12 +851,18 @@ const AppContent = () => {
   } else {
     // If there's an invitation, prefill the email in login/signup and show back button
     const handleBackToInvitation = () => {
-      setShowAuthForInvitation(false);
+      navigateTo({
+        view: "invitation",
+        showAuthForInvitation: false,
+      });
     };
 
     const handleBackToWelcome = () => {
-      setDeploymentType(null);
       localStorage.removeItem("deploymentType");
+      navigateTo({
+        view: "deployment",
+        deploymentType: null,
+      });
     };
 
     return isLoginView ? (
