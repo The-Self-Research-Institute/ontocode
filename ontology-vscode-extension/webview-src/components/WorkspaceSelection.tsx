@@ -47,6 +47,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
   const [error, setError] = useState("");
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [createDialogError, setCreateDialogError] = useState("");
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
   const [newWorkspaceDescription, setNewWorkspaceDescription] = useState("");
   const [selectedPlan, setSelectedPlan] = useState("FREE");
@@ -189,7 +190,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
 
   const handleOpenPlanSelection = () => {
     if (!newWorkspaceName.trim()) {
-      setError("Please enter a workspace name first");
+      setCreateDialogError("Please enter a workspace name first");
       return;
     }
     // Close modal and show plan selection screen
@@ -203,7 +204,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
     // Validate workspace name
     const nameValidation = validateWorkspaceName(newWorkspaceName);
     if (!nameValidation.isValid) {
-      setError(nameValidation.error || "Invalid workspace name");
+      setCreateDialogError(nameValidation.error || "Invalid workspace name");
       return;
     }
 
@@ -211,7 +212,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
     if (newWorkspaceDescription) {
       const descValidation = validateDescription(newWorkspaceDescription);
       if (!descValidation.isValid) {
-        setError(descValidation.error || "Invalid description");
+        setCreateDialogError(descValidation.error || "Invalid description");
         return;
       }
     }
@@ -219,7 +220,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
     // Check workspace limit before creating
     const maxWorkspaces = getMaxWorkspacesForPlan(selectedPlan);
     if (workspaces.length >= maxWorkspaces) {
-      setError(
+      setCreateDialogError(
         `Maximum workspace limit reached (${maxWorkspaces} for ${selectedPlan.toUpperCase()} plan). Please upgrade your subscription or delete existing workspaces.`,
       );
       return;
@@ -227,7 +228,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
 
     try {
       setCreating(true);
-      setError("");
+      setCreateDialogError("");
 
       // Check if workspace name already exists
       const checkResponse = await apiClient.get(
@@ -290,12 +291,12 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
         setShowCreateDialog(false);
         setNewWorkspaceName("");
         setNewWorkspaceDescription("");
-        setSelectedPlan("free");
+        setSelectedPlan("FREE");
         await loadWorkspaces();
       }
     } catch (err: any) {
       console.error("Error creating workspace:", err);
-      setError(err.response?.data?.error || err.message || "Failed to create workspace");
+      setCreateDialogError(err.response?.data?.error || err.message || "Failed to create workspace");
     } finally {
       setCreating(false);
     }
@@ -418,16 +419,24 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                   className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6 hover:bg-white/10 hover:border-purple-400/50 transition-all cursor-pointer group"
                 >
                   <div className="flex items-center justify-between">
-                    <div className="flex items-start space-x-4 flex-1">
+                    <div className="flex items-start space-x-4 flex-1 min-w-0">
                       <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center flex-shrink-0">
                         <Building2 size={24} className="text-white" />
                       </div>
-                      <div className="flex-1">
-                        <div className="flex items-center space-x-2 mb-1">
-                          <h3 className="text-xl font-semibold text-white">{workspace.name}</h3>
-                          {getRoleBadge(workspace)}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center space-x-2 mb-1 min-w-0">
+                          <h3 className="text-xl font-semibold text-white truncate flex-shrink min-w-0" title={workspace.name}>
+                            {workspace.name}
+                          </h3>
+                          <div className="flex-shrink-0">
+                            {getRoleBadge(workspace)}
+                          </div>
                         </div>
-                        {workspace.description && <p className="text-gray-400 text-sm mb-2">{workspace.description}</p>}
+                        {workspace.description && (
+                          <p className="text-gray-400 text-sm mb-2 line-clamp-2" title={workspace.description}>
+                            {workspace.description}
+                          </p>
+                        )}
                         <div className="flex items-center space-x-4 text-sm text-gray-400">
                           <span className="flex items-center space-x-1">
                             <Users size={14} />
@@ -491,27 +500,40 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
       {showCreateDialog && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-slate-800 border border-white/20 rounded-2xl shadow-2xl p-8 w-full max-w-md">
-            <h3 className="text-2xl font-bold text-white mb-6">Create New Workspace</h3>
+            <h3 className="text-2xl font-bold text-gray-200 mb-6 text-center">Create New Workspace</h3>
+
+            {createDialogError && (
+              <div className="bg-red-500/10 border border-red-400/30 text-red-400 px-4 py-3 rounded-lg mb-4 text-sm backdrop-blur-sm">
+                {createDialogError}
+              </div>
+            )}
+
             <form onSubmit={handleCreateWorkspace} className="space-y-4">
               <div>
-                <label htmlFor="workspaceName" className="block text-sm font-medium text-gray-200 mb-2">
+                <label htmlFor="workspaceName" className="block text-sm text-gray-200 mb-2">
                   Workspace Name *
                 </label>
                 <input
                   type="text"
                   id="workspaceName"
                   value={newWorkspaceName}
-                  onChange={(e) => setNewWorkspaceName(e.target.value)}
+                  onChange={(e) => {
+                    setNewWorkspaceName(e.target.value);
+                    setCreateDialogError("");
+                  }}
                   required
                   disabled={creating}
                   maxLength={255}
-                  className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-gray-200 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
                   placeholder="My Ontology Workspace"
                 />
-                <p className="text-xs text-gray-400 mt-1">{newWorkspaceName.length}/255 characters</p>
+                <p className={`text-xs mt-1 ${newWorkspaceName.length >= 255 ? 'text-red-400 font-medium' : newWorkspaceName.length > 240 ? 'text-orange-400 font-medium' : 'text-gray-400'}`}>
+                  {newWorkspaceName.length}/255 characters
+                  {newWorkspaceName.length >= 255 && ' (Maximum reached)'}
+                </p>
               </div>
               <div>
-                <label htmlFor="workspaceDescription" className="block text-sm font-medium text-gray-200 mb-2">
+                <label htmlFor="workspaceDescription" className="block text-sm text-gray-200 mb-2">
                   Description (Optional)
                 </label>
                 <textarea
@@ -532,7 +554,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-200 mb-3">Subscription Plan *</label>
+                <label className="block text-sm text-gray-200 mb-3">Subscription Plan *</label>
                 <button
                   type="button"
                   onClick={handleOpenPlanSelection}
@@ -541,10 +563,10 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                 >
                   <div className="flex items-center justify-between">
                     <div className="text-left">
-                      <h4 className="font-semibold text-white group-hover:text-purple-400 transition-colors">
-                        {selectedPlan === "free" && "Free Plan"}
-                        {selectedPlan === "pro" && "Professional Plan"}
-                        {selectedPlan === "enterprise" && "Enterprise Plan"}
+                      <h4 className="font-semibold text-sm text-gray-200 group-hover:text-purple-400 transition-colors">
+                        {selectedPlan === "FREE" && "Free Plan"}
+                        {selectedPlan === "PRO" && "Professional Plan"}
+                        {selectedPlan === "ENTERPRISE" && "Enterprise Plan"}
                       </h4>
                       <p className="text-sm text-gray-400">Click to select a different plan</p>
                     </div>
@@ -559,8 +581,8 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                     setShowCreateDialog(false);
                     setNewWorkspaceName("");
                     setNewWorkspaceDescription("");
-                    setSelectedPlan("free");
-                    setError("");
+                    setSelectedPlan("FREE");
+                    setCreateDialogError("");
                   }}
                   disabled={creating}
                   className="flex-1 px-4 py-3 bg-white/5 border border-white/20 text-white font-medium rounded-lg hover:bg-white/10 transition-all disabled:opacity-50"
@@ -569,7 +591,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={creating || !newWorkspaceName.trim()}
+                  disabled={creating || !newWorkspaceName.trim() || newWorkspaceName.length >= 255}
                   className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-medium rounded-lg hover:from-purple-600 hover:to-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
                 >
                   {creating ? (
@@ -665,12 +687,20 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
               </p>
               <p className="text-red-400 text-sm mt-2">This action cannot be undone.</p>
             </div>
+
+            {error && (
+              <div className="bg-red-500/10 border border-red-400/30 text-red-400 px-4 py-3 rounded-lg mb-4 text-sm backdrop-blur-sm">
+                {error}
+              </div>
+            )}
+
             <div className="flex space-x-3">
               <button
                 type="button"
                 onClick={() => {
                   setShowDeleteConfirm(false);
                   setWorkspaceToDelete(null);
+                  setError("");
                 }}
                 disabled={deletingWorkspace !== null}
                 className="flex-1 px-4 py-3 bg-white/5 border border-white/20 text-white font-medium rounded-lg hover:bg-white/10 transition-all disabled:opacity-50"

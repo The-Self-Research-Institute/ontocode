@@ -514,6 +514,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 const deploymentType = getStoredDeploymentType();
                 const isAdmin = deploymentType === 'cloud' ? true : (responseData?.isAdmin || userInfo.isAdmin || false);
                 
+                console.log('[AuthContext] Initial signup - deploymentType:', deploymentType, 'isAdmin:', isAdmin);
+                
                 setUser({ 
                     token,
                     userId: userInfo.userId,
@@ -544,7 +546,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             }
                             
                             const roleData = roleResponse?.data || roleResponse;
-                            const newIsAdmin = roleData?.isAdmin || false;
+                            // Cloud users are always admins, don't let role update override this
+                            const newIsAdmin = deploymentType === 'cloud' ? true : (roleData?.isAdmin || false);
                             const newRoles = roleData?.roles || [];
                             
                             setUser({ 
@@ -563,6 +566,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                                 userInfo.workspaceId
                             );
                             setNeedsWorkspaceSelection(requiresWorkspace);
+                            console.log('[AuthContext] After role update - isAdmin:', newIsAdmin, 'needsWorkspaceSelection:', requiresWorkspace);
                         }
                     } catch (roleError) {
                         console.error('[AuthContext] Failed to update role after signup:', roleError);
