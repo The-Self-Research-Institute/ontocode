@@ -18,6 +18,36 @@ import InviteAcceptPage from "./components/InviteAcceptPage";
 import { Loader2 } from "lucide-react";
 import { useRouter, RouteState } from "./hooks/useRouter";
 
+const getInitialInvitationFromLocation = (): { token: string | null; email: string | null } => {
+  const params = new URLSearchParams(window.location.search);
+  let token = params.get("token") || params.get("invite");
+  let email = params.get("email");
+
+  // Support hash-based invitation links: #/invitation?token=... or #/invite?token=...
+  if (window.location.hash) {
+    const hashPart = window.location.hash.substring(1);
+    const [path, queryString] = hashPart.split("?");
+    if ((path.startsWith("/invitation") || path.startsWith("/invite")) && queryString) {
+      const hashParams = new URLSearchParams(queryString);
+      token = token || hashParams.get("token") || hashParams.get("invite");
+      email = email || hashParams.get("email");
+    }
+  }
+
+  // In test-web mode, token may be present on parent URL
+  try {
+    if (window.parent && window.parent !== window) {
+      const parentParams = new URLSearchParams(window.parent.location.search);
+      token = token || parentParams.get("token") || parentParams.get("invite");
+      email = email || parentParams.get("email");
+    }
+  } catch {
+    // Ignore cross-origin access errors
+  }
+
+  return { token, email };
+};
+
 const AppContent = () => {
   const { user, loading, needsWorkspaceSelection, selectWorkspace, logout, updateSubscriptionPlan, updateUserRole } =
     useAuth();
@@ -30,14 +60,17 @@ const AppContent = () => {
     needsWorkspaceSelection,
   );
 
+  // Capture invitation params before router initialization can rewrite the URL.
+  const initialInvitation = getInitialInvitationFromLocation();
+
   const [isLoginView, setIsLoginView] = useState(true);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedProjectName, setSelectedProjectName] = useState<string>("");
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [selectedFileName, setSelectedFileName] = useState<string>("");
   const [showSubscriptionPlan, setShowSubscriptionPlan] = useState(false);
-  const [inviteToken, setInviteToken] = useState<string | null>(null);
-  const [inviteEmail, setInviteEmail] = useState<string | null>(null);
+  const [inviteToken, setInviteToken] = useState<string | null>(initialInvitation.token);
+  const [inviteEmail, setInviteEmail] = useState<string | null>(initialInvitation.email);
   const [pendingFile, setPendingFile] = useState<{ fileName: string; fileContent: string; fileSize: number } | null>(
     null,
   );
@@ -319,12 +352,12 @@ const AppContent = () => {
     let token = params.get("token") || params.get("invite");
     let email = params.get("email");
 
-    // Check hash-based route for invitation (e.g., #/invitation?token=xxx)
+    // Check hash-based route for invitation (e.g., #/invitation?token=xxx or #/invite?token=xxx)
     if (window.location.hash) {
       const hashPart = window.location.hash.substring(1); // Remove the '#'
       const [path, queryString] = hashPart.split("?");
 
-      if (path.startsWith("/invitation") && queryString) {
+      if ((path.startsWith("/invitation") || path.startsWith("/invite")) && queryString) {
         const hashParams = new URLSearchParams(queryString);
         token = token || hashParams.get("token") || hashParams.get("invite");
         email = email || hashParams.get("email");
