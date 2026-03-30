@@ -147,9 +147,10 @@ export const parseUrlPath = (): Partial<RouteState> | null => {
             return { view: 'subscription', showSubscriptionPlan: true };
 
         case 'invitation':
+        case 'invite':
             return {
                 view: 'invitation',
-                inviteToken: params.get('token') || undefined
+                inviteToken: params.get('token') || params.get('invite') || undefined
             };
 
         case 'projects':
