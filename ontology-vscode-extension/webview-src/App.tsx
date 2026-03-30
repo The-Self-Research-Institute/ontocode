@@ -23,6 +23,12 @@ const getInitialInvitationFromLocation = (): { token: string | null; email: stri
   let token = params.get("token") || params.get("invite");
   let email = params.get("email");
 
+  // Support pathname-based invitation links: /invitation?token=... or /invite?token=...
+  if (window.location.pathname.startsWith("/invitation") || window.location.pathname.startsWith("/invite")) {
+    token = token || params.get("token") || params.get("invite");
+    email = email || params.get("email");
+  }
+
   // Support hash-based invitation links: #/invitation?token=... or #/invite?token=...
   if (window.location.hash) {
     const hashPart = window.location.hash.substring(1);
@@ -78,6 +84,7 @@ const AppContent = () => {
   const [needsDeploymentSelection, setNeedsDeploymentSelection] = useState(false);
   const [deploymentType, setDeploymentType] = useState<"self-hosted" | "cloud" | null>(null);
   const [forceShowWorkspace, setForceShowWorkspace] = useState(false);
+  const [skipWorkspaceRequested, setSkipWorkspaceRequested] = useState(false);
   const [restoredRoute, setRestoredRoute] = useState<RouteState | null>(null);
 
   // Helper to check if workspace selection is required
@@ -101,6 +108,11 @@ const AppContent = () => {
       return false;
     }
 
+    if (skipWorkspaceRequested) {
+      console.log("[App] Returning false - skipWorkspaceRequested is set");
+      return false;
+    }
+
     if (user.workspaceId) {
       console.log("[App] Returning false - user already has workspace");
       return false;
@@ -121,7 +133,14 @@ const AppContent = () => {
 
     // Fall back to needsWorkspaceSelection from auth context
     return needsWorkspaceSelection;
-  }, [user, needsWorkspaceSelection, forceShowWorkspace]);
+  }, [user, needsWorkspaceSelection, forceShowWorkspace, skipWorkspaceRequested]);
+
+  // Reset local skip flag when user context is reset or workspace is explicitly selected.
+  useEffect(() => {
+    if (!user || !!user.workspaceId) {
+      setSkipWorkspaceRequested(false);
+    }
+  }, [user]);
 
   // Determine current route based on state
   const currentRoute: RouteState = useMemo(() => {
@@ -192,30 +211,30 @@ const AppContent = () => {
     // Create a mutable copy of the route to update with restored IDs
     const updatedRoute = { ...route };
 
+    // Restore IDs from name-based routes (works for refresh/init and browser navigation).
+    try {
+      if (updatedRoute.projectName && !updatedRoute.projectId) {
+        const cachedMappings = JSON.parse(sessionStorage.getItem("project_name_id_map") || "{}");
+        const projectId = cachedMappings[updatedRoute.projectName];
+        if (projectId) {
+          updatedRoute.projectId = projectId;
+          console.log("[App] Restored projectId from cache:", projectId);
+        }
+      }
+      if (updatedRoute.fileName && !updatedRoute.fileId) {
+        const cachedMappings = JSON.parse(sessionStorage.getItem("file_name_id_map") || "{}");
+        const fileId = cachedMappings[updatedRoute.fileName];
+        if (fileId) {
+          updatedRoute.fileId = fileId;
+          console.log("[App] Restored fileId from cache:", fileId);
+        }
+      }
+    } catch (e) {
+      console.warn("[App] Failed to restore IDs from cache:", e);
+    }
+
     // Only set restored route if this is from browser back/forward navigation
     if (fromBrowserNav) {
-      // When navigating back, try to restore IDs from names using sessionStorage cache
-      try {
-        if (updatedRoute.projectName && !updatedRoute.projectId) {
-          const cachedMappings = JSON.parse(sessionStorage.getItem("project_name_id_map") || "{}");
-          const projectId = cachedMappings[updatedRoute.projectName];
-          if (projectId) {
-            updatedRoute.projectId = projectId;
-            console.log("[App] Restored projectId from cache:", projectId);
-          }
-        }
-        if (updatedRoute.fileName && !updatedRoute.fileId) {
-          const cachedMappings = JSON.parse(sessionStorage.getItem("file_name_id_map") || "{}");
-          const fileId = cachedMappings[updatedRoute.fileName];
-          if (fileId) {
-            updatedRoute.fileId = fileId;
-            console.log("[App] Restored fileId from cache:", fileId);
-          }
-        }
-      } catch (e) {
-        console.warn("[App] Failed to restore IDs from cache:", e);
-      }
-
       // Set the restored route AFTER updating IDs
       setRestoredRoute(updatedRoute);
     } else {
@@ -320,21 +339,6 @@ const AppContent = () => {
     }
   }, [restoredRoute]);
 
-  // Clear history when entering workspace view to prevent back navigation
-  // Use a ref to track if we've already cleared history for workspace to avoid repeated clears
-  const hasWorkspaceClearedHistoryRef = useRef(false);
-  
-  useEffect(() => {
-    if (currentRoute.view === "workspace" && !hasWorkspaceClearedHistoryRef.current) {
-      console.log("[App] Entered workspace view - clearing navigation history");
-      clearHistory();
-      hasWorkspaceClearedHistoryRef.current = true;
-    } else if (currentRoute.view !== "workspace") {
-      // Reset the flag when leaving workspace view
-      hasWorkspaceClearedHistoryRef.current = false;
-    }
-  }, [currentRoute.view, clearHistory]);
-
   // Send webviewReady on mount to ensure extension knows webview is loaded
   useEffect(() => {
     console.log("[App] Webview mounted, sending webviewReady signal");
@@ -347,10 +351,18 @@ const AppContent = () => {
   }, []);
 
   useEffect(() => {
-    // Check for invitation parameters in URL (query params and hash-based routes)
+    // Check for invitation parameters in URL (query params, pathname routes, and hash-based routes)
     const params = new URLSearchParams(window.location.search);
     let token = params.get("token") || params.get("invite");
     let email = params.get("email");
+
+    // Check pathname-based route for invitation (e.g., /invitation?token=xxx or /invite?token=xxx)
+    const pathname = window.location.pathname;
+    if (pathname.startsWith("/invitation") || pathname.startsWith("/invite")) {
+      token = token || params.get("token") || params.get("invite");
+      email = email || params.get("email");
+      console.log("[App] Found invitation in pathname route:", !!token, "email:", !!email);
+    }
 
     // Check hash-based route for invitation (e.g., #/invitation?token=xxx or #/invite?token=xxx)
     if (window.location.hash) {
@@ -495,10 +507,21 @@ const AppContent = () => {
   };
 
   const handleWorkspaceSelected = (workspaceData: any) => {
+    setSkipWorkspaceRequested(false);
     selectWorkspace(workspaceData);
     setForceShowWorkspace(false); // Reset after workspace selection
-    // Clear history to prevent back navigation to workspace selection
-    clearHistory();
+    setRestoredRoute(null);
+    setSelectedProjectId(null);
+    setSelectedProjectName("");
+    setSelectedFileId(null);
+    setSelectedFileName("");
+    navigateTo({
+      view: "projectDashboard",
+      projectId: null,
+      projectName: "",
+      fileId: null,
+      fileName: "",
+    });
     // Subscription plan is now selected during workspace creation
     // No need to show separate subscription plan screen
   };
@@ -619,6 +642,7 @@ const AppContent = () => {
     setInviteToken(null);
     setInviteEmail(null);
     setForceShowWorkspace(false); // Reset workspace view state
+    setSkipWorkspaceRequested(false);
     // Clear route history
     clearHistory();
     // Keep deployment type so user doesn't need to select again
@@ -626,7 +650,7 @@ const AppContent = () => {
   };
 
   const handleBackToProjectDashboard = () => {
-    // Navigate using router to update browser history
+    // Use deterministic route navigation so back works regardless of browser history state.
     navigateTo({
       view: "projectDashboard",
       projectId: null,
@@ -637,7 +661,7 @@ const AppContent = () => {
   };
 
   const handleBackToProjectLibrary = () => {
-    // Navigate using router to update browser history
+    // Use deterministic route navigation so back works regardless of browser history state.
     navigateTo({
       view: "projectLibrary",
       projectId: selectedProjectId, // Preserve current project
@@ -773,12 +797,23 @@ const AppContent = () => {
           console.log("[App] 🚀 User chose to continue without workspace");
           console.log("[App] Current needsWorkspaceSelection:", needsWorkspaceSelection);
           console.log("[App] Current user:", { email: user?.email, workspaceId: user?.workspaceId });
+          setSkipWorkspaceRequested(true);
           // Update auth context to skip workspace selection
           selectWorkspace({ skipWorkspace: true });
-          setForceShowWorkspace(false); // Reset after skipping
-          // Clear history to prevent back navigation to workspace selection
-          clearHistory();
-          console.log("[App] ✅ Workspace selection skipped, should proceed to editor");
+          setForceShowWorkspace(false);
+          setRestoredRoute(null);
+          setSelectedProjectId(null);
+          setSelectedProjectName("");
+          setSelectedFileId("__editor__");
+          setSelectedFileName("");
+          navigateTo({
+            view: "dashboard",
+            projectId: null,
+            projectName: "",
+            fileId: "__editor__",
+            fileName: "",
+          });
+          console.log("[App] ✅ Continue without workspace now routes to editor");
         }}
         onLogout={handleLogout}
       />

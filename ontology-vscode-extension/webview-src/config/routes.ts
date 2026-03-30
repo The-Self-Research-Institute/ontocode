@@ -61,55 +61,64 @@ export const routes: Record<string, RouteConfig> = {
     },
 };
 
+const shouldUseHashRouting = (): boolean => {
+    const protocol = window.location.protocol;
+    return protocol.startsWith('vscode-webview') || protocol.startsWith('vscode-webview-resource');
+};
+
 /**
  * Generate URL path from route state
  */
 export const generateUrlPath = (state: RouteState): string => {
-    // Get base URL without hash
-    const baseUrl = window.location.origin + window.location.pathname.split('#')[0];
+    const baseUrl = window.location.origin;
+    const useHashRouting = shouldUseHashRouting();
+
+    const withRoute = (path: string): string => {
+        return useHashRouting ? `${baseUrl}#${path}` : `${baseUrl}${path}`;
+    };
 
     switch (state.view) {
         case 'deployment':
-            return baseUrl + '#' + routes.deployment.path;
+            return withRoute(routes.deployment.path);
 
         case 'login':
-            return baseUrl + '#' + routes.login.path;
+            return withRoute(routes.login.path);
 
         case 'signup':
-            return baseUrl + '#' + routes.signup.path;
+            return withRoute(routes.signup.path);
 
         case 'workspace':
-            return baseUrl + '#' + routes.workspace.path;
+            return withRoute(routes.workspace.path);
 
         case 'subscription':
-            return baseUrl + '#' + routes.subscription.path;
+            return withRoute(routes.subscription.path);
 
         case 'invitation':
             const invitePath = routes.invitation.path;
-            return baseUrl + `#${invitePath}${state.inviteToken ? `?token=${encodeURIComponent(state.inviteToken)}` : ''}`;
+            return withRoute(`${invitePath}${state.inviteToken ? `?token=${encodeURIComponent(state.inviteToken)}` : ''}`);
 
         case 'projectDashboard':
-            return baseUrl + '#' + routes.projectDashboard.path;
+            return withRoute(routes.projectDashboard.path);
 
         case 'projectLibrary':
             if (state.projectName) {
-                return baseUrl + `#${routes.projectLibrary.path.replace(':projectName', encodeURIComponent(state.projectName))}`;
+                return withRoute(routes.projectLibrary.path.replace(':projectName', encodeURIComponent(state.projectName)));
             }
-            return baseUrl + '#' + routes.projectDashboard.path;
+            return withRoute(routes.projectDashboard.path);
 
         case 'dashboard':
             if (state.projectName && state.fileName) {
-                return baseUrl + `#${routes.fileEditor.path
+                return withRoute(routes.fileEditor.path
                     .replace(':projectName', encodeURIComponent(state.projectName))
-                    .replace(':fileName', encodeURIComponent(state.fileName))}`;
+                    .replace(':fileName', encodeURIComponent(state.fileName)));
             } else if (state.projectName) {
-                return baseUrl + `#${routes.projectEditor.path.replace(':projectName', encodeURIComponent(state.projectName))}`;
+                return withRoute(routes.projectEditor.path.replace(':projectName', encodeURIComponent(state.projectName)));
             }
             // Fallback to projects dashboard if no project context
-            return baseUrl + '#' + routes.projectDashboard.path;
+            return withRoute(routes.projectDashboard.path);
 
         default:
-            return baseUrl + '#/';
+            return useHashRouting ? `${baseUrl}#/` : `${baseUrl}/`;
     }
 };
 
@@ -117,13 +126,33 @@ export const generateUrlPath = (state: RouteState): string => {
  * Parse URL path to route state
  */
 export const parseUrlPath = (): Partial<RouteState> | null => {
-    const hash = window.location.hash.substring(1); // Remove leading #
-    if (!hash) return null;
+    const hash = window.location.hash.substring(1);
+    const useHashRouting = shouldUseHashRouting();
+
+    let sourcePath = '';
+    let sourceQuery = '';
+
+    // Keep backward compatibility with existing hash links while preferring pathname routing.
+    if (hash && hash.startsWith('/')) {
+        const [path, queryString] = hash.split('?');
+        sourcePath = path;
+        sourceQuery = queryString || '';
+    } else if (useHashRouting) {
+        if (!hash) return null;
+        const [path, queryString] = hash.split('?');
+        sourcePath = path;
+        sourceQuery = queryString || '';
+    } else {
+        sourcePath = window.location.pathname;
+        sourceQuery = window.location.search.startsWith('?')
+            ? window.location.search.substring(1)
+            : window.location.search;
+        if (!sourcePath || sourcePath === '/') return null;
+    }
 
     // Split path and query string
-    const [path, queryString] = hash.split('?');
-    const params = new URLSearchParams(queryString || '');
-    const pathParts = path.split('/').filter(p => p);
+    const params = new URLSearchParams(sourceQuery || '');
+    const pathParts = sourcePath.split('/').filter(p => p);
 
     if (pathParts.length === 0) return null;
 
