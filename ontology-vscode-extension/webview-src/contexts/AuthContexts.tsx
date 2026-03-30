@@ -30,6 +30,15 @@ interface AuthContextType {
 }
 
 type DeploymentType = 'self-hosted' | 'cloud';
+const SKIP_WORKSPACE_MODE_KEY = 'skipWorkspaceMode';
+
+const isSkipWorkspaceMode = (): boolean => {
+    try {
+        return localStorage.getItem(SKIP_WORKSPACE_MODE_KEY) === 'true';
+    } catch {
+        return false;
+    }
+};
 
 // Decode JWT token to check expiration
 const isTokenExpired = (token: string): boolean => {
@@ -111,12 +120,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const ignoringWorkspaceRef = useRef(false);
     const logout = useCallback((showExpiredMessage = false) => {
         console.log('[AuthContext] Logging out...');
-        
-        // Remember last workspace for auto-selection on next login
-        if (user?.workspaceId) {
-            localStorage.setItem('lastWorkspaceId', user.workspaceId);
-            console.log('[AuthContext] Saved last workspace for auto-login:', user.workspaceId);
-        }
+
+        // Always start fresh after logout: do not carry workspace context into next login.
+        localStorage.removeItem('lastWorkspaceId');
+        localStorage.removeItem(SKIP_WORKSPACE_MODE_KEY);
+        ignoringWorkspaceRef.current = false;
         
         setUser(null);
         setNeedsWorkspaceSelection(false);
@@ -126,11 +134,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (window.vscode) {
             window.vscode.postMessage({ type: 'logout' });
         } else {
-            // Clear localStorage in browser/web mode (but keep lastWorkspaceId)
+            // Clear local token in browser/web mode.
             localStorage.removeItem('authToken');
         }
         console.log('[AuthContext]  Logout successful');
-    }, [user?.workspaceId]);
+    }, []);
 
     // Register unauthorized callback with apiClient
     useEffect(() => {
@@ -159,6 +167,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 
                 // Decode JWT to get user info
                 const userInfo = decodeToken(token);
+                const skipWorkspaceMode = isSkipWorkspaceMode();
                 const deploymentType = getStoredDeploymentType();
                 
                 // Cloud users are always admins
@@ -167,7 +176,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 const requiresWorkspace = shouldRequireWorkspaceSelection(
                     deploymentType,
                     isAdmin,
-                    userInfo.workspaceId
+                    skipWorkspaceMode ? undefined : userInfo.workspaceId
                 );
 
                 // Persist user state from token
@@ -178,14 +187,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     email: userInfo.email,
                     roles: userInfo.roles,
                     isAdmin: isAdmin,
-                    workspaceId: userInfo.workspaceId,
-                    workspaceName: userInfo.workspaceName,
-                    workspaceRole: userInfo.workspaceRole,
+                    workspaceId: skipWorkspaceMode ? undefined : userInfo.workspaceId,
+                    workspaceName: skipWorkspaceMode ? undefined : userInfo.workspaceName,
+                    workspaceRole: skipWorkspaceMode ? undefined : userInfo.workspaceRole,
                     subscriptionPlan: userInfo.subscriptionPlan
                 });
 
                 // Workspace selection based on deployment choice and role
-                setNeedsWorkspaceSelection(requiresWorkspace);
+                setNeedsWorkspaceSelection(skipWorkspaceMode ? false : requiresWorkspace);
                 setSessionExpiredMessage(null);
             }
             
@@ -221,6 +230,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         
                         // Decode JWT to get user info
                         const userInfo = decodeToken(message.token);
+                        const skipWorkspaceMode = isSkipWorkspaceMode();
                         const deploymentType = getStoredDeploymentType();
                         
                         // Cloud users are always admins
@@ -229,7 +239,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         const requiresWorkspace = shouldRequireWorkspaceSelection(
                             deploymentType,
                             isAdmin,
-                            userInfo.workspaceId
+                            skipWorkspaceMode ? undefined : userInfo.workspaceId
                         );
 
                         // Persist user state from token
@@ -240,14 +250,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             email: userInfo.email,
                             roles: userInfo.roles,
                             isAdmin: isAdmin,
-                            workspaceId: userInfo.workspaceId,
-                            workspaceName: userInfo.workspaceName,
-                            workspaceRole: userInfo.workspaceRole,
+                            workspaceId: skipWorkspaceMode ? undefined : userInfo.workspaceId,
+                            workspaceName: skipWorkspaceMode ? undefined : userInfo.workspaceName,
+                            workspaceRole: skipWorkspaceMode ? undefined : userInfo.workspaceRole,
                             subscriptionPlan: userInfo.subscriptionPlan
                         });
 
                         // Workspace selection based on deployment choice and role
-                        setNeedsWorkspaceSelection(requiresWorkspace);
+                        setNeedsWorkspaceSelection(skipWorkspaceMode ? false : requiresWorkspace);
                         // Clear expired message on successful login
                         setSessionExpiredMessage(null);
                     }
@@ -325,9 +335,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             
             // Auto-select last workspace if available and user doesn't have workspace in JWT
             const lastWorkspaceId = localStorage.getItem('lastWorkspaceId');
-            console.log('[AuthContext] Checking auto-select: lastWorkspaceId=', lastWorkspaceId, 'userInfo.workspaceId=', userInfo.workspaceId, 'deploymentType=', deploymentType, 'isAdmin=', isAdmin);
+            const skipWorkspaceMode = isSkipWorkspaceMode();
+            console.log('[AuthContext] Checking auto-select: lastWorkspaceId=', lastWorkspaceId, 'userInfo.workspaceId=', userInfo.workspaceId, 'deploymentType=', deploymentType, 'isAdmin=', isAdmin, 'skipWorkspaceMode=', skipWorkspaceMode);
             
-            if (!userInfo.workspaceId && lastWorkspaceId && (deploymentType === 'cloud' || isAdmin)) {
+            if (!skipWorkspaceMode && !userInfo.workspaceId && lastWorkspaceId && (deploymentType === 'cloud' || isAdmin)) {
                 console.log('[AuthContext] 🔄 Auto-selecting last workspace after login:', lastWorkspaceId);
                 try {
                     const selectResponse = await apiClient.post(`/api/workspaces/${lastWorkspaceId}/select`);
@@ -599,11 +610,22 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             console.log('[AuthContext] ✅ User skipped workspace selection, continuing to editor');
             console.log('[AuthContext] Setting needsWorkspaceSelection to false');
             console.log('[AuthContext] User will proceed to editor without workspace context');
+
+            localStorage.setItem(SKIP_WORKSPACE_MODE_KEY, 'true');
+            localStorage.removeItem('lastWorkspaceId');
             
             // Set flag to ignore workspace restoration from next storedAuthToken message
             ignoringWorkspaceRef.current = true;
             console.log('[AuthContext] 🚫 Set ignoringWorkspaceRef to prevent workspace restoration');
             
+            if (user) {
+                setUser({
+                    ...user,
+                    workspaceId: undefined,
+                    workspaceName: undefined,
+                    workspaceRole: undefined
+                });
+            }
             setNeedsWorkspaceSelection(false);
             // User stays logged in but without workspace context
             // The editor will work in non-workspace mode
@@ -620,6 +642,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             localStorage.setItem('lastWorkspaceId', workspaceData.workspaceId);
             console.log('[AuthContext] 💾 Saved workspace for future auto-login:', workspaceData.workspaceId);
         }
+        localStorage.removeItem(SKIP_WORKSPACE_MODE_KEY);
 
         // Save new workspace-scoped token
         // Always save to localStorage for webview API client
@@ -666,6 +689,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // Set flag to ignore workspace restoration from next storedAuthToken message
         ignoringWorkspaceRef.current = true;
         console.log('[AuthContext] 🚫 Set ignoringWorkspaceRef to prevent workspace restoration');
+        localStorage.removeItem(SKIP_WORKSPACE_MODE_KEY);
         
         // Clear workspace-specific data but keep the user logged in with token
         const updatedUser = {

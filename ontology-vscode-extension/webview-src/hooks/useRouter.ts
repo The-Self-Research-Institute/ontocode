@@ -76,33 +76,35 @@ export const useRouter = (
             const parsedRoute = parseUrlPath();
             console.log('[Router] Parsed URL route:', parsedRoute);
 
-            // Don't restore history if current view is workspace (prevents back navigation)
-            if (currentRoute.view === 'workspace') {
-                console.log('[Router] Workspace view detected - skipping history restoration');
-                const url = generateUrlPath(currentRoute);
-                window.history.replaceState(currentRoute, '', url);
-                historyStackRef.current = [currentRoute];
-                saveRouteHistory([currentRoute]);
-                return;
-            }
-
             // Load persisted route history from sessionStorage
             const persistedHistory = loadRouteHistory();
             console.log('[Router] Loaded persisted route history:', persistedHistory.length, 'entries');
 
             if (persistedHistory.length > 0) {
-                // Restore the route history by pushing each entry to browser history
-                for (let i = 0; i < persistedHistory.length - 1; i++) {
-                    const route = persistedHistory[i];
-                    const url = generateUrlPath(route);
-                    window.history.pushState(route, '', url);
+                // Rebuild the full browser history stack so Back/Forward works after refresh.
+                const restoredHistory = [...persistedHistory];
+
+                // If URL route exists and differs from last persisted route, prefer URL as current entry.
+                if (parsedRoute) {
+                    const mergedParsedRoute = { ...currentRoute, ...parsedRoute } as RouteState;
+                    const lastPersistedRoute = restoredHistory[restoredHistory.length - 1];
+                    if (hasRouteChanged(lastPersistedRoute, mergedParsedRoute)) {
+                        restoredHistory.push(mergedParsedRoute);
+                    }
                 }
 
-                // Set the current route as the last entry
-                historyStackRef.current = [...persistedHistory];
+                const firstRoute = restoredHistory[0];
+                window.history.replaceState(firstRoute, '', generateUrlPath(firstRoute));
+                for (let i = 1; i < restoredHistory.length; i++) {
+                    const route = restoredHistory[i];
+                    window.history.pushState(route, '', generateUrlPath(route));
+                }
 
-                // Check if current route matches the last persisted route
-                const lastPersistedRoute = persistedHistory[persistedHistory.length - 1];
+                historyStackRef.current = restoredHistory;
+                saveRouteHistory(restoredHistory);
+
+                // Check if current route matches the last restored route
+                const lastPersistedRoute = restoredHistory[restoredHistory.length - 1];
                 if (hasRouteChanged(currentRoute, lastPersistedRoute)) {
                     console.log('[Router] Current route differs from last persisted, restoring...');
                     onRouteChange(lastPersistedRoute, false); // From initialization, not browser nav
@@ -142,6 +144,14 @@ export const useRouter = (
         const handlePopState = (event: PopStateEvent) => {
             console.log('[Router] Browser back/forward detected');
 
+            // Keep users pinned on workspace route when they are currently in workspace flow.
+            if (currentRoute.view === 'workspace') {
+                console.log('[Router] Workspace back navigation blocked');
+                const url = generateUrlPath(currentRoute);
+                window.history.pushState(currentRoute, '', url);
+                return;
+            }
+
             const route = event.state as RouteState | null;
 
             if (route) {
@@ -169,7 +179,7 @@ export const useRouter = (
 
         window.addEventListener('popstate', handlePopState);
         return () => window.removeEventListener('popstate', handlePopState);
-    }, [onRouteChange]);
+    }, [onRouteChange, currentRoute]);
 
     // Update browser history when route changes
     useEffect(() => {
@@ -189,19 +199,9 @@ export const useRouter = (
         // Generate clean URL path for the current route
         const url = generateUrlPath(currentRoute);
 
-        // If current view is workspace, use replaceState to prevent adding to history
         if (currentRoute.view === 'workspace') {
-            console.log('[Router] Workspace view - using replaceState to prevent history entry');
+            // Do not add workspace view to back stack; keep a single pinned workspace state.
             window.history.replaceState(currentRoute, '', url);
-            // Clear history stack for workspace
-            historyStackRef.current = [currentRoute];
-            saveRouteHistory([currentRoute]);
-        } else if (previousRoute && previousRoute.view === 'workspace') {
-            // If navigating AWAY FROM workspace, replace the workspace entry instead of pushing
-            // This prevents back navigation to workspace selection
-            console.log('[Router] Navigating from workspace - using replaceState to prevent back navigation');
-            window.history.replaceState(currentRoute, '', url);
-            // Start fresh history stack from this point
             historyStackRef.current = [currentRoute];
             saveRouteHistory([currentRoute]);
         } else {
