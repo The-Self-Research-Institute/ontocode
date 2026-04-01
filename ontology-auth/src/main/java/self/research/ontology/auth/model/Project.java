@@ -154,17 +154,17 @@ public class Project {
     }
     
     public void removeMember(String userId) {
-        this.members.removeIf(m -> m.getUserId().equals(userId));
+        this.members.removeIf(m -> userId != null && userId.equals(m.getUserId()));
         this.updatedAt = LocalDateTime.now();
     }
     
     public boolean hasMember(String userId) {
-        return this.members.stream().anyMatch(m -> m.getUserId().equals(userId));
+        return this.members.stream().anyMatch(m -> userId != null && userId.equals(m.getUserId()));
     }
     
     public ProjectMember getMember(String userId) {
         return this.members.stream()
-            .filter(m -> m.getUserId().equals(userId))
+            .filter(m -> userId != null && userId.equals(m.getUserId()))
             .findFirst()
             .orElse(null);
     }

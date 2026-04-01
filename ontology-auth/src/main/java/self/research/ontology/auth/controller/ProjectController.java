@@ -209,29 +209,52 @@ public class ProjectController {
                 request.description
             );
             
-            // Handle member sharing
+            // Handle member sharing - add members before final save
+            boolean membersAdded = false;
+            
+            // If creator is not workspace owner, add workspace owner as ADMIN
+            Optional<self.research.ontology.auth.model.Workspace> workspaceOpt = 
+                projectService.getWorkspace(request.workspaceId);
+            if (workspaceOpt.isPresent()) {
+                self.research.ontology.auth.model.Workspace workspace = workspaceOpt.get();
+                String wsOwnerId = workspace.getOwnerId();
+                if (wsOwnerId != null && !wsOwnerId.equals(user.getId())) {
+                    Optional<User> wsOwnerOpt = userRepository.findById(wsOwnerId);
+                    if (wsOwnerOpt.isPresent()) {
+                        User wsOwner = wsOwnerOpt.get();
+                        project.addMember(wsOwner.getId(), wsOwner.getUsername(), wsOwner.getEmail(), "ADMIN");
+                        membersAdded = true;
+                    }
+                }
+            }
+            
             if ("all".equals(request.shareWith)) {
-                // Add all workspace members as viewers (except owner)
-                Optional<self.research.ontology.auth.model.Workspace> workspaceOpt = 
-                    projectService.getWorkspace(request.workspaceId);
+                // Add all active workspace members as editors (except owner and workspace owner, skip pending)
                 if (workspaceOpt.isPresent()) {
                     self.research.ontology.auth.model.Workspace workspace = workspaceOpt.get();
                     for (self.research.ontology.auth.model.Workspace.WorkspaceMember member : workspace.getMembers()) {
-                        if (!member.getUserId().equals(user.getId())) {
-                            project.addMember(member.getUserId(), member.getUsername(), member.getEmail(), "VIEWER");
+                        if (member.getUserId() != null 
+                                && !member.getUserId().equals(user.getId())
+                                && !member.getUserId().equals(workspace.getOwnerId())
+                                && member.getStatus() == self.research.ontology.auth.model.Workspace.MemberStatus.ACTIVE) {
+                            project.addMember(member.getUserId(), member.getUsername(), member.getEmail(), "EDITOR");
+                            membersAdded = true;
                         }
                     }
-                    projectService.updateProject(project);
                 }
             } else if ("specific".equals(request.shareWith) && request.memberUsernames != null) {
-                // Add specific members as viewers
+                // Add specific members as editors
                 for (String memberUsername : request.memberUsernames) {
                     Optional<User> memberOpt = userRepository.findByUsername(memberUsername);
                     if (memberOpt.isPresent() && !memberOpt.get().getId().equals(user.getId())) {
                         User member = memberOpt.get();
-                        project.addMember(member.getId(), member.getUsername(), member.getEmail(), "VIEWER");
+                        project.addMember(member.getId(), member.getUsername(), member.getEmail(), "EDITOR");
+                        membersAdded = true;
                     }
                 }
+            }
+            
+            if (membersAdded) {
                 projectService.updateProject(project);
             }
 
@@ -261,7 +284,25 @@ public class ProjectController {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
             }
 
+            User user = userOpt.get();
             List<Project> projects = projectService.getWorkspaceProjects(workspaceId);
+            
+            // Filter projects based on workspace role:
+            // Workspace owners and admins see all projects; others only see projects they're members of
+            Optional<Workspace> wsOpt = workspaceService.getWorkspace(workspaceId);
+            boolean isOwnerOrAdmin = false;
+            if (wsOpt.isPresent()) {
+                Workspace.WorkspaceMember wsMember = wsOpt.get().getMember(user.getId());
+                if (wsMember != null) {
+                    Workspace.WorkspaceRole wsRole = wsMember.getRole();
+                    isOwnerOrAdmin = wsRole == Workspace.WorkspaceRole.OWNER || wsRole == Workspace.WorkspaceRole.ADMIN;
+                }
+            }
+            if (!isOwnerOrAdmin) {
+                projects = projects.stream()
+                        .filter(p -> p.hasMember(user.getId()))
+                        .collect(Collectors.toList());
+            }
             
             List<Map<String, Object>> projectDTOs = projects.stream()
                     .map(this::convertToDTO)
@@ -387,6 +428,24 @@ public class ProjectController {
                     }
                     log.info("[getMyProjects]   Project: id={}, name={}, ownerId={}, members={}, files={}", 
                         p.getProjectId(), p.getName(), p.getOwnerId(), p.getMembers().size(), p.getActiveFiles().size());
+                }
+                
+                // Filter projects based on workspace role:
+                // Workspace owners and admins see all projects; others only see projects they're members of
+                Optional<Workspace> wsOpt = workspaceService.getWorkspace(effectiveWorkspaceId);
+                boolean isOwnerOrAdmin = false;
+                if (wsOpt.isPresent()) {
+                    Workspace.WorkspaceMember wsMember = wsOpt.get().getMember(user.getId());
+                    if (wsMember != null) {
+                        Workspace.WorkspaceRole wsRole = wsMember.getRole();
+                        isOwnerOrAdmin = wsRole == Workspace.WorkspaceRole.OWNER || wsRole == Workspace.WorkspaceRole.ADMIN;
+                    }
+                }
+                if (!isOwnerOrAdmin) {
+                    projects = projects.stream()
+                            .filter(p -> p.hasMember(user.getId()))
+                            .collect(Collectors.toList());
+                    log.info("[getMyProjects] Filtered to {} projects for non-owner/admin user {}", projects.size(), username);
                 }
             }
             
@@ -783,6 +842,32 @@ public class ProjectController {
                 return ResponseEntity.status(403).body(Map.of("error", "Access denied"));
             }
             
+            // Determine user's project role
+            String userProjectRole = "VIEWER"; // default
+            if (project.getOwnerId().equals(user.getId())) {
+                userProjectRole = "OWNER";
+            } else {
+                // Workspace owners/admins always get ADMIN role in projects
+                Optional<Workspace> wsOpt = workspaceService.getWorkspace(project.getWorkspaceId());
+                boolean isWsOwnerOrAdmin = false;
+                if (wsOpt.isPresent()) {
+                    Workspace.WorkspaceMember wsMember = wsOpt.get().getMember(user.getId());
+                    if (wsMember != null) {
+                        Workspace.WorkspaceRole wsRole = wsMember.getRole();
+                        if (wsRole == Workspace.WorkspaceRole.OWNER || wsRole == Workspace.WorkspaceRole.ADMIN) {
+                            userProjectRole = "ADMIN";
+                            isWsOwnerOrAdmin = true;
+                        }
+                    }
+                }
+                if (!isWsOwnerOrAdmin) {
+                    Project.ProjectMember pm = project.getMember(user.getId());
+                    if (pm != null) {
+                        userProjectRole = pm.getRole();
+                    }
+                }
+            }
+            
             // Get files from project metadata (primary source)
             List<Map<String, Object>> files = new ArrayList<>();
             for (Project.FileMetadataInfo fileInfo : project.getActiveFiles()) {
@@ -791,6 +876,7 @@ public class ProjectController {
                 fileData.put("name", fileInfo.getFileName());
                 fileData.put("size", fileInfo.getFileSize());
                 fileData.put("uploadedBy", fileInfo.getUploaderUsername());
+                fileData.put("uploadedByUserId", fileInfo.getUploadedBy());
                 fileData.put("uploadedAt", fileInfo.getUploadedAt().toString());
                 fileData.put("type", fileInfo.getExtension());
                 files.add(fileData);
@@ -805,6 +891,7 @@ public class ProjectController {
                     fileInfo.put("name", fileMeta.getFileName());
                     fileInfo.put("size", fileMeta.getFileSize());
                     fileInfo.put("uploadedBy", fileMeta.getUploaderUsername());
+                    fileInfo.put("uploadedByUserId", fileMeta.getUploadedBy());
                     fileInfo.put("uploadedAt", fileMeta.getUploadedAt().toString());
                     fileInfo.put("type", fileMeta.getExtension());
                     files.add(fileInfo);
@@ -813,7 +900,8 @@ public class ProjectController {
 
             return ResponseEntity.ok(Map.of(
                 "files", files,
-                "count", files.size()
+                "count", files.size(),
+                "userProjectRole", userProjectRole
             ));
         } catch (SecurityException e) {
             log.error("Security error getting project files", e);
@@ -1025,6 +1113,12 @@ public class ProjectController {
             }
             
             Project project = projectOpt.get();
+            
+            // Check user's project role - viewers cannot upload files
+            Project.ProjectMember projectMember = project.getMember(user.getId());
+            if (projectMember != null && "VIEWER".equals(projectMember.getRole())) {
+                return ResponseEntity.status(403).body(Map.of("error", "Viewers cannot upload files to this project"));
+            }
             
             // Check GraphDB for duplicate data BEFORE uploading
             // This prevents loading the same ontology data multiple times into the same project graph
@@ -1316,6 +1410,52 @@ public class ProjectController {
         } catch (Exception e) {
             log.error("Error restoring file", e);
             return ResponseEntity.internalServerError().body(Map.of("error", "Failed to restore file"));
+        }
+    }
+
+    /**
+     * Update project details (description, etc.)
+     */
+    @PatchMapping("/{projectId}")
+    public ResponseEntity<?> updateProject(
+            @PathVariable String projectId,
+            @RequestBody Map<String, String> request) {
+        try {
+            String username = getCurrentUsername();
+            Optional<User> userOpt = userRepository.findByUsername(username);
+
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            }
+
+            User user = userOpt.get();
+
+            // Get project and verify ownership
+            Optional<Project> projectOpt = projectService.getProject(projectId);
+            if (projectOpt.isEmpty()) {
+                return ResponseEntity.notFound().build();
+            }
+
+            Project project = projectOpt.get();
+            if (!project.getOwnerId().equals(user.getId())) {
+                return ResponseEntity.status(403).body(Map.of("error", "Only project owner can update project settings"));
+            }
+
+            // Update description if provided
+            if (request.containsKey("description")) {
+                project.setDescription(request.get("description"));
+            }
+
+            project.setUpdatedAt(java.time.LocalDateTime.now());
+            projectService.updateProject(project);
+
+            return ResponseEntity.ok(Map.of(
+                "message", "Project updated successfully",
+                "project", convertToDTO(project)
+            ));
+        } catch (Exception e) {
+            log.error("Error updating project", e);
+            return ResponseEntity.internalServerError().body(Map.of("error", "Failed to update project"));
         }
     }
 

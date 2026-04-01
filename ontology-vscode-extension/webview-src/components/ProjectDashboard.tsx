@@ -147,6 +147,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   // Check if current user is workspace owner
   // Check both userId match and if user has OWNER role in the workspace
   const isWorkspaceOwner = user?.userId === workspaceOwnerId || user?.workspaceRole === "OWNER";
+  const isViewer = user?.workspaceRole === "VIEWER";
 
   // Handle workspace subscription plan upgrade
   const handleUpgradePlan = async (planId: string) => {
@@ -195,6 +196,41 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   useEffect(() => {
     loadData();
   }, []);
+
+  // Poll for workspace member changes (e.g. when invitees accept)
+  useEffect(() => {
+    if (!user?.workspaceId) return;
+    const interval = setInterval(async () => {
+      try {
+        const workspaceResponse = await apiClient.get(`/api/workspaces/${user.workspaceId}`);
+        const workspaceData = workspaceResponse?.data || workspaceResponse;
+        const members = workspaceData?.members || [];
+        const teamMembersList = members.map((member: any) => {
+          const isPending = member.status === "PENDING" || (!member.userId && member.invitationToken);
+          return {
+            id: member.userId || `pending-${member.email}`,
+            username: member.username,
+            email: member.email,
+            roles: [member.role],
+            lastLoginAt: member.joinedAt,
+            status: isPending ? "PENDING" : "ACTIVE",
+            invitationToken: member.invitationToken,
+          };
+        });
+        setTeamMembers((prev) => {
+          if (JSON.stringify(prev) !== JSON.stringify(teamMembersList)) {
+            console.log("[ProjectDashboard] Members updated via polling");
+            return teamMembersList;
+          }
+          return prev;
+        });
+        setWorkspaceOwnerId(workspaceData?.ownerId || null);
+      } catch (e) {
+        // Silently ignore polling errors
+      }
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [user?.workspaceId]);
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -626,8 +662,8 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   const filteredProjects = useMemo(() => {
     console.log("[ProjectDashboard] Recalculating filteredProjects, projects:", projects.length);
 
-    // Backend already returns only projects the user has access to
-    // (workspace-based or member-based), so just apply search filter
+    // Backend already filters projects by membership for non-owner/admin users
+    // Just apply the local search filter here
     return projects.filter(
       (project) =>
         project.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -798,14 +834,16 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                 <Building2 size={14} />
                 <span className="hidden sm:inline">Switch Workspace</span>
               </button>
-              <button
-                onClick={() => setShowCreateProject(true)}
-                className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg transition-all hover:shadow-lg cursor-pointer bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600"
-                title="Create New Project"
-              >
-                <Plus size={14} />
-                New Project
-              </button>
+              {!isViewer && (
+                <button
+                  onClick={() => setShowCreateProject(true)}
+                  className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg transition-all hover:shadow-lg cursor-pointer bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600"
+                  title="Create New Project"
+                >
+                  <Plus size={14} />
+                  New Project
+                </button>
+              )}
               {onOpenEditor && (
                 <button
                   onClick={onOpenEditor}
@@ -892,7 +930,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                   <p className="text-gray-500 mb-4">
                     {searchQuery ? "No projects found matching your search" : "No projects yet"}
                   </p>
-                  {!searchQuery && (
+                  {!searchQuery && !isViewer && (
                     <button
                       onClick={() => setShowCreateProject(true)}
                       className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
@@ -939,8 +977,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                         </div>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-                        {(project.ownerId === user?.userId || isWorkspaceOwner) && (
-                          <div className="relative">
+                        <div className="relative">
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -964,31 +1001,34 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                                   <Settings size={14} />
                                   Project Settings
                                 </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    startRename(project.projectId, project.name);
-                                  }}
-                                  className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-                                >
-                                  <Edit size={14} />
-                                  Rename
-                                </button>
-                                <div className="border-t border-gray-100 my-1"></div>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleDeleteProject(project);
-                                  }}
-                                  className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
-                                >
-                                  <Trash2 size={14} />
-                                  Delete Project
-                                </button>
+                                {!isViewer && (project.ownerId === user?.userId || isWorkspaceOwner) && (
+                                  <>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        startRename(project.projectId, project.name);
+                                      }}
+                                      className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                                    >
+                                      <Edit size={14} />
+                                      Rename
+                                    </button>
+                                    <div className="border-t border-gray-100 my-1"></div>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDeleteProject(project);
+                                      }}
+                                      className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                                    >
+                                      <Trash2 size={14} />
+                                      Delete Project
+                                    </button>
+                                  </>
+                                )}
                               </div>
                             )}
                           </div>
-                        )}
                         {viewMode === "list" && <ChevronRight size={20} className="text-gray-400" />}
                       </div>
                     </div>
@@ -1259,17 +1299,19 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                 <Users size={16} />
                 Members ({projectSettingsModal.members?.length || 0})
               </button>
-              <button
-                onClick={() => setProjectSettingsTab("danger")}
-                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
-                  projectSettingsTab === "danger"
-                    ? "text-red-600 border-b-2 border-red-600 bg-red-50"
-                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
-                }`}
-              >
-                <AlertTriangle size={16} />
-                Danger Zone
-              </button>
+              {!isViewer && (
+                <button
+                  onClick={() => setProjectSettingsTab("danger")}
+                  className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                    projectSettingsTab === "danger"
+                      ? "text-red-600 border-b-2 border-red-600 bg-red-50"
+                      : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
+                  }`}
+                >
+                  <AlertTriangle size={16} />
+                  Danger Zone
+                </button>
+              )}
             </div>
 
             {/* Content */}
@@ -1283,8 +1325,9 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                       type="text"
                       value={editingProjectName}
                       onChange={(e) => setEditingProjectName(e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      className={`w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent ${isViewer ? "bg-gray-100 cursor-not-allowed" : ""}`}
                       placeholder="Enter project name"
+                      disabled={isViewer}
                     />
                   </div>
                   <div>
@@ -1293,8 +1336,9 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                       value={editingProjectDescription}
                       onChange={(e) => setEditingProjectDescription(e.target.value)}
                       rows={4}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
+                      className={`w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none ${isViewer ? "bg-gray-100 cursor-not-allowed" : ""}`}
                       placeholder="Enter project description"
+                      disabled={isViewer}
                     />
                   </div>
                   <div className="bg-gray-50 rounded-lg p-4">
@@ -1330,9 +1374,9 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <p className="text-sm text-gray-600">
-                      Manage who has access to this project and their permissions.
+                      {isViewer ? "View who has access to this project and their permissions." : "Manage who has access to this project and their permissions."}
                     </p>
-                    {projectSettingsModal.ownerId === user?.userId && (
+                    {!isViewer && (projectSettingsModal.ownerId === user?.userId || isWorkspaceOwner) && (
                       <button
                         onClick={() => setShowAddMemberForm(!showAddMemberForm)}
                         className="flex items-center gap-2 px-3 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 transition-colors"
@@ -1434,27 +1478,35 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
-                            <select
-                              value={member.role}
-                              onChange={(e) =>
-                                handleUpdateProjectMemberRole(projectSettingsModal, member, e.target.value)
-                              }
-                              className="text-sm border border-gray-300 rounded-lg px-2 py-1 focus:ring-2 focus:ring-purple-500"
-                              disabled={member.role === "OWNER" || projectSettingsModal.ownerId !== user?.userId}
-                            >
-                              <option value="OWNER">Owner</option>
-                              <option value="ADMIN">Admin</option>
-                              <option value="EDITOR">Editor</option>
-                              <option value="VIEWER">Viewer</option>
-                            </select>
-                            {member.role !== "OWNER" && projectSettingsModal.ownerId === user?.userId && (
-                              <button
-                                onClick={() => handleRemoveProjectMember(projectSettingsModal, member)}
-                                className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                title="Remove member"
-                              >
-                                <UserMinus size={16} />
-                              </button>
+                            {isViewer ? (
+                              <span className="text-sm px-2 py-1 bg-gray-100 text-gray-700 rounded">
+                                {member.role}
+                              </span>
+                            ) : (
+                              <>
+                                <select
+                                  value={member.role}
+                                  onChange={(e) =>
+                                    handleUpdateProjectMemberRole(projectSettingsModal, member, e.target.value)
+                                  }
+                                  className="text-sm border border-gray-300 rounded-lg px-2 py-1 focus:ring-2 focus:ring-purple-500"
+                                  disabled={member.role === "OWNER" || (projectSettingsModal.ownerId !== user?.userId && !isWorkspaceOwner)}
+                                >
+                                  <option value="OWNER">Owner</option>
+                                  <option value="ADMIN">Admin</option>
+                                  <option value="EDITOR">Editor</option>
+                                  <option value="VIEWER">Viewer</option>
+                                </select>
+                                {member.role !== "OWNER" && (projectSettingsModal.ownerId === user?.userId || isWorkspaceOwner) && (
+                                  <button
+                                    onClick={() => handleRemoveProjectMember(projectSettingsModal, member)}
+                                    className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                    title="Remove member"
+                                  >
+                                    <UserMinus size={16} />
+                                  </button>
+                                )}
+                              </>
                             )}
                           </div>
                         </div>
@@ -1509,17 +1561,19 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                   onClick={() => setProjectSettingsModal(null)}
                   className="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 font-medium transition-colors"
                 >
-                  Cancel
+                  {isViewer ? "Close" : "Cancel"}
                 </button>
-                <button
-                  onClick={handleSaveProjectSettings}
-                  disabled={savingProject || !editingProjectName.trim()}
-                  className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
-                >
-                  {savingProject && <Loader2 size={16} className="animate-spin" />}
-                  <Save size={16} />
-                  Save Changes
-                </button>
+                {!isViewer && (
+                  <button
+                    onClick={handleSaveProjectSettings}
+                    disabled={savingProject || !editingProjectName.trim()}
+                    className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {savingProject && <Loader2 size={16} className="animate-spin" />}
+                    <Save size={16} />
+                    Save Changes
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -1538,6 +1592,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
       <UserGuideModal isOpen={showUserGuide} onClose={() => setShowUserGuide(false)} />
     </div>
   );
-};
+};;
 
 export default ProjectDashboard;
