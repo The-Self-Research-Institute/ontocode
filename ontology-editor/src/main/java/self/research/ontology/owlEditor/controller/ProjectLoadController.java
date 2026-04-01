@@ -273,9 +273,14 @@ public class ProjectLoadController {
                     "filename", filename,
                     "message", message));
         } catch (IOException e) {
-            log.error("Upload failed", e);
+            log.error("Upload failed (IO)", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("success", false, "error", e.getMessage()));
+        } catch (Exception e) {
+            log.error("Upload failed", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("success", false, "error",
+                            e.getMessage() != null ? e.getMessage() : "Unexpected upload error"));
         }
     }
     

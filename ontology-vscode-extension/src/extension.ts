@@ -1603,6 +1603,7 @@ class OntoCodePanel {
                 // Reconstruct the file from the transferred byte array
                 if (body._fileBuffer && body._fileFieldName) {
                     const buf = Buffer.from(body._fileBuffer);
+                    console.log(`[Proxy] Reconstructing FormData: file=${body._originalFileName}, size=${buf.length}, type=${body.fileType}`);
                     form.append(body._fileFieldName, buf, {
                         filename: body._originalFileName || 'upload',
                         contentType: body.fileType || 'application/octet-stream',
@@ -1610,12 +1611,14 @@ class OntoCodePanel {
                 }
                 // Append remaining string fields
                 for (const [k, v] of Object.entries(body)) {
-                    if (k.startsWith('_') || k === 'file') continue;
+                    if (k.startsWith('_') || k === 'file' || k === 'fileType') continue;
                     form.append(k, String(v));
                 }
                 postBody = form;
                 // Override headers for multipart
-                axiosConfig.headers = { ...headers, ...form.getHeaders() };
+                const formHeaders = form.getHeaders();
+                console.log(`[Proxy] FormData headers:`, formHeaders);
+                axiosConfig.headers = { ...headers, ...formHeaders };
                 axiosConfig.maxContentLength = Infinity;
                 axiosConfig.maxBodyLength = Infinity;
             }

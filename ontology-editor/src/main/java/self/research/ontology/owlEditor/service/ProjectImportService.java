@@ -87,6 +87,21 @@ public class ProjectImportService {
 
         log.info("[Import] Submitting import for project {}: {}", projectId, filename);
 
+        // Write PROCESSING status synchronously BEFORE enqueueing so that any
+        // status poll from the frontend sees PROCESSING instead of the stale
+        // COMPLETED from the previous import.  This closes the race window
+        // where the frontend polls, sees old COMPLETED, and fetches stale data
+        // — especially noticeable with large ontologies (90k+ classes).
+        //
+        // Preserve the user-facing filename (e.g. "ontology-1235.owl") from the
+        // existing status record rather than using the physical file name
+        // (e.g. "ontology.current.owl") which is an internal storage detail.
+        String displayFilename = metadataService.readStatus(projectId)
+                .map(ProjectStatus::filename)
+                .filter(f -> f != null && !f.isBlank())
+                .orElse(filename);
+        metadataService.writeStatus(projectId, ProjectStatus.processing(displayFilename));
+
         // Add to queue
         queueManager.enqueue(projectId, filename, ownerEmail, owlFile, options);
 
