@@ -31,6 +31,7 @@ interface FileItem {
   name: string;
   size: number;
   uploadedBy: string;
+  uploadedByUserId: string;
   uploadedAt: string;
   type: string;
 }
@@ -62,6 +63,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     type: "success",
   });
   const [openMenuFileId, setOpenMenuFileId] = useState<string | null>(null); // Track which file menu is open
+  const [userProjectRole, setUserProjectRole] = useState<string>("VIEWER");
   const { user } = useAuth();
 
   const showToast = (message: string, type: "success" | "error" = "success") => {
@@ -198,6 +200,10 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       // Handle both response.data and response.data.files structures
       const fileList = response?.files || response?.data || [];
       console.log("[ProjectLibrary] Parsed file list:", fileList);
+
+      if (response?.userProjectRole) {
+        setUserProjectRole(response.userProjectRole);
+      }
 
       const filesArray = Array.isArray(fileList) ? fileList : [];
       setFiles(filesArray);
@@ -454,8 +460,13 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             <div className="flex items-center gap-3">
               <button
                 onClick={handleCreateNewFile}
-                className="px-2.5 py-1.5 text-xs text-green-600 border border-green-300 bg-green-50 rounded-md hover:bg-green-100 transition-colors flex items-center gap-1.5 font-medium"
-                title="Create a new ontology file"
+                className={`px-2.5 py-1.5 text-xs border rounded-md transition-colors flex items-center gap-1.5 font-medium ${
+                  userProjectRole === "VIEWER"
+                    ? "text-gray-400 border-gray-200 bg-gray-50 cursor-not-allowed opacity-60"
+                    : "text-green-600 border-green-300 bg-green-50 hover:bg-green-100"
+                }`}
+                title={userProjectRole === "VIEWER" ? "Viewers cannot create files" : "Create a new ontology file"}
+                disabled={userProjectRole === "VIEWER"}
               >
                 <Plus size={14} />
                 New File
@@ -469,16 +480,31 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                   Editor
                 </button>
               )}
-              <label className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-all hover:shadow-lg cursor-pointer bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600">
-                <Upload size={18} className={uploading ? "animate-bounce" : ""} style={{ color: "white" }} />
-                <span style={{ color: "white" }}>{uploading ? "Uploading..." : "Upload File"}</span>
-                <input
-                  type="file"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                  accept=".owl,.rdf,.ttl,.n3"
-                  disabled={uploading}
+              <label
+                className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${
+                  userProjectRole === "VIEWER"
+                    ? "bg-gray-300 text-gray-500 cursor-not-allowed opacity-60"
+                    : "hover:shadow-lg cursor-pointer bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600"
+                }`}
+                title={userProjectRole === "VIEWER" ? "Viewers cannot upload files" : ""}
+              >
+                <Upload
+                  size={18}
+                  className={uploading ? "animate-bounce" : ""}
+                  style={{ color: userProjectRole === "VIEWER" ? "currentColor" : "white" }}
                 />
+                <span style={{ color: userProjectRole === "VIEWER" ? "currentColor" : "white" }}>
+                  {uploading ? "Uploading..." : "Upload File"}
+                </span>
+                {userProjectRole !== "VIEWER" && (
+                  <input
+                    type="file"
+                    onChange={handleFileUpload}
+                    className="hidden"
+                    accept=".owl,.rdf,.ttl,.n3"
+                    disabled={uploading}
+                  />
+                )}
               </label>
             </div>
           </div>
@@ -556,16 +582,31 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             </p>
             {!searchQuery && (
               <div className="flex flex-col items-center gap-4">
-                <label className="group flex items-center gap-3 px-8 py-4 text-lg font-semibold rounded-xl transition-all hover:shadow-lg cursor-pointer bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600">
-                  <Upload size={24} className="group-hover:animate-bounce" style={{ color: "white" }} />
-                  <span style={{ color: "white" }}>Upload Your First File</span>
-                  <input
-                    type="file"
-                    onChange={handleFileUpload}
-                    className="hidden"
-                    accept=".owl,.rdf,.ttl,.n3"
-                    disabled={uploading}
+                <label
+                  className={`group flex items-center gap-3 px-8 py-4 text-lg font-semibold rounded-xl transition-all ${
+                    userProjectRole === "VIEWER"
+                      ? "bg-gray-300 text-gray-500 cursor-not-allowed opacity-60"
+                      : "hover:shadow-lg cursor-pointer bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600"
+                  }`}
+                  title={userProjectRole === "VIEWER" ? "Viewers cannot upload files" : ""}
+                >
+                  <Upload
+                    size={24}
+                    className={userProjectRole !== "VIEWER" ? "group-hover:animate-bounce" : ""}
+                    style={{ color: userProjectRole === "VIEWER" ? "currentColor" : "white" }}
                   />
+                  <span style={{ color: userProjectRole === "VIEWER" ? "currentColor" : "white" }}>
+                    Upload Your First File
+                  </span>
+                  {userProjectRole !== "VIEWER" && (
+                    <input
+                      type="file"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                      accept=".owl,.rdf,.ttl,.n3"
+                      disabled={uploading}
+                    />
+                  )}
                 </label>
                 <p className="text-sm text-gray-500">Supported formats: .owl, .rdf, .ttl, .n3 (up to 1GB)</p>
               </div>
@@ -586,31 +627,35 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                   <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
                     <FileText size={24} className="text-purple-600" />
                   </div>
-                  <div className="relative">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setOpenMenuFileId(openMenuFileId === file.id ? null : file.id);
-                      }}
-                      className="p-1 hover:bg-gray-100 rounded"
-                    >
-                      <MoreVertical size={16} className="text-gray-400" />
-                    </button>
-                    {openMenuFileId === file.id && (
-                      <div className="absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteFile(file.id, file.name);
-                          }}
-                          className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 rounded-lg flex items-center gap-2"
-                        >
-                          <Trash2 size={14} />
-                          Delete
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                  {(userProjectRole === "OWNER" ||
+                    userProjectRole === "ADMIN" ||
+                    (userProjectRole === "EDITOR" && file.uploadedByUserId === user?.userId)) && (
+                    <div className="relative">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpenMenuFileId(openMenuFileId === file.id ? null : file.id);
+                        }}
+                        className="p-1 hover:bg-gray-100 rounded"
+                      >
+                        <MoreVertical size={16} className="text-gray-400" />
+                      </button>
+                      {openMenuFileId === file.id && (
+                        <div className="absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteFile(file.id, file.name);
+                            }}
+                            className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 rounded-lg flex items-center gap-2"
+                          >
+                            <Trash2 size={14} />
+                            Delete
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <h3 className="font-semibold text-gray-900 mb-1 truncate" title={file.name}>
@@ -677,15 +722,19 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{file.uploadedBy}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{formatDate(file.uploadedAt)}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteFile(file.id, file.name);
-                        }}
-                        className="text-red-600 hover:text-red-800"
-                      >
-                        <Trash2 size={16} />
-                      </button>
+                      {(userProjectRole === "OWNER" ||
+                        userProjectRole === "ADMIN" ||
+                        (userProjectRole === "EDITOR" && file.uploadedByUserId === user?.userId)) && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteFile(file.id, file.name);
+                          }}
+                          className="text-red-600 hover:text-red-800"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

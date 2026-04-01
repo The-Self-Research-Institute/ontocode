@@ -372,7 +372,25 @@ public class ProjectService {
      */
     public boolean hasAccess(String projectId, String userId) {
         Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
-        return projectOpt.isPresent() && projectOpt.get().hasMember(userId);
+        if (projectOpt.isEmpty()) {
+            return false;
+        }
+        Project project = projectOpt.get();
+        // Check direct project membership first
+        if (project.hasMember(userId)) {
+            return true;
+        }
+        // Workspace owners and admins have access to all projects in their workspace
+        Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(project.getWorkspaceId());
+        if (workspaceOpt.isPresent()) {
+            Workspace workspace = workspaceOpt.get();
+            Workspace.WorkspaceMember wsMember = workspace.getMember(userId);
+            if (wsMember != null) {
+                Workspace.WorkspaceRole role = wsMember.getRole();
+                return role == Workspace.WorkspaceRole.OWNER || role == Workspace.WorkspaceRole.ADMIN;
+            }
+        }
+        return false;
     }
 
     /**
@@ -384,7 +402,21 @@ public class ProjectService {
         }
         
         Project.ProjectMember member = project.getMember(userId);
-        return member != null && ("OWNER".equals(member.getRole()) || "EDITOR".equals(member.getRole()));
+        if (member != null) {
+            String role = member.getRole();
+            return "OWNER".equals(role) || "ADMIN".equals(role) || "EDITOR".equals(role);
+        }
+        
+        // Workspace owners/admins also have edit permission
+        Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(project.getWorkspaceId());
+        if (workspaceOpt.isPresent()) {
+            Workspace.WorkspaceMember wsMember = workspaceOpt.get().getMember(userId);
+            if (wsMember != null) {
+                Workspace.WorkspaceRole wsRole = wsMember.getRole();
+                return wsRole == Workspace.WorkspaceRole.OWNER || wsRole == Workspace.WorkspaceRole.ADMIN;
+            }
+        }
+        return false;
     }
 
     /**
@@ -509,6 +541,15 @@ public class ProjectService {
         // Check if user has edit permission
         if (!hasEditPermission(project, userId)) {
             throw new SecurityException("You don't have permission to remove files from this project");
+        }
+        
+        // Editors can only delete their own files
+        Project.ProjectMember member = project.getMember(userId);
+        if (member != null && "EDITOR".equals(member.getRole()) && !project.getOwnerId().equals(userId)) {
+            Project.FileMetadataInfo fileInfo = project.getFile(fileId);
+            if (fileInfo != null && fileInfo.getUploadedBy() != null && !fileInfo.getUploadedBy().equals(userId)) {
+                throw new SecurityException("Editors can only delete files they uploaded");
+            }
         }
         
         // Mark file as deleted in project metadata
