@@ -257,6 +257,18 @@ class ApiClient {
           msgBody._fileBuffer = Array.from(new Uint8Array(buf));
           msgBody._fileFieldName = 'file';
           msgBody._originalFileName = fileEntry.name;
+          // Detect OWL file types
+          let contentType = fileEntry.type;
+          if (!contentType || contentType === '') {
+            const fileName = fileEntry.name.toLowerCase();
+            if (fileName.endsWith('.owl')) contentType = 'application/rdf+xml';
+            else if (fileName.endsWith('.rdf')) contentType = 'application/rdf+xml';
+            else if (fileName.endsWith('.ttl')) contentType = 'text/turtle';
+            else if (fileName.endsWith('.n3')) contentType = 'text/n3';
+            else contentType = 'application/octet-stream';
+          }
+          msgBody.fileType = contentType;
+          console.log(`[ApiClient] FormData bridge: file=${fileEntry.name}, size=${buf.byteLength}, type=${contentType}`);
         }
         msgBody._isMultipart = true;
         data = await this.postViaVSCode<T>({ type: 'apiPost', url, body: msgBody, headers: config?.headers });

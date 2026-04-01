@@ -84,6 +84,7 @@ import HistoryPanel from "./HistoryPanel";
 import ToastNotification from "./ToastNotification";
 import { CollaborativeCursors } from "./CollaborativeCursor";
 import ShareDialog from "./ShareDialog";
+import MergeWizard from "./MergeWizard";
 import { ReportIssueModal } from "./ReportIssueModal";
 import { UserGuideModal } from "./UserGuideModal";
 import ThemeSettings from "./ThemeSettings";
@@ -772,6 +773,7 @@ const TopMenuBar = ({
   onOpenHistory,
   onReportIssue,
   onOpenUserGuide,
+  onOpenMergeWizard,
   syncMode,
   onToggleSyncMode,
   isReasonerRunning,
@@ -802,6 +804,7 @@ const TopMenuBar = ({
   onOpenHistory: () => void;
   onReportIssue: () => void;
   onOpenUserGuide: () => void;
+  onOpenMergeWizard: () => void;
   syncMode: "private" | "public";
   onToggleSyncMode: () => void;
   isReasonerRunning?: boolean;
@@ -1046,16 +1049,16 @@ const TopMenuBar = ({
                 item === "Help" ? (
                   <div className="py-1">
                     {localStorage.getItem("deploymentType") !== "self-hosted" && (
-                    <button
-                      onClick={() => {
-                        onOpenUserGuide();
-                        setOpenMenu(null);
-                      }}
-                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
-                    >
-                      <BookOpen size={14} />
-                      User Guide
-                    </button>
+                      <button
+                        onClick={() => {
+                          onOpenUserGuide();
+                          setOpenMenu(null);
+                        }}
+                        className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                      >
+                        <BookOpen size={14} />
+                        User Guide
+                      </button>
                     )}
                     <button
                       onClick={() => {
@@ -1134,6 +1137,25 @@ const TopMenuBar = ({
                       className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Share
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        if (currentProjectId) {
+                          onOpenMergeWizard();
+                        } else if (window.vscode) {
+                          window.vscode.postMessage({
+                            type: "error",
+                            value: "No ontology loaded. Please open a file first.",
+                          });
+                        }
+                        setOpenMenu(null);
+                      }}
+                      disabled={!currentProjectId}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                      <GitMerge size={14} />
+                      Merge Ontologies
                     </button>
                     {/* <button
                       onClick={(e) => {
@@ -1260,7 +1282,7 @@ const OpenFileDialog = ({
     if (!canOpenLocalFile || !window.vscode) {
       return;
     }
-   
+
     window.vscode.postMessage({
       type: "createNewFile",
       projectId: parentProjectId || undefined,
@@ -2228,12 +2250,25 @@ const Dashboard: React.FC<DashboardProps> = ({
     message: string;
     onConfirm: () => void;
     onCancel?: () => void;
+    confirmLabel?: string;
+    cancelLabel?: string;
   }>({
     isOpen: false,
     title: "",
     message: "",
     onConfirm: () => {},
     onCancel: undefined,
+    confirmLabel: undefined,
+    cancelLabel: undefined,
+  });
+
+  // Dedicated unsaved-changes warning dialog (separate from generic confirmDialog)
+  const [unsavedChangesDialog, setUnsavedChangesDialog] = useState<{
+    isOpen: boolean;
+    onLeave: () => void;
+  }>({
+    isOpen: false,
+    onLeave: () => {},
   });
 
   const [duplicatePrompt, setDuplicatePrompt] = useState<{
@@ -2320,6 +2355,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [shareFileId, setShareFileId] = useState<string | null>(null);
   const [isCurrentFileShared, setIsCurrentFileShared] = useState(false);
+  const [isMergeWizardOpen, setMergeWizardOpen] = useState(false);
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
   const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
   const [isUserGuideOpen, setIsUserGuideOpen] = useState(false);
@@ -3194,7 +3230,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, [user?.email, user?.token]);
 
   const fetchData = useCallback(
-    async (currentProjectId: string, waitForCompletion = false, parentProjectId?: string) => {
+    async (currentProjectId: string, waitForCompletion = false, parentProjectId?: string, forceRefresh = false) => {
       // Don't block UI - let user continue working
       setSelectedItem(null);
       setSearchQuery("");
@@ -3224,19 +3260,25 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       try {
-        // Wait for processing to complete before fetching data
-        console.log("[Dashboard] Waiting for file processing to complete...");
-        const result = await waitForProcessingComplete(currentProjectId);
+        // When forceRefresh is true (e.g., after merge), skip the processing check since
+        // we'll poll for completion separately. Otherwise, check processing status normally.
+        if (!forceRefresh) {
+          // Wait for processing to complete before fetching data
+          console.log("[Dashboard] Waiting for file processing to complete...");
+          const result = await waitForProcessingComplete(currentProjectId);
 
-        if (!result.ready) {
-          const errorTitle = result.status === "ERROR" ? "Import Failed" : "Loading Failed";
-          const errorMessage = result.error || "Unable to load ontology";
+          if (!result.ready) {
+            const errorTitle = result.status === "ERROR" ? "Import Failed" : "Loading Failed";
+            const errorMessage = result.error || "Unable to load ontology";
 
-          console.error(`[Dashboard] Cannot load project: ${result.status}`, result.error);
-          notificationService.error(errorTitle, errorMessage);
-          setIsInitialLoading(false);
-          return null;
-          return;
+            console.error(`[Dashboard] Cannot load project: ${result.status}`, result.error);
+            notificationService.error(errorTitle, errorMessage);
+            setIsInitialLoading(false);
+            return null;
+            return;
+          }
+        } else {
+          console.log("[Dashboard] ⚡ Force refresh mode - skipping processing status check");
         }
 
         console.log("[Dashboard] File processing complete, fetching ontology data...");
@@ -3245,17 +3287,22 @@ const Dashboard: React.FC<DashboardProps> = ({
         // Encode project ID for use in URL paths (handles slashes in hierarchical project IDs)
         const encodedProjectId = encodeURIComponent(currentProjectId);
 
+        // Add cache-busting parameter when forceRefresh is true to bypass any HTTP/browser caching
+        const cacheBuster = forceRefresh ? `?_t=${Date.now()}` : "";
+
         // Fetch data in background
         // Metadata endpoint now returns comprehensive cached data (annotations, imports, axioms, prefixes)
         // so we don't need to make separate calls for those
         const dataFetchPromise = Promise.all([
-          apiClient.get<any>(`/api/ontology/metadata/${encodedProjectId}`),
-          apiClient.get<any>(`/api/ontology/classes/top-level/${encodedProjectId}`),
-          apiClient.get<any>(`/api/ontology/classes/instance-counts/${encodedProjectId}`).catch(() => null),
-          apiClient.get<any>(`/api/ontology/properties/${encodedProjectId}`),
-          apiClient.get<any>(`/api/ontology/individuals/${encodedProjectId}`),
-          apiClient.get<any>(`/api/ontology/annotation-properties/${encodedProjectId}`),
-          apiClient.get<any>(`/api/ontology/datatypes/${encodedProjectId}`),
+          apiClient.get<any>(`/api/ontology/metadata/${encodedProjectId}${cacheBuster}`),
+          apiClient.get<any>(`/api/ontology/classes/top-level/${encodedProjectId}${cacheBuster}`),
+          apiClient
+            .get<any>(`/api/ontology/classes/instance-counts/${encodedProjectId}${cacheBuster}`)
+            .catch(() => null),
+          apiClient.get<any>(`/api/ontology/properties/${encodedProjectId}${cacheBuster}`),
+          apiClient.get<any>(`/api/ontology/individuals/${encodedProjectId}${cacheBuster}`),
+          apiClient.get<any>(`/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`),
+          apiClient.get<any>(`/api/ontology/datatypes/${encodedProjectId}${cacheBuster}`),
         ]);
 
         // Allow UI to be responsive immediately if not waiting
@@ -3614,8 +3661,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             const hasProjectMembers = myProjectsList.some(
               (f: any) =>
                 f.id === currentProjectId &&
-                ((f.memberCount && f.memberCount > 1) ||
-                  (f.members && f.members.length > 1)),
+                ((f.memberCount && f.memberCount > 1) || (f.members && f.members.length > 1)),
             );
             const isShared = isSharedWithMe || isSharedByMe || hasProjectMembers;
             setIsCurrentFileShared(isShared);
@@ -5245,8 +5291,24 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
 
           if (initialProjectId && message.projectId === initialProjectId) {
-            console.log("[Dashboard] File list updated for project, skipping ontology load:", message.projectId);
-            fetchProjects();
+            // If this fileReady came from creating/uploading a new file into the project,
+            // auto-load it so the user sees it immediately instead of requiring a manual click.
+            if (message.uploadedFileId && message.uploadedFileName) {
+              console.log(
+                "[Dashboard] 📂 New file created in project, auto-loading:",
+                message.uploadedFileId,
+                message.uploadedFileName,
+              );
+              // Wait for the file list refresh to complete, then load the new file
+              fetchProjects();
+              // Use a small delay to let the file list state update
+              setTimeout(() => {
+                handleLoadProjectFile(message.uploadedFileId, message.uploadedFileName);
+              }, 500);
+            } else {
+              console.log("[Dashboard] File list updated for project, skipping ontology load:", message.projectId);
+              fetchProjects();
+            }
             break;
           }
           if (
@@ -6755,31 +6817,64 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
-      // Show confirmation dialog only if there are actual unsaved changes
-      setConfirmDialog({
+      // Show unsaved-changes warning
+      setUnsavedChangesDialog({
         isOpen: true,
-        title: "Unsaved Changes",
-        message: `You have ${draftCount} unsaved change${draftCount !== 1 ? "s" : ""} in "${projectId}". Do you want to save before switching?`,
-        onConfirm: async () => {
-          await handleSave();
-          switchFile();
-        },
-        onCancel: async () => {
-          // Discard drafts
-          if (projectId) {
-            try {
-              await draftTrackingService.discardDrafts(projectId);
-              console.log("[Dashboard] Discarded drafts");
-            } catch (error) {
-              console.error("[Dashboard] Failed to discard drafts:", error);
-            }
-          }
+        onLeave: () => {
+          setUnsavedChangesDialog((prev) => ({ ...prev, isOpen: false }));
           switchFile();
         },
       });
     },
-    [hasUnsavedChanges, draftCount, projectId, handleSave],
+    [hasUnsavedChanges, draftCount, projectId],
   );
+
+  // Back to projects (with unsaved changes check)
+  const handleBackToProjects = useCallback(() => {
+    if (!onBackToProjects) return;
+
+    // If no unsaved changes or draft count is 0, navigate directly
+    if (!hasUnsavedChanges || draftCount === 0) {
+      onBackToProjects();
+      return;
+    }
+
+    // Show unsaved-changes warning
+    setUnsavedChangesDialog({
+      isOpen: true,
+      onLeave: () => {
+        setUnsavedChangesDialog((prev) => ({ ...prev, isOpen: false }));
+        onBackToProjects();
+      },
+    });
+  }, [onBackToProjects, hasUnsavedChanges, draftCount]);
+
+  // Intercept browser/VS Code back navigation when there are unsaved changes
+  useEffect(() => {
+    if (!hasUnsavedChanges || draftCount === 0) return;
+
+    const handlePopState = () => {
+      // Push state back to cancel the navigation
+      window.history.pushState(null, "", window.location.href);
+      // Show the unsaved changes warning
+      setUnsavedChangesDialog({
+        isOpen: true,
+        onLeave: () => {
+          setUnsavedChangesDialog((prev) => ({ ...prev, isOpen: false }));
+          // Actually go back now
+          window.history.go(-2);
+        },
+      });
+    };
+
+    // Push an extra history entry so we can intercept the back
+    window.history.pushState(null, "", window.location.href);
+    window.addEventListener("popstate", handlePopState);
+
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, [hasUnsavedChanges, draftCount]);
 
   // Load a file from the project (admin flow) - fetch content and upload to ontology editor
   const handleLoadProjectFile = useCallback(
@@ -13318,7 +13413,44 @@ const Dashboard: React.FC<DashboardProps> = ({
         onCancel={confirmDialog.onCancel}
         title={confirmDialog.title}
         message={confirmDialog.message}
+        confirmLabel={confirmDialog.confirmLabel}
+        cancelLabel={confirmDialog.cancelLabel}
       />
+      {/* Dedicated Unsaved Changes Warning Dialog */}
+      {unsavedChangesDialog.isOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999]">
+          <div
+            className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-yellow-100 flex items-center justify-center">
+                <svg className="w-5 h-5 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900">Unsaved Changes</h3>
+            </div>
+            <p className="text-sm text-gray-600 mb-6">
+              You have unsaved changes. Are you sure you want to leave? Your changes will be lost.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setUnsavedChangesDialog((prev) => ({ ...prev, isOpen: false }))}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Stay
+              </button>
+              <button
+                onClick={unsavedChangesDialog.onLeave}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700"
+              >
+                Leave
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <ConfirmDialog
         isOpen={deleteFileDialog.isOpen}
         onClose={() => setDeleteFileDialog({ isOpen: false, projectId: "", fileName: "" })}
@@ -13375,6 +13507,19 @@ const Dashboard: React.FC<DashboardProps> = ({
           onOpenHistory={() => setIsHistoryPanelOpen(true)}
           onReportIssue={() => setIsReportIssueModalOpen(true)}
           onOpenUserGuide={() => setIsUserGuideOpen(true)}
+          onOpenMergeWizard={async () => {
+            setMergeWizardOpen(true);
+            // Fetch files from the current project to show in merge wizard
+            if (projectId && !initialProjectId) {
+              // Only fetch if not in admin flow (admin flow already has projectFiles loaded)
+              try {
+                console.log("[Dashboard] 📂 Fetching project files for merge wizard:", projectId);
+                await fetchProjectFiles(projectId);
+              } catch (error) {
+                console.warn("[Dashboard] ⚠️ Could not fetch project files:", error);
+              }
+            }
+          }}
           syncMode={syncMode}
           onToggleSyncMode={() => {
             const newMode = syncMode === "public" ? "private" : "public";
@@ -13502,7 +13647,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               </button>
               {onBackToProjects && (
                 <button
-                  onClick={onBackToProjects}
+                  onClick={handleBackToProjects}
                   className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50 p-2 rounded-md cursor-pointer"
                   title="Back to Projects"
                 >
@@ -13950,6 +14095,200 @@ const Dashboard: React.FC<DashboardProps> = ({
         />
       )}
 
+      {/* Merge Wizard */}
+      <MergeWizard
+        isOpen={isMergeWizardOpen}
+        onClose={() => setMergeWizardOpen(false)}
+        projectId={projectId || ""}
+        projectTitle={activeFileName || myFiles.find((f) => f.projectId === projectId)?.filename || "Unknown"}
+        initialProjectId={initialProjectId || undefined}
+        availableFiles={
+          // Show files from the current project, not all user's projects
+          projectFiles.length > 0
+            ? projectFiles.map((f: any) => ({
+                id: f.id,
+                filename: f.filename,
+              }))
+            : // Fallback: show only the current file if projectFiles not loaded
+              [
+                {
+                  id: projectId || "",
+                  filename: activeFileName || "Current File",
+                },
+              ]
+        }
+        onMergeComplete={async (targetProjectId: string, isNewFile?: boolean) => {
+          try {
+            console.log("[Dashboard] 🔄 Merge complete - targetProjectId:", targetProjectId, "isNewFile:", isNewFile);
+
+            if (isNewFile) {
+              // "Save as new file" — MergeWizard already uploaded the file to
+              // the auth service. Just refresh the project file list so the
+              // new file shows up. Current loaded file is NOT affected.
+              console.log("[Dashboard] ✅ New file merge — refreshing project file list only");
+              if (initialProjectId) {
+                await fetchProjectFiles(initialProjectId);
+              }
+              await fetchProjects();
+              notificationService.success("Merge Complete", "Merged ontology saved as a new file in your project!");
+              return;
+            }
+
+            // "Merge into current/existing file" — poll and refresh as before
+            console.log("[Dashboard] Current projectId:", projectId);
+
+            // If merge was to current file, refresh it completely
+            if (targetProjectId === projectId) {
+              console.log("[Dashboard] ✅ Refreshing current file data after merge");
+
+              // Show loading screen during the wait
+              setIsInitialLoading(true);
+              notificationService.info("Processing Merge", "Waiting for GraphDB to finish importing merged data...");
+
+              // Clear ALL current state to ensure fully fresh data
+              setClassHierarchy([]);
+              setObjectProperties([]);
+              setDataProperties([]);
+              setObjectPropertyHierarchy([]);
+              setDataPropertyHierarchy([]);
+              setAnnotationProperties([]);
+              setIndividuals([]);
+              setDatatypes([]);
+              setMetadata(null);
+              setSelectedItem(null);
+              setClassInstanceCounts({});
+
+              // Poll the backend status until the GraphDB re-import completes.
+              // After merge, the backend calls importService.submitImport() which sets
+              // status to PROCESSING and does an async GraphDB bulk load. We must wait
+              // for it to reach COMPLETED before fetching data, otherwise the queries
+              // will return stale/empty results.
+              // Use escalating backoff so small ontologies finish fast while
+              // large ones (90k+ classes) get up to ~10 minutes of polling.
+              const maxPollAttempts = 90;
+              const getPollDelay = (att: number) => {
+                if (att <= 5) return 2000; // first 5: 2s  (10s)
+                if (att <= 15) return 3000; // next 10: 3s  (30s)
+                if (att <= 30) return 5000; // next 15: 5s  (75s)
+                return 10000; // rest 60: 10s (600s)  => total ~715s ≈ 12 min
+              };
+              let importCompleted = false;
+
+              console.log("[Dashboard] ⏳ Polling for GraphDB import completion...");
+              for (let attempt = 1; attempt <= maxPollAttempts; attempt++) {
+                try {
+                  const statusRes = await apiClient.get<any>(
+                    `/api/ontology/status/${encodeURIComponent(targetProjectId)}?_t=${Date.now()}`,
+                  );
+                  const status = statusRes?.data?.status || statusRes?.status;
+                  if (attempt <= 10 || attempt % 10 === 0) {
+                    console.log(`[Dashboard] Poll attempt ${attempt}/${maxPollAttempts}: status = ${status}`);
+                  }
+
+                  if (status === "COMPLETED") {
+                    importCompleted = true;
+                    console.log("[Dashboard] ✅ GraphDB import completed!");
+                    break;
+                  }
+
+                  if (status === "ERROR") {
+                    console.error("[Dashboard] ❌ Import failed during merge re-import");
+                    notificationService.error("Import Failed", "The merged file failed to import into GraphDB.");
+                    setIsInitialLoading(false);
+                    return;
+                  }
+
+                  // Still PROCESSING - wait and try again
+                  await new Promise((resolve) => setTimeout(resolve, getPollDelay(attempt)));
+                } catch (pollError) {
+                  console.warn(`[Dashboard] Poll attempt ${attempt} error:`, pollError);
+                  await new Promise((resolve) => setTimeout(resolve, getPollDelay(attempt)));
+                }
+              }
+
+              if (!importCompleted) {
+                console.warn("[Dashboard] ⚠️ Timed out waiting for import to complete, attempting to fetch anyway");
+                notificationService.warning(
+                  "Import Taking Long",
+                  "GraphDB import is taking longer than expected. Attempting to load current data...",
+                );
+              }
+
+              console.log("[Dashboard] 🔄 Starting data fetch with force refresh...");
+
+              // Reload all ontology data with forceRefresh=true:
+              // - Skips waitForProcessingComplete (we already polled above)
+              // - Adds cache-busting timestamps to all API URLs
+              // - waitForCompletion=true shows loading screen until all data is loaded
+              try {
+                await fetchData(targetProjectId, true, undefined, true);
+                console.log("[Dashboard] ✅ Data fetch completed successfully");
+              } catch (fetchError) {
+                console.error("[Dashboard] ❌ Failed to fetch data after merge:", fetchError);
+                notificationService.error("Refresh Failed", "Could not load merged data. Please refresh manually.");
+                setIsInitialLoading(false);
+                setMergeWizardOpen(false);
+                return;
+              }
+
+              console.log("[Dashboard] 📊 Data refresh complete");
+              notificationService.success("Merge Complete", "Your ontology has been updated with the merged data!");
+
+              // Rebuild the full class hierarchy (re-expand previously expanded
+              // nodes).  fetchData only sets a flat 1-level tree under owl:Thing;
+              // refreshClassHierarchy reloads children for all expanded nodes so
+              // the user sees the complete tree without manually re-expanding.
+              try {
+                await refreshClassHierarchy();
+              } catch (_) {
+                // Non-critical — the flat tree from fetchData is still visible
+              }
+            } else {
+              // Merge was to a different existing file — poll for import and notify.
+              // The user's currently loaded file is not affected.
+              console.log("[Dashboard] ⚠️ Merge targeted a different existing file:", targetProjectId);
+
+              // Poll for the target file's import completion
+              const maxPollAttempts2 = 90;
+              const getPollDelay2 = (att: number) => {
+                if (att <= 5) return 2000;
+                if (att <= 15) return 3000;
+                if (att <= 30) return 5000;
+                return 10000;
+              };
+
+              for (let attempt = 1; attempt <= maxPollAttempts2; attempt++) {
+                try {
+                  const statusRes = await apiClient.get<any>(
+                    `/api/ontology/status/${encodeURIComponent(targetProjectId)}?_t=${Date.now()}`,
+                  );
+                  const status = statusRes?.data?.status || statusRes?.status;
+                  if (status === "COMPLETED" || status === "ERROR") break;
+                  await new Promise((resolve) => setTimeout(resolve, getPollDelay2(attempt)));
+                } catch {
+                  await new Promise((resolve) => setTimeout(resolve, getPollDelay2(attempt)));
+                }
+              }
+
+              notificationService.success(
+                "Merge Complete",
+                "Ontology merged into the selected file. Open that file to view the changes.",
+              );
+            }
+
+            // Also refresh the projects list
+            await fetchProjects();
+          } catch (error) {
+            console.warn("[Dashboard] Failed to refresh data after merge:", error);
+            setIsInitialLoading(false);
+            notificationService.error(
+              "Refresh Failed",
+              "Failed to refresh ontology data after merge. Please reload manually.",
+            );
+          }
+        }}
+      />
+
       {/* Report Issue Modal */}
       {isReportIssueModalOpen && (
         <ReportIssueModal
@@ -13961,9 +14300,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       )}
 
       {/* User Guide Modal - only in cloud mode */}
-      {isCloudDeployment && (
-        <UserGuideModal isOpen={isUserGuideOpen} onClose={() => setIsUserGuideOpen(false)} />
-      )}
+      {isCloudDeployment && <UserGuideModal isOpen={isUserGuideOpen} onClose={() => setIsUserGuideOpen(false)} />}
 
       {/* Toast Notifications */}
       <div className="fixed top-4 right-4 z-[9999] space-y-2">
