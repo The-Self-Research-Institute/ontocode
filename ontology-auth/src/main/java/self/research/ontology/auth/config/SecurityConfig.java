@@ -66,7 +66,7 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .csrf(AbstractHttpConfigurer::disable) // Disable CSRF for stateless API
-                .cors(cors -> cors.configurationSource(corsConfigurationSource())) // Enable CORS as fallback (gateway also handles it)
+                .cors(AbstractHttpConfigurer::disable) // Disable CORS - handled by gateway
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll() // Always allow preflight
                         .requestMatchers("/api/auth/**").permitAll() // Allow public access to auth endpoints
