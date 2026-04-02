@@ -66,7 +66,7 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .csrf(AbstractHttpConfigurer::disable) // Disable CSRF for stateless API
-                .cors(AbstractHttpConfigurer::disable) // Disable CORS - handled by gateway
+                .cors(cors -> cors.configurationSource(corsConfigurationSource())) // Enable CORS as fallback (gateway also handles it)
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll() // Always allow preflight
                         .requestMatchers("/api/auth/**").permitAll() // Allow public access to auth endpoints
@@ -101,8 +101,10 @@ public class SecurityConfig {
             "https://localhost:*",            // Local development over HTTPS
             "http://ec2-54-226-221-174.compute-1.amazonaws.com:*",
             "https://ec2-54-226-221-174.compute-1.amazonaws.com:*",
-            "https://ontocodeapi.selfresearch.org:*", // Production API URL
-            "https://ontocode.selfresearch.org:*",
+            "https://ontocodeapi.selfresearch.org",   // Production API (default port)
+            "https://ontocodeapi.selfresearch.org:*", // Production API (explicit port)
+            "https://ontocode.selfresearch.org",      // Production frontend (default port)
+            "https://ontocode.selfresearch.org:*",    // Production frontend (explicit port)
             "vscode-webview://*",             // VS Code webview
             "vscode-webview-resource://*",
             "https://*.vscode-cdn.net",       // VS Code CDN
