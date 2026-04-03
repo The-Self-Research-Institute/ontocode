@@ -7,59 +7,70 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.reactive.ServerHttpResponse;
-import org.springframework.web.cors.CorsConfiguration;
-import org.springframework.web.cors.reactive.CorsWebFilter;
-import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
 import org.springframework.web.server.ServerWebExchange;
+import org.springframework.web.server.WebFilter;
 import reactor.core.publisher.Mono;
 
-import java.util.Arrays;
 import java.util.List;
 
 @Configuration
 public class GatewayCorsConfig {
 
     /**
-     * Shared CORS configuration used by both CorsWebFilter and the error handler.
-     * allowedOriginPatterns("*") + allowCredentials(true) is valid — Spring will
-     * echo back the actual request Origin instead of returning a literal "*".
-     */
-    @Bean
-    public UrlBasedCorsConfigurationSource corsConfigurationSource() {
-        CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOriginPatterns(Arrays.asList("*"));
-        config.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"));
-        config.setAllowedHeaders(Arrays.asList("*"));
-        config.setAllowCredentials(true);
-        config.setExposedHeaders(Arrays.asList("*"));
-        config.setMaxAge(3600L);
-
-        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/**", config);
-        return source;
-    }
-
-    /**
-     * CorsWebFilter handles CORS for all normal request/response flows, including
-     * OPTIONS preflight (short-circuits without forwarding to the backend).
-     * Ordered before Spring Security (which is at -100) so CORS runs first.
+     * WebFilter that runs before everything else (including Spring Security at -100).
+     *
+     * Key fix for CORS-on-error-responses: headers are set on the ORIGINAL
+     * ServerHttpResponse object BEFORE chain.filter() is called. Because
+     * ErrorWebExceptionHandler also receives the same original exchange/response,
+     * the CORS headers are already present when it writes a 504/502 error response.
+     * This is in contrast to CorsWebFilter which wraps a response decorator that
+     * ErrorWebExceptionHandler bypasses.
      */
     @Bean
     @Order(Ordered.HIGHEST_PRECEDENCE)
-    public CorsWebFilter corsWebFilter() {
-        return new CorsWebFilter(corsConfigurationSource());
+    public WebFilter corsEarlySetFilter() {
+        return (exchange, chain) -> {
+            String origin = exchange.getRequest().getHeaders().getOrigin();
+
+            // Preflight — answer immediately before security/routing see the request.
+            boolean isPreflight = HttpMethod.OPTIONS.equals(exchange.getRequest().getMethod())
+                    && exchange.getRequest().getHeaders().containsKey(HttpHeaders.ORIGIN)
+                    && exchange.getRequest().getHeaders().containsKey(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD);
+            if (isPreflight) {
+                ServerHttpResponse res = exchange.getResponse();
+                res.setStatusCode(HttpStatus.NO_CONTENT);
+                HttpHeaders h = res.getHeaders();
+                h.set(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN,
+                        (origin != null && !origin.isEmpty()) ? origin : "*");
+                h.set(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true");
+                h.set(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS,
+                        "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD");
+                h.set(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS, "*");
+                h.set(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, "*");
+                h.set(HttpHeaders.ACCESS_CONTROL_MAX_AGE, "3600");
+                return res.setComplete();
+            }
+
+            // Set CORS headers now, on the original response, before any downstream
+            // processing that might fail or timeout.
+            if (origin != null && !origin.isEmpty()) {
+                HttpHeaders h = exchange.getResponse().getHeaders();
+                h.set(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+                h.set(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true");
+                h.set(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, "*");
+            }
+
+            return chain.filter(exchange);
+        };
     }
 
     /**
-     * GlobalFilter that strips CORS headers copied from the upstream (backend) response
-     * before they are written to the client. This runs just before the response is
-     * committed — after the routing filter has populated the headers from the backend,
-     * but before Reactor Netty flushes them. CorsWebFilter (HIGHEST_PRECEDENCE) has
-     * already set the correct single-value headers earlier in the chain, so removing
-     * the backend's duplicates here ensures the browser sees exactly one value.
-     *
+     * GlobalFilter that runs after the routing filter for SUCCESSFUL responses.
+     * Overwrites ACAO with the echoed request origin (corrects upstream "*" values)
+     * and deduplicates any other CORS headers the backend may have added.
      * Order is just above LOWEST_PRECEDENCE so it runs very late (after routing).
      */
     @Bean
@@ -71,10 +82,13 @@ public class GatewayCorsConfig {
                     || response.getStatusCode() == HttpStatus.SWITCHING_PROTOCOLS) {
                 return;
             }
+            String origin = exchange.getRequest().getHeaders().getOrigin();
             HttpHeaders headers = response.getHeaders();
-            // If the backend added extra CORS values, collapse each header to a single entry.
-            dedup(headers, HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN);
-            dedup(headers, HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS);
+            // Re-assert the correct origin-specific value, overwriting any upstream "*".
+            if (origin != null && !origin.isEmpty()) {
+                headers.set(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+                headers.set(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true");
+            }
             dedup(headers, HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS);
             dedup(headers, HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS);
             dedup(headers, HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS);
@@ -91,10 +105,11 @@ public class GatewayCorsConfig {
     }
 
     /**
-     * Error handler that ensures CORS headers are present on gateway-generated
-     * error responses (e.g. 504 Gateway Timeout, 502 Bad Gateway).
-     * These bypass the normal filter chain, so CorsWebFilter cannot add headers.
-     * Order -2 runs before Spring Boot's default handler (order -1).
+     * Error handler for gateway-generated error responses (504, 502, etc.).
+     * corsEarlySetFilter already set CORS headers on the original response before
+     * the request started, so the browser will receive them. This handler additionally
+     * re-asserts them (in case something cleared them) and writes a structured body.
+     * Order -2 runs before Spring Boot's default error handler (order -1).
      */
     @Bean
     @Order(-2)
@@ -103,14 +118,10 @@ public class GatewayCorsConfig {
             addCorsHeaders(exchange);
             ServerHttpResponse response = exchange.getResponse();
             if (!response.isCommitted()) {
-                if (ex instanceof java.util.concurrent.TimeoutException
-                        || (ex.getMessage() != null && ex.getMessage().contains("timeout"))) {
-                    response.setStatusCode(HttpStatus.GATEWAY_TIMEOUT);
-                } else {
-                    response.setStatusCode(HttpStatus.INTERNAL_SERVER_ERROR);
-                }
+                HttpStatus status = resolveStatus(ex);
+                response.setStatusCode(status);
                 response.getHeaders().setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
-                String body = "{\"error\":\"" + ((HttpStatus) response.getStatusCode()).getReasonPhrase() + "\"}";
+                String body = "{\"error\":\"" + status.getReasonPhrase() + "\"}";
                 org.springframework.core.io.buffer.DataBuffer buf =
                         response.bufferFactory().wrap(body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 return response.writeWith(Mono.just(buf));
@@ -119,31 +130,34 @@ public class GatewayCorsConfig {
         };
     }
 
+    private static HttpStatus resolveStatus(Throwable ex) {
+        // Netty timeout types (ReadTimeoutException, ConnectTimeoutException) do NOT
+        // extend java.util.concurrent.TimeoutException — match by class name too.
+        String className = ex.getClass().getName();
+        String message = ex.getMessage();
+        boolean isTimeout = ex instanceof java.util.concurrent.TimeoutException
+                || className.contains("TimeoutException")
+                || (message != null && message.toLowerCase().contains("timeout"));
+        return isTimeout ? HttpStatus.GATEWAY_TIMEOUT : HttpStatus.BAD_GATEWAY;
+    }
+
     private void addCorsHeaders(ServerWebExchange exchange) {
         ServerHttpResponse response = exchange.getResponse();
         if (response.isCommitted()
                 || response.getStatusCode() == HttpStatus.SWITCHING_PROTOCOLS) {
             return;
         }
-
         HttpHeaders headers = response.getHeaders();
         String origin = exchange.getRequest().getHeaders().getOrigin();
-
         headers.remove(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN);
         headers.remove(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS);
-        headers.remove(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS);
-        headers.remove(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS);
-        headers.remove(HttpHeaders.ACCESS_CONTROL_MAX_AGE);
         headers.remove(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS);
-
         if (origin != null && !origin.isEmpty()) {
             headers.set(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, origin);
             headers.set(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true");
         } else {
             headers.set(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "*");
         }
-        headers.set(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS, "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD");
-        headers.set(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS, "*");
         headers.set(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, "*");
         headers.set(HttpHeaders.ACCESS_CONTROL_MAX_AGE, "3600");
     }
