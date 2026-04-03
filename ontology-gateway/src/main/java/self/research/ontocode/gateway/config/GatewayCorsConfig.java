@@ -1,6 +1,7 @@
 package self.research.ontocode.gateway.config;
 
 import org.springframework.boot.web.reactive.error.ErrorWebExceptionHandler;
+import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
@@ -15,6 +16,7 @@ import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
 import java.util.Arrays;
+import java.util.List;
 
 @Configuration
 public class GatewayCorsConfig {
@@ -48,6 +50,44 @@ public class GatewayCorsConfig {
     @Order(Ordered.HIGHEST_PRECEDENCE)
     public CorsWebFilter corsWebFilter() {
         return new CorsWebFilter(corsConfigurationSource());
+    }
+
+    /**
+     * GlobalFilter that strips CORS headers copied from the upstream (backend) response
+     * before they are written to the client. This runs just before the response is
+     * committed — after the routing filter has populated the headers from the backend,
+     * but before Reactor Netty flushes them. CorsWebFilter (HIGHEST_PRECEDENCE) has
+     * already set the correct single-value headers earlier in the chain, so removing
+     * the backend's duplicates here ensures the browser sees exactly one value.
+     *
+     * Order is just above LOWEST_PRECEDENCE so it runs very late (after routing).
+     */
+    @Bean
+    @Order(Ordered.LOWEST_PRECEDENCE - 1)
+    public GlobalFilter corsUpstreamHeaderStripFilter() {
+        return (exchange, chain) -> chain.filter(exchange).then(Mono.fromRunnable(() -> {
+            ServerHttpResponse response = exchange.getResponse();
+            if (response.isCommitted()
+                    || response.getStatusCode() == HttpStatus.SWITCHING_PROTOCOLS) {
+                return;
+            }
+            HttpHeaders headers = response.getHeaders();
+            // If the backend added extra CORS values, collapse each header to a single entry.
+            dedup(headers, HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN);
+            dedup(headers, HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS);
+            dedup(headers, HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS);
+            dedup(headers, HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS);
+            dedup(headers, HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS);
+            dedup(headers, HttpHeaders.ACCESS_CONTROL_MAX_AGE);
+        }));
+    }
+
+    /** Keep only the first (non-null) value for the given header name. */
+    private static void dedup(HttpHeaders headers, String name) {
+        List<String> values = headers.get(name);
+        if (values != null && values.size() > 1) {
+            headers.set(name, values.get(0));
+        }
     }
 
     /**
