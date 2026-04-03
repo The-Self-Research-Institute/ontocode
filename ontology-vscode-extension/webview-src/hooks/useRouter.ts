@@ -9,6 +9,7 @@ export interface RouteState {
     fileName?: string;
     isLoginView?: boolean;
     inviteToken?: string | null;
+    resetToken?: string | null;
     showAuthForInvitation?: boolean;
     deploymentType?: string | null;
     showSubscriptionPlan?: boolean;

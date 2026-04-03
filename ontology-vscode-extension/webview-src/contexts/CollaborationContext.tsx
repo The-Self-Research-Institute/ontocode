@@ -139,7 +139,7 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
   useEffect(() => {
     if (!isBrowserMode() || !user?.token) return;
 
-    const baseUrl = getBaseUrl();
+    const baseUrl = getBaseUrl() || window.location.origin;
     const sockJsUrl = new URL("/ws", baseUrl).toString();
     console.log("[CollaborationContext] 🌐 Browser mode — connecting via SockJS:", sockJsUrl);
 

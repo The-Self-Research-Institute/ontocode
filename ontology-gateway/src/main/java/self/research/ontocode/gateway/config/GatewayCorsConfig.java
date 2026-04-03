@@ -1,8 +1,10 @@
 package self.research.ontocode.gateway.config;
 
+import org.springframework.boot.web.reactive.error.ErrorWebExceptionHandler;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -34,6 +36,38 @@ public class GatewayCorsConfig {
                 return Mono.empty();
             });
             return chain.filter(exchange);
+        };
+    }
+
+    /**
+     * Error handler that ensures CORS headers are present on gateway-generated
+     * error responses (e.g. 504 Gateway Timeout, 502 Bad Gateway).
+     * These errors are produced by Netty/Spring Cloud Gateway itself and bypass
+     * the GlobalFilter beforeCommit callbacks, so CORS headers must be injected
+     * here before the default error handler renders the response body.
+     * Order -2 runs before the default Spring Boot handler (order -1).
+     */
+    @Bean
+    @Order(-2)
+    public ErrorWebExceptionHandler corsErrorWebExceptionHandler() {
+        return (exchange, ex) -> {
+            addCorsHeaders(exchange);
+            // Determine appropriate status code
+            ServerHttpResponse response = exchange.getResponse();
+            if (!response.isCommitted()) {
+                if (ex instanceof java.util.concurrent.TimeoutException
+                        || ex.getMessage() != null && ex.getMessage().contains("timeout")) {
+                    response.setStatusCode(HttpStatus.GATEWAY_TIMEOUT);
+                } else {
+                    response.setStatusCode(HttpStatus.INTERNAL_SERVER_ERROR);
+                }
+                response.getHeaders().setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+                String body = "{\"error\":\"" + ((HttpStatus) response.getStatusCode()).getReasonPhrase() + "\"}";
+                org.springframework.core.io.buffer.DataBuffer buf =
+                        response.bufferFactory().wrap(body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                return response.writeWith(Mono.just(buf));
+            }
+            return Mono.empty();
         };
     }
 

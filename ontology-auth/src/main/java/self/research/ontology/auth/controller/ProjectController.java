@@ -1122,7 +1122,8 @@ public class ProjectController {
             
             // Check GraphDB for duplicate data BEFORE uploading
             // This prevents loading the same ontology data multiple times into the same project graph
-            if (replaceFileId == null || replaceFileId.isEmpty()) {
+            // Skip for small files (< 10KB) as they are typically new empty ontologies
+            if ((replaceFileId == null || replaceFileId.isEmpty()) && file.getSize() > 10240) {
                 // Only check for new uploads, skip for replacements
                 try {
                     String editorServiceUrl = System.getenv("EDITOR_SERVICE_URL");

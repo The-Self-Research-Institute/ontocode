@@ -15,18 +15,31 @@ import ProjectDashboard from "./components/ProjectDashboard";
 import ProjectLibrary from "./components/ProjectLibrary";
 import SubscriptionPlanSelection from "./components/SubscriptionPlanSelection";
 import InviteAcceptPage from "./components/InviteAcceptPage";
+import EmailVerificationNotice from "./components/EmailVerificationNotice";
+import ForgotPasswordForm from "./components/ForgotPasswordForm";
+import ResetPasswordForm from "./components/ResetPasswordForm";
 import { Loader2 } from "lucide-react";
 import { useRouter, RouteState } from "./hooks/useRouter";
 
 const getInitialInvitationFromLocation = (): { token: string | null; email: string | null } => {
+  const pathname = window.location.pathname;
+
+  // Don't treat reset-password or verify-email URLs as invitation tokens
+  if (pathname.startsWith("/reset-password") || pathname.startsWith("/verify-email")) {
+    return { token: null, email: null };
+  }
+
   const params = new URLSearchParams(window.location.search);
   let token = params.get("token") || params.get("invite");
   let email = params.get("email");
 
-  // Support pathname-based invitation links: /invitation?token=... or /invite?token=...
-  if (window.location.pathname.startsWith("/invitation") || window.location.pathname.startsWith("/invite")) {
+  // Only grab generic ?token= if we're on an invitation/invite path or the root
+  if (pathname.startsWith("/invitation") || pathname.startsWith("/invite")) {
     token = token || params.get("token") || params.get("invite");
     email = email || params.get("email");
+  } else if (pathname !== "/" && pathname !== "") {
+    // For non-root, non-invitation paths, don't treat ?token= as invitation
+    token = params.get("invite");
   }
 
   // Support hash-based invitation links: #/invitation?token=... or #/invite?token=...
@@ -55,8 +68,16 @@ const getInitialInvitationFromLocation = (): { token: string | null; email: stri
 };
 
 const AppContent = () => {
-  const { user, loading, needsWorkspaceSelection, selectWorkspace, logout, updateSubscriptionPlan, updateUserRole } =
-    useAuth();
+  const {
+    user,
+    loading,
+    needsWorkspaceSelection,
+    selectWorkspace,
+    logout,
+    updateSubscriptionPlan,
+    updateUserRole,
+    verifyEmailAndLogin,
+  } = useAuth();
   console.log(
     "[App] 🔄 AppContent render - user:",
     user?.email,
@@ -86,6 +107,23 @@ const AppContent = () => {
   const [forceShowWorkspace, setForceShowWorkspace] = useState(false);
   const [skipWorkspaceRequested, setSkipWorkspaceRequested] = useState(false);
   const [restoredRoute, setRestoredRoute] = useState<RouteState | null>(null);
+  const [authSubView, setAuthSubView] = useState<
+    "login" | "signup" | "forgotPassword" | "resetPassword" | "verifyEmail"
+  >("login");
+  const [verificationEmail, setVerificationEmail] = useState("");
+  const [resetToken, setResetToken] = useState<string | null>(null);
+  // Initialize verify-email state directly from the URL so the verify screen
+  // shows immediately on the first render — before the auth loading spinner.
+  const _verifyPath = window.location.pathname.startsWith("/verify-email");
+  const _verifyTokenFromUrl = _verifyPath
+    ? new URLSearchParams(window.location.search).get("token")
+    : null;
+  const [emailVerifyToken, setEmailVerifyToken] = useState<string | null>(_verifyTokenFromUrl);
+  const [emailVerifyStatus, setEmailVerifyStatus] = useState<"idle" | "verifying" | "success" | "error">(
+    _verifyTokenFromUrl ? "verifying" : "idle",
+  );
+  const [emailVerifyError, setEmailVerifyError] = useState<string>("");
+  const [verifiedEmail, setVerifiedEmail] = useState<string>("");
 
   // Helper to check if workspace selection is required
   const shouldShowWorkspaceSelection = useCallback((): boolean => {
@@ -144,6 +182,13 @@ const AppContent = () => {
 
   // Determine current route based on state
   const currentRoute: RouteState = useMemo(() => {
+    // While the verify-email flow is active, keep the router in a neutral state
+    // so useRouter doesn't overwrite window.location to /deployment (which would
+    // break the verify useEffect's ability to detect the original URL).
+    if (emailVerifyToken && emailVerifyStatus !== "idle") {
+      return { view: "login", isLoginView: true };
+    }
+
     // If we have a restored route from navigation (back/forward), use it
     if (restoredRoute) {
       console.log("[App] Using restored route:", restoredRoute.view);
@@ -189,6 +234,8 @@ const AppContent = () => {
       showAuthForInvitation,
     };
   }, [
+    emailVerifyToken,
+    emailVerifyStatus,
     restoredRoute,
     user,
     deploymentType,
@@ -305,6 +352,12 @@ const AppContent = () => {
       setShowAuthForInvitation(updatedRoute.showAuthForInvitation);
     }
 
+    // Update reset password state
+    if (updatedRoute.resetToken) {
+      setResetToken(updatedRoute.resetToken);
+      setAuthSubView("resetPassword");
+    }
+
     // Update subscription plan view
     if (updatedRoute.showSubscriptionPlan !== undefined) {
       setShowSubscriptionPlan(updatedRoute.showSubscriptionPlan);
@@ -320,6 +373,14 @@ const AppContent = () => {
       }
     } else {
       setForceShowWorkspace(false);
+    }
+
+    // Restore non-workspace editor state when navigating to dashboard without project context
+    if (updatedRoute.view === "dashboard" && !updatedRoute.projectId && !updatedRoute.projectName) {
+      setSkipWorkspaceRequested(true);
+      if (!updatedRoute.fileId) {
+        setSelectedFileId("__editor__");
+      }
     }
   }, []);
 
@@ -350,14 +411,68 @@ const AppContent = () => {
     // Deployment type will be set after user selects in DeploymentSelector
   }, []);
 
+  // Ref to prevent the verify fetch from running twice in React 18 StrictMode.
+  // (useRouter's init effect changes window.location.pathname before this effect
+  //  runs, so we cannot rely on a pathname guard — use a ref instead.)
+  const _verifyFetchStarted = useRef(false);
+
+  // Detect /verify-email?token=... URL, verify the account, and show success screen.
+  // State is already initialised from the URL above; this effect just kicks off the fetch.
+  useEffect(() => {
+    if (!emailVerifyToken) return;
+    // Guard against StrictMode double-invocation (ref persists across the simulated
+    // unmount/remount cycle, unlike component state).
+    if (_verifyFetchStarted.current) return;
+    _verifyFetchStarted.current = true;
+
+    fetch(`/api/auth/verify?token=${encodeURIComponent(emailVerifyToken)}`)
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data?.error || data?.message || "Verification failed");
+        }
+        const email = data?.email || "";
+        setVerifiedEmail(email);
+        setEmailVerifyStatus("success");
+        window.history.replaceState({}, "", "/");
+      })
+      .catch((err: any) => {
+        console.error("[App] Email verification failed:", err);
+        setEmailVerifyStatus("error");
+        setEmailVerifyError(err?.message || "Verification failed");
+      });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Detect /reset-password?token=... URL and show reset form
+  useEffect(() => {
+    const pathname = window.location.pathname;
+    if (pathname.startsWith("/reset-password")) {
+      const params = new URLSearchParams(window.location.search);
+      const token = params.get("token");
+      if (token) {
+        console.log("[App] 🔑 Found reset-password token in URL");
+        setResetToken(token);
+        setAuthSubView("resetPassword");
+        window.history.replaceState({}, "", "/");
+      }
+    }
+  }, []);
+
   useEffect(() => {
     // Check for invitation parameters in URL (query params, pathname routes, and hash-based routes)
+    const pathname = window.location.pathname;
+
+    // Skip invitation detection for verify-email and reset-password routes
+    if (pathname.startsWith("/verify-email") || pathname.startsWith("/reset-password")) {
+      console.log("[App] Skipping invitation detection for path:", pathname);
+      return;
+    }
+
     const params = new URLSearchParams(window.location.search);
     let token = params.get("token") || params.get("invite");
     let email = params.get("email");
 
     // Check pathname-based route for invitation (e.g., /invitation?token=xxx or /invite?token=xxx)
-    const pathname = window.location.pathname;
     if (pathname.startsWith("/invitation") || pathname.startsWith("/invite")) {
       token = token || params.get("token") || params.get("invite");
       email = email || params.get("email");
@@ -499,10 +614,12 @@ const AppContent = () => {
   }, [user, pendingFile, uploadFileBrowserMode]);
 
   const toggleFormView = () => {
+    const newIsLogin = !isLoginView;
+    setAuthSubView(newIsLogin ? "login" : "signup");
     // Navigate using router to update browser history
     navigateTo({
-      view: isLoginView ? "signup" : "login",
-      isLoginView: !isLoginView,
+      view: newIsLogin ? "login" : "signup",
+      isLoginView: newIsLogin,
     });
   };
 
@@ -730,6 +847,79 @@ const AppContent = () => {
     }
   }, [user, showAuthForInvitation, inviteToken]);
 
+  // Show email verification UI when arriving via /verify-email?token=...
+  // Rendered BEFORE the loading spinner so it shows immediately on first paint.
+  if (emailVerifyToken && emailVerifyStatus !== "idle") {
+    const handleGoToLogin = () => {
+      // Ensure deployment type is set so the login form renders (webapp = always cloud)
+      if (!deploymentType) {
+        setDeploymentType("cloud");
+        localStorage.setItem("deploymentType", "cloud");
+        updateBaseUrl("cloud");
+      }
+      // Pre-fill the verified email in the login form
+      setVerificationEmail(verifiedEmail);
+      setEmailVerifyToken(null);
+      setEmailVerifyStatus("idle");
+      setAuthSubView("login");
+      setIsLoginView(true);
+    };
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-pulse" />
+          <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-indigo-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-pulse delay-1000" />
+        </div>
+        <div className="relative bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl p-8 w-full max-w-md text-center">
+          {emailVerifyStatus === "verifying" && (
+            <>
+              <Loader2 className="animate-spin mx-auto mb-4 text-purple-400" size={48} />
+              <h2 className="text-xl font-bold text-white mb-2">Verifying your email...</h2>
+              <p className="text-gray-300 text-sm">Please wait while we verify your account.</p>
+            </>
+          )}
+          {emailVerifyStatus === "success" && (
+            <>
+              <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <h2 className="text-2xl font-bold text-white mb-2">Email Verified!</h2>
+              <p className="text-gray-300 text-sm mb-1">Your account has been verified successfully.</p>
+              {verifiedEmail && (
+                <p className="text-purple-300 text-sm font-medium mb-6">{verifiedEmail}</p>
+              )}
+              <button
+                onClick={handleGoToLogin}
+                className="w-full py-3 px-4 bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 text-white rounded-lg text-sm font-medium transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-purple-500"
+              >
+                Login to OntoCode
+              </button>
+            </>
+          )}
+          {emailVerifyStatus === "error" && (
+            <>
+              <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-bold text-white mb-2">Verification Failed</h2>
+              <p className="text-red-300 text-sm mb-4">{emailVerifyError}</p>
+              <button
+                onClick={handleGoToLogin}
+                className="px-6 py-2 bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 text-white rounded-lg text-sm font-medium"
+              >
+                Back to Sign In
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div
@@ -933,12 +1123,37 @@ const AppContent = () => {
       });
     };
 
+    const handleBackToLogin = () => {
+      setAuthSubView("login");
+      setIsLoginView(true);
+      setEmailVerifyToken(null);
+      setEmailVerifyStatus("idle");
+    };
+
+    if (authSubView === "verifyEmail") {
+      return <EmailVerificationNotice email={verificationEmail} onBackToLogin={handleBackToLogin} />;
+    }
+
+    if (authSubView === "forgotPassword") {
+      return (
+        <ForgotPasswordForm
+          onBackToLogin={handleBackToLogin}
+          onResetTokenReceived={() => setAuthSubView("resetPassword")}
+        />
+      );
+    }
+
+    if (authSubView === "resetPassword") {
+      return <ResetPasswordForm onBackToLogin={handleBackToLogin} initialToken={resetToken || undefined} />;
+    }
+
     return isLoginView ? (
       <LoginForm
         onToggleForm={toggleFormView}
-        prefillEmail={inviteEmail || undefined}
+        prefillEmail={inviteEmail || verificationEmail || undefined}
         onBackToInvitation={inviteToken ? handleBackToInvitation : undefined}
         onBackToWelcome={handleBackToWelcome}
+        onForgotPassword={() => setAuthSubView("forgotPassword")}
       />
     ) : (
       <SignupForm
@@ -946,6 +1161,10 @@ const AppContent = () => {
         prefillEmail={inviteEmail || undefined}
         onBackToInvitation={inviteToken ? handleBackToInvitation : undefined}
         onBackToWelcome={handleBackToWelcome}
+        onVerificationRequired={(email) => {
+          setVerificationEmail(email);
+          setAuthSubView("verifyEmail");
+        }}
       />
     );
   }

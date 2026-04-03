@@ -328,30 +328,8 @@ function handleBrowserMessage(message: any) {
                     return;
                 }
 
-                // Check for duplicates if in project context and auto-rename if needed
-                if (message.projectId) {
-                    const token = localStorage.getItem('authToken');
-                    const baseUrl = getGatewayUrl();
-
-                    try {
-                        const checkUrl = `${baseUrl}/api/projects/${message.projectId}/files/check?fileName=${encodeURIComponent(fileName)}`;
-                        const checkResp = await fetch(checkUrl, {
-                            headers: token ? { Authorization: `Bearer ${token}` } : {},
-                        });
-                        const checkData = await checkResp.json().catch(() => ({}));
-
-                        if (checkData.exists) {
-                            console.log('[BrowserBridge] Duplicate detected for:', fileName);
-                            notificationService.error('File Exists', `A file named "${fileName}" already exists in this project.`);
-                            return;
-                        }
-                    } catch (checkError) {
-                        console.warn('[BrowserBridge] Failed to check for duplicate:', checkError);
-                        // Continue with upload if check fails
-                    }
-                }
-
                 // Create minimal empty ontology content with owl:Thing
+                // Note: duplicate check is handled server-side during upload
                 const ontologyIRI = `http://example.org/ontologies/${fileName.replace(/\.[^/.]+$/, '')}`;
                 const emptyOntologyContent = `<?xml version="1.0"?>
 <rdf:RDF xmlns="${ontologyIRI}#"
