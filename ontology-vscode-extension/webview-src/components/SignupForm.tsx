@@ -8,9 +8,10 @@ interface SignupFormProps {
     prefillEmail?: string;
     onBackToInvitation?: () => void;
     onBackToWelcome?: () => void;
+    onVerificationRequired?: (email: string) => void;
 }
 
-const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation, onBackToWelcome }: SignupFormProps) => {
+const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation, onBackToWelcome, onVerificationRequired }: SignupFormProps) => {
     const [username, setUsername] = useState('');
     const [email, setEmail] = useState(prefillEmail || '');
     const [password, setPassword] = useState('');
@@ -51,12 +52,22 @@ const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation, onBackToWe
         
         setIsLoading(true);
         try {
-            await signup(username, email, password);
-            // If we get here without error, signup succeeded with immediate login
+            const result = await signup(username, email, password);
+            if (result.requiresVerification) {
+                if (onVerificationRequired) {
+                    onVerificationRequired(result.email || email);
+                } else {
+                    setSuccessMessage(result.message || 'Please check your email to verify your account.');
+                }
+            }
+            // If no verification required, user is logged in automatically
         } catch (err: any) {
-            // Check if it's a success case (verification required)
-            if (err?.success && err?.message) {
-                setSuccessMessage(err.message);
+            if (err?.requiresVerification) {
+                if (onVerificationRequired) {
+                    onVerificationRequired(err.email || email);
+                } else {
+                    setSuccessMessage(err.message || 'Please check your email to verify your account.');
+                }
             } else {
                 setError(err instanceof Error ? err.message : 'An unknown error occurred.');
             }

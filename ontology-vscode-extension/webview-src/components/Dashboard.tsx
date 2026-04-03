@@ -1988,7 +1988,34 @@ const Dashboard: React.FC<DashboardProps> = ({
     },
     [user?.email, user?.username], // collaboration.addNotification is stable, no need to include
   );
-  const [projectId, setProjectId] = useState<string | null>(initialProjectId || null);
+  const isNonWorkspaceMode = !initialProjectId && !user?.workspaceId;
+
+  // In non-workspace mode, restore the last opened file from localStorage
+  const storedProjectId = isNonWorkspaceMode
+    ? typeof localStorage !== "undefined"
+      ? localStorage.getItem("ontocode_lastProjectId")
+      : null
+    : null;
+
+  const [projectId, setProjectIdInternal] = useState<string | null>(initialProjectId || storedProjectId || null);
+
+  // Wrapper to persist projectId to localStorage in non-workspace mode
+  const setProjectId = useCallback(
+    (value: string | null | ((prev: string | null) => string | null)) => {
+      setProjectIdInternal((prev) => {
+        const newValue = typeof value === "function" ? value(prev) : value;
+        if (isNonWorkspaceMode && typeof localStorage !== "undefined") {
+          if (newValue) {
+            localStorage.setItem("ontocode_lastProjectId", newValue);
+          } else {
+            localStorage.removeItem("ontocode_lastProjectId");
+          }
+        }
+        return newValue;
+      });
+    },
+    [isNonWorkspaceMode],
+  );
 
   // Helper function to encode project ID for use in URL paths
   // Handles hierarchical project IDs like "project-123/file-456"
@@ -3290,19 +3317,27 @@ const Dashboard: React.FC<DashboardProps> = ({
         // Add cache-busting parameter when forceRefresh is true to bypass any HTTP/browser caching
         const cacheBuster = forceRefresh ? `?_t=${Date.now()}` : "";
 
+        // Abort any previous in-flight fetch and create a fresh controller for this load
+        if (fetchAbortControllerRef.current) {
+          fetchAbortControllerRef.current.abort();
+        }
+        const abortController = new AbortController();
+        fetchAbortControllerRef.current = abortController;
+        const signal = abortController.signal;
+
         // Fetch data in background
         // Metadata endpoint now returns comprehensive cached data (annotations, imports, axioms, prefixes)
         // so we don't need to make separate calls for those
         const dataFetchPromise = Promise.all([
-          apiClient.get<any>(`/api/ontology/metadata/${encodedProjectId}${cacheBuster}`),
-          apiClient.get<any>(`/api/ontology/classes/top-level/${encodedProjectId}${cacheBuster}`),
+          apiClient.get<any>(`/api/ontology/metadata/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
+          apiClient.get<any>(`/api/ontology/classes/top-level/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
           apiClient
-            .get<any>(`/api/ontology/classes/instance-counts/${encodedProjectId}${cacheBuster}`)
-            .catch(() => null),
-          apiClient.get<any>(`/api/ontology/properties/${encodedProjectId}${cacheBuster}`),
-          apiClient.get<any>(`/api/ontology/individuals/${encodedProjectId}${cacheBuster}`),
-          apiClient.get<any>(`/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`),
-          apiClient.get<any>(`/api/ontology/datatypes/${encodedProjectId}${cacheBuster}`),
+            .get<any>(`/api/ontology/classes/instance-counts/${encodedProjectId}${cacheBuster}`, undefined, { signal })
+            .catch((e: any) => { if (e?.name === 'AbortError' || e?.code === 'ERR_CANCELED') throw e; return null; }),
+          apiClient.get<any>(`/api/ontology/properties/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
+          apiClient.get<any>(`/api/ontology/individuals/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
+          apiClient.get<any>(`/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
+          apiClient.get<any>(`/api/ontology/datatypes/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
         ]);
 
         // Allow UI to be responsive immediately if not waiting
@@ -3637,12 +3672,23 @@ const Dashboard: React.FC<DashboardProps> = ({
           console.log("[Dashboard] ✅ Non-admin flow - fetching files for user");
           try {
             const lists = await fetchProjects();
+
+            // Non-workspace mode: always apply mutations directly to GraphDB
+            // (no collaboration, so draft mode causes data loss if user navigates away)
+            const isNonWorkspaceMode = !initialProjectId && !user?.workspaceId;
+
             if (!lists) {
-              console.warn("[Dashboard] ?? No project list available - defaulting to private mode");
+              console.warn("[Dashboard] ?? No project list available");
               setIsCurrentFileShared(false);
-              ontologyMutationService.setRealTimeSync(false);
-              setSyncMode("private");
-              console.log("[Dashboard] ?? File is private - using draft mode (click Save to apply changes)");
+              if (isNonWorkspaceMode) {
+                ontologyMutationService.setRealTimeSync(true);
+                setSyncMode("public");
+                console.log("[Dashboard] ?? Non-workspace mode - applying changes directly to GraphDB");
+              } else {
+                ontologyMutationService.setRealTimeSync(false);
+                setSyncMode("private");
+                console.log("[Dashboard] ?? File is private - using draft mode (click Save to apply changes)");
+              }
             }
 
             const myProjectsList = Array.isArray(lists?.myFiles) ? lists.myFiles : [];
@@ -3680,8 +3726,13 @@ const Dashboard: React.FC<DashboardProps> = ({
             );
 
             // Configure mutation service based on whether file is shared
-            ontologyMutationService.setRealTimeSync(isShared);
-            setSyncMode(isShared ? "public" : "private");
+            // Non-workspace mode: always apply directly to GraphDB to prevent data loss
+            const shouldApplyDirectly = isShared || isNonWorkspaceMode;
+            ontologyMutationService.setRealTimeSync(shouldApplyDirectly);
+            setSyncMode(shouldApplyDirectly ? "public" : "private");
+            if (isNonWorkspaceMode && !isShared) {
+              console.log("[Dashboard] 📝 Non-workspace mode - mutations apply directly to GraphDB");
+            }
 
             // Only start monitoring for shared files (real-time collaboration)
             if (isShared) {
@@ -3744,7 +3795,17 @@ const Dashboard: React.FC<DashboardProps> = ({
           "Ontology Loaded",
           `"${currentProjectId}" is ready! Found ${classes.length} classes, ${allProps.length} properties.`,
         );
-      } catch (error) {
+      } catch (error: any) {
+        // Ignore cancellations – these happen when the user switches files mid-load
+        if (
+          error?.name === 'AbortError' ||
+          error?.code === 'ERR_CANCELED' ||
+          error?.message?.includes('aborted')
+        ) {
+          console.log("[Dashboard] fetchData cancelled (user switched files)");
+          setIsInitialLoading(false);
+          return null;
+        }
         console.error("Failed to fetch data:", error);
 
         // Notify user of the error
@@ -4944,6 +5005,26 @@ const Dashboard: React.FC<DashboardProps> = ({
     console.log("[Dashboard] ✅ Fetching all projects for user email:", resolvedEmail || "(none)");
     fetchProjects();
 
+    // Non-workspace mode: auto-load the last opened file from localStorage
+    if (isNonWorkspaceMode && storedProjectId && !hasUserSelectedFileRef.current) {
+      console.log("[Dashboard] 🔄 Non-workspace mode - restoring last opened file:", storedProjectId);
+      hasUserSelectedFileRef.current = true;
+      setHasUserSelectedFile(true);
+      setActiveFileName(storedProjectId);
+      fetchData(storedProjectId, false)
+        .then(() => {
+          console.log("[Dashboard] ✅ Last file restored:", storedProjectId);
+        })
+        .catch((err) => {
+          console.warn("[Dashboard] ⚠️ Failed to restore last file:", storedProjectId, err);
+          // Clear the stored project ID if it can't be loaded
+          localStorage.removeItem("ontocode_lastProjectId");
+          setProjectId(null);
+          setHasUserSelectedFile(false);
+          hasUserSelectedFileRef.current = false;
+        });
+    }
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.email, user?.workspaceId, resolveUserEmail]); // Only re-run when user identity changes
 
@@ -4956,6 +5037,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   // Track if a file is currently being loaded to prevent duplicate loads
   const fileLoadingRef = useRef(false);
   const lastLoadedFileRef = useRef<string | null>(null);
+
+  // AbortController for cancelling in-flight fetchData requests when the user switches files
+  const fetchAbortControllerRef = useRef<AbortController | null>(null);
 
   // Auto-load selected file from Project Library (admin flow)
   useEffect(() => {
@@ -5240,7 +5324,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             console.log("[Dashboard] 📋 Current projectFiles count before refresh:", projectFiles.length);
 
             // Retry mechanism to ensure newly uploaded file appears in list
-            const fetchWithRetry = async (retries = 3, delay = 1000) => {
+            const fetchWithRetry = async (retries = 3, delay = 300) => {
               for (let attempt = 1; attempt <= retries; attempt++) {
                 console.log(`[Dashboard] 📋 Fetch attempt ${attempt}/${retries}...`);
                 const fetchedFiles = await fetchProjectFiles(initialProjectId);
@@ -5304,7 +5388,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               // Use a small delay to let the file list state update
               setTimeout(() => {
                 handleLoadProjectFile(message.uploadedFileId, message.uploadedFileName);
-              }, 500);
+              }, 200);
             } else {
               console.log("[Dashboard] File list updated for project, skipping ontology load:", message.projectId);
               fetchProjects();
@@ -6426,7 +6510,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                     refreshProperties();
                   } else if (entitiesTab === "Individuals") {
                     // Refresh individuals list
-                    fetchData();
+                    if (projectId) fetchData(projectId, false);
                   }
                 }
               })
@@ -6434,12 +6518,12 @@ const Dashboard: React.FC<DashboardProps> = ({
                 console.error("[Dashboard] Failed to refresh entity after rollback:", error);
                 // If specific entity fetch fails, try a full data refresh
                 console.log("[Dashboard] Attempting full data refresh after rollback error");
-                fetchData();
+                if (projectId) fetchData(projectId, false);
               });
           } else {
             // No specific endpoint, do a full refresh
             console.log("[Dashboard] No API endpoint matched, doing full refresh");
-            fetchData();
+            if (projectId) fetchData(projectId, false);
           }
         }
       }, 1500); // Increased delay to ensure GraphDB fully processes the rollback
@@ -6787,25 +6871,46 @@ const Dashboard: React.FC<DashboardProps> = ({
         console.log("[Dashboard] 🔄 Switching to file:", newProjectId);
         console.log("[Dashboard] 🧹 Clearing current state for:", projectId);
 
-        // Clear all current state
+        // Clear all current state (including metadata so old counts don't persist)
         setClassHierarchy([]);
         setObjectProperties([]);
         setDataProperties([]);
         setAnnotationProperties([]);
         setIndividuals([]);
+        setDatatypes([]);
+        setMetadata(null);
         setSelectedItem(null);
         setSearchQuery("");
         setActiveFileId(null);
         setActiveFileName(newProjectId); // Use new project ID as file name if no explicit file ID Provided
+        setHasUnsavedChanges(false);
+        setDraftCount(0);
+
+        // Update projectId so the Dashboard knows which file is active
+        setProjectId(newProjectId);
+        hasUserSelectedFileRef.current = true;
+        setHasUserSelectedFile(true);
+
+        // Cancel any in-flight HTTP requests for the previous file before starting the new load
+        if (fetchAbortControllerRef.current) {
+          fetchAbortControllerRef.current.abort();
+          fetchAbortControllerRef.current = null;
+        }
 
         if (window.vscode) {
+          // Show loading dialog immediately before the round-trip to the extension
+          setShowLoadingChoice(true);
+          setLoadingProjectName(newProjectId);
           window.vscode.postMessage({
             type: "fileLoaded",
             projectId: newProjectId,
           });
+        } else {
+          // Browser mode: show LoadingDialog and load data directly from GraphDB
+          console.log("[Dashboard] 🌐 Browser mode - loading file via fetchData:", newProjectId);
+          setIsInitialLoading(true);
+          fetchData(newProjectId, true);
         }
-        setHasUnsavedChanges(false);
-        setDraftCount(0);
 
         console.log("[Dashboard] ✅ State cleared, loading new file:", newProjectId);
       };
@@ -6826,7 +6931,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         },
       });
     },
-    [hasUnsavedChanges, draftCount, projectId],
+    [hasUnsavedChanges, draftCount, projectId, fetchData, setProjectId, setIsInitialLoading, setShowLoadingChoice, setLoadingProjectName],
   );
 
   // Back to projects (with unsaved changes check)
@@ -7673,14 +7778,46 @@ const Dashboard: React.FC<DashboardProps> = ({
           user?.username || "Anonymous",
         );
 
-        console.log("[handleAddClassInline] Class created, refreshing...");
-        // Add a small delay to ensure backend has processed the class
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        // Optimistic local state update so the class appears immediately
+        const newNode: TreeNode = {
+          id: newIri,
+          label: name || "NewClass",
+          children: undefined,
+          hasChildren: false,
+          annotations: { "rdfs:label": name || "NewClass" },
+        };
 
-        // Ensure parent node is in expanded nodes before refresh
-        if (parentIri && !expandedNodes.includes(parentIri)) {
-          setExpandedNodes((prev) => [...prev, parentIri]);
-        }
+        setExpandedNodes((prev) => {
+          if (parentIri && !prev.includes(parentIri)) {
+            return [...prev, parentIri];
+          }
+          return prev;
+        });
+
+        setClassHierarchy((prev) => {
+          const addNodeRecursively = (nodes: TreeNode[]): TreeNode[] => {
+            return nodes.map((node) => {
+              if (type === "subclass" && node.id === parentIri) {
+                const children = node.children ? [...node.children, newNode] : [newNode];
+                return { ...node, children, hasChildren: true };
+              }
+              if (type === "sibling" && node.children?.some((child: TreeNode) => child.id === parentId)) {
+                return { ...node, children: [...(node.children || []), newNode] };
+              }
+              if (node.children) {
+                return { ...node, children: addNodeRecursively(node.children) };
+              }
+              return node;
+            });
+          };
+          return addNodeRecursively(prev);
+        });
+
+        markAsUnsaved();
+
+        console.log("[handleAddClassInline] Class created, refreshing from GraphDB...");
+        // Add a small delay to ensure backend has processed the class
+        await new Promise((resolve) => setTimeout(resolve, 500));
 
         await refreshClassHierarchy();
 
@@ -7697,7 +7834,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         throw error;
       }
     },
-    [projectId, metadata, classHierarchy, user, refreshClassHierarchy, showNotification, expandedNodes],
+    [projectId, metadata, classHierarchy, user, refreshClassHierarchy, showNotification, expandedNodes, markAsUnsaved],
   );
 
   const handleAddItem = useCallback(

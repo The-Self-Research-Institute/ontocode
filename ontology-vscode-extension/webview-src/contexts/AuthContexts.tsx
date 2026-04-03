@@ -20,7 +20,11 @@ interface AuthContextType {
     loading: boolean;
     needsWorkspaceSelection: boolean;
     login: (username: string, password: string) => Promise<void>;
-    signup: (username: string, email: string, password: string) => Promise<void>;
+    signup: (username: string, email: string, password: string) => Promise<{ requiresVerification: boolean; email?: string; message?: string }>;
+    forgotPassword: (email: string) => Promise<string>;
+    resetPassword: (token: string, password: string) => Promise<string>;
+    resendVerification: (email: string) => Promise<string>;
+    verifyEmailAndLogin: (token: string) => Promise<void>;
     selectWorkspace: (workspaceData: any) => void;
     switchWorkspace: () => void;
     updateSubscriptionPlan: (planId: string) => Promise<void>;
@@ -590,19 +594,93 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 
                 // Clear expired message on successful signup
                 setSessionExpiredMessage(null);
-                return;
+                return { requiresVerification: false };
             }
 
             // No token means email verification required
-            const message = response?.message || response?.data?.message || 'Registration successful! Please check your email to verify your account.';
-            console.log('[AuthContext]  Signup successful - awaiting email verification:', message);
-            // Show success message to user through a custom result
-            throw { success: true, message };
+            const responseData = response?.data || response;
+            const message = responseData?.message || 'Registration successful! Please check your email to verify your account.';
+            const verificationEmail = responseData?.email || email;
+            console.log('[AuthContext] Signup successful - awaiting email verification:', message);
+            return { requiresVerification: true, email: verificationEmail, message };
         } catch (error: any) {
-            console.error('[AuthContext]  Signup failed:', error);
+            console.error('[AuthContext] Signup failed:', error);
+            // Re-throw verification results as-is
+            if (error?.requiresVerification) throw error;
             const message = error?.message || error?.data?.message || error?.data?.error || 'Could not create account';
             throw new Error(message);
         }
+    };
+
+    const forgotPassword = async (email: string): Promise<string> => {
+        try {
+            const response = await apiClient.post('/api/auth/forgot-password', { email });
+            const data = response?.data || response;
+            return data?.message || 'If the email exists in our system, a password reset link has been sent.';
+        } catch (error: any) {
+            const message = error?.message || error?.data?.message || error?.data?.error || 'Failed to process request';
+            throw new Error(message);
+        }
+    };
+
+    const resetPassword = async (token: string, password: string): Promise<string> => {
+        try {
+            const response = await apiClient.post('/api/auth/reset-password', { token, password });
+            const data = response?.data || response;
+            return data?.message || 'Password reset successfully!';
+        } catch (error: any) {
+            const message = error?.message || error?.data?.message || error?.data?.error || 'Failed to reset password';
+            throw new Error(message);
+        }
+    };
+
+    const resendVerification = async (email: string): Promise<string> => {
+        try {
+            const response = await apiClient.post('/api/auth/resend-verification', { email });
+            const data = response?.data || response;
+            return data?.message || 'Verification email sent.';
+        } catch (error: any) {
+            const message = error?.message || error?.data?.message || error?.data?.error || 'Failed to resend verification email';
+            throw new Error(message);
+        }
+    };
+
+    const verifyEmailAndLogin = async (token: string): Promise<void> => {
+        console.log('[AuthContext] Verifying email and auto-logging in...');
+        const response = await apiClient.get('/api/auth/verify', { token });
+        const data = response?.data || response;
+
+        const jwt = data?.jwt;
+        if (!jwt) {
+            if (data?.error) throw new Error(data.error);
+            throw new Error('Verification failed - no token received');
+        }
+
+        // Save token
+        localStorage.setItem('authToken', jwt);
+        if (window.vscode) {
+            window.vscode.postMessage({ type: 'saveAuthToken', token: jwt });
+        }
+
+        const userInfo = decodeToken(jwt);
+        const deploymentType = getStoredDeploymentType();
+        const isAdmin = deploymentType === 'cloud' ? true : (data?.isAdmin || false);
+
+        setUser({
+            token: jwt,
+            userId: userInfo.userId,
+            username: data?.username || userInfo.username,
+            email: data?.email || userInfo.email,
+            roles: data?.roles || userInfo.roles || [],
+            isAdmin,
+            workspaceId: userInfo.workspaceId,
+            workspaceName: userInfo.workspaceName,
+            workspaceRole: userInfo.workspaceRole,
+            subscriptionPlan: userInfo.subscriptionPlan,
+        });
+        setNeedsWorkspaceSelection(!userInfo.workspaceId);
+        setSessionExpiredMessage(null);
+        console.log('[AuthContext] ✅ Email verified and auto-logged in as', data?.username);
     };
 
     const selectWorkspace = (workspaceData: any) => {
@@ -791,6 +869,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         needsWorkspaceSelection,
         login,
         signup,
+        forgotPassword,
+        resetPassword,
+        resendVerification,
+        verifyEmailAndLogin,
         selectWorkspace,
         switchWorkspace,
         updateSubscriptionPlan,

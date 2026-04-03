@@ -316,7 +316,7 @@ public class GraphDBDatasetService {
             log.debug("[GRAPHDB] Query: {}", sparqlQuery);
             
             TupleQuery query = conn.prepareTupleQuery(sparqlQuery);
-            
+            query.setMaxExecutionTime(120); // 2-minute timeout to prevent indefinite hangs            
             // Materialize results into a list before closing connection
             List<BindingSet> results = new ArrayList<>();
             List<String> bindingNames = new ArrayList<>();

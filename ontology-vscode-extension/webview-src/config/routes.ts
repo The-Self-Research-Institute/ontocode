@@ -49,6 +49,10 @@ export const routes: Record<string, RouteConfig> = {
         view: 'projectLibrary',
         params: ['projectName'],
     },
+    editor: {
+        path: '/editor',
+        view: 'dashboard',
+    },
     projectEditor: {
         path: '/projects/:projectName/editor',
         view: 'dashboard',
@@ -114,8 +118,8 @@ export const generateUrlPath = (state: RouteState): string => {
             } else if (state.projectName) {
                 return withRoute(routes.projectEditor.path.replace(':projectName', encodeURIComponent(state.projectName)));
             }
-            // Fallback to projects dashboard if no project context
-            return withRoute(routes.projectDashboard.path);
+            // Non-workspace editor (continue without workspace)
+            return withRoute(routes.editor.path);
 
         default:
             return useHashRouting ? `${baseUrl}#/` : `${baseUrl}/`;
@@ -169,6 +173,9 @@ export const parseUrlPath = (): Partial<RouteState> | null => {
         case 'signup':
             return { view: 'signup', isLoginView: false };
 
+        case 'editor':
+            return { view: 'dashboard' };
+
         case 'workspace':
             return { view: 'workspace' };
 
@@ -180,6 +187,13 @@ export const parseUrlPath = (): Partial<RouteState> | null => {
             return {
                 view: 'invitation',
                 inviteToken: params.get('token') || params.get('invite') || undefined
+            };
+
+        case 'reset-password':
+            return {
+                view: 'login',
+                isLoginView: true,
+                resetToken: params.get('token') || undefined
             };
 
         case 'projects':
