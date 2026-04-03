@@ -7,22 +7,17 @@ import org.springframework.security.config.annotation.web.reactive.EnableWebFlux
 import org.springframework.security.config.web.server.ServerHttpSecurity;
 import org.springframework.security.web.server.SecurityWebFilterChain;
 import org.springframework.security.web.server.authentication.HttpStatusServerEntryPoint;
-import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
 
 @Configuration
 @EnableWebFluxSecurity
 public class SecurityConfig {
 
-    private final UrlBasedCorsConfigurationSource corsConfigurationSource;
-
-    public SecurityConfig(UrlBasedCorsConfigurationSource corsConfigurationSource) {
-        this.corsConfigurationSource = corsConfigurationSource;
-    }
-
     @Bean
     public SecurityWebFilterChain springSecurityFilterChain(ServerHttpSecurity http) {
         http
-                .cors(cors -> cors.configurationSource(corsConfigurationSource))
+                // CORS is handled entirely by corsEarlySetFilter (WebFilter at HIGHEST_PRECEDENCE),
+                // which runs before Spring Security and handles preflight directly.
+                .cors(cors -> cors.disable())
 
                 .csrf(csrf -> csrf.disable())
 
