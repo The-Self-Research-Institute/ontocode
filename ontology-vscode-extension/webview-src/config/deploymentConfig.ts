@@ -14,13 +14,12 @@ const isLocalhost = typeof window !== 'undefined' &&
     (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
 // ─── Default URLs ────────────────────────────────────────────────────────────
-// Smart defaults:
-// - If on cloud domain (ontocode.selfresearch.org): use same-origin (empty string)
-// - If on localhost: use full cloud/self-hosted URLs to avoid CORS
+// Cloud URLs point to ontocodeapi.selfresearch.org (API subdomain)
+// Self-hosted uses localhost with specific ports
 const DEFAULTS = {
-    CLOUD_GATEWAY_URL: isLocalhost ? 'https://ontocode.selfresearch.org' : '',
-    CLOUD_EDITOR_URL: '',
-    CLOUD_PLUGIN_URL: '',
+    CLOUD_GATEWAY_URL: 'https://ontocodeapi.selfresearch.org',
+    CLOUD_EDITOR_URL: 'https://ontocodeapi.selfresearch.org',
+    CLOUD_PLUGIN_URL: 'https://ontocodeapi.selfresearch.org:8087',
     SELF_HOSTED_GATEWAY_URL: isViteDevServer ? '' : 'http://localhost:80',
     SELF_HOSTED_EDITOR_URL: 'http://localhost:8083',
     SELF_HOSTED_PLUGIN_URL: 'http://localhost:8087',
