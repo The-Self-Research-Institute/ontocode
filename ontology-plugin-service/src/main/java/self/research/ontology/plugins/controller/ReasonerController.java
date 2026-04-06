@@ -44,7 +44,7 @@ public class ReasonerController {
     @Autowired
     private ReasonerService reasonerService;
 
-    @Value("${ontology.editor.url:http://owl-editor:8082}")
+    @Value("${ontology.editor.url:http://owl-editor:8083}")
     private String editorServiceUrl;
 
     private final RestTemplate restTemplate = new RestTemplate();
