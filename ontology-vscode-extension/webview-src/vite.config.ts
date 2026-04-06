@@ -31,12 +31,12 @@ export default defineConfig(({ mode }) => {
       'process.env.Z_SYNC_FLUSH': '2',
       'process.env.Z_NO_FLUSH': '0',
       // Inject runtime config for standalone (browser / cloud) mode
-      // In dev mode, use empty string so requests go through Vite proxy (avoids CORS)
-      // Set VITE_CLOUD_GATEWAY_URL in .env.production to override
+      // Cloud: uses env variable when on localhost, same-origin when on cloud domain
+      // Self-hosted: uses localhost URLs or proxy in dev mode
       '__ONTOCODE_CONFIG__': JSON.stringify({
         IS_WEB_EXTENSION: true,
-        CLOUD_GATEWAY_URL: env.VITE_CLOUD_GATEWAY_URL || (mode === 'development' ? '' : 'https://ontocodeapi.selfresearch.org'),
-        SELF_HOSTED_GATEWAY_URL: env.VITE_SELF_HOSTED_GATEWAY_URL || (mode === 'development' ? '' : 'http://localhost:80'),
+        CLOUD_GATEWAY_URL: env.VITE_CLOUD_GATEWAY_URL || '',
+        SELF_HOSTED_GATEWAY_URL: env.VITE_SELF_HOSTED_GATEWAY_URL || '',
       }),
     },
     resolve: {
