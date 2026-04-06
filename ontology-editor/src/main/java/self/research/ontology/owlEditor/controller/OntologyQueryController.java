@@ -38,6 +38,17 @@ public class OntologyQueryController {
                 queryService.topLevelClasses(projectId, limit)));
     }
 
+    /**
+     * Get ALL classes in one bulk request (for graph visualization)
+     * This avoids N+1 query problem that causes continuous polling
+     */
+    @GetMapping("/classes/all/{projectId:.+}")
+    public ResponseEntity<?> allClasses(@PathVariable String projectId,
+                                        @RequestParam(defaultValue = "10000") int limit) {
+        return ResponseEntity.ok(Map.of("success", true, "classes",
+                queryService.allClasses(projectId, limit)));
+    }
+
     @GetMapping("/classes/children/{projectId:.+}")
     public ResponseEntity<?> children(@PathVariable String projectId,
                                       @RequestParam String parentIri,
