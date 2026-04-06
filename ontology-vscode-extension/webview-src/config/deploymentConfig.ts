@@ -20,7 +20,7 @@ const DEFAULTS = {
     CLOUD_GATEWAY_URL: 'https://ontocodeapi.selfresearch.org',
     CLOUD_EDITOR_URL: 'https://ontocodeapi.selfresearch.org',
     CLOUD_PLUGIN_URL: 'https://ontocodeapi.selfresearch.org:8087',
-    SELF_HOSTED_GATEWAY_URL: isViteDevServer ? '' : 'http://localhost:80',
+    SELF_HOSTED_GATEWAY_URL: 'http://localhost:80',
     SELF_HOSTED_EDITOR_URL: 'http://localhost:80',
     SELF_HOSTED_PLUGIN_URL: 'http://localhost:8087',
     DEFAULT_DEPLOYMENT_TYPE: 'cloud' as DeploymentType,
