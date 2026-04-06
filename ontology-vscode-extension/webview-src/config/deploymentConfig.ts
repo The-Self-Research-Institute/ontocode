@@ -21,7 +21,7 @@ const DEFAULTS = {
     CLOUD_EDITOR_URL: 'https://ontocodeapi.selfresearch.org',
     CLOUD_PLUGIN_URL: 'https://ontocodeapi.selfresearch.org:8087',
     SELF_HOSTED_GATEWAY_URL: isViteDevServer ? '' : 'http://localhost:80',
-    SELF_HOSTED_EDITOR_URL: 'http://localhost:8083',
+    SELF_HOSTED_EDITOR_URL: 'http://localhost:80',
     SELF_HOSTED_PLUGIN_URL: 'http://localhost:8087',
     DEFAULT_DEPLOYMENT_TYPE: 'cloud' as DeploymentType,
 } as const;
@@ -33,6 +33,15 @@ function getConfig(): Record<string, string> | undefined {
 
 // ─── Current Deployment Type ─────────────────────────────────────────────────
 export function getStoredDeploymentType(): DeploymentType {
+    // Auto-detect based on hostname - overrides localStorage for cloud domain
+    if (typeof window !== 'undefined') {
+        const hostname = window.location.hostname;
+        if (hostname === 'ontocode.selfresearch.org' || hostname === 'ontocodeapi.selfresearch.org') {
+            // Force cloud mode when accessing from cloud domain
+            return 'cloud';
+        }
+    }
+    
     try {
         const val = localStorage.getItem('deploymentType');
         if (val === 'self-hosted' || val === 'cloud') return val;
