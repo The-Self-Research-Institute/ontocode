@@ -8,13 +8,16 @@
 // ─── Deployment Types ────────────────────────────────────────────────────────
 export type DeploymentType = 'self-hosted' | 'cloud';
 
+// ─── Detect Vite dev server (proxy handles /api → gateway) ──────────────────
+const isViteDevServer = typeof window !== 'undefined' && window.location.port === '3001';
+
 // ─── Default URLs (change here to update everywhere) ─────────────────────────
 const DEFAULTS = {
-    CLOUD_GATEWAY_URL: 'https://ontocodeapi.selfresearch.org',
-    CLOUD_EDITOR_URL: 'https://ontocodeapi.selfresearch.org',
+    CLOUD_GATEWAY_URL: isViteDevServer ? '' : 'https://ontocodeapi.selfresearch.org',
+    CLOUD_EDITOR_URL: isViteDevServer ? '' : 'https://ontocodeapi.selfresearch.org',
     CLOUD_PLUGIN_URL: 'https://ontocodeapi.selfresearch.org:8087',
-    SELF_HOSTED_GATEWAY_URL: 'http://localhost:80',
-    SELF_HOSTED_EDITOR_URL: 'http://localhost:8083',
+    SELF_HOSTED_GATEWAY_URL: isViteDevServer ? '' : 'http://localhost:80',
+    SELF_HOSTED_EDITOR_URL: isViteDevServer ? '' : 'http://localhost:8083',
     SELF_HOSTED_PLUGIN_URL: 'http://localhost:8087',
     DEFAULT_DEPLOYMENT_TYPE: 'cloud' as DeploymentType,
 } as const;

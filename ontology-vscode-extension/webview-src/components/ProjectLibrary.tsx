@@ -393,9 +393,12 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
 
   const handleFileClick = (file: FileItem) => {
     setSelectedFile(file.id);
+    // Single click now opens the file (previously required double-click)
+    onFileSelect(file.id, file.name);
   };
 
   const handleFileDoubleClick = (file: FileItem) => {
+    // Keep for backward compatibility, but single click now handles opening
     onFileSelect(file.id, file.name);
   };
 
@@ -618,7 +621,6 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
               <div
                 key={file.id}
                 onClick={() => handleFileClick(file)}
-                onDoubleClick={() => handleFileDoubleClick(file)}
                 className={`bg-white rounded-lg border-2 p-4 cursor-pointer transition-all hover:shadow-lg ${
                   selectedFile === file.id ? "border-purple-500 shadow-lg" : "border-gray-200"
                 }`}
@@ -705,7 +707,6 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                   <tr
                     key={file.id}
                     onClick={() => handleFileClick(file)}
-                    onDoubleClick={() => handleFileDoubleClick(file)}
                     className={`cursor-pointer hover:bg-gray-50 transition-colors ${
                       selectedFile === file.id ? "bg-purple-50" : ""
                     }`}

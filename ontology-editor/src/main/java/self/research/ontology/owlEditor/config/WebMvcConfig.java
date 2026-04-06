@@ -10,6 +10,8 @@ import org.springframework.web.util.UrlPathHelper;
  * 
  * Enables support for hierarchical project IDs with slashes (e.g., "project-123/file-456")
  * by disabling the default URL decoding behavior that would truncate at the first slash.
+ * 
+ * Static resources and webview serving are handled by WebviewController.
  */
 @Configuration
 public class WebMvcConfig implements WebMvcConfigurer {
