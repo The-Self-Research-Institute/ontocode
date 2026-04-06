@@ -249,10 +249,13 @@ services:
       SPRING_DATA_MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       SPRING_DATA_MONGODB_DATABASE: ${MONGODB_DATABASE:-ontocode}
       JWT_SECRET: ${JWT_SECRET:-b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==}
+      ONTOLOGY_EDITOR_URL: http://owl-editor:8083
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
     depends_on:
       mongo:
+        condition: service_healthy
+      owl-editor:
         condition: service_healthy
     networks:
       - ontology-net

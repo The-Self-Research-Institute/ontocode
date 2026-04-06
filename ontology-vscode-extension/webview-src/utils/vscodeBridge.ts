@@ -378,13 +378,59 @@ function handleBrowserMessage(message: any) {
                     // No project context — upload directly to GraphDB as standalone ontology
                     const standaloneProjectId = fileName.replace(/\.(owl|rdf|ttl|n3|nt|jsonld)$/i, '');
                     console.log('[BrowserBridge] No project context, uploading as standalone:', standaloneProjectId);
-                    handleBrowserMessage({
-                        type: 'uploadOntology',
-                        projectId: standaloneProjectId,
-                        fileName: fileName,
-                        fileContent: fileContentBase64,
-                        ownerEmail: getOwnerEmailFromToken(),
-                    });
+
+                    // Upload to GraphDB first
+                    postToSelf({ type: 'showLoading', projectId: standaloneProjectId });
+
+                    try {
+                        const token = localStorage.getItem('authToken');
+                        const baseUrl = getGatewayUrl();
+
+                        // Upload file to GraphDB
+                        const formData = new FormData();
+                        const fileBlob = new Blob([emptyOntologyContent], { type: 'application/rdf+xml' });
+                        formData.append('file', fileBlob, fileName);
+
+                        const uploadUrl = `${baseUrl}/api/ontology/upload/${standaloneProjectId}`;
+                        const uploadResp = await fetch(uploadUrl, {
+                            method: 'POST',
+                            headers: token ? { Authorization: `Bearer ${token}` } : {},
+                            body: formData,
+                        });
+
+                        if (!uploadResp.ok) {
+                            throw new Error(`Upload failed: ${uploadResp.statusText}`);
+                        }
+
+                        const uploadData = await uploadResp.json();
+                        console.log('[BrowserBridge] Standalone file uploaded to GraphDB:', uploadData);
+
+                        // Immediately save to MongoDB to persist the file
+                        console.log('[BrowserBridge] Saving to MongoDB for persistence...');
+                        const saveResp = await fetch(`${baseUrl}/api/ontology/save/${standaloneProjectId}`, {
+                            method: 'POST',
+                            headers: token ? { Authorization: `Bearer ${token}` } : {},
+                        });
+
+                        if (saveResp.ok) {
+                            console.log('[BrowserBridge] ✅ New file saved to MongoDB - will persist after refresh');
+                            notificationService.success('File Created', `${fileName} created and saved to database`);
+                        } else {
+                            console.warn('[BrowserBridge] ⚠️ File uploaded but save failed - may be lost on refresh');
+                        }
+
+                        // Notify that file is ready
+                        postToSelf({
+                            type: 'fileReady',
+                            projectId: standaloneProjectId,
+                            uploadedFileName: fileName,
+                        });
+                    } catch (err: any) {
+                        console.error('[BrowserBridge] Standalone file creation failed:', err);
+                        notificationService.error('Upload Failed', err?.message || 'File creation failed');
+                    } finally {
+                        postToSelf({ type: 'hideLoading', projectId: standaloneProjectId });
+                    }
                 }
             })();
             break;
@@ -501,13 +547,59 @@ function handleBrowserMessage(message: any) {
                     // No project context — upload directly to GraphDB as standalone ontology
                     const standaloneProjectId = fileName.replace(/\.(owl|rdf|ttl|n3|nt|jsonld)$/i, '');
                     console.log('[BrowserBridge] No project context, uploading as standalone:', standaloneProjectId);
-                    handleBrowserMessage({
-                        type: 'uploadOntology',
-                        projectId: standaloneProjectId,
-                        fileName: fileName,
-                        fileContent: fileContentBase64,
-                        ownerEmail: getOwnerEmailFromToken(),
-                    });
+
+                    // Upload to GraphDB first
+                    postToSelf({ type: 'showLoading', projectId: standaloneProjectId });
+
+                    try {
+                        const token = localStorage.getItem('authToken');
+                        const baseUrl = getGatewayUrl();
+
+                        // Upload file to GraphDB
+                        const formData = new FormData();
+                        const fileBlob = new Blob([emptyOntologyContent], { type: 'application/rdf+xml' });
+                        formData.append('file', fileBlob, fileName);
+
+                        const uploadUrl = `${baseUrl}/api/ontology/upload/${standaloneProjectId}`;
+                        const uploadResp = await fetch(uploadUrl, {
+                            method: 'POST',
+                            headers: token ? { Authorization: `Bearer ${token}` } : {},
+                            body: formData,
+                        });
+
+                        if (!uploadResp.ok) {
+                            throw new Error(`Upload failed: ${uploadResp.statusText}`);
+                        }
+
+                        const uploadData = await uploadResp.json();
+                        console.log('[BrowserBridge] Standalone file uploaded to GraphDB:', uploadData);
+
+                        // Immediately save to MongoDB to persist the file
+                        console.log('[BrowserBridge] Saving to MongoDB for persistence...');
+                        const saveResp = await fetch(`${baseUrl}/api/ontology/save/${standaloneProjectId}`, {
+                            method: 'POST',
+                            headers: token ? { Authorization: `Bearer ${token}` } : {},
+                        });
+
+                        if (saveResp.ok) {
+                            console.log('[BrowserBridge] ✅ New file saved to MongoDB - will persist after refresh');
+                            notificationService.success('File Created', `${fileName} created and saved to database`);
+                        } else {
+                            console.warn('[BrowserBridge] ⚠️ File uploaded but save failed - may be lost on refresh');
+                        }
+
+                        // Notify that file is ready
+                        postToSelf({
+                            type: 'fileReady',
+                            projectId: standaloneProjectId,
+                            uploadedFileName: fileName,
+                        });
+                    } catch (err: any) {
+                        console.error('[BrowserBridge] Standalone file creation failed:', err);
+                        notificationService.error('Upload Failed', err?.message || 'File creation failed');
+                    } finally {
+                        postToSelf({ type: 'hideLoading', projectId: standaloneProjectId });
+                    }
                 }
             })();
             break;
