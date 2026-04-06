@@ -1426,49 +1426,7 @@ const OpenFileDialog = ({
             </div>
           )}
         </div>
-        <div className="p-3 border-t" style={{ borderColor: "var(--color-border)" }}>
-          <div className="mb-3">
-            <div className="text-[11px] font-semibold text-gray-600 mb-2">Import options</div>
-            <div className="flex gap-2">
-              <div className="flex-1">
-                <label className="block text-[10px] text-gray-500 mb-1">Mode</label>
-                <select
-                  value={importMode}
-                  onChange={(e) => onImportModeChange(e.target.value as "full" | "incremental" | "diff")}
-                  className="w-full text-xs px-2 py-1.5 rounded border"
-                  style={{
-                    borderColor: "var(--color-border)",
-                    backgroundColor: "var(--color-surface)",
-                    color: "var(--color-text)",
-                  }}
-                >
-                  <option value="full">Full</option>
-                  <option value="incremental">Incremental</option>
-                  <option value="diff">Diff</option>
-                </select>
-              </div>
-              <div className="flex-1">
-                <label className="block text-[10px] text-gray-500 mb-1">Partition</label>
-                <select
-                  value={partitionStrategy}
-                  onChange={(e) => onPartitionStrategyChange(e.target.value as "none" | "namespace")}
-                  disabled={importMode === "diff"}
-                  className="w-full text-xs px-2 py-1.5 rounded border disabled:opacity-60"
-                  style={{
-                    borderColor: "var(--color-border)",
-                    backgroundColor: "var(--color-surface)",
-                    color: "var(--color-text)",
-                  }}
-                >
-                  <option value="none">None</option>
-                  <option value="namespace">Namespace</option>
-                </select>
-              </div>
-            </div>
-            {importMode === "diff" && (
-              <div className="text-[10px] text-amber-600 mt-1">Diff mode does not support namespace partitioning.</div>
-            )}
-          </div>
+        <div className="p-3 border-t space-y-2" style={{ borderColor: "var(--color-border)" }}>
           <button
             onClick={handleCreateNewFile}
             disabled={!canOpenLocalFile}
