@@ -8,16 +8,21 @@
 // ─── Deployment Types ────────────────────────────────────────────────────────
 export type DeploymentType = 'self-hosted' | 'cloud';
 
-// ─── Detect Vite dev server (proxy handles /api → gateway) ──────────────────
+// ─── Detect where we're running ─────────────────────────────────────────────
 const isViteDevServer = typeof window !== 'undefined' && window.location.port === '3001';
+const isLocalhost = typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
-// ─── Default URLs (change here to update everywhere) ─────────────────────────
+// ─── Default URLs ────────────────────────────────────────────────────────────
+// Smart defaults:
+// - If on cloud domain (ontocode.selfresearch.org): use same-origin (empty string)
+// - If on localhost: use full cloud/self-hosted URLs to avoid CORS
 const DEFAULTS = {
-    CLOUD_GATEWAY_URL: isViteDevServer ? '' : 'https://ontocodeapi.selfresearch.org',
-    CLOUD_EDITOR_URL: isViteDevServer ? '' : 'https://ontocodeapi.selfresearch.org',
-    CLOUD_PLUGIN_URL: 'https://ontocodeapi.selfresearch.org:8087',
+    CLOUD_GATEWAY_URL: isLocalhost ? 'https://ontocode.selfresearch.org' : '',
+    CLOUD_EDITOR_URL: '',
+    CLOUD_PLUGIN_URL: '',
     SELF_HOSTED_GATEWAY_URL: isViteDevServer ? '' : 'http://localhost:80',
-    SELF_HOSTED_EDITOR_URL: isViteDevServer ? '' : 'http://localhost:8083',
+    SELF_HOSTED_EDITOR_URL: 'http://localhost:8083',
     SELF_HOSTED_PLUGIN_URL: 'http://localhost:8087',
     DEFAULT_DEPLOYMENT_TYPE: 'cloud' as DeploymentType,
 } as const;
