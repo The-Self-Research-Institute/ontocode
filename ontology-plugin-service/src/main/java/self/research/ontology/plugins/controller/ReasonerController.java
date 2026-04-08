@@ -24,6 +24,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 /**
@@ -51,6 +54,10 @@ public class ReasonerController {
 
     // Cache for loaded ontologies
     private final Map<String, OWLOntology> ontologyCache = new HashMap<>();
+
+    // Async classification task tracking
+    private final ConcurrentHashMap<String, Map<String, Object>> classifyTasks = new ConcurrentHashMap<>();
+    private final ExecutorService classifyExecutor = Executors.newFixedThreadPool(2);
 
     /**
      * Load ontology from multiple sources in priority order:
@@ -225,7 +232,8 @@ public class ReasonerController {
     }
 
     /**
-     * Classify the ontology (compute class hierarchy)
+     * Classify the ontology (compute class hierarchy) — async version.
+     * Returns immediately with a taskId; poll GET /api/reasoner/{projectId}/classify/status/{taskId} for results.
      * POST /api/reasoner/{projectId}/classify
      */
     @PostMapping("/{projectId}/classify")
@@ -236,40 +244,92 @@ public class ReasonerController {
         try {
             String reasonerType = request.getOrDefault("reasonerType", "HERMIT");
             log.info("Classifying ontology for project: {} with {}", projectId, reasonerType);
-            
-            OWLOntology ontology = loadOntology(projectId);
+
+            // Pre-validate reasoner type
             ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
-            
-            long startTime = System.currentTimeMillis();
-            reasonerService.classify(ontology, type);
-            long duration = System.currentTimeMillis() - startTime;
-            
-            // Get classification results
-            Map<String, Object> classificationData = reasonerService.getClassificationResults(ontology, type);
-            
-            Map<String, Object> result = new HashMap<>();
-            result.put("success", true);
-            result.put("reasonerType", type.getDisplayName());
-            result.put("durationMs", duration);
-            result.put("message", "Classification completed successfully");
-            
-            // Add classification details
-            result.put("classHierarchy", classificationData.get("classHierarchy"));
-            result.put("objectPropertyHierarchy", classificationData.get("objectPropertyHierarchy"));
-            result.put("dataPropertyHierarchy", classificationData.get("dataPropertyHierarchy"));
-            result.put("equivalentClasses", classificationData.get("equivalentClasses"));
-            result.put("unsatisfiableClasses", classificationData.get("unsatisfiableClasses"));
-            result.put("totalClasses", classificationData.get("totalClasses"));
-            
-            return ResponseEntity.ok(result);
-            
+
+            // Pre-load ontology on the request thread so errors surface immediately
+            OWLOntology ontology = loadOntology(projectId);
+
+            String taskId = UUID.randomUUID().toString();
+
+            Map<String, Object> taskInfo = new ConcurrentHashMap<>();
+            taskInfo.put("status", "RUNNING");
+            taskInfo.put("startedAt", System.currentTimeMillis());
+            taskInfo.put("reasonerType", type.getDisplayName());
+            classifyTasks.put(taskId, taskInfo);
+
+            classifyExecutor.submit(() -> {
+                try {
+                    long startTime = System.currentTimeMillis();
+                    reasonerService.classify(ontology, type);
+                    long duration = System.currentTimeMillis() - startTime;
+
+                    Map<String, Object> classificationData = reasonerService.getClassificationResults(ontology, type);
+
+                    taskInfo.put("status", "COMPLETED");
+                    taskInfo.put("success", true);
+                    taskInfo.put("durationMs", duration);
+                    taskInfo.put("message", "Classification completed successfully");
+                    taskInfo.put("classHierarchy", classificationData.get("classHierarchy"));
+                    taskInfo.put("objectPropertyHierarchy", classificationData.get("objectPropertyHierarchy"));
+                    taskInfo.put("dataPropertyHierarchy", classificationData.get("dataPropertyHierarchy"));
+                    taskInfo.put("equivalentClasses", classificationData.get("equivalentClasses"));
+                    taskInfo.put("unsatisfiableClasses", classificationData.get("unsatisfiableClasses"));
+                    taskInfo.put("totalClasses", classificationData.get("totalClasses"));
+                } catch (Exception e) {
+                    log.error("Async classification failed for project: {}", projectId, e);
+                    taskInfo.put("status", "FAILED");
+                    taskInfo.put("success", false);
+                    taskInfo.put("error", e.getMessage());
+                }
+            });
+
+            Map<String, Object> accepted = new HashMap<>();
+            accepted.put("taskId", taskId);
+            accepted.put("status", "RUNNING");
+            accepted.put("pollUrl", "/api/reasoner/" + projectId + "/classify/status/" + taskId);
+            return ResponseEntity.accepted().body(accepted);
+
         } catch (Exception e) {
-            log.error("Error during classification", e);
+            log.error("Error starting classification", e);
             return ResponseEntity.status(500).body(Map.of(
                 "success", false,
                 "error", e.getMessage()
             ));
         }
+    }
+
+    /**
+     * Poll for async classification results.
+     * GET /api/reasoner/{projectId}/classify/status/{taskId}
+     */
+    @GetMapping("/{projectId}/classify/status/{taskId}")
+    public ResponseEntity<Map<String, Object>> classifyStatus(
+            @PathVariable String projectId,
+            @PathVariable String taskId
+    ) {
+        Map<String, Object> taskInfo = classifyTasks.get(taskId);
+        if (taskInfo == null) {
+            return ResponseEntity.status(404).body(Map.of(
+                "success", false,
+                "error", "Task not found: " + taskId
+            ));
+        }
+
+        String status = (String) taskInfo.get("status");
+        Map<String, Object> response = new HashMap<>(taskInfo);
+        response.put("taskId", taskId);
+
+        if ("COMPLETED".equals(status) || "FAILED".equals(status)) {
+            // Cleanup after retrieval — keep for 60s in case of retry
+            classifyExecutor.submit(() -> {
+                try { Thread.sleep(60_000); } catch (InterruptedException ignored) {}
+                classifyTasks.remove(taskId);
+            });
+        }
+
+        return ResponseEntity.ok(response);
     }
 
     /**

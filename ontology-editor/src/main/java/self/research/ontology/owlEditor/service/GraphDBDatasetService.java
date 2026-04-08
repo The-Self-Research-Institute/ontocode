@@ -150,11 +150,13 @@ public class GraphDBDatasetService {
                 org.apache.http.impl.client.CloseableHttpClient httpClient = org.apache.http.impl.client.HttpClients.custom()
                     .setDefaultRequestConfig(org.apache.http.client.config.RequestConfig.custom()
                         .setConnectTimeout(30_000)        // 30s to establish connection
-                        .setSocketTimeout(300_000)         // 5 min to wait for data (must exceed query.setMaxExecutionTime)
+                        .setSocketTimeout(600_000)         // 10 min to wait for data (must exceed query.setMaxExecutionTime)
                         .setConnectionRequestTimeout(30_000)
                         .build())
                     .setMaxConnTotal(50)
                     .setMaxConnPerRoute(20)
+                    .evictExpiredConnections()
+                    .evictIdleConnections(5, java.util.concurrent.TimeUnit.MINUTES)
                     .build();
                 httpRepo.setHttpClient(httpClient);
                 
@@ -169,7 +171,7 @@ public class GraphDBDatasetService {
                 
                 log.info("✅ GraphDB HTTP client configured with:");
                 log.info("   - Connect timeout: 30s");
-                log.info("   - Socket timeout: 300s (5 min)");
+                log.info("   - Socket timeout: 600s (10 min)");
                 log.info("   - Connection pool: 50 total, 20 per route");
                 log.info("   - Compression enabled");
                 
@@ -310,6 +312,14 @@ public class GraphDBDatasetService {
      * Execute a SPARQL SELECT query and return materialized results
      */
     public TupleQueryResult execSelect(String projectId, String sparqlQuery) {
+        return execSelect(projectId, sparqlQuery, true);
+    }
+
+    /**
+     * Execute a SPARQL SELECT query with control over inference.
+     * @param includeInferred false to skip transitive/OWL inference (much faster on large repos)
+     */
+    public TupleQueryResult execSelect(String projectId, String sparqlQuery, boolean includeInferred) {
         Repository repo = getRepository();
         String graphUri = getGraphUri(projectId);
         
@@ -327,7 +337,8 @@ public class GraphDBDatasetService {
             log.debug("[GRAPHDB] Query: {}", sparqlQuery);
             
             TupleQuery query = conn.prepareTupleQuery(sparqlQuery);
-            query.setMaxExecutionTime(120); // 2-minute timeout to prevent indefinite hangs            
+            query.setIncludeInferred(includeInferred);
+            query.setMaxExecutionTime(300); // 5-minute timeout to prevent indefinite hangs            
             // Materialize results into a list before closing connection
             List<BindingSet> results = new ArrayList<>();
             List<String> bindingNames = new ArrayList<>();
@@ -340,15 +351,21 @@ public class GraphDBDatasetService {
             
             log.info("[GRAPHDB] ✅ Query completed, retrieved {} results from GraphDB", results.size());
             
-            // Diagnostic: If no results, check if graph has any data at all
+            // Diagnostic: If no results, check if graphs have any data at all
             if (results.isEmpty()) {
                 try {
-                    var graphIri = conn.getValueFactory().createIRI(graphUri);
-                    long graphSize = conn.size(graphIri);
-                    log.warn("[GRAPHDB] ⚠️ Query returned 0 results. Graph {} contains {} total triples.", graphUri, graphSize);
-                    
-                    if (graphSize == 0) {
-                        log.error("[GRAPHDB] ❌ Graph is EMPTY! Data may not have been loaded or committed.");
+                    List<String> allGraphs = getAllGraphUris(conn, projectId);
+                    long totalSize = 0;
+                    for (String g : allGraphs) {
+                        var gIri = conn.getValueFactory().createIRI(g);
+                        long gSize = conn.size(gIri);
+                        totalSize += gSize;
+                        if (gSize > 0) {
+                            log.warn("[GRAPHDB] ⚠️ Query returned 0 results. Graph {} contains {} triples.", g, gSize);
+                        }
+                    }
+                    if (totalSize == 0) {
+                        log.error("[GRAPHDB] ❌ All graphs for project {} are EMPTY! Data may not have been loaded or committed. Graphs checked: {}", projectId, allGraphs);
                     }
                 } catch (Exception diagEx) {
                     log.warn("[GRAPHDB] Could not check graph size: {}", diagEx.getMessage());

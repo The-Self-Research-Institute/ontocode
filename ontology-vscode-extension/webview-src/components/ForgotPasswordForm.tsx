@@ -56,12 +56,6 @@ const ForgotPasswordForm = ({ onBackToLogin, onResetTokenReceived }: ForgotPassw
         {successMessage && (
           <div className="bg-green-500/10 border border-green-400/30 text-green-400 px-4 py-3 rounded-lg mb-6 text-sm backdrop-blur-sm">
             <p>{successMessage}</p>
-            <button
-              onClick={onResetTokenReceived}
-              className="mt-3 text-purple-400 hover:text-purple-300 font-medium text-sm underline"
-            >
-              I have a reset code — enter new password
-            </button>
           </div>
         )}
 

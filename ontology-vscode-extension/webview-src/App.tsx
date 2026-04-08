@@ -103,7 +103,23 @@ const AppContent = () => {
   );
   const [showAuthForInvitation, setShowAuthForInvitation] = useState(false); // Show login/signup form while keeping invite token
   const [needsDeploymentSelection, setNeedsDeploymentSelection] = useState(false);
-  const [deploymentType, setDeploymentType] = useState<"self-hosted" | "cloud" | null>(null);
+  const [deploymentType, setDeploymentType] = useState<"self-hosted" | "cloud" | null>(() => {
+    // Auto-detect cloud mode when accessing from the cloud domain
+    if (typeof window !== "undefined") {
+      const hostname = window.location.hostname;
+      if (hostname === "ontocode.selfresearch.org" || hostname === "ontocodeapi.selfresearch.org") {
+        return "cloud";
+      }
+    }
+    // Restore from localStorage for returning users
+    try {
+      const stored = localStorage.getItem("deploymentType");
+      if (stored === "self-hosted" || stored === "cloud") return stored;
+    } catch {
+      /* ignore */
+    }
+    return null;
+  });
   const [forceShowWorkspace, setForceShowWorkspace] = useState(false);
   const [skipWorkspaceRequested, setSkipWorkspaceRequested] = useState(false);
   const [restoredRoute, setRestoredRoute] = useState<RouteState | null>(null);
@@ -1098,7 +1114,6 @@ const AppContent = () => {
     );
     return (
       <Dashboard
-        key={selectedFileId || "default"} // Force remount when file changes
         onBackToProjects={user.workspaceId ? handleBackToProjectLibrary : undefined}
         onFileSelected={handleFileSelected}
         selectedFileId={selectedFileId || undefined}
