@@ -146,20 +146,31 @@ public class GraphDBDatasetService {
             try {
                 HTTPRepository httpRepo = new HTTPRepository(graphdbUrl, repositoryId);
                 
-                // PERFORMANCE OPTIMIZATION: Configure HTTP client with extended timeouts and connection pooling
-                // This prevents "Connection aborted" errors during large imports
+                // Configure HTTP client timeouts to match SPARQL query execution time
+                org.apache.http.impl.client.CloseableHttpClient httpClient = org.apache.http.impl.client.HttpClients.custom()
+                    .setDefaultRequestConfig(org.apache.http.client.config.RequestConfig.custom()
+                        .setConnectTimeout(30_000)        // 30s to establish connection
+                        .setSocketTimeout(300_000)         // 5 min to wait for data (must exceed query.setMaxExecutionTime)
+                        .setConnectionRequestTimeout(30_000)
+                        .build())
+                    .setMaxConnTotal(50)
+                    .setMaxConnPerRoute(20)
+                    .build();
+                httpRepo.setHttpClient(httpClient);
+                
                 httpRepo.setAdditionalHttpHeaders(java.util.Map.of(
-                    "Keep-Alive", "timeout=3600, max=100", // 1 hour keep-alive, reuse connections
+                    "Keep-Alive", "timeout=3600, max=100",
                     "Connection", "keep-alive",
-                    "Accept-Encoding", "gzip, deflate" // Enable compression
+                    "Accept-Encoding", "gzip, deflate"
                 ));
                 
                 repository = httpRepo;
                 repository.init();
                 
                 log.info("✅ GraphDB HTTP client configured with:");
-                log.info("   - Extended timeouts (1 hour)");
-                log.info("   - Connection pooling (max 100 reuse)");
+                log.info("   - Connect timeout: 30s");
+                log.info("   - Socket timeout: 300s (5 min)");
+                log.info("   - Connection pool: 50 total, 20 per route");
                 log.info("   - Compression enabled");
                 
                 // Test connection
