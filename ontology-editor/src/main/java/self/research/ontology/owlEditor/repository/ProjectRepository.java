@@ -10,5 +10,6 @@ import java.util.Optional;
 @Repository
 public interface ProjectRepository extends MongoRepository<ProjectDocument, String> {
     List<ProjectDocument> findAllByOrderByUpdatedAtDesc();
-    Optional<ProjectDocument> findByFilenameAndOwnerEmail(String filename, String ownerEmail);
+    Optional<ProjectDocument> findFirstByFilenameAndOwnerEmailOrderByUpdatedAtDesc(String filename, String ownerEmail);
+    List<ProjectDocument> findByFilenameAndOwnerEmail(String filename, String ownerEmail);
 }

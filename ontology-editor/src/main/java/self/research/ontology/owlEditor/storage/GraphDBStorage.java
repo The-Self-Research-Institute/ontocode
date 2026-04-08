@@ -34,8 +34,21 @@ public class GraphDBStorage implements OntologyStorage {
         this.repositoryId = repositoryId;
         this.maxTripleCount = 100_000_000; // 100M triples max
         
-        // Initialize HTTP repository connection to GraphDB
-        this.repository = new HTTPRepository(graphdbUrl, repositoryId);
+        // Initialize HTTP repository connection to GraphDB with proper timeouts
+        HTTPRepository httpRepo = new HTTPRepository(graphdbUrl, repositoryId);
+        org.apache.http.impl.client.CloseableHttpClient httpClient = org.apache.http.impl.client.HttpClients.custom()
+            .setDefaultRequestConfig(org.apache.http.client.config.RequestConfig.custom()
+                .setConnectTimeout(30_000)        // 30s to establish connection
+                .setSocketTimeout(600_000)         // 10 min to wait for data
+                .setConnectionRequestTimeout(30_000)
+                .build())
+            .setMaxConnTotal(50)
+            .setMaxConnPerRoute(20)
+            .evictExpiredConnections()
+            .evictIdleConnections(5, java.util.concurrent.TimeUnit.MINUTES)
+            .build();
+        httpRepo.setHttpClient(httpClient);
+        this.repository = httpRepo;
         this.repository.init();
     }
 

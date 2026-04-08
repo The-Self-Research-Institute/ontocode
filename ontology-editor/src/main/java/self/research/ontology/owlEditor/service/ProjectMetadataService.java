@@ -84,14 +84,14 @@ public class ProjectMetadataService {
         if (filename == null || ownerEmail == null) {
             return false;
         }
-        return projectRepository.findByFilenameAndOwnerEmail(filename, ownerEmail).isPresent();
+        return !projectRepository.findByFilenameAndOwnerEmail(filename, ownerEmail).isEmpty();
     }
     
     public Optional<String> getExistingProjectId(String filename, String ownerEmail) {
         if (filename == null || ownerEmail == null) {
             return Optional.empty();
         }
-        return projectRepository.findByFilenameAndOwnerEmail(filename, ownerEmail)
+        return projectRepository.findFirstByFilenameAndOwnerEmailOrderByUpdatedAtDesc(filename, ownerEmail)
                 .map(ProjectDocument::getId);
     }
     

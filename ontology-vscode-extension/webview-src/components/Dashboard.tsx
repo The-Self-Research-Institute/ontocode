@@ -2172,7 +2172,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [showOpenDialog, setShowOpenDialog] = useState(false);
   const [activeOntologySubTab, setActiveOntologySubTab] = useState("prefixes");
   const [importMode, setImportMode] = useState<"full" | "incremental" | "diff">("full");
-  const [partitionStrategy, setPartitionStrategy] = useState<"none" | "namespace">("none");
+  const [partitionStrategy, setPartitionStrategy] = useState<"none" | "namespace">("namespace");
   const [isCreateIndividualModalOpen, setCreateIndividualModalOpen] = useState(false);
   const [isAddAnnotationDialogOpen, setAddAnnotationDialogOpen] = useState(false);
   const [isEditAnnotationDialogOpen, setEditAnnotationDialogOpen] = useState(false);
@@ -2697,8 +2697,54 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       const encodedProjectId = encodeURIComponent(projectId);
 
-      const [classificationResponse, statsResponse] = await Promise.all([
-        apiClient.post(`/plugin-service/api/reasoner/${encodedProjectId}/classify`, { reasonerType }),
+      // Start classification (async — returns a taskId)
+      const startResponse: any = await apiClient.post(
+        `/plugin-service/api/reasoner/${encodedProjectId}/classify`,
+        { reasonerType },
+      );
+
+      const startData = startResponse?.data ?? startResponse;
+
+      // If the backend returned a taskId, poll for completion
+      if (startData?.taskId) {
+        const taskId = startData.taskId;
+        const POLL_INTERVAL = 3000; // 3 seconds
+        const MAX_POLL_TIME = 600_000; // 10 minutes
+
+        const pollForResult = async (): Promise<any> => {
+          const deadline = Date.now() + MAX_POLL_TIME;
+          while (Date.now() < deadline) {
+            await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+            const statusResp: any = await apiClient.get(
+              `/plugin-service/api/reasoner/${encodedProjectId}/classify/status/${taskId}`,
+            );
+            const statusData = statusResp?.data ?? statusResp;
+            if (statusData?.status === "COMPLETED") {
+              return statusData;
+            }
+            if (statusData?.status === "FAILED") {
+              throw new Error(statusData?.error || "Classification failed");
+            }
+            // still RUNNING — continue polling
+          }
+          throw new Error("Classification timed out after 10 minutes");
+        };
+
+        const [classificationResponse, statsResponse] = await Promise.all([
+          pollForResult(),
+          apiClient
+            .get(`/plugin-service/api/reasoner/${encodedProjectId}/stats?reasonerType=${reasonerType}`)
+            .catch((error) => {
+              console.warn("[Dashboard] Reasoner stats request failed:", error);
+              return null;
+            }),
+        ]);
+
+        return combineReasonerResults(classificationResponse, statsResponse ?? undefined);
+      }
+
+      // Fallback: backend returned a synchronous result (older API)
+      const [statsResponse] = await Promise.all([
         apiClient
           .get(`/plugin-service/api/reasoner/${encodedProjectId}/stats?reasonerType=${reasonerType}`)
           .catch((error) => {
@@ -2707,7 +2753,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           }),
       ]);
 
-      return combineReasonerResults(classificationResponse, statsResponse ?? undefined);
+      return combineReasonerResults(startResponse, statsResponse ?? undefined);
     },
     [projectId],
   );
@@ -2879,15 +2925,13 @@ const Dashboard: React.FC<DashboardProps> = ({
       // This ensures we have the full depth like Desktop Protégé, not just the bundle's view
       console.log("[Dashboard] Reasoner completed, loading full recursive hierarchies...");
 
-      // Load full hierarchies in parallel
-      await Promise.all([
-        loadInferredHierarchy(),
-        loadInferredObjectPropertyHierarchy(),
-        loadInferredDataPropertyHierarchy(),
-        loadInferredAnnotationPropertyHierarchy(),
-        loadInferredDatatypes(),
-        loadInferredIndividuals(),
-      ]);
+      // Load hierarchies sequentially to avoid overwhelming GraphDB
+      await loadInferredHierarchy();
+      await loadInferredObjectPropertyHierarchy();
+      await loadInferredDataPropertyHierarchy();
+      await loadInferredAnnotationPropertyHierarchy();
+      await loadInferredDatatypes();
+      await loadInferredIndividuals();
 
       console.log("[Dashboard] ✅ All inferred hierarchies processed");
 
@@ -3283,20 +3327,18 @@ const Dashboard: React.FC<DashboardProps> = ({
         fetchAbortControllerRef.current = abortController;
         const signal = abortController.signal;
 
-        // Fetch data in background
+        // Fetch data sequentially to avoid overwhelming GraphDB (limited concurrent query capacity)
         // Metadata endpoint now returns comprehensive cached data (annotations, imports, axioms, prefixes)
-        // so we don't need to make separate calls for those
-        const dataFetchPromise = Promise.all([
-          apiClient.get<any>(`/api/ontology/metadata/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
-          apiClient.get<any>(`/api/ontology/classes/top-level/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
-          apiClient
-            .get<any>(`/api/ontology/classes/instance-counts/${encodedProjectId}${cacheBuster}`, undefined, { signal })
-            .catch((e: any) => { if (e?.name === 'AbortError' || e?.code === 'ERR_CANCELED') throw e; return null; }),
-          apiClient.get<any>(`/api/ontology/properties/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
-          apiClient.get<any>(`/api/ontology/individuals/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
-          apiClient.get<any>(`/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
-          apiClient.get<any>(`/api/ontology/datatypes/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
-        ]);
+        const metadataResP = await apiClient.get<any>(`/api/ontology/metadata/${encodedProjectId}${cacheBuster}`, undefined, { signal });
+        const topLevelResP = await apiClient.get<any>(`/api/ontology/classes/top-level/${encodedProjectId}${cacheBuster}`, undefined, { signal });
+        const instanceCountsResP = await apiClient
+          .get<any>(`/api/ontology/classes/instance-counts/${encodedProjectId}${cacheBuster}`, undefined, { signal })
+          .catch((e: any) => { if (e?.name === 'AbortError' || e?.code === 'ERR_CANCELED') throw e; return null; });
+        const propertiesResP = await apiClient.get<any>(`/api/ontology/properties/${encodedProjectId}${cacheBuster}`, undefined, { signal });
+        const individualsResP = await apiClient.get<any>(`/api/ontology/individuals/${encodedProjectId}${cacheBuster}`, undefined, { signal });
+        const annotationPropsResP = await apiClient.get<any>(`/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`, undefined, { signal });
+        const datatypesResP = await apiClient.get<any>(`/api/ontology/datatypes/${encodedProjectId}${cacheBuster}`, undefined, { signal });
+        const dataFetchPromise = Promise.resolve([metadataResP, topLevelResP, instanceCountsResP, propertiesResP, individualsResP, annotationPropsResP, datatypesResP]);
 
         // Allow UI to be responsive immediately if not waiting
         if (!waitForCompletion) {
@@ -6949,6 +6991,12 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       try {
         console.log("[Dashboard] 📂 Loading file from project:", fileId, fileName);
+
+        // Mark refs so the auto-load useEffect won't double-fire when
+        // onFileSelected updates the selectedFileId prop from the parent.
+        lastLoadedFileRef.current = fileId;
+        fileLoadingRef.current = true;
+
         setActiveFileId(fileId);
         setActiveFileName(fileName);
         if (onFileSelected) onFileSelected(fileId, fileName);
@@ -7017,63 +7065,109 @@ const Dashboard: React.FC<DashboardProps> = ({
           console.log("[Dashboard] Pending import project:", ontologyProjectId);
           notificationService.info("Uploading", `Uploading ${fileName} to GraphDB...`);
         } else {
-          // In browser, convert base64 to blob and use FormData
-          const byteCharacters = atob(base64Data);
-          const byteNumbers = new Array(byteCharacters.length);
-          for (let i = 0; i < byteCharacters.length; i++) {
-            byteNumbers[i] = byteCharacters.charCodeAt(i);
+          // In browser (self-hosted), check if the file already exists in GraphDB
+          // before re-uploading. This avoids duplicate uploads and speeds up file switching.
+          let needsUpload = true;
+          try {
+            const statusRes = await apiClient.get<any>(
+              `/api/ontology/status/${encodeURIComponent(ontologyProjectId)}`,
+            );
+            const status = statusRes?.data?.status || statusRes?.status;
+            if (status === "COMPLETED") {
+              console.log("[Dashboard] ✅ File already exists in GraphDB, skipping upload");
+              needsUpload = false;
+            } else {
+              console.log("[Dashboard] File status:", status, "- will upload");
+            }
+          } catch {
+            console.log("[Dashboard] File not found in GraphDB, will upload");
           }
-          const byteArray = new Uint8Array(byteNumbers);
-          const blob = new Blob([byteArray], { type: "application/rdf+xml" });
 
-          // Create FormData
-          const formData = new FormData();
-          formData.append("file", blob, fileName);
+          if (needsUpload) {
+            // Convert base64 to blob and use FormData
+            const byteCharacters = atob(base64Data);
+            const byteNumbers = new Array(byteCharacters.length);
+            for (let i = 0; i < byteCharacters.length; i++) {
+              byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            const blob = new Blob([byteArray], { type: "application/rdf+xml" });
 
-          // Upload using axios directly (apiClient doesn't support FormData)
-          const token = localStorage.getItem("authToken");
-          const resolvedEmail = resolveUserEmail();
-          // Use deployment-aware URL
-          const uploadBaseUrl = getBaseUrl();
-          const query = new URLSearchParams();
-          query.set("ownerEmail", resolvedEmail || "");
-          query.set("importMode", importMode);
-          query.set("partition", partitionStrategy);
-          if (user?.workspaceId) {
-            query.set("workspaceId", user.workspaceId);
-          }
-          if (initialProjectId) {
-            query.set("parentProjectId", initialProjectId);
-          }
-          const uploadResponse = await fetch(
-            `${uploadBaseUrl}/api/ontology/upload/${ontologyProjectId}?${query.toString()}`,
-            {
-              method: "POST",
-              headers: token ? { Authorization: `Bearer ${token}` } : {},
-              body: formData,
-            },
-          );
+            // Create FormData
+            const formData = new FormData();
+            formData.append("file", blob, fileName);
 
-          console.log(uploadResponse, "upload-response");
+            // Upload using fetch directly (apiClient doesn't support FormData)
+            const token = localStorage.getItem("authToken");
+            const resolvedEmail = resolveUserEmail();
+            // Use deployment-aware URL
+            const uploadBaseUrl = getBaseUrl();
+            const query = new URLSearchParams();
+            query.set("ownerEmail", resolvedEmail || "");
+            query.set("importMode", importMode);
+            query.set("partition", partitionStrategy);
+            if (user?.workspaceId) {
+              query.set("workspaceId", user.workspaceId);
+            }
+            if (initialProjectId) {
+              query.set("parentProjectId", initialProjectId);
+            }
+            const uploadResponse = await fetch(
+              `${uploadBaseUrl}/api/ontology/upload/${ontologyProjectId}?${query.toString()}`,
+              {
+                method: "POST",
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
+                body: formData,
+              },
+            );
 
-          if (uploadResponse.ok) {
+            console.log(uploadResponse, "upload-response");
+
+            if (!uploadResponse.ok) {
+              const errorData = await uploadResponse.json().catch(() => ({ error: "Upload failed" }));
+              throw new Error(errorData.error || "Upload failed");
+            }
             console.log("[Dashboard] ✅ File uploaded successfully");
-            setProjectId(ontologyProjectId);
 
-            // Wait a moment for processing then fetch data with parentProjectId for file menu
-            setTimeout(() => {
-              fetchData(ontologyProjectId, false, initialProjectId);
-            }, 2000);
-
-            notificationService.success("File Loaded", `${fileName} is ready for editing`);
-          } else {
-            const errorData = await uploadResponse.json().catch(() => ({ error: "Upload failed" }));
-            throw new Error(errorData.error || "Upload failed");
+            // Poll for processing completion instead of using a fixed timeout
+            const maxPolls = 30;
+            for (let i = 0; i < maxPolls; i++) {
+              await new Promise((r) => setTimeout(r, 1000));
+              try {
+                const pollRes = await apiClient.get<any>(
+                  `/api/ontology/status/${encodeURIComponent(ontologyProjectId)}`,
+                );
+                const pollStatus = pollRes?.data?.status || pollRes?.status;
+                if (pollStatus === "COMPLETED") {
+                  console.log("[Dashboard] ✅ Processing complete after", i + 1, "polls");
+                  break;
+                }
+                if (pollStatus === "ERROR") {
+                  throw new Error(pollRes?.data?.errorMessage || "Import processing failed");
+                }
+                console.log("[Dashboard] ⏳ Processing...", pollStatus);
+              } catch (pollErr: any) {
+                if (pollErr?.message?.includes("Import processing failed")) throw pollErr;
+                // Status endpoint not ready yet, keep polling
+              }
+            }
           }
+
+          setProjectId(ontologyProjectId);
+          setIsInitialLoading(true);
+          // forceRefresh=true after a fresh upload (skip stale status check + bust cache)
+          // forceRefresh=false when file already existed (status already COMPLETED)
+          fetchData(ontologyProjectId, true, initialProjectId, needsUpload);
+          notificationService.success("File Loaded", `${fileName} is ready for editing`);
         }
       } catch (error: any) {
         console.error("[Dashboard] ❌ Failed to load project file:", error);
         notificationService.error("Load Failed", error?.message || "Failed to load file");
+      } finally {
+        // Allow new loads after a brief delay to prevent rapid re-triggers
+        setTimeout(() => {
+          fileLoadingRef.current = false;
+        }, 1000);
       }
     },
     [initialProjectId, resolveUserEmail, importMode, partitionStrategy],
@@ -13908,13 +14002,11 @@ const Dashboard: React.FC<DashboardProps> = ({
                 try {
                   await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, { importIri: importIRI });
 
-                  // Refresh all metadata related state
-                  const [metadataRes, annotationsRes, importsRes, gciRes] = await Promise.all([
-                    apiClient.get(`/api/ontology/metadata/${projectId}`),
-                    apiClient.get(`/api/ontology/metadata/${projectId}/annotations`),
-                    apiClient.get(`/api/ontology/metadata/${projectId}/imports`),
-                    apiClient.get(`/api/ontology/metadata/${projectId}/gci`),
-                  ]);
+                  // Refresh all metadata related state sequentially
+                  const metadataRes = await apiClient.get(`/api/ontology/metadata/${projectId}`);
+                  const annotationsRes = await apiClient.get(`/api/ontology/metadata/${projectId}/annotations`);
+                  const importsRes = await apiClient.get(`/api/ontology/metadata/${projectId}/imports`);
+                  const gciRes = await apiClient.get(`/api/ontology/metadata/${projectId}/gci`);
 
                   // Extract data with fallbacks
                   const annotationsData = Array.isArray(annotationsRes?.data)
