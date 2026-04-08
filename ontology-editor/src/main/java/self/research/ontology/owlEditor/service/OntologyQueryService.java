@@ -97,42 +97,6 @@ public class OntologyQueryService {
         return mapTreeNodes(projectId, query, parentIri);
     }
 
-    /**
-     * Get ALL classes in one bulk query for graph visualization
-     * This avoids N+1 query problem from fetching children recursively
-     */
-    public List<OntologyDto.TreeNode> allClasses(String projectId, int limit) {
-        String query = PREFIXES + """
-            SELECT DISTINCT ?c ?label ?description
-                   (GROUP_CONCAT(DISTINCT STR(?parent); SEPARATOR="|") AS ?parents)
-                   (EXISTS { ?child rdfs:subClassOf ?c . FILTER(?child != ?c) } AS ?hasChildren)
-            WHERE {
-              {
-                ?c a owl:Class .
-              } UNION {
-                ?c rdfs:subClassOf ?any .
-              } UNION {
-                ?any rdfs:subClassOf ?c .
-              }
-              
-              FILTER(isIRI(?c))
-              FILTER(?c != <http://www.w3.org/2002/07/owl#Thing>)
-              
-              OPTIONAL { ?c rdfs:label ?label }
-              OPTIONAL { ?c rdfs:comment ?description }
-              OPTIONAL { 
-                ?c rdfs:subClassOf ?parent . 
-                FILTER(isIRI(?parent) && ?parent != ?c)
-              }
-            }
-            GROUP BY ?c ?label ?description
-            ORDER BY COALESCE(LCASE(?label), STR(?c))
-            LIMIT %d
-            """.formatted(Math.max(1, limit));
-        log.info("Fetching all classes for project {} (limit: {})", projectId, limit);
-        return mapTreeNodesWithParents(projectId, query);
-    }
-
     public List<PropertyDto> properties(String projectId, String type, int limit, int offset) {
         String filter = switch (normalize(type)) {
             case "object" -> "FILTER(?kind = owl:ObjectProperty)";
@@ -579,57 +543,6 @@ public class OntologyQueryService {
             nodes.add(node);
         }
         System.out.println("=== MAPPED " + nodes.size() + " NODES FROM " + count + " ROWS ===");
-        return nodes;
-    }
-
-    /**
-     * Map tree nodes with parent information from GROUP_CONCAT result
-     */
-    private List<OntologyDto.TreeNode> mapTreeNodesWithParents(String projectId, String query) {
-        TupleQueryResult rs = datasetService.execSelect(projectId, query);
-        List<OntologyDto.TreeNode> nodes = new ArrayList<>();
-        log.debug("Mapping tree nodes with parents");
-        
-        while (rs.hasNext()) {
-            BindingSet sol = rs.next();
-            String iri = resource(sol, "c");
-            if (iri == null) continue;
-            
-            OntologyDto.TreeNode node = new OntologyDto.TreeNode();
-            node.setId(iri);
-            
-            String label = literal(sol, "label");
-            node.setLabel(label.isBlank() ? localName(iri) : label);
-            
-            String description = literal(sol, "description");
-            node.setDescription(description);
-            
-            // Parse parent IRIs from GROUP_CONCAT result
-            if (sol.hasBinding("parents")) {
-                Value parentsValue = sol.getValue("parents");
-                if (parentsValue != null && parentsValue.isLiteral()) {
-                    String parentsStr = parentsValue.stringValue();
-                    if (!parentsStr.isEmpty() && !parentsStr.equals("|")) {
-                        // First parent from the list
-                        String[] parentIris = parentsStr.split("\\|");
-                        if (parentIris.length > 0 && !parentIris[0].isBlank()) {
-                            node.setParent(parentIris[0]);
-                        }
-                    }
-                }
-            }
-            
-            if (sol.hasBinding("hasChildren")) {
-                Value hasChildrenValue = sol.getValue("hasChildren");
-                if (hasChildrenValue != null && hasChildrenValue.isLiteral()) {
-                    node.setHasChildren(Boolean.parseBoolean(hasChildrenValue.stringValue()));
-                }
-            }
-            
-            nodes.add(node);
-        }
-        
-        log.info("Mapped {} nodes with parent information", nodes.size());
         return nodes;
     }
 
