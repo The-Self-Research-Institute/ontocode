@@ -173,6 +173,10 @@ services:
         condition: service_healthy
     networks:
       - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 5g
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8083/actuator/health"]
       interval: 15s
