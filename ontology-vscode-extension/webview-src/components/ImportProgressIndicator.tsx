@@ -19,9 +19,24 @@ export const ImportProgressIndicator: React.FC<ImportProgressIndicatorProps> = (
   importStatus,
   onClick
 }) => {
+  const [showCompleted, setShowCompleted] = useState(false);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  if (importStatus.type === 'IDLE' || importStatus.status === 'COMPLETED') {
-    return null; // Don't show anything when idle or completed
+  useEffect(() => {
+    if (importStatus.type === 'IMPORT_COMPLETED') {
+      setShowCompleted(true);
+      hideTimerRef.current = setTimeout(() => setShowCompleted(false), 3000);
+    } else if (importStatus.type !== 'IDLE') {
+      setShowCompleted(false);
+    }
+    return () => { if (hideTimerRef.current) clearTimeout(hideTimerRef.current); };
+  }, [importStatus.type]);
+
+  if (importStatus.type === 'IDLE') {
+    return null;
+  }
+  if (importStatus.status === 'COMPLETED' && !showCompleted) {
+    return null;
   }
 
   const getStatusIcon = () => {

@@ -65,6 +65,18 @@ public class OntologyQueryController {
         }
     }
 
+    @GetMapping("/properties/detail/{projectId:.+}")
+    public ResponseEntity<?> propertyDetail(@PathVariable String projectId,
+                                            @RequestParam String iri) {
+        try {
+            return ResponseEntity.ok(Map.of("success", true, "data",
+                    queryService.propertyDetail(projectId, iri)));
+        } catch (Exception e) {
+            return ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("success", false, "error", "Query failed: " + e.getMessage()));
+        }
+    }
+
     @GetMapping("/individuals/{projectId:.+}")
     public ResponseEntity<?> individuals(@PathVariable String projectId,
                                          @RequestParam(defaultValue = "50") int limit,

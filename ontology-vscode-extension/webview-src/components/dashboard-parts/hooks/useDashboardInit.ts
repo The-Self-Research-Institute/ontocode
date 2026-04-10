@@ -286,6 +286,13 @@ export function useDashboardInit(state: DashboardState) {
 
   const fetchData = useCallback(
     async (currentProjectId: string, waitForCompletion = false, parentProjectId?: string, forceRefresh = false) => {
+      // Skip re-fetching if this project is already loaded and no force refresh requested
+      if (!forceRefresh && currentProjectId === projectId && classHierarchy.length > 0 && metadata) {
+        console.log("[Dashboard] ⚡ Project already loaded, skipping re-fetch:", currentProjectId);
+        setIsInitialLoading(false);
+        return null;
+      }
+
       // Don't block UI - let user continue working
       setSelectedItem(null);
       setSearchQuery("");
@@ -408,7 +415,6 @@ export function useDashboardInit(state: DashboardState) {
           individualCount: metadataData?.individualCount || metadataData?.counts?.individuals || 0,
           annotationPropertyCount:
             metadataData?.annotationPropertyCount || metadataData?.counts?.annotationProperties || 0,
-          tripleCount: metadataData?.tripleCount || metadataData?.counts?.triples || 0,
           prefixes: metadataData?.prefixes || [],
         };
         console.log("Transformed metadata:", transformedMetadata);

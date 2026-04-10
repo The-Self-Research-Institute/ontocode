@@ -2557,7 +2557,9 @@ class OntoCodePanel {
 
                             // Send progress update to webview
                             if (statusMessage && attempt % 2 === 0) { // Update every 2nd attempt to avoid spam
-                                const progressPercent = Math.min(95, Math.floor((attempt / maxAttempts) * 100));
+                                // Extract real progress from backend statusMessage (e.g., "Importing... (90%) | ETA...")
+                                const progressMatch = statusMessage.match(/\((\d+)%\)/);
+                                const progressPercent = progressMatch ? parseInt(progressMatch[1], 10) : Math.min(95, Math.floor((attempt / maxAttempts) * 100));
                                 this.postMessage({
                                     type: 'updateLoadingStatus',
                                     projectId: uploadProjectId,
@@ -2743,6 +2745,34 @@ class OntoCodePanel {
         console.log(`[OntoCode] 📤 Handling webview upload for project: ${projectId}, file: ${fileName}`);
 
         try {
+            // Fast path: check if this file already exists in GraphDB before converting/uploading
+            const token = await (this._context as any).secrets.get(TOKEN_KEY);
+            if (token) {
+                try {
+                    const statusUrl = `${GATEWAY_URL}/api/ontology/status/${encodeURIComponent(projectId)}`;
+                    const statusResp = await axios.get(statusUrl, {
+                        headers: { 'Authorization': `Bearer ${token}` },
+                        validateStatus: (status) => status < 500
+                    });
+                    const status = statusResp?.data?.data?.status || statusResp?.data?.status;
+                    if (status === 'COMPLETED') {
+                        console.log(`[OntoCode] ✅ File already exists in GraphDB, sending fileReady directly: ${projectId}`);
+                        this._lastProjectId = projectId;
+                        try {
+                            await this.initializeCollaborationForProject(projectId, token);
+                        } catch (e) {
+                            console.warn('[OntoCode] Failed to initialize collaboration:', e);
+                        }
+                        if (this._isWebviewReady) {
+                            this.postMessage({ type: 'fileReady', projectId });
+                        }
+                        return;
+                    }
+                } catch (checkErr) {
+                    console.log('[OntoCode] Status check failed, proceeding with upload:', checkErr);
+                }
+            }
+
             // Convert base64 to Uint8Array (web-compatible)
             const fileData = base64ToUint8Array(base64Content);
 

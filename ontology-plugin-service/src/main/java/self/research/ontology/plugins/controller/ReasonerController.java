@@ -60,6 +60,20 @@ public class ReasonerController {
     private final ExecutorService classifyExecutor = Executors.newFixedThreadPool(2);
 
     /**
+     * Extract base project ID from partition format.
+     * Partition IDs use format: proj-xxx--partition-uuid
+     * Example: proj-33c06f4a--5c615441-ee3f-4d6d-b77d-6555cc7833e8 → proj-33c06f4a
+     */
+    private String extractBaseProjectId(String projectId) {
+        if (projectId == null || !projectId.contains("--")) {
+            return projectId;
+        }
+        String baseId = projectId.substring(0, projectId.indexOf("--"));
+        log.debug("Extracted base projectId '{}' from partition format '{}'", baseId, projectId);
+        return baseId;
+    }
+
+    /**
      * Load ontology from multiple sources in priority order:
      * 1. Editor service (for ontologies being edited)
      * 2. GridFS (for uploaded ontologies)
@@ -68,53 +82,57 @@ public class ReasonerController {
     private OWLOntology loadOntology(String projectId) throws Exception {
         log.info("Loading ontology for project: {}", projectId);
 
-        if (ontologyCache.containsKey(projectId)) {
-            log.info("Returning cached ontology for project: {}", projectId);
-            return ontologyCache.get(projectId);
+        // Extract base projectId if this is a partition ID (format: proj-xxx--partition-uuid)
+        String baseProjectId = extractBaseProjectId(projectId);
+        if (ontologyCache.containsKey(baseProjectId)) {
+            log.info("Returning cached ontology for project: {}", baseProjectId);
+            return ontologyCache.get(baseProjectId);
         }
 
         // 1. Try editor service first (for ontologies being edited in the IDE)
-        OWLOntology editorOntology = loadOntologyFromEditorService(projectId);
+        OWLOntology editorOntology = loadOntologyFromEditorService(baseProjectId);
         if (editorOntology != null) {
-            ontologyCache.put(projectId, editorOntology);
+            ontologyCache.put(baseProjectId, editorOntology);
             return editorOntology;
         }
 
         // 2. Try GridFS (for uploaded ontologies)
-        GridFSFile file = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(projectId)));
+        GridFSFile file = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(baseProjectId)));
         if (file == null) {
-            log.warn("File not found with metadata.projectId={}, trying filename", projectId);
-            file = gridfs.findOne(new Query(Criteria.where("filename").is(projectId + ".owl")));
+            log.warn("File not found with metadata.projectId={}, trying filename", baseProjectId);
+            file = gridfs.findOne(new Query(Criteria.where("filename").is(baseProjectId + ".owl")));
         }
 
         if (file != null) {
             log.info("Found ontology file in GridFS: {}", file.getFilename());
             GridFsResource resource = gridfs.getResource(file);
             try (InputStream inputStream = resource.getInputStream()) {
-                OWLOntology ontology = loadOntologyFromStream(projectId, inputStream, "GridFS file " + file.getFilename());
+                OWLOntology ontology = loadOntologyFromStream(baseProjectId, inputStream, "GridFS file " + file.getFilename());
                 if (ontology != null) {
-                    ontologyCache.put(projectId, ontology);
+                    ontologyCache.put(baseProjectId, ontology);
                     return ontology;
                 }
             }
         }
 
         // 3. Fallback: try loading from local filesystem (dev convenience)
-        OWLOntology filesystemOntology = loadOntologyFromFilesystem(projectId);
+        OWLOntology filesystemOntology = loadOntologyFromFilesystem(baseProjectId);
         if (filesystemOntology != null) {
-            ontologyCache.put(projectId, filesystemOntology);
+            ontologyCache.put(baseProjectId, filesystemOntology);
             return filesystemOntology;
         }
 
-        log.error("Ontology file not found for project: {} (tried: editor service, GridFS, filesystem)", projectId);
-        throw new RuntimeException("Ontology file not found for project: " + projectId + 
+        log.error("Ontology file not found for project: {} (tried: editor service, GridFS, filesystem)", baseProjectId);
+        throw new RuntimeException("Ontology file not found for project: " + baseProjectId + 
             ". Make sure the ontology is either being edited in the IDE or has been uploaded to the system.");
     }
 
     /**
      * Fetch ontology from the editor service API
+     * Uses configured editor URL: ${ontology.editor.url}
      */
     private OWLOntology loadOntologyFromEditorService(String projectId) {
+        log.debug("Attempting to fetch from editor service at: {}", editorServiceUrl);
         try {
             String url = editorServiceUrl + "/api/ontology-file/" + projectId;
             log.info("Fetching ontology from editor service: {}", url);

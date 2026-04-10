@@ -3,9 +3,8 @@ package self.research.ontology.owlEditor.service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
-import org.eclipse.rdf4j.repository.RepositoryConnection;
-import org.eclipse.rdf4j.query.TupleQuery;
 import org.eclipse.rdf4j.query.TupleQueryResult;
 import org.eclipse.rdf4j.query.BindingSet;
 
@@ -47,6 +46,10 @@ public class OntologyMutationService {
         this.metadataExecutor = metadataExecutor;
     }
 
+    /**
+     * Apply ontology mutations and clear relevant caches for instant UI updates.
+     */
+    @CacheEvict(value = {"topLevelClasses", "classChildren", "ontologyProperties", "ontologyIndividuals", "classInstanceCounts"}, allEntries = true)
     public void apply(String projectId, List<MutationOp> ops) {
         if (ops == null || ops.isEmpty()) {
             log.warn("[MUTATION] No operations to apply for project: {}", projectId);
@@ -55,6 +58,7 @@ public class OntologyMutationService {
 
         log.info("[MUTATION] ========== APPLYING {} MUTATIONS ==========", ops.size());
         log.info("[MUTATION] Project: {}", projectId);
+        log.info("[MUTATION] Cache cleared: topLevelClasses, classChildren");
         
         String sparql = PREFIXES + "\n" + ops.stream()
                 .map(op -> toUpdate(projectId, op))
@@ -116,11 +120,16 @@ public class OntologyMutationService {
         }, metadataExecutor);
     }
 
+    /**
+     * Make sibling classes disjoint and clear relevant caches.
+     */
+    @CacheEvict(value = {"topLevelClasses", "classChildren", "ontologyProperties", "ontologyIndividuals", "classInstanceCounts"}, allEntries = true)
     public void makeSiblingsDisjoint(String projectId, List<String> classIds) {
         if (classIds == null || classIds.size() < 2) {
             return;
         }
 
+        log.info("[MUTATION] Cache cleared: topLevelClasses, classChildren");
         // Create pairwise disjoint axioms
         StringBuilder sparqlBuilder = new StringBuilder(PREFIXES);
         sparqlBuilder.append("\nINSERT DATA {\n");

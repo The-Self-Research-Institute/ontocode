@@ -100,11 +100,23 @@ function injectDynamicNamespaces(content: string): string {
         faldo: 'http://biohackathon.org/resource/faldo#',
     };
 
-    // Scan for all used prefixes
+    // Scan for prefixes used in XML element/attribute names only (not in text content).
+    // In RDF/XML, namespace prefixes appear as:
+    //   1. Element names: <prefix:LocalName ...>  or  </prefix:LocalName>
+    //   2. Attribute names: prefix:attr="..."
+    // We must NOT match "prefix:text" inside string values like rdfs:label.
     const usedPrefixes = new Set<string>();
-    const usedRegex = /(?:<|\s)([a-zA-Z][a-zA-Z0-9_-]*):[a-zA-Z]/g;
+
+    // Match opening/closing element names: <prefix:Name or </prefix:Name
+    const elementPrefixRegex = /<\/?([a-zA-Z][a-zA-Z0-9_-]*):[a-zA-Z]/g;
     let m;
-    while ((m = usedRegex.exec(content)) !== null) {
+    while ((m = elementPrefixRegex.exec(content)) !== null) {
+        const p = m[1];
+        if (p !== 'xmlns' && p !== 'xml') usedPrefixes.add(p);
+    }
+    // Match attribute names: whitespace followed by prefix:attr= (with = to ensure it's an attribute, not text)
+    const attrPrefixRegex = /\s([a-zA-Z][a-zA-Z0-9_-]*):[a-zA-Z][a-zA-Z0-9_-]*\s*=/g;
+    while ((m = attrPrefixRegex.exec(content)) !== null) {
         const p = m[1];
         if (p !== 'xmlns' && p !== 'xml') usedPrefixes.add(p);
     }
@@ -159,7 +171,6 @@ function injectDynamicNamespaces(content: string): string {
 
         if (resolvedUri) {
             toInject.push({ prefix, uri: resolvedUri });
-            console.log(`[BrowserBridge] Dynamically resolved prefix '${prefix}' → '${resolvedUri}'`);
         } else {
             unresolved.push(prefix);
         }
@@ -621,6 +632,29 @@ function handleBrowserMessage(message: any) {
                     const token = localStorage.getItem('authToken');
                     const baseUrl = getGatewayUrl();
 
+                    // ── FAST PATH: Check if file already exists in GraphDB (skip upload entirely) ──
+                    try {
+                        const statusUrl = `${baseUrl}/api/ontology/status/${encodeURIComponent(uploadProjectId)}`;
+                        const statusResp = await fetch(statusUrl, {
+                            headers: token ? { Authorization: `Bearer ${token}` } : {},
+                        });
+                        const statusData = await statusResp.json().catch(() => ({}));
+                        const status = statusData?.data?.status || statusData?.status;
+
+                        if (status === 'COMPLETED') {
+                            console.log('[BrowserBridge] File already exists in GraphDB, sending fileReady immediately:', uploadProjectId);
+                            postToSelf({ type: 'loadingComplete' });
+                            postToSelf({
+                                type: 'fileReady',
+                                projectId: uploadProjectId,
+                                uploadedFileName: message.fileName,
+                            });
+                            return; // No upload, no queries — just open the existing file
+                        }
+                    } catch (statusErr) {
+                        console.log('[BrowserBridge] Status check failed, proceeding with upload:', statusErr);
+                    }
+
                     // ── Check for duplicate BEFORE uploading (if not explicitly skipping) ──
                     if (!message.skipDuplicateCheck) {
                         console.log('[BrowserBridge] Checking for duplicate file before upload:', message.fileName);
@@ -675,18 +709,42 @@ function handleBrowserMessage(message: any) {
                         console.log('[BrowserBridge] Skipping duplicate check (skipDuplicateCheck=true)');
                     }
 
-                    // Decode base64 → text for namespace injection
-                    const byteString = atob(message.fileContent);
-                    const bytes = new Uint8Array(byteString.length);
-                    for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i);
-                    let fileText = new TextDecoder().decode(bytes);
+                    // ── Convert base64 to upload blob ──
+                    // For large files (>50 MB base64 ≈ >37 MB raw), skip the expensive
+                    // text decode + namespace injection path. The byte-by-byte atob loop
+                    // and regex-based namespace scan each take minutes on 200 MB+ files.
+                    // The backend already handles missing namespaces during RDF parsing.
+                    const base64Length = message.fileContent ? message.fileContent.length : 0;
+                    const LARGE_FILE_THRESHOLD = 50 * 1024 * 1024; // 50 MB base64 (~37 MB raw)
 
-                    // ── Dynamic namespace injection for RDF/XML files ──
-                    if (fileText.includes('<rdf:RDF')) {
-                        fileText = injectDynamicNamespaces(fileText);
+                    let blob: Blob;
+                    if (base64Length > LARGE_FILE_THRESHOLD) {
+                        // FAST PATH: chunked base64→binary without text decode or namespace injection
+                        console.log(`[BrowserBridge] Large file (${(base64Length / (1024 * 1024)).toFixed(0)} MB base64), using fast binary upload`);
+                        const CHUNK = 1024 * 1024; // decode 1 MB at a time
+                        const chunks: Uint8Array[] = [];
+                        for (let offset = 0; offset < base64Length; offset += CHUNK) {
+                            const slice = message.fileContent.slice(offset, offset + CHUNK);
+                            const raw = atob(slice);
+                            const buf = new Uint8Array(raw.length);
+                            for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+                            chunks.push(buf);
+                        }
+                        blob = new Blob(chunks as BlobPart[], { type: 'application/octet-stream' });
+                    } else {
+                        // SMALL FILE PATH: full text decode + namespace injection
+                        const byteString = atob(message.fileContent);
+                        const bytes = new Uint8Array(byteString.length);
+                        for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i);
+                        let fileText = new TextDecoder().decode(bytes);
+
+                        // ── Dynamic namespace injection for RDF/XML files ──
+                        if (fileText.includes('<rdf:RDF')) {
+                            fileText = injectDynamicNamespaces(fileText);
+                        }
+
+                        blob = new Blob([fileText], { type: 'application/rdf+xml' });
                     }
-
-                    const blob = new Blob([fileText], { type: 'application/rdf+xml' });
                     const formData = new FormData();
                     formData.append('file', blob, message.fileName);
 
@@ -722,7 +780,11 @@ function handleBrowserMessage(message: any) {
                         }
 
                         // Poll /api/ontology/status until COMPLETED (GraphDB processes async)
-                        const maxAttempts = 60;
+                        // Adaptive timeout: actual processing is ~50MB/min not 10MB/min
+                        const fileSizeMB = base64Length > 0 ? (base64Length * 3 / 4) / (1024 * 1024) : 50; // actual file size (base64 is 4/3x)
+                        const estimatedMinutes = Math.max(3, Math.ceil(fileSizeMB / 50)); // ~50MB/min with optimized pipeline
+                        const maxAttempts = Math.max(60, Math.ceil(estimatedMinutes * 60 / 10)); // At least 60 attempts, scale with file size
+                        console.log(`[BrowserBridge] File ~${fileSizeMB.toFixed(0)}MB, estimated ${estimatedMinutes} min, maxAttempts: ${maxAttempts}`);
                         const getDelay = (att: number) => {
                             if (att <= 3) return 2000;
                             if (att <= 6) return 3000;
@@ -816,13 +878,16 @@ function handleBrowserMessage(message: any) {
 
                                     // Send progress update
                                     if (payload?.statusMessage) {
+                                        // Extract real progress from backend statusMessage (e.g., "Importing... (90%) | ETA...")
+                                        const progressMatch = payload.statusMessage.match(/\((\d+)%\)/);
+                                        const realProgress = progressMatch ? parseInt(progressMatch[1], 10) : Math.min(95, Math.floor((attempt / maxAttempts) * 100));
                                         postToSelf({
                                             type: 'importStatusUpdate',
                                             status: {
                                                 type: 'IMPORT_PROGRESS',
                                                 projectId: actualProjectId,
                                                 status: 'PROCESSING',
-                                                progress: Math.min(95, Math.floor((attempt / maxAttempts) * 100)),
+                                                progress: realProgress,
                                                 metadata: { message: payload.statusMessage },
                                             },
                                         });

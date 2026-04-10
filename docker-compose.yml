@@ -33,10 +33,11 @@ services:
     ports:
       - "7200:7200"
     environment:
-      GDB_HEAP_SIZE: 2g
+      GDB_HEAP_SIZE: 4g
       GDB_LICENSE_PATH: /opt/graphdb
     volumes:
       - graphdb-data:/opt/graphdb/home/data
+      - graphdb-import:/opt/graphdb/home/graphdb-import
     networks:
       - ontology-net
     healthcheck:
@@ -139,6 +140,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:-b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==}
       AUTH_SERVICE_URL: http://auth:8086
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      # Gateway needs enough heap to buffer large file uploads (224MB+) in memory
+      JAVA_OPTS: -Xms512m -Xmx2g
     depends_on:
       auth:
         condition: service_started
@@ -156,8 +159,18 @@ services:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       GRAPHDB_URL: http://graphdb:7200
       GRAPHDB_REPOSITORY: ${GRAPHDB_REPOSITORY:-ontocode}
+      GRAPHDB_IMPORT_DIR: /opt/graphdb-import
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      # PERFORMANCE OPTIMIZATION: JVM settings for handling large file uploads (100MB+)
+      # G1GC is optimized for large heaps and reduces pause times during garbage collection
+      JAVA_OPTS: >-
+        -Xms2g
+        -Xmx4g
+        -XX:+UseG1GC
+        -XX:MaxGCPauseMillis=200
+        -XX:+ParallelRefProcEnabled
+        -XX:InitiatingHeapOccupancyPercent=45
       EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
       JIRA_ENABLED: ${JIRA_ENABLED:-true}
       JIRA_CLOUD_URL: ${JIRA_CLOUD_URL:-https://coretopia.atlassian.net}
@@ -171,6 +184,8 @@ services:
         condition: service_healthy
       graphdb:
         condition: service_healthy
+    volumes:
+      - graphdb-import:/opt/graphdb-import
     networks:
       - ontology-net
     deploy:
@@ -295,6 +310,7 @@ services:
 volumes:
   mongo-data:
   graphdb-data:
+  graphdb-import:
 
 networks:
   ontology-net:

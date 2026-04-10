@@ -783,6 +783,7 @@ public class OntologyMetadataService {
         Map<String, String> prefixMap = new HashMap<>();
         
         // 1. Try to get from MongoDB metadata
+        boolean hasCachedPrefixes = false;
         Optional<Map<String, Object>> meta = projectMetadataService.readMeta(projectId);
         if (meta.isPresent() && meta.get().containsKey("prefixes")) {
             Object prefixesObj = meta.get().get("prefixes");
@@ -791,6 +792,7 @@ public class OntologyMetadataService {
                 for (Map.Entry<?, ?> entry : rawMap.entrySet()) {
                     prefixMap.put(entry.getKey().toString(), entry.getValue().toString());
                 }
+                hasCachedPrefixes = !prefixMap.isEmpty();
             } else if (prefixesObj instanceof List) {
                 // Handle list of objects format: [{prefix: "...", namespace: "..."}, ...]
                 List<?> list = (List<?>) prefixesObj;
@@ -804,17 +806,20 @@ public class OntologyMetadataService {
                         }
                     }
                 }
+                hasCachedPrefixes = !prefixMap.isEmpty();
             }
         }
 
-        // 2. Always merge with GraphDB repository namespaces to ensure we see everything
-        log.debug("Merging MongoDB prefixes with GraphDB namespaces for project {}", projectId);
-        Map<String, String> graphdbPrefixes = datasetService.getPrefixes(projectId);
-        for (Map.Entry<String, String> entry : graphdbPrefixes.entrySet()) {
-            // Only add if not already present in MongoDB (MongoDB takes precedence for custom renames)
-            if (!prefixMap.containsKey(entry.getKey())) {
-                prefixMap.put(entry.getKey(), entry.getValue());
-            }
+        // 2. Only query GraphDB if MongoDB has no cached prefixes.
+        //    All prefix mutations (add/update/delete) already update MongoDB,
+        //    so cached prefixes are always in sync. Skipping the expensive
+        //    SPARQL namespace-usage query avoids running it twice during import.
+        if (!hasCachedPrefixes) {
+            log.debug("No cached prefixes in MongoDB, querying GraphDB for project {}", projectId);
+            Map<String, String> graphdbPrefixes = datasetService.getPrefixes(projectId);
+            prefixMap.putAll(graphdbPrefixes);
+        } else {
+            log.debug("Using cached prefixes from MongoDB for project {} ({} entries)", projectId, prefixMap.size());
         }
 
         // Convert to list of objects for frontend compatibility

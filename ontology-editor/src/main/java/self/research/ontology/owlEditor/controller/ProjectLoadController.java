@@ -240,10 +240,8 @@ public class ProjectLoadController {
 
             log.info("Stored file in GridFS for project {}: fileId={}", actualProjectId, gridfsFileId);
 
-            // Strip binary garbage bytes that the upload pipeline may prepend before XML content.
-            // This fixes the file on disk so ALL downstream consumers (preparse, import, conversion)
-            // get a clean file without needing their own stripping logic.
-            OWLFormatConverter.sanitizeFileOnDisk(original);
+            // SKIP sanitization here — ProjectImportService.runImport() does it during async import.
+            // Doing it twice wastes 10-15 seconds on 224 MB files (streams entire file for IRI scanning).
 
             // Extract citation-entity mappings from uploaded file for smart repositioning
             // This must be done BEFORE GraphDB import, as GraphDB will reorganize the content

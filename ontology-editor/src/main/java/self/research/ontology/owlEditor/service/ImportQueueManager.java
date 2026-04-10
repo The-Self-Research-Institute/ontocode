@@ -93,7 +93,9 @@ public class ImportQueueManager {
                 .maxRetries(MAX_RETRIES)
                 .build();
 
+        // Add to end of queue (FIFO)
         queue.addLast(item);
+        updateQueuePositions();
 
         log.info("[Queue] Added project {} to queue at position {} (total in queue: {})",
                 projectId, item.getQueuePosition(), queue.size());

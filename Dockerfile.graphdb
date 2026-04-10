@@ -7,8 +7,14 @@ COPY CORETOPIA_GRAPHDB_FREE_v11.1.license /opt/graphdb/home/conf/graphdb.license
 # Set proper permissions
 RUN chmod 644 /opt/graphdb/home/conf/graphdb.license
 
+# Configure GraphDB server properties for large file imports
+# transaction.timeout: Max seconds a transaction can live (default ~60s, set to 30 min)
+RUN echo "graphdb.workbench.importDirectory=/opt/graphdb/home/graphdb-import" > /opt/graphdb/home/conf/graphdb.properties && \
+    echo "graphdb.append.only=false" >> /opt/graphdb/home/conf/graphdb.properties && \
+    echo "graphdb.engine.transaction.timeout=1800" >> /opt/graphdb/home/conf/graphdb.properties
+
 # Environment variables
-ENV GDB_HEAP_SIZE=2g
+ENV GDB_HEAP_SIZE=4g
 ENV GDB_LICENSE_PATH=/opt/graphdb
 
 EXPOSE 7200

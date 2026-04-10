@@ -877,7 +877,7 @@ public class ProjectController {
                 fileData.put("size", fileInfo.getFileSize());
                 fileData.put("uploadedBy", fileInfo.getUploaderUsername());
                 fileData.put("uploadedByUserId", fileInfo.getUploadedBy());
-                fileData.put("uploadedAt", fileInfo.getUploadedAt().toString());
+                fileData.put("uploadedAt", fileInfo.getUploadedAt() != null ? fileInfo.getUploadedAt().toString() : null);
                 fileData.put("type", fileInfo.getExtension());
                 files.add(fileData);
             }
@@ -892,7 +892,7 @@ public class ProjectController {
                     fileInfo.put("size", fileMeta.getFileSize());
                     fileInfo.put("uploadedBy", fileMeta.getUploaderUsername());
                     fileInfo.put("uploadedByUserId", fileMeta.getUploadedBy());
-                    fileInfo.put("uploadedAt", fileMeta.getUploadedAt().toString());
+                    fileInfo.put("uploadedAt", fileMeta.getUploadedAt() != null ? fileMeta.getUploadedAt().toString() : null);
                     fileInfo.put("type", fileMeta.getExtension());
                     files.add(fileInfo);
                 }
