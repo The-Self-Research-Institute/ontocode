@@ -19,6 +19,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -380,10 +381,18 @@ public class StorageManager {
      */
     public void extractCitationMappingsFromFile(Path filePath, String projectId) {
         try {
-            String content = Files.readString(filePath, StandardCharsets.UTF_8);
+            long fileSize = Files.size(filePath);
             String format = detectFormatFromPath(filePath);
             
-            Map<String, String> extractedMappings = extractCitationEntityMappings(content, format);
+            Map<String, String> extractedMappings;
+            if (fileSize > 50 * 1024 * 1024) {
+                // For large files (>50MB): use streaming extraction with a sliding window
+                log.info("[PERFORMANCE] Using streaming citation extraction for {} MB file", fileSize / (1024 * 1024));
+                extractedMappings = extractCitationEntityMappingsStreaming(filePath, format);
+            } else {
+                String content = Files.readString(filePath, StandardCharsets.UTF_8);
+                extractedMappings = extractCitationEntityMappings(content, format);
+            }
             
             if (!extractedMappings.isEmpty()) {
                 log.info("Extracted {} citation-entity mappings from uploaded file for project {}", 
@@ -401,6 +410,51 @@ public class StorageManager {
         } catch (IOException e) {
             log.error("Failed to extract citation mappings from file for project {}", projectId, e);
         }
+    }
+
+    /**
+     * Streaming version of citation extraction that uses a sliding window of recent lines
+     * instead of loading the entire file into memory. Suitable for files >50MB.
+     */
+    private Map<String, String> extractCitationEntityMappingsStreaming(Path filePath, String format) throws IOException {
+        Map<String, String> mappings = new HashMap<>();
+        // Sliding window of last 50 lines for backward lookback
+        java.util.LinkedList<String> windowLines = new java.util.LinkedList<>();
+        int windowSize = 50;
+        int citationCount = 0;
+        
+        try (BufferedReader reader = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                windowLines.addLast(line);
+                if (windowLines.size() > windowSize) {
+                    windowLines.removeFirst();
+                }
+                
+                String citationUrn = extractCitationUrn(line, format);
+                if (citationUrn != null) {
+                    citationCount++;
+                    // Search backward in the window
+                    String entityUri = null;
+                    java.util.ListIterator<String> it = windowLines.listIterator(windowLines.size() - 1);
+                    while (it.hasPrevious()) {
+                        String prevLine = it.previous();
+                        String entity = extractEntityFromLine(prevLine, format);
+                        if (entity != null && !entity.isEmpty() && !entity.startsWith("urn:citation:")) {
+                            entityUri = entity;
+                            break;
+                        }
+                    }
+                    if (entityUri != null) {
+                        mappings.put(citationUrn, entityUri);
+                    }
+                }
+            }
+        }
+        
+        log.info("Streaming extraction complete: found {} citations, mapped {} to entities", 
+                citationCount, mappings.size());
+        return mappings;
     }
 
     /**

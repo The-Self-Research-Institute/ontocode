@@ -200,6 +200,9 @@ public class ProjectImportService {
                 .map(ProjectStatus::filename)
                 .orElse(owlFile.getFileName().toString());
 
+        // Track whether import was marked as COMPLETED (prevents overwriting to ERROR in catch block)
+        AtomicBoolean importMarkedCompleted = new AtomicBoolean(false);
+
         log.info("[Import {}] Starting import for file {}", projectId, filename);
 
         // Notify: Import started
@@ -214,14 +217,21 @@ public class ProjectImportService {
                     projectId, format, format.getName(), format.getDefaultFileExtension());
             
             // Sanitize the file to fix malformed XML before import
-            stage = "sanitize";
-            try {
-                OWLFormatConverter.sanitizeFileOnDisk(owlFile);
-                log.info("[Import {}] File sanitization completed", projectId);
-            } catch (Exception sanitizeEx) {
-                log.warn("[Import {}] File sanitization failed: {}", projectId, sanitizeEx.getMessage());
-                // Continue anyway - sanitization is best-effort
-            }
+            // NOTE: For large files (>50MB), sanitizeFileOnDisk uses an optimized path
+            // that skips OWL API re-serialization to avoid loading the entire file into memory.
+            // stage = "sanitize";
+            // long fileSizeForSanitize = Files.size(owlFile);
+            // if (fileSizeForSanitize > 50 * 1024 * 1024) {
+            //     log.info("[Import {}] [PERFORMANCE] Large file ({} MB) - sanitization will use optimized path",
+            //             projectId, fileSizeForSanitize / (1024 * 1024));
+            // }
+            // try {
+            //     OWLFormatConverter.sanitizeFileOnDisk(owlFile);
+            //     log.info("[Import {}] File sanitization completed", projectId);
+            // } catch (Exception sanitizeEx) {
+            //     log.warn("[Import {}] File sanitization failed: {}", projectId, sanitizeEx.getMessage());
+            //     // Continue anyway - sanitization is best-effort
+            // }
 
             stage = "bulk-load";
             log.info("[Import {}] Loading data into GraphDB", projectId);
@@ -286,8 +296,50 @@ public class ProjectImportService {
                 log.info("[Import {}] File format is compatible, no conversion needed", projectId);
             }
 
-            log.info("[Import {}] Starting bulkLoadChunked: file={}, format={}, size={} bytes, converted={}",
+            log.info("[Import {}] Starting import: file={}, format={}, size={} bytes, converted={}",
                     projectId, fileToLoad.getFileName(), format, actualFileSize, converted);
+
+            // ⚡ FAST PATH: Try GraphDB server-side import first (reads file from shared volume — no HTTP overhead)
+            boolean serverImportDone = false;
+            try {
+                serverImportDone = datasetService.serverSideImport(projectId, fileToLoad, format, actualFileSize, options, progress -> {
+                    long totalBytes = progress.getTotalBytes();
+                    long bytesRead = progress.getBytesRead();
+                    long elapsedMs = progress.getElapsedMs();
+                    if (totalBytes <= 0) return;
+                    int percent = (int) Math.min(99, Math.floor((bytesRead * 100.0) / totalBytes));
+                    lastProgressPercent.set(percent);
+                    String message = String.format("Importing... (%d%%) | Server-side import", percent);
+                    sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
+                            "PROCESSING", message, filename, Map.of("progress", percent, "stage", "graphdb-loading", "message", message));
+                    metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
+                });
+            } catch (Exception serverEx) {
+                log.info("[Import {}] Server-side import not available: {}", projectId, serverEx.getMessage());
+            }
+
+            // ⚡ MEDIUM PATH: Try direct HTTP upload (single POST, no batch commits)
+            if (!serverImportDone) {
+                try {
+                    serverImportDone = datasetService.directHttpUpload(projectId, fileToLoad, format, actualFileSize, options, progress -> {
+                        long totalBytes = progress.getTotalBytes();
+                        long bytesRead = progress.getBytesRead();
+                        if (totalBytes <= 0) return;
+                        int percent = (int) Math.min(99, Math.floor((bytesRead * 100.0) / totalBytes));
+                        lastProgressPercent.set(percent);
+                        String message = String.format("Importing... (%d%%) | Direct upload", percent);
+                        sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
+                                "PROCESSING", message, filename, Map.of("progress", percent, "stage", "graphdb-loading", "message", message));
+                        metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
+                    });
+                } catch (Exception directEx) {
+                    log.info("[Import {}] Direct HTTP upload failed: {}", projectId, directEx.getMessage());
+                }
+            }
+
+            if (!serverImportDone) {
+            // FALLBACK: Client-side chunked bulk load via RDF4J HTTP
+            log.info("[Import {}] Using chunked bulk load (client-side)", projectId);
 
             // Track re-serialized fallback file for cleanup
             Path[] owlApiFallbackFile = { null };
@@ -303,7 +355,7 @@ public class ProjectImportService {
                         return;
                     }
 
-                    int percent = (int) Math.min(90, Math.floor((bytesRead * 100.0) / totalBytes));
+                    int percent = (int) Math.min(99, Math.floor((bytesRead * 100.0) / totalBytes));
                     long now = System.nanoTime();
                     long lastSent = lastProgressSentAt.get();
 
@@ -311,14 +363,23 @@ public class ProjectImportService {
                     if (percent > lastProgressPercent.get() || (now - lastSent) >= 5_000_000_000L) {
                         if (lastProgressSentAt.compareAndSet(lastSent, now)) {
                             lastProgressPercent.set(percent);
-                            double elapsedSeconds = Math.max(1.0, elapsedMs / 1000.0);
-                            double rateBytesPerSec = bytesRead / elapsedSeconds;
-                            long remainingBytes = Math.max(0, totalBytes - bytesRead);
-                            long etaSeconds = rateBytesPerSec > 0 ? (long) (remainingBytes / rateBytesPerSec) : -1;
+                            double elapsedSeconds = elapsedMs / 1000.0;
+                            // Use smoothed rate: ignore first 3 seconds (rate is unreliable early on)
+                            long etaSeconds = -1;
+                            if (elapsedSeconds >= 3.0 && bytesRead > 0) {
+                                double rateBytesPerSec = bytesRead / elapsedSeconds;
+                                long remainingBytes = Math.max(0, totalBytes - bytesRead);
+                                etaSeconds = rateBytesPerSec > 0 ? (long) (remainingBytes / rateBytesPerSec) : -1;
+                            }
 
-                            String etaMessage = etaSeconds > 0
-                                    ? String.format("ETA %d:%02d", etaSeconds / 60, etaSeconds % 60)
-                                    : "ETA calculating...";
+                            String etaMessage;
+                            if (etaSeconds < 0) {
+                                etaMessage = "ETA calculating...";
+                            } else if (etaSeconds == 0) {
+                                etaMessage = "Almost done...";
+                            } else {
+                                etaMessage = String.format("ETA %d:%02d", etaSeconds / 60, etaSeconds % 60);
+                            }
 
                             String message = String.format("Importing... (%d%%) | %s", percent, etaMessage);
 
@@ -384,6 +445,7 @@ public class ProjectImportService {
                     }
                 }
             }
+            } // end if (!serverImportDone)
             log.info("[Import {}] GraphDB bulk load completed in {} ms", projectId, elapsedMillis(bulkLoadStart));
 
             // Copy file to current location
@@ -396,6 +458,7 @@ public class ProjectImportService {
             // This allows frontend to start using the ontology without waiting for metadata indexing
             long durationMs = elapsedMillis(importStart);
             metadataService.writeStatus(projectId, ProjectStatus.completed(filename));
+            importMarkedCompleted.set(true);  // Prevent catch block from overwriting to ERROR
             
             // Send IMPORT_COMPLETED notification NOW so frontend can start working
             Map<String, Object> completionMeta = new HashMap<>();
@@ -472,13 +535,22 @@ public class ProjectImportService {
 
         } catch (Exception e) {
             log.error("Import failed for {} while {}", projectId, stage, e);
-            metadataService.writeStatus(projectId, ProjectStatus.error(filename, e.getMessage()));
+            
+            // Only set ERROR status if import wasn't already marked as COMPLETED
+            // This prevents overwriting COMPLETED -> ERROR after IMPORT_COMPLETED was sent
+            if (!importMarkedCompleted.get()) {
+                metadataService.writeStatus(projectId, ProjectStatus.error(filename, e.getMessage()));
 
-            // Notify: Import failed
-            Map<String, Object> errorMeta = new HashMap<>();
-            errorMeta.put("error", e.getMessage());
-            sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_FAILED,
-                    "ERROR", "Import failed: " + e.getMessage(), filename, errorMeta);
+                // Notify: Import failed
+                Map<String, Object> errorMeta = new HashMap<>();
+                errorMeta.put("error", e.getMessage());
+                sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_FAILED,
+                        "ERROR", "Import failed: " + e.getMessage(), filename, errorMeta);
+            } else {
+                // Import was already marked COMPLETED - log but don't change status
+                log.warn("[Import {}] Exception occurred after import was marked COMPLETED (status not changed): {}", 
+                        projectId, e.getMessage());
+            }
         } finally {
             guard.set(false);
         }
@@ -551,9 +623,12 @@ public class ProjectImportService {
      */
     private RDFFormat detectFormatByContent(Path file) {
         try {
-            // Read first 2KB to detect format
-            byte[] header = java.nio.file.Files.readAllBytes(file);
-            int readLength = Math.min(2048, header.length);
+            // Read only the first 2KB to detect format (not the entire file)
+            byte[] header;
+            try (InputStream fis = Files.newInputStream(file)) {
+                header = fis.readNBytes(2048);
+            }
+            int readLength = header.length;
             
             // Skip UTF-8 BOM if present
             int offset = 0;
@@ -751,6 +826,7 @@ public class ProjectImportService {
                     }
                     try {
                         try {
+                            log.warn("[Import {}] Sanitizing import file on disk: {}", projectId, importTempFile);
                             OWLFormatConverter.sanitizeFileOnDisk(importTempFile);
                         } catch (Exception sanitizeEx) {
                             log.warn("[Import {}] Sanitization of import {} failed: {}",

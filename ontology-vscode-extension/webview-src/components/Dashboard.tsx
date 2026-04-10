@@ -2161,7 +2161,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [syncMode, setSyncMode] = useState<"private" | "public">("private");
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Import status state - Removed (ImportProgressToast removed per user request)
+  // Track background import progress (visible after user clicks "Continue Working")
+  const [backgroundImportActive, setBackgroundImportActive] = useState(false);
+  const [backgroundImportProgress, setBackgroundImportProgress] = useState<number | undefined>(undefined);
   // Track import status for all projects (for ProjectSelector)
   const [projectImportStatuses, setProjectImportStatuses] = useState<{
     [projectId: string]: { type: string; status: string; progress?: number };
@@ -2172,7 +2174,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [showOpenDialog, setShowOpenDialog] = useState(false);
   const [activeOntologySubTab, setActiveOntologySubTab] = useState("prefixes");
   const [importMode, setImportMode] = useState<"full" | "incremental" | "diff">("full");
-  const [partitionStrategy, setPartitionStrategy] = useState<"none" | "namespace">("namespace");
+  const [partitionStrategy, setPartitionStrategy] = useState<"none" | "namespace">("none");
   const [isCreateIndividualModalOpen, setCreateIndividualModalOpen] = useState(false);
   const [isAddAnnotationDialogOpen, setAddAnnotationDialogOpen] = useState(false);
   const [isEditAnnotationDialogOpen, setEditAnnotationDialogOpen] = useState(false);
@@ -3260,6 +3262,13 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const fetchData = useCallback(
     async (currentProjectId: string, waitForCompletion = false, parentProjectId?: string, forceRefresh = false) => {
+      // Skip re-fetching if this project is already loaded and no force refresh requested
+      if (!forceRefresh && currentProjectId === projectId && classHierarchy.length > 0 && metadata) {
+        console.log("[Dashboard] ⚡ Project already loaded, skipping re-fetch:", currentProjectId);
+        setIsInitialLoading(false);
+        return null;
+      }
+
       // Don't block UI - let user continue working
       setSelectedItem(null);
       setSearchQuery("");
@@ -3289,10 +3298,13 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       try {
-        // When forceRefresh is true (e.g., after merge), skip the processing check since
-        // we'll poll for completion separately. Otherwise, check processing status normally.
-        if (!forceRefresh) {
-          // Wait for processing to complete before fetching data
+        // Skip status check for files being reopened (not fresh uploads)
+        // Only check status if this is a fresh import (isExpectingFileReady = true)
+        // This significantly improves load time for files already in GraphDB
+        if (!forceRefresh && !isExpectingFileReady) {
+          console.log("[Dashboard] ⚡ Skipping status check for existing file - loading directly from GraphDB");
+        } else if (!forceRefresh) {
+          // Wait for processing to complete before fetching data (fresh imports only)
           console.log("[Dashboard] Waiting for file processing to complete...");
           const result = await waitForProcessingComplete(currentProjectId);
 
@@ -3327,18 +3339,24 @@ const Dashboard: React.FC<DashboardProps> = ({
         fetchAbortControllerRef.current = abortController;
         const signal = abortController.signal;
 
-        // Fetch data sequentially to avoid overwhelming GraphDB (limited concurrent query capacity)
+        // Fetch data in parallel to improve performance (GraphDB can handle concurrent queries)
         // Metadata endpoint now returns comprehensive cached data (annotations, imports, axioms, prefixes)
-        const metadataResP = await apiClient.get<any>(`/api/ontology/metadata/${encodedProjectId}${cacheBuster}`, undefined, { signal });
-        const topLevelResP = await apiClient.get<any>(`/api/ontology/classes/top-level/${encodedProjectId}${cacheBuster}`, undefined, { signal });
-        const instanceCountsResP = await apiClient
+        // Top-level classes are loaded eagerly now for instant display
+        // Instance counts are loaded in background (non-blocking) to not delay initial render
+        const dataFetchPromise = Promise.all([
+          apiClient.get<any>(`/api/ontology/metadata/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
+          apiClient.get<any>(`/api/ontology/classes/top-level/${encodedProjectId}?limit=200${cacheBuster ? '&' + cacheBuster.substring(1) : ''}`, undefined, { signal })
+            .catch((e: any) => { if (e?.name === 'AbortError' || e?.code === 'ERR_CANCELED') throw e; return null; }),
+          apiClient.get<any>(`/api/ontology/properties/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
+          apiClient.get<any>(`/api/ontology/individuals/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
+          apiClient.get<any>(`/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
+          apiClient.get<any>(`/api/ontology/datatypes/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
+        ]);
+
+        // Load instance counts in background - don't block the main data fetch
+        const instanceCountsPromise = apiClient
           .get<any>(`/api/ontology/classes/instance-counts/${encodedProjectId}${cacheBuster}`, undefined, { signal })
-          .catch((e: any) => { if (e?.name === 'AbortError' || e?.code === 'ERR_CANCELED') throw e; return null; });
-        const propertiesResP = await apiClient.get<any>(`/api/ontology/properties/${encodedProjectId}${cacheBuster}`, undefined, { signal });
-        const individualsResP = await apiClient.get<any>(`/api/ontology/individuals/${encodedProjectId}${cacheBuster}`, undefined, { signal });
-        const annotationPropsResP = await apiClient.get<any>(`/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`, undefined, { signal });
-        const datatypesResP = await apiClient.get<any>(`/api/ontology/datatypes/${encodedProjectId}${cacheBuster}`, undefined, { signal });
-        const dataFetchPromise = Promise.resolve([metadataResP, topLevelResP, instanceCountsResP, propertiesResP, individualsResP, annotationPropsResP, datatypesResP]);
+          .catch((e: any) => { console.warn('[Dashboard] Instance counts fetch failed (non-blocking):', e?.message); return null; });
 
         // Allow UI to be responsive immediately if not waiting
         if (!waitForCompletion) {
@@ -3350,8 +3368,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         // Continue loading in background
         const [
           metadataRes,
-          topLevelRes,
-          instanceCountsRes,
+          topLevelClassesRes,
           propertiesRes,
           individualsRes,
           annotationPropsRes,
@@ -3388,17 +3405,26 @@ const Dashboard: React.FC<DashboardProps> = ({
           individualCount: metadataData?.individualCount || metadataData?.counts?.individuals || 0,
           annotationPropertyCount:
             metadataData?.annotationPropertyCount || metadataData?.counts?.annotationProperties || 0,
-          tripleCount: metadataData?.tripleCount || metadataData?.counts?.triples || 0,
           prefixes: metadataData?.prefixes || [],
         };
         console.log("Transformed metadata:", transformedMetadata);
         setMetadata(transformedMetadata);
 
-        const instanceCountsPayload = instanceCountsRes?.data || instanceCountsRes;
-        const instanceCountsData = instanceCountsPayload?.data || instanceCountsPayload || {};
-        if (instanceCountsData && typeof instanceCountsData === "object") {
-          setClassInstanceCounts(instanceCountsData);
-        }
+        // Instance counts load in background - set empty initially, update when ready
+        let instanceCountsData: any = {};
+        setClassInstanceCounts({});
+        
+        // When instance counts arrive (async), update state
+        instanceCountsPromise.then((instanceCountsRes: any) => {
+          if (instanceCountsRes) {
+            const payload = instanceCountsRes?.data || instanceCountsRes;
+            const data = payload?.data || payload || {};
+            if (data && typeof data === "object") {
+              setClassInstanceCounts(data);
+              instanceCountsData = data;
+            }
+          }
+        });
 
         // Use imports from metadata response (already extracted above)
         const validImportsData = Array.isArray(imports) ? imports : [];
@@ -3441,82 +3467,43 @@ const Dashboard: React.FC<DashboardProps> = ({
         }));
         setPrefixMappings(prefixList);
 
-        // Handle classes response - backend returns {success: true, classes: [...]}
-        console.log("=== CLASSES RESPONSE DEBUG ===");
-        console.log("Raw topLevelRes:", JSON.stringify(topLevelRes, null, 2));
-        console.log("topLevelRes type:", typeof topLevelRes);
-        console.log("topLevelRes keys:", Object.keys(topLevelRes || {}));
-        console.log("topLevelRes?.success:", topLevelRes?.success);
-        console.log("topLevelRes?.classes:", topLevelRes?.classes);
-        console.log("Is topLevelRes.classes an array?", Array.isArray(topLevelRes?.classes));
-
-        // The response structure is: topLevelRes = {success: true, classes: [...]}
-        // But apiClient might wrap it in a data field, so check both
-        let classes: any[] = [];
-
-        if (Array.isArray(topLevelRes?.classes)) {
-          classes = topLevelRes.classes;
-          console.log("✅ Found classes in topLevelRes.classes, count:", classes.length);
-        } else if (Array.isArray(topLevelRes?.data?.classes)) {
-          classes = topLevelRes.data.classes;
-          console.log("✅ Found classes in topLevelRes.data.classes, count:", classes.length);
-        } else if (Array.isArray(topLevelRes?.data)) {
-          classes = topLevelRes.data;
-          console.log("✅ Found classes in topLevelRes.data (array), count:", classes.length);
-        } else if (Array.isArray(topLevelRes)) {
-          classes = topLevelRes;
-          console.log("✅ topLevelRes itself is an array, count:", classes.length);
-        } else {
-          console.error("❌ Could not find classes array in response structure!");
-          console.error("Available keys:", Object.keys(topLevelRes || {}));
-          if (topLevelRes?.data) {
-            console.error("Data keys:", Object.keys(topLevelRes.data || {}));
-          }
-          // Fallback: try to extract classes from any nested structure
-          if (topLevelRes && typeof topLevelRes === "object") {
-            for (const key of Object.keys(topLevelRes)) {
-              console.log(`Checking key '${key}':`, topLevelRes[key]);
-              if (Array.isArray(topLevelRes[key])) {
-                console.log(`Found array at key '${key}' with length ${topLevelRes[key].length}`);
-              }
-            }
-          }
+        // ⚡ Load top-level classes eagerly so the user sees classes immediately
+        console.log("[Dashboard] ⚡ Loading top-level classes for instant display");
+        
+        let topLevelClasses: any[] = [];
+        if (topLevelClassesRes) {
+          topLevelClasses = Array.isArray(topLevelClassesRes?.classes)
+            ? topLevelClassesRes.classes
+            : Array.isArray(topLevelClassesRes?.data?.classes)
+              ? topLevelClassesRes.data.classes
+              : Array.isArray(topLevelClassesRes?.data)
+                ? topLevelClassesRes.data
+                : Array.isArray(topLevelClassesRes)
+                  ? topLevelClassesRes
+                  : [];
         }
-
-        console.log("Extracted classes array length:", classes.length);
-        console.log("First 3 classes:", classes.slice(0, 3));
-        console.log("=== END CLASSES DEBUG ===");
-
-        // Nest all top-level classes under owl:Thing
-        const topLevelNodes: TreeNode[] = classes.map((c: TopLevelClass) => ({
+        console.log("[Dashboard] 📊 Got", topLevelClasses.length, "top-level classes");
+        
+        const topLevelNodes: TreeNode[] = topLevelClasses.map((c: TopLevelClass) => ({
           ...c,
           children: [],
-          hasChildren: c.hasChildren,
-          subClassOfAxioms: [{ id: "sub1", type: "SubClassOf", definition: "Thing" }],
+          hasChildren: c.hasChildren !== false, // default true for lazy loading
+          subClassOfAxioms: [{ id: "http://www.w3.org/2002/07/owl#Thing", type: "SubClassOf", definition: "owl:Thing" }],
         }));
 
-        console.log("=== OWL:THING HIERARCHY DEBUG ===");
-        console.log("topLevelNodes count:", topLevelNodes.length);
-        console.log("First 3 topLevelNodes:", topLevelNodes.slice(0, 3));
-
-        // Always include owl:Thing at the root with pre-loaded children
+        const resolvedCounts = instanceCountsData && typeof instanceCountsData === "object" ? instanceCountsData : {};
+        
+        // Build hierarchy with owl:Thing as root and top-level classes as children
         const owlThingNode: TreeNode = {
           id: "http://www.w3.org/2002/07/owl#Thing",
           label: "owl:Thing",
-          children: topLevelNodes,
+          children: applyInstanceCountsToTree(topLevelNodes, resolvedCounts),
           hasChildren: topLevelNodes.length > 0,
           annotations: {},
         };
 
-        console.log("owlThingNode created with children count:", owlThingNode.children?.length);
-        console.log("owlThingNode full structure:", JSON.stringify(owlThingNode, null, 2));
-        console.log("Setting classHierarchy with owl:Thing");
-        console.log("=== END OWL:THING DEBUG ===");
-
-        const resolvedCounts = instanceCountsData && typeof instanceCountsData === "object" ? instanceCountsData : {};
         const hierarchyWithCounts = applyInstanceCountsToTree([owlThingNode], resolvedCounts);
-        console.log("📊 Final classHierarchy being set:", JSON.stringify(hierarchyWithCounts, null, 2));
-        console.log("📊 classHierarchy root node children count:", hierarchyWithCounts[0]?.children?.length);
+        console.log("[Dashboard] 📊 Class hierarchy loaded with", topLevelNodes.length, "top-level classes");
         setClassHierarchy(hierarchyWithCounts);
 
         // Handle properties response
@@ -3793,7 +3780,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         // Notify user that ontology is fully loaded
         notificationService.success(
           "Ontology Loaded",
-          `"${currentProjectId}" is ready! Found ${classes.length} classes, ${allProps.length} properties.`,
+          `"${currentProjectId}" is ready! Found ${allProps.length} properties.`,
         );
       } catch (error: any) {
         // Ignore cancellations – these happen when the user switches files mid-load
@@ -5227,7 +5214,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleContinueWorking = useCallback(() => {
     userLoadingChoice.current = "continue";
     setShowLoadingChoice(false);
-    console.log("[Dashboard] Continue Working clicked - closing dialog, will auto-load when import completes");
+    setBackgroundImportActive(true);
+    console.log("[Dashboard] Continue Working clicked - closing dialog, showing persistent progress banner");
     // Keep isExpectingFileReady=true so IMPORT_COMPLETED will auto-load
     // Reset choice after a short delay
     setTimeout(() => {
@@ -5527,6 +5515,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             // Update loading status message for user feedback
             if (message.status.type === "IMPORT_PROGRESS" && message.status.metadata?.message) {
               setLoadingStatusMessage(message.status.metadata.message);
+              if (message.status.progress !== undefined) setBackgroundImportProgress(message.status.progress);
             } else if (message.status.type === "IMPORT_PROGRESS" && message.status.metadata?.stage) {
               const stage = message.status.metadata.stage;
               const stageMessages: Record<string, string> = {
@@ -5536,6 +5525,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 "computing-metadata": "Computing ontology statistics...",
               };
               setLoadingStatusMessage(stageMessages[stage] || "Processing...");
+              if (message.status.progress !== undefined) setBackgroundImportProgress(message.status.progress);
             }
           }
 
@@ -5556,14 +5546,6 @@ const Dashboard: React.FC<DashboardProps> = ({
             // 2. This matches the pendingImportProjectId (new upload)
             if (isCurrentProject || isPendingImport) {
               console.log("[Dashboard] Should auto-load:", isPendingImport ? "pending import" : "current project");
-
-              // Prevent duplicate fetchData if already loading
-              if (loadingPromiseRef.current) {
-                console.log("[Dashboard] Already loading, skipping duplicate fetchData from IMPORT_COMPLETED");
-                // Just clear the pending import ref and return
-                pendingImportProjectIdRef.current = null;
-                return;
-              }
 
               // For new uploads, always switch to the newly imported project
               if (isPendingImport) {
@@ -5596,27 +5578,36 @@ const Dashboard: React.FC<DashboardProps> = ({
               console.log("[Dashboard] Cleared pendingImportProjectIdRef");
               setIsExpectingFileReady(false);
 
-              // Fetch the data
-              console.log("[Dashboard] Fetching data for:", message.status.projectId);
-              console.log("[Dashboard] Parent project for file menu:", initialProjectId);
-              fetchData(message.status.projectId, false, initialProjectId)
-                .then(() => {
-                  console.log("[Dashboard] ✅ Data loaded successfully");
-                  console.log("[Dashboard] Closing dialogs...");
-                  // Close all dialogs after successful load
-                  setShowLoadingChoice(false);
-                  setShowQueueStatus(false);
-                  setShowProjectSelector(false);
-                  setIsInitialLoading(false);
-                  // Reset user choice
-                  userLoadingChoice.current = null;
-                })
-                .catch((error) => {
-                  console.error("[Dashboard] ❌ Failed to fetch data:", error);
-                  setShowLoadingChoice(false);
-                  setIsInitialLoading(false);
-                  notificationService.error("Load Failed", "Failed to load ontology data");
+              // Data loading is handled by the fileReady message (always sent before IMPORT_COMPLETED).
+              // Here we only clean up UI state. If fetchData is already in progress, chain cleanup onto it;
+              // otherwise close dialogs immediately.
+              const cleanupUI = () => {
+                console.log("[Dashboard] Closing dialogs after IMPORT_COMPLETED");
+                setShowLoadingChoice(false);
+                setShowQueueStatus(false);
+                setShowProjectSelector(false);
+                setIsInitialLoading(false);
+                setBackgroundImportActive(false);
+                setBackgroundImportProgress(undefined);
+                userLoadingChoice.current = null;
+              };
+
+              // Show completion notification
+              const importedName = message.status.filename || message.status.projectId || "Ontology";
+              notificationService.success(
+                "Import Complete",
+                `"${importedName}" has been loaded successfully.`
+              );
+
+              if (loadingPromiseRef.current) {
+                console.log("[Dashboard] fetchData already in progress (from fileReady), chaining UI cleanup");
+                loadingPromiseRef.current.then(cleanupUI).catch(() => {
+                  cleanupUI();
                 });
+              } else {
+                console.log("[Dashboard] No fetchData in progress, cleaning up UI directly");
+                cleanupUI();
+              }
 
               // Refresh projects list
               setTimeout(() => fetchProjects(), 500);
@@ -5662,12 +5653,14 @@ const Dashboard: React.FC<DashboardProps> = ({
             // Show notification for all failed imports
             notificationService.error("Import Failed", `Failed to import "${projectName}": ${displayError}`);
 
-            // Close dialogs if this is the current project
+            // Close dialogs and clear background progress if this is the current project
             if (message.status.projectId === projectId) {
               console.log("[Dashboard] Closing dialogs for current project");
               setTimeout(() => {
                 setShowLoadingChoice(false);
                 setShowQueueStatus(false);
+                setBackgroundImportActive(false);
+                setBackgroundImportProgress(undefined);
               }, 2000);
             }
           }
@@ -5700,6 +5693,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           setShowLoadingChoice(false);
           setShowQueueStatus(false);
           setIsInitialLoading(false);
+          setBackgroundImportActive(false);
+          setBackgroundImportProgress(undefined);
           notificationService.error("Import Failed", `Failed to import ontology: ${message.error || "Unknown error"}`);
           break;
 
@@ -5708,6 +5703,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           setShowLoadingChoice(false);
           setShowQueueStatus(false);
           setIsInitialLoading(false);
+          setBackgroundImportActive(false);
+          setBackgroundImportProgress(undefined);
           notificationService.error(
             "Import Timeout",
             "The import operation took too long. Your ontology may still be processing. Please check back later.",
@@ -5774,9 +5771,17 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (!projectId) return;
       try {
         console.log(`[loadChildren] Loading children for node: ${nodeId}`);
-        const response = await apiClient.get<any>(
-          `/api/ontology/classes/children/${projectId}?parentIri=${encodeURIComponent(nodeId)}`,
-        );
+        
+        // Special case: when loading children of owl:Thing, use the top-level endpoint
+        // which finds ALL top-level classes (not just those with explicit rdfs:subClassOf owl:Thing)
+        // OPTIMIZED: Use limit parameter for faster initial load (backend has caching)
+        const isOwlThing = nodeId === "http://www.w3.org/2002/07/owl#Thing";
+        const endpoint = isOwlThing
+          ? `/api/ontology/classes/top-level/${projectId}?limit=100`
+          : `/api/ontology/classes/children/${projectId}?parentIri=${encodeURIComponent(nodeId)}`;
+        
+        console.log(`[loadChildren] Using endpoint: ${endpoint}`);
+        const response = await apiClient.get<any>(endpoint);
         console.log("[loadChildren] Children response:", response);
 
         // Extract array from response - handle both direct array and wrapped responses
@@ -6062,6 +6067,33 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, mainTab, entitiesTab, hierarchyViewModes.DataProperties]);
+
+  // On-demand property detail loading: when a property is selected, fetch full details (domains, ranges, etc.)
+  useEffect(() => {
+    if (!projectId || !selectedItem) return;
+    const isProperty = (selectedItem as any).type === "ObjectProperty" || (selectedItem as any).type === "DataProperty";
+    if (!isProperty) return;
+    // Skip if details already loaded (has domains array)
+    if (Array.isArray((selectedItem as any).domains) && (selectedItem as any).domains.length > 0) return;
+    // Also skip for built-in top properties
+    if (selectedItem.id === "http://www.w3.org/2002/07/owl#topObjectProperty" || selectedItem.id === "http://www.w3.org/2002/07/owl#topDataProperty") return;
+
+    const encodedProjectId = encodeURIComponent(projectId);
+    const encodedIri = encodeURIComponent(selectedItem.id);
+    apiClient.get<any>(`/api/ontology/properties/detail/${encodedProjectId}?iri=${encodedIri}`)
+      .then((res: any) => {
+        const detail = res?.data || res;
+        if (detail && detail.id) {
+          // Merge detail fields into the selected item
+          setSelectedItem((prev) => {
+            if (prev?.id !== detail.id) return prev;
+            return { ...prev, ...detail };
+          });
+        }
+      })
+      .catch((e: any) => console.warn("[Dashboard] Property detail fetch failed (non-critical):", e?.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, selectedItem?.id]);
 
   // Handle remote edits from collaborative users in real-time
   useEffect(() => {
@@ -6989,6 +7021,16 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
+      // If this file is already loaded, skip re-fetching all data
+      const ontologyProjectIdCheck = `${initialProjectId}--${fileId}`;
+      if (projectId === ontologyProjectIdCheck && classHierarchy.length > 0) {
+        console.log("[Dashboard] ✅ File already loaded, skipping re-fetch:", fileId);
+        setActiveFileId(fileId);
+        setActiveFileName(fileName);
+        if (onFileSelected) onFileSelected(fileId, fileName);
+        return;
+      }
+
       try {
         console.log("[Dashboard] 📂 Loading file from project:", fileId, fileName);
 
@@ -7000,6 +7042,33 @@ const Dashboard: React.FC<DashboardProps> = ({
         setActiveFileId(fileId);
         setActiveFileName(fileName);
         if (onFileSelected) onFileSelected(fileId, fileName);
+
+        const ontologyProjectId = `${initialProjectId}--${fileId}`;
+
+        // ⚡ FAST PATH: Check if data already exists in GraphDB — skip MongoDB fetch + re-upload
+        try {
+          const graphCheck = await apiClient.get<{
+            success: boolean;
+            exists: boolean;
+            graphSize?: number;
+          }>(`/api/ontology/${encodeProjectId(ontologyProjectId)}/graphdb/check?fileName=${encodeURIComponent(fileName)}&fileId=${encodeURIComponent(fileId)}`);
+
+          if (graphCheck?.exists && (graphCheck.graphSize ?? 0) > 0) {
+            console.log(`[Dashboard] ⚡ File already in GraphDB (${graphCheck.graphSize} triples), loading directly`);
+            setProjectId(ontologyProjectId);
+            setLoadingProjectName(ontologyProjectId);
+            notificationService.info("Loading", `Loading ${fileName} from cache...`);
+            await fetchData(ontologyProjectId, true, initialProjectId);
+            setShowLoadingChoice(false);
+            setShowQueueStatus(false);
+            setShowProjectSelector(false);
+            setIsInitialLoading(false);
+            return;
+          }
+        } catch (checkErr) {
+          console.warn("[Dashboard] GraphDB check failed, falling back to full upload:", checkErr);
+        }
+
         notificationService.info("Loading File", `Loading ${fileName}...`);
 
         // Reset all entity state before loading new file
@@ -7035,7 +7104,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         // This organizes all files under their MongoDB project in GraphDB
         // e.g., http://ontocode.org/project/project-123--file-456
         // Note: Using -- instead of / to avoid URL encoding issues (%2F blocked by gateway)
-        const ontologyProjectId = `${initialProjectId}--${fileId}`;
 
         // Extract pure base64 data (remove data URL prefix if present)
         const base64Data = fileContent.content.includes(",") ? fileContent.content.split(",")[1] : fileContent.content;
@@ -7044,122 +7112,24 @@ const Dashboard: React.FC<DashboardProps> = ({
         setProjectId(ontologyProjectId);
         pendingImportProjectIdRef.current = ontologyProjectId;
 
-        // Upload to ontology editor service
-        if (window.vscode) {
-          // In VS Code, use message passing
-          const resolvedEmail = resolveUserEmail();
-          window.vscode.postMessage({
-            type: "uploadOntology",
-            projectId: ontologyProjectId,
-            fileName: fileName,
-            fileContent: base64Data,
-            ownerEmail: resolvedEmail || undefined,
-            skipDuplicateCheck: false, // Enable duplicate check to avoid re-importing existing files
-            importMode,
-            partition: partitionStrategy,
-          });
+        // Upload to ontology editor service via VSCodeBridge (works in both VS Code and browser)
+        const resolvedEmail = resolveUserEmail();
+        window.vscode.postMessage({
+          type: "uploadOntology",
+          projectId: ontologyProjectId,
+          fileName: fileName,
+          fileContent: base64Data,
+          ownerEmail: resolvedEmail || undefined,
+          skipDuplicateCheck: false, // Enable duplicate check to avoid re-importing existing files
+          importMode,
+          partition: partitionStrategy,
+        });
 
-          // The fileReady message will trigger fetchData via IMPORT_COMPLETED
-          setIsExpectingFileReady(true);
-          console.log("[Dashboard] ✅ Upload request sent to extension");
-          console.log("[Dashboard] Pending import project:", ontologyProjectId);
-          notificationService.info("Uploading", `Uploading ${fileName} to GraphDB...`);
-        } else {
-          // In browser (self-hosted), check if the file already exists in GraphDB
-          // before re-uploading. This avoids duplicate uploads and speeds up file switching.
-          let needsUpload = true;
-          try {
-            const statusRes = await apiClient.get<any>(
-              `/api/ontology/status/${encodeURIComponent(ontologyProjectId)}`,
-            );
-            const status = statusRes?.data?.status || statusRes?.status;
-            if (status === "COMPLETED") {
-              console.log("[Dashboard] ✅ File already exists in GraphDB, skipping upload");
-              needsUpload = false;
-            } else {
-              console.log("[Dashboard] File status:", status, "- will upload");
-            }
-          } catch {
-            console.log("[Dashboard] File not found in GraphDB, will upload");
-          }
-
-          if (needsUpload) {
-            // Convert base64 to blob and use FormData
-            const byteCharacters = atob(base64Data);
-            const byteNumbers = new Array(byteCharacters.length);
-            for (let i = 0; i < byteCharacters.length; i++) {
-              byteNumbers[i] = byteCharacters.charCodeAt(i);
-            }
-            const byteArray = new Uint8Array(byteNumbers);
-            const blob = new Blob([byteArray], { type: "application/rdf+xml" });
-
-            // Create FormData
-            const formData = new FormData();
-            formData.append("file", blob, fileName);
-
-            // Upload using fetch directly (apiClient doesn't support FormData)
-            const token = localStorage.getItem("authToken");
-            const resolvedEmail = resolveUserEmail();
-            // Use deployment-aware URL
-            const uploadBaseUrl = getBaseUrl();
-            const query = new URLSearchParams();
-            query.set("ownerEmail", resolvedEmail || "");
-            query.set("importMode", importMode);
-            query.set("partition", partitionStrategy);
-            if (user?.workspaceId) {
-              query.set("workspaceId", user.workspaceId);
-            }
-            if (initialProjectId) {
-              query.set("parentProjectId", initialProjectId);
-            }
-            const uploadResponse = await fetch(
-              `${uploadBaseUrl}/api/ontology/upload/${ontologyProjectId}?${query.toString()}`,
-              {
-                method: "POST",
-                headers: token ? { Authorization: `Bearer ${token}` } : {},
-                body: formData,
-              },
-            );
-
-            console.log(uploadResponse, "upload-response");
-
-            if (!uploadResponse.ok) {
-              const errorData = await uploadResponse.json().catch(() => ({ error: "Upload failed" }));
-              throw new Error(errorData.error || "Upload failed");
-            }
-            console.log("[Dashboard] ✅ File uploaded successfully");
-
-            // Poll for processing completion instead of using a fixed timeout
-            const maxPolls = 30;
-            for (let i = 0; i < maxPolls; i++) {
-              await new Promise((r) => setTimeout(r, 1000));
-              try {
-                const pollRes = await apiClient.get<any>(
-                  `/api/ontology/status/${encodeURIComponent(ontologyProjectId)}`,
-                );
-                const pollStatus = pollRes?.data?.status || pollRes?.status;
-                if (pollStatus === "COMPLETED") {
-                  console.log("[Dashboard] ✅ Processing complete after", i + 1, "polls");
-                  break;
-                }
-                if (pollStatus === "ERROR") {
-                  throw new Error(pollRes?.data?.errorMessage || "Import processing failed");
-                }
-                console.log("[Dashboard] ⏳ Processing...", pollStatus);
-              } catch (pollErr: any) {
-                if (pollErr?.message?.includes("Import processing failed")) throw pollErr;
-                // Status endpoint not ready yet, keep polling
-              }
-            }
-          }
-
-          setProjectId(ontologyProjectId);
-          setIsInitialLoading(true);
-          // forceRefresh=true after a fresh upload (skip stale status check + bust cache)
-          // forceRefresh=false when file already existed (status already COMPLETED)
-          fetchData(ontologyProjectId, true, initialProjectId, needsUpload);
-          notificationService.success("File Loaded", `${fileName} is ready for editing`);
-        }
+        // The fileReady message will trigger fetchData via the message handler
+        setIsExpectingFileReady(true);
+        console.log("[Dashboard] ✅ Upload request sent via VSCodeBridge");
+        console.log("[Dashboard] Pending import project:", ontologyProjectId);
+        notificationService.info("Loading", `Loading ${fileName}...`);
       } catch (error: any) {
         console.error("[Dashboard] ❌ Failed to load project file:", error);
         notificationService.error("Load Failed", error?.message || "Failed to load file");
@@ -7170,8 +7140,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         }, 1000);
       }
     },
-    [initialProjectId, resolveUserEmail, importMode, partitionStrategy],
-  ); // Removed fetchData to prevent infinite loop
+    [initialProjectId, resolveUserEmail, importMode, partitionStrategy, fetchData],
+  );
 
   // Create Property from Class Expression Dialog
   const handleCreatePropertyFromDialog = useCallback(() => {
@@ -13677,6 +13647,27 @@ const Dashboard: React.FC<DashboardProps> = ({
       />
 
       <div className="h-screen bg-gray-50 flex flex-col text-sm max-h-screen">
+        {/* Persistent background import progress banner */}
+        {backgroundImportActive && (
+          <div className="flex items-center gap-2 px-4 py-1.5 bg-blue-50 border-b border-blue-200 text-blue-800 text-xs z-40 shrink-0">
+            <Loader2 size={14} className="animate-spin text-blue-600" />
+            <span className="font-medium">
+              Loading "{loadingProjectName}" in the background
+              {loadingStatusMessage ? ` — ${loadingStatusMessage}` : "..."}
+            </span>
+            {backgroundImportProgress !== undefined && backgroundImportProgress > 0 && (
+              <>
+                <div className="w-32 h-1.5 bg-blue-200 rounded-full overflow-hidden ml-2">
+                  <div
+                    className="h-full bg-blue-600 transition-all duration-300 rounded-full"
+                    style={{ width: `${backgroundImportProgress}%` }}
+                  />
+                </div>
+                <span className="text-blue-600 font-semibold">{Math.round(backgroundImportProgress)}%</span>
+              </>
+            )}
+          </div>
+        )}
         <TopMenuBar
           fileList={listOfFiles}
           myFiles={myFiles}

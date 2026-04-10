@@ -252,7 +252,7 @@ public class OntologyIndexService {
         meta.put("axioms", metadataService.getGeneralClassAxioms(projectId));
         
         // Add axiom counts for Protégé-like display
-        meta.put("axiomCount", (int) counts.getOrDefault("triples", 0));
+        meta.put("axiomCount", logicalAxioms + declarations);
         meta.put("logicalAxiomCount", logicalAxioms);
         meta.put("declarationAxiomCount", declarations);
         meta.put("classCount", counts.getOrDefault("classes", 0));

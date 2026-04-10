@@ -8,6 +8,13 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 import self.research.ontology.owlEditor.service.GraphDBDatasetService;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+
 /**
  * Validates GraphDB connectivity on application startup
  */
@@ -23,6 +30,9 @@ public class GraphDBHealthCheck {
     
     @Value("${graphdb.repository}")
     private String repositoryId;
+    
+    @Value("${ontocode.data.dir:./data}")
+    private String dataDir;
     
     public GraphDBHealthCheck(GraphDBDatasetService datasetService) {
         this.datasetService = datasetService;
@@ -71,5 +81,45 @@ public class GraphDBHealthCheck {
         }
         
         log.info("========================================");
+        
+        cleanupStaleTempFiles();
+    }
+    
+    /**
+     * Remove stale multipart temp files older than 1 hour.
+     * Tomcat writes upload data here and failed/interrupted requests can leave orphaned files.
+     */
+    private void cleanupStaleTempFiles() {
+        Path tmpDir = Paths.get(dataDir, "tmp");
+        if (!Files.isDirectory(tmpDir)) {
+            try {
+                Files.createDirectories(tmpDir);
+                log.info("Created multipart temp directory: {}", tmpDir.toAbsolutePath());
+            } catch (IOException e) {
+                log.warn("Could not create temp directory {}: {}", tmpDir, e.getMessage());
+            }
+            return;
+        }
+        
+        Instant cutoff = Instant.now().minus(1, ChronoUnit.HOURS);
+        try (var stream = Files.list(tmpDir)) {
+            long[] counts = {0, 0}; // [deleted, totalSize]
+            stream.filter(Files::isRegularFile).forEach(file -> {
+                try {
+                    Instant modified = Files.getLastModifiedTime(file).toInstant();
+                    if (modified.isBefore(cutoff)) {
+                        long size = Files.size(file);
+                        Files.deleteIfExists(file);
+                        counts[0]++;
+                        counts[1] += size;
+                    }
+                } catch (IOException ignored) {}
+            });
+            if (counts[0] > 0) {
+                log.info("Cleaned up {} stale temp files ({} MB)", counts[0], counts[1] / (1024 * 1024));
+            }
+        } catch (IOException e) {
+            log.warn("Could not clean temp directory {}: {}", tmpDir, e.getMessage());
+        }
     }
 }
