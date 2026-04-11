@@ -36,12 +36,17 @@ services:
     ports:
       - "7200:7200"
     environment:
-      GDB_HEAP_SIZE: 2g
+      GDB_HEAP_SIZE: 6g
       GDB_LICENSE_PATH: /opt/graphdb
+      GDB_JAVA_OPTS: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+ParallelRefProcEnabled -XX:InitiatingHeapOccupancyPercent=45 -XX:G1HeapRegionSize=16m"
     volumes:
       - graphdb-data:/opt/graphdb/data
     networks:
       - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 8g
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:7200/rest/repositories"]
       interval: 15s
@@ -93,6 +98,7 @@ services:
                     graphdb:in-memory-literal-properties "true" ;
                     graphdb:enable-literal-index "true" ;
                     graphdb:entity-index-size "10000000" ;
+                    graphdb:enable-context-index "true" ;
                     graphdb:enablePredicateList "true" ;
                     graphdb:read-only "false" ;
                 ]

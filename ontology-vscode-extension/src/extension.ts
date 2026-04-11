@@ -184,7 +184,7 @@ type WebviewMessage =
     | { type: 'storedAuthToken'; token: string | null }
     | { type: 'loggedOut' }
     | { type: 'showLogin' }
-    | { type: 'showLoading'; projectId: string }
+    | { type: 'showLoading'; projectId: string; fileName?: string }
     | { type: 'fileReady'; projectId: string; uploadedFileId?: string; uploadedFileName?: string }
     | { type: 'openProjectFile'; projectId: string; fileId: string; fileName: string }
     | { type: 'loadingFailed'; error: string }
@@ -1940,7 +1940,9 @@ class OntoCodePanel {
         }
 
         // 3. For self-hosted: Check for duplicate file if action not specified
-        if (!isCloudDeployment && !action && !skipDuplicateCheck && resolvedOwnerEmail) {
+        // Skip for workspace files (hierarchical IDs with --) since they are project-scoped
+        const isWorkspaceFile = projectId.includes('--');
+        if (!isCloudDeployment && !action && !skipDuplicateCheck && !isWorkspaceFile && resolvedOwnerEmail) {
             console.log(`[OntoCode] Checking for duplicate file: ${fileName}`);
             try {
                 const checkUrl = `${GATEWAY_URL}/api/ontology/check-duplicate?filename=${encodeURIComponent(fileName)}&ownerEmail=${encodeURIComponent(resolvedOwnerEmail)}`;
@@ -1986,6 +1988,11 @@ class OntoCodePanel {
                                     console.warn('[OntoCode] Failed to initialize collaboration for existing project:', error);
                                 }
                                 if (this._isWebviewReady) {
+                                    // If the graph was empty and reimport was triggered, show loading state
+                                    if (checkResponse.data.graphEmpty && checkResponse.data.reloadTriggered) {
+                                        console.log('[OntoCode] Existing project graph was empty, reimport triggered. Showing loading state.');
+                                        this.postMessage({ type: 'showLoading', projectId: existingProjectId, fileName });
+                                    }
                                     this.postMessage({ type: 'fileReady', projectId: existingProjectId });
                                 }
                             } else {
@@ -2069,6 +2076,11 @@ class OntoCodePanel {
                                 console.warn('[OntoCode] Failed to initialize collaboration for existing project:', error);
                             }
                             if (this._isWebviewReady) {
+                                // If the graph was empty and reimport was triggered, show loading state
+                                if (checkResponse.data.graphEmpty && checkResponse.data.reloadTriggered) {
+                                    console.log('[OntoCode] Existing project graph was empty, reimport triggered. Showing loading state.');
+                                    this.postMessage({ type: 'showLoading', projectId: existingProjectId, fileName });
+                                }
                                 this.postMessage({ type: 'fileReady', projectId: existingProjectId });
                             }
                         } else {
@@ -2264,7 +2276,7 @@ class OntoCodePanel {
             );
         }
 
-        const showLoadingResult = this.postMessage({ type: 'showLoading', projectId });
+        const showLoadingResult = this.postMessage({ type: 'showLoading', projectId, fileName });
         console.log(`[OntoCode] 📢 showLoading message sent, result:`, showLoadingResult);
 
         try {

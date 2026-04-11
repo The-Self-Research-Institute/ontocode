@@ -232,10 +232,8 @@ public class GraphDBDatasetService {
             String graphUri = getGraphUri(projectId);
             
             try (RepositoryConnection conn = repo.getConnection()) {
-                IRI graphIri = conn.getValueFactory().createIRI(graphUri);
-                
                 // Check 1: Check if there are any triples in the graph (basic duplicate prevention)
-                long graphSize = conn.size(graphIri);
+                long graphSize = countGraphTriplesSparql(conn, graphUri);
                 
                 // Check 2: Query for file metadata if the system stores it
                 // This checks for triples that might indicate a file was already loaded
@@ -325,7 +323,9 @@ public class GraphDBDatasetService {
      * Execute a SPARQL SELECT query and return materialized results
      */
     public TupleQueryResult execSelect(String projectId, String sparqlQuery) {
-        return execSelect(projectId, sparqlQuery, true);
+        // Default to includeInferred=false — the repository uses ruleset: empty,
+        // so inference adds only overhead (30-130s penalties per query)
+        return execSelect(projectId, sparqlQuery, false);
     }
 
     /**
@@ -370,8 +370,7 @@ public class GraphDBDatasetService {
                     List<String> allGraphs = getAllGraphUris(conn, projectId);
                     long totalSize = 0;
                     for (String g : allGraphs) {
-                        var gIri = conn.getValueFactory().createIRI(g);
-                        long gSize = conn.size(gIri);
+                        long gSize = countGraphTriplesSparql(conn, g);
                         totalSize += gSize;
                         if (gSize > 0) {
                             log.warn("[GRAPHDB] ⚠️ Query returned 0 results. Graph {} contains {} triples.", g, gSize);
@@ -452,6 +451,7 @@ public class GraphDBDatasetService {
             log.info("[GRAPHDB] Executing CONSTRUCT query for project: {}", projectId);
             long constructStart = System.nanoTime();
             GraphQuery query = conn.prepareGraphQuery(sparqlQuery);
+            query.setIncludeInferred(false);
             GraphQueryResult result = query.evaluate();
             log.info("[TIMING] execConstruct for project {}: {} ms", projectId, elapsedMillis(constructStart));
             return result;
@@ -480,6 +480,7 @@ public class GraphDBDatasetService {
             log.info("[GRAPHDB] Executing ASK query for project: {}", projectId);
             long askStart = System.nanoTime();
             BooleanQuery query = conn.prepareBooleanQuery(sparqlQuery);
+            query.setIncludeInferred(false);
             boolean askResult = query.evaluate();
             log.info("[TIMING] execAsk for project {}: {} ms (result: {})", projectId, elapsedMillis(askStart), askResult);
             return askResult;
@@ -913,9 +914,9 @@ public class GraphDBDatasetService {
                     long commitDuration = elapsedMillis(commitStart);
                     log.info("✓ FINAL COMMIT completed in {} ms ({} sec)", commitDuration, commitDuration / 1000);
 
-                    // VERIFICATION: Check if data is actually readable after commit
+                    // VERIFICATION: Check if data is actually readable after commit (SPARQL COUNT is much faster than conn.size())
                     long verifyStart = System.nanoTime();
-                    long verifiedSize = conn.size(graphIri);
+                    long verifiedSize = countGraphTriplesSparql(conn, graphUri);
                     log.info("✓ VERIFICATION: Graph {} contains {} triples after commit (check took {} ms)", 
                             graphUri, verifiedSize, elapsedMillis(verifyStart));
                     
@@ -1057,13 +1058,12 @@ public class GraphDBDatasetService {
             long uploadMs = elapsedMillis(uploadStart);
 
             if (response.statusCode() >= 200 && response.statusCode() < 300) {
-                // Step 3: Verify — check graph size
+                // Step 3: Verify — check graph size (using SPARQL COUNT, much faster than conn.size())
                 long verifyStart = System.nanoTime();
                 Repository repo = getRepository();
                 long verifiedSize = 0;
                 try (RepositoryConnection conn = repo.getConnection()) {
-                    IRI graphIri = conn.getValueFactory().createIRI(graphUri);
-                    verifiedSize = conn.size(graphIri);
+                    verifiedSize = countGraphTriplesSparql(conn, graphUri);
                 }
                 long verifyMs = elapsedMillis(verifyStart);
                 long totalMs = elapsedMillis(start);
@@ -1235,11 +1235,9 @@ public class GraphDBDatasetService {
                 }
             }
 
-            // Step 5: Verify
+            // Step 5: Verify (using SPARQL COUNT, much faster than conn.size())
             try (RepositoryConnection conn = getRepository().getConnection()) {
-                var valueFactory = conn.getValueFactory();
-                IRI graphIri = valueFactory.createIRI(graphUri);
-                long size = conn.size(graphIri);
+                long size = countGraphTriplesSparql(conn, graphUri);
                 log.info("[ServerImport {}] ✅ Verification: graph has {} triples", projectId, size);
                 if (size == 0) {
                     log.warn("[ServerImport {}] Graph is empty after import — falling back to chunked", projectId);
@@ -1396,9 +1394,9 @@ public class GraphDBDatasetService {
                     // Clean up temp file
                     tempFile.delete();
 
-                    // Get size after loading
+                    // Get size after loading (SPARQL COUNT is much faster than conn.size())
                     long sizeQueryStart = System.nanoTime();
-                    long tripleCount = conn.size(graphIri);
+                    long tripleCount = countGraphTriplesSparql(conn, graphUri);
                     log.info("Graph size computed in {} ms", elapsedMillis(sizeQueryStart));
 
                     // **COMMIT THE TRANSACTION** - This is where all changes are persisted
@@ -1661,7 +1659,7 @@ public class GraphDBDatasetService {
             List<String> graphs = getAllGraphUris(conn, projectId);
             long total = 0;
             for (String g : graphs) {
-                total += conn.size(conn.getValueFactory().createIRI(g));
+                total += countGraphTriplesSparql(conn, g);
             }
             log.info("[TIMING] getDatasetSize for project {}: {} ms ({} triples across {} graphs)", 
                      projectId, elapsedMillis(sizeStart), total, graphs.size());
@@ -2058,13 +2056,31 @@ public class GraphDBDatasetService {
 
     private long safeGraphSize(RepositoryConnection conn, IRI graphIri, String tag, String projectId) {
         try {
-            long size = conn.size(graphIri);
+            long size = countGraphTriplesSparql(conn, graphIri.stringValue());
             log.info("Project {}: graph size {} during {}", projectId, size, tag);
             return size;
         } catch (Exception e) {
             log.warn("Could not get graph size for project {} during {}: {}", projectId, tag, e.getMessage());
             return -1;
         }
+    }
+
+    /**
+     * Fast triple count using SPARQL COUNT instead of conn.size().
+     * conn.size(graphIri) is extremely slow on GraphDB (20-60s even for small graphs)
+     * because it scans the entire index. A SPARQL COUNT query is orders of magnitude faster.
+     */
+    private long countGraphTriplesSparql(RepositoryConnection conn, String graphUri) {
+        String query = "SELECT (COUNT(*) AS ?count) FROM <" + graphUri + "> WHERE { ?s ?p ?o }";
+        try (TupleQueryResult result = conn.prepareTupleQuery(query).evaluate()) {
+            if (result.hasNext()) {
+                BindingSet bs = result.next();
+                if (bs.hasBinding("count")) {
+                    return Long.parseLong(bs.getValue("count").stringValue());
+                }
+            }
+        }
+        return 0;
     }
 
     private void logCauseChain(Throwable throwable) {
@@ -2218,7 +2234,8 @@ public class GraphDBDatasetService {
                 "      FILTER (?class != owl:Thing && !isBlank(?class)) \n" +
                 "      OPTIONAL { \n" +
                 "        ?class rdfs:subClassOf ?parent . \n" +
-                "        FILTER (?parent != owl:Thing && !isBlank(?parent)) \n" +
+                "        ?parent a owl:Class . \n" +
+                "        FILTER (?parent != owl:Thing && !isBlank(?parent) && isIRI(?parent)) \n" +
                 "      } \n" +
                 "      FILTER (!BOUND(?parent)) \n" +
                 "    } \n" +
@@ -2232,7 +2249,8 @@ public class GraphDBDatasetService {
                 "    FILTER (?class != owl:Thing && !isBlank(?class)) \n" +
                 "    OPTIONAL { \n" +
                 "      ?class rdfs:subClassOf ?parent . \n" +
-                "      FILTER (?parent != owl:Thing && !isBlank(?parent)) \n" +
+                "      ?parent a owl:Class . \n" +
+                "      FILTER (?parent != owl:Thing && !isBlank(?parent) && isIRI(?parent)) \n" +
                 "    } \n" +
                 "    FILTER (!BOUND(?parent)) \n" +
                 "  } \n" +

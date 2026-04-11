@@ -55,6 +55,7 @@ public class ImportQueueManager {
                                                String ownerEmail,
                                                Path owlFile,
                                                ImportOptions options) {
+        long enqueueStart = System.nanoTime();
         // Check if already queued or processing
         ImportQueueItem existing = findInQueue(projectId);
         if (existing != null) {
@@ -97,8 +98,8 @@ public class ImportQueueManager {
         queue.addLast(item);
         updateQueuePositions();
 
-        log.info("[Queue] Added project {} to queue at position {} (total in queue: {})",
-                projectId, item.getQueuePosition(), queue.size());
+        log.info("[Queue] Added project {} to queue at position {} (total in queue: {}) in {} ms",
+                projectId, item.getQueuePosition(), queue.size(), (System.nanoTime() - enqueueStart) / 1_000_000);
 
         // Notify user about queue position
         notifyQueueStatus(projectId);
@@ -113,6 +114,7 @@ public class ImportQueueManager {
      * Get next item from queue and mark as processing
      */
     public synchronized ImportQueueItem dequeue() {
+        long dequeueStart = System.nanoTime();
         if (activeImports.size() >= MAX_CONCURRENT_IMPORTS || queue.isEmpty()) {
             return null;
         }
@@ -124,8 +126,8 @@ public class ImportQueueManager {
 
         activeImports.put(item.getProjectId(), item);
 
-        log.info("[Queue] Started processing project {} (waited {} ms, queue size now: {})",
-                item.getProjectId(), item.getWaitTimeMs(), queue.size());
+        log.info("[Queue] Started processing project {} (waited {} ms in queue, dequeue took {} ms, queue size now: {})",
+                item.getProjectId(), item.getWaitTimeMs(), (System.nanoTime() - dequeueStart) / 1_000_000, queue.size());
 
         // Update queue positions for remaining items
         updateQueuePositions();

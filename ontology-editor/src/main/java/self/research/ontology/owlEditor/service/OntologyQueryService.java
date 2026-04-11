@@ -67,11 +67,13 @@ public class OntologyQueryService {
               # Only include named classes (filter out blank nodes)
               FILTER(isIRI(?c))
               
-              # Filter for top-level: either subclass of owl:Thing or no superclass at all
+              # Filter for top-level: either subclass of owl:Thing, no superclass at all,
+              # or superclass is not a declared class in the loaded data (unresolved import target)
               FILTER (
                 NOT EXISTS { 
                   ?c rdfs:subClassOf ?super . 
-                  FILTER(?super != ?c && ?super != <http://www.w3.org/2002/07/owl#Thing>)
+                  ?super a owl:Class .
+                  FILTER(isIRI(?super) && ?super != ?c && ?super != <http://www.w3.org/2002/07/owl#Thing>)
                 } ||
                 EXISTS {
                   ?c rdfs:subClassOf <http://www.w3.org/2002/07/owl#Thing> .

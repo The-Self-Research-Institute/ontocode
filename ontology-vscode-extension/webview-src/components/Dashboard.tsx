@@ -265,100 +265,155 @@ const combineReasonerResults = (classificationPayload: any, statsPayload?: any) 
 };
 // #region Helper Components
 
-const LoadingDialog = ({ isOpen, message }: { isOpen: boolean; message?: string }) => {
-  if (!isOpen) return null;
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div
-        className="bg-theme-surface rounded-lg shadow-xl p-8 max-w-sm w-full mx-4"
-        style={{ borderColor: "var(--color-border)" }}
-      >
-        <div className="flex flex-col items-center">
-          <Loader2 size={48} className="animate-spin mb-4" style={{ color: "var(--color-primary)" }} />
-          <h3 className="text-lg font-semibold mb-2" style={{ color: "var(--color-text)" }}>
-            {message || "Loading Ontology"}
-          </h3>
-          <p className="text-sm text-center" style={{ color: "var(--color-text-secondary)" }}>
-            Please wait while we process your ontology data...
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const LoadingChoiceDialog = ({
+const LoadingDialog = ({
   isOpen,
+  message,
   projectName,
   loadingStatusMessage,
-  onWait,
-  onContinue,
+  progress,
+  queuePosition,
+  totalInQueue,
+  estimatedWaitTimeMs,
 }: {
   isOpen: boolean;
-  projectName: string;
+  message?: string;
+  projectName?: string;
   loadingStatusMessage?: string;
-  onWait: () => void;
-  onContinue: () => void;
+  progress?: number;
+  queuePosition?: number;
+  totalInQueue?: number;
+  estimatedWaitTimeMs?: number;
 }) => {
   if (!isOpen) return null;
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]">
-      <div className="bg-theme-surface rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
-        <div className="flex items-start mb-4">
-          <div className="flex-shrink-0 w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center mr-3">
-            <Loader2 size={20} className="text-purple-600 animate-spin" />
-          </div>
-          <div className="flex-1">
-            <h3 className="text-lg font-semibold text-gray-900 mb-1">Loading Ontology</h3>
-            <p className="text-sm text-gray-600 mb-1">"{projectName}" is loading in the background...</p>
-            {loadingStatusMessage && (
-              <p className="text-xs text-blue-600 font-medium mt-2 bg-blue-50 px-2 py-1 rounded">
-                📊 {loadingStatusMessage}
-              </p>
-            )}
-          </div>
-        </div>
 
-        <div className="bg-gray-50 rounded-lg p-4 mb-4">
-          <p className="text-sm text-gray-700 mb-3">
-            <strong>What would you like to do?</strong>
-          </p>
-          <ul className="text-sm text-gray-600 space-y-2">
-            <li className="flex items-start">
-              <span className="text-purple-600 mr-2">•</span>
-              <span>
-                <strong>Wait:</strong> Stay on this screen until loading completes
-              </span>
-            </li>
-            <li className="flex items-start">
-              <span className="text-purple-600 mr-2">•</span>
-              <span>
-                <strong>Continue:</strong> Work on other files, you'll get a notification when ready
-              </span>
-            </li>
-          </ul>
-          {loadingStatusMessage && loadingStatusMessage.includes("minute") && (
-            <div className="mt-3 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
-              <strong>⏱️ Large file detected:</strong> This may take several minutes. We recommend clicking "Continue
-              Working".
-            </div>
+  const formatWaitTime = (ms: number): string => {
+    const minutes = Math.ceil(ms / 60000);
+    if (minutes < 1) return "Less than a minute";
+    if (minutes === 1) return "~1 minute";
+    return `~${minutes} minutes`;
+  };
+
+  const hasProgress = progress !== undefined && progress > 0;
+  const hasQueue = queuePosition !== undefined && queuePosition > 0;
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60]">
+      <div
+        className="rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden border"
+        style={{
+          backgroundColor: "var(--color-surface, #fff)",
+          borderColor: "var(--color-border, #e5e7eb)",
+        }}
+      >
+        {/* Header gradient bar */}
+        <div className="h-1.5 bg-gradient-to-r from-purple-500 via-indigo-500 to-purple-600">
+          {hasProgress && (
+            <div
+              className="h-full bg-white/30 transition-all duration-500 ease-out"
+              style={{ width: `${100 - progress}%`, marginLeft: "auto" }}
+            />
           )}
         </div>
 
-        <div className="flex gap-3">
-          <button
-            onClick={onWait}
-            className="flex-1 px-4 py-2.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium flex items-center justify-center gap-2"
-          >
-            <Loader2 size={16} className="animate-spin" />
-            Wait for Loading
-          </button>
-          <button
-            onClick={onContinue}
-            className="flex-1 px-4 py-2.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium"
-          >
-            Continue Working
-          </button>
+        <div className="p-6">
+          {/* Top section: Icon + title */}
+          <div className="flex flex-col items-center text-center mb-4">
+            <div className="relative mb-3">
+              <div className="w-12 h-12 rounded-full bg-gradient-to-br from-purple-100 to-indigo-100 flex items-center justify-center">
+                <Loader2 size={22} className="text-purple-600 animate-spin" />
+              </div>
+              {hasProgress && (
+                <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-purple-600 text-white text-[9px] font-bold flex items-center justify-center shadow-sm">
+                  {Math.round(progress)}
+                </div>
+              )}
+            </div>
+            <h3 className="text-base font-semibold truncate w-full" style={{ color: "var(--color-text)" }}>
+              {message || "Loading Ontology"}
+            </h3>
+            {projectName ? (
+              <p className="text-sm truncate w-full mt-0.5" style={{ color: "var(--color-text-secondary)" }}>
+                {projectName}
+              </p>
+            ) : (
+              <p className="text-sm mt-0.5" style={{ color: "var(--color-text-secondary)" }}>
+                Processing your ontology data…
+              </p>
+            )}
+          </div>
+
+          {/* Progress bar */}
+          {hasProgress && (
+            <div className="mb-4">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                  Progress
+                </span>
+                <span className="text-xs font-bold text-purple-600">{Math.round(progress)}%</span>
+              </div>
+              <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-purple-500 to-indigo-500 transition-all duration-500 ease-out"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Status message */}
+          {loadingStatusMessage && (
+            <div
+              className="flex items-center justify-center gap-2 text-xs font-medium px-3 py-2 rounded-lg mb-4 text-center"
+              style={{ backgroundColor: "rgba(99,102,241,0.08)", color: "rgb(79,70,229)" }}
+            >
+              <Sparkles size={13} className="flex-shrink-0 opacity-70" />
+              <span>{loadingStatusMessage}</span>
+            </div>
+          )}
+
+          {/* Queue / Wait list */}
+          {hasQueue && (
+            <div
+              className="rounded-lg px-3.5 py-3 mb-4 border"
+              style={{
+                backgroundColor: "rgba(147,51,234,0.05)",
+                borderColor: "rgba(147,51,234,0.15)",
+              }}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-purple-700">
+                  <Clock size={12} />
+                  <span>Queue Position #{queuePosition}</span>
+                </div>
+                {totalInQueue !== undefined && totalInQueue > 0 && (
+                  <span className="text-[10px] font-medium text-purple-500 bg-purple-100 px-1.5 py-0.5 rounded-full">
+                    {totalInQueue} in queue
+                  </span>
+                )}
+              </div>
+              <div className="text-xs text-purple-600 space-y-1">
+                {queuePosition > 1 && (
+                  <div className="flex items-center gap-1.5">
+                    <Users size={11} className="opacity-70" />
+                    <span>
+                      {queuePosition - 1} file{queuePosition - 1 !== 1 ? "s" : ""} ahead of you
+                    </span>
+                  </div>
+                )}
+                {estimatedWaitTimeMs !== undefined && estimatedWaitTimeMs > 0 && (
+                  <div className="flex items-center gap-1.5">
+                    <Clock size={11} className="opacity-70" />
+                    <span>Estimated wait: {formatWaitTime(estimatedWaitTimeMs)}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Waiting indicator */}
+          <div className="flex items-center justify-center py-2 text-xs font-medium text-purple-600">
+            <span>{hasQueue ? "Waiting in queue…" : hasProgress ? "Importing…" : ""}</span>
+          </div>
         </div>
       </div>
     </div>
@@ -2170,6 +2225,10 @@ const Dashboard: React.FC<DashboardProps> = ({
   }>({});
   // Queue status visibility
   const [showQueueStatus, setShowQueueStatus] = useState(false);
+  // Queue position tracking for loading dialog
+  const [queuePosition, setQueuePosition] = useState<number | undefined>(undefined);
+  const [totalInQueue, setTotalInQueue] = useState<number | undefined>(undefined);
+  const [estimatedWaitTimeMs, setEstimatedWaitTimeMs] = useState<number | undefined>(undefined);
   const collaborationPanelRef = useRef<CollaborationPanelRef>(null);
   const [showOpenDialog, setShowOpenDialog] = useState(false);
   const [activeOntologySubTab, setActiveOntologySubTab] = useState("prefixes");
@@ -2700,10 +2759,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       const encodedProjectId = encodeURIComponent(projectId);
 
       // Start classification (async — returns a taskId)
-      const startResponse: any = await apiClient.post(
-        `/plugin-service/api/reasoner/${encodedProjectId}/classify`,
-        { reasonerType },
-      );
+      const startResponse: any = await apiClient.post(`/plugin-service/api/reasoner/${encodedProjectId}/classify`, {
+        reasonerType,
+      });
 
       const startData = startResponse?.data ?? startResponse;
 
@@ -3345,18 +3403,31 @@ const Dashboard: React.FC<DashboardProps> = ({
         // Instance counts are loaded in background (non-blocking) to not delay initial render
         const dataFetchPromise = Promise.all([
           apiClient.get<any>(`/api/ontology/metadata/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
-          apiClient.get<any>(`/api/ontology/classes/top-level/${encodedProjectId}?limit=200${cacheBuster ? '&' + cacheBuster.substring(1) : ''}`, undefined, { signal })
-            .catch((e: any) => { if (e?.name === 'AbortError' || e?.code === 'ERR_CANCELED') throw e; return null; }),
+          apiClient
+            .get<any>(
+              `/api/ontology/classes/top-level/${encodedProjectId}?limit=200${cacheBuster ? "&" + cacheBuster.substring(1) : ""}`,
+              undefined,
+              { signal },
+            )
+            .catch((e: any) => {
+              if (e?.name === "AbortError" || e?.code === "ERR_CANCELED") throw e;
+              return null;
+            }),
           apiClient.get<any>(`/api/ontology/properties/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
           apiClient.get<any>(`/api/ontology/individuals/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
-          apiClient.get<any>(`/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
+          apiClient.get<any>(`/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`, undefined, {
+            signal,
+          }),
           apiClient.get<any>(`/api/ontology/datatypes/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
         ]);
 
         // Load instance counts in background - don't block the main data fetch
         const instanceCountsPromise = apiClient
           .get<any>(`/api/ontology/classes/instance-counts/${encodedProjectId}${cacheBuster}`, undefined, { signal })
-          .catch((e: any) => { console.warn('[Dashboard] Instance counts fetch failed (non-blocking):', e?.message); return null; });
+          .catch((e: any) => {
+            console.warn("[Dashboard] Instance counts fetch failed (non-blocking):", e?.message);
+            return null;
+          });
 
         // Allow UI to be responsive immediately if not waiting
         if (!waitForCompletion) {
@@ -3366,14 +3437,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
 
         // Continue loading in background
-        const [
-          metadataRes,
-          topLevelClassesRes,
-          propertiesRes,
-          individualsRes,
-          annotationPropsRes,
-          datatypesRes,
-        ] = await dataFetchPromise;
+        const [metadataRes, topLevelClassesRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes] =
+          await dataFetchPromise;
 
         console.log("[Dashboard] ✅ Data loaded from GraphDB database successfully!");
         console.log("[Dashboard] 📊 This data includes all saved changes from the database");
@@ -3413,7 +3478,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         // Instance counts load in background - set empty initially, update when ready
         let instanceCountsData: any = {};
         setClassInstanceCounts({});
-        
+
         // When instance counts arrive (async), update state
         instanceCountsPromise.then((instanceCountsRes: any) => {
           if (instanceCountsRes) {
@@ -3469,7 +3534,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         // ⚡ Load top-level classes eagerly so the user sees classes immediately
         console.log("[Dashboard] ⚡ Loading top-level classes for instant display");
-        
+
         let topLevelClasses: any[] = [];
         if (topLevelClassesRes) {
           topLevelClasses = Array.isArray(topLevelClassesRes?.classes)
@@ -3483,16 +3548,18 @@ const Dashboard: React.FC<DashboardProps> = ({
                   : [];
         }
         console.log("[Dashboard] 📊 Got", topLevelClasses.length, "top-level classes");
-        
+
         const topLevelNodes: TreeNode[] = topLevelClasses.map((c: TopLevelClass) => ({
           ...c,
           children: [],
           hasChildren: c.hasChildren !== false, // default true for lazy loading
-          subClassOfAxioms: [{ id: "http://www.w3.org/2002/07/owl#Thing", type: "SubClassOf", definition: "owl:Thing" }],
+          subClassOfAxioms: [
+            { id: "http://www.w3.org/2002/07/owl#Thing", type: "SubClassOf", definition: "owl:Thing" },
+          ],
         }));
 
         const resolvedCounts = instanceCountsData && typeof instanceCountsData === "object" ? instanceCountsData : {};
-        
+
         // Build hierarchy with owl:Thing as root and top-level classes as children
         const owlThingNode: TreeNode = {
           id: "http://www.w3.org/2002/07/owl#Thing",
@@ -3784,11 +3851,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         );
       } catch (error: any) {
         // Ignore cancellations – these happen when the user switches files mid-load
-        if (
-          error?.name === 'AbortError' ||
-          error?.code === 'ERR_CANCELED' ||
-          error?.message?.includes('aborted')
-        ) {
+        if (error?.name === "AbortError" || error?.code === "ERR_CANCELED" || error?.message?.includes("aborted")) {
           console.log("[Dashboard] fetchData cancelled (user switched files)");
           setIsInitialLoading(false);
           return null;
@@ -5238,7 +5301,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         setIsExpectingFileReady(true);
         // Show loading dialog immediately
         setShowLoadingChoice(true);
-        setLoadingProjectName(message.projectId || "Processing file upload...");
+        setLoadingProjectName(message.fileName || message.projectId || "Processing file upload...");
         // Don't fetch projects yet - wait for upload to complete
         return;
       }
@@ -5388,12 +5451,12 @@ const Dashboard: React.FC<DashboardProps> = ({
             pendingImportProjectIdRef.current &&
             message.projectId === pendingImportProjectIdRef.current
           ) {
-            console.log("[Dashboard] FileReady for project file import:", message.projectId);
+            console.log("[Dashboard] FileReady for project file import:", message);
             setHasUserSelectedFile(true);
             hasUserSelectedFileRef.current = true;
             setProjectId(message.projectId);
             setSelectedItem(null);
-            setLoadingProjectName(message.projectId);
+            setLoadingProjectName(message.uploadedFileName);
             // userLoadingChoice.current = null;
             // setShowLoadingChoice(true);
 
@@ -5406,6 +5469,9 @@ const Dashboard: React.FC<DashboardProps> = ({
                   console.log("[Dashboard] Loading completed for:", message.projectId);
                   setShowLoadingChoice(false);
                   setShowQueueStatus(false);
+                  setQueuePosition(undefined);
+                  setTotalInQueue(undefined);
+                  setEstimatedWaitTimeMs(undefined);
                   setIsInitialLoading(false);
                   setTimeout(() => fetchProjects(), 300);
                   loadingPromiseRef.current = null;
@@ -5448,7 +5514,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
           setActiveFileId(null); // In free mode, fileId is same as projectId
           setSelectedItem(null);
-          setLoadingProjectName(message.projectId);
+          console.log(message,"message=====>",projId)
+          setLoadingProjectName(message.uploadedFileName);
           userLoadingChoice.current = null; // Reset choice for new loading
           setShowLoadingChoice(true);
 
@@ -5462,6 +5529,9 @@ const Dashboard: React.FC<DashboardProps> = ({
                 // Close loading dialog immediately on success
                 setShowLoadingChoice(false);
                 setShowQueueStatus(false);
+                setQueuePosition(undefined);
+                setTotalInQueue(undefined);
+                setEstimatedWaitTimeMs(undefined);
                 // Refresh projects list
                 setTimeout(() => fetchProjects(), 300);
                 loadingPromiseRef.current = null;
@@ -5564,7 +5634,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                 } else {
                   console.log("[Dashboard] ProjectId is essentially the same (ignoring timestamp), skipping update");
                 }
-                setLoadingProjectName(message.status.projectId);
+                console.log(message, "message--->");
+                setLoadingProjectName(message.status.filename || message.status.projectId);
                 // In free mode, mark the new file as active immediately
                 if (!initialProjectId) {
                   const nextFileName = message.status.filename || `${message.status.projectId}.owl`;
@@ -5585,6 +5656,9 @@ const Dashboard: React.FC<DashboardProps> = ({
                 console.log("[Dashboard] Closing dialogs after IMPORT_COMPLETED");
                 setShowLoadingChoice(false);
                 setShowQueueStatus(false);
+                setQueuePosition(undefined);
+                setTotalInQueue(undefined);
+                setEstimatedWaitTimeMs(undefined);
                 setShowProjectSelector(false);
                 setIsInitialLoading(false);
                 setBackgroundImportActive(false);
@@ -5594,10 +5668,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
               // Show completion notification
               const importedName = message.status.filename || message.status.projectId || "Ontology";
-              notificationService.success(
-                "Import Complete",
-                `"${importedName}" has been loaded successfully.`
-              );
+              notificationService.success("Import Complete", `"${importedName}" has been loaded successfully.`);
 
               if (loadingPromiseRef.current) {
                 console.log("[Dashboard] fetchData already in progress (from fileReady), chaining UI cleanup");
@@ -5659,6 +5730,9 @@ const Dashboard: React.FC<DashboardProps> = ({
               setTimeout(() => {
                 setShowLoadingChoice(false);
                 setShowQueueStatus(false);
+                setQueuePosition(undefined);
+                setTotalInQueue(undefined);
+                setEstimatedWaitTimeMs(undefined);
                 setBackgroundImportActive(false);
                 setBackgroundImportProgress(undefined);
               }, 2000);
@@ -5695,6 +5769,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           setIsInitialLoading(false);
           setBackgroundImportActive(false);
           setBackgroundImportProgress(undefined);
+          setQueuePosition(undefined);
+          setTotalInQueue(undefined);
+          setEstimatedWaitTimeMs(undefined);
           notificationService.error("Import Failed", `Failed to import ontology: ${message.error || "Unknown error"}`);
           break;
 
@@ -5705,6 +5782,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           setIsInitialLoading(false);
           setBackgroundImportActive(false);
           setBackgroundImportProgress(undefined);
+          setQueuePosition(undefined);
+          setTotalInQueue(undefined);
+          setEstimatedWaitTimeMs(undefined);
           notificationService.error(
             "Import Timeout",
             "The import operation took too long. Your ontology may still be processing. Please check back later.",
@@ -5718,6 +5798,19 @@ const Dashboard: React.FC<DashboardProps> = ({
             `(${message.attempt}/${message.maxAttempts})`,
           );
           setLoadingStatusMessage(message.message);
+          break;
+
+        case "queueStatusUpdate":
+          if (message.status?.projectId === projectId) {
+            setQueuePosition(message.status.queuePosition);
+            setTotalInQueue(message.status.totalInQueue);
+            setEstimatedWaitTimeMs(message.status.estimatedWaitTimeMs);
+            if (message.status.status === "COMPLETED" || message.status.status === "FAILED") {
+              setQueuePosition(undefined);
+              setTotalInQueue(undefined);
+              setEstimatedWaitTimeMs(undefined);
+            }
+          }
           break;
 
         case "citationFormatted":
@@ -5771,7 +5864,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (!projectId) return;
       try {
         console.log(`[loadChildren] Loading children for node: ${nodeId}`);
-        
+
         // Special case: when loading children of owl:Thing, use the top-level endpoint
         // which finds ALL top-level classes (not just those with explicit rdfs:subClassOf owl:Thing)
         // OPTIMIZED: Use limit parameter for faster initial load (backend has caching)
@@ -5779,7 +5872,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         const endpoint = isOwlThing
           ? `/api/ontology/classes/top-level/${projectId}?limit=100`
           : `/api/ontology/classes/children/${projectId}?parentIri=${encodeURIComponent(nodeId)}`;
-        
+
         console.log(`[loadChildren] Using endpoint: ${endpoint}`);
         const response = await apiClient.get<any>(endpoint);
         console.log("[loadChildren] Children response:", response);
@@ -6076,11 +6169,16 @@ const Dashboard: React.FC<DashboardProps> = ({
     // Skip if details already loaded (has domains array)
     if (Array.isArray((selectedItem as any).domains) && (selectedItem as any).domains.length > 0) return;
     // Also skip for built-in top properties
-    if (selectedItem.id === "http://www.w3.org/2002/07/owl#topObjectProperty" || selectedItem.id === "http://www.w3.org/2002/07/owl#topDataProperty") return;
+    if (
+      selectedItem.id === "http://www.w3.org/2002/07/owl#topObjectProperty" ||
+      selectedItem.id === "http://www.w3.org/2002/07/owl#topDataProperty"
+    )
+      return;
 
     const encodedProjectId = encodeURIComponent(projectId);
     const encodedIri = encodeURIComponent(selectedItem.id);
-    apiClient.get<any>(`/api/ontology/properties/detail/${encodedProjectId}?iri=${encodedIri}`)
+    apiClient
+      .get<any>(`/api/ontology/properties/detail/${encodedProjectId}?iri=${encodedIri}`)
       .then((res: any) => {
         const detail = res?.data || res;
         if (detail && detail.id) {
@@ -6963,7 +7061,16 @@ const Dashboard: React.FC<DashboardProps> = ({
         },
       });
     },
-    [hasUnsavedChanges, draftCount, projectId, fetchData, setProjectId, setIsInitialLoading, setShowLoadingChoice, setLoadingProjectName],
+    [
+      hasUnsavedChanges,
+      draftCount,
+      projectId,
+      fetchData,
+      setProjectId,
+      setIsInitialLoading,
+      setShowLoadingChoice,
+      setLoadingProjectName,
+    ],
   );
 
   // Back to projects (with unsaved changes check)
@@ -7051,16 +7158,21 @@ const Dashboard: React.FC<DashboardProps> = ({
             success: boolean;
             exists: boolean;
             graphSize?: number;
-          }>(`/api/ontology/${encodeProjectId(ontologyProjectId)}/graphdb/check?fileName=${encodeURIComponent(fileName)}&fileId=${encodeURIComponent(fileId)}`);
+          }>(
+            `/api/ontology/${encodeProjectId(ontologyProjectId)}/graphdb/check?fileName=${encodeURIComponent(fileName)}&fileId=${encodeURIComponent(fileId)}`,
+          );
 
           if (graphCheck?.exists && (graphCheck.graphSize ?? 0) > 0) {
             console.log(`[Dashboard] ⚡ File already in GraphDB (${graphCheck.graphSize} triples), loading directly`);
             setProjectId(ontologyProjectId);
-            setLoadingProjectName(ontologyProjectId);
+            setLoadingProjectName(fileName);
             notificationService.info("Loading", `Loading ${fileName} from cache...`);
             await fetchData(ontologyProjectId, true, initialProjectId);
             setShowLoadingChoice(false);
             setShowQueueStatus(false);
+            setQueuePosition(undefined);
+            setTotalInQueue(undefined);
+            setEstimatedWaitTimeMs(undefined);
             setShowProjectSelector(false);
             setIsInitialLoading(false);
             return;
@@ -7114,13 +7226,17 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         // Upload to ontology editor service via VSCodeBridge (works in both VS Code and browser)
         const resolvedEmail = resolveUserEmail();
+        // Workspace files use hierarchical IDs (proj--fileId). Skip duplicate check
+        // because the file is scoped to this project — a standalone file with the same
+        // name should NOT short-circuit the upload.
+        const isWorkspaceFile = ontologyProjectId.includes("--");
         window.vscode.postMessage({
           type: "uploadOntology",
           projectId: ontologyProjectId,
           fileName: fileName,
           fileContent: base64Data,
           ownerEmail: resolvedEmail || undefined,
-          skipDuplicateCheck: false, // Enable duplicate check to avoid re-importing existing files
+          skipDuplicateCheck: isWorkspaceFile,
           importMode,
           partition: partitionStrategy,
         });
@@ -13009,7 +13125,15 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   return (
     <>
-      <LoadingDialog isOpen={isInitialLoading} />
+      <LoadingDialog
+        isOpen={isInitialLoading || showLoadingChoice}
+        projectName={loadingProjectName || undefined}
+        loadingStatusMessage={loadingStatusMessage || undefined}
+        progress={backgroundImportProgress}
+        queuePosition={queuePosition}
+        totalInQueue={totalInQueue}
+        estimatedWaitTimeMs={estimatedWaitTimeMs}
+      />
       <CreateIndividualModal
         isOpen={isCreateIndividualModalOpen}
         onClose={() => setCreateIndividualModalOpen(false)}
@@ -13578,14 +13702,16 @@ const Dashboard: React.FC<DashboardProps> = ({
       {/* Dedicated Unsaved Changes Warning Dialog */}
       {unsavedChangesDialog.isOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999]">
-          <div
-            className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-3 mb-4">
               <div className="flex-shrink-0 w-10 h-10 rounded-full bg-yellow-100 flex items-center justify-center">
                 <svg className="w-5 h-5 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
                 </svg>
               </div>
               <h3 className="text-lg font-semibold text-gray-900">Unsaved Changes</h3>
@@ -14247,15 +14373,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           importStatus={projectImportStatuses}
         />
       )}
-
-      {/* Loading Choice Dialog */}
-      <LoadingChoiceDialog
-        isOpen={showLoadingChoice}
-        projectName={loadingProjectName}
-        loadingStatusMessage={loadingStatusMessage}
-        onWait={handleWaitForLoading}
-        onContinue={handleContinueWorking}
-      />
 
       {/* Collaboration Panel - Toggle visibility manually */}
       {showCollaborationPanel && <CollaborationPanel ref={collaborationPanelRef} projectId={projectId || undefined} />}
