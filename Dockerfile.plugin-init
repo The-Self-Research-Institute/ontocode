@@ -9,12 +9,12 @@
 FROM node:21-alpine AS build-change-assistant
 WORKDIR /build
 COPY plugins/change-assistant-plugin/package*.json ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm config set fetch-retries 20 && \
-    npm config set fetch-retry-mintimeout 20000 && \
-    npm config set fetch-retry-maxtimeout 300000 && \
-    npm config set fetch-timeout 300000 && \
-    npm config set maxsockets 10 && \
+RUN --mount=type=cache,id=npm-change-assistant,target=/root/.npm \
+    npm config set fetch-retries 30 && \
+    npm config set fetch-retry-mintimeout 30000 && \
+    npm config set fetch-retry-maxtimeout 600000 && \
+    npm config set fetch-timeout 600000 && \
+    npm config set maxsockets 3 && \
     npm config set prefer-online true && \
     npm install --prefer-online
 COPY plugins/change-assistant-plugin/ ./
@@ -26,12 +26,12 @@ RUN npm run build
 FROM node:21-alpine AS build-fuzzy-ontology
 WORKDIR /build
 COPY plugins/fuzzy-ontology-plugin/package*.json ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm config set fetch-retries 20 && \
-    npm config set fetch-retry-mintimeout 20000 && \
-    npm config set fetch-retry-maxtimeout 300000 && \
-    npm config set fetch-timeout 300000 && \
-    npm config set maxsockets 10 && \
+RUN --mount=type=cache,id=npm-fuzzy-ontology,target=/root/.npm \
+    npm config set fetch-retries 30 && \
+    npm config set fetch-retry-mintimeout 30000 && \
+    npm config set fetch-retry-maxtimeout 600000 && \
+    npm config set fetch-timeout 600000 && \
+    npm config set maxsockets 3 && \
     npm config set prefer-online true && \
     npm install --prefer-online
 COPY plugins/fuzzy-ontology-plugin/ ./
@@ -43,12 +43,12 @@ RUN npm run build
 FROM node:21-alpine AS build-graph-view
 WORKDIR /build
 COPY plugins/graph-view-plugin/package*.json ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm config set fetch-retries 20 && \
-    npm config set fetch-retry-mintimeout 20000 && \
-    npm config set fetch-retry-maxtimeout 300000 && \
-    npm config set fetch-timeout 300000 && \
-    npm config set maxsockets 10 && \
+RUN --mount=type=cache,id=npm-graph-view,target=/root/.npm \
+    npm config set fetch-retries 30 && \
+    npm config set fetch-retry-mintimeout 30000 && \
+    npm config set fetch-retry-maxtimeout 600000 && \
+    npm config set fetch-timeout 600000 && \
+    npm config set maxsockets 3 && \
     npm config set prefer-online true && \
     npm install --prefer-online
 COPY plugins/graph-view-plugin/ ./
@@ -60,12 +60,12 @@ RUN npm run build
 FROM node:21-alpine AS build-swrl-editor
 WORKDIR /build
 COPY plugins/swrl-editor-plugin/package*.json ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm config set fetch-retries 20 && \
-    npm config set fetch-retry-mintimeout 20000 && \
-    npm config set fetch-retry-maxtimeout 300000 && \
-    npm config set fetch-timeout 300000 && \
-    npm config set maxsockets 10 && \
+RUN --mount=type=cache,id=npm-swrl-editor,target=/root/.npm \
+    npm config set fetch-retries 30 && \
+    npm config set fetch-retry-mintimeout 30000 && \
+    npm config set fetch-retry-maxtimeout 600000 && \
+    npm config set fetch-timeout 600000 && \
+    npm config set maxsockets 3 && \
     npm config set prefer-online true && \
     npm install --prefer-online
 COPY plugins/swrl-editor-plugin/ ./
@@ -77,12 +77,12 @@ RUN npm run build
 FROM node:21-alpine AS build-sparql-query
 WORKDIR /build
 COPY plugins/sparql-query-plugin/package*.json ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm config set fetch-retries 20 && \
-    npm config set fetch-retry-mintimeout 20000 && \
-    npm config set fetch-retry-maxtimeout 300000 && \
-    npm config set fetch-timeout 300000 && \
-    npm config set maxsockets 10 && \
+RUN --mount=type=cache,id=npm-sparql-query,target=/root/.npm \
+    npm config set fetch-retries 30 && \
+    npm config set fetch-retry-mintimeout 30000 && \
+    npm config set fetch-retry-maxtimeout 600000 && \
+    npm config set fetch-timeout 600000 && \
+    npm config set maxsockets 3 && \
     npm config set prefer-online true && \
     npm install --prefer-online
 COPY plugins/sparql-query-plugin/ ./
@@ -94,12 +94,12 @@ RUN npm run build
 FROM node:21-alpine AS build-reasoner
 WORKDIR /build
 COPY plugins/reasoner-plugin/package*.json ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm config set fetch-retries 20 && \
-    npm config set fetch-retry-mintimeout 20000 && \
-    npm config set fetch-retry-maxtimeout 300000 && \
-    npm config set fetch-timeout 300000 && \
-    npm config set maxsockets 10 && \
+RUN --mount=type=cache,id=npm-reasoner,target=/root/.npm \
+    npm config set fetch-retries 30 && \
+    npm config set fetch-retry-mintimeout 30000 && \
+    npm config set fetch-retry-maxtimeout 600000 && \
+    npm config set fetch-timeout 600000 && \
+    npm config set maxsockets 3 && \
     npm config set prefer-online true && \
     npm install --prefer-online
 COPY plugins/reasoner-plugin/ ./
@@ -116,12 +116,12 @@ RUN apk add --no-cache bash curl
 
 # Install MongoDB driver
 COPY scripts/package.json ./package.json
-RUN --mount=type=cache,target=/root/.npm \
-    npm config set fetch-retries 20 && \
-    npm config set fetch-retry-mintimeout 20000 && \
-    npm config set fetch-retry-maxtimeout 300000 && \
-    npm config set fetch-timeout 300000 && \
-    npm config set maxsockets 10 && \
+RUN --mount=type=cache,id=npm-runtime,target=/root/.npm \
+    npm config set fetch-retries 30 && \
+    npm config set fetch-retry-mintimeout 30000 && \
+    npm config set fetch-retry-maxtimeout 600000 && \
+    npm config set fetch-timeout 600000 && \
+    npm config set maxsockets 3 && \
     npm config set prefer-online true && \
     npm install mongodb --prefer-online
 
