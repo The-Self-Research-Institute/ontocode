@@ -747,6 +747,44 @@ public class ProjectController {
             }
 
             User user = userOpt.get();
+
+            // Delete from GraphDB first (best-effort) for each file in the project
+            try {
+                Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
+                if (projectOpt.isPresent()) {
+                    Project project = projectOpt.get();
+                    String editorServiceUrl = System.getenv().getOrDefault("ONTOLOGY_EDITOR_URL", "http://localhost:8083");
+
+                    for (Project.FileMetadataInfo fileInfo : project.getFiles()) {
+                        if ("DELETED".equals(fileInfo.getStatus())) continue;
+                        String fileId = fileInfo.getFileId();
+                        if (fileId == null || fileId.isEmpty()) continue;
+
+                        String graphDbProjectId = projectId + "/" + fileId;
+                        try {
+                            String graphDbDeleteUrl = editorServiceUrl + "/api/ontology/project/" + java.net.URLEncoder.encode(graphDbProjectId, "UTF-8");
+                            log.info("🗑️ Deleting file from GraphDB during project delete: {} (graph: http://ontocode.org/project/{})", fileId, graphDbProjectId);
+                            restTemplate.delete(graphDbDeleteUrl);
+                            log.info("✅ Successfully deleted file from GraphDB: {}", graphDbProjectId);
+                        } catch (Exception graphDbEx) {
+                            log.warn("⚠️ Failed to delete file {} from GraphDB (continuing): {}", fileId, graphDbEx.getMessage());
+                        }
+                    }
+
+                    // Also try to delete the project-level graph (for files imported directly under the project ID)
+                    try {
+                        String graphDbDeleteUrl = editorServiceUrl + "/api/ontology/project/" + java.net.URLEncoder.encode(projectId, "UTF-8");
+                        log.info("🗑️ Deleting project graph from GraphDB: {}", projectId);
+                        restTemplate.delete(graphDbDeleteUrl);
+                        log.info("✅ Successfully deleted project graph from GraphDB: {}", projectId);
+                    } catch (Exception graphDbEx) {
+                        log.warn("⚠️ Failed to delete project graph from GraphDB (continuing): {}", graphDbEx.getMessage());
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("⚠️ GraphDB cleanup failed during project delete (continuing with soft delete): {}", e.getMessage());
+            }
+
             projectService.deleteProject(projectId, user.getId());
 
             return ResponseEntity.ok(Map.of("message", "Project deleted successfully"));
@@ -812,7 +850,7 @@ public class ProjectController {
         dto.put("createdAt", project.getCreatedAt().toString());
         dto.put("updatedAt", project.getUpdatedAt().toString());
         dto.put("fileIds", project.getFileIds()); // Keep for backward compatibility
-        dto.put("files", project.getFiles()); // Include file metadata
+        dto.put("files", project.getActiveFiles()); // Only include non-deleted files
         return dto;
     }
 

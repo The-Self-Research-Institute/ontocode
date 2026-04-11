@@ -44,9 +44,9 @@ curl -X POST http://localhost:7200/rest/repositories ^
             owlim:entity-id-size "32" ;
             owlim:imports "" ;
             owlim:repository-type "file-repository" ;
-            owlim:ruleset "owl-horst-optimized" ;
+            owlim:ruleset "empty" ;
             owlim:storage-folder "storage" ;
-            owlim:enable-context-index "false" ;
+            owlim:enable-context-index "true" ;
             owlim:enablePredicateList "true" ;
             owlim:in-memory-literal-properties "true" ;
             owlim:enable-literal-index "true" ;

@@ -212,26 +212,28 @@ public class ProjectImportService {
         metadataService.writeStatus(projectId, ProjectStatus.processing(filename));
         try {
             stage = "detect-format";
+            long stageStart = System.nanoTime();
             RDFFormat format = detectFormat(owlFile);
-            log.info("[Import {}] Detected RDF format: {} (name: {}, defaultFileExtension: {})", 
-                    projectId, format, format.getName(), format.getDefaultFileExtension());
+            log.info("[Import {}] [TIMING] Format detection: {} ms (detected: {})", 
+                    projectId, elapsedMillis(stageStart), format.getName());
             
             // Sanitize the file to fix malformed XML before import
             // NOTE: For large files (>50MB), sanitizeFileOnDisk uses an optimized path
             // that skips OWL API re-serialization to avoid loading the entire file into memory.
-            // stage = "sanitize";
-            // long fileSizeForSanitize = Files.size(owlFile);
-            // if (fileSizeForSanitize > 50 * 1024 * 1024) {
-            //     log.info("[Import {}] [PERFORMANCE] Large file ({} MB) - sanitization will use optimized path",
-            //             projectId, fileSizeForSanitize / (1024 * 1024));
-            // }
-            // try {
-            //     OWLFormatConverter.sanitizeFileOnDisk(owlFile);
-            //     log.info("[Import {}] File sanitization completed", projectId);
-            // } catch (Exception sanitizeEx) {
-            //     log.warn("[Import {}] File sanitization failed: {}", projectId, sanitizeEx.getMessage());
-            //     // Continue anyway - sanitization is best-effort
-            // }
+            stage = "sanitize";
+            stageStart = System.nanoTime();
+            long fileSizeForSanitize = Files.size(owlFile);
+            if (fileSizeForSanitize > 50 * 1024 * 1024) {
+                log.info("[Import {}] [PERFORMANCE] Large file ({} MB) - sanitization will use optimized path",
+                        projectId, fileSizeForSanitize / (1024 * 1024));
+            }
+            try {
+                OWLFormatConverter.sanitizeFileOnDisk(owlFile);
+                log.info("[Import {}] [TIMING] Sanitization: {} ms", projectId, elapsedMillis(stageStart));
+            } catch (Exception sanitizeEx) {
+                log.warn("[Import {}] File sanitization failed: {}", projectId, sanitizeEx.getMessage());
+                // Continue anyway - sanitization is best-effort
+            }
 
             stage = "bulk-load";
             log.info("[Import {}] Loading data into GraphDB", projectId);
@@ -302,6 +304,7 @@ public class ProjectImportService {
             // ⚡ FAST PATH: Try GraphDB server-side import first (reads file from shared volume — no HTTP overhead)
             boolean serverImportDone = false;
             try {
+                stageStart = System.nanoTime();
                 serverImportDone = datasetService.serverSideImport(projectId, fileToLoad, format, actualFileSize, options, progress -> {
                     long totalBytes = progress.getTotalBytes();
                     long bytesRead = progress.getBytesRead();
@@ -315,12 +318,13 @@ public class ProjectImportService {
                     metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
                 });
             } catch (Exception serverEx) {
-                log.info("[Import {}] Server-side import not available: {}", projectId, serverEx.getMessage());
+                log.info("[Import {}] [TIMING] Server-side import failed after {} ms: {}", projectId, elapsedMillis(stageStart), serverEx.getMessage());
             }
 
             // ⚡ MEDIUM PATH: Try direct HTTP upload (single POST, no batch commits)
             if (!serverImportDone) {
                 try {
+                    stageStart = System.nanoTime();
                     serverImportDone = datasetService.directHttpUpload(projectId, fileToLoad, format, actualFileSize, options, progress -> {
                         long totalBytes = progress.getTotalBytes();
                         long bytesRead = progress.getBytesRead();
@@ -333,12 +337,13 @@ public class ProjectImportService {
                         metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
                     });
                 } catch (Exception directEx) {
-                    log.info("[Import {}] Direct HTTP upload failed: {}", projectId, directEx.getMessage());
+                    log.info("[Import {}] [TIMING] Direct HTTP upload failed after {} ms: {}", projectId, elapsedMillis(stageStart), directEx.getMessage());
                 }
             }
 
             if (!serverImportDone) {
             // FALLBACK: Client-side chunked bulk load via RDF4J HTTP
+            stageStart = System.nanoTime();
             log.info("[Import {}] Using chunked bulk load (client-side)", projectId);
 
             // Track re-serialized fallback file for cleanup
@@ -446,13 +451,16 @@ public class ProjectImportService {
                 }
             }
             } // end if (!serverImportDone)
-            log.info("[Import {}] GraphDB bulk load completed in {} ms", projectId, elapsedMillis(bulkLoadStart));
+            log.info("[Import {}] [TIMING] GraphDB bulk load completed in {} ms (total import so far: {} ms)", 
+                    projectId, elapsedMillis(bulkLoadStart), elapsedMillis(importStart));
 
             // Copy file to current location
             stage = "persist-copy";
+            stageStart = System.nanoTime();
             Path current = storageManager.resolveProjectFile(projectId, "ontology.current." + extensionFor(format));
             Files.createDirectories(current.getParent());
             Files.copy(owlFile, current, StandardCopyOption.REPLACE_EXISTING);
+            log.info("[Import {}] [TIMING] File copy to current: {} ms", projectId, elapsedMillis(stageStart));
 
             // ⚡ PERFORMANCE OPTIMIZATION: Mark import as COMPLETED immediately after GraphDB load
             // This allows frontend to start using the ontology without waiting for metadata indexing

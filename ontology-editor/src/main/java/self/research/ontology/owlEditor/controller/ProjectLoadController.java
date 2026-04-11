@@ -118,10 +118,12 @@ public class ProjectLoadController {
                                                       @RequestParam(required = false) String workspaceId,
                                                       @RequestParam(required = false) String parentProjectId,
                                                       @RequestParam(required = false, defaultValue = "false") boolean compressed) {
-        log.info("[ProjectLoadController] Upload request - projectId: {}, filename: {}, ownerEmail: {}, workspaceId: {}, parentProjectId: {}, action: {}, compressed: {}",
-            projectId, file.getOriginalFilename(), ownerEmail, workspaceId, parentProjectId, action, compressed);
+        long uploadStartTime = System.nanoTime();
+        log.info("[ProjectLoadController] ═══ Upload STARTED - projectId: {}, filename: {}, size: {} bytes, ownerEmail: {}, workspaceId: {}, parentProjectId: {}, action: {}, compressed: {}",
+            projectId, file.getOriginalFilename(), file.getSize(), ownerEmail, workspaceId, parentProjectId, action, compressed);
         try {
             // VALIDATION: Check file size (max 300MB)
+            long stepStart = System.nanoTime();
             long maxSize = 300 * 1024 * 1024; // 300MB
             if (file.getSize() > maxSize) {
                 log.warn("File too large: {} bytes (max: {} bytes)", file.getSize(), maxSize);
@@ -132,6 +134,9 @@ public class ProjectLoadController {
                         ));
             }
 
+            log.info("[ProjectLoadController] [TIMING] Validation: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
+
+            stepStart = System.nanoTime();
             String actualProjectId = projectId;
             boolean isReplacement = false;
             String filename = file.getOriginalFilename();
@@ -183,7 +188,10 @@ public class ProjectLoadController {
                 }
             }
             
+            log.info("[ProjectLoadController] [TIMING] Duplicate check: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
+
             // Optimize by writing to filesystem and GridFS in one pass
+            stepStart = System.nanoTime();
             Path projectDir = storageManager.prepareProjectDir(actualProjectId);
             Path original = projectDir.resolve("ontology.original.owl");
             Files.createDirectories(original.getParent());
@@ -233,6 +241,8 @@ public class ProjectLoadController {
                 );
             }
 
+            log.info("[ProjectLoadController] [TIMING] File save (disk + GridFS): {} ms", (System.nanoTime() - stepStart) / 1_000_000);
+
             // FIX: Add error handling - verify GridFS storage succeeded
             if (gridfsFileId == null || gridfsFileId.isEmpty()) {
                 throw new RuntimeException("Failed to store file in GridFS - no file ID returned");
@@ -245,20 +255,33 @@ public class ProjectLoadController {
 
             // Extract citation-entity mappings from uploaded file for smart repositioning
             // This must be done BEFORE GraphDB import, as GraphDB will reorganize the content
+            stepStart = System.nanoTime();
             log.info("Extracting citation-entity mappings from uploaded file: {}", filename);
             storageManager.extractCitationMappingsFromFile(original, actualProjectId);
+            log.info("[ProjectLoadController] [TIMING] Citation extraction: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
 
             // FIX: Batch metadata updates into single operation for better performance
             // Use the potentially modified filename
+            stepStart = System.nanoTime();
             ProjectStatus status = ProjectStatus.uploaded(filename);
             metadataService.updateProjectMetadata(actualProjectId, status, gridfsFileId, ownerEmail, workspaceId, parentProjectId);
+            log.info("[ProjectLoadController] [TIMING] Metadata update: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
 
+            stepStart = System.nanoTime();
             ImportOptions options = resolveImportOptions(importMode, partition);
             importWorkerDispatcher.dispatch(actualProjectId, original, ownerEmail, filename, gridfsFileId, options);
+            log.info("[ProjectLoadController] [TIMING] Import dispatch: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
 
+            stepStart = System.nanoTime();
             RDFFormat format = detectFormat(original);
+            log.info("[ProjectLoadController] [TIMING] Format detection: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
+
             preparseService.preparse(original, actualProjectId, format);
             
+            long totalUploadMs = (System.nanoTime() - uploadStartTime) / 1_000_000;
+            log.info("[ProjectLoadController] ═══ Upload endpoint COMPLETED in {} ms ({} sec) for project: {}",
+                    totalUploadMs, totalUploadMs / 1000, actualProjectId);
+
             String message = isReplacement ? "File replaced successfully, processing scheduled" : 
                             ("create_copy".equals(action) ? "Copy created successfully with name '" + filename + "', processing scheduled" :
                             "Upload complete, processing scheduled");
@@ -388,6 +411,13 @@ public class ProjectLoadController {
                                        java.nio.charset.StandardCharsets.UTF_8);
             String contentLower = content.toLowerCase(Locale.ROOT);
             
+            // Check for XML markers
+            if (contentLower.startsWith("<?xml") || contentLower.contains("<rdf:rdf") || 
+                contentLower.contains("<owl:ontology") || contentLower.contains("<ontology")) {
+                log.info("Detected RDF/XML format (found XML markers)");
+                return RDFFormat.RDFXML;
+            }
+
             // Check for Turtle/N3 markers
             if (contentLower.startsWith("@prefix") || contentLower.startsWith("@base") ||
                 contentLower.contains("@prefix ") || contentLower.contains("@base ")) {
@@ -399,13 +429,6 @@ public class ProjectLoadController {
             if (content.matches("(?s)^\\s*<[^>]+>\\s+<[^>]+>\\s+.*")) {
                 log.info("Detected N-Triples format");
                 return RDFFormat.NTRIPLES;
-            }
-            
-            // Check for XML markers
-            if (contentLower.startsWith("<?xml") || contentLower.contains("<rdf:rdf") || 
-                contentLower.contains("<owl:ontology") || contentLower.contains("<ontology")) {
-                log.info("Detected RDF/XML format (found XML markers)");
-                return RDFFormat.RDFXML;
             }
             
             // Check for JSON-LD
