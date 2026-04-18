@@ -167,6 +167,23 @@ public class ProjectLoadController {
                         actualProjectId = existingProjectId.get();
                         isReplacement = true;
                         log.info("Replacing existing file: {} for user: {} with projectId: {}", filename, ownerEmail, actualProjectId);
+                        
+                        // Clean up stale files before re-import so OntologyFileController
+                        // does not serve the old version while the new import is processing
+                        try {
+                            Path oldProjectDir = storageManager.projectDir(actualProjectId);
+                            for (String staleFile : new String[]{
+                                "ontology.current.owl", "ontology.current.rdf",
+                                "ontology.current.ttl", "ontology.current.nt"
+                            }) {
+                                Path stalePath = oldProjectDir.resolve(staleFile);
+                                if (Files.deleteIfExists(stalePath)) {
+                                    log.info("Cleaned up stale file before re-import: {}", stalePath);
+                                }
+                            }
+                        } catch (Exception cleanupEx) {
+                            log.warn("Failed to clean up stale files for project {}: {}", actualProjectId, cleanupEx.getMessage());
+                        }
                     } else if ("create_copy".equals(action)) {
                         // Create a copy with modified filename
                         String copyFilename = generateCopyFilename(filename, ownerEmail);

@@ -6,6 +6,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Network } from 'vis-network';
 import type { Options, Data, Node, Edge } from 'vis-network';
+import { applyRadialLayout, applyCircularLayout } from './layouts';
 import { 
   ZoomIn, 
   ZoomOut, 
@@ -69,9 +70,10 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
   const [showClassTree, setShowClassTree] = useState(true);
   const [expandedClasses, setExpandedClasses] = useState<Set<string>>(new Set(['owl:Thing']));
   
-  const [layoutType, setLayoutType] = useState<'hierarchical' | 'force' | 'circular' | 'radial'>('hierarchical');
+  const [layoutType, setLayoutType] = useState<'hierarchical' | 'force' | 'circular' | 'radial' | 'tree-vertical' | 'tree-horizontal' | 'spring'>('hierarchical');
   const [assertionView, setAssertionView] = useState<'asserted' | 'inferred' | 'all'>('asserted');
   const [showInferences, setShowInferences] = useState(false);
+  const [showLayoutMenu, setShowLayoutMenu] = useState(false);
   
   // Fetch ontology data
   const fetchGraphData = useCallback(async () => {
@@ -242,7 +244,7 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
       edges: visEdges
     };
 
-    const layoutOptions = {
+    const layoutOptions: Record<string, any> = {
       hierarchical: {
         hierarchical: {
           enabled: true,
@@ -256,7 +258,36 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
           parentCentralization: true
         }
       },
+      'tree-vertical': {
+        hierarchical: {
+          enabled: true,
+          direction: 'UD',
+          sortMethod: 'directed',
+          levelSeparation: 120,
+          nodeSpacing: 150,
+          treeSpacing: 150,
+          blockShifting: true,
+          edgeMinimization: true,
+          parentCentralization: true
+        }
+      },
+      'tree-horizontal': {
+        hierarchical: {
+          enabled: true,
+          direction: 'LR',
+          sortMethod: 'directed',
+          levelSeparation: 200,
+          nodeSpacing: 100,
+          treeSpacing: 150,
+          blockShifting: true,
+          edgeMinimization: true,
+          parentCentralization: true
+        }
+      },
       force: {
+        randomSeed: 2
+      },
+      spring: {
         randomSeed: 2
       },
       circular: {
@@ -267,15 +298,18 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
       }
     };
 
+    const isHierarchicalLayout = layoutType === 'hierarchical' || layoutType === 'tree-vertical' || layoutType === 'tree-horizontal';
+
     const options: Options = {
       layout: layoutOptions[layoutType] || {},
       physics: {
-        enabled: layoutType !== 'hierarchical',
+        enabled: !isHierarchicalLayout,
         barnesHut: {
-          gravitationalConstant: -2000,
-          springConstant: 0.04,
-          springLength: 150,
-          damping: 0.09
+          gravitationalConstant: layoutType === 'spring' ? -3000 : -2000,
+          springConstant: layoutType === 'spring' ? 0.08 : 0.04,
+          springLength: layoutType === 'spring' ? 200 : 150,
+          damping: 0.09,
+          centralGravity: layoutType === 'radial' ? 0.8 : 0.3
         },
         stabilization: {
           iterations: 200,
@@ -314,6 +348,39 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
 
     const network = new Network(containerRef.current, data, options);
     networkRef.current = network;
+
+    // Apply custom layout positions for circular and radial layouts
+    if (layoutType === 'circular' || layoutType === 'radial') {
+      const container = containerRef.current;
+      const width = container.clientWidth || 800;
+      const height = container.clientHeight || 600;
+      
+      const layoutNodes = nodes.map(n => ({
+        id: n.id,
+        label: n.label || n.id,
+        type: n.type || 'class',
+        uri: n.uri || n.id,
+      }));
+      const layoutEdges = edges.map(e => ({
+        id: e.id || `${e.from}-${e.to}`,
+        from: e.from || e.source,
+        to: e.to || e.target,
+        label: e.label || '',
+        type: e.type || 'subClassOf',
+      }));
+      
+      const positionMap = layoutType === 'radial'
+        ? applyRadialLayout(layoutNodes as any, layoutEdges as any, { width, height })
+        : applyCircularLayout(layoutNodes as any, layoutEdges as any, { width, height });
+      
+      network.once('stabilizationIterationsDone', () => {
+        positionMap.forEach((pos, nodeId) => {
+          try { network.moveNode(nodeId, pos.x, pos.y); } catch { /* node may not exist */ }
+        });
+        network.setOptions({ physics: { enabled: false } });
+        network.fit({ animation: { duration: 500, easingFunction: 'easeInOutQuad' } });
+      });
+    }
 
     // Event listeners
     network.on('selectNode', (params: any) => {
@@ -667,9 +734,65 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
         
         <div style={{ width: '1px', height: '20px', backgroundColor: '#ccc', margin: '0 4px' }} />
         
-        <button title="Layout" style={iconToolbarButtonStyle}>
-          <Layers size={16} />
-        </button>
+        <div style={{ position: 'relative' }}>
+          <button 
+            title="Layout" 
+            style={{
+              ...iconToolbarButtonStyle,
+              backgroundColor: showLayoutMenu ? '#e0e0e0' : 'white'
+            }}
+            onClick={() => setShowLayoutMenu(!showLayoutMenu)}
+          >
+            <Layers size={16} />
+          </button>
+          {showLayoutMenu && (
+            <div style={{
+              position: 'absolute',
+              top: '100%',
+              left: 0,
+              backgroundColor: 'white',
+              border: '1px solid #ccc',
+              borderRadius: '4px',
+              boxShadow: '2px 2px 8px rgba(0,0,0,0.15)',
+              zIndex: 1001,
+              minWidth: '180px',
+              padding: '4px 0'
+            }}>
+              {([
+                { key: 'hierarchical', label: 'Hierarchical' },
+                { key: 'tree-vertical', label: 'Tree (Vertical)' },
+                { key: 'tree-horizontal', label: 'Tree (Horizontal)' },
+                { key: 'radial', label: 'Radial Layout' },
+                { key: 'spring', label: 'Spring (Force) Layout' },
+                { key: 'circular', label: 'Circular Layout' },
+              ] as const).map(item => (
+                <button
+                  key={item.key}
+                  onClick={() => { setLayoutType(item.key); setShowLayoutMenu(false); }}
+                  style={{
+                    width: '100%',
+                    padding: '6px 16px',
+                    border: 'none',
+                    backgroundColor: layoutType === item.key ? '#e8f0fe' : 'transparent',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    fontWeight: layoutType === item.key ? 600 : 400,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px'
+                  }}
+                  onMouseEnter={(e) => { if (layoutType !== item.key) e.currentTarget.style.backgroundColor = '#f0f0f0'; }}
+                  onMouseLeave={(e) => { if (layoutType !== item.key) e.currentTarget.style.backgroundColor = 'transparent'; }}
+                >
+                  {layoutType === item.key && <span style={{ color: '#1a73e8' }}>&#10003;</span>}
+                  {layoutType !== item.key && <span style={{ width: '14px' }} />}
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <button title="Filter" style={iconToolbarButtonStyle}>
           <Filter size={16} />
         </button>
@@ -860,7 +983,7 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
       </div>
 
       {/* Close context menu on click outside */}
-      {contextMenu && (
+      {(contextMenu || showLayoutMenu) && (
         <div
           style={{
             position: 'fixed',
@@ -870,7 +993,7 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
             bottom: 0,
             zIndex: 999
           }}
-          onClick={() => setContextMenu(null)}
+          onClick={() => { setContextMenu(null); setShowLayoutMenu(false); }}
         />
       )}
 

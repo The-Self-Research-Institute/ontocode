@@ -16,7 +16,9 @@ import org.eclipse.rdf4j.rio.helpers.AbstractRDFHandler;
 import org.eclipse.rdf4j.rio.helpers.BasicParserSettings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cache.CacheManager;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.ImportOptions;
 
@@ -53,6 +55,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public class GraphDBDatasetService {
     
     private static final Logger log = LoggerFactory.getLogger(GraphDBDatasetService.class);
+    private static final Logger sparqlLog = LoggerFactory.getLogger("SPARQL");
     
     @Value("${graphdb.url:http://localhost:7200}")
     private String graphdbUrl;
@@ -65,6 +68,9 @@ public class GraphDBDatasetService {
     
     @Value("${graphdb.import.dir:/opt/graphdb-import}")
     private String graphdbImportDir;
+    
+    @Autowired(required = false)
+    private CacheManager cacheManager;
     
     // Shared repository connection
     private Repository repository;
@@ -212,7 +218,7 @@ public class GraphDBDatasetService {
      */
     public String getGraphUri(String projectId) {
         return graphUriCache.computeIfAbsent(projectId, 
-            id -> "http://ontocode.org/project/" + id);
+            id -> "http://ontocode.org/project/" + java.net.URLEncoder.encode(id, java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20"));
     }
     
     /**
@@ -335,8 +341,10 @@ public class GraphDBDatasetService {
     public TupleQueryResult execSelect(String projectId, String sparqlQuery, boolean includeInferred) {
         Repository repo = getRepository();
         String graphUri = getGraphUri(projectId);
+        long totalStart = System.nanoTime();
         
         try (RepositoryConnection conn = repo.getConnection()) {
+            long connMs = (System.nanoTime() - totalStart) / 1_000_000;
             
             // Inject FROM clause if not present
             if (!sparqlQuery.toUpperCase().contains("FROM")) {
@@ -344,11 +352,13 @@ public class GraphDBDatasetService {
                     buildFromClause(conn, projectId) + " WHERE");
             }
             
-            log.info("[GRAPHDB] 📡 EXECUTING SELECT QUERY");
-            log.info("[GRAPHDB] Project: {}", projectId);
-            log.info("[GRAPHDB] Graph URI: {}", graphUri);
+            // Extract query type for logging (first SELECT/ASK/CONSTRUCT keyword)
+            String queryType = extractQueryType(sparqlQuery);
+            
+            log.info("[GRAPHDB] EXECUTING {} project={} graph={} connTime={}ms", queryType, projectId, graphUri, connMs);
             log.debug("[GRAPHDB] Query: {}", sparqlQuery);
             
+            long queryStart = System.nanoTime();
             TupleQuery query = conn.prepareTupleQuery(sparqlQuery);
             query.setIncludeInferred(includeInferred);
             query.setMaxExecutionTime(300); // 5-minute timeout to prevent indefinite hangs            
@@ -361,8 +371,21 @@ public class GraphDBDatasetService {
                     results.add(result.next());
                 }
             }
+            long queryMs = (System.nanoTime() - queryStart) / 1_000_000;
+            long totalMs = (System.nanoTime() - totalStart) / 1_000_000;
             
-            log.info("[GRAPHDB] ✅ Query completed, retrieved {} results from GraphDB", results.size());
+            // Log to dedicated SPARQL logger
+            sparqlLog.info("[SPARQL] {} project={} results={} queryTime={}ms totalTime={}ms connTime={}ms",
+                    queryType, projectId, results.size(), queryMs, totalMs, connMs);
+            
+            if (queryMs > 1000) {
+                sparqlLog.warn("[SPARQL_SLOW] {} project={} took {}ms results={} query={}",
+                        queryType, projectId, queryMs, results.size(),
+                        sparqlQuery.replaceAll("\\s+", " ").substring(0, Math.min(200, sparqlQuery.length())));
+            }
+            
+            log.info("[GRAPHDB] {} completed: {} results in {}ms (conn={}ms, query={}ms)",
+                    queryType, results.size(), totalMs, connMs, queryMs);
             
             // Diagnostic: If no results, check if graphs have any data at all
             if (results.isEmpty()) {
@@ -373,11 +396,11 @@ public class GraphDBDatasetService {
                         long gSize = countGraphTriplesSparql(conn, g);
                         totalSize += gSize;
                         if (gSize > 0) {
-                            log.warn("[GRAPHDB] ⚠️ Query returned 0 results. Graph {} contains {} triples.", g, gSize);
+                            log.warn("[GRAPHDB] Query returned 0 results. Graph {} contains {} triples.", g, gSize);
                         }
                     }
                     if (totalSize == 0) {
-                        log.error("[GRAPHDB] ❌ All graphs for project {} are EMPTY! Data may not have been loaded or committed. Graphs checked: {}", projectId, allGraphs);
+                        log.error("[GRAPHDB] All graphs for project {} are EMPTY!", projectId);
                     }
                 } catch (Exception diagEx) {
                     log.warn("[GRAPHDB] Could not check graph size: {}", diagEx.getMessage());
@@ -388,7 +411,9 @@ public class GraphDBDatasetService {
             return new SimpleTupleQueryResult(bindingNames, results);
             
         } catch (Exception e) {
-            log.error("[GRAPHDB] ❌ SELECT query failed for project: {}", projectId, e);
+            long totalMs = (System.nanoTime() - totalStart) / 1_000_000;
+            log.error("[GRAPHDB] SELECT failed for project {} after {}ms: {}", projectId, totalMs, e.getMessage());
+            sparqlLog.error("[SPARQL_ERROR] project={} duration={}ms error={}", projectId, totalMs, e.getMessage());
             throw new RuntimeException("SPARQL query execution failed", e);
         }
     }
@@ -497,20 +522,16 @@ public class GraphDBDatasetService {
     public void execUpdate(String projectId, String sparqlUpdate) {
         Repository repo = getRepository();
         String graphUri = getGraphUri(projectId);
+        long totalStart = System.nanoTime();
         
         try (RepositoryConnection conn = repo.getConnection()) {
+            long connMs = elapsedMillis(totalStart);
             
-            log.info("[GRAPHDB] ========== EXECUTING UPDATE ==========");
-            log.info("[GRAPHDB] Project: {}", projectId);
-            log.info("[GRAPHDB] Graph URI: {}", graphUri);
-            log.info("[GRAPHDB] Original SPARQL:");
-            log.info("{}", sparqlUpdate);
+            log.info("[GRAPHDB] EXECUTING UPDATE project={} graph={} connTime={}ms", projectId, graphUri, connMs);
+            log.debug("[GRAPHDB] Update SPARQL: {}", sparqlUpdate);
             
             // Inject graph context properly
             String graphAwareUpdate = injectGraphContext(sparqlUpdate, graphUri);
-            
-            log.info("[GRAPHDB] Graph-aware SPARQL:");
-            log.info("{}", graphAwareUpdate);
             
             // Explicitly manage transaction for immediate visibility
             boolean autoCommit = conn.isAutoCommit();
@@ -523,28 +544,39 @@ public class GraphDBDatasetService {
                 Update update = conn.prepareUpdate(graphAwareUpdate);
                 update.execute();
                 long updateExecMs = elapsedMillis(updateExecStart);
-                log.info("[TIMING] execUpdate execution for project {}: {} ms", projectId, updateExecMs);
                 
                 // Explicitly commit for immediate visibility
+                long commitMs = 0;
                 if (autoCommit) {
                     long commitStart = System.nanoTime();
                     conn.commit();
-                    log.info("[GRAPHDB] ✅ Transaction committed in {} ms", elapsedMillis(commitStart));
+                    commitMs = elapsedMillis(commitStart);
                 }
                 
-                log.info("[GRAPHDB] ✅ UPDATE executed successfully in {} ms (total incl. commit)", elapsedMillis(updateExecStart));
+                long totalMs = elapsedMillis(totalStart);
+                sparqlLog.info("[SPARQL] UPDATE project={} execTime={}ms commitTime={}ms totalTime={}ms connTime={}ms",
+                        projectId, updateExecMs, commitMs, totalMs, connMs);
+                log.info("[GRAPHDB] UPDATE completed: execTime={}ms commitTime={}ms totalTime={}ms",
+                        updateExecMs, commitMs, totalMs);
+                
+                if (totalMs > 1000) {
+                    sparqlLog.warn("[SPARQL_SLOW] UPDATE project={} took {}ms query={}",
+                            projectId, totalMs,
+                            sparqlUpdate.replaceAll("\\s+", " ").substring(0, Math.min(200, sparqlUpdate.length())));
+                }
                 
             } catch (Exception e) {
                 if (autoCommit) {
                     conn.rollback();
-                    log.error("[GRAPHDB] ⚠️ Transaction rolled back");
+                    log.error("[GRAPHDB] Transaction rolled back for project {}", projectId);
                 }
                 throw e;
             }
             
         } catch (Exception e) {
-            log.error("[GRAPHDB] ❌ UPDATE failed for project: {}", projectId, e);
-            log.error("[GRAPHDB] Query was: {}", sparqlUpdate);
+            long totalMs = elapsedMillis(totalStart);
+            log.error("[GRAPHDB] UPDATE failed for project {} after {}ms: {}", projectId, totalMs, e.getMessage());
+            sparqlLog.error("[SPARQL_ERROR] UPDATE project={} duration={}ms error={}", projectId, totalMs, e.getMessage());
             throw new RuntimeException("SPARQL UPDATE failed: " + e.getMessage(), e);
         }
     }
@@ -1750,6 +1782,24 @@ public class GraphDBDatasetService {
         return (System.nanoTime() - startNanos) / 1_000_000;
     }
 
+    private String extractQueryType(String sparql) {
+        if (sparql == null) return "UNKNOWN";
+        String trimmed = sparql.stripLeading().toUpperCase();
+        // Skip PREFIX declarations
+        while (trimmed.startsWith("PREFIX")) {
+            int nl = trimmed.indexOf('\n');
+            if (nl < 0) break;
+            trimmed = trimmed.substring(nl + 1).stripLeading();
+        }
+        if (trimmed.startsWith("SELECT")) return "SELECT";
+        if (trimmed.startsWith("ASK")) return "ASK";
+        if (trimmed.startsWith("CONSTRUCT")) return "CONSTRUCT";
+        if (trimmed.startsWith("DESCRIBE")) return "DESCRIBE";
+        if (trimmed.startsWith("INSERT")) return "INSERT";
+        if (trimmed.startsWith("DELETE")) return "DELETE";
+        return "QUERY";
+    }
+
     private int resolveBatchSize(long fileSizeBytes) {
         // Larger batches reduce HTTP round-trip overhead.
         // Each batch is one HTTP POST to GraphDB's transaction endpoint.
@@ -2146,11 +2196,21 @@ public class GraphDBDatasetService {
     }
 
     /**
-     * Invalidate the per-project partition cache.
+     * Invalidate the per-project partition cache and Spring-managed caches.
      * Called after successful imports to ensure new graphs are discovered.
      */
     private void invalidateContextCaches(String projectId) {
         partitionGraphCache.remove(projectId);
+        // Evict Spring-managed Caffeine caches that depend on ontology data
+        if (cacheManager != null) {
+            for (String cacheName : List.of("topLevelClasses", "classChildren", "allClasses",
+                    "ontologyProperties", "ontologyIndividuals", "classInstanceCounts",
+                    "classDetails", "classInstances", "individualCount", "debugInfo", "graphCache")) {
+                var cache = cacheManager.getCache(cacheName);
+                if (cache != null) cache.clear();
+            }
+            log.info("[CACHE] Evicted all Spring caches after import for project {}", projectId);
+        }
         log.info("[CACHE] Invalidated partition cache for project {}", projectId);
     }
 
@@ -2460,13 +2520,20 @@ public class GraphDBDatasetService {
     private String sanitizeIriString(String iri) {
         if (iri == null || iri.isEmpty()) return null;
 
+        // Reject IRIs that are only whitespace — GraphDB throws InvalidValueException
+        if (iri.isBlank()) {
+            log.warn("[IRI-SANITIZE] Skipping blank IRI");
+            return "urn:invalid:blank-iri";
+        }
+
         // Fast check: scan for any character that needs encoding.
         // Most IRIs are clean ASCII — exit as early as possible.
         final int len = iri.length();
         for (int i = 0; i < len; i++) {
             char c = iri.charAt(i);
-            // Ordered by likelihood: most common bad chars first
-            if (c > 127 || c == ' ' || c == '[' || c == ']' || c == '{' || c == '}'
+            // Control characters (0x00-0x1F, 0x7F) cause GraphDB InvalidValueException
+            if (c < 0x20 || c == 0x7F
+                    || c > 127 || c == ' ' || c == '[' || c == ']' || c == '{' || c == '}'
                     || c == '|' || c == '\\' || c == '^' || c == '`'
                     || c == '(' || c == ')') {
                 // Found a bad char — do encoding starting from this position
@@ -2483,7 +2550,13 @@ public class GraphDBDatasetService {
         sb.append(iri, 0, start); // copy clean prefix
         for (int i = start; i < len; i++) {
             char c = iri.charAt(i);
-            if (c == '[') sb.append("%5B");
+            // Control characters (0x00-0x1F, 0x7F) — GraphDB rejects these with InvalidValueException
+            if (c < 0x20 || c == 0x7F) {
+                sb.append('%');
+                sb.append(Character.toUpperCase(Character.forDigit((c >> 4) & 0xF, 16)));
+                sb.append(Character.toUpperCase(Character.forDigit(c & 0xF, 16)));
+            }
+            else if (c == '[') sb.append("%5B");
             else if (c == ']') sb.append("%5D");
             else if (c == '{') sb.append("%7B");
             else if (c == '}') sb.append("%7D");

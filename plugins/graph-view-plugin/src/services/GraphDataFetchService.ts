@@ -175,9 +175,9 @@ export class GraphDataFetchService {
       console.warn('[GraphDataFetchService] ⚠️ Bulk fetch error, falling back:', error);
     }
     
-    // Fallback: fetch only top-level classes
+    // Fallback: fetch top-level classes and then recursively fetch their children
     const topLevelUrl = `${this.apiBaseUrl}/api/ontology/classes/top-level/${this.ontologyId}?limit=10000`;
-    console.log('[GraphDataFetchService] 📦 Falling back to top-level fetch from:', topLevelUrl);
+    console.log('[GraphDataFetchService] 📦 Falling back to top-level + recursive children fetch');
     
     try {
       const response = await fetch(topLevelUrl, { headers: this.headers });
@@ -189,10 +189,39 @@ export class GraphDataFetchService {
       
       const data = await response.json();
       const topLevelClasses = data.success && data.classes ? data.classes : [];
-      console.log('[GraphDataFetchService] ✅ Top-level classes extracted:', topLevelClasses.length);
-      console.log('[GraphDataFetchService] ⚠️ NOTE: Showing top-level classes only (bulk endpoint unavailable)');
+      console.log('[GraphDataFetchService] ✅ Top-level classes:', topLevelClasses.length);
       
-      return topLevelClasses;
+      // Recursively fetch children for each top-level class (unlimited depth with cycle protection)
+      const allClasses = [...topLevelClasses];
+      const visited = new Set<string>();
+      const fetchChildren = async (parentIri: string): Promise<any[]> => {
+        if (visited.has(parentIri)) return [];
+        visited.add(parentIri);
+        try {
+          const childUrl = `${this.apiBaseUrl}/api/ontology/classes/children/${this.ontologyId}?parentIri=${encodeURIComponent(parentIri)}&limit=1000`;
+          const childResp = await fetch(childUrl, { headers: this.headers });
+          if (!childResp.ok) return [];
+          const childData = await childResp.json();
+          const children = Array.isArray(childData) ? childData : (childData.children || childData.classes || []);
+          for (const child of children) {
+            child.parent = parentIri;
+          }
+          const grandChildren = await Promise.all(
+            children.map((c: any) => fetchChildren(c.id || c.iri))
+          );
+          return [...children, ...grandChildren.flat()];
+        } catch {
+          return [];
+        }
+      };
+
+      const childResults = await Promise.all(
+        topLevelClasses.map((cls: any) => fetchChildren(cls.id || cls.iri))
+      );
+      allClasses.push(...childResults.flat());
+      
+      console.log('[GraphDataFetchService] ✅ Total classes (with children):', allClasses.length);
+      return allClasses;
     } catch (error) {
       console.error('[GraphDataFetchService] Error fetching classes:', error);
       return [];

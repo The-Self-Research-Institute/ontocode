@@ -35,6 +35,8 @@ import self.research.ontology.swrl.dto.RuleStatistics;
 public class SwrlEngineService {
 
     private static final Logger logger = LoggerFactory.getLogger(SwrlEngineService.class);
+    private static final Logger perfLog = LoggerFactory.getLogger("PERFORMANCE");
+    private static final Logger engineLog = LoggerFactory.getLogger("SWRL_ENGINE");
 
     @Autowired
     private OntologyClientService ontologyClient;
@@ -90,17 +92,75 @@ public class SwrlEngineService {
     }
 
     public ValidationResult validateRule(String projectId, String ruleText) {
+        long startTime = System.currentTimeMillis();
+        engineLog.info("[VALIDATE] Starting validation project={} ruleLength={}", projectId, ruleText.length());
         Timer.Sample sample = meterRegistry != null ? Timer.start(meterRegistry) : null;
         
         try {
+            long fetchStart = System.currentTimeMillis();
             OWLOntology ontology = ontologyClient.fetchOntology(projectId);
+            long fetchDuration = System.currentTimeMillis() - fetchStart;
+            engineLog.info("[VALIDATE] Ontology fetched in {}ms project={}", fetchDuration, projectId);
+            
+            long engineStart = System.currentTimeMillis();
             SWRLRuleEngine engine = getOrCreateEngine(projectId, ontology);
+            long engineDuration = System.currentTimeMillis() - engineStart;
+            engineLog.info("[VALIDATE] Engine obtained in {}ms project={} (cached={})", 
+                    engineDuration, projectId, engineDuration < 10 ? "yes" : "no");
             
             String tempName = "temp_validation_" + System.currentTimeMillis();
             engine.createSWRLRule(tempName, ruleText);
-            engine.deleteSWRLRule(tempName);
+            
+            // Semantic validation: attempt inference to catch built-in binding errors
+            // (e.g., swrlb:lessThanOrEqual with unbound arguments)
+            try {
+                engine.infer();
+            } catch (Exception inferEx) {
+                engine.deleteSWRLRule(tempName);
+                
+                String errorMsg = inferEx.getMessage() != null ? inferEx.getMessage() : inferEx.getClass().getSimpleName();
+                
+                // Check if this is a built-in binding error
+                if (inferEx instanceof SWRLBuiltInException
+                    || errorMsg.contains("built-in")
+                    || errorMsg.contains("do not support argument binding")) {
+                    
+                    logger.warn("SWRL built-in validation error for project {}: {}", projectId, errorMsg);
+                    
+                    if (meterRegistry != null) {
+                        meterRegistry.counter("swrl.validation.errors",
+                            "projectId", projectId,
+                            "type", "builtin").increment();
+                    }
+                    
+                    List<String> suggestions = new ArrayList<>();
+                    if (errorMsg.contains("comparison built-ins do not support argument binding") 
+                        || errorMsg.contains("do not support argument binding")) {
+                        suggestions.add("Comparison built-ins (swrlb:lessThan, swrlb:greaterThan, swrlb:lessThanOrEqual, etc.) require all arguments to be already bound.");
+                        suggestions.add("Ensure variables are bound by class or property atoms before using them in comparison built-ins.");
+                        suggestions.add("Example: Person(?p) ^ hasAge(?p, ?age) ^ swrlb:lessThanOrEqual(?age, 25) -> Young(?p)");
+                    }
+                    
+                    return new ValidationResult(false,
+                        "Built-in function error: " + errorMsg,
+                        suggestions);
+                }
+                
+                // Re-throw non-built-in errors
+                throw inferEx;
+            } finally {
+                // Cleanup: delete temp rule to restore engine state
+                try {
+                    engine.deleteSWRLRule(tempName);
+                } catch (Exception cleanupEx) {
+                    logger.debug("Cleanup after validation: {}", cleanupEx.getMessage());
+                }
+            }
             
             logger.info("Rule validation successful for project: {}", projectId);
+            long totalDuration = System.currentTimeMillis() - startTime;
+            perfLog.info("[PERF] SWRL_VALIDATE project={} status=success duration={}ms", projectId, totalDuration);
+            engineLog.info("[VALIDATE] Completed successfully in {}ms project={}", totalDuration, projectId);
             
             if (sample != null) {
                 sample.stop(Timer.builder("swrl.validation")
@@ -112,7 +172,10 @@ public class SwrlEngineService {
             return new ValidationResult(true, null, Collections.emptyList());
             
         } catch (SWRLParseException e) {
+            long totalDuration = System.currentTimeMillis() - startTime;
             logger.warn("SWRL parse error for project {}: {}", projectId, e.getMessage());
+            perfLog.info("[PERF] SWRL_VALIDATE project={} status=parse_error duration={}ms", projectId, totalDuration);
+            engineLog.warn("[VALIDATE] Parse error in {}ms project={}: {}", totalDuration, projectId, e.getMessage());
             
             if (meterRegistry != null) {
                 meterRegistry.counter("swrl.validation.errors",
@@ -125,7 +188,10 @@ public class SwrlEngineService {
                 generateEnhancedSuggestions(ruleText, e));
                 
         } catch (Exception e) {
+            long totalDuration = System.currentTimeMillis() - startTime;
             logger.error("Validation error for project {}", projectId, e);
+            perfLog.info("[PERF] SWRL_VALIDATE project={} status=error duration={}ms error={}", projectId, totalDuration, e.getMessage());
+            engineLog.error("[VALIDATE] Error in {}ms project={}: {}", totalDuration, projectId, e.getMessage());
             
             if (meterRegistry != null) {
                 meterRegistry.counter("swrl.validation.errors",
@@ -141,6 +207,8 @@ public class SwrlEngineService {
 
     public SwrlRule createRule(String projectId, String ruleName, String ruleText, 
                               String comment, String category) {
+        long startTime = System.currentTimeMillis();
+        engineLog.info("[CREATE_RULE] Starting project={} ruleName={}", projectId, ruleName);
         try {
             // Check for duplicate rule name
             if (ruleRepository.existsByProjectIdAndRuleName(projectId, ruleName)) {
@@ -171,10 +239,15 @@ public class SwrlEngineService {
                     "projectId", projectId).increment();
             }
             
+            long totalDuration = System.currentTimeMillis() - startTime;
+            perfLog.info("[PERF] SWRL_CREATE_RULE project={} rule={} duration={}ms", projectId, ruleName, totalDuration);
+            engineLog.info("[CREATE_RULE] Completed in {}ms project={} rule={}", totalDuration, projectId, ruleName);
             return rule;
 
         } catch (Exception e) {
-            logger.error("Failed to create rule {} for project {}", ruleName, projectId, e);
+            long totalDuration = System.currentTimeMillis() - startTime;
+            logger.error("Failed to create rule {} for project {} after {}ms", ruleName, projectId, totalDuration, e);
+            perfLog.info("[PERF] SWRL_CREATE_RULE project={} rule={} status=error duration={}ms", projectId, ruleName, totalDuration);
             throw new RuntimeException("Failed to create rule: " + e.getMessage(), e);
         }
     }
@@ -185,11 +258,19 @@ public class SwrlEngineService {
         long startTime = System.currentTimeMillis();
 
         try {
+            long fetchStart = System.currentTimeMillis();
             OWLOntology ontology = ontologyClient.fetchOntology(projectId);
+            long fetchDuration = System.currentTimeMillis() - fetchStart;
+            engineLog.info("[EXECUTE] Ontology fetched in {}ms project={}", fetchDuration, projectId);
+
+            long engineStart = System.currentTimeMillis();
             SWRLRuleEngine engine = getOrCreateEngine(projectId, ontology);
+            long engineDuration = System.currentTimeMillis() - engineStart;
+            engineLog.info("[EXECUTE] Engine obtained in {}ms project={}", engineDuration, projectId);
 
             List<SwrlRule> enabledRules = ruleRepository.findByProjectIdAndEnabled(projectId, true);
             logger.info("Executing {} enabled rules for project: {}", enabledRules.size(), projectId);
+            engineLog.info("[EXECUTE] {} rules to execute project={}", enabledRules.size(), projectId);
 
             // Clear existing rules from engine
             engine.getSWRLRules().forEach(rule -> engine.deleteSWRLRule(rule.getRuleName()));
@@ -245,10 +326,17 @@ public class SwrlEngineService {
             );
             result.setExecutedRuleNames(executedRuleNames);
             result.setExecutionMode("all");
+            perfLog.info("[PERF] SWRL_EXECUTE project={} rules={} inferred={} duration={}ms status=success",
+                    projectId, enabledRules.size(), inferredAxioms.size(), executionTime);
+            engineLog.info("[EXECUTE] Completed: {} rules, {} inferred axioms in {}ms project={}",
+                    enabledRules.size(), inferredAxioms.size(), executionTime, projectId);
             return result;
 
         } catch (TimeoutException e) {
-            logger.error("Rule execution timed out for project: {}", projectId);
+            long totalDuration = System.currentTimeMillis() - startTime;
+            logger.error("Rule execution timed out for project: {} after {}ms", projectId, totalDuration);
+            perfLog.info("[PERF] SWRL_EXECUTE project={} status=timeout duration={}ms", projectId, totalDuration);
+            engineLog.error("[EXECUTE] Timeout after {}ms project={}", totalDuration, projectId);
             
             if (meterRegistry != null) {
                 meterRegistry.counter("swrl.execution.errors",
@@ -260,7 +348,10 @@ public class SwrlEngineService {
                 "Execution timed out after " + executionTimeoutSeconds + " seconds");
                 
         } catch (SWRLBuiltInException e) {
-            logger.error("SWRL built-in error for project {}", projectId, e);
+            long totalDuration = System.currentTimeMillis() - startTime;
+            logger.error("SWRL built-in error for project {} after {}ms", projectId, totalDuration, e);
+            perfLog.info("[PERF] SWRL_EXECUTE project={} status=builtin_error duration={}ms", projectId, totalDuration);
+            engineLog.error("[EXECUTE] Built-in error in {}ms project={}: {}", totalDuration, projectId, e.getMessage());
             
             if (meterRegistry != null) {
                 meterRegistry.counter("swrl.execution.errors",
@@ -272,7 +363,10 @@ public class SwrlEngineService {
                 "Built-in function error: " + e.getMessage());
                 
         } catch (Exception e) {
-            logger.error("Execution error for project {}", projectId, e);
+            long totalDuration = System.currentTimeMillis() - startTime;
+            logger.error("Execution error for project {} after {}ms", projectId, totalDuration, e);
+            perfLog.info("[PERF] SWRL_EXECUTE project={} status=error duration={}ms error={}", projectId, totalDuration, e.getMessage());
+            engineLog.error("[EXECUTE] Error in {}ms project={}: {}", totalDuration, projectId, e.getMessage());
             
             if (meterRegistry != null) {
                 meterRegistry.counter("swrl.execution.errors",

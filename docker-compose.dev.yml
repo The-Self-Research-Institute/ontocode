@@ -16,8 +16,13 @@ services:
       MONGO_INITDB_DATABASE: ${MONGODB_DATABASE:-ontocode}
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-admin}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-changeme123}
+    command: ["mongod", "--wiredTigerCacheSizeGB", "0.3", "--auth"]
     networks:
       - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 768m
     healthcheck:
       test: echo 'db.runCommand("ping").ok' | mongosh "mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@localhost:27017/admin" --quiet
       interval: 10s
@@ -36,9 +41,9 @@ services:
     ports:
       - "7200:7200"
     environment:
-      GDB_HEAP_SIZE: 6g
+      GDB_HEAP_SIZE: 2560m
       GDB_LICENSE_PATH: /opt/graphdb
-      GDB_JAVA_OPTS: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+ParallelRefProcEnabled -XX:InitiatingHeapOccupancyPercent=45 -XX:G1HeapRegionSize=16m"
+      GDB_JAVA_OPTS: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+ParallelRefProcEnabled -XX:InitiatingHeapOccupancyPercent=45 -XX:G1HeapRegionSize=8m -DentityExpansionLimit=100000000 -Djdk.xml.entityExpansionLimit=100000000"
     volumes:
       - graphdb-data:/opt/graphdb/home/data
     networks:
@@ -46,7 +51,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 8g
+          memory: 3g
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:7200/rest/repositories"]
       interval: 15s
@@ -133,11 +138,16 @@ services:
       JWT_SECRET: ${JWT_SECRET:-b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==}
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      JAVA_OPTS: -Xms128m -Xmx256m -XX:+UseG1GC
     depends_on:
       mongo:
         condition: service_healthy
     networks:
       - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 320m
     healthcheck:
       test: ["CMD-SHELL", "pgrep java || exit 1"]
       interval: 15s
@@ -160,11 +170,16 @@ services:
       JWT_SECRET: ${JWT_SECRET:-b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==}
       AUTH_SERVICE_URL: http://auth:8086
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      JAVA_OPTS: -Xms128m -Xmx384m -XX:+UseG1GC
     depends_on:
       auth:
         condition: service_healthy
     networks:
       - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     healthcheck:
       test: ["CMD-SHELL", "pgrep java || exit 1"]
       interval: 15s
@@ -188,6 +203,14 @@ services:
       GRAPHDB_REPOSITORY: ${GRAPHDB_REPOSITORY:-ontocode}
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      LOG_DIR: /app/logs
+      JAVA_OPTS: >-
+        -Xms512m -Xmx1200m
+        -XX:+UseG1GC -XX:MaxGCPauseMillis=200
+        -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof
+        -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=3,filesize=20m
+        -DentityExpansionLimit=100000000
+        -Djdk.xml.entityExpansionLimit=100000000
       EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
       JIRA_ENABLED: ${JIRA_ENABLED:-true}
       JIRA_CLOUD_URL: ${JIRA_CLOUD_URL:-https://coretopia.atlassian.net}
@@ -196,6 +219,8 @@ services:
       JIRA_PROJECT_KEY: ${JIRA_PROJECT_KEY:-TSRI}
       JIRA_EPIC_KEY: ${JIRA_EPIC_KEY:-TSRI-103}
       JIRA_ISSUE_TYPE: ${JIRA_ISSUE_TYPE:-Task}
+    volumes:
+      - editor-logs:/app/logs
     depends_on:
       mongo:
         condition: service_healthy
@@ -203,6 +228,10 @@ services:
         condition: service_healthy
     networks:
       - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 1536m
     healthcheck:
       test: ["CMD-SHELL", "pgrep java || exit 1"]
       interval: 15s
@@ -227,6 +256,14 @@ services:
       ONTOLOGY_EDITOR_URL: http://owl-editor:8083
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      LOG_DIR: /app/logs
+      JAVA_OPTS: >-
+        -Xms128m -Xmx384m
+        -XX:+UseG1GC -XX:MaxGCPauseMillis=200
+        -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof
+        -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=2,filesize=10m
+    volumes:
+      - swrl-logs:/app/logs
     depends_on:
       mongo:
         condition: service_healthy
@@ -234,6 +271,10 @@ services:
         condition: service_healthy
     networks:
       - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     healthcheck:
       test: ["CMD-SHELL", "pgrep java || exit 1"]
       interval: 15s
@@ -258,6 +299,7 @@ services:
       ONTOLOGY_EDITOR_URL: http://owl-editor:8083
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      JAVA_OPTS: -Xms128m -Xmx256m -XX:+UseG1GC
     depends_on:
       mongo:
         condition: service_healthy
@@ -265,6 +307,10 @@ services:
         condition: service_healthy
     networks:
       - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 320m
     healthcheck:
       test: ["CMD-SHELL", "pgrep java || exit 1"]
       interval: 15s
@@ -310,6 +356,10 @@ services:
       # OntoCode API endpoints
       ONTOCODE_API_URL: http://gateway:80
       AUTH_SERVICE_URL: http://auth:8086
+    deploy:
+      resources:
+        limits:
+          memory: 256m
     depends_on:
       gateway:
         condition: service_healthy
@@ -318,7 +368,7 @@ services:
     networks:
       - ontology-net
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://0.0.0.0:3000/"]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -327,6 +377,8 @@ services:
 volumes:
   mongo-data:
   graphdb-data:
+  editor-logs:
+  swrl-logs:
 
 networks:
   ontology-net:

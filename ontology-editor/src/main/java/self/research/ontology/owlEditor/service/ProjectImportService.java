@@ -43,6 +43,8 @@ import java.util.concurrent.atomic.AtomicLong;
 public class ProjectImportService {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectImportService.class);
+    private static final Logger importLog = LoggerFactory.getLogger("IMPORT");
+    private static final Logger perfLog = LoggerFactory.getLogger("PERFORMANCE");
 
     // Prevent concurrent imports for the same project (which cause overlapping progress threads and GraphDB clears)
     private final Map<String, AtomicBoolean> importInProgress = new ConcurrentHashMap<>();
@@ -85,6 +87,7 @@ public class ProjectImportService {
     public void submitImport(String projectId, Path owlFile, String ownerEmail, ImportOptions options) {
         String filename = owlFile.getFileName().toString();
 
+        importLog.info("[SUBMIT] project={} file={} size={}", projectId, filename, owlFile.toFile().length());
         log.info("[Import] Submitting import for project {}: {}", projectId, filename);
 
         // Write PROCESSING status synchronously BEFORE enqueueing so that any
@@ -101,6 +104,43 @@ public class ProjectImportService {
                 .filter(f -> f != null && !f.isBlank())
                 .orElse(filename);
         metadataService.writeStatus(projectId, ProjectStatus.processing(displayFilename));
+
+        // Fast path for small files: skip queue overhead when no concurrent imports running
+        long fileSizeBytes;
+        try {
+            fileSizeBytes = java.nio.file.Files.size(owlFile);
+        } catch (Exception e) {
+            fileSizeBytes = -1;
+        }
+        boolean isSmallFile = fileSizeBytes >= 0 && fileSizeBytes < 100 * 1024; // < 100KB
+        
+        if (isSmallFile && queueManager.canProcess() && queueManager.isEmpty()) {
+            log.info("[Import] Fast path: small file ({} bytes), processing immediately", fileSizeBytes);
+            final long fSize = fileSizeBytes;
+            owlParsingExecutor.execute(() -> {
+                ImportQueueItem item = ImportQueueItem.builder()
+                        .projectId(projectId)
+                        .filename(filename)
+                        .ownerEmail(ownerEmail)
+                        .owlFile(owlFile)
+                        .importMode(options.getMode())
+                        .partitionStrategy(options.getPartitionStrategy())
+                        .fileSizeBytes(fSize)
+                        .status(ImportQueueItem.ImportStatus.PROCESSING)
+                        .queuedAt(java.time.Instant.now())
+                        .startedAt(java.time.Instant.now())
+                        .build();
+                long startTime = System.currentTimeMillis();
+                try {
+                    runImport(item);
+                    long duration = System.currentTimeMillis() - startTime;
+                    log.info("[Import] Fast path completed in {} ms for project {}", duration, projectId);
+                } catch (Exception e) {
+                    log.error("[Import] Fast path failed for project {}", projectId, e);
+                }
+            });
+            return;
+        }
 
         // Add to queue
         queueManager.enqueue(projectId, filename, ownerEmail, owlFile, options);
@@ -195,6 +235,7 @@ public class ProjectImportService {
         }
 
         long importStart = System.nanoTime();
+        importLog.info("[START] project={} file={}", projectId, owlFile.getFileName());
         String stage = "initialization";
         String filename = metadataService.readStatus(projectId)
                 .map(ProjectStatus::filename)
@@ -312,7 +353,7 @@ public class ProjectImportService {
                     if (totalBytes <= 0) return;
                     int percent = (int) Math.min(99, Math.floor((bytesRead * 100.0) / totalBytes));
                     lastProgressPercent.set(percent);
-                    String message = String.format("Importing... (%d%%) | Server-side import", percent);
+                    String message = String.format("Importing... (%d%%)", percent);
                     sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
                             "PROCESSING", message, filename, Map.of("progress", percent, "stage", "graphdb-loading", "message", message));
                     metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
@@ -331,7 +372,7 @@ public class ProjectImportService {
                         if (totalBytes <= 0) return;
                         int percent = (int) Math.min(99, Math.floor((bytesRead * 100.0) / totalBytes));
                         lastProgressPercent.set(percent);
-                        String message = String.format("Importing... (%d%%) | Direct upload", percent);
+                        String message = String.format("Importing... (%d%%)", percent);
                         sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
                                 "PROCESSING", message, filename, Map.of("progress", percent, "stage", "graphdb-loading", "message", message));
                         metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
@@ -478,6 +519,8 @@ public class ProjectImportService {
             
             log.info("✅ [Import {}] Marked as COMPLETED after {} ms. Metadata indexing continues in background.", 
                     projectId, durationMs);
+            importLog.info("[COMPLETED] project={} duration={}ms file={}", projectId, durationMs, filename);
+            perfLog.info("[IMPORT] project={} duration={}ms file={}", projectId, durationMs, filename);
 
             // Compute metadata asynchronously in background (non-blocking)
             stage = "indexing";
@@ -543,6 +586,7 @@ public class ProjectImportService {
 
         } catch (Exception e) {
             log.error("Import failed for {} while {}", projectId, stage, e);
+            importLog.error("[FAILED] project={} stage={} error={}", projectId, stage, e.getMessage());
             
             // Only set ERROR status if import wasn't already marked as COMPLETED
             // This prevents overwriting COMPLETED -> ERROR after IMPORT_COMPLETED was sent
@@ -752,7 +796,7 @@ public class ProjectImportService {
             String msg = t.getMessage();
             if (msg != null) {
                 String lower = msg.toLowerCase(Locale.ROOT);
-                // SAX well-formedness errors
+                // SAX well-formedness errors and GraphDB IRI validation errors
                 if (lower.contains("must be terminated") ||
                     lower.contains("end-tag") ||
                     lower.contains("end tag") ||
@@ -760,6 +804,8 @@ public class ProjectImportService {
                     lower.contains("premature end of file") ||
                     lower.contains("content is not allowed in prolog") ||
                     lower.contains("invalid xml") ||
+                    lower.contains("invalid iri") ||
+                    lower.contains("invalidvalueexception") ||
                     lower.contains("illegalstateexception") ||
                     lower.contains("illegal state")) {
                     return true;

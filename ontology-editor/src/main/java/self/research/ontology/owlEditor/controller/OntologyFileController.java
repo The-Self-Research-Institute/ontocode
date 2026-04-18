@@ -35,30 +35,34 @@ public class OntologyFileController {
      * GET /api/ontology-file/{projectId}
      */
     @GetMapping("/{projectId}")
-    public ResponseEntity<?> getOntologyFile(@PathVariable String projectId) {
+    public ResponseEntity<?> getOntologyFile(@PathVariable String projectId,
+                                             @RequestParam(required = false, defaultValue = "false") boolean forceExport) {
         try {
-            log.info("Serving ontology file for project: {}", projectId);
+            log.info("Serving ontology file for project: {} (forceExport={})", projectId, forceExport);
             
-            // Try current file first
-            Path currentFile = storageManager.projectDir(projectId).resolve("ontology.current.owl");
-            if (Files.exists(currentFile) && Files.isReadable(currentFile)) {
-                log.info("Found current ontology file: {}", currentFile);
-                Resource resource = new FileSystemResource(currentFile);
-                return ResponseEntity.ok()
-                    .contentType(MediaType.APPLICATION_XML)
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + projectId + ".owl\"")
-                    .body(resource);
-            }
-            
-            // Fallback to original file
-            Path originalFile = storageManager.projectDir(projectId).resolve("ontology.original.owl");
-            if (Files.exists(originalFile) && Files.isReadable(originalFile)) {
-                log.info("Found original ontology file: {}", originalFile);
-                Resource resource = new FileSystemResource(originalFile);
-                return ResponseEntity.ok()
-                    .contentType(MediaType.APPLICATION_XML)
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + projectId + ".owl\"")
-                    .body(resource);
+            // If forceExport requested, skip disk files and export fresh from GraphDB
+            if (!forceExport) {
+                // Try current file first
+                Path currentFile = storageManager.projectDir(projectId).resolve("ontology.current.owl");
+                if (Files.exists(currentFile) && Files.isReadable(currentFile)) {
+                    log.info("Found current ontology file: {}", currentFile);
+                    Resource resource = new FileSystemResource(currentFile);
+                    return ResponseEntity.ok()
+                        .contentType(MediaType.APPLICATION_XML)
+                        .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + projectId + ".owl\"")
+                        .body(resource);
+                }
+                
+                // Fallback to original file
+                Path originalFile = storageManager.projectDir(projectId).resolve("ontology.original.owl");
+                if (Files.exists(originalFile) && Files.isReadable(originalFile)) {
+                    log.info("Found original ontology file: {}", originalFile);
+                    Resource resource = new FileSystemResource(originalFile);
+                    return ResponseEntity.ok()
+                        .contentType(MediaType.APPLICATION_XML)
+                        .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + projectId + ".owl\"")
+                        .body(resource);
+                }
             }
             
             // Last resort: try to export from GraphDB

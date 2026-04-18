@@ -30,8 +30,8 @@ public class ImportQueueManager {
     private final LinkedList<ImportQueueItem> queue = new LinkedList<>();
     private final Map<String, ImportQueueItem> activeImports = new ConcurrentHashMap<>();
 
-    // Configuration
-    private static final int MAX_CONCURRENT_IMPORTS = 1; // Process one at a time to avoid GraphDB conflicts
+    // Configuration — keep at 1 on t3.large (2 vCPU / 8GB); increase on larger instances
+    private static final int MAX_CONCURRENT_IMPORTS = 1;
     private static final int MAX_RETRIES = 3; // Maximum retry attempts for failed imports
     private static final long RETRY_DELAY_MS = 10 * 1000; // 10 seconds delay before retry
 
@@ -111,7 +111,8 @@ public class ImportQueueManager {
     }
 
     /**
-     * Get next item from queue and mark as processing
+     * Get next item from queue and mark as processing.
+     * Skips items whose repository is already being imported (per-repo locking).
      */
     public synchronized ImportQueueItem dequeue() {
         long dequeueStart = System.nanoTime();
@@ -119,7 +120,21 @@ public class ImportQueueManager {
             return null;
         }
 
-        ImportQueueItem item = queue.removeFirst();
+        // Find first queued item whose project is not already being processed
+        ImportQueueItem item = null;
+        var it = queue.iterator();
+        while (it.hasNext()) {
+            ImportQueueItem candidate = it.next();
+            if (!activeImports.containsKey(candidate.getProjectId())) {
+                item = candidate;
+                it.remove();
+                break;
+            }
+        }
+        if (item == null) {
+            return null; // All queued items are for projects already being imported
+        }
+
         item.setStatus(ImportQueueItem.ImportStatus.PROCESSING);
         item.setStartedAt(Instant.now());
         item.setQueuePosition(0);
@@ -323,6 +338,13 @@ public class ImportQueueManager {
      */
     public synchronized boolean canProcess() {
         return activeImports.size() < MAX_CONCURRENT_IMPORTS;
+    }
+
+    /**
+     * Check if the queue is empty (no pending imports)
+     */
+    public synchronized boolean isEmpty() {
+        return queue.isEmpty() && activeImports.isEmpty();
     }
 
     // Private helper methods
