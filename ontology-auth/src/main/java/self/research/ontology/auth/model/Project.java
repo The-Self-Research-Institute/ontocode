@@ -154,17 +154,17 @@ public class Project {
     }
     
     public void removeMember(String userId) {
-        this.members.removeIf(m -> m.getUserId().equals(userId));
+        this.members.removeIf(m -> userId != null && userId.equals(m.getUserId()));
         this.updatedAt = LocalDateTime.now();
     }
     
     public boolean hasMember(String userId) {
-        return this.members.stream().anyMatch(m -> m.getUserId().equals(userId));
+        return this.members.stream().anyMatch(m -> userId != null && userId.equals(m.getUserId()));
     }
     
     public ProjectMember getMember(String userId) {
         return this.members.stream()
-            .filter(m -> m.getUserId().equals(userId))
+            .filter(m -> userId != null && userId.equals(m.getUserId()))
             .findFirst()
             .orElse(null);
     }
@@ -195,14 +195,25 @@ public class Project {
     
     public FileMetadataInfo getFile(String fileId) {
         return this.files.stream()
-            .filter(f -> f.getFileId().equals(fileId) && !"DELETED".equals(f.getStatus()))
+            .filter(f -> {
+                if (!f.getFileId().equals(fileId)) {
+                    return false;
+                }
+                // Exclude explicitly deleted files, but include files with null/empty status (backward compatibility)
+                String status = f.getStatus();
+                return !"DELETED".equals(status);
+            })
             .findFirst()
             .orElse(null);
     }
     
     public List<FileMetadataInfo> getActiveFiles() {
         return this.files.stream()
-            .filter(f -> "ACTIVE".equals(f.getStatus()))
+            .filter(f -> {
+                // Treat null or missing status as ACTIVE for backward compatibility
+                String status = f.getStatus();
+                return status == null || status.isEmpty() || "ACTIVE".equals(status);
+            })
             .toList();
     }
     

@@ -229,7 +229,7 @@ public class AuthController {
         // Don't set role on signup - will be set after deployment selection
         user.setRoles(new HashSet<>());
         
-        user.setEnabled(true); // Enable immediately for development (skip email verification)
+        user.setEnabled(false); // Require email verification
 
         // Generate verification token (expires in 24 hours)
         String verificationToken = UUID.randomUUID().toString();
@@ -238,32 +238,21 @@ public class AuthController {
 
         userRepository.save(user);
 
-        // Skip sending verification email for development
-        // try {
-        //     emailService.sendVerificationEmail(user.getEmail(), verificationToken);
-        // } catch (Exception e) {
-        //     log.error("Failed to send verification email", e);
-        //     // Don't fail registration if email fails
-        // }
+        // Send verification email
+        try {
+            emailService.sendVerificationEmail(user.getEmail(), verificationToken);
+        } catch (Exception e) {
+            log.error("Failed to send verification email", e);
+            // Don't fail registration if email fails
+        }
 
         auditService.logSignup(request.getUsername(), request.getEmail());
 
-        // Generate JWT token for immediate login
-        UserDetails userDetails = userDetailsService.loadUserByUsername(request.getUsername());
-        String jwt = jwtUtil.generateToken(userDetails, user.getEmail(), user.getId());
-
-        // Check if user is admin
-        boolean isAdmin = user.getRoles().contains("ROLE_ADMIN");
-
-        Map<String, Object> response = new HashMap<>();
-        response.put("jwt", jwt);
-        response.put("username", user.getUsername());
-        response.put("email", user.getEmail());
-        response.put("roles", user.getRoles());
-        response.put("isAdmin", isAdmin);
-        response.put("message", "Registration successful!");
-        
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(Map.of(
+            "message", "Registration successful! Please check your email to verify your account.",
+            "requiresVerification", true,
+            "email", user.getEmail()
+        ));
     }
 
     /**
@@ -291,12 +280,55 @@ public class AuthController {
         // Enable account
         user.setEnabled(true);
         user.clearVerificationToken();
+        user.setLastLoginAt(LocalDateTime.now());
         userRepository.save(user);
 
         auditService.logEmailVerified(user.getUsername());
 
+        // Generate JWT for auto-login
+        UserDetails userDetails = userDetailsService.loadUserByUsername(user.getUsername());
+        String jwt = jwtUtil.generateToken(userDetails, user.getEmail(), user.getId());
+
+        boolean isAdmin = user.getRoles().contains("ROLE_ADMIN");
+
         return ResponseEntity.ok(Map.of(
-            "message", "Email verified successfully! You can now log in."
+            "message", "Email verified successfully!",
+            "jwt", jwt,
+            "username", user.getUsername(),
+            "email", user.getEmail(),
+            "roles", user.getRoles(),
+            "isAdmin", isAdmin
+        ));
+    }
+
+    /**
+     * Resend verification email
+     */
+    @PostMapping("/resend-verification")
+    public ResponseEntity<?> resendVerification(@RequestBody Map<String, String> request) {
+        String email = request.get("email");
+        if (email == null || email.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Email is required"));
+        }
+
+        // Always return success to prevent email enumeration
+        userRepository.findByEmail(email).ifPresent(user -> {
+            if (!user.isEnabled()) {
+                String verificationToken = UUID.randomUUID().toString();
+                user.setVerificationToken(verificationToken);
+                user.setVerificationTokenExpiry(LocalDateTime.now().plusHours(24));
+                userRepository.save(user);
+
+                try {
+                    emailService.sendVerificationEmail(user.getEmail(), verificationToken);
+                } catch (Exception e) {
+                    log.error("Failed to resend verification email", e);
+                }
+            }
+        });
+
+        return ResponseEntity.ok(Map.of(
+            "message", "If the email exists and is not yet verified, a new verification link has been sent."
         ));
     }
 
@@ -311,26 +343,35 @@ public class AuthController {
     ) {
         String clientIp = getClientIP(httpRequest);
 
-        // Always return success to prevent email enumeration
-        userRepository.findByEmail(request.getEmail()).ifPresent(user -> {
-            // Generate reset token (expires in 1 hour)
-            String resetToken = UUID.randomUUID().toString();
-            user.setPasswordResetToken(resetToken);
-            user.setPasswordResetTokenExpiry(LocalDateTime.now().plusHours(1));
-            userRepository.save(user);
+        Optional<User> userOpt = userRepository.findByEmail(request.getEmail());
+        if (userOpt.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "error", "No account found with that email address."
+            ));
+        }
 
-            // Send reset email
-            try {
-                emailService.sendPasswordResetEmail(user.getEmail(), resetToken);
-            } catch (Exception e) {
-                log.error("Failed to send password reset email", e);
-            }
+        User user = userOpt.get();
 
-            auditService.logPasswordResetRequest(user.getUsername(), clientIp);
-        });
+        // Generate reset token (expires in 1 hour)
+        String resetToken = UUID.randomUUID().toString();
+        user.setPasswordResetToken(resetToken);
+        user.setPasswordResetTokenExpiry(LocalDateTime.now().plusHours(1));
+        userRepository.save(user);
+
+        // Send reset email
+        try {
+            emailService.sendPasswordResetEmail(user.getEmail(), resetToken);
+        } catch (Exception e) {
+            log.error("Failed to send password reset email", e);
+            return ResponseEntity.internalServerError().body(Map.of(
+                "error", "Failed to send reset email. Please try again."
+            ));
+        }
+
+        auditService.logPasswordResetRequest(user.getUsername(), clientIp);
 
         return ResponseEntity.ok(Map.of(
-            "message", "If the email exists in our system, a password reset link has been sent."
+            "message", "A password reset link has been sent to your email."
         ));
     }
 
@@ -360,6 +401,8 @@ public class AuthController {
         user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.clearPasswordResetToken();
         user.resetFailedAttempts(); // Clear any lockouts
+        // Also enable account in case it was never verified — user proved email ownership by receiving the reset link
+        user.setEnabled(true);
         userRepository.save(user);
 
         auditService.logPasswordResetSuccess(user.getUsername());

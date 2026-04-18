@@ -7,9 +7,18 @@ COPY CORETOPIA_GRAPHDB_FREE_v11.1.license /opt/graphdb/home/conf/graphdb.license
 # Set proper permissions
 RUN chmod 644 /opt/graphdb/home/conf/graphdb.license
 
-# Environment variables
-ENV GDB_HEAP_SIZE=2g
+# Configure GraphDB server properties for large file imports and query performance
+RUN echo "graphdb.workbench.importDirectory=/opt/graphdb/home/graphdb-import" > /opt/graphdb/home/conf/graphdb.properties && \
+    echo "graphdb.append.only=false" >> /opt/graphdb/home/conf/graphdb.properties && \
+    echo "graphdb.engine.transaction.timeout=1800" >> /opt/graphdb/home/conf/graphdb.properties && \
+    # Query performance: enable query caching and parallel execution
+    echo "graphdb.page.cache.size=2g" >> /opt/graphdb/home/conf/graphdb.properties && \
+    echo "graphdb.query.timeout=600" >> /opt/graphdb/home/conf/graphdb.properties
+
+# Environment variables — G1GC with tuned pauses for query-heavy workloads
+ENV GDB_HEAP_SIZE=6g
 ENV GDB_LICENSE_PATH=/opt/graphdb
+ENV GDB_JAVA_OPTS="-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+ParallelRefProcEnabled -XX:InitiatingHeapOccupancyPercent=45 -XX:G1HeapRegionSize=16m"
 
 EXPOSE 7200
 

@@ -5,7 +5,7 @@ import org.semanticweb.owlapi.reasoner.*;
 import org.semanticweb.owlapi.reasoner.structural.StructuralReasonerFactory;
 import openllet.owlapi.OpenlletReasonerFactory;
 import org.semanticweb.HermiT.ReasonerFactory;
-import org.semanticweb.elk.owlapi.ElkReasonerFactory;
+// import org.semanticweb.elk.owlapi.ElkReasonerFactory; // Temporarily disabled
 import uk.ac.manchester.cs.jfact.JFactFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,12 +48,21 @@ public class ReasonerService {
         // Precompute inferences for new reasoner to ensure full hierarchy is available
         log.info("Precomputing inferences for new {} reasoner", type.getDisplayName());
         try {
-            reasoner.precomputeInferences(
-                InferenceType.CLASS_HIERARCHY,
-                InferenceType.OBJECT_PROPERTY_HIERARCHY,
-                InferenceType.DATA_PROPERTY_HIERARCHY,
-                InferenceType.CLASS_ASSERTIONS
-            );
+            // ELK temporarily disabled
+            // if (type == ReasonerType.ELK) {
+            //     // ELK only supports CLASS_HIERARCHY and CLASS_ASSERTIONS
+            //     reasoner.precomputeInferences(
+            //         InferenceType.CLASS_HIERARCHY,
+            //         InferenceType.CLASS_ASSERTIONS
+            //     );
+            // } else {
+                reasoner.precomputeInferences(
+                    InferenceType.CLASS_HIERARCHY,
+                    InferenceType.OBJECT_PROPERTY_HIERARCHY,
+                    InferenceType.DATA_PROPERTY_HIERARCHY,
+                    InferenceType.CLASS_ASSERTIONS
+                );
+            // }
         } catch (Exception e) {
             log.warn("Failed to precompute inferences, some results might be incomplete", e);
         }
@@ -98,10 +107,11 @@ public class ReasonerService {
                     log.info("Using FaCT++ (JFact) reasoner");
                     return new JFactFactory().createReasoner(ontology, config);
                     
-                case ELK:
-                    // ELK - Fast and scalable EL reasoner
-                    log.info("Using ELK (Consequence-based) reasoner");
-                    return new ElkReasonerFactory().createReasoner(ontology, config);
+                // Temporarily disabled ELK reasoner due to compatibility issues
+                // case ELK:
+                //     // ELK - Fast and scalable EL reasoner
+                //     log.info("Using ELK (Consequence-based) reasoner");
+                //     return new ElkReasonerFactory().createReasoner(ontology, config);
                     
                 case STRUCTURAL:
                 default:
@@ -162,11 +172,17 @@ public class ReasonerService {
             log.info("Starting classification with {}", type.getDisplayName());
             long startTime = System.currentTimeMillis();
             
-            reasoner.precomputeInferences(
-                InferenceType.CLASS_HIERARCHY,
-                InferenceType.OBJECT_PROPERTY_HIERARCHY,
-                InferenceType.DATA_PROPERTY_HIERARCHY
-            );
+            // ELK temporarily disabled
+            // if (type == ReasonerType.ELK) {
+            //     // ELK only supports CLASS_HIERARCHY (EL profile)
+            //     reasoner.precomputeInferences(InferenceType.CLASS_HIERARCHY);
+            // } else {
+                reasoner.precomputeInferences(
+                    InferenceType.CLASS_HIERARCHY,
+                    InferenceType.OBJECT_PROPERTY_HIERARCHY,
+                    InferenceType.DATA_PROPERTY_HIERARCHY
+                );
+            // }
             
             long duration = System.currentTimeMillis() - startTime;
             log.info("Classification completed in {} ms", duration);

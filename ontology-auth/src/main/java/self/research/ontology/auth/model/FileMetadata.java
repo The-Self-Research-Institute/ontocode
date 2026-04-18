@@ -1,6 +1,7 @@
 package self.research.ontology.auth.model;
 
 import org.springframework.data.annotation.Id;
+import org.springframework.data.annotation.Transient;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.LocalDateTime;
@@ -23,7 +24,9 @@ public class FileMetadata {
     private Long fileSize;
     private String fileType; // MIME type
     private String extension; // owl, rdf, ttl, n3
-    private String base64Data; // Base64 encoded file content (temporary storage)
+    @Transient
+    private String base64Data; // NOT persisted – only used transiently to pass content between controller methods
+    private String gridfsId;   // MongoDB GridFS object ID where the binary is stored
     private String storageLocation; // Future: path to file in storage system
     
     // Upload metadata
@@ -83,6 +86,9 @@ public class FileMetadata {
     public String getBase64Data() { return base64Data; }
     public void setBase64Data(String base64Data) { this.base64Data = base64Data; }
     
+    public String getGridfsId() { return gridfsId; }
+    public void setGridfsId(String gridfsId) { this.gridfsId = gridfsId; }
+
     public String getStorageLocation() { return storageLocation; }
     public void setStorageLocation(String storageLocation) { this.storageLocation = storageLocation; }
     

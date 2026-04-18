@@ -32,6 +32,12 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
+        <!-- Actuator (for health checks) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
         <!-- Spring Boot Data MongoDB -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -106,18 +112,29 @@
             <version>2.6.5</version>
         </dependency>
 
-        <!-- ELK Reasoner - Fast and scalable EL reasoner -->
-        <dependency>
-            <groupId>org.semanticweb.elk</groupId>
-            <artifactId>elk-owlapi</artifactId>
-            <version>0.4.3</version>
-        </dependency>
-
         <!-- FaCT++ Reasoner (via JFact - Java port) -->
         <dependency>
             <groupId>net.sourceforge.owlapi</groupId>
             <artifactId>jfact</artifactId>
             <version>5.0.3</version>
+        </dependency>
+
+        <!-- ELK Reasoner (incremental OWL EL reasoner - compatible with OWLAPI 5 at compile time) -->
+        <dependency>
+            <groupId>org.semanticweb.elk</groupId>
+            <artifactId>elk-owlapi</artifactId>
+            <version>0.4.3</version>
+            <exclusions>
+                <!-- Exclude OWLAPI 4 to avoid conflict with owlapi-distribution 5.x -->
+                <exclusion>
+                    <groupId>net.sourceforge.owlapi</groupId>
+                    <artifactId>owlapi-api</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>net.sourceforge.owlapi</groupId>
+                    <artifactId>owlapi-apibinding</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
     </dependencies>
 

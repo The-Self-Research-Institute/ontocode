@@ -34,23 +34,45 @@ public class OntologyMetadataService {
 
     /**
      * Get all metadata for an ontology
+     * Uses cached metadata from MongoDB if available to avoid expensive GraphDB queries
      */
     public Map<String, Object> getMetadata(String projectId) {
         Map<String, Object> metadata = new HashMap<>();
         
-        // 1. Get base metadata from MongoDB
-        projectMetadataService.readMeta(projectId).ifPresent(metadata::putAll);
-
+        // 1. Check if cached metadata exists and is valid
+        Optional<Map<String, Object>> cachedMetadata = projectMetadataService.readMeta(projectId);
+        
+        if (cachedMetadata.isPresent() && !cachedMetadata.get().isEmpty()) {
+            Map<String, Object> cached = cachedMetadata.get();
+            
+            // Check if cache contains comprehensive data (has counts or classCount)
+            if (cached.containsKey("counts") || cached.containsKey("classCount") || cached.containsKey("cacheComplete")) {
+                log.info("⚡ Using cached metadata for project {} (fast path, skipping GraphDB queries)", projectId);
+                metadata.putAll(cached);
+                
+                // Always include fresh filename and status from MongoDB
+                projectMetadataService.readStatus(projectId).ifPresent(status -> {
+                    metadata.put("filename", status.filename());
+                    metadata.put("projectStatus", status.status());
+                });
+                
+                return metadata;
+            }
+        }
+        
+        // 2. Cache miss or incomplete - compute from GraphDB (slow path)
+        log.info("📊 Computing fresh metadata for project {} (slow path, querying GraphDB)", projectId);
+        
         // Include filename and status from project metadata for UI context
         projectMetadataService.readStatus(projectId).ifPresent(status -> {
             metadata.put("filename", status.filename());
             metadata.put("projectStatus", status.status());
         });
         
-        // 2. Merge with dynamic metrics from GraphDB
+        // Merge with dynamic metrics from GraphDB
         metadata.putAll(getDynamicMetrics(projectId));
         
-        // 3. Get ontology IRI and version IRI
+        // Get ontology IRI and version IRI
         String ontologyIri = getOntologyIri(projectId);
         metadata.put("ontologyIRI", ontologyIri);
         
@@ -66,11 +88,21 @@ public class OntologyMetadataService {
             }
         }
         
-        // 4. Add other metadata components
+        // Add other metadata components
         metadata.put("prefixes", getPrefixes(projectId));
         metadata.put("annotations", getOntologyAnnotations(projectId));
         metadata.put("imports", getOntologyImports(projectId));
         metadata.put("axioms", getGeneralClassAxioms(projectId));
+        
+        // Save to cache for future fast loading
+        try {
+            metadata.put("cacheComplete", true);
+            metadata.put("cachedAt", java.time.Instant.now().toString());
+            projectMetadataService.writeMeta(projectId, new HashMap<>(metadata));
+            log.info("💾 Saved metadata to MongoDB cache for project {}", projectId);
+        } catch (Exception e) {
+            log.warn("Failed to cache metadata for project {}: {}", projectId, e.getMessage());
+        }
         
         return metadata;
     }
@@ -513,72 +545,149 @@ public class OntologyMetadataService {
         Map<String, Object> metrics = new HashMap<>();
         
         log.info("Calculating dynamic metrics for project: {}", projectId);
-        
-        int classCount = getCount(projectId, "owl:Class");
-        int objectPropertyCount = getCount(projectId, "owl:ObjectProperty");
-        int dataPropertyCount = getCount(projectId, "owl:DatatypeProperty");
-        int annotationPropertyCount = getCount(projectId, "owl:AnnotationProperty");
-        int individualCount = getCount(projectId, "owl:NamedIndividual");
-        
+
+        // ── 1. Entity type counts (single query) ──
+        String typeCounts = PREFIXES + """
+            SELECT ?type (COUNT(DISTINCT ?s) AS ?count) WHERE {
+              ?s a ?type .
+              VALUES ?type {
+                owl:Class owl:ObjectProperty owl:DatatypeProperty
+                owl:AnnotationProperty owl:NamedIndividual
+                owl:FunctionalProperty owl:InverseFunctionalProperty
+                owl:TransitiveProperty owl:SymmetricProperty
+                owl:AsymmetricProperty owl:ReflexiveProperty
+                owl:IrreflexiveProperty owl:NegativePropertyAssertion
+              }
+            }
+            GROUP BY ?type
+            """;
+        Map<String, Integer> typeCountMap = new HashMap<>();
+        try {
+            TupleQueryResult rs = datasetService.execSelect(projectId, typeCounts);
+            while (rs.hasNext()) {
+                BindingSet sol = rs.next();
+                if (sol.hasBinding("type") && sol.hasBinding("count")) {
+                    typeCountMap.put(sol.getValue("type").stringValue(),
+                            Integer.parseInt(sol.getValue("count").stringValue()));
+                }
+            }
+        } catch (Exception e) {
+            log.error("Error getting type counts for project {}", projectId, e);
+        }
+
+        int classCount = typeCountMap.getOrDefault("http://www.w3.org/2002/07/owl#Class", 0);
+        int objectPropertyCount = typeCountMap.getOrDefault("http://www.w3.org/2002/07/owl#ObjectProperty", 0);
+        int dataPropertyCount = typeCountMap.getOrDefault("http://www.w3.org/2002/07/owl#DatatypeProperty", 0);
+        int annotationPropertyCount = typeCountMap.getOrDefault("http://www.w3.org/2002/07/owl#AnnotationProperty", 0);
+        int individualCount = typeCountMap.getOrDefault("http://www.w3.org/2002/07/owl#NamedIndividual", 0);
+
         metrics.put("classCount", classCount);
         metrics.put("objectPropertyCount", objectPropertyCount);
         metrics.put("dataPropertyCount", dataPropertyCount);
         metrics.put("annotationPropertyCount", annotationPropertyCount);
         metrics.put("individualCount", individualCount);
-        
-        // Axiom count (total triples in the graph)
+
         int tripleCount = (int) datasetService.getDatasetSize(projectId);
         metrics.put("axiomCount", tripleCount);
         metrics.put("tripleCount", tripleCount);
-        
-        // Declaration axioms = sum of entity types
-        metrics.put("declarationAxiomCount", classCount + objectPropertyCount + dataPropertyCount + annotationPropertyCount + individualCount);
-        
-        // Logical axioms (heuristic: total - declarations - metadata)
-        metrics.put("logicalAxiomCount", Math.max(0, tripleCount - (classCount + objectPropertyCount + dataPropertyCount + annotationPropertyCount + individualCount)));
+        int declCount = classCount + objectPropertyCount + dataPropertyCount + annotationPropertyCount + individualCount;
+        metrics.put("declarationAxiomCount", declCount);
+        metrics.put("logicalAxiomCount", Math.max(0, tripleCount - declCount));
 
-        // Specific axiom counts
-        metrics.put("subClassOfAxiomCount", getPredicateCount(projectId, "rdfs:subClassOf"));
-        metrics.put("equivalentClassesAxiomCount", getPredicateCount(projectId, "owl:equivalentClass"));
-        metrics.put("disjointClassesAxiomCount", getPredicateCount(projectId, "owl:disjointWith"));
-        
-        metrics.put("subObjectPropertyOfAxiomCount", getPredicateCount(projectId, "rdfs:subPropertyOf"));
-        metrics.put("equivalentObjectPropertiesAxiomCount", getPredicateCount(projectId, "owl:equivalentProperty"));
-        metrics.put("inverseObjectPropertiesAxiomCount", getPredicateCount(projectId, "owl:inverseOf"));
-        metrics.put("disjointObjectPropertiesAxiomCount", getPredicateCount(projectId, "owl:propertyDisjointWith"));
-        metrics.put("functionalObjectPropertyAxiomCount", getCount(projectId, "owl:FunctionalProperty"));
-        metrics.put("inverseFunctionalObjectPropertyAxiomCount", getCount(projectId, "owl:InverseFunctionalProperty"));
-        metrics.put("transitiveObjectPropertyAxiomCount", getCount(projectId, "owl:TransitiveProperty"));
-        metrics.put("symmetricObjectPropertyAxiomCount", getCount(projectId, "owl:SymmetricProperty"));
-        metrics.put("asymmetricObjectPropertyAxiomCount", getCount(projectId, "owl:AsymmetricProperty"));
-        metrics.put("reflexiveObjectPropertyAxiomCount", getCount(projectId, "owl:ReflexiveProperty"));
-        metrics.put("irreflexiveObjectPropertyAxiomCount", getCount(projectId, "owl:IrreflexiveProperty"));
-        metrics.put("objectPropertyDomainAxiomCount", getPredicateCount(projectId, "rdfs:domain"));
-        metrics.put("objectPropertyRangeAxiomCount", getPredicateCount(projectId, "rdfs:range"));
-        
-        metrics.put("subDataPropertyOfAxiomCount", getPredicateCount(projectId, "rdfs:subPropertyOf"));
-        metrics.put("equivalentDataPropertiesAxiomCount", getPredicateCount(projectId, "owl:equivalentProperty"));
-        metrics.put("disjointDataPropertiesAxiomCount", getPredicateCount(projectId, "owl:propertyDisjointWith"));
-        metrics.put("functionalDataPropertyAxiomCount", getCount(projectId, "owl:FunctionalProperty"));
-        metrics.put("dataPropertyDomainAxiomCount", getPredicateCount(projectId, "rdfs:domain"));
-        metrics.put("dataPropertyRangeAxiomCount", getPredicateCount(projectId, "rdfs:range"));
-        
-        metrics.put("classAssertionAxiomCount", getPredicateCount(projectId, "rdf:type"));
-        metrics.put("objectPropertyAssertionAxiomCount", getTripleCountWithPredicateType(projectId, "owl:ObjectProperty"));
-        metrics.put("dataPropertyAssertionAxiomCount", getTripleCountWithPredicateType(projectId, "owl:DatatypeProperty"));
-        metrics.put("sameIndividualAxiomCount", getPredicateCount(projectId, "owl:sameAs"));
-        metrics.put("differentIndividualsAxiomCount", getPredicateCount(projectId, "owl:differentFrom"));
-        metrics.put("negativeObjectPropertyAssertionAxiomCount", getCount(projectId, "owl:NegativePropertyAssertion")); // Simplified
-        metrics.put("negativeDataPropertyAssertionAxiomCount", 0); // Usually same as above in RDF
-        
-        metrics.put("subPropertyChainOfAxiomCount", getPredicateCount(projectId, "owl:propertyChainAxiom"));
-        
-        // Annotation axioms
-        metrics.put("annotationAssertionAxiomCount", getTripleCountWithPredicateType(projectId, "owl:AnnotationProperty"));
-        metrics.put("annotationPropertyDomainAxiomCount", getPredicateCount(projectId, "rdfs:domain")); // Note: shared with object/data properties
-        metrics.put("annotationPropertyRangeAxiomCount", getPredicateCount(projectId, "rdfs:range"));   // Note: shared with object/data properties
-        metrics.put("subAnnotationPropertyOfAxiomCount", getPredicateCount(projectId, "rdfs:subPropertyOf")); // Note: shared
-        
+        metrics.put("functionalObjectPropertyAxiomCount", typeCountMap.getOrDefault("http://www.w3.org/2002/07/owl#FunctionalProperty", 0));
+        metrics.put("inverseFunctionalObjectPropertyAxiomCount", typeCountMap.getOrDefault("http://www.w3.org/2002/07/owl#InverseFunctionalProperty", 0));
+        metrics.put("transitiveObjectPropertyAxiomCount", typeCountMap.getOrDefault("http://www.w3.org/2002/07/owl#TransitiveProperty", 0));
+        metrics.put("symmetricObjectPropertyAxiomCount", typeCountMap.getOrDefault("http://www.w3.org/2002/07/owl#SymmetricProperty", 0));
+        metrics.put("asymmetricObjectPropertyAxiomCount", typeCountMap.getOrDefault("http://www.w3.org/2002/07/owl#AsymmetricProperty", 0));
+        metrics.put("reflexiveObjectPropertyAxiomCount", typeCountMap.getOrDefault("http://www.w3.org/2002/07/owl#ReflexiveProperty", 0));
+        metrics.put("irreflexiveObjectPropertyAxiomCount", typeCountMap.getOrDefault("http://www.w3.org/2002/07/owl#IrreflexiveProperty", 0));
+        metrics.put("negativeObjectPropertyAssertionAxiomCount", typeCountMap.getOrDefault("http://www.w3.org/2002/07/owl#NegativePropertyAssertion", 0));
+        metrics.put("negativeDataPropertyAssertionAxiomCount", 0);
+        // Reuse functional count for data properties (shared OWL type)
+        metrics.put("functionalDataPropertyAxiomCount", typeCountMap.getOrDefault("http://www.w3.org/2002/07/owl#FunctionalProperty", 0));
+
+        // ── 2. Predicate counts (single query) ──
+        String predicateCounts = PREFIXES + """
+            SELECT ?pred (COUNT(*) AS ?count) WHERE {
+              ?s ?pred ?o .
+              VALUES ?pred {
+                rdfs:subClassOf owl:equivalentClass owl:disjointWith
+                rdfs:subPropertyOf owl:equivalentProperty owl:inverseOf
+                owl:propertyDisjointWith rdfs:domain rdfs:range
+                rdf:type owl:sameAs owl:differentFrom owl:propertyChainAxiom
+              }
+            }
+            GROUP BY ?pred
+            """;
+        Map<String, Integer> predCountMap = new HashMap<>();
+        try {
+            TupleQueryResult rs = datasetService.execSelect(projectId, predicateCounts);
+            while (rs.hasNext()) {
+                BindingSet sol = rs.next();
+                if (sol.hasBinding("pred") && sol.hasBinding("count")) {
+                    predCountMap.put(sol.getValue("pred").stringValue(),
+                            Integer.parseInt(sol.getValue("count").stringValue()));
+                }
+            }
+        } catch (Exception e) {
+            log.error("Error getting predicate counts for project {}", projectId, e);
+        }
+
+        int domainCount = predCountMap.getOrDefault("http://www.w3.org/2000/01/rdf-schema#domain", 0);
+        int rangeCount = predCountMap.getOrDefault("http://www.w3.org/2000/01/rdf-schema#range", 0);
+        int subPropCount = predCountMap.getOrDefault("http://www.w3.org/2000/01/rdf-schema#subPropertyOf", 0);
+        int equivPropCount = predCountMap.getOrDefault("http://www.w3.org/2002/07/owl#equivalentProperty", 0);
+        int disjPropCount = predCountMap.getOrDefault("http://www.w3.org/2002/07/owl#propertyDisjointWith", 0);
+
+        metrics.put("subClassOfAxiomCount", predCountMap.getOrDefault("http://www.w3.org/2000/01/rdf-schema#subClassOf", 0));
+        metrics.put("equivalentClassesAxiomCount", predCountMap.getOrDefault("http://www.w3.org/2002/07/owl#equivalentClass", 0));
+        metrics.put("disjointClassesAxiomCount", predCountMap.getOrDefault("http://www.w3.org/2002/07/owl#disjointWith", 0));
+        metrics.put("subObjectPropertyOfAxiomCount", subPropCount);
+        metrics.put("equivalentObjectPropertiesAxiomCount", equivPropCount);
+        metrics.put("inverseObjectPropertiesAxiomCount", predCountMap.getOrDefault("http://www.w3.org/2002/07/owl#inverseOf", 0));
+        metrics.put("disjointObjectPropertiesAxiomCount", disjPropCount);
+        metrics.put("objectPropertyDomainAxiomCount", domainCount);
+        metrics.put("objectPropertyRangeAxiomCount", rangeCount);
+        metrics.put("subDataPropertyOfAxiomCount", subPropCount);
+        metrics.put("equivalentDataPropertiesAxiomCount", equivPropCount);
+        metrics.put("disjointDataPropertiesAxiomCount", disjPropCount);
+        metrics.put("dataPropertyDomainAxiomCount", domainCount);
+        metrics.put("dataPropertyRangeAxiomCount", rangeCount);
+        metrics.put("classAssertionAxiomCount", predCountMap.getOrDefault("http://www.w3.org/1999/02/22-rdf-syntax-ns#type", 0));
+        metrics.put("sameIndividualAxiomCount", predCountMap.getOrDefault("http://www.w3.org/2002/07/owl#sameAs", 0));
+        metrics.put("differentIndividualsAxiomCount", predCountMap.getOrDefault("http://www.w3.org/2002/07/owl#differentFrom", 0));
+        metrics.put("subPropertyChainOfAxiomCount", predCountMap.getOrDefault("http://www.w3.org/2002/07/owl#propertyChainAxiom", 0));
+        metrics.put("annotationPropertyDomainAxiomCount", domainCount);
+        metrics.put("annotationPropertyRangeAxiomCount", rangeCount);
+        metrics.put("subAnnotationPropertyOfAxiomCount", subPropCount);
+
+        // ── 3. Predicate-type join counts (single query) ──
+        String predTypeCounts = PREFIXES + """
+            SELECT ?ptype (COUNT(*) AS ?count) WHERE {
+              ?s ?p ?o .
+              ?p a ?ptype .
+              VALUES ?ptype { owl:ObjectProperty owl:DatatypeProperty owl:AnnotationProperty }
+            }
+            GROUP BY ?ptype
+            """;
+        Map<String, Integer> predTypeMap = new HashMap<>();
+        try {
+            TupleQueryResult rs = datasetService.execSelect(projectId, predTypeCounts);
+            while (rs.hasNext()) {
+                BindingSet sol = rs.next();
+                if (sol.hasBinding("ptype") && sol.hasBinding("count")) {
+                    predTypeMap.put(sol.getValue("ptype").stringValue(),
+                            Integer.parseInt(sol.getValue("count").stringValue()));
+                }
+            }
+        } catch (Exception e) {
+            log.error("Error getting predicate-type counts for project {}", projectId, e);
+        }
+
+        metrics.put("objectPropertyAssertionAxiomCount", predTypeMap.getOrDefault("http://www.w3.org/2002/07/owl#ObjectProperty", 0));
+        metrics.put("dataPropertyAssertionAxiomCount", predTypeMap.getOrDefault("http://www.w3.org/2002/07/owl#DatatypeProperty", 0));
+        metrics.put("annotationAssertionAxiomCount", predTypeMap.getOrDefault("http://www.w3.org/2002/07/owl#AnnotationProperty", 0));
+
         // GCI count
         metrics.put("gciCount", getGCICount(projectId));
         
@@ -674,6 +783,7 @@ public class OntologyMetadataService {
         Map<String, String> prefixMap = new HashMap<>();
         
         // 1. Try to get from MongoDB metadata
+        boolean hasCachedPrefixes = false;
         Optional<Map<String, Object>> meta = projectMetadataService.readMeta(projectId);
         if (meta.isPresent() && meta.get().containsKey("prefixes")) {
             Object prefixesObj = meta.get().get("prefixes");
@@ -682,6 +792,7 @@ public class OntologyMetadataService {
                 for (Map.Entry<?, ?> entry : rawMap.entrySet()) {
                     prefixMap.put(entry.getKey().toString(), entry.getValue().toString());
                 }
+                hasCachedPrefixes = !prefixMap.isEmpty();
             } else if (prefixesObj instanceof List) {
                 // Handle list of objects format: [{prefix: "...", namespace: "..."}, ...]
                 List<?> list = (List<?>) prefixesObj;
@@ -695,17 +806,20 @@ public class OntologyMetadataService {
                         }
                     }
                 }
+                hasCachedPrefixes = !prefixMap.isEmpty();
             }
         }
 
-        // 2. Always merge with GraphDB repository namespaces to ensure we see everything
-        log.debug("Merging MongoDB prefixes with GraphDB namespaces for project {}", projectId);
-        Map<String, String> graphdbPrefixes = datasetService.getPrefixes(projectId);
-        for (Map.Entry<String, String> entry : graphdbPrefixes.entrySet()) {
-            // Only add if not already present in MongoDB (MongoDB takes precedence for custom renames)
-            if (!prefixMap.containsKey(entry.getKey())) {
-                prefixMap.put(entry.getKey(), entry.getValue());
-            }
+        // 2. Only query GraphDB if MongoDB has no cached prefixes.
+        //    All prefix mutations (add/update/delete) already update MongoDB,
+        //    so cached prefixes are always in sync. Skipping the expensive
+        //    SPARQL namespace-usage query avoids running it twice during import.
+        if (!hasCachedPrefixes) {
+            log.debug("No cached prefixes in MongoDB, querying GraphDB for project {}", projectId);
+            Map<String, String> graphdbPrefixes = datasetService.getPrefixes(projectId);
+            prefixMap.putAll(graphdbPrefixes);
+        } else {
+            log.debug("Using cached prefixes from MongoDB for project {} ({} entries)", projectId, prefixMap.size());
         }
 
         // Convert to list of objects for frontend compatibility

@@ -84,14 +84,14 @@ public class ProjectMetadataService {
         if (filename == null || ownerEmail == null) {
             return false;
         }
-        return projectRepository.findByFilenameAndOwnerEmail(filename, ownerEmail).isPresent();
+        return !projectRepository.findByFilenameAndOwnerEmail(filename, ownerEmail).isEmpty();
     }
     
     public Optional<String> getExistingProjectId(String filename, String ownerEmail) {
         if (filename == null || ownerEmail == null) {
             return Optional.empty();
         }
-        return projectRepository.findByFilenameAndOwnerEmail(filename, ownerEmail)
+        return projectRepository.findFirstByFilenameAndOwnerEmailOrderByUpdatedAtDesc(filename, ownerEmail)
                 .map(ProjectDocument::getId);
     }
     
@@ -110,9 +110,9 @@ public class ProjectMetadataService {
      * Improves performance by avoiding 3 separate DB writes
      * Creates MongoDB project document for both cloud and self-hosted deployments
      */
-    public void updateProjectMetadata(String projectId, ProjectStatus status, String gridfsFileId, String ownerEmail) {
-        log.info("[ProjectMetadataService] Updating project metadata - projectId: {}, owner: {}, status: {}", 
-            projectId, ownerEmail, status.status());
+    public void updateProjectMetadata(String projectId, ProjectStatus status, String gridfsFileId, String ownerEmail, String workspaceId, String parentProjectId) {
+        log.info("[ProjectMetadataService] Updating project metadata - projectId: {}, owner: {}, workspace: {}, parentProject: {}, status: {}", 
+            projectId, ownerEmail, workspaceId, parentProjectId, status.status());
             
         ProjectDocument doc = projectRepository.findById(projectId)
                 .orElse(new ProjectDocument(projectId, projectId, status.filename()));
@@ -128,6 +128,16 @@ public class ProjectMetadataService {
             log.info("[ProjectMetadataService] Setting owner email: {} for project: {}", ownerEmail, projectId);
         } else {
             log.warn("[ProjectMetadataService] No owner email provided for project: {}", projectId);
+        }
+
+        if (workspaceId != null && !workspaceId.isEmpty()) {
+            doc.setWorkspaceId(workspaceId);
+            log.info("[ProjectMetadataService] Setting workspace ID: {} for project: {}", workspaceId, projectId);
+        }
+
+        if (parentProjectId != null && !parentProjectId.isEmpty()) {
+            doc.setProjectId(parentProjectId);
+            log.info("[ProjectMetadataService] Setting parent project ID: {} for file: {}", parentProjectId, projectId);
         }
 
         doc.setUpdatedAt(Instant.now());

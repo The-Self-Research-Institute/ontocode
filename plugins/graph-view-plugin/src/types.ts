@@ -247,24 +247,6 @@ export interface ReasoningResult {
   }>;
 }
 
-// Collaboration features
-export interface CollaborationState {
-  activeUsers: Array<{
-    userId: string;
-    username: string;
-    color: string;
-    cursor?: { x: number; y: number };
-    selectedNodes?: string[];
-  }>;
-  locks: Map<string, { userId: string; timestamp: Date }>;
-  pendingChanges: Array<{
-    userId: string;
-    changeType: 'add' | 'modify' | 'delete';
-    entityId: string;
-    timestamp: Date;
-  }>;
-}
-
 // Version control
 export interface GraphVersion {
   version: string;

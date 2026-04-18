@@ -560,7 +560,21 @@ public class ReasonerController {
             OWLObjectProperty topProperty = df.getOWLTopObjectProperty();
 
             Set<String> visited = new HashSet<>();
-            Map<String, Object> root = buildObjectPropertyNode(ontology, reasoner, topProperty, visited);
+            Map<String, Object> root = null;
+            
+            // ELK does not support property hierarchy inference
+            // Catch UnsupportedOperationException and fall back to asserted properties
+            try {
+                root = buildObjectPropertyNode(ontology, reasoner, topProperty, visited);
+            } catch (UnsupportedOperationException e) {
+                log.warn("Reasoner {} does not support object property hierarchy. Falling back to asserted properties.", type.getDisplayName());
+                root = new HashMap<>();
+                root.put("id", topProperty.getIRI().toString());
+                root.put("label", "owl:topObjectProperty");
+                root.put("children", List.of());
+                root.put("hasChildren", false);
+                root.put("type", "ObjectProperty");
+            }
 
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> children = (List<Map<String, Object>>) root.get("children");
@@ -633,7 +647,21 @@ public class ReasonerController {
             OWLDataProperty topProperty = df.getOWLTopDataProperty();
 
             Set<String> visited = new HashSet<>();
-            Map<String, Object> root = buildDataPropertyNode(ontology, reasoner, topProperty, visited);
+            Map<String, Object> root = null;
+            
+            // ELK does not support property hierarchy inference
+            // Catch UnsupportedOperationException and fall back to asserted properties
+            try {
+                root = buildDataPropertyNode(ontology, reasoner, topProperty, visited);
+            } catch (UnsupportedOperationException e) {
+                log.warn("Reasoner {} does not support data property hierarchy. Falling back to asserted properties.", type.getDisplayName());
+                root = new HashMap<>();
+                root.put("id", topProperty.getIRI().toString());
+                root.put("label", "owl:topDataProperty");
+                root.put("children", List.of());
+                root.put("hasChildren", false);
+                root.put("type", "DataProperty");
+            }
 
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> children = (List<Map<String, Object>>) root.get("children");

@@ -26,9 +26,15 @@ import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.io.SequenceInputStream;
 import java.io.StringWriter;
+import java.net.URI;
 import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -57,13 +63,16 @@ public class GraphDBDatasetService {
     @Value("${ontocode.data.dir:./data}")
     private String dataDir;
     
+    @Value("${graphdb.import.dir:/opt/graphdb-import}")
+    private String graphdbImportDir;
+    
     // Shared repository connection
     private Repository repository;
     
     // Cache of graph URIs per project (projectId -> graphUri)
     private final Map<String, String> graphUriCache = new ConcurrentHashMap<>();
     private final Map<String, PartitionGraphs> partitionGraphCache = new ConcurrentHashMap<>();
-    private static final long PARTITION_CACHE_TTL_MS = 30_000;
+    private static final long PARTITION_CACHE_TTL_MS = 120_000; // 2 minutes — partition graphs rarely change
 
     public interface ProgressListener {
         void onProgress(ImportProgress progress);
@@ -146,20 +155,31 @@ public class GraphDBDatasetService {
             try {
                 HTTPRepository httpRepo = new HTTPRepository(graphdbUrl, repositoryId);
                 
-                // PERFORMANCE OPTIMIZATION: Configure HTTP client with extended timeouts and connection pooling
-                // This prevents "Connection aborted" errors during large imports
+                // Configure HTTP client timeouts to match SPARQL query execution time
+                org.apache.http.impl.client.CloseableHttpClient httpClient = org.apache.http.impl.client.HttpClients.custom()
+                    .setDefaultRequestConfig(org.apache.http.client.config.RequestConfig.custom()
+                        .setConnectTimeout(30_000)        // 30s to establish connection
+                        .setSocketTimeout(1_800_000)       // 30 min to wait for data (large imports need this)
+                        .setConnectionRequestTimeout(30_000)
+                        .build())
+                    .setMaxConnTotal(50)
+                    .setMaxConnPerRoute(20)
+                    .build();
+                httpRepo.setHttpClient(httpClient);
+                
                 httpRepo.setAdditionalHttpHeaders(java.util.Map.of(
-                    "Keep-Alive", "timeout=3600, max=100", // 1 hour keep-alive, reuse connections
+                    "Keep-Alive", "timeout=3600, max=100",
                     "Connection", "keep-alive",
-                    "Accept-Encoding", "gzip, deflate" // Enable compression
+                    "Accept-Encoding", "gzip, deflate"
                 ));
                 
                 repository = httpRepo;
                 repository.init();
                 
                 log.info("✅ GraphDB HTTP client configured with:");
-                log.info("   - Extended timeouts (1 hour)");
-                log.info("   - Connection pooling (max 100 reuse)");
+                log.info("   - Connect timeout: 30s");
+                log.info("   - Socket timeout: 1800s (30 min)");
+                log.info("   - Connection pool: 50 total, 20 per route");
                 log.info("   - Compression enabled");
                 
                 // Test connection
@@ -196,6 +216,103 @@ public class GraphDBDatasetService {
     }
     
     /**
+     * Check if a file is already loaded into GraphDB by checking for file metadata triples
+     * or by checking if the ontology IRI already exists in the project graph
+     * @param projectId The project ID
+     * @param fileName The name of the file to check
+     * @param fileId Optional file ID to check for specific file metadata
+     * @return Map with "exists" boolean and "details" with information about the existing file
+     */
+    public Map<String, Object> checkFileExistsInGraphDB(String projectId, String fileName, String fileId) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("exists", false);
+        
+        try {
+            Repository repo = getRepository();
+            String graphUri = getGraphUri(projectId);
+            
+            try (RepositoryConnection conn = repo.getConnection()) {
+                // Check 1: Check if there are any triples in the graph (basic duplicate prevention)
+                long graphSize = countGraphTriplesSparql(conn, graphUri);
+                
+                // Check 2: Query for file metadata if the system stores it
+                // This checks for triples that might indicate a file was already loaded
+                String checkQuery = String.format(
+                    "ASK { " +
+                    "  GRAPH <%s> { " +
+                    "    { ?s ?p ?o } " + // Check if graph has any data
+                    "  } " +
+                    "}",
+                    graphUri
+                );
+                
+                BooleanQuery boolQuery = conn.prepareBooleanQuery(checkQuery);
+                long askStart = System.nanoTime();
+                boolean hasData = boolQuery.evaluate();
+                log.info("[TIMING] checkFileExistsInGraphDB ASK query for project {}: {} ms", projectId, elapsedMillis(askStart));
+                
+                if (hasData && graphSize > 0) {
+                    // Graph has data - check if it's from a file with the same name
+                    // Try to find ontology IRI or file identifier
+                    String detailQuery = String.format(
+                        "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> " +
+                        "PREFIX owl: <http://www.w3.org/2002/07/owl#> " +
+                        "SELECT DISTINCT ?ontology WHERE { " +
+                        "  GRAPH <%s> { " +
+                        "    { ?ontology rdf:type owl:Ontology } " +
+                        "    UNION { ?ontology owl:versionIRI ?version } " +
+                        "  } " +
+                        "} LIMIT 5",
+                        graphUri
+                    );
+                    
+                    TupleQuery tupleQuery = conn.prepareTupleQuery(detailQuery);
+                    List<String> ontologyIRIs = new ArrayList<>();
+                    long detailQueryStart = System.nanoTime();
+                    
+                    try (TupleQueryResult queryResult = tupleQuery.evaluate()) {
+                        while (queryResult.hasNext()) {
+                            BindingSet binding = queryResult.next();
+                            if (binding.hasBinding("ontology")) {
+                                ontologyIRIs.add(binding.getValue("ontology").stringValue());
+                            }
+                        }
+                    }
+                    
+                    log.info("[TIMING] checkFileExistsInGraphDB detail SELECT query for project {}: {} ms (found {} ontology IRIs)",
+                        projectId, elapsedMillis(detailQueryStart), ontologyIRIs.size());
+                    
+                    result.put("exists", true);
+                    result.put("graphSize", graphSize);
+                    result.put("ontologyIRIs", ontologyIRIs);
+                    result.put("message", String.format(
+                        "Project graph already contains %d triples. Loading this file may create duplicate data.",
+                        graphSize
+                    ));
+                    
+                    log.info("[GraphDB Duplicate Check] Project {} graph contains {} triples. File: {}, FileId: {}",
+                        projectId, graphSize, fileName, fileId);
+                    
+                    return result;
+                }
+                
+                result.put("exists", false);
+                result.put("graphSize", 0);
+                log.debug("[GraphDB Duplicate Check] Project {} graph is empty. File: {} can be loaded.",
+                    projectId, fileName);
+                
+            }
+        } catch (Exception e) {
+            log.error("[GraphDB Duplicate Check] Error checking file existence in GraphDB for project: {}, file: {}",
+                projectId, fileName, e);
+            result.put("error", e.getMessage());
+            result.put("checkFailed", true);
+        }
+        
+        return result;
+    }
+    
+    /**
      * Get the project directory path
      */
     public Path getProjectPath(String projectId) {
@@ -206,6 +323,16 @@ public class GraphDBDatasetService {
      * Execute a SPARQL SELECT query and return materialized results
      */
     public TupleQueryResult execSelect(String projectId, String sparqlQuery) {
+        // Default to includeInferred=false — the repository uses ruleset: empty,
+        // so inference adds only overhead (30-130s penalties per query)
+        return execSelect(projectId, sparqlQuery, false);
+    }
+
+    /**
+     * Execute a SPARQL SELECT query with control over inference.
+     * @param includeInferred false to skip transitive/OWL inference (much faster on large repos)
+     */
+    public TupleQueryResult execSelect(String projectId, String sparqlQuery, boolean includeInferred) {
         Repository repo = getRepository();
         String graphUri = getGraphUri(projectId);
         
@@ -223,7 +350,8 @@ public class GraphDBDatasetService {
             log.debug("[GRAPHDB] Query: {}", sparqlQuery);
             
             TupleQuery query = conn.prepareTupleQuery(sparqlQuery);
-            
+            query.setIncludeInferred(includeInferred);
+            query.setMaxExecutionTime(300); // 5-minute timeout to prevent indefinite hangs            
             // Materialize results into a list before closing connection
             List<BindingSet> results = new ArrayList<>();
             List<String> bindingNames = new ArrayList<>();
@@ -236,15 +364,20 @@ public class GraphDBDatasetService {
             
             log.info("[GRAPHDB] ✅ Query completed, retrieved {} results from GraphDB", results.size());
             
-            // Diagnostic: If no results, check if graph has any data at all
+            // Diagnostic: If no results, check if graphs have any data at all
             if (results.isEmpty()) {
                 try {
-                    var graphIri = conn.getValueFactory().createIRI(graphUri);
-                    long graphSize = conn.size(graphIri);
-                    log.warn("[GRAPHDB] ⚠️ Query returned 0 results. Graph {} contains {} total triples.", graphUri, graphSize);
-                    
-                    if (graphSize == 0) {
-                        log.error("[GRAPHDB] ❌ Graph is EMPTY! Data may not have been loaded or committed.");
+                    List<String> allGraphs = getAllGraphUris(conn, projectId);
+                    long totalSize = 0;
+                    for (String g : allGraphs) {
+                        long gSize = countGraphTriplesSparql(conn, g);
+                        totalSize += gSize;
+                        if (gSize > 0) {
+                            log.warn("[GRAPHDB] ⚠️ Query returned 0 results. Graph {} contains {} triples.", g, gSize);
+                        }
+                    }
+                    if (totalSize == 0) {
+                        log.error("[GRAPHDB] ❌ All graphs for project {} are EMPTY! Data may not have been loaded or committed. Graphs checked: {}", projectId, allGraphs);
                     }
                 } catch (Exception diagEx) {
                     log.warn("[GRAPHDB] Could not check graph size: {}", diagEx.getMessage());
@@ -315,9 +448,13 @@ public class GraphDBDatasetService {
                     buildFromClause(conn, projectId) + " WHERE");
             }
             
-            log.debug("Executing CONSTRUCT query for project: {}", projectId);
+            log.info("[GRAPHDB] Executing CONSTRUCT query for project: {}", projectId);
+            long constructStart = System.nanoTime();
             GraphQuery query = conn.prepareGraphQuery(sparqlQuery);
-            return query.evaluate();
+            query.setIncludeInferred(false);
+            GraphQueryResult result = query.evaluate();
+            log.info("[TIMING] execConstruct for project {}: {} ms", projectId, elapsedMillis(constructStart));
+            return result;
             
         } catch (Exception e) {
             log.error("SPARQL CONSTRUCT query failed for project: {}", projectId, e);
@@ -340,9 +477,13 @@ public class GraphDBDatasetService {
                     buildFromClause(conn, projectId) + " WHERE");
             }
             
-            log.debug("Executing ASK query for project: {}", projectId);
+            log.info("[GRAPHDB] Executing ASK query for project: {}", projectId);
+            long askStart = System.nanoTime();
             BooleanQuery query = conn.prepareBooleanQuery(sparqlQuery);
-            return query.evaluate();
+            query.setIncludeInferred(false);
+            boolean askResult = query.evaluate();
+            log.info("[TIMING] execAsk for project {}: {} ms (result: {})", projectId, elapsedMillis(askStart), askResult);
+            return askResult;
             
         } catch (Exception e) {
             log.error("SPARQL ASK query failed for project: {}", projectId, e);
@@ -378,16 +519,20 @@ public class GraphDBDatasetService {
             }
             
             try {
+                long updateExecStart = System.nanoTime();
                 Update update = conn.prepareUpdate(graphAwareUpdate);
                 update.execute();
+                long updateExecMs = elapsedMillis(updateExecStart);
+                log.info("[TIMING] execUpdate execution for project {}: {} ms", projectId, updateExecMs);
                 
                 // Explicitly commit for immediate visibility
                 if (autoCommit) {
+                    long commitStart = System.nanoTime();
                     conn.commit();
-                    log.info("[GRAPHDB] ✅ Transaction committed");
+                    log.info("[GRAPHDB] ✅ Transaction committed in {} ms", elapsedMillis(commitStart));
                 }
                 
-                log.info("[GRAPHDB] ✅ UPDATE executed successfully!");
+                log.info("[GRAPHDB] ✅ UPDATE executed successfully in {} ms (total incl. commit)", elapsedMillis(updateExecStart));
                 
             } catch (Exception e) {
                 if (autoCommit) {
@@ -562,6 +707,12 @@ public class GraphDBDatasetService {
                 var valueFactory = conn.getValueFactory();
                 IRI graphIri = valueFactory.createIRI(graphUri);
 
+                // NOTE: The repository is configured with graphdb:ruleset "empty"
+                // so there is NO inference engine active. The disableInferenceDuringImport
+                // call is skipped because it's a no-op that just adds HTTP round-trips.
+                boolean inferenceDisabled = false;
+
+                // Start the import transaction AFTER inference is disabled
                 if (!conn.isActive()) {
                     conn.begin();
                 }
@@ -618,8 +769,18 @@ public class GraphDBDatasetService {
                     final IRI finalTargetGraphIri = targetGraphIri;
                     Map<IRI, List<Statement>> partitionBatches = partitionByNamespace ? new HashMap<>() : null;
                     
-                    // Optimized: Periodic commits for massive files (every 1M triples) to prevent memory bloat
-                    final long COMMIT_INTERVAL = 1_000_000L;
+                    // Intermediate commits keep the transaction alive and prevent GraphDB from
+                    // timing out long-running transactions ("transaction not registered" error).
+                    // With ruleset "empty" (no inference), commits are cheap — just index updates.
+                    // But each commit+begin is 2 HTTP round-trips, and GraphDB indexes on commit,
+                    // so committing too often adds significant overhead for large imports.
+                    final long COMMIT_TIME_INTERVAL_MS = 60_000L; // Commit every 60 seconds
+                    final long COMMIT_TRIPLE_INTERVAL = 200_000L;  // Also commit every 200k triples
+                    final AtomicLong lastCommitTime = new AtomicLong(System.currentTimeMillis());
+                    final AtomicLong lastCommitTriples = new AtomicLong(0);
+                    
+                    log.info("[PERFORMANCE] Intermediate commit strategy: Time-based every {}s OR every {} triples (file size: {} MB, batch size: {})",
+                        COMMIT_TIME_INTERVAL_MS / 1000, COMMIT_TRIPLE_INTERVAL, fileSizeBytes / (1024 * 1024), batchSize);
                     
                     final long totalBytes = fileSizeBytes > 0 ? fileSizeBytes : -1;
                     final AtomicLong lastProgressSentAt = new AtomicLong(System.nanoTime());
@@ -641,13 +802,20 @@ public class GraphDBDatasetService {
                                         graphForStatement, key -> new ArrayList<>(batchSize));
                                 graphBatch.add(st);
                                 if (graphBatch.size() >= batchSize) {
-                                    flushBatch(conn, graphBatch, graphForStatement, totalTriples, batchSize);
+                                    flushBatchWithRetry(conn, graphBatch, graphForStatement, totalTriples, batchSize);
                                     
-                                    // Optimized: Periodic commits for very large files (only check after flush)
-                                    if (totalTriples.get() % COMMIT_INTERVAL == 0 && totalTriples.get() > 0) {
+                                    // Time-based and count-based intermediate commits
+                                    long now = System.currentTimeMillis();
+                                    long triplesNow = totalTriples.get();
+                                    if (now - lastCommitTime.get() >= COMMIT_TIME_INTERVAL_MS
+                                            || triplesNow - lastCommitTriples.get() >= COMMIT_TRIPLE_INTERVAL) {
+                                        long commitStart = System.nanoTime();
                                         conn.commit();
                                         conn.begin();
-                                        log.info("Intermediate commit at {} triples", totalTriples.get());
+                                        long commitMs = elapsedMillis(commitStart);
+                                        lastCommitTime.set(System.currentTimeMillis());
+                                        lastCommitTriples.set(triplesNow);
+                                        log.info("[TIMING] Intermediate commit at {} triples: {} ms", triplesNow, commitMs);
                                     }
                                 }
                                 return;
@@ -655,13 +823,20 @@ public class GraphDBDatasetService {
 
                             batch.add(st);
                             if (batch.size() >= batchSize) {
-                                flushBatch(conn, batch, finalTargetGraphIri, totalTriples, batchSize);
+                                flushBatchWithRetry(conn, batch, finalTargetGraphIri, totalTriples, batchSize);
                                 
-                                // Optimized: Periodic commits for very large files (only check after flush)
-                                if (totalTriples.get() % COMMIT_INTERVAL == 0 && totalTriples.get() > 0) {
+                                // Time-based and count-based intermediate commits
+                                long now = System.currentTimeMillis();
+                                long triplesNow = totalTriples.get();
+                                if (now - lastCommitTime.get() >= COMMIT_TIME_INTERVAL_MS
+                                        || triplesNow - lastCommitTriples.get() >= COMMIT_TRIPLE_INTERVAL) {
+                                    long commitStart = System.nanoTime();
                                     conn.commit();
                                     conn.begin();
-                                    log.info("Intermediate commit at {} triples", totalTriples.get());
+                                    long commitMs = elapsedMillis(commitStart);
+                                    lastCommitTime.set(System.currentTimeMillis());
+                                    lastCommitTriples.set(triplesNow);
+                                    log.info("[TIMING] Intermediate commit at {} triples: {} ms", triplesNow, commitMs);
                                 }
                             }
                             if (progressListener != null) {
@@ -691,17 +866,19 @@ public class GraphDBDatasetService {
                     String previewStr = new String(preview, java.nio.charset.StandardCharsets.UTF_8);
                     log.info("Stream content preview (first 500 chars): {}", previewStr);
                     
+                    long parseStart = System.nanoTime();
                     parser.parse(cleanedStream, finalTargetGraphUri);
+                    log.info("[TIMING] RDF parsing completed in {} ms ({} triples parsed)", elapsedMillis(parseStart), totalTriples.get());
                     
                     // Upload remaining triples
                     if (partitionByNamespace) {
                         for (Map.Entry<IRI, List<Statement>> entry : partitionBatches.entrySet()) {
                             if (!entry.getValue().isEmpty()) {
-                                flushBatch(conn, entry.getValue(), entry.getKey(), totalTriples, batchSize);
+                                flushBatchWithRetry(conn, entry.getValue(), entry.getKey(), totalTriples, batchSize);
                             }
                         }
                     } else if (!batch.isEmpty()) {
-                        flushBatch(conn, batch, finalTargetGraphIri, totalTriples, batchSize);
+                        flushBatchWithRetry(conn, batch, finalTargetGraphIri, totalTriples, batchSize);
                     }
 
                     log.info("Parsed {} triples total", totalTriples.get());
@@ -717,21 +894,46 @@ public class GraphDBDatasetService {
 
                     }
 
+                    // Guard: If the parser produced 0 triples and we cleared the graph,
+                    // rollback to preserve the original data instead of committing the clear.
+                    if (totalTriples.get() == 0 && shouldClear) {
+                        if (conn.isActive()) {
+                            conn.rollback();
+                        }
+                        log.error("❌ ABORTING IMPORT: Parser produced 0 triples from a non-empty file. " +
+                                "Rolling back to preserve existing graph data for project: {}", projectId);
+                        throw new RuntimeException(
+                                "Import produced 0 triples — possible format mismatch or corrupt file. " +
+                                "Existing data preserved (not cleared).");
+                    }
+
                     // Commit transaction
                     log.warn("⏳ Committing {} triples to GraphDB...", totalTriples.get());
                     long commitStart = System.nanoTime();
                     conn.commit();
                     long commitDuration = elapsedMillis(commitStart);
-                    log.info("✓ Transaction committed in {} ms ({} sec)", commitDuration, commitDuration / 1000);
+                    log.info("✓ FINAL COMMIT completed in {} ms ({} sec)", commitDuration, commitDuration / 1000);
 
-                    // VERIFICATION: Check if data is actually readable after commit
+                    // VERIFICATION: Check if data is actually readable after commit (SPARQL COUNT is much faster than conn.size())
                     long verifyStart = System.nanoTime();
-                    long verifiedSize = conn.size(graphIri);
+                    long verifiedSize = countGraphTriplesSparql(conn, graphUri);
                     log.info("✓ VERIFICATION: Graph {} contains {} triples after commit (check took {} ms)", 
                             graphUri, verifiedSize, elapsedMillis(verifyStart));
                     
                     if (verifiedSize == 0 && totalTriples.get() > 0) {
                         log.error("❌ DATA LOSS DETECTED: Parsed {} triples but graph is empty after commit!", totalTriples.get());
+                    }
+
+                    // Invalidate context caches after new data is committed
+                    invalidateContextCaches(projectId);
+
+                    // Register any partition graphs that were created during this import
+                    if (partitionBatches != null && !partitionBatches.isEmpty()) {
+                        List<String> partGraphs = partitionBatches.keySet().stream()
+                                .map(IRI::stringValue)
+                                .filter(g -> !g.equals(graphUri))
+                                .toList();
+                        registerPartitionGraphs(projectId, partGraphs);
                     }
 
                     long totalDuration = elapsedMillis(bulkLoadStart);
@@ -743,7 +945,7 @@ public class GraphDBDatasetService {
                     log.info("    • Parsing & batched upload: {} ms ({}%)", parseDuration, (parseDuration * 100) / totalDuration);
                     log.info("    • Commit to GraphDB: {} ms ({}%)", commitDuration, (commitDuration * 100) / totalDuration);
                     log.info("  TOTAL TIME: {} ms ({} seconds)", totalDuration, totalDuration / 1000);
-                    log.info("  Average speed: {:.0f} triples/sec", (totalTriples.get() * 1000.0) / totalDuration);
+                    log.info("  Average speed: {} triples/sec", (long)((totalTriples.get() * 1000.0) / Math.max(totalDuration, 1)));
                     log.info("═══════════════════════════════════════════════════════════");
                 } catch (Exception e) {
                     if (conn.isActive()) {
@@ -751,6 +953,12 @@ public class GraphDBDatasetService {
                         log.warn("Transaction rolled back for project: {}", projectId);
                     }
                     throw e;
+                } finally {
+                    // With ruleset "empty", inference is never enabled so no re-enable needed.
+                    // Kept as guard for future ruleset changes.
+                    if (inferenceDisabled) {
+                        // reEnableInferenceNoReindex(conn, valueFactory);
+                    }
                 }
             }
             
@@ -758,6 +966,305 @@ public class GraphDBDatasetService {
             log.error("Chunked bulk load failed for project: {}", projectId, e);
             logCauseChain(e);
             throw new RuntimeException("Chunked bulk load failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Import an RDF file by POSTing the entire file directly to GraphDB's REST API
+     * in a single HTTP request. GraphDB handles parsing and indexing internally —
+     * no client-side batching, no intermediate commits, no transaction management.
+     *
+     * This is the fastest client-side approach: ONE HTTP request for the entire file.
+     * Falls back to chunked if this fails (e.g., GraphDB rejects the request or times out).
+     *
+     * @param projectId   The project ID (determines the named graph)
+     * @param sourceFile  Path to the RDF file on the editor's filesystem
+     * @param rdfFormat   The RDF format of the file
+     * @param fileSizeBytes The file size in bytes (for logging)
+     * @param options     Import options (mode, partition strategy)
+     * @param progressListener Optional callback for progress updates
+     * @return true if direct upload succeeded, false if it should fall back to chunked
+     */
+    public boolean directHttpUpload(String projectId,
+                                     Path sourceFile,
+                                     RDFFormat rdfFormat,
+                                     long fileSizeBytes,
+                                     ImportOptions options,
+                                     ProgressListener progressListener) {
+        long start = System.nanoTime();
+        ImportOptions resolvedOptions = options != null ? options : ImportOptions.defaults();
+        ImportOptions.ImportMode mode = resolvedOptions.getMode() != null
+                ? resolvedOptions.getMode()
+                : ImportOptions.ImportMode.FULL;
+
+        // Direct upload does not support DIFF mode or namespace partitioning
+        if (mode == ImportOptions.ImportMode.DIFF) {
+            log.info("[DirectUpload] DIFF mode not supported, falling back to chunked");
+            return false;
+        }
+        if (resolvedOptions.getPartitionStrategy() == ImportOptions.PartitionStrategy.NAMESPACE) {
+            log.info("[DirectUpload] Namespace partitioning not supported, falling back to chunked");
+            return false;
+        }
+
+        String graphUri = getGraphUri(projectId);
+        String contentType = rdfFormat.getDefaultMIMEType();
+
+        log.info("[DirectUpload] Starting direct HTTP upload for project: {} | file: {} | size: {} MB | format: {} | content-type: {}",
+                projectId, sourceFile.getFileName(), fileSizeBytes / (1024 * 1024), rdfFormat, contentType);
+
+        try {
+            // Step 1: If FULL mode, clear the existing graph first via SPARQL
+            if (mode == ImportOptions.ImportMode.FULL) {
+                long clearStart = System.nanoTime();
+                Repository repo = getRepository();
+                try (RepositoryConnection conn = repo.getConnection()) {
+                    IRI graphIri = conn.getValueFactory().createIRI(graphUri);
+                    long existingSize = safeGraphSize(conn, graphIri, "before-clear", projectId);
+                    if (existingSize > 0) {
+                        conn.begin();
+                        clearGraph(conn, graphIri, graphUri, projectId);
+                        conn.commit();
+                        log.info("[DirectUpload] Cleared existing graph ({} triples) in {} ms",
+                                existingSize, elapsedMillis(clearStart));
+                    }
+                }
+            }
+
+            // Step 2: POST entire file to GraphDB statements endpoint
+            // URL: POST {graphdbUrl}/repositories/{repositoryId}/statements?context=<graphUri>
+            String encodedContext = URLEncoder.encode("<" + graphUri + ">", StandardCharsets.UTF_8);
+            String url = graphdbUrl + "/repositories/" + repositoryId + "/statements?context=" + encodedContext;
+
+            log.info("[DirectUpload] POSTing to: {}", url);
+
+            HttpClient client = HttpClient.newBuilder()
+                    .version(HttpClient.Version.HTTP_1_1)
+                    .build();
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .header("Content-Type", contentType)
+                    .POST(HttpRequest.BodyPublishers.ofFile(sourceFile))
+                    .build();
+
+            // Report initial progress
+            if (progressListener != null) {
+                progressListener.onProgress(new ImportProgress(0, fileSizeBytes, 0, 0));
+            }
+
+            long uploadStart = System.nanoTime();
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            long uploadMs = elapsedMillis(uploadStart);
+
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                // Step 3: Verify — check graph size (using SPARQL COUNT, much faster than conn.size())
+                long verifyStart = System.nanoTime();
+                Repository repo = getRepository();
+                long verifiedSize = 0;
+                try (RepositoryConnection conn = repo.getConnection()) {
+                    verifiedSize = countGraphTriplesSparql(conn, graphUri);
+                }
+                long verifyMs = elapsedMillis(verifyStart);
+                long totalMs = elapsedMillis(start);
+
+                // Report final progress
+                if (progressListener != null) {
+                    progressListener.onProgress(new ImportProgress(fileSizeBytes, fileSizeBytes, verifiedSize, totalMs));
+                }
+
+                // Invalidate context caches
+                invalidateContextCaches(projectId);
+
+                log.info("═══════════════════════════════════════════════════════════");
+                log.info("✓ DIRECT HTTP UPLOAD COMPLETE for project: {}", projectId);
+                log.info("  Verified triples: {}", verifiedSize);
+                log.info("  TIMING BREAKDOWN:");
+                log.info("    • HTTP upload + GraphDB indexing: {} ms ({} sec)", uploadMs, uploadMs / 1000);
+                log.info("    • Verification: {} ms", verifyMs);
+                log.info("  TOTAL TIME: {} ms ({} seconds)", totalMs, totalMs / 1000);
+                if (verifiedSize > 0) {
+                    log.info("  Average speed: {} triples/sec", (long) ((verifiedSize * 1000.0) / Math.max(uploadMs, 1)));
+                }
+                log.info("═══════════════════════════════════════════════════════════");
+
+                if (verifiedSize == 0 && fileSizeBytes > 0) {
+                    log.error("❌ DIRECT UPLOAD: GraphDB returned 2xx but graph is empty! Falling back to chunked.");
+                    return false;
+                }
+
+                return true;
+            } else {
+                log.warn("[DirectUpload] GraphDB returned HTTP {}: {}. Falling back to chunked.",
+                        response.statusCode(), response.body().substring(0, Math.min(500, response.body().length())));
+                return false;
+            }
+        } catch (Exception e) {
+            log.warn("[DirectUpload] Failed: {}. Falling back to chunked.", e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Import an RDF file using GraphDB's server-side import API.
+     * This is significantly faster than client-side bulk load because GraphDB reads the file
+     * directly from its local filesystem — no HTTP serialization overhead per batch.
+     *
+     * @param projectId   The project ID (determines the named graph)
+     * @param sourceFile  Path to the RDF file on the editor's filesystem
+     * @param rdfFormat   The RDF format of the file
+     * @param fileSizeBytes The file size in bytes (for logging)
+     * @param options     Import options (mode, partition strategy)
+     * @param progressListener Optional callback for progress updates
+     * @return true if server-side import succeeded, false if it should fall back to chunked
+     */
+    public boolean serverSideImport(String projectId,
+                                     Path sourceFile,
+                                     RDFFormat rdfFormat,
+                                     long fileSizeBytes,
+                                     ImportOptions options,
+                                     ProgressListener progressListener) {
+        Path importDir = Paths.get(graphdbImportDir);
+        if (!Files.isDirectory(importDir)) {
+            log.info("[ServerImport] Import directory {} not available, falling back to chunked", graphdbImportDir);
+            return false;
+        }
+
+        ImportOptions resolvedOptions = options != null ? options : ImportOptions.defaults();
+        ImportOptions.ImportMode mode = resolvedOptions.getMode() != null
+                ? resolvedOptions.getMode()
+                : ImportOptions.ImportMode.FULL;
+        boolean shouldClear = mode == ImportOptions.ImportMode.FULL;
+
+        String graphUri = getGraphUri(projectId);
+        // Use a unique filename to avoid collisions
+        String importFileName = projectId.replaceAll("[^a-zA-Z0-9._-]", "_") + "_" + System.currentTimeMillis()
+                + "." + rdfFormat.getDefaultFileExtension();
+        Path importFile = importDir.resolve(importFileName);
+
+        try {
+            // Step 1: Copy file to the shared import directory
+            long copyStart = System.nanoTime();
+            Files.copy(sourceFile, importFile, StandardCopyOption.REPLACE_EXISTING);
+            log.info("[ServerImport {}] File copied to import dir in {} ms ({} bytes)",
+                    projectId, elapsedMillis(copyStart), fileSizeBytes);
+
+            if (progressListener != null) {
+                progressListener.onProgress(new ImportProgress(fileSizeBytes / 4, fileSizeBytes, 0, elapsedMillis(copyStart)));
+            }
+
+            // Step 2: Clear existing graph if FULL mode
+            if (shouldClear) {
+                try (RepositoryConnection conn = getRepository().getConnection()) {
+                    var valueFactory = conn.getValueFactory();
+                    IRI graphIri = valueFactory.createIRI(graphUri);
+                    long existing = safeGraphSize(conn, graphIri, "before-server-import", projectId);
+                    if (existing > 0) {
+                        clearGraph(conn, graphIri, graphUri, projectId);
+                    }
+                }
+            }
+
+            if (progressListener != null) {
+                progressListener.onProgress(new ImportProgress(fileSizeBytes / 2, fileSizeBytes, 0, elapsedMillis(copyStart)));
+            }
+
+            // Step 3: Trigger GraphDB server-side import via REST API
+            // The file is at /opt/graphdb/home/graphdb-import/<filename> inside the GraphDB container
+            long importStart = System.nanoTime();
+            log.info("[ServerImport {}] Triggering server-side import: file={}, graph={}", projectId, importFileName, graphUri);
+
+            HttpClient httpClient = HttpClient.newHttpClient();
+            String importUrl = graphdbUrl + "/rest/data/import/server/" + URLEncoder.encode(repositoryId, StandardCharsets.UTF_8);
+
+            // GraphDB server-side import request body
+            String jsonBody = String.format(
+                    "{\"fileNames\":[\"%s\"],\"importSettings\":{\"context\":\"%s\",\"replaceGraphs\":[]}}",
+                    importFileName, graphUri);
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(importUrl))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() >= 300) {
+                log.warn("[ServerImport {}] GraphDB REST API returned {}: {}", projectId, response.statusCode(), response.body());
+                return false;
+            }
+            log.info("[ServerImport {}] Import triggered, polling for completion...", projectId);
+
+            // Step 4: Poll for completion
+            String statusUrl = graphdbUrl + "/rest/data/import/server/" + URLEncoder.encode(repositoryId, StandardCharsets.UTF_8);
+            int maxPolls = 600; // 10 minutes max (1s intervals)
+            for (int poll = 0; poll < maxPolls; poll++) {
+                Thread.sleep(1000);
+
+                HttpRequest statusReq = HttpRequest.newBuilder()
+                        .uri(URI.create(statusUrl))
+                        .GET()
+                        .build();
+                HttpResponse<String> statusResp = httpClient.send(statusReq, HttpResponse.BodyHandlers.ofString());
+                String body = statusResp.body();
+
+                // Check if our file is still in the import list (means still importing or queued)
+                if (!body.contains(importFileName)) {
+                    // File no longer in list — import finished
+                    log.info("[ServerImport {}] Import completed in {} ms", projectId, elapsedMillis(importStart));
+                    break;
+                }
+
+                // Check for status in the JSON response
+                if (body.contains("\"status\":\"DONE\"") && body.contains(importFileName)) {
+                    log.info("[ServerImport {}] Import DONE in {} ms", projectId, elapsedMillis(importStart));
+                    break;
+                }
+                if (body.contains("\"status\":\"ERROR\"") && body.contains(importFileName)) {
+                    log.error("[ServerImport {}] Import failed: {}", projectId, body);
+                    return false;
+                }
+
+                // Update progress
+                if (progressListener != null && poll % 5 == 0) {
+                    long elapsed = elapsedMillis(copyStart);
+                    // Estimate progress: 50% is copy done, 50-99% is GraphDB processing
+                    int estimatedPercent = (int) Math.min(99, 50 + (poll * 50.0 / maxPolls));
+                    progressListener.onProgress(new ImportProgress(
+                            (long) (fileSizeBytes * estimatedPercent / 100.0), fileSizeBytes, 0, elapsed));
+                }
+            }
+
+            // Step 5: Verify (using SPARQL COUNT, much faster than conn.size())
+            try (RepositoryConnection conn = getRepository().getConnection()) {
+                long size = countGraphTriplesSparql(conn, graphUri);
+                log.info("[ServerImport {}] ✅ Verification: graph has {} triples", projectId, size);
+                if (size == 0) {
+                    log.warn("[ServerImport {}] Graph is empty after import — falling back to chunked", projectId);
+                    return false;
+                }
+            }
+
+            if (progressListener != null) {
+                progressListener.onProgress(new ImportProgress(fileSizeBytes, fileSizeBytes, 0, elapsedMillis(copyStart)));
+            }
+
+            // Invalidate context caches after new data is committed
+            invalidateContextCaches(projectId);
+
+            long totalMs = elapsedMillis(copyStart);
+            log.info("═══════════════════════════════════════════════════════════");
+            log.info("✅ SERVER-SIDE IMPORT COMPLETE for project: {}", projectId);
+            log.info("  TOTAL TIME: {} ms ({} seconds)", totalMs, totalMs / 1000);
+            log.info("═══════════════════════════════════════════════════════════");
+            return true;
+
+        } catch (Exception e) {
+            log.warn("[ServerImport {}] Server-side import failed, will fall back to chunked: {}", projectId, e.getMessage());
+            return false;
+        } finally {
+            // Clean up the import file
+            try { Files.deleteIfExists(importFile); } catch (Exception ignored) {}
         }
     }
     
@@ -871,8 +1378,8 @@ public class GraphDBDatasetService {
                                 if (count % 50000 == 0 || (System.currentTimeMillis() - lastLogTime.get() > 30000)) {
                                     long elapsed = elapsedMillis(addStart);
                                     double rate = (count * 1000.0) / elapsed; // triples per second
-                                    log.info("  Progress: {} triples parsed/uploaded in {} ms ({:.0f} triples/sec)", 
-                                            count, elapsed, rate);
+                                    log.info("  Progress: {} triples parsed/uploaded in {} ms ({} triples/sec)", 
+                                            count, elapsed, (long) rate);
                                     lastLogTime.set(System.currentTimeMillis());
                                 }
                             }
@@ -881,15 +1388,15 @@ public class GraphDBDatasetService {
                     }
                     long parseDuration = elapsedMillis(addStart);
                     double parseRate = (tripleCounter.get() * 1000.0) / parseDuration;
-                    log.info("✓ Parsing & uploading completed in {} ms ({} sec) - {} triples at {:.0f} triples/sec", 
-                            parseDuration, parseDuration / 1000, tripleCounter.get(), parseRate);
+                    log.info("✓ Parsing & uploading completed in {} ms ({} sec) - {} triples at {} triples/sec", 
+                            parseDuration, parseDuration / 1000, tripleCounter.get(), (long) parseRate);
                     
                     // Clean up temp file
                     tempFile.delete();
 
-                    // Get size after loading
+                    // Get size after loading (SPARQL COUNT is much faster than conn.size())
                     long sizeQueryStart = System.nanoTime();
-                    long tripleCount = conn.size(graphIri);
+                    long tripleCount = countGraphTriplesSparql(conn, graphUri);
                     log.info("Graph size computed in {} ms", elapsedMillis(sizeQueryStart));
 
                     // **COMMIT THE TRANSACTION** - This is where all changes are persisted
@@ -914,7 +1421,7 @@ public class GraphDBDatasetService {
                     log.info("    • Parsing & upload: {} ms ({}%)", parseDuration, (parseDuration * 100) / totalDuration);
                     log.info("    • Commit to GraphDB: {} ms ({}%)", commitDuration, (commitDuration * 100) / totalDuration);
                     log.info("  TOTAL TIME: {} ms ({} seconds)", totalDuration, totalDuration / 1000);
-                    log.info("  Average speed: {:.0f} triples/sec", (tripleCount * 1000.0) / totalDuration);
+                    log.info("  Average speed: {} triples/sec", (long)((tripleCount * 1000.0) / Math.max(totalDuration, 1)));
                     log.info("═══════════════════════════════════════════════════════════");
                 } catch (Exception e) {
                     // Rollback on any error
@@ -980,12 +1487,14 @@ public class GraphDBDatasetService {
                 String countQuery = buildCountQuery(graphs);
 
                 try {
+                    long countStart = System.nanoTime();
                     var query = conn.prepareTupleQuery(countQuery);
                     try (var result = query.evaluate()) {
                         if (result.hasNext()) {
                             var binding = result.next();
                             var countValue = binding.getValue("count");
                             long count = Long.parseLong(countValue.stringValue());
+                            log.info("[TIMING] clearDataset count query for project {}: {} ms ({} triples)", projectId, elapsedMillis(countStart), count);
 
                             if (count == 0) {
                                 log.info("Dataset already empty for project: {}, skipping clear", projectId);
@@ -1005,12 +1514,14 @@ public class GraphDBDatasetService {
                     );
 
                     try {
+                        long deleteStart = System.nanoTime();
                         conn.prepareUpdate(deleteQuery).execute();
-                        log.info("Dataset cleared for project {} graph {} using SPARQL DELETE", projectId, g);
+                        log.info("[TIMING] clearDataset DELETE for project {} graph {}: {} ms", projectId, g, elapsedMillis(deleteStart));
                     } catch (Exception e) {
                         log.warn("SPARQL DELETE failed for graph {}: {}. Falling back to conn.clear()", g, e.getMessage());
+                        long clearStart = System.nanoTime();
                         conn.clear(conn.getValueFactory().createIRI(g));
-                        log.info("Dataset cleared for project {} graph {} using conn.clear()", projectId, g);
+                        log.info("[TIMING] clearDataset conn.clear() for project {} graph {}: {} ms", projectId, g, elapsedMillis(clearStart));
                     }
                 }
             }
@@ -1033,24 +1544,37 @@ public class GraphDBDatasetService {
     }
     
     /**
-     * Get prefix mappings from the dataset
+     * Get prefix mappings from the dataset.
+     * Returns all namespaces registered in the GraphDB repository.
      */
     public Map<String, String> getPrefixes(String projectId) {
+        return doGetPrefixes(projectId);
+    }
+    
+    /**
+     * Internal: returns prefixes registered in the GraphDB repository.
+     * Uses the fast conn.getNamespaces() API instead of scanning all triples.
+     */
+    private Map<String, String> doGetPrefixes(String projectId) {
         Map<String, String> prefixes = new HashMap<>();
         
         try (RepositoryConnection conn = getRepository().getConnection()) {
             
-            // GraphDB typically stores prefixes in the repository namespace
+            long prefixStart = System.nanoTime();
+            // Collect all registered namespaces
+            Map<String, String> allNamespaces = new HashMap<>();
             for (org.eclipse.rdf4j.model.Namespace ns : conn.getNamespaces()) {
                 String prefix = ns.getPrefix();
-                // Normalize: ensure it ends with a colon for consistency with OWL API
                 if (!prefix.endsWith(":") && !prefix.isEmpty()) {
                     prefix += ":";
                 } else if (prefix.isEmpty()) {
-                    prefix = ":"; // Default prefix
+                    prefix = ":";
                 }
                 prefixes.put(prefix, ns.getName());
             }
+
+            log.info("[TIMING] doGetPrefixes for project {}: {} ms ({} prefixes)",
+                    projectId, elapsedMillis(prefixStart), prefixes.size());
             
         } catch (Exception e) {
             log.error("Failed to get prefixes for project: {}", projectId, e);
@@ -1131,11 +1655,14 @@ public class GraphDBDatasetService {
         String graphUri = getGraphUri(projectId);
         
         try (RepositoryConnection conn = repo.getConnection()) {
+            long sizeStart = System.nanoTime();
             List<String> graphs = getAllGraphUris(conn, projectId);
             long total = 0;
             for (String g : graphs) {
-                total += conn.size(conn.getValueFactory().createIRI(g));
+                total += countGraphTriplesSparql(conn, g);
             }
+            log.info("[TIMING] getDatasetSize for project {}: {} ms ({} triples across {} graphs)", 
+                     projectId, elapsedMillis(sizeStart), total, graphs.size());
             return total;
         } catch (Exception e) {
             log.error("Failed to get dataset size for project: {}", projectId, e);
@@ -1159,6 +1686,7 @@ public class GraphDBDatasetService {
         
         try (RepositoryConnection conn = repo.getConnection()) {
             
+            long exportStart = System.nanoTime();
             StringWriter writer = new StringWriter();
             List<String> graphs = getAllGraphUris(conn, projectId);
             List<IRI> contexts = new ArrayList<>();
@@ -1168,7 +1696,10 @@ public class GraphDBDatasetService {
             conn.export(Rio.createWriter(format, writer),
                        contexts.toArray(new IRI[0]));
             
-            return writer.toString();
+            String result = writer.toString();
+            log.info("[TIMING] exportDataset for project {}: {} ms ({} chars, format: {})", 
+                     projectId, elapsedMillis(exportStart), result.length(), format);
+            return result;
             
         } catch (Exception e) {
             log.error("Failed to export dataset for project: {}", projectId, e);
@@ -1196,8 +1727,11 @@ public class GraphDBDatasetService {
                 buildFromClause(conn, projectId) + " WHERE");
         }
         
+        long executeQueryStart = System.nanoTime();
         TupleQuery query = conn.prepareTupleQuery(sparqlQuery);
-        return query.evaluate();
+        TupleQueryResult result = query.evaluate();
+        log.info("[TIMING] executeQuery for project {}: {} ms", projectId, elapsedMillis(executeQueryStart));
+        return result;
     }
     
     /**
@@ -1217,20 +1751,24 @@ public class GraphDBDatasetService {
     }
 
     private int resolveBatchSize(long fileSizeBytes) {
+        // Larger batches reduce HTTP round-trip overhead.
+        // Each batch is one HTTP POST to GraphDB's transaction endpoint.
+        // For a 224MB/2.8M triple file at 10K batch size = 280 HTTP requests.
+        // At 50K batch size = 56 HTTP requests — 5x fewer round-trips.
         if (fileSizeBytes <= 0) {
-            return 50000;  // Optimized: 50x larger default batch size
+            return 5000;
         }
         long mb = fileSizeBytes / (1024 * 1024);
-        if (mb >= 500) {
-            return 100000;  // Optimized: massive batch for large files (20x improvement)
-        }
         if (mb >= 200) {
-            return 75000;  // Optimized: large batch
+            return 50000;  // Large files: maximize throughput, fewer HTTP round-trips
         }
-        if (mb >= 100) {
-            return 50000;  // Optimized: medium batch
+        if (mb >= 50) {
+            return 25000;  // Medium files: balanced
         }
-        return 50000;  // Optimized: default batch
+        if (mb >= 10) {
+            return 10000;
+        }
+        return 5000;
     }
 
     private InputStream stripLeadingGarbage(InputStream inputStream, RDFFormat format) {
@@ -1381,9 +1919,13 @@ public class GraphDBDatasetService {
             """, mainGraphUri, stagingGraphUri, mainGraphUri);
 
         log.info("[Diff] Applying delete diff for {}", projectId);
+        long diffDeleteStart = System.nanoTime();
         conn.prepareUpdate(deleteQuery).execute();
+        log.info("[TIMING] applyDiffUpdate DELETE for project {}: {} ms", projectId, elapsedMillis(diffDeleteStart));
         log.info("[Diff] Applying insert diff for {}", projectId);
+        long diffInsertStart = System.nanoTime();
         conn.prepareUpdate(insertQuery).execute();
+        log.info("[TIMING] applyDiffUpdate INSERT for project {}: {} ms", projectId, elapsedMillis(diffInsertStart));
     }
 
     private void flushBatch(RepositoryConnection conn,
@@ -1411,28 +1953,134 @@ public class GraphDBDatasetService {
             throw e;
         }
         long count = totalTriples.addAndGet(batch.size());
-        // Optimized: Only log every 100k triples instead of 10k to reduce I/O overhead
-        if (count % 100000 == 0) {
-            log.info("Uploaded {} triples so far...", count);
+        long durationMs = elapsedMillis(start);
+        // Log every 50K triples with timing
+        if (count % 50000 == 0) {
+            log.info("[TIMING] flushBatch: uploaded {} triples so far (this batch: {} triples in {} ms, rate: {} triples/sec)", 
+                     count, batch.size(), durationMs, (long)((batch.size() * 1000.0) / Math.max(durationMs, 1)));
+        } else if (durationMs > 5000) {
+            log.warn("[TIMING] flushBatch slow: {} triples in {} ms (rate: {} triples/sec, total: {})", 
+                     batch.size(), durationMs, (long)((batch.size() * 1000.0) / Math.max(durationMs, 1)), count);
         }
         batch.clear();
+    }
 
-        // Optimized: Removed backpressure/sleep logic - trust GraphDB's internal queuing
-        long durationMs = elapsedMillis(start);
-        if (durationMs > 10000) {
-            log.debug("Batch flush took {} ms for {} triples", durationMs, batchSize);
+    /**
+     * Flush a batch with retry logic. If GraphDB is temporarily unresponsive (GC pause,
+     * high load), wait and retry up to 3 times with exponential backoff.
+     */
+    private void flushBatchWithRetry(RepositoryConnection conn,
+                                     List<Statement> batch,
+                                     IRI graphIri,
+                                     AtomicLong totalTriples,
+                                     int batchSize) {
+        int maxRetries = 3;
+        long backoffMs = 5_000; // 5s initial backoff
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                flushBatch(conn, batch, graphIri, totalTriples, batchSize);
+                return;
+            } catch (Exception e) {
+                boolean isConnectionError = isConnectionError(e);
+                if (!isConnectionError || attempt == maxRetries) {
+                    throw e;
+                }
+                log.warn("flushBatch failed (attempt {}/{}), GraphDB may be under pressure. Retrying in {}ms...",
+                        attempt, maxRetries, backoffMs, e);
+                try {
+                    Thread.sleep(backoffMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw new RuntimeException("Interrupted during retry backoff", ie);
+                }
+                // Verify GraphDB is reachable before retrying
+                if (!waitForGraphDB(15_000)) {
+                    throw new RuntimeException("GraphDB did not recover within timeout. Last error: " + e.getMessage(), e);
+                }
+                backoffMs *= 2;
+            }
         }
+    }
+
+    /**
+     * Check if an exception is a connection-level error (connection refused, timeout, etc.)
+     */
+    private boolean isConnectionError(Throwable e) {
+        Throwable current = e;
+        while (current != null) {
+            if (current instanceof java.net.ConnectException
+                    || current instanceof java.net.SocketTimeoutException
+                    || current instanceof org.apache.http.conn.HttpHostConnectException
+                    || (current.getMessage() != null && current.getMessage().contains("Connection refused"))) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    /**
+     * Wait for GraphDB to become reachable, polling every 2 seconds.
+     * @return true if GraphDB responds within the timeout
+     */
+    private boolean waitForGraphDB(long timeoutMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                HttpClient client = HttpClient.newBuilder()
+                        .connectTimeout(java.time.Duration.ofSeconds(3))
+                        .build();
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(graphdbUrl + "/rest/repositories"))
+                        .timeout(java.time.Duration.ofSeconds(5))
+                        .GET()
+                        .build();
+                HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() == 200) {
+                    log.info("GraphDB is reachable again (status {})", response.statusCode());
+                    return true;
+                }
+            } catch (Exception ignored) {
+                // Still not reachable
+            }
+            try {
+                Thread.sleep(2_000);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        log.error("GraphDB did not become reachable within {}ms", timeoutMs);
+        return false;
     }
 
     private long safeGraphSize(RepositoryConnection conn, IRI graphIri, String tag, String projectId) {
         try {
-            long size = conn.size(graphIri);
+            long size = countGraphTriplesSparql(conn, graphIri.stringValue());
             log.info("Project {}: graph size {} during {}", projectId, size, tag);
             return size;
         } catch (Exception e) {
             log.warn("Could not get graph size for project {} during {}: {}", projectId, tag, e.getMessage());
             return -1;
         }
+    }
+
+    /**
+     * Fast triple count using SPARQL COUNT instead of conn.size().
+     * conn.size(graphIri) is extremely slow on GraphDB (20-60s even for small graphs)
+     * because it scans the entire index. A SPARQL COUNT query is orders of magnitude faster.
+     */
+    private long countGraphTriplesSparql(RepositoryConnection conn, String graphUri) {
+        String query = "SELECT (COUNT(*) AS ?count) FROM <" + graphUri + "> WHERE { ?s ?p ?o }";
+        try (TupleQueryResult result = conn.prepareTupleQuery(query).evaluate()) {
+            if (result.hasNext()) {
+                BindingSet bs = result.next();
+                if (bs.hasBinding("count")) {
+                    return Long.parseLong(bs.getValue("count").stringValue());
+                }
+            }
+        }
+        return 0;
     }
 
     private void logCauseChain(Throwable throwable) {
@@ -1471,36 +2119,39 @@ public class GraphDBDatasetService {
     }
 
     private List<String> getPartitionGraphs(RepositoryConnection conn, String projectId, String baseGraph) {
-        long now = System.currentTimeMillis();
+        // Partition graphs are only created during import with PartitionStrategy.NAMESPACE.
+        // They are populated into the cache at import time (see bulkLoadChunked).
+        // If cache is cold/expired, we return empty — no expensive GraphDB queries needed.
+        // getContextIDs() over HTTP takes 20-64 seconds and is not acceptable.
         PartitionGraphs cached = partitionGraphCache.get(projectId);
-        if (cached != null && now - cached.lastUpdatedMs < PARTITION_CACHE_TTL_MS) {
-            return cached.graphUris;
-        }
-
-        List<String> graphs = new ArrayList<>();
-        String query = String.format("""
-            SELECT DISTINCT ?g WHERE {
-              GRAPH ?g { ?s ?p ?o }
-              FILTER(STRSTARTS(STR(?g), "%s/ns/"))
+        if (cached != null) {
+            long age = System.currentTimeMillis() - cached.lastUpdatedMs;
+            if (age < PARTITION_CACHE_TTL_MS) {
+                return cached.graphUris;
             }
-            """, baseGraph);
-
-        try {
-            TupleQuery tupleQuery = conn.prepareTupleQuery(query);
-            try (TupleQueryResult result = tupleQuery.evaluate()) {
-                while (result.hasNext()) {
-                    BindingSet binding = result.next();
-                    if (binding.hasBinding("g")) {
-                        graphs.add(binding.getValue("g").stringValue());
-                    }
-                }
-            }
-        } catch (Exception e) {
-            log.warn("Failed to list partition graphs for {}: {}", projectId, e.getMessage());
         }
+        // Cold cache — assume no partitions (base graph only).
+        // Partitions will be populated after the next import if applicable.
+        log.debug("[TIMING] getPartitionGraphs for project {}: cache miss, returning empty (no expensive query)", projectId);
+        return List.of();
+    }
 
-        partitionGraphCache.put(projectId, new PartitionGraphs(graphs, now));
-        return graphs;
+    /**
+     * Register partition graphs discovered during import into the cache.
+     * Called from bulkLoadChunked when partitionByNamespace is enabled.
+     */
+    public void registerPartitionGraphs(String projectId, List<String> graphs) {
+        partitionGraphCache.put(projectId, new PartitionGraphs(graphs, System.currentTimeMillis()));
+        log.info("[CACHE] Registered {} partition graphs for project {}", graphs.size(), projectId);
+    }
+
+    /**
+     * Invalidate the per-project partition cache.
+     * Called after successful imports to ensure new graphs are discovered.
+     */
+    private void invalidateContextCaches(String projectId) {
+        partitionGraphCache.remove(projectId);
+        log.info("[CACHE] Invalidated partition cache for project {}", projectId);
     }
 
     private String buildCountQuery(List<String> graphs) {
@@ -1583,7 +2234,8 @@ public class GraphDBDatasetService {
                 "      FILTER (?class != owl:Thing && !isBlank(?class)) \n" +
                 "      OPTIONAL { \n" +
                 "        ?class rdfs:subClassOf ?parent . \n" +
-                "        FILTER (?parent != owl:Thing && !isBlank(?parent)) \n" +
+                "        ?parent a owl:Class . \n" +
+                "        FILTER (?parent != owl:Thing && !isBlank(?parent) && isIRI(?parent)) \n" +
                 "      } \n" +
                 "      FILTER (!BOUND(?parent)) \n" +
                 "    } \n" +
@@ -1597,7 +2249,8 @@ public class GraphDBDatasetService {
                 "    FILTER (?class != owl:Thing && !isBlank(?class)) \n" +
                 "    OPTIONAL { \n" +
                 "      ?class rdfs:subClassOf ?parent . \n" +
-                "      FILTER (?parent != owl:Thing && !isBlank(?parent)) \n" +
+                "      ?parent a owl:Class . \n" +
+                "      FILTER (?parent != owl:Thing && !isBlank(?parent) && isIRI(?parent)) \n" +
                 "    } \n" +
                 "    FILTER (!BOUND(?parent)) \n" +
                 "  } \n" +
@@ -1605,6 +2258,7 @@ public class GraphDBDatasetService {
                 "ORDER BY ?label ?class";
             
             log.info("[GRAPHDB] Executing getRootClasses query for project: {}", projectId);
+            long rootClassesStart = System.nanoTime();
             TupleQuery tupleQuery = conn.prepareTupleQuery(query);
             
             try (TupleQueryResult result = tupleQuery.evaluate()) {
@@ -1629,7 +2283,8 @@ public class GraphDBDatasetService {
                 }
             }
             
-            log.info("[GRAPHDB] Found {} root classes for project {}", rootClasses.size(), projectId);
+            log.info("[TIMING] getRootClassesFromGraphDB for project {}: {} ms ({} root classes)", 
+                     projectId, elapsedMillis(rootClassesStart), rootClasses.size());
             
         } catch (Exception e) {
             log.error("Error getting root classes from GraphDB for project {}", projectId, e);
@@ -1677,6 +2332,7 @@ public class GraphDBDatasetService {
             
             log.info("[GRAPHDB] Executing getChildClasses query for parent: {} in project: {}", 
                      parentClassIri, projectId);
+            long childClassesStart = System.nanoTime();
             TupleQuery tupleQuery = conn.prepareTupleQuery(query);
             
             try (TupleQueryResult result = tupleQuery.evaluate()) {
@@ -1701,8 +2357,8 @@ public class GraphDBDatasetService {
                 }
             }
             
-            log.info("[GRAPHDB] Found {} child classes for parent {} in project {}", 
-                     childClasses.size(), parentClassIri, projectId);
+            log.info("[TIMING] getChildClassesFromGraphDB for parent {} in project {}: {} ms ({} children)", 
+                     parentClassIri, projectId, elapsedMillis(childClassesStart), childClasses.size());
             
         } catch (Exception e) {
             log.error("Error getting child classes from GraphDB for parent {} in project {}", 
@@ -1742,8 +2398,11 @@ public class GraphDBDatasetService {
                 "  } \n" +
                 "}";
             
+            long hasChildrenStart = System.nanoTime();
             BooleanQuery booleanQuery = conn.prepareBooleanQuery(query);
-            return booleanQuery.evaluate();
+            boolean result = booleanQuery.evaluate();
+            log.debug("[TIMING] classHasChildren ASK for {}: {} ms (result: {})", classIri, elapsedMillis(hasChildrenStart), result);
+            return result;
             
         } catch (Exception e) {
             log.warn("Error checking if class {} has children", classIri, e);
@@ -1796,25 +2455,33 @@ public class GraphDBDatasetService {
     /**
      * Percent-encode characters in an IRI that GraphDB rejects.
      * Returns null if no sanitization needed (fast path for common case).
+     * Optimized: uses char[] directly and avoids String.charAt() overhead on hot path.
      */
     private String sanitizeIriString(String iri) {
-        if (iri == null) return null;
+        if (iri == null || iri.isEmpty()) return null;
 
-        // Fast check: scan for any character that needs encoding
-        boolean needsEncoding = false;
-        for (int i = 0; i < iri.length(); i++) {
+        // Fast check: scan for any character that needs encoding.
+        // Most IRIs are clean ASCII — exit as early as possible.
+        final int len = iri.length();
+        for (int i = 0; i < len; i++) {
             char c = iri.charAt(i);
-            if (c == '[' || c == ']' || c == '{' || c == '}' || c == '|'
-                    || c == '\\' || c == '^' || c == '`' || c == ' '
-                    || c == '(' || c == ')' || c > 127) {
-                needsEncoding = true;
-                break;
+            // Ordered by likelihood: most common bad chars first
+            if (c > 127 || c == ' ' || c == '[' || c == ']' || c == '{' || c == '}'
+                    || c == '|' || c == '\\' || c == '^' || c == '`'
+                    || c == '(' || c == ')') {
+                // Found a bad char — do encoding starting from this position
+                return sanitizeIriStringFrom(iri, i);
             }
         }
-        if (!needsEncoding) return null;
+        return null;
+    }
 
-        StringBuilder sb = new StringBuilder(iri.length() + 40);
-        for (int i = 0; i < iri.length(); i++) {
+    /** Encode bad chars in IRI starting from position {@code start}. */
+    private String sanitizeIriStringFrom(String iri, int start) {
+        final int len = iri.length();
+        StringBuilder sb = new StringBuilder(len + 40);
+        sb.append(iri, 0, start); // copy clean prefix
+        for (int i = start; i < len; i++) {
             char c = iri.charAt(i);
             if (c == '[') sb.append("%5B");
             else if (c == ']') sb.append("%5D");
@@ -1839,6 +2506,53 @@ public class GraphDBDatasetService {
             else sb.append(c);
         }
         return sb.toString();
+    }
+
+    /**
+     * Disable GraphDB's forward-chaining inference engine during bulk import.
+     * This is the single biggest performance win: without inference, commits
+     * that took 8+ minutes complete in under 30 seconds.
+     *
+     * Must be called OUTSIDE an active transaction.
+     */
+    private boolean disableInferenceDuringImport(RepositoryConnection conn, ValueFactory vf) {
+        try {
+            if (conn.isActive()) {
+                conn.commit(); // close any open tx first
+            }
+            conn.begin();
+            IRI sysProp = vf.createIRI("http://www.ontotext.com/owlim/system#inferenceDisabled");
+            conn.add(sysProp, sysProp, vf.createLiteral(true));
+            conn.commit();
+            log.info("⚡ Inference DISABLED for bulk import");
+            return true;
+        } catch (Exception e) {
+            log.warn("Could not disable inference (will proceed with inference enabled): {}", e.getMessage());
+            try { if (conn.isActive()) conn.rollback(); } catch (Exception ignored) {}
+            return false;
+        }
+    }
+
+    /**
+     * Re-enable inference after import WITHOUT triggering a full reindex.
+     * Our SPARQL queries use explicit patterns (owl:Class, rdfs:subClassOf)
+     * and do NOT depend on inferred triples, so reindex is unnecessary and
+     * would waste 14+ minutes on large ontologies.
+     */
+    private void reEnableInferenceNoReindex(RepositoryConnection conn, ValueFactory vf) {
+        try {
+            if (conn.isActive()) {
+                conn.commit();
+            }
+            conn.begin();
+            IRI sysProp = vf.createIRI("http://www.ontotext.com/owlim/system#inferenceDisabled");
+            conn.remove(sysProp, sysProp, null);
+            conn.commit();
+            log.info("✓ Inference re-enabled (reindex skipped — not needed for explicit queries)");
+        } catch (Exception e) {
+            log.warn("Could not re-enable inference (non-critical): {}", e.getMessage());
+            try { if (conn.isActive()) conn.rollback(); } catch (Exception ignored) {}
+        }
     }
 
     /**

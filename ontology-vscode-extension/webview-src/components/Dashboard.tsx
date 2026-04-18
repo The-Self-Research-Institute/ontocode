@@ -1,36 +1,95 @@
 // src/Dashboard.tsx
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
-  ChevronRight, ChevronDown, Settings, Search, FileText, Eye, Database, Tag, Share2, List, Code, Loader2, Package, Check, Trash2, PlusCircle, User, Type, GitBranch, Binary, LogOut, Play, Square, DatabaseZap, Upload, FolderOpen, Sparkles, Clock, Users, Download, RefreshCw, AlertCircle, Puzzle, Zap, BookOpen, Brain, Network, GitMerge, Palette, Edit2, Plus, Globe, Link as LinkIcon, Hash, X, FileCode, Info, Crown, Rocket, Bug
+  ChevronRight,
+  ChevronDown,
+  Settings,
+  Search,
+  FileText,
+  Eye,
+  Database,
+  Tag,
+  Share2,
+  List,
+  Code,
+  Loader2,
+  Package,
+  Check,
+  Trash2,
+  PlusCircle,
+  User,
+  Type,
+  GitBranch,
+  Binary,
+  LogOut,
+  Play,
+  Square,
+  DatabaseZap,
+  Upload,
+  FolderOpen,
+  Sparkles,
+  Clock,
+  Users,
+  Download,
+  RefreshCw,
+  AlertCircle,
+  Puzzle,
+  Zap,
+  BookOpen,
+  Brain,
+  Network,
+  GitMerge,
+  Palette,
+  Edit2,
+  Plus,
+  Globe,
+  Link as LinkIcon,
+  Hash,
+  X,
+  FileCode,
+  Info,
+  Crown,
+  Rocket,
+  Bug,
 } from "lucide-react";
-import apiClient from "../services/apiClient";
+import apiClient, { getBaseUrl } from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
 import { draftTrackingService } from "../services/draftTrackingService";
 import { notificationService } from "../services/notificationService";
 import { syncService } from "../services/syncService";
-import type { TreeNode, Property, Individual, OntologyMetadata, SelectableItem, AnnotationProperty, Datatype } from '../types';
-import { useAuth } from '../custom-hook/useAuth';
-import { useCollaboration } from '../contexts/CollaborationContext';
-import { useTheme } from '../contexts/ThemeContext';
-import { useSubscription } from '../hooks/useSubscription';
-import EntityHierarchy from './EntityHierarchy';
-import ClassEditor from './details/ClassEditor';
-import PropertyEditor from './details/PropertyEditor';
-import IndividualEditor from './details/IndividualEditor';
-import DatatypeEditor from './details/DatatypeEditor';
-import AnnotationPropertyEditor from './details/AnnotationPropertyEditor';
-import { Panel, AnnotationsDisplay } from './details/common';
+import type {
+  TreeNode,
+  Property,
+  Individual,
+  OntologyMetadata,
+  SelectableItem,
+  AnnotationProperty,
+  Datatype,
+} from "../types";
+import { useAuth } from "../custom-hook/useAuth";
+import { useCollaboration } from "../contexts/CollaborationContext";
+import { useTheme } from "../contexts/ThemeContext";
+import { useSubscription } from "../hooks/useSubscription";
+import EntityHierarchy from "./EntityHierarchy";
+import ClassEditor from "./details/ClassEditor";
+import PropertyEditor from "./details/PropertyEditor";
+import IndividualEditor from "./details/IndividualEditor";
+import DatatypeEditor from "./details/DatatypeEditor";
+import AnnotationPropertyEditor from "./details/AnnotationPropertyEditor";
+import { Panel, AnnotationsDisplay } from "./details/common";
 // SparqlQueryEditor moved to plugin: sparql-query-plugin
-import { ProjectSelector } from './ProjectSelector';
-import CollaborationPanel, { CollaborationPanelRef } from './CollaborationPanel';
-import HistoryPanel from './HistoryPanel';
-import ToastNotification from './ToastNotification';
-import { CollaborativeCursors } from './CollaborativeCursor';
-import ShareDialog from './ShareDialog';
-import { ReportIssueModal } from './ReportIssueModal';
-import ThemeSettings from './ThemeSettings';
+import { ProjectSelector } from "./ProjectSelector";
+import CollaborationPanel, { CollaborationPanelRef } from "./CollaborationPanel";
+import HistoryPanel from "./HistoryPanel";
+import ToastNotification from "./ToastNotification";
+import { CollaborativeCursors } from "./CollaborativeCursor";
+import ShareDialog from "./ShareDialog";
+import MergeWizard from "./MergeWizard";
+import { ReportIssueModal } from "./ReportIssueModal";
+import { UserGuideModal } from "./UserGuideModal";
+import ThemeSettings from "./ThemeSettings";
 // ImportProgressToast removed per user request
-import { QueueStatusIndicator, GlobalQueueStats } from './QueueStatusIndicator';
+import { QueueStatusIndicator, GlobalQueueStats } from "./QueueStatusIndicator";
 import {
   ClassSelectorDialog,
   CreateIndividualModal,
@@ -52,16 +111,16 @@ import {
   GCIEditorDialog,
   AddImportDialog,
   EditOntologyIRIDialog,
-  PrefixDialog
-} from './dialogs';
-import { useKeyboardShortcuts, DEFAULT_SHORTCUTS, KeyboardShortcut } from '../hooks/useKeyboardShortcuts';
-import { useEntityPreferences } from '../contexts/EntityPreferencesContext';
-import { CodeHighlighter } from './CodeHighlighter';
-import { PluginMarketplace } from './PluginMarketplace';
-import { pluginLoader } from '../services/pluginLoader';
-import DLQueryPanel from './DLQueryPanel';
-import CitationPickerDialog from './CitationPickerDialog';
-import ManualCitationDialog from './ManualCitationDialog';
+  PrefixDialog,
+} from "./dialogs";
+import { useKeyboardShortcuts, DEFAULT_SHORTCUTS, KeyboardShortcut } from "../hooks/useKeyboardShortcuts";
+import { useEntityPreferences } from "../contexts/EntityPreferencesContext";
+import { CodeHighlighter } from "./CodeHighlighter";
+import { PluginMarketplace } from "./PluginMarketplace";
+import { pluginLoader } from "../services/pluginLoader";
+import DLQueryPanel from "./DLQueryPanel";
+import CitationPickerDialog from "./CitationPickerDialog";
+import ManualCitationDialog from "./ManualCitationDialog";
 
 type TopLevelClass = TreeNode & { hasChildren: boolean };
 
@@ -73,7 +132,7 @@ type FileInfo = {
   uploadDate: string; // ISO
   projectId?: string | null;
   size?: number;
-  permission?: 'view' | 'edit';
+  permission?: "view" | "edit";
   sharedBy?: string;
   ownerEmail?: string;
 };
@@ -90,25 +149,25 @@ const findParentNode = (nodes: any[], targetId: string, parent: any | null = nul
 };
 
 const DATATYPE_IRI_MAP: Record<string, string> = {
-  'xsd:string': 'http://www.w3.org/2001/XMLSchema#string',
-  'xsd:boolean': 'http://www.w3.org/2001/XMLSchema#boolean',
-  'xsd:integer': 'http://www.w3.org/2001/XMLSchema#integer',
-  'xsd:decimal': 'http://www.w3.org/2001/XMLSchema#decimal',
-  'xsd:dateTime': 'http://www.w3.org/2001/XMLSchema#dateTime',
-  'xsd:anyURI': 'http://www.w3.org/2001/XMLSchema#anyURI'
+  "xsd:string": "http://www.w3.org/2001/XMLSchema#string",
+  "xsd:boolean": "http://www.w3.org/2001/XMLSchema#boolean",
+  "xsd:integer": "http://www.w3.org/2001/XMLSchema#integer",
+  "xsd:decimal": "http://www.w3.org/2001/XMLSchema#decimal",
+  "xsd:dateTime": "http://www.w3.org/2001/XMLSchema#dateTime",
+  "xsd:anyURI": "http://www.w3.org/2001/XMLSchema#anyURI",
 };
 
 const REASONER_ID_MAP: Record<string, string> = {
-  HermiT: 'HERMIT',
-  ELK: 'ELK',
-  Pellet: 'PELLET',
-  Openllet: 'OPENLLET',
-  Structural: 'STRUCTURAL'
+  HermiT: "HERMIT",
+  ELK: "ELK",
+  Pellet: "PELLET",
+  Openllet: "OPENLLET",
+  Structural: "STRUCTURAL",
 };
 
 const REASONER_OPTIONS = Object.keys(REASONER_ID_MAP);
 
-const normalizeReasonerType = (label: string): string => REASONER_ID_MAP[label] || 'HERMIT';
+const normalizeReasonerType = (label: string): string => REASONER_ID_MAP[label] || "HERMIT";
 
 // Convert the flat depth-annotated classification list from the backend into a nested tree
 const buildHierarchyTree = (nodes: any[]): any[] => {
@@ -138,7 +197,7 @@ const buildHierarchyTree = (nodes: any[]): any[] => {
 };
 
 const extractResponseData = (payload: any) => {
-  if (payload && typeof payload === 'object' && 'data' in payload) {
+  if (payload && typeof payload === "object" && "data" in payload) {
     return (payload as any).data ?? {};
   }
   return payload ?? {};
@@ -147,7 +206,7 @@ const extractResponseData = (payload: any) => {
 const combineReasonerResults = (classificationPayload: any, statsPayload?: any) => {
   // Add validation to handle error responses
   if (!classificationPayload || (classificationPayload.error && !classificationPayload.data)) {
-    console.error('[Dashboard] Invalid classification response:', classificationPayload);
+    console.error("[Dashboard] Invalid classification response:", classificationPayload);
     return {
       classHierarchy: [],
       classHierarchyTree: [],
@@ -163,8 +222,8 @@ const combineReasonerResults = (classificationPayload: any, statsPayload?: any) 
         individuals: 0,
         satisfiableClasses: 0,
         unsatisfiableClasses: 0,
-        isConsistent: true
-      }
+        isConsistent: true,
+      },
     };
   }
 
@@ -180,17 +239,13 @@ const combineReasonerResults = (classificationPayload: any, statsPayload?: any) 
   if (!statsData) {
     return {
       ...classificationData,
-      classHierarchyTree
+      classHierarchyTree,
     };
   }
 
   const unsatRaw = statsData.unsatisfiableClasses;
-  const unsatCount = unsatRaw === -1
-    ? 0
-    : (statsData.unsatisfiableClasses || 0);
-  const isConsistent = statsData.isConsistent === false || unsatRaw === -1
-    ? false
-    : true;
+  const unsatCount = unsatRaw === -1 ? 0 : statsData.unsatisfiableClasses || 0;
+  const isConsistent = statsData.isConsistent === false || unsatRaw === -1 ? false : true;
 
   return {
     ...classificationData,
@@ -204,96 +259,161 @@ const combineReasonerResults = (classificationPayload: any, statsPayload?: any) 
       individuals: statsData.individualCount ?? existingStats.individuals ?? 0,
       satisfiableClasses: statsData.satisfiableClasses ?? existingStats.satisfiableClasses ?? 0,
       unsatisfiableClasses: unsatCount,
-      isConsistent
-    }
+      isConsistent,
+    },
   };
 };
 // #region Helper Components
 
-const LoadingDialog = ({ isOpen, message }: { isOpen: boolean; message?: string }) => {
-  if (!isOpen) return null;
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-theme-surface rounded-lg shadow-xl p-8 max-w-sm w-full mx-4" style={{ borderColor: 'var(--color-border)' }}>
-        <div className="flex flex-col items-center">
-          <Loader2 size={48} className="animate-spin mb-4" style={{ color: 'var(--color-primary)' }} />
-          <h3 className="text-lg font-semibold mb-2" style={{ color: 'var(--color-text)' }}>{message || "Loading Ontology"}</h3>
-          <p className="text-sm text-center" style={{ color: 'var(--color-text-secondary)' }}>Please wait while we process your ontology data...</p>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const LoadingChoiceDialog = ({
+const LoadingDialog = ({
   isOpen,
+  message,
   projectName,
   loadingStatusMessage,
-  onWait,
-  onContinue
+  progress,
+  queuePosition,
+  totalInQueue,
+  estimatedWaitTimeMs,
 }: {
   isOpen: boolean;
-  projectName: string;
+  message?: string;
+  projectName?: string;
   loadingStatusMessage?: string;
-  onWait: () => void;
-  onContinue: () => void;
+  progress?: number;
+  queuePosition?: number;
+  totalInQueue?: number;
+  estimatedWaitTimeMs?: number;
 }) => {
   if (!isOpen) return null;
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]">
-      <div className="bg-theme-surface rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
-        <div className="flex items-start mb-4">
-          <div className="flex-shrink-0 w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center mr-3">
-            <Loader2 size={20} className="text-purple-600 animate-spin" />
-          </div>
-          <div className="flex-1">
-            <h3 className="text-lg font-semibold text-gray-900 mb-1">Loading Ontology</h3>
-            <p className="text-sm text-gray-600 mb-1">
-              "{projectName}" is loading in the background...
-            </p>
-            {loadingStatusMessage && (
-              <p className="text-xs text-blue-600 font-medium mt-2 bg-blue-50 px-2 py-1 rounded">
-                📊 {loadingStatusMessage}
-              </p>
-            )}
-          </div>
-        </div>
 
-        <div className="bg-gray-50 rounded-lg p-4 mb-4">
-          <p className="text-sm text-gray-700 mb-3">
-            <strong>What would you like to do?</strong>
-          </p>
-          <ul className="text-sm text-gray-600 space-y-2">
-            <li className="flex items-start">
-              <span className="text-purple-600 mr-2">•</span>
-              <span><strong>Wait:</strong> Stay on this screen until loading completes</span>
-            </li>
-            <li className="flex items-start">
-              <span className="text-purple-600 mr-2">•</span>
-              <span><strong>Continue:</strong> Work on other files, you'll get a notification when ready</span>
-            </li>
-          </ul>
-          {loadingStatusMessage && loadingStatusMessage.includes('minute') && (
-            <div className="mt-3 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
-              <strong>⏱️ Large file detected:</strong> This may take several minutes. We recommend clicking "Continue Working".
-            </div>
+  const formatWaitTime = (ms: number): string => {
+    const minutes = Math.ceil(ms / 60000);
+    if (minutes < 1) return "Less than a minute";
+    if (minutes === 1) return "~1 minute";
+    return `~${minutes} minutes`;
+  };
+
+  const hasProgress = progress !== undefined && progress > 0;
+  const hasQueue = queuePosition !== undefined && queuePosition > 0;
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60]">
+      <div
+        className="rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden border"
+        style={{
+          backgroundColor: "var(--color-surface, #fff)",
+          borderColor: "var(--color-border, #e5e7eb)",
+        }}
+      >
+        {/* Header gradient bar */}
+        <div className="h-1.5 bg-gradient-to-r from-purple-500 via-indigo-500 to-purple-600">
+          {hasProgress && (
+            <div
+              className="h-full bg-white/30 transition-all duration-500 ease-out"
+              style={{ width: `${100 - progress}%`, marginLeft: "auto" }}
+            />
           )}
         </div>
 
-        <div className="flex gap-3">
-          <button
-            onClick={onWait}
-            className="flex-1 px-4 py-2.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium flex items-center justify-center gap-2"
-          >
-            <Loader2 size={16} className="animate-spin" />
-            Wait for Loading
-          </button>
-          <button
-            onClick={onContinue}
-            className="flex-1 px-4 py-2.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium"
-          >
-            Continue Working
-          </button>
+        <div className="p-6">
+          {/* Top section: Icon + title */}
+          <div className="flex flex-col items-center text-center mb-4">
+            <div className="relative mb-3">
+              <div className="w-12 h-12 rounded-full bg-gradient-to-br from-purple-100 to-indigo-100 flex items-center justify-center">
+                <Loader2 size={22} className="text-purple-600 animate-spin" />
+              </div>
+              {hasProgress && (
+                <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-purple-600 text-white text-[9px] font-bold flex items-center justify-center shadow-sm">
+                  {Math.round(progress)}
+                </div>
+              )}
+            </div>
+            <h3 className="text-base font-semibold truncate w-full" style={{ color: "var(--color-text)" }}>
+              {message || "Loading Ontology"}
+            </h3>
+            {projectName ? (
+              <p className="text-sm truncate w-full mt-0.5" style={{ color: "var(--color-text-secondary)" }}>
+                {projectName}
+              </p>
+            ) : (
+              <p className="text-sm mt-0.5" style={{ color: "var(--color-text-secondary)" }}>
+                Processing your ontology data…
+              </p>
+            )}
+          </div>
+
+          {/* Progress bar */}
+          {hasProgress && (
+            <div className="mb-4">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                  Progress
+                </span>
+                <span className="text-xs font-bold text-purple-600">{Math.round(progress)}%</span>
+              </div>
+              <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-purple-500 to-indigo-500 transition-all duration-500 ease-out"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Status message */}
+          {loadingStatusMessage && (
+            <div
+              className="flex items-center justify-center gap-2 text-xs font-medium px-3 py-2 rounded-lg mb-4 text-center"
+              style={{ backgroundColor: "rgba(99,102,241,0.08)", color: "rgb(79,70,229)" }}
+            >
+              <Sparkles size={13} className="flex-shrink-0 opacity-70" />
+              <span>{loadingStatusMessage}</span>
+            </div>
+          )}
+
+          {/* Queue / Wait list */}
+          {hasQueue && (
+            <div
+              className="rounded-lg px-3.5 py-3 mb-4 border"
+              style={{
+                backgroundColor: "rgba(147,51,234,0.05)",
+                borderColor: "rgba(147,51,234,0.15)",
+              }}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-purple-700">
+                  <Clock size={12} />
+                  <span>Queue Position #{queuePosition}</span>
+                </div>
+                {totalInQueue !== undefined && totalInQueue > 0 && (
+                  <span className="text-[10px] font-medium text-purple-500 bg-purple-100 px-1.5 py-0.5 rounded-full">
+                    {totalInQueue} in queue
+                  </span>
+                )}
+              </div>
+              <div className="text-xs text-purple-600 space-y-1">
+                {queuePosition > 1 && (
+                  <div className="flex items-center gap-1.5">
+                    <Users size={11} className="opacity-70" />
+                    <span>
+                      {queuePosition - 1} file{queuePosition - 1 !== 1 ? "s" : ""} ahead of you
+                    </span>
+                  </div>
+                )}
+                {estimatedWaitTimeMs !== undefined && estimatedWaitTimeMs > 0 && (
+                  <div className="flex items-center gap-1.5">
+                    <Clock size={11} className="opacity-70" />
+                    <span>Estimated wait: {formatWaitTime(estimatedWaitTimeMs)}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Waiting indicator */}
+          <div className="flex items-center justify-center py-2 text-xs font-medium text-purple-600">
+            <span>{hasQueue ? "Waiting in queue…" : hasProgress ? "Importing…" : ""}</span>
+          </div>
         </div>
       </div>
     </div>
@@ -305,7 +425,7 @@ const ReasonerExplanationModal = ({
   onClose,
   data,
   loading,
-  error
+  error,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -317,17 +437,27 @@ const ReasonerExplanationModal = ({
 
   const causes = data?.causes || [];
   const isConsistent = data?.isConsistent ?? data?.consistent;
-  const heading = isConsistent === false ? 'Ontology is inconsistent' : (isConsistent === true ? 'Ontology is consistent' : 'Explanation');
+  const heading =
+    isConsistent === false
+      ? "Ontology is inconsistent"
+      : isConsistent === true
+        ? "Ontology is consistent"
+        : "Explanation";
 
   return (
     <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center">
-      <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full mx-4 overflow-hidden border" style={{ borderColor: 'var(--color-border)' }}>
+      <div
+        className="bg-white rounded-xl shadow-2xl max-w-3xl w-full mx-4 overflow-hidden border"
+        style={{ borderColor: "var(--color-border)" }}
+      >
         <div className="flex items-center justify-between px-5 py-3 border-b bg-gray-50">
           <div className="flex items-center gap-2 text-sm font-semibold text-gray-800">
             <AlertCircle size={16} className="text-red-500" />
             Inconsistency explanation
           </div>
-          <button onClick={onClose} className="text-xs text-gray-500 hover:text-gray-800">Close</button>
+          <button onClick={onClose} className="text-xs text-gray-500 hover:text-gray-800">
+            Close
+          </button>
         </div>
 
         <div className="p-5 max-h-[70vh] overflow-y-auto text-sm text-gray-700">
@@ -346,14 +476,18 @@ const ReasonerExplanationModal = ({
               <div className="mb-4">
                 <div className="text-xs uppercase text-gray-500 font-semibold mb-1">Summary</div>
                 <div className="text-gray-800 font-medium">{data.message || heading}</div>
-                {typeof data.totalIssues === 'number' && (
+                {typeof data.totalIssues === "number" && (
                   <div className="text-[11px] text-gray-500">Issues detected: {data.totalIssues}</div>
                 )}
                 {isConsistent === false && (
-                  <div className="mt-1 text-[11px] text-red-600">The ontology failed consistency checks. See causes below.</div>
+                  <div className="mt-1 text-[11px] text-red-600">
+                    The ontology failed consistency checks. See causes below.
+                  </div>
                 )}
                 {isConsistent === true && (
-                  <div className="mt-1 text-[11px] text-green-600">The ontology is consistent; no inconsistency causes detected.</div>
+                  <div className="mt-1 text-[11px] text-green-600">
+                    The ontology is consistent; no inconsistency causes detected.
+                  </div>
                 )}
               </div>
 
@@ -365,14 +499,16 @@ const ReasonerExplanationModal = ({
                     <div key={idx} className="border rounded-lg p-3 bg-gray-50">
                       <div className="flex items-center justify-between mb-1">
                         <div className="text-sm font-semibold text-gray-800">{cause.title || cause.type}</div>
-                        {cause.severity && <span className="text-[11px] uppercase text-red-600 font-semibold">{cause.severity}</span>}
+                        {cause.severity && (
+                          <span className="text-[11px] uppercase text-red-600 font-semibold">{cause.severity}</span>
+                        )}
                       </div>
                       {cause.description && <div className="text-xs text-gray-600 mb-2">{cause.description}</div>}
                       {cause.classes && Array.isArray(cause.classes) && (
                         <div className="text-[11px] text-gray-700 space-y-1">
                           {cause.classes.map((cls: any, i: number) => (
                             <div key={i} className="bg-white border rounded px-2 py-1">
-                              <div className="font-semibold">{cls.label || cls.iri || 'Class'}</div>
+                              <div className="font-semibold">{cls.label || cls.iri || "Class"}</div>
                               {cls.reason && <div className="text-gray-600">{cls.reason}</div>}
                               {cls.iri && <div className="text-gray-500">{cls.iri}</div>}
                             </div>
@@ -387,22 +523,33 @@ const ReasonerExplanationModal = ({
                               <div key={i} className="bg-white border rounded px-2 py-1">
                                 {violation.individual && <div className="font-semibold">{violation.individual}</div>}
                                 {violation.disjointClasses && (
-                                  <div className="text-gray-600">Classes: {(violation.disjointClasses as string[]).join(', ')}</div>
+                                  <div className="text-gray-600">
+                                    Classes: {(violation.disjointClasses as string[]).join(", ")}
+                                  </div>
                                 )}
-                                {violation.individualIri && <div className="text-gray-500">{violation.individualIri}</div>}
+                                {violation.individualIri && (
+                                  <div className="text-gray-500">{violation.individualIri}</div>
+                                )}
 
                                 {isPropertyViolation && (
                                   <div className="space-y-1">
-                                    <div className="font-semibold text-gray-800">{violation.property || 'Property'}</div>
-                                    {violation.propertyIri && <div className="text-gray-500">{violation.propertyIri}</div>}
+                                    <div className="font-semibold text-gray-800">
+                                      {violation.property || "Property"}
+                                    </div>
+                                    {violation.propertyIri && (
+                                      <div className="text-gray-500">{violation.propertyIri}</div>
+                                    )}
                                     <div className="text-gray-600">
-                                      Domain constraints: {violation.hasDomainConstraints ? 'present' : 'none'}; Range constraints: {violation.hasRangeConstraints ? 'present' : 'none'}
+                                      Domain constraints: {violation.hasDomainConstraints ? "present" : "none"}; Range
+                                      constraints: {violation.hasRangeConstraints ? "present" : "none"}
                                     </div>
                                   </div>
                                 )}
 
                                 {!violation.individual && !isPropertyViolation && (
-                                  <pre className="text-[10px] text-gray-600 overflow-x-auto">{JSON.stringify(violation, null, 2)}</pre>
+                                  <pre className="text-[10px] text-gray-600 overflow-x-auto">
+                                    {JSON.stringify(violation, null, 2)}
+                                  </pre>
                                 )}
                               </div>
                             );
@@ -436,7 +583,7 @@ const ReasonerSettingsDialog = ({
   isSynced,
   onSelectReasoner,
   onToggleSync,
-  onClose
+  onClose,
 }: {
   isOpen: boolean;
   selectedReasoner: string;
@@ -449,13 +596,18 @@ const ReasonerSettingsDialog = ({
 
   return (
     <div className="fixed inset-0 z-[65] bg-black/40 flex items-center justify-center">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 border" style={{ borderColor: 'var(--color-border)' }}>
+      <div
+        className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 border"
+        style={{ borderColor: "var(--color-border)" }}
+      >
         <div className="px-5 py-3 border-b bg-gray-50 flex items-center justify-between">
           <div className="flex items-center gap-2 text-sm font-semibold text-gray-800">
             <Settings size={16} />
             Reasoner settings
           </div>
-          <button onClick={onClose} className="text-xs text-gray-500 hover:text-gray-800">Close</button>
+          <button onClick={onClose} className="text-xs text-gray-500 hover:text-gray-800">
+            Close
+          </button>
         </div>
         <div className="p-5 space-y-4 text-sm text-gray-800">
           <div>
@@ -466,17 +618,14 @@ const ReasonerSettingsDialog = ({
               className="w-full border rounded px-3 py-2 text-sm"
             >
               {REASONER_OPTIONS.map((option) => (
-                <option key={option} value={option}>{option}</option>
+                <option key={option} value={option}>
+                  {option}
+                </option>
               ))}
             </select>
           </div>
           <label className="flex items-center gap-2 text-sm text-gray-700">
-            <input
-              type="checkbox"
-              checked={isSynced}
-              onChange={onToggleSync}
-              className="rounded border-gray-300"
-            />
+            <input type="checkbox" checked={isSynced} onChange={onToggleSync} className="rounded border-gray-300" />
             Synchronize reasoner after edits
           </label>
           <p className="text-xs text-gray-500">Matches Protégé: keep the reasoner in sync or run manually.</p>
@@ -512,13 +661,19 @@ const PluginPlaceholder: React.FC<PluginPlaceholderProps> = ({
   onRetryLoad,
   isInstalled,
   isLoading,
-  error
+  error,
 }) => {
   return (
-    <div className="h-full flex items-center justify-center p-8" style={{ backgroundColor: 'var(--bg)', color: 'var(--text-primary)' }}>
+    <div
+      className="h-full flex items-center justify-center p-8"
+      style={{ backgroundColor: "var(--bg)", color: "var(--text-primary)" }}
+    >
       <div className="max-w-2xl w-full">
         {/* Main Card */}
-        <div className="rounded-2xl shadow-xl overflow-hidden" style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border)' }}>
+        <div
+          className="rounded-2xl shadow-xl overflow-hidden"
+          style={{ backgroundColor: "var(--surface-1)", border: "1px solid var(--border)" }}
+        >
           {/* Header with gradient */}
           <div className={`bg-gradient-to-r ${accentColor} p-8 text-white relative overflow-hidden`}>
             {/* Background pattern */}
@@ -549,7 +704,11 @@ const PluginPlaceholder: React.FC<PluginPlaceholderProps> = ({
               </h3>
               <div className="grid grid-cols-2 gap-3">
                 {features?.map((feature, index) => (
-                  <div key={index} className="flex items-center gap-3 p-3 rounded-lg transition-all hover-overlay" style={{ backgroundColor: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+                  <div
+                    key={index}
+                    className="flex items-center gap-3 p-3 rounded-lg transition-all hover-overlay"
+                    style={{ backgroundColor: "var(--surface-2)", border: "1px solid var(--border)" }}
+                  >
                     <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center flex-shrink-0">
                       <Check size={12} className="text-white" />
                     </div>
@@ -560,33 +719,45 @@ const PluginPlaceholder: React.FC<PluginPlaceholderProps> = ({
             </div>
 
             {/* Status & Action */}
-            <div className="pt-6" style={{ borderTop: '1px solid var(--divider)' }}>
+            <div className="pt-6" style={{ borderTop: "1px solid var(--divider)" }}>
               {error ? (
-                <div className="mb-4 p-4 rounded-xl flex items-start gap-3" style={{ backgroundColor: 'var(--error-tint)', border: '1px solid var(--error)' }}>
-                  <AlertCircle size={20} className="flex-shrink-0 mt-0.5" style={{ color: 'var(--error)' }} />
+                <div
+                  className="mb-4 p-4 rounded-xl flex items-start gap-3"
+                  style={{ backgroundColor: "var(--error-tint)", border: "1px solid var(--error)" }}
+                >
+                  <AlertCircle size={20} className="flex-shrink-0 mt-0.5" style={{ color: "var(--error)" }} />
                   <div className="flex-1">
                     <p className="text-sm font-medium text-red-800">Failed to load plugin</p>
                     <p className="text-xs text-red-600 mt-1">{error}</p>
                   </div>
                 </div>
               ) : isLoading ? (
-                <div className="mb-4 p-4 rounded-xl flex items-center gap-3" style={{ backgroundColor: 'var(--info-tint)', border: '1px solid var(--info)' }}>
-                  <Loader2 size={20} className="animate-spin" style={{ color: 'var(--info)' }} />
+                <div
+                  className="mb-4 p-4 rounded-xl flex items-center gap-3"
+                  style={{ backgroundColor: "var(--info-tint)", border: "1px solid var(--info)" }}
+                >
+                  <Loader2 size={20} className="animate-spin" style={{ color: "var(--info)" }} />
                   <div>
                     <p className="text-sm font-medium text-blue-800">Loading plugin...</p>
                     <p className="text-xs text-blue-600 mt-0.5">Downloading and initializing components</p>
                   </div>
                 </div>
               ) : isInstalled ? (
-                <div className="mb-4 p-4 rounded-xl flex items-start gap-3" style={{ backgroundColor: 'var(--warning-tint)', border: '1px solid var(--warning)' }}>
-                  <AlertCircle size={20} className="flex-shrink-0 mt-0.5" style={{ color: 'var(--warning)' }} />
+                <div
+                  className="mb-4 p-4 rounded-xl flex items-start gap-3"
+                  style={{ backgroundColor: "var(--warning-tint)", border: "1px solid var(--warning)" }}
+                >
+                  <AlertCircle size={20} className="flex-shrink-0 mt-0.5" style={{ color: "var(--warning)" }} />
                   <div>
                     <p className="text-sm font-medium text-amber-800">Plugin installed but not loaded</p>
                     <p className="text-xs text-amber-600 mt-1">Click the button below to load the plugin</p>
                   </div>
                 </div>
               ) : (
-                <div className="mb-4 p-4 rounded-xl flex items-start gap-3" style={{ backgroundColor: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+                <div
+                  className="mb-4 p-4 rounded-xl flex items-start gap-3"
+                  style={{ backgroundColor: "var(--surface-2)", border: "1px solid var(--border)" }}
+                >
                   <Package size={20} className="flex-shrink-0 mt-0.5 text-tertiary" />
                   <div>
                     <p className="text-sm font-medium text-gray-700">Plugin not installed</p>
@@ -600,10 +771,11 @@ const PluginPlaceholder: React.FC<PluginPlaceholderProps> = ({
                   <button
                     onClick={onRetryLoad}
                     disabled={isLoading}
-                    className={`flex-1 px-6 py-3 rounded-xl font-semibold text-white shadow-lg transition-all flex items-center justify-center gap-2 ${isLoading
-                      ? 'bg-gray-400 cursor-not-allowed'
-                      : 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 hover:shadow-xl hover:-translate-y-0.5'
-                      }`}
+                    className={`flex-1 px-6 py-3 rounded-xl font-semibold text-white shadow-lg transition-all flex items-center justify-center gap-2 ${
+                      isLoading
+                        ? "bg-gray-400 cursor-not-allowed"
+                        : "bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 hover:shadow-xl hover:-translate-y-0.5"
+                    }`}
                   >
                     {isLoading ? (
                       <>
@@ -655,6 +827,8 @@ const TopMenuBar = ({
   onOpenPluginMarketplace,
   onOpenHistory,
   onReportIssue,
+  onOpenUserGuide,
+  onOpenMergeWizard,
   syncMode,
   onToggleSyncMode,
   isReasonerRunning,
@@ -684,7 +858,9 @@ const TopMenuBar = ({
   onOpenPluginMarketplace: () => void;
   onOpenHistory: () => void;
   onReportIssue: () => void;
-  syncMode: 'private' | 'public';
+  onOpenUserGuide: () => void;
+  onOpenMergeWizard: () => void;
+  syncMode: "private" | "public";
   onToggleSyncMode: () => void;
   isReasonerRunning?: boolean;
   isReasonerLoading?: boolean;
@@ -718,7 +894,8 @@ const TopMenuBar = ({
         // Build URL with proper query parameters
         const url = `/api/ontology/files?search=${encodeURIComponent(value)}&caseSensitive=true`;
         const response = await apiClient.get<{
-          data: any; files: FileInfo[]
+          data: any;
+          files: FileInfo[];
         }>(url);
         const files = response?.files || response?.data?.files || [];
         setFiles(files);
@@ -742,10 +919,18 @@ const TopMenuBar = ({
   }, [fileList]);
 
   const displayedFiles = searchFile ? files : fileList;
-  const menuItems = ['File', 'Edit', 'View', 'Reasoner', 'Tools', 'Window', 'Help'];
+  const menuItems = ["File", "Edit", "View", "Reasoner", "Tools", "Window", "Help"];
 
   return (
-    <header ref={menuRef} className="ontocode-top-menu text-xs flex items-center px-2 relative border-b h-8 flex-shrink-0" style={{ backgroundColor: 'var(--color-background)', color: 'var(--color-text)', borderBottomColor: 'var(--color-border)' }}>
+    <header
+      ref={menuRef}
+      className="ontocode-top-menu text-xs flex items-center px-2 relative border-b h-8 flex-shrink-0"
+      style={{
+        backgroundColor: "var(--color-background)",
+        color: "var(--color-text)",
+        borderBottomColor: "var(--color-border)",
+      }}
+    >
       <div className="flex items-center gap-1 p-2 mr-2">
         <Package size={16} className="text-purple-600" />
       </div>
@@ -756,7 +941,7 @@ const TopMenuBar = ({
               onClick={() => {
                 setOpenMenu(openMenu === item ? null : item);
               }}
-              className={`ontocode-top-menu-button cursor-pointer disabled:cursor-not-allowed px-3 py-1 rounded-sm transition-colors ${openMenu === item ? 'is-open' : ''}`}
+              className={`ontocode-top-menu-button cursor-pointer disabled:cursor-not-allowed px-3 py-1 rounded-sm transition-colors ${openMenu === item ? "is-open" : ""}`}
             >
               {item}
               {/* {item === 'Reasoner' && isReasonerRunning && (
@@ -767,7 +952,10 @@ const TopMenuBar = ({
               )} */}
             </button>
             {openMenu === item && (
-              <div className={`ontocode-top-menu-dropdown absolute left-0 mt-1 ${item === 'File' ? 'w-[360px]' : 'w-48'} bg-theme-surface border rounded-lg shadow-xl z-20 overflow-hidden`} style={{ borderColor: 'var(--color-border)' }}>
+              <div
+                className={`ontocode-top-menu-dropdown absolute left-0 mt-1 ${item === "File" ? "w-[360px]" : "w-48"} bg-theme-surface border rounded-lg shadow-xl z-20 overflow-hidden`}
+                style={{ borderColor: "var(--color-border)" }}
+              >
                 {item === "View" ? (
                   <div className="py-1">
                     <button
@@ -785,216 +973,246 @@ const TopMenuBar = ({
                   <div className="py-1">
                     <div className="px-3 py-1 text-gray-400 text-xs">Appearance</div>
                   </div>
-                )
-                  // : item === "Reasoner" ? (
-                  // <div className="py-1">
-                  //   <button
-                  //     onClick={async () => {
-                  //       setOpenMenu(null);
-                  //       if (onStartReasoner) await onStartReasoner();
-                  //     }}
-                  //     className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 ${
-                  //       isReasonerRunning || isReasonerLoading 
-                  //         ? 'text-gray-400 cursor-not-allowed' 
-                  //         : 'hover:bg-gray-100'
-                  //     }`}
-                  //     disabled={isReasonerRunning || isReasonerLoading}
-                  //   >
-                  //     {isReasonerLoading ? <Loader2 size={12} className="animate-spin" /> : null}
-                  //     Start reasoner
-                  //   </button>
-                  //   <button
-                  //     onClick={() => {
-                  //       setOpenMenu(null);
-                  //       if (onCheckConsistency) onCheckConsistency();
-                  //     }}
-                  //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
-                  //     disabled={isReasonerLoading || isConsistencyLoading}
-                  //   >
-                  //     {isConsistencyLoading ? <Loader2 size={12} className="animate-spin" /> : null}
-                  //     Check consistency
-                  //   </button>
-                  //   <button
-                  //     onClick={() => {
-                  //       setOpenMenu(null);
-                  //       if (onToggleReasonerSync) onToggleReasonerSync();
-                  //     }}
-                  //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
-                  //   >
-                  //     <input type="checkbox" checked={isReasonerSynced} readOnly className="pointer-events-none" />
-                  //     Synchronize reasoner
-                  //   </button>
-                  //   <button
-                  //     onClick={() => {
-                  //       setOpenMenu(null);
-                  //       if (onStopReasoner) onStopReasoner();
-                  //     }}
-                  //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
-                  //     disabled={!isReasonerRunning}
-                  //   >
-                  //     Stop reasoner
-                  //   </button>
-                  //   <button
-                  //     onClick={() => {
-                  //       setOpenMenu(null);
-                  //       if (onExplainInconsistency) onExplainInconsistency();
-                  //     }}
-                  //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
-                  //     disabled={isReasonerLoading}
-                  //   >
-                  //     Explain inconsistent ontology
-                  //   </button>
-                  //   <div className="border-t border-gray-200 my-1"></div>
-                  //   <button
-                  //     onClick={() => {
-                  //       // Configure reasoner preferences
-                  //       setOpenMenu(null);
-                  //       if (onOpenReasonerSettings) onOpenReasonerSettings();
-                  //     }}
-                  //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
-                  //   >
-                  //     Configure...
-                  //   </button>
-                  //   <div className="border-t border-gray-200 my-1"></div>
-                  //   <div className="px-4 py-1 text-[11px] text-gray-500 font-semibold">Select Reasoner:</div>
-                  //   <button
-                  //     onClick={() => {
-                  //       setOpenMenu(null);
-                  //       if (onSelectReasoner) onSelectReasoner('HermiT');
-                  //     }}
-                  //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2 ${
-                  //       selectedReasoner === 'HermiT' ? 'bg-blue-50 font-semibold' : ''
-                  //     }`}
-                  //   >
-                  //     {selectedReasoner === 'HermiT' ? '• ' : '  '}HermiT 1.4.5.519
-                  //   </button>
-                  //   <button
-                  //     onClick={() => {
-                  //       setOpenMenu(null);
-                  //       if (onSelectReasoner) onSelectReasoner('ELK');
-                  //     }}
-                  //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2 ${
-                  //       selectedReasoner === 'ELK' ? 'bg-blue-50 font-semibold' : ''
-                  //     }`}
-                  //   >
-                  //     {selectedReasoner === 'ELK' ? '• ' : '  '}ELK 0.4.3
-                  //   </button>
-                  //   <button
-                  //     onClick={() => {
-                  //       setOpenMenu(null);
-                  //       if (onSelectReasoner) onSelectReasoner('Pellet');
-                  //     }}
-                  //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
-                  //       selectedReasoner === 'Pellet' ? 'bg-blue-50 font-semibold' : ''
-                  //     }`}
-                  //   >
-                  //     {selectedReasoner === 'Pellet' ? '• ' : '  '}Pellet
-                  //   </button>
-                  //   <button
-                  //     onClick={() => {
-                  //       setOpenMenu(null);
-                  //       if (onSelectReasoner) onSelectReasoner('Openllet');
-                  //     }}
-                  //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
-                  //       selectedReasoner === 'Openllet' ? 'bg-blue-50 font-semibold' : ''
-                  //     }`}
-                  //   >
-                  //     {selectedReasoner === 'Openllet' ? '• ' : '  '}Openllet 2.6.5
-                  //   </button>
-                  //   <button
-                  //     onClick={() => {
-                  //       setOpenMenu(null);
-                  //       if (onSelectReasoner) onSelectReasoner('Structural');
-                  //     }}
-                  //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
-                  //       selectedReasoner === 'Structural' ? 'bg-blue-50 font-semibold' : ''
-                  //     }`}
-                  //   >
-                  //     {selectedReasoner === 'Structural' ? '• ' : '  '}Structural Reasoner
-                  //   </button>
-                  // </div>
-                  // ) 
-                  : item === "Help" ? (
-                    <div className="py-1">
+                ) : // : item === "Reasoner" ? (
+                // <div className="py-1">
+                //   <button
+                //     onClick={async () => {
+                //       setOpenMenu(null);
+                //       if (onStartReasoner) await onStartReasoner();
+                //     }}
+                //     className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 ${
+                //       isReasonerRunning || isReasonerLoading
+                //         ? 'text-gray-400 cursor-not-allowed'
+                //         : 'hover:bg-gray-100'
+                //     }`}
+                //     disabled={isReasonerRunning || isReasonerLoading}
+                //   >
+                //     {isReasonerLoading ? <Loader2 size={12} className="animate-spin" /> : null}
+                //     Start reasoner
+                //   </button>
+                //   <button
+                //     onClick={() => {
+                //       setOpenMenu(null);
+                //       if (onCheckConsistency) onCheckConsistency();
+                //     }}
+                //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                //     disabled={isReasonerLoading || isConsistencyLoading}
+                //   >
+                //     {isConsistencyLoading ? <Loader2 size={12} className="animate-spin" /> : null}
+                //     Check consistency
+                //   </button>
+                //   <button
+                //     onClick={() => {
+                //       setOpenMenu(null);
+                //       if (onToggleReasonerSync) onToggleReasonerSync();
+                //     }}
+                //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                //   >
+                //     <input type="checkbox" checked={isReasonerSynced} readOnly className="pointer-events-none" />
+                //     Synchronize reasoner
+                //   </button>
+                //   <button
+                //     onClick={() => {
+                //       setOpenMenu(null);
+                //       if (onStopReasoner) onStopReasoner();
+                //     }}
+                //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
+                //     disabled={!isReasonerRunning}
+                //   >
+                //     Stop reasoner
+                //   </button>
+                //   <button
+                //     onClick={() => {
+                //       setOpenMenu(null);
+                //       if (onExplainInconsistency) onExplainInconsistency();
+                //     }}
+                //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                //     disabled={isReasonerLoading}
+                //   >
+                //     Explain inconsistent ontology
+                //   </button>
+                //   <div className="border-t border-gray-200 my-1"></div>
+                //   <button
+                //     onClick={() => {
+                //       // Configure reasoner preferences
+                //       setOpenMenu(null);
+                //       if (onOpenReasonerSettings) onOpenReasonerSettings();
+                //     }}
+                //     className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
+                //   >
+                //     Configure...
+                //   </button>
+                //   <div className="border-t border-gray-200 my-1"></div>
+                //   <div className="px-4 py-1 text-[11px] text-gray-500 font-semibold">Select Reasoner:</div>
+                //   <button
+                //     onClick={() => {
+                //       setOpenMenu(null);
+                //       if (onSelectReasoner) onSelectReasoner('HermiT');
+                //     }}
+                //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2 ${
+                //       selectedReasoner === 'HermiT' ? 'bg-blue-50 font-semibold' : ''
+                //     }`}
+                //   >
+                //     {selectedReasoner === 'HermiT' ? '• ' : '  '}HermiT 1.4.5.519
+                //   </button>
+                //   <button
+                //     onClick={() => {
+                //       setOpenMenu(null);
+                //       if (onSelectReasoner) onSelectReasoner('ELK');
+                //     }}
+                //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2 ${
+                //       selectedReasoner === 'ELK' ? 'bg-blue-50 font-semibold' : ''
+                //     }`}
+                //   >
+                //     {selectedReasoner === 'ELK' ? '• ' : '  '}ELK 0.4.3
+                //   </button>
+                //   <button
+                //     onClick={() => {
+                //       setOpenMenu(null);
+                //       if (onSelectReasoner) onSelectReasoner('Pellet');
+                //     }}
+                //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
+                //       selectedReasoner === 'Pellet' ? 'bg-blue-50 font-semibold' : ''
+                //     }`}
+                //   >
+                //     {selectedReasoner === 'Pellet' ? '• ' : '  '}Pellet
+                //   </button>
+                //   <button
+                //     onClick={() => {
+                //       setOpenMenu(null);
+                //       if (onSelectReasoner) onSelectReasoner('Openllet');
+                //     }}
+                //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
+                //       selectedReasoner === 'Openllet' ? 'bg-blue-50 font-semibold' : ''
+                //     }`}
+                //   >
+                //     {selectedReasoner === 'Openllet' ? '• ' : '  '}Openllet 2.6.5
+                //   </button>
+                //   <button
+                //     onClick={() => {
+                //       setOpenMenu(null);
+                //       if (onSelectReasoner) onSelectReasoner('Structural');
+                //     }}
+                //     className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
+                //       selectedReasoner === 'Structural' ? 'bg-blue-50 font-semibold' : ''
+                //     }`}
+                //   >
+                //     {selectedReasoner === 'Structural' ? '• ' : '  '}Structural Reasoner
+                //   </button>
+                // </div>
+                // )
+                item === "Help" ? (
+                  <div className="py-1">
+                    {localStorage.getItem("deploymentType") !== "self-hosted" && (
                       <button
                         onClick={() => {
-                          onReportIssue();
+                          onOpenUserGuide();
                           setOpenMenu(null);
                         }}
                         className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
                       >
-                        <Bug size={14} />
-                        Report Issue
+                        <BookOpen size={14} />
+                        User Guide
                       </button>
-                    </div>
-                  ) : item === "File" ? (
-                    <div className="flex flex-col py-1">
-                      <div className="px-4 py-2 text-[11px] uppercase tracking-wide text-gray-500">File</div>
-                      <button
-                        onClick={(e) => {
-                          e.preventDefault();
-                          onOpenDialog();
-                          setOpenMenu(null);
-                        }}
-                        className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
-                      >
-                        Open
-                      </button>
-                      <div className="border-t border-gray-100 my-1" />
-                      <button
-                        onClick={async (e) => {
-                          e.preventDefault();
-                          await onSave();
-                          setOpenMenu(null);
-                        }}
-                        disabled={!hasUnsavedChanges || isSaving || !currentProjectId}
-                        className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                      >
-                        Save {draftCount && draftCount > 0 ? `(${draftCount})` : ''}
-                        {hasUnsavedChanges && <span className="text-orange-600 text-lg leading-none">•</span>}
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.preventDefault();
-                          if (window.vscode && currentProjectId) {
-                            window.vscode.postMessage({
-                              type: "downloadOntology",
-                              url: `/api/ontology/export/${currentProjectId}`,
-                              filename: `${currentProjectId}.owl`
-                            });
-                          } else if (window.vscode) {
-                            window.vscode.postMessage({
-                              type: 'error',
-                              value: 'No ontology loaded. Please open a file first.'
-                            });
-                          }
-                          setOpenMenu(null);
-                        }}
-                        disabled={!currentProjectId}
-                        className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Download
-                      </button>
-                      <div className="border-t border-gray-100 my-1" />
-                      <button
-                        onClick={(e) => {
-                          e.preventDefault();
-                          if (currentProjectId) {
-                            onShareFile(currentProjectId);
-                          } else if (window.vscode) {
-                            window.vscode.postMessage({
-                              type: 'error',
-                              value: 'No ontology loaded. Please open a file first.'
-                            });
-                          }
-                          setOpenMenu(null);
-                        }}
-                        disabled={!currentProjectId}
-                        className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Share
-                      </button>
-                      {/* <button
+                    )}
+                    <button
+                      onClick={() => {
+                        onReportIssue();
+                        setOpenMenu(null);
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                    >
+                      <Bug size={14} />
+                      Report Issue
+                    </button>
+                  </div>
+                ) : item === "File" ? (
+                  <div className="flex flex-col py-1">
+                    <div className="px-4 py-2 text-[11px] uppercase tracking-wide text-gray-500">File</div>
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        onOpenDialog();
+                        setOpenMenu(null);
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100"
+                    >
+                      Open
+                    </button>
+                    <div className="border-t border-gray-100 my-1" />
+                    <button
+                      onClick={async (e) => {
+                        e.preventDefault();
+                        await onSave();
+                        setOpenMenu(null);
+                      }}
+                      disabled={!hasUnsavedChanges || isSaving || !currentProjectId}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                      Save {draftCount && draftCount > 0 ? `(${draftCount})` : ""}
+                      {hasUnsavedChanges && <span className="text-orange-600 text-lg leading-none">•</span>}
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        if (window.vscode && currentProjectId) {
+                          window.vscode.postMessage({
+                            type: "downloadOntology",
+                            url: `/api/ontology/export/${currentProjectId}`,
+                            filename: `${currentProjectId}.owl`,
+                          });
+                        } else if (window.vscode) {
+                          window.vscode.postMessage({
+                            type: "error",
+                            value: "No ontology loaded. Please open a file first.",
+                          });
+                        }
+                        setOpenMenu(null);
+                      }}
+                      disabled={!currentProjectId}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Download
+                    </button>
+                    <div className="border-t border-gray-100 my-1" />
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        if (currentProjectId) {
+                          onShareFile(currentProjectId);
+                        } else if (window.vscode) {
+                          window.vscode.postMessage({
+                            type: "error",
+                            value: "No ontology loaded. Please open a file first.",
+                          });
+                        }
+                        setOpenMenu(null);
+                      }}
+                      disabled={!currentProjectId}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Share
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        if (currentProjectId) {
+                          onOpenMergeWizard();
+                        } else if (window.vscode) {
+                          window.vscode.postMessage({
+                            type: "error",
+                            value: "No ontology loaded. Please open a file first.",
+                          });
+                        }
+                        setOpenMenu(null);
+                      }}
+                      disabled={!currentProjectId}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                      <GitMerge size={14} />
+                      Merge Ontologies
+                    </button>
+                    {/* <button
                       onClick={(e) => {
                         e.preventDefault();
                         if (currentProjectId) {
@@ -1013,10 +1231,10 @@ const TopMenuBar = ({
                       <Clock size={14} />
                       History
                     </button> */}
-                    </div>
-                  ) : (
-                    <div className="p-2 text-xs text-gray-400">No actions available</div>
-                  )}
+                  </div>
+                ) : (
+                  <div className="p-2 text-xs text-gray-400">No actions available</div>
+                )}
               </div>
             )}
           </div>
@@ -1024,78 +1242,111 @@ const TopMenuBar = ({
       </div>
 
       <div className="flex items-center ml-auto mr-4 gap-2">
-        <span className={`text-xs font-medium ${syncMode === 'public' ? 'text-green-600' : 'text-gray-500'}`}>
-          {syncMode === 'public' ? 'Public (Live)' : 'Private (Draft)'}
+        <span className={`text-xs font-medium ${syncMode === "public" ? "text-green-600" : "text-gray-500"}`}>
+          {syncMode === "public" ? "Public (Live)" : "Private (Draft)"}
         </span>
         <button
           onClick={onToggleSyncMode}
-          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 ${syncMode === 'public' ? 'bg-green-500' : 'bg-gray-300'
-            }`}
-          title={syncMode === 'public' ? "Switch to Private Draft Mode" : "Switch to Public Live Mode"}
+          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 ${
+            syncMode === "public" ? "bg-green-500" : "bg-gray-300"
+          }`}
+          title={syncMode === "public" ? "Switch to Private Draft Mode" : "Switch to Public Live Mode"}
         >
           <span
-            className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${syncMode === 'public' ? 'translate-x-5' : 'translate-x-1'
-              }`}
+            className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+              syncMode === "public" ? "translate-x-5" : "translate-x-1"
+            }`}
           />
         </button>
       </div>
-
     </header>
   );
 };
 
 const OpenFileDialog = ({
-    isOpen,
-    onClose,
-    myFiles,
-    sharedFiles,
-    currentProjectId,
-    currentFileId,
-    currentFileName,
-    onDeleteFile,
-    onSwitchFile,
-    parentProjectId,
-    onLoadProjectFile,
-    projectFiles,
-    importMode,
-    partitionStrategy,
-    onImportModeChange,
-    onPartitionStrategyChange
-  }: {
-    isOpen: boolean;
-    onClose: () => void;
-    myFiles: FileInfo[];
-    sharedFiles: FileInfo[];
+  isOpen,
+  onClose,
+  myFiles,
+  sharedFiles,
+  currentProjectId,
+  currentFileId,
+  currentFileName,
+  onDeleteFile,
+  onSwitchFile,
+  parentProjectId,
+  onLoadProjectFile,
+  projectFiles,
+  importMode,
+  partitionStrategy,
+  onImportModeChange,
+  onPartitionStrategyChange,
+  isWorkspaceMode,
+  onRefresh,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  myFiles: FileInfo[];
+  sharedFiles: FileInfo[];
   currentProjectId: string | null;
   currentFileId?: string | null;
   currentFileName?: string | null;
   onDeleteFile?: (projectId: string, fileName: string) => void;
-    onSwitchFile: (projectId: string) => void;
-    parentProjectId?: string;
-    onLoadProjectFile?: (fileId: string, fileName: string) => void;
-    projectFiles?: FileInfo[];
-    importMode: 'full' | 'incremental' | 'diff';
-    partitionStrategy: 'none' | 'namespace';
-    onImportModeChange: (mode: 'full' | 'incremental' | 'diff') => void;
-    onPartitionStrategyChange: (strategy: 'none' | 'namespace') => void;
-  }) => {
+  onSwitchFile: (projectId: string) => void;
+  parentProjectId?: string;
+  onLoadProjectFile?: (fileId: string, fileName: string) => void;
+  projectFiles?: FileInfo[];
+  importMode: "full" | "incremental" | "diff";
+  partitionStrategy: "none" | "namespace";
+  onImportModeChange: (mode: "full" | "incremental" | "diff") => void;
+  onPartitionStrategyChange: (strategy: "none" | "namespace") => void;
+  isWorkspaceMode?: boolean;
+  onRefresh?: () => void;
+}) => {
   const [searchQuery, setSearchQuery] = useState("");
-  const canOpenLocalFile = typeof window !== 'undefined' && !!(window as any).vscode;
+  const canOpenLocalFile = typeof window !== "undefined" && !!(window as any).vscode;
   const usingProjectFiles = !!parentProjectId;
-  const primaryFiles = usingProjectFiles ? (projectFiles || []) : myFiles;
+
+  // Backend now filters to only return files (not projects), so just pass through
+  const primaryFiles = usingProjectFiles ? projectFiles || [] : myFiles;
   const secondaryFiles = usingProjectFiles ? [] : sharedFiles;
-    const handleOpenLocalFile = () => {
-      if (!canOpenLocalFile || !window.vscode) {
-        return;
-      }
-      window.vscode.postMessage({
-        type: 'openLocalFile',
-        projectId: parentProjectId || undefined,
-        importMode,
-        partition: partitionStrategy
+
+  // Track when projectFiles prop changes
+  useEffect(() => {
+    if (usingProjectFiles) {
+      console.log("[OpenFileDialog] 🔄 projectFiles prop changed:", {
+        count: projectFiles?.length || 0,
+        files: projectFiles?.map((f) => f.filename),
       });
-      onClose();
-    };
+    }
+  }, [projectFiles, usingProjectFiles]);
+
+  const handleOpenLocalFile = () => {
+    if (!canOpenLocalFile || !window.vscode) {
+      return;
+    }
+    window.vscode.postMessage({
+      type: "openLocalFile",
+      projectId: parentProjectId || undefined,
+      importMode,
+      partition: partitionStrategy,
+    });
+    onClose();
+  };
+
+  const handleCreateNewFile = () => {
+    if (!canOpenLocalFile || !window.vscode) {
+      return;
+    }
+
+    window.vscode.postMessage({
+      type: "createNewFile",
+      projectId: parentProjectId || undefined,
+      importMode,
+      partition: partitionStrategy,
+    });
+    // Don't close dialog - let it stay open so user can see the new file appear
+    // onClose();
+  };
 
   // console.log('[OpenFileDialog] Rendered with myFiles:', myFiles.length, 'sharedFiles:', sharedFiles.length, 'isOpen:', isOpen);
   // console.log('[OpenFileDialog] myFiles data:', myFiles);
@@ -1105,73 +1356,92 @@ const OpenFileDialog = ({
 
   const allFiles = [...primaryFiles, ...secondaryFiles];
   const filteredFiles = searchQuery
-    ? allFiles.filter(f => f.filename.toLowerCase().includes(searchQuery.toLowerCase()))
+    ? allFiles.filter((f) => f.filename.toLowerCase().includes(searchQuery.toLowerCase()))
     : allFiles;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-theme-surface rounded-lg shadow-2xl w-full max-w-md mx-4 max-h-[70vh] flex flex-col" onClick={e => e.stopPropagation()}>
-        <div className="p-4 border-b" style={{ borderColor: 'var(--color-border)' }}>
-          <div className="relative">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search files..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              autoFocus
-              className="w-full pl-10 pr-3 py-2 border rounded-lg focus:ring-2 text-sm"
-              style={{
-                borderColor: 'var(--color-border)',
-                backgroundColor: 'var(--color-surface)',
-                color: 'var(--color-text)',
-                '--tw-ring-color': 'var(--color-primary)'
-              } as React.CSSProperties}
-            />
+      <div
+        className="bg-theme-surface rounded-lg shadow-2xl w-full max-w-md mx-4 max-h-[70vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-4 border-b" style={{ borderColor: "var(--color-border)" }}>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
+              {usingProjectFiles ? `Project Files (${filteredFiles.length})` : "Open File"}
+            </h3>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search files..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                autoFocus
+                className="w-full pl-10 pr-3 py-2 border rounded-lg focus:ring-2 text-sm"
+                style={
+                  {
+                    borderColor: "var(--color-border)",
+                    backgroundColor: "var(--color-surface)",
+                    color: "var(--color-text)",
+                    "--tw-ring-color": "var(--color-primary)",
+                  } as React.CSSProperties
+                }
+              />
+            </div>
+            {usingProjectFiles && onRefresh && (
+              <button
+                onClick={() => {
+                  console.log("[OpenFileDialog] 🔄 Manual refresh clicked");
+                  onRefresh();
+                }}
+                className="p-2 rounded-md border hover:bg-gray-50 transition-colors"
+                style={{
+                  borderColor: "var(--color-border)",
+                  color: "var(--color-text)",
+                }}
+                title="Refresh file list"
+              >
+                <RefreshCw size={16} />
+              </button>
+            )}
           </div>
         </div>
         <div className="flex-1 overflow-y-auto">
-          {primaryFiles.length > 0 && (
+          {filteredFiles.length > 0 ? (
             <div className="p-3">
-              <div className="flex items-center gap-2 px-2 py-1.5 mb-2">
-                {usingProjectFiles ? (
-                  <FolderOpen size={14} className="text-purple-600" />
-                ) : (
-                  <User size={14} className="text-purple-600" />
-                )}
-                <span className="text-xs font-semibold text-purple-800">
-                  {usingProjectFiles ? 'Project Files' : 'My Files'} ({primaryFiles.filter(f => !searchQuery || f.filename.toLowerCase().includes(searchQuery.toLowerCase())).length})
-                </span>
-              </div>
               <div className="space-y-0.5">
-                {primaryFiles.filter(f => !searchQuery || (f.filename && f.filename.toLowerCase().includes(searchQuery.toLowerCase()))).map((file) => {
-                  const fileProjectId = file.projectId || file.id || (file.filename ? file.filename.replace(/\.[^/.]+$/, '') : '');
+                {filteredFiles.map((file) => {
+                  const fileProjectId =
+                    file.projectId || file.id || (file.filename ? file.filename.replace(/\.[^/.]+$/, "") : "");
                   const isActiveById = currentFileId ? file.id === currentFileId : false;
                   const isActiveByName = currentFileName ? file.filename === currentFileName : false;
-                  // Also check if projectId matches (for free mode where projectId IS the file identifier)
-                  const isActiveByProjectId = currentProjectId ? (fileProjectId === currentProjectId || file.filename === currentProjectId) : false;
+                  const isActiveByProjectId = currentProjectId
+                    ? fileProjectId === currentProjectId || file.filename === currentProjectId
+                    : false;
                   const isActive = isActiveById || isActiveByName || isActiveByProjectId;
+                  const isSharedFile = sharedFiles.some((sf) => sf.id === file.id);
+
                   return (
                     <div
                       key={file.id}
                       onClick={() => {
                         if (!isActive) {
-                          // If we have a parent project (admin flow), load the file from project
                           if (parentProjectId && onLoadProjectFile) {
                             onLoadProjectFile(file.id, file.filename);
                           } else {
-                            // Normal flow - switch to existing ontology project
                             onSwitchFile(fileProjectId);
                           }
                         }
                         onClose();
                       }}
-                      className={`flex items-center gap-3 p-2 px-3 rounded-md cursor-pointer transition-all ${isActive
-                        ? 'selected'
-                        : 'hover-overlay border border-transparent'
-                        }`}
+                      className={`flex items-center gap-3 p-2 px-3 rounded-md cursor-pointer transition-all ${
+                        isActive ? "selected" : "hover-overlay border border-transparent"
+                      }`}
                     >
-                      <FileText size={18} className="text-accent" />
+                      <FileText size={18} className={isSharedFile ? "text-blue-500" : "text-accent"} />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="text-xs font-medium text-gray-900 truncate">{file.filename}</span>
@@ -1182,7 +1452,7 @@ const OpenFileDialog = ({
                           )}
                         </div>
                       </div>
-                      {!usingProjectFiles && onDeleteFile && fileProjectId && (
+                      {!usingProjectFiles && onDeleteFile && fileProjectId && !isSharedFile && (
                         <button
                           onClick={(event) => {
                             event.stopPropagation();
@@ -1199,128 +1469,38 @@ const OpenFileDialog = ({
                 })}
               </div>
             </div>
-          )}
-          {!usingProjectFiles && (
-            <div className="p-3 border-t border-gray-100">
-              <div className="flex items-center gap-2 px-2 py-1.5 mb-2">
-                <Share2 size={14} className="text-blue-600" />
-                <span className="text-xs font-semibold text-blue-800">Shared With Me ({sharedFiles.filter(f => !searchQuery || f.filename.toLowerCase().includes(searchQuery.toLowerCase())).length})</span>
-              </div>
-              {sharedFiles.length > 0 ? (
-                <div className="space-y-0.5">
-                  {sharedFiles.filter(f => !searchQuery || (f.filename && f.filename.toLowerCase().includes(searchQuery.toLowerCase()))).map((file) => {
-                    const fileProjectId = file.projectId || file.id || (file.filename ? file.filename.replace(/\.[^/.]+$/, '') : '');
-                    const isActiveById = currentFileId ? file.id === currentFileId : false;
-                    const isActiveByName = currentFileName ? file.filename === currentFileName : false;
-                    const isActive = isActiveById || isActiveByName || (!currentFileId && !currentFileName && fileProjectId === currentProjectId);
-                    return (
-                      <div
-                        key={file.id}
-                        onClick={() => {
-                          if (!isActive) {
-                            onSwitchFile(fileProjectId);
-                          }
-                          onClose();
-                        }}
-                        className={`flex items-center gap-3 p-2 px-3 rounded-md cursor-pointer transition-all ${isActive
-                          ? 'bg-blue-50 border border-blue-300'
-                          : 'hover:bg-gray-50 border border-transparent'
-                          }`}
-                      >
-                        <FileText size={18} className="text-blue-500" />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium text-gray-900 truncate">{file.filename}</span>
-                            {isActive && (
-                              <span className="px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-semibold rounded">
-                                ACTIVE
-                              </span>
-                            )}
-                          </div>
-                          {file.sharedBy && (
-                            <div className="text-[10px] text-gray-500 mt-0.5">
-                              Shared by {file.sharedBy}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-4 text-gray-400">
-                  <Share2 size={20} className="mb-1.5 opacity-50" />
-                  <p className="text-[10px]">No shared files</p>
-                </div>
-              )}
-            </div>
-          )}
-          {filteredFiles.length === 0 && (
+          ) : (
             <div className="flex flex-col items-center justify-center py-12 text-gray-400">
               <Search size={40} className="mb-3 opacity-30" />
-              <p className="text-base font-medium text-gray-600 mb-1">
-                {usingProjectFiles ? 'No project files found' : 'No ontology files found'}
-              </p>
+              <p className="text-base font-medium text-gray-600 mb-1">No files found</p>
               <p className="text-xs text-gray-500 max-w-xs text-center">
                 {searchQuery
                   ? `No files match "${searchQuery}". Try a different search.`
-                  : 'Upload or open a local file to get started.'}
+                  : "Upload or open a local file to get started."}
               </p>
             </div>
           )}
         </div>
-          <div className="p-3 border-t" style={{ borderColor: 'var(--color-border)' }}>
-            <div className="mb-3">
-              <div className="text-[11px] font-semibold text-gray-600 mb-2">Import options</div>
-              <div className="flex gap-2">
-                <div className="flex-1">
-                  <label className="block text-[10px] text-gray-500 mb-1">Mode</label>
-                  <select
-                    value={importMode}
-                    onChange={(e) => onImportModeChange(e.target.value as 'full' | 'incremental' | 'diff')}
-                    className="w-full text-xs px-2 py-1.5 rounded border"
-                    style={{
-                      borderColor: 'var(--color-border)',
-                      backgroundColor: 'var(--color-surface)',
-                      color: 'var(--color-text)'
-                    }}
-                  >
-                    <option value="full">Full</option>
-                    <option value="incremental">Incremental</option>
-                    <option value="diff">Diff</option>
-                  </select>
-                </div>
-                <div className="flex-1">
-                  <label className="block text-[10px] text-gray-500 mb-1">Partition</label>
-                  <select
-                    value={partitionStrategy}
-                    onChange={(e) => onPartitionStrategyChange(e.target.value as 'none' | 'namespace')}
-                    disabled={importMode === 'diff'}
-                    className="w-full text-xs px-2 py-1.5 rounded border disabled:opacity-60"
-                    style={{
-                      borderColor: 'var(--color-border)',
-                      backgroundColor: 'var(--color-surface)',
-                      color: 'var(--color-text)'
-                    }}
-                  >
-                    <option value="none">None</option>
-                    <option value="namespace">Namespace</option>
-                  </select>
-                </div>
-              </div>
-              {importMode === 'diff' && (
-                <div className="text-[10px] text-amber-600 mt-1">
-                  Diff mode does not support namespace partitioning.
-                </div>
-              )}
-            </div>
-            <button
-              onClick={handleOpenLocalFile}
-              disabled={!canOpenLocalFile}
+        <div className="p-3 border-t space-y-2" style={{ borderColor: "var(--color-border)" }}>
+          <button
+            onClick={handleCreateNewFile}
+            disabled={!canOpenLocalFile}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs rounded-md border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
             style={{
-              borderColor: 'var(--color-border)',
-              color: 'var(--color-text)'
+              borderColor: "var(--color-border)",
+              color: "var(--color-text)",
+            }}
+          >
+            <Plus size={14} />
+            Create New File
+          </button>
+          <button
+            onClick={handleOpenLocalFile}
+            disabled={!canOpenLocalFile}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs rounded-md border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{
+              borderColor: "var(--color-border)",
+              color: "var(--color-text)",
             }}
           >
             <FolderOpen size={14} />
@@ -1340,7 +1520,7 @@ const ConfirmDialog = ({
   title,
   message,
   confirmLabel,
-  cancelLabel
+  cancelLabel,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -1353,14 +1533,21 @@ const ConfirmDialog = ({
 }) => {
   if (!isOpen) return null;
 
-  const cancelText = cancelLabel ?? (onCancel ? 'Discard' : 'Cancel');
-  const confirmText = confirmLabel ?? (onCancel ? 'Save' : 'Confirm');
+  const cancelText = cancelLabel ?? (onCancel ? "Discard" : "Cancel");
+  const confirmText = confirmLabel ?? (onCancel ? "Save" : "Confirm");
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-theme-surface rounded-lg shadow-xl p-6 max-w-md w-full mx-4" onClick={e => e.stopPropagation()}>
-        <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--color-text)' }}>{title}</h3>
-        <p className="text-sm mb-6" style={{ color: 'var(--color-text-secondary)' }}>{message}</p>
+      <div
+        className="bg-theme-surface rounded-lg shadow-xl p-6 max-w-md w-full mx-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-lg font-semibold mb-4" style={{ color: "var(--color-text)" }}>
+          {title}
+        </h3>
+        <p className="text-sm mb-6" style={{ color: "var(--color-text-secondary)" }}>
+          {message}
+        </p>
         <div className="flex justify-end gap-3">
           <button
             onClick={() => {
@@ -1400,7 +1587,7 @@ const DuplicateFileDialog = ({
   onCancel,
   allowOpenExisting,
   error,
-  isSubmitting
+  isSubmitting,
 }: {
   isOpen: boolean;
   fileName: string;
@@ -1419,35 +1606,45 @@ const DuplicateFileDialog = ({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onCancel}>
-      <div className="bg-theme-surface rounded-lg shadow-xl p-6 max-w-lg w-full mx-4" onClick={e => e.stopPropagation()}>
-        <h3 className="text-lg font-semibold mb-2" style={{ color: 'var(--color-text)' }}>Duplicate File</h3>
-        <p className="text-sm mb-3" style={{ color: 'var(--color-text-secondary)' }}>
+      <div
+        className="bg-theme-surface rounded-lg shadow-xl p-6 max-w-lg w-full mx-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-lg font-semibold mb-2" style={{ color: "var(--color-text)" }}>
+          Duplicate File
+        </h3>
+        <p className="text-sm mb-3" style={{ color: "var(--color-text-secondary)" }}>
           A file named "<span className="font-semibold">{fileName}</span>" already exists.
         </p>
         {detail && (
-          <pre className="text-xs whitespace-pre-wrap rounded-md p-3 mb-3" style={{ backgroundColor: 'var(--color-surface)', color: 'var(--color-text-secondary)' }}>
+          <pre
+            className="text-xs whitespace-pre-wrap rounded-md p-3 mb-3"
+            style={{ backgroundColor: "var(--color-surface)", color: "var(--color-text-secondary)" }}
+          >
             {detail}
           </pre>
         )}
         <div className="mb-3">
-          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--color-text-secondary)' }}>Copy name</label>
+          <label className="block text-xs font-medium mb-1" style={{ color: "var(--color-text-secondary)" }}>
+            Copy name
+          </label>
           <input
             type="text"
             value={copyName}
             onChange={(e) => onCopyNameChange(e.target.value)}
             className="w-full px-3 py-2 text-sm border rounded-md focus:ring-2"
-            style={{
-              borderColor: 'var(--color-border)',
-              backgroundColor: 'var(--color-surface)',
-              color: 'var(--color-text)',
-              '--tw-ring-color': 'var(--color-primary)'
-            } as React.CSSProperties}
+            style={
+              {
+                borderColor: "var(--color-border)",
+                backgroundColor: "var(--color-surface)",
+                color: "var(--color-text)",
+                "--tw-ring-color": "var(--color-primary)",
+              } as React.CSSProperties
+            }
             placeholder="Enter copy name"
           />
         </div>
-        {error && (
-          <div className="text-xs text-red-600 mb-3">{error}</div>
-        )}
+        {error && <div className="text-xs text-red-600 mb-3">{error}</div>}
         <div className="flex flex-wrap justify-end gap-2">
           {allowOpenExisting && (
             <button
@@ -1468,7 +1665,7 @@ const DuplicateFileDialog = ({
             disabled={isSubmitting}
             className="px-3 py-2 text-xs bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50"
           >
-            {isSubmitting ? 'Checking...' : 'Create Copy'}
+            {isSubmitting ? "Checking..." : "Create Copy"}
           </button>
           <button
             onClick={onCancel}
@@ -1523,7 +1720,7 @@ const DetailsPanel = ({
   individuals,
   setIndividuals,
   markAsUnsaved,
-  viewMode = 'asserted'
+  viewMode = "asserted",
 }: {
   selectedItem: SelectableItem | null;
   entitiesTab: string;
@@ -1547,12 +1744,12 @@ const DetailsPanel = ({
   objectProperties: Property[];
   expandedNodes?: string[];
   onToggleNode?: (nodeId: string) => Promise<void> | void;
-  onAddClass?: (type: 'subclass' | 'sibling') => void;
-  onAddClassInline?: (type: 'subclass' | 'sibling', parentId?: string, name?: string) => Promise<void>;
+  onAddClass?: (type: "subclass" | "sibling") => void;
+  onAddClassInline?: (type: "subclass" | "sibling", parentId?: string, name?: string) => Promise<void>;
   onDeleteClass?: () => void;
   onRefreshClasses?: () => Promise<void>;
-  onAddObjectProperty?: (type: 'subclass' | 'sibling', parentId?: string, name?: string) => Promise<void>;
-  onAddDataProperty?: (type: 'subclass' | 'sibling', parentId?: string, name?: string) => Promise<void>;
+  onAddObjectProperty?: (type: "subclass" | "sibling", parentId?: string, name?: string) => Promise<void>;
+  onAddDataProperty?: (type: "subclass" | "sibling", parentId?: string, name?: string) => Promise<void>;
   dataPropertyHierarchy: TreeNode[];
   objectPropertyHierarchy: TreeNode[];
   dataProperties: Property[];
@@ -1560,14 +1757,16 @@ const DetailsPanel = ({
   individuals: Individual[];
   setIndividuals: React.Dispatch<React.SetStateAction<Individual[]>>;
   markAsUnsaved: () => void;
-  viewMode?: 'asserted' | 'inferred';
+  viewMode?: "asserted" | "inferred";
 }) => {
   if (!selectedItem) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-center text-gray-400 p-4">
         <Package size={48} className="mb-4 text-gray-300" />
         <h3 className="text-lg font-semibold text-gray-600">Ontology Editor</h3>
-        <p className="text-sm">Select an entity from the hierarchy panel on the left to view its details and make edits.</p>
+        <p className="text-sm">
+          Select an entity from the hierarchy panel on the left to view its details and make edits.
+        </p>
       </div>
     );
   }
@@ -1577,82 +1776,88 @@ const DetailsPanel = ({
     onEditAnnotation,
     onDeleteAnnotation,
     activeTheme,
-    projectId: projectId || '',
+    projectId: projectId || "",
     // userId: user?.email || 'anonymous',
     // username: user?.username || 'Anonymous'
   };
 
   switch (entitiesTab) {
-    case 'Classes':
-      return <ClassEditor
-        item={selectedItem as TreeNode}
-        onUpdate={onUpdate}
-        classHierarchy={classHierarchy}
-        expandedNodes={expandedNodes}
-        onToggleNode={onToggleNode}
-        onAddClass={onAddClass}
-        onAddClassInline={onAddClassInline}
-        onDeleteClass={onDeleteClass}
-        onRefreshClasses={onRefreshClasses}
-        onAddObjectProperty={onAddObjectProperty}
-        onAddDataProperty={onAddDataProperty}
-        onDeleteProperty={() => { }}
-        metadata={metadata ?? undefined}
-        objectPropertyHierarchy={objectPropertyHierarchy}
-        dataPropertyHierarchy={dataPropertyHierarchy}
-        objectProperties={objectProperties}
-        dataProperties={dataProperties}
-        viewMode={viewMode}
-        individuals={individuals}
-        onAddIndividual={async (name: string, classIri: string) => {
-          const id = `${metadata?.ontologyIRI || 'http://example.org/ontology'}#${name.replace(/\s+/g, '_')}`;
-          await ontologyMutationService.createIndividual(projectId || '', id, name, classIri);
-          const newIndividual: Individual = {
-            id,
-            iri: id,
-            label: name,
-            annotations: { 'rdfs:label': name },
-            types: [classIri]
-          };
-          setIndividuals(prev => [...prev, newIndividual]);
-          markAsUnsaved();
-        }}
-        onDeleteIndividual={async (id: string) => {
-          await ontologyMutationService.deleteIndividual(projectId || '', id);
-          setIndividuals(prev => prev.filter(ind => ind.id !== id));
-          markAsUnsaved();
-        }}
-        onRefreshIndividuals={() => {
-          // Reload individuals from backend
-          if (projectId) {
-            apiClient.get<any>(`/api/ontology/individuals/${projectId}`)
-              .then(res => {
-                setIndividuals(Array.isArray(res?.data) ? res.data :
-                  Array.isArray(res?.individuals) ? res.individuals : []);
-              })
-              .catch(err => console.error('Failed to refresh individuals:', err));
-          }
-        }}
-        {...sharedProps}
-      />;
-    case 'ObjectProperties':
-    case 'DataProperties':
-      return <PropertyEditor
-        item={selectedItem as Property}
-        onUpdate={onUpdate}
-        {...sharedProps}
-        onAddDomainClick={onAddDomainClick}
-        onAddRangeClick={onAddRangeClick}
-        onAddSubPropertyClick={onAddSubPropertyClick}
-        onAddInverseClick={onAddInverseClick}
-        onAddDisjointClick={onAddDisjointClick}
-        onAddEquivalentClick={onAddEquivalentClick}
-        objectProperties={objectProperties}
-        viewMode={viewMode}
-      />;
-    case 'Individuals':
+    case "Classes":
+      return (
+        <ClassEditor
+          item={selectedItem as TreeNode}
+          onUpdate={onUpdate}
+          classHierarchy={classHierarchy}
+          expandedNodes={expandedNodes}
+          onToggleNode={onToggleNode}
+          onAddClass={onAddClass}
+          onAddClassInline={onAddClassInline}
+          onDeleteClass={onDeleteClass}
+          onRefreshClasses={onRefreshClasses}
+          onAddObjectProperty={onAddObjectProperty}
+          onAddDataProperty={onAddDataProperty}
+          onDeleteProperty={() => {}}
+          metadata={metadata ?? undefined}
+          objectPropertyHierarchy={objectPropertyHierarchy}
+          dataPropertyHierarchy={dataPropertyHierarchy}
+          objectProperties={objectProperties}
+          dataProperties={dataProperties}
+          viewMode={viewMode}
+          individuals={individuals}
+          onAddIndividual={async (name: string, classIri: string) => {
+            const id = `${metadata?.ontologyIRI || "http://example.org/ontology"}#${name.replace(/\s+/g, "_")}`;
+            await ontologyMutationService.createIndividual(projectId || "", id, name, classIri);
+            const newIndividual: Individual = {
+              id,
+              iri: id,
+              label: name,
+              annotations: { "rdfs:label": name },
+              types: [classIri],
+            };
+            setIndividuals((prev) => [...prev, newIndividual]);
+            markAsUnsaved();
+          }}
+          onDeleteIndividual={async (id: string) => {
+            await ontologyMutationService.deleteIndividual(projectId || "", id);
+            setIndividuals((prev) => prev.filter((ind) => ind.id !== id));
+            markAsUnsaved();
+          }}
+          onRefreshIndividuals={() => {
+            // Reload individuals from backend
+            if (projectId) {
+              apiClient
+                .get<any>(`/api/ontology/individuals/${encodeURIComponent(projectId)}`)
+                .then((res) => {
+                  setIndividuals(
+                    Array.isArray(res?.data) ? res.data : Array.isArray(res?.individuals) ? res.individuals : [],
+                  );
+                })
+                .catch((err) => console.error("Failed to refresh individuals:", err));
+            }
+          }}
+          {...sharedProps}
+        />
+      );
+    case "ObjectProperties":
+    case "DataProperties":
+      return (
+        <PropertyEditor
+          item={selectedItem as Property}
+          onUpdate={onUpdate}
+          {...sharedProps}
+          onAddDomainClick={onAddDomainClick}
+          onAddRangeClick={onAddRangeClick}
+          onAddSubPropertyClick={onAddSubPropertyClick}
+          onAddInverseClick={onAddInverseClick}
+          onAddDisjointClick={onAddDisjointClick}
+          onAddEquivalentClick={onAddEquivalentClick}
+          objectProperties={objectProperties}
+          viewMode={viewMode}
+        />
+      );
+    case "Individuals":
       return <IndividualEditor item={selectedItem as Individual} onUpdate={onUpdate} {...sharedProps} />;
-    case 'AnnotationProperties': {
+    case "AnnotationProperties": {
       const apItem = selectedItem as AnnotationProperty;
       return (
         <AnnotationPropertyEditor
@@ -1662,29 +1867,37 @@ const DetailsPanel = ({
           onEditAnnotation={onEditAnnotation}
           onDeleteAnnotation={onDeleteAnnotation}
           activeTheme={activeTheme}
-          projectId={projectId || ''}
+          projectId={projectId || ""}
           onAddSubPropertyClick={onAddAnnotationSuperpropertyClick}
           onAddDomainClick={onAddAnnotationDomainClick}
           onAddRangeClick={onAddAnnotationRangeClick}
         />
       );
     }
-    case 'Datatypes':
+    case "Datatypes":
       return <DatatypeEditor item={selectedItem as Datatype} onUpdate={onUpdate} {...sharedProps} />;
     default:
-      return <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4"><AnnotationsDisplay annotations={selectedItem.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} /></div>;
+      return (
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+          <AnnotationsDisplay
+            annotations={selectedItem.annotations}
+            onDelete={onDeleteAnnotation}
+            onEdit={onEditAnnotation}
+          />
+        </div>
+      );
   }
 };
 // #endregion
 
 // Helper function to show notifications
-const showNotification = (message: string, type: 'info' | 'error' | 'warning' = 'info') => {
+const showNotification = (message: string, type: "info" | "error" | "warning" = "info") => {
   console.log(`[${type.toUpperCase()}]`, message);
   if (window.vscode) {
     window.vscode.postMessage({
-      type: 'notification',
+      type: "notification",
       level: type,
-      message: message
+      message: message,
     });
   }
 };
@@ -1702,7 +1915,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   onFileSelected,
   selectedFileId,
   selectedFileName,
-  projectId: initialProjectId
+  projectId: initialProjectId,
 }) => {
   // #region State
   const { user, logout } = useAuth();
@@ -1711,48 +1924,50 @@ const Dashboard: React.FC<DashboardProps> = ({
   const subscription = useSubscription();
   const readonlyMode = false; // Allow editing by default
   const [showThemeSettings, setShowThemeSettings] = useState(false);
-  const deploymentType = localStorage.getItem('deploymentType') as 'self-hosted' | 'cloud' | null;
-  const isCloudDeployment = deploymentType === 'cloud';
+  const deploymentType = localStorage.getItem("deploymentType") as "self-hosted" | "cloud" | null;
+  const isCloudDeployment = deploymentType === "cloud";
 
-  const applyInstanceCountsToTree = useCallback((
-    nodes: TreeNode[],
-    counts: Record<string, { direct?: number; inferred?: number; total?: number }>
-  ): TreeNode[] => {
-    if (!Array.isArray(nodes)) {
-      console.warn('[Dashboard] applyInstanceCountsToTree received non-array:', nodes);
-      return [];
-    }
+  const applyInstanceCountsToTree = useCallback(
+    (nodes: TreeNode[], counts: Record<string, { direct?: number; inferred?: number; total?: number }>): TreeNode[] => {
+      if (!Array.isArray(nodes)) {
+        console.warn("[Dashboard] applyInstanceCountsToTree received non-array:", nodes);
+        return [];
+      }
 
-    return nodes.map((node) => {
-      const countEntry = counts[node.id];
-      const direct = countEntry?.direct;
-      const inferred = countEntry?.inferred;
-      const total = countEntry ? (countEntry.total ?? (direct ?? 0) + (inferred ?? 0)) : undefined;
+      return nodes.map((node) => {
+        const countEntry = counts[node.id];
+        const direct = countEntry?.direct;
+        const inferred = countEntry?.inferred;
+        const total = countEntry ? (countEntry.total ?? (direct ?? 0) + (inferred ?? 0)) : undefined;
 
-      // Ensure children is always an array
-      const children = Array.isArray(node.children) ? node.children : [];
+        // Ensure children is always an array
+        const children = Array.isArray(node.children) ? node.children : [];
 
-      return {
-        ...node,
-        directInstanceCount: direct,
-        inferredInstanceCount: inferred,
-        totalInstanceCount: total,
-        children: children.length > 0 ? applyInstanceCountsToTree(children, counts) : [],
-        // Preserve hasChildren from backend (for lazy loading) or fallback to children.length > 0
-        hasChildren: node.hasChildren !== undefined ? node.hasChildren : children.length > 0
-      };
-    });
-  }, []);
+        return {
+          ...node,
+          directInstanceCount: direct,
+          inferredInstanceCount: inferred,
+          totalInstanceCount: total,
+          children: children.length > 0 ? applyInstanceCountsToTree(children, counts) : [],
+          // Preserve hasChildren from backend (for lazy loading) or fallback to children.length > 0
+          hasChildren: node.hasChildren !== undefined ? node.hasChildren : children.length > 0,
+        };
+      });
+    },
+    [],
+  );
 
   const countNodes = (nodes: any[]): number => {
     let count = 0;
     for (const node of nodes) {
       // Don't count owl:Thing or owl:Nothing in the total class count
       const id = node.id || node.iri;
-      if (id !== 'http://www.w3.org/2002/07/owl#Thing' &&
-        id !== 'owl:Thing' &&
-        id !== 'http://www.w3.org/2002/07/owl#Nothing' &&
-        id !== 'owl:Nothing') {
+      if (
+        id !== "http://www.w3.org/2002/07/owl#Thing" &&
+        id !== "owl:Thing" &&
+        id !== "http://www.w3.org/2002/07/owl#Nothing" &&
+        id !== "owl:Nothing"
+      ) {
         count++;
       }
       if (node.children && node.children.length > 0) {
@@ -1763,65 +1978,110 @@ const Dashboard: React.FC<DashboardProps> = ({
   };
 
   const showToast = useCallback(
-    (message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') => {
+    (message: string, type: "success" | "error" | "info" | "warning" = "info") => {
       collaboration.addNotification({
         type,
         message,
-        userId: user?.email || 'system',
-        username: user?.username || 'You',
-        userColor: '#6366f1',
+        userId: user?.email || "system",
+        username: user?.username || "You",
+        userColor: "#6366f1",
         timestamp: Date.now(),
       });
 
       if (window.vscode) {
         window.vscode.postMessage({
-          type: 'showNotification',
+          type: "showNotification",
           notification: {
             type,
-            title: 'OntoCode',
+            title: "OntoCode",
             message,
           },
         });
       }
     },
-    [user?.email, user?.username] // collaboration.addNotification is stable, no need to include
+    [user?.email, user?.username], // collaboration.addNotification is stable, no need to include
   );
-  const [projectId, setProjectId] = useState<string | null>(initialProjectId || null);
+  const isNonWorkspaceMode = !initialProjectId && !user?.workspaceId;
+
+  // In non-workspace mode, restore the last opened file from localStorage
+  const storedProjectId = isNonWorkspaceMode
+    ? typeof localStorage !== "undefined"
+      ? localStorage.getItem("ontocode_lastProjectId")
+      : null
+    : null;
+
+  const [projectId, setProjectIdInternal] = useState<string | null>(initialProjectId || storedProjectId || null);
+
+  // Wrapper to persist projectId to localStorage in non-workspace mode
+  const setProjectId = useCallback(
+    (value: string | null | ((prev: string | null) => string | null)) => {
+      setProjectIdInternal((prev) => {
+        const newValue = typeof value === "function" ? value(prev) : value;
+        if (isNonWorkspaceMode && typeof localStorage !== "undefined") {
+          if (newValue) {
+            localStorage.setItem("ontocode_lastProjectId", newValue);
+          } else {
+            localStorage.removeItem("ontocode_lastProjectId");
+          }
+        }
+        return newValue;
+      });
+    },
+    [isNonWorkspaceMode],
+  );
+
+  // Helper function to encode project ID for use in URL paths
+  // Handles hierarchical project IDs like "project-123/file-456"
+  const encodeProjectId = (id: string | null | undefined): string => {
+    if (!id) return "";
+    return encodeURIComponent(id);
+  };
   const [availableProjects, setAvailableProjects] = useState<any[]>([]);
   const [showProjectSelector, setShowProjectSelector] = useState(false);
   const [metadata, setMetadata] = useState<OntologyMetadata | null>(null);
   const [ontologyImports, setOntologyImports] = useState<string[]>([]);
-  const [generalClassAxioms, setGeneralClassAxioms] = useState<Array<{
-    subExpression: string;
-    superClassIri?: string;
-    superClassLabel?: string;
-    definition?: string;
-  }>>([]);
-  const [ontologyAnnotations, setOntologyAnnotations] = useState<Array<{
-    propertyIri: string;
-    value: string;
-    datatype?: string;
-    lang?: string;
-  }>>([]);
+  const [generalClassAxioms, setGeneralClassAxioms] = useState<
+    Array<{
+      subExpression: string;
+      superClassIri?: string;
+      superClassLabel?: string;
+      definition?: string;
+    }>
+  >([]);
+  const [ontologyAnnotations, setOntologyAnnotations] = useState<
+    Array<{
+      propertyIri: string;
+      value: string;
+      datatype?: string;
+      lang?: string;
+    }>
+  >([]);
   const [prefixMappings, setPrefixMappings] = useState<Array<{ prefix: string; namespace: string }>>([]);
   const [isEditingOntologyId, setIsEditingOntologyId] = useState(false);
-  const [ontologyIriDraft, setOntologyIriDraft] = useState('');
-  const [versionIriDraft, setVersionIriDraft] = useState('');
+  const [ontologyIriDraft, setOntologyIriDraft] = useState("");
+  const [versionIriDraft, setVersionIriDraft] = useState("");
   const [isPrefixEditing, setIsPrefixEditing] = useState(false);
   const [editingPrefixIndex, setEditingPrefixIndex] = useState<number | null>(null);
-  const [importDraft, setImportDraft] = useState('');
+  const [importDraft, setImportDraft] = useState("");
   const [editingImportIndex, setEditingImportIndex] = useState<number | null>(null);
   const [bottomTabsHeight, setBottomTabsHeight] = useState(200);
   const [isResizing, setIsResizing] = useState(false);
   const [axiomDialogOpen, setAxiomDialogOpen] = useState(false);
   const [editingAxiomIndex, setEditingAxiomIndex] = useState<number | null>(null);
-  const [axiomDraft, setAxiomDraft] = useState({ definition: '', superClassIri: '' });
-  const [collaboratorCursors, setCollaboratorCursors] = useState<Map<string, { x: number; y: number; userName: string; color: string; timestamp: number }>>(new Map());
+  const [axiomDraft, setAxiomDraft] = useState({ definition: "", superClassIri: "" });
+  const [collaboratorCursors, setCollaboratorCursors] = useState<
+    Map<string, { x: number; y: number; userName: string; color: string; timestamp: number }>
+  >(new Map());
   const [myLocalCursor, setMyLocalCursor] = useState({ x: 0, y: 0 });
   const [isPrefixDialogOpen, setIsPrefixDialogOpen] = useState(false);
-  const [prefixDialogData, setPrefixDialogData] = useState({ prefix: '', namespace: '', isEdit: false, originalPrefix: '' });
+  const [prefixDialogData, setPrefixDialogData] = useState({
+    prefix: "",
+    namespace: "",
+    isEdit: false,
+    originalPrefix: "",
+  });
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
-  const [importDialogData, setImportDialogData] = useState({ iri: '', isEdit: false, originalIri: '' });
+  const [importDialogData, setImportDialogData] = useState({ iri: "", isEdit: false, originalIri: "" });
   const [showImportClosure, setShowImportClosure] = useState(false);
   const [expandedImports, setExpandedImports] = useState<Set<string>>(new Set());
   const [isOntologyAnnotationDialogOpen, setIsOntologyAnnotationDialogOpen] = useState(false);
@@ -1838,81 +2098,96 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [mainTab, setMainTab] = useState("Entities");
   const [entitiesTab, setEntitiesTab] = useState("Classes");
   const [selectedItem, setSelectedItem] = useState<SelectableItem | null>(null);
-  const [expandedNodes, setExpandedNodes] = useState<string[]>(['http://www.w3.org/2002/07/owl#Thing']); // Pre-expand owl:Thing
-  const expandedNodesRef = useRef<string[]>(['http://www.w3.org/2002/07/owl#Thing']);
+  const [expandedNodes, setExpandedNodes] = useState<string[]>(["http://www.w3.org/2002/07/owl#Thing"]); // Pre-expand owl:Thing
+  const expandedNodesRef = useRef<string[]>(["http://www.w3.org/2002/07/owl#Thing"]);
   useEffect(() => {
     expandedNodesRef.current = expandedNodes;
-    console.log('[Dashboard] 🔍 expandedNodes updated:', expandedNodes.length, 'nodes', expandedNodes.slice(0, 5));
+    console.log("[Dashboard] 🔍 expandedNodes updated:", expandedNodes.length, "nodes", expandedNodes.slice(0, 5));
   }, [expandedNodes]);
 
   // Fetch files for the currently selected project
-  const fetchProjectFiles = useCallback(async (currentProjectId: string) => {
-    if (!currentProjectId) return;
+  const fetchProjectFiles = useCallback(async (currentProjectId: string): Promise<FileInfo[]> => {
+    if (!currentProjectId) return [];
 
     try {
-      console.log('[Dashboard] 📂 Fetching files for project:', currentProjectId);
-      const filesResponse = await apiClient.get<{ files: any[]; count: number }>(`/api/projects/${currentProjectId}/files`);
+      console.log("[Dashboard] 📂 Fetching files for project:", currentProjectId);
+      const filesResponse = await apiClient.get<{ files: any[]; count: number }>(
+        `/api/projects/${currentProjectId}/files`,
+      );
 
-      console.log('[Dashboard] 📥 Raw files response:', filesResponse);
+      console.log("[Dashboard] 📥 Raw files response:", filesResponse);
 
       if (filesResponse && Array.isArray(filesResponse.files)) {
-        console.log('[Dashboard] 📄 Found', filesResponse.files.length, 'files in project');
+        console.log("[Dashboard] 📄 Found", filesResponse.files.length, "files in project");
 
         // Map file metadata to FileInfo format
         const projectFiles = filesResponse.files.map((file: any) => ({
           id: file.id,
           filename: file.name || file.fileName || file.id,
-          contentType: file.type === 'owl' ? 'application/rdf+xml' : `application/${file.type}`,
+          contentType: file.type === "owl" ? "application/rdf+xml" : `application/${file.type}`,
           uploadDate: file.uploadedAt || new Date().toISOString(),
           length: file.size || 0,
-          uploadedBy: file.uploadedBy
+          uploadedBy: file.uploadedBy,
         }));
 
         console.log(`[Dashboard] 📋 Mapped ${projectFiles.length} project files`);
-        console.log('[Dashboard] 📋 Mapped project files:', projectFiles);
+        console.log("[Dashboard] 📋 Mapped project files:", projectFiles);
+        console.log(
+          "[Dashboard] 📋 File details:",
+          projectFiles.map((f) => ({ id: f.id, name: f.filename })),
+        );
 
+        console.log("[Dashboard] 📋 About to call setProjectFiles with", projectFiles.length, "files");
         setProjectFiles(projectFiles);
+        console.log("[Dashboard] ✅ setProjectFiles called");
 
         // Only update listOfFiles for backward compatibility
         // Do NOT overwrite myFiles/sharedFiles - those are user-specific and should be
         // populated by fetchProjects() which gets files by user email
         setListOfFiles(projectFiles);
 
-        console.log('[Dashboard] ✅ File menu updated with project files (listOfFiles only)');
+        console.log("[Dashboard] ✅ File menu updated with project files (listOfFiles only)");
+        console.log("[Dashboard] ✅ projectFiles state updated with", projectFiles.length, "files");
+
+        return projectFiles; // Return the files for verification
       } else if (filesResponse && filesResponse.files === undefined) {
         // Maybe files are at a different level or API returned error
-        console.log('[Dashboard] ⚠️ Response has no files array:', filesResponse);
+        console.log("[Dashboard] ⚠️ Response has no files array:", filesResponse);
         // Try to handle different response formats
         if (Array.isArray(filesResponse)) {
           const projectFiles = filesResponse.map((file: any) => ({
             id: file.id,
             filename: file.name || file.fileName || file.id,
-            contentType: file.type === 'owl' ? 'application/rdf+xml' : `application/${file.type}`,
+            contentType: file.type === "owl" ? "application/rdf+xml" : `application/${file.type}`,
             uploadDate: file.uploadedAt || new Date().toISOString(),
             length: file.size || 0,
-            uploadedBy: file.uploadedBy
+            uploadedBy: file.uploadedBy,
           }));
           setProjectFiles(projectFiles);
 
           // Only update listOfFiles, not myFiles/sharedFiles
           setListOfFiles(projectFiles);
+          return projectFiles; // Return the files
         } else {
-          console.log('[Dashboard] ⚠️ Unable to parse files from response, clearing file menu');
+          console.log("[Dashboard] ⚠️ Unable to parse files from response, clearing file menu");
           // setMyFiles([]);
           // setSharedFiles([]);
           setProjectFiles([]);
           setListOfFiles([]);
+          return []; // Return empty array
         }
       } else {
-        console.log('[Dashboard] ℹ️ No files found in project or empty response');
+        console.log("[Dashboard] ℹ️ No files found in project or empty response");
         // Don't clear myFiles/sharedFiles - they contain user's files from fetchProjects
         setProjectFiles([]);
         setListOfFiles([]);
+        return []; // Return empty array
       }
     } catch (error: any) {
-      console.error('[Dashboard] ❌ Failed to fetch project files:', error);
-      console.error('[Dashboard] ❌ Error details:', error?.response?.data || error?.message || error);
+      console.error("[Dashboard] ❌ Failed to fetch project files:", error);
+      console.error("[Dashboard] ❌ Error details:", error?.response?.data || error?.message || error);
       // Don't clear the file menu on error - keep showing projects list
+      return []; // Return empty array on error
     }
   }, []);
   const [searchQuery, setSearchQuery] = useState("");
@@ -1920,7 +2195,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     useRegex: false,
     searchAnnotations: false,
     hideDeprecated: false,
-    hideBuiltins: false
+    hideBuiltins: false,
   });
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [isInitialLoading, setIsInitialLoading] = useState(false);
@@ -1934,29 +2209,42 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [loadingProjectName, setLoadingProjectName] = useState("");
   const [loadingStatusMessage, setLoadingStatusMessage] = useState<string>(""); // Track import progress message
   const loadingPromiseRef = useRef<Promise<void> | null>(null);
-  const userLoadingChoice = useRef<'wait' | 'continue' | null>(null);
+  const userLoadingChoice = useRef<"wait" | "continue" | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [draftCount, setDraftCount] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
-  const [syncMode, setSyncMode] = useState<'private' | 'public'>('private');
+  const [syncMode, setSyncMode] = useState<"private" | "public">("private");
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Import status state - Removed (ImportProgressToast removed per user request)
+  // Track background import progress (visible after user clicks "Continue Working")
+  const [backgroundImportActive, setBackgroundImportActive] = useState(false);
+  const [backgroundImportProgress, setBackgroundImportProgress] = useState<number | undefined>(undefined);
   // Track import status for all projects (for ProjectSelector)
-  const [projectImportStatuses, setProjectImportStatuses] = useState<{ [projectId: string]: { type: string; status: string; progress?: number } }>({});
+  const [projectImportStatuses, setProjectImportStatuses] = useState<{
+    [projectId: string]: { type: string; status: string; progress?: number };
+  }>({});
   // Queue status visibility
   const [showQueueStatus, setShowQueueStatus] = useState(false);
+  // Queue position tracking for loading dialog
+  const [queuePosition, setQueuePosition] = useState<number | undefined>(undefined);
+  const [totalInQueue, setTotalInQueue] = useState<number | undefined>(undefined);
+  const [estimatedWaitTimeMs, setEstimatedWaitTimeMs] = useState<number | undefined>(undefined);
   const collaborationPanelRef = useRef<CollaborationPanelRef>(null);
   const [showOpenDialog, setShowOpenDialog] = useState(false);
-  const [activeOntologySubTab, setActiveOntologySubTab] = useState('prefixes');
-  const [importMode, setImportMode] = useState<'full' | 'incremental' | 'diff'>('full');
-  const [partitionStrategy, setPartitionStrategy] = useState<'none' | 'namespace'>('none');
+  const [activeOntologySubTab, setActiveOntologySubTab] = useState("prefixes");
+  const [importMode, setImportMode] = useState<"full" | "incremental" | "diff">("full");
+  const [partitionStrategy, setPartitionStrategy] = useState<"none" | "namespace">("none");
   const [isCreateIndividualModalOpen, setCreateIndividualModalOpen] = useState(false);
   const [isAddAnnotationDialogOpen, setAddAnnotationDialogOpen] = useState(false);
   const [isEditAnnotationDialogOpen, setEditAnnotationDialogOpen] = useState(false);
   const [isEditOntologyIRIDialogOpen, setEditOntologyIRIDialogOpen] = useState(false);
   const [isGCIEditorDialogOpen, setGCIEditorDialogOpen] = useState(false);
-  const [editGCIData, setEditGCIData] = useState<{ subClass: string, superClass: string, value: string, index: number } | null>(null);
+  const [editGCIData, setEditGCIData] = useState<{
+    subClass: string;
+    superClass: string;
+    value: string;
+    index: number;
+  } | null>(null);
   const [editAnnotationData, setEditAnnotationData] = useState<{
     propertyIri: string;
     currentValue: string;
@@ -1966,11 +2254,11 @@ const Dashboard: React.FC<DashboardProps> = ({
     originalPropertyIri?: string;
   } | null>(null);
   const [isAddClassDialogOpen, setAddClassDialogOpen] = useState(false);
-  const [addClassType, setAddClassType] = useState<'subclass' | 'sibling'>('subclass');
-  const [classParentLabel, setClassParentLabel] = useState('owl:Thing');
+  const [addClassType, setAddClassType] = useState<"subclass" | "sibling">("subclass");
+  const [classParentLabel, setClassParentLabel] = useState("owl:Thing");
   const [isAddPropertyDialogOpen, setAddPropertyDialogOpen] = useState(false);
-  const [addPropertyType, setAddPropertyType] = useState<'subproperty' | 'sibling' | 'root'>('root');
-  const [propertyParentLabel, setPropertyParentLabel] = useState('owl:topObjectProperty');
+  const [addPropertyType, setAddPropertyType] = useState<"subproperty" | "sibling" | "root">("root");
+  const [propertyParentLabel, setPropertyParentLabel] = useState("owl:topObjectProperty");
   const [isAddDatatypeDialogOpen, setAddDatatypeDialogOpen] = useState(false);
   const [isKeyboardShortcutsDialogOpen, setKeyboardShortcutsDialogOpen] = useState(false);
   const [isEntityPreferencesDialogOpen, setEntityPreferencesDialogOpen] = useState(false);
@@ -1989,7 +2277,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isPropertyExpressionDialogOpen, setIsPropertyExpressionDialogOpen] = useState(false);
   const [isObjectPropertyExpressionDialogOpen, setIsObjectPropertyExpressionDialogOpen] = useState(false);
   const [isClassExpressionDialogOpen, setIsClassExpressionDialogOpen] = useState(false);
-  const [selectorTarget, setSelectorTarget] = useState<'domain' | 'range' | 'subProperty' | 'inverse' | 'disjoint' | 'equivalent' | null>(null);
+  const [selectorTarget, setSelectorTarget] = useState<
+    "domain" | "range" | "subProperty" | "inverse" | "disjoint" | "equivalent" | null
+  >(null);
 
   // Annotation Property Description Dialogs (Protégé-style)
   const [isAnnotationDomainDialogOpen, setIsAnnotationDomainDialogOpen] = useState(false);
@@ -2006,19 +2296,32 @@ const Dashboard: React.FC<DashboardProps> = ({
     message: string;
     onConfirm: () => void;
     onCancel?: () => void;
+    confirmLabel?: string;
+    cancelLabel?: string;
   }>({
     isOpen: false,
-    title: '',
-    message: '',
-    onConfirm: () => { },
-    onCancel: undefined
+    title: "",
+    message: "",
+    onConfirm: () => {},
+    onCancel: undefined,
+    confirmLabel: undefined,
+    cancelLabel: undefined,
+  });
+
+  // Dedicated unsaved-changes warning dialog (separate from generic confirmDialog)
+  const [unsavedChangesDialog, setUnsavedChangesDialog] = useState<{
+    isOpen: boolean;
+    onLeave: () => void;
+  }>({
+    isOpen: false,
+    onLeave: () => {},
   });
 
   const [duplicatePrompt, setDuplicatePrompt] = useState<{
     isOpen: boolean;
     requestId: string | null;
     fileName: string;
-    context: 'project' | 'ontology';
+    context: "project" | "ontology";
     projectId?: string;
     ownerEmail?: string;
     defaultCopyName?: string;
@@ -2028,42 +2331,44 @@ const Dashboard: React.FC<DashboardProps> = ({
   }>({
     isOpen: false,
     requestId: null,
-    fileName: '',
-    context: 'project',
+    fileName: "",
+    context: "project",
     projectId: undefined,
     ownerEmail: undefined,
     defaultCopyName: undefined,
     detail: undefined,
     allowOpenExisting: true,
-    error: undefined
+    error: undefined,
   });
-  const [duplicateCopyName, setDuplicateCopyName] = useState('');
+  const [duplicateCopyName, setDuplicateCopyName] = useState("");
   const [duplicateCopyError, setDuplicateCopyError] = useState<string | null>(null);
   const [duplicateCopySubmitting, setDuplicateCopySubmitting] = useState(false);
 
   const [selectedClassForIndividuals, setSelectedClassForIndividuals] = useState<TreeNode | null>(null);
   const [classInstances, setClassInstances] = useState<Individual[]>([]);
   const [classInstancesLoading, setClassInstancesLoading] = useState(false);
-  const [classInstancesQuery, setClassInstancesQuery] = useState('');
-  const [classInstancesView, setClassInstancesView] = useState<'direct' | 'inferred' | 'all'>('direct');
-  const [classTreeSearchQuery, setClassTreeSearchQuery] = useState('');
+  const [classInstancesQuery, setClassInstancesQuery] = useState("");
+  const [classInstancesView, setClassInstancesView] = useState<"direct" | "inferred" | "all">("direct");
+  const [classTreeSearchQuery, setClassTreeSearchQuery] = useState("");
   const [selectedClassIndividual, setSelectedClassIndividual] = useState<Individual | null>(null);
   const [selectedClassIndividualDetails, setSelectedClassIndividualDetails] = useState<Individual | null>(null);
   const [selectedClassIndividualLoading, setSelectedClassIndividualLoading] = useState(false);
-  const [classInstanceCounts, setClassInstanceCounts] = useState<Record<string, { direct?: number; inferred?: number; total?: number }>>({});
-  const [hierarchyViewModes, setHierarchyViewModes] = useState<Record<string, 'asserted' | 'inferred'>>({
-    Classes: 'asserted',
-    ObjectProperties: 'asserted',
-    DataProperties: 'asserted',
-    AnnotationProperties: 'asserted',
-    Individuals: 'asserted',
-    Datatypes: 'asserted'
+  const [classInstanceCounts, setClassInstanceCounts] = useState<
+    Record<string, { direct?: number; inferred?: number; total?: number }>
+  >({});
+  const [hierarchyViewModes, setHierarchyViewModes] = useState<Record<string, "asserted" | "inferred">>({
+    Classes: "asserted",
+    ObjectProperties: "asserted",
+    DataProperties: "asserted",
+    AnnotationProperties: "asserted",
+    Individuals: "asserted",
+    Datatypes: "asserted",
   });
   const [isClassIndividualAnnotationDialogOpen, setClassIndividualAnnotationDialogOpen] = useState(false);
   const [isClassIndividualTypeDialogOpen, setClassIndividualTypeDialogOpen] = useState(false);
   const [isClassIndividualPropertyDialogOpen, setClassIndividualPropertyDialogOpen] = useState(false);
   const [classIndividualPropertyIsObject, setClassIndividualPropertyIsObject] = useState(true);
-  const [dlQuery, setDlQuery] = useState('Pizza and hasTopping some MozzarellaTopping');
+  const [dlQuery, setDlQuery] = useState("Pizza and hasTopping some MozzarellaTopping");
   const [dlQueryResults, setDlQueryResults] = useState<string[] | null>(null);
   const [isDlQueryLoading, setIsDlQueryLoading] = useState(false);
 
@@ -2090,23 +2395,35 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [activeFileName, setActiveFileName] = useState<string | null>(null);
   const [deleteFileDialog, setDeleteFileDialog] = useState<{ isOpen: boolean; projectId: string; fileName: string }>({
     isOpen: false,
-    projectId: '',
-    fileName: ''
+    projectId: "",
+    fileName: "",
   });
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [shareFileId, setShareFileId] = useState<string | null>(null);
   const [isCurrentFileShared, setIsCurrentFileShared] = useState(false);
+  const [isMergeWizardOpen, setMergeWizardOpen] = useState(false);
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
   const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
+  const [isUserGuideOpen, setIsUserGuideOpen] = useState(false);
   const [showCollaborationPanel, setShowCollaborationPanel] = useState(false);
 
-  const [visibleMainTabs, setVisibleMainTabs] = useState(['ActiveOntology', 'Entities', 'IndividualsByClass', 'DLQuery', 'CodeView']);
+  const [visibleMainTabs, setVisibleMainTabs] = useState([
+    "ActiveOntology",
+    "Entities",
+    "IndividualsByClass",
+    "DLQuery",
+    "CodeView",
+  ]);
   const [showPluginMarketplace, setShowPluginMarketplace] = useState(false);
   const [installedPlugins, setInstalledPlugins] = useState<Set<string>>(new Set());
-  const [pluginLoadingStates, setPluginLoadingStates] = useState<Record<string, { loading: boolean; error: string | null }>>({});
+  const [pluginLoadingStates, setPluginLoadingStates] = useState<
+    Record<string, { loading: boolean; error: string | null }>
+  >({});
 
-  const [codeViewFormat, setCodeViewFormat] = useState<'rdfxml' | 'turtle' | 'ntriples' | 'owlxml' | 'manchester' | 'functional'>('rdfxml');
-  const [codeViewContent, setCodeViewContent] = useState<string>('');
+  const [codeViewFormat, setCodeViewFormat] = useState<
+    "rdfxml" | "turtle" | "ntriples" | "owlxml" | "manchester" | "functional"
+  >("rdfxml");
+  const [codeViewContent, setCodeViewContent] = useState<string>("");
   const [codeViewLoading, setCodeViewLoading] = useState(false);
   const [hasLocalCodeViewChanges, setHasLocalCodeViewChanges] = useState(false); // Track if user has made local modifications
   const [citationJustInserted, setCitationJustInserted] = useState(false); // Track recent citation insertion for format refresh
@@ -2118,99 +2435,172 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [selectedInsertionLine, setSelectedInsertionLine] = useState<number | null>(null);
 
   // Reasoner state management
-  const [selectedReasoner, setSelectedReasoner] = useState<string>('HermiT');
+  const [selectedReasoner, setSelectedReasoner] = useState<string>("HermiT");
   const [isReasonerRunning, setIsReasonerRunning] = useState(false);
   const [isReasonerSynced, setIsReasonerSynced] = useState(false);
   const [reasonerResults, setReasonerResults] = useState<any>(null);
   const [isReasonerLoading, setIsReasonerLoading] = useState(false);
   const [isConsistencyLoading, setIsConsistencyLoading] = useState(false);
   const [consistencyResult, setConsistencyResult] = useState<any | null>(null);
-  const [explanationState, setExplanationState] = useState<{ open: boolean; loading: boolean; data: any; error: string | null }>(
-    { open: false, loading: false, data: null, error: null }
-  );
+  const [explanationState, setExplanationState] = useState<{
+    open: boolean;
+    loading: boolean;
+    data: any;
+    error: string | null;
+  }>({ open: false, loading: false, data: null, error: null });
   const [isReasonerSettingsOpen, setIsReasonerSettingsOpen] = useState(false);
 
-  const currentHierarchyViewMode = hierarchyViewModes[entitiesTab] || 'asserted';
+  const currentHierarchyViewMode = hierarchyViewModes[entitiesTab] || "asserted";
 
   const entitiesTabs = [
     {
       id: "Classes",
       label: "Classes",
       icon: Package,
-      count: hierarchyViewModes.Classes === 'inferred'
-        ? countNodes(inferredClassHierarchy.length > 0 ? inferredClassHierarchy : (Array.isArray(reasonerResults?.classHierarchyTree) ? reasonerResults.classHierarchyTree : (Array.isArray(reasonerResults?.classHierarchy) ? reasonerResults.classHierarchy : [])))
-        : (metadata as any)?.classCount || 0,
-      theme: 'bg-gradient-to-b from-[#F5F0E6] to-[#E1C688] text-black border-[#D6C9AD]'
+      count:
+        hierarchyViewModes.Classes === "inferred"
+          ? countNodes(
+              inferredClassHierarchy.length > 0
+                ? inferredClassHierarchy
+                : Array.isArray(reasonerResults?.classHierarchyTree)
+                  ? reasonerResults.classHierarchyTree
+                  : Array.isArray(reasonerResults?.classHierarchy)
+                    ? reasonerResults.classHierarchy
+                    : [],
+            )
+          : (metadata as any)?.classCount || 0,
+      theme: "bg-gradient-to-b from-[#F5F0E6] to-[#E1C688] text-black border-[#D6C9AD]",
     },
     {
       id: "ObjectProperties",
       label: "Object properties",
       icon: Share2,
-      count: hierarchyViewModes.ObjectProperties === 'inferred'
-        ? countNodes(inferredObjectPropertyHierarchy.length > 0 ? inferredObjectPropertyHierarchy : (Array.isArray(reasonerResults?.objectPropertyHierarchy) ? reasonerResults.objectPropertyHierarchy : []))
-        : (metadata as any)?.objectPropertyCount || 0,
-      theme: 'bg-gradient-to-b from-blue-300 to-blue-500 text-white border-blue-600'
+      count:
+        hierarchyViewModes.ObjectProperties === "inferred"
+          ? countNodes(
+              inferredObjectPropertyHierarchy.length > 0
+                ? inferredObjectPropertyHierarchy
+                : Array.isArray(reasonerResults?.objectPropertyHierarchy)
+                  ? reasonerResults.objectPropertyHierarchy
+                  : [],
+            )
+          : (metadata as any)?.objectPropertyCount || 0,
+      theme: "bg-gradient-to-b from-blue-300 to-blue-500 text-white border-blue-600",
     },
     {
       id: "DataProperties",
       label: "Data properties",
       icon: Database,
-      count: hierarchyViewModes.DataProperties === 'inferred'
-        ? countNodes(inferredDataPropertyHierarchy.length > 0 ? inferredDataPropertyHierarchy : (Array.isArray(reasonerResults?.dataPropertyHierarchy) ? reasonerResults.dataPropertyHierarchy : []))
-        : (metadata as any)?.dataPropertyCount || 0,
-      theme: 'bg-gradient-to-b from-green-300 to-green-500 text-white border-green-600'
+      count:
+        hierarchyViewModes.DataProperties === "inferred"
+          ? countNodes(
+              inferredDataPropertyHierarchy.length > 0
+                ? inferredDataPropertyHierarchy
+                : Array.isArray(reasonerResults?.dataPropertyHierarchy)
+                  ? reasonerResults.dataPropertyHierarchy
+                  : [],
+            )
+          : (metadata as any)?.dataPropertyCount || 0,
+      theme: "bg-gradient-to-b from-green-300 to-green-500 text-white border-green-600",
     },
-    { id: "AnnotationProperties", label: "Annotation properties", icon: Tag, count: annotationProperties.length, theme: 'bg-gradient-to-b from-orange-300 to-orange-500 text-white border-orange-600' },
-    { id: "Datatypes", label: "Datatypes", icon: Settings, count: datatypes.length || 0, theme: 'bg-gradient-to-b from-red-300 to-red-500 text-white border-red-600' },
-    { id: "Individuals", label: "Individuals", icon: Eye, count: (metadata as any)?.individualCount || 0, theme: 'bg-gradient-to-b from-purple-300 to-purple-500 text-white border-purple-600' },
+    {
+      id: "AnnotationProperties",
+      label: "Annotation properties",
+      icon: Tag,
+      count: annotationProperties.length,
+      theme: "bg-gradient-to-b from-orange-300 to-orange-500 text-white border-orange-600",
+    },
+    {
+      id: "Datatypes",
+      label: "Datatypes",
+      icon: Settings,
+      count: datatypes.length || 0,
+      theme: "bg-gradient-to-b from-red-300 to-red-500 text-white border-red-600",
+    },
+    {
+      id: "Individuals",
+      label: "Individuals",
+      icon: Eye,
+      count: (metadata as any)?.individualCount || 0,
+      theme: "bg-gradient-to-b from-purple-300 to-purple-500 text-white border-purple-600",
+    },
   ];
-  const activeTheme = entitiesTabs.find(t => t.id === entitiesTab)?.theme;
+  const activeTheme = entitiesTabs.find((t) => t.id === entitiesTab)?.theme;
 
   const sourceData = React.useMemo(() => {
-    console.log('[Dashboard sourceData] entitiesTab:', entitiesTab);
-    console.log('[Dashboard sourceData] hierarchyViewModes.Classes:', hierarchyViewModes.Classes);
-    console.log('[Dashboard sourceData] classHierarchy:', classHierarchy);
-    console.log('[Dashboard sourceData] classHierarchy length:', classHierarchy.length);
-    console.log('[Dashboard sourceData] classHierarchy first element:', classHierarchy[0]);
+    console.log("[Dashboard sourceData] entitiesTab:", entitiesTab);
+    console.log("[Dashboard sourceData] hierarchyViewModes.Classes:", hierarchyViewModes.Classes);
+    console.log("[Dashboard sourceData] classHierarchy:", classHierarchy);
+    console.log("[Dashboard sourceData] classHierarchy length:", classHierarchy.length);
+    console.log("[Dashboard sourceData] classHierarchy first element:", classHierarchy[0]);
 
     switch (entitiesTab) {
       case "Classes":
-        if (hierarchyViewModes.Classes === 'inferred') {
+        if (hierarchyViewModes.Classes === "inferred") {
           // Use inferredClassHierarchy if available, otherwise fall back to reasoner results
-          const inferred = inferredClassHierarchy.length > 0
-            ? inferredClassHierarchy
-            : (Array.isArray(reasonerResults?.classHierarchyTree) ? reasonerResults.classHierarchyTree : (Array.isArray(reasonerResults?.classHierarchy) ? reasonerResults.classHierarchy : []));
+          const inferred =
+            inferredClassHierarchy.length > 0
+              ? inferredClassHierarchy
+              : Array.isArray(reasonerResults?.classHierarchyTree)
+                ? reasonerResults.classHierarchyTree
+                : Array.isArray(reasonerResults?.classHierarchy)
+                  ? reasonerResults.classHierarchy
+                  : [];
 
-          console.log('[Dashboard] Using inferred class hierarchy, length:', Array.isArray(inferred) ? inferred.length : 0);
+          console.log(
+            "[Dashboard] Using inferred class hierarchy, length:",
+            Array.isArray(inferred) ? inferred.length : 0,
+          );
           return Array.isArray(inferred) ? inferred : [];
         }
-        console.log('[Dashboard] Using asserted class hierarchy, length:', classHierarchy.length);
-        console.log('[Dashboard] Returning classHierarchy:', classHierarchy);
+        console.log("[Dashboard] Using asserted class hierarchy, length:", classHierarchy.length);
+        console.log("[Dashboard] Returning classHierarchy:", classHierarchy);
         return classHierarchy;
       case "ObjectProperties":
-        console.log(inferredObjectPropertyHierarchy, '[Dashboard] Hierarchy view mode for ObjectProperties:', hierarchyViewModes.ObjectProperties);
-        const objPropData = hierarchyViewModes.ObjectProperties === 'inferred'
-          ? (inferredObjectPropertyHierarchy.length > 0 ? inferredObjectPropertyHierarchy : (Array.isArray(reasonerResults?.objectPropertyHierarchy) ? reasonerResults.objectPropertyHierarchy : []))
-          : objectPropertyHierarchy;
+        console.log(
+          inferredObjectPropertyHierarchy,
+          "[Dashboard] Hierarchy view mode for ObjectProperties:",
+          hierarchyViewModes.ObjectProperties,
+        );
+        const objPropData =
+          hierarchyViewModes.ObjectProperties === "inferred"
+            ? inferredObjectPropertyHierarchy.length > 0
+              ? inferredObjectPropertyHierarchy
+              : Array.isArray(reasonerResults?.objectPropertyHierarchy)
+                ? reasonerResults.objectPropertyHierarchy
+                : []
+            : objectPropertyHierarchy;
         return Array.isArray(objPropData) ? objPropData : [];
       case "DataProperties":
-        const dataPropData = hierarchyViewModes.DataProperties === 'inferred'
-          ? (inferredDataPropertyHierarchy.length > 0 ? inferredDataPropertyHierarchy : (Array.isArray(reasonerResults?.dataPropertyHierarchy) ? reasonerResults.dataPropertyHierarchy : []))
-          : dataPropertyHierarchy;
+        const dataPropData =
+          hierarchyViewModes.DataProperties === "inferred"
+            ? inferredDataPropertyHierarchy.length > 0
+              ? inferredDataPropertyHierarchy
+              : Array.isArray(reasonerResults?.dataPropertyHierarchy)
+                ? reasonerResults.dataPropertyHierarchy
+                : []
+            : dataPropertyHierarchy;
         return Array.isArray(dataPropData) ? dataPropData : [];
       case "AnnotationProperties":
-        return hierarchyViewModes.AnnotationProperties === 'inferred'
-          ? (inferredAnnotationPropertyHierarchy.length > 0 ? inferredAnnotationPropertyHierarchy : annotationProperties)
+        return hierarchyViewModes.AnnotationProperties === "inferred"
+          ? inferredAnnotationPropertyHierarchy.length > 0
+            ? inferredAnnotationPropertyHierarchy
+            : annotationProperties
           : annotationProperties;
       case "Individuals":
-        return hierarchyViewModes.Individuals === 'inferred'
-          ? (inferredIndividuals.length > 0 ? inferredIndividuals : individuals)
+        return hierarchyViewModes.Individuals === "inferred"
+          ? inferredIndividuals.length > 0
+            ? inferredIndividuals
+            : individuals
           : individuals;
       case "Datatypes":
-        return hierarchyViewModes.Datatypes === 'inferred'
-          ? (inferredDatatypes.length > 0 ? inferredDatatypes : datatypes)
+        return hierarchyViewModes.Datatypes === "inferred"
+          ? inferredDatatypes.length > 0
+            ? inferredDatatypes
+            : datatypes
           : datatypes;
-      default: return [];
+      default:
+        return [];
     }
   }, [
     entitiesTab,
@@ -2232,7 +2622,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     annotationProperties,
     individuals,
     datatypes,
-    reasonerResults
+    reasonerResults,
   ]);
 
   const filteredData = React.useMemo(() => {
@@ -2241,46 +2631,43 @@ const Dashboard: React.FC<DashboardProps> = ({
     let regex: RegExp | null = null;
     if (searchOptions.useRegex && trimmedQuery) {
       try {
-        regex = new RegExp(trimmedQuery, 'i');
+        regex = new RegExp(trimmedQuery, "i");
       } catch (error) {
-        console.warn('[Dashboard] Invalid regex:', error);
+        console.warn("[Dashboard] Invalid regex:", error);
         regex = null;
       }
     }
 
     const builtinsByTab: Record<string, Set<string>> = {
-      Classes: new Set([
-        'http://www.w3.org/2002/07/owl#Thing',
-        'http://www.w3.org/2002/07/owl#Nothing'
-      ]),
+      Classes: new Set(["http://www.w3.org/2002/07/owl#Thing", "http://www.w3.org/2002/07/owl#Nothing"]),
       ObjectProperties: new Set([
-        'http://www.w3.org/2002/07/owl#topObjectProperty',
-        'http://www.w3.org/2002/07/owl#bottomObjectProperty'
+        "http://www.w3.org/2002/07/owl#topObjectProperty",
+        "http://www.w3.org/2002/07/owl#bottomObjectProperty",
       ]),
       DataProperties: new Set([
-        'http://www.w3.org/2002/07/owl#topDataProperty',
-        'http://www.w3.org/2002/07/owl#bottomDataProperty'
+        "http://www.w3.org/2002/07/owl#topDataProperty",
+        "http://www.w3.org/2002/07/owl#bottomDataProperty",
       ]),
       AnnotationProperties: new Set([
-        'http://www.w3.org/2000/01/rdf-schema#label',
-        'http://www.w3.org/2000/01/rdf-schema#comment',
-        'http://www.w3.org/2000/01/rdf-schema#seeAlso',
-        'http://www.w3.org/2000/01/rdf-schema#isDefinedBy',
-        'http://www.w3.org/2002/07/owl#deprecated'
+        "http://www.w3.org/2000/01/rdf-schema#label",
+        "http://www.w3.org/2000/01/rdf-schema#comment",
+        "http://www.w3.org/2000/01/rdf-schema#seeAlso",
+        "http://www.w3.org/2000/01/rdf-schema#isDefinedBy",
+        "http://www.w3.org/2002/07/owl#deprecated",
       ]),
       Datatypes: new Set([
-        'http://www.w3.org/2000/01/rdf-schema#Literal',
-        'http://www.w3.org/1999/02/22-rdf-syntax-ns#PlainLiteral',
-        'http://www.w3.org/2001/XMLSchema#string',
-        'http://www.w3.org/2001/XMLSchema#integer',
-        'http://www.w3.org/2001/XMLSchema#decimal',
-        'http://www.w3.org/2001/XMLSchema#float',
-        'http://www.w3.org/2001/XMLSchema#double',
-        'http://www.w3.org/2001/XMLSchema#boolean',
-        'http://www.w3.org/2001/XMLSchema#date',
-        'http://www.w3.org/2001/XMLSchema#dateTime',
-        'http://www.w3.org/2001/XMLSchema#anyURI'
-      ])
+        "http://www.w3.org/2000/01/rdf-schema#Literal",
+        "http://www.w3.org/1999/02/22-rdf-syntax-ns#PlainLiteral",
+        "http://www.w3.org/2001/XMLSchema#string",
+        "http://www.w3.org/2001/XMLSchema#integer",
+        "http://www.w3.org/2001/XMLSchema#decimal",
+        "http://www.w3.org/2001/XMLSchema#float",
+        "http://www.w3.org/2001/XMLSchema#double",
+        "http://www.w3.org/2001/XMLSchema#boolean",
+        "http://www.w3.org/2001/XMLSchema#date",
+        "http://www.w3.org/2001/XMLSchema#dateTime",
+        "http://www.w3.org/2001/XMLSchema#anyURI",
+      ]),
     };
 
     const isBuiltIn = (item: SelectableItem) => {
@@ -2292,20 +2679,21 @@ const Dashboard: React.FC<DashboardProps> = ({
     const isDeprecated = (item: SelectableItem) => {
       if (!searchOptions.hideDeprecated) return false;
       const annotations = (item as any).annotations || {};
-      const deprecatedValue = annotations['http://www.w3.org/2002/07/owl#deprecated'] || annotations['owl:deprecated'];
+      const deprecatedValue = annotations["http://www.w3.org/2002/07/owl#deprecated"] || annotations["owl:deprecated"];
       if (!deprecatedValue) return false;
       const normalized = String(deprecatedValue).toLowerCase();
-      return normalized === 'true' || normalized === '1' || normalized === 'yes';
+      return normalized === "true" || normalized === "1" || normalized === "yes";
     };
 
     const matchesQuery = (item: SelectableItem) => {
       if (!trimmedQuery) return true;
-      const annotationBlob = searchOptions.searchAnnotations && (item as any).annotations
-        ? Object.entries((item as any).annotations)
-          .map(([key, value]) => `${key} ${String(value)}`)
-          .join(' ')
-        : '';
-      const haystack = `${item.label || ''} ${item.id || ''} ${annotationBlob}`;
+      const annotationBlob =
+        searchOptions.searchAnnotations && (item as any).annotations
+          ? Object.entries((item as any).annotations)
+              .map(([key, value]) => `${key} ${String(value)}`)
+              .join(" ")
+          : "";
+      const haystack = `${item.label || ""} ${item.id || ""} ${annotationBlob}`;
       if (regex) return regex.test(haystack);
       return haystack.toLowerCase().includes(lowercasedQuery);
     };
@@ -2313,7 +2701,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const filterRecursively = (items: SelectableItem[]): SelectableItem[] => {
       // Safety check: ensure items is an array
       if (!Array.isArray(items)) {
-        console.warn('[Dashboard] filterRecursively received non-array:', items);
+        console.warn("[Dashboard] filterRecursively received non-array:", items);
         return [];
       }
 
@@ -2345,7 +2733,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             matches = true;
           }
         }
-        if (matches && !results.find(r => r.id === item.id)) {
+        if (matches && !results.find((r) => r.id === item.id)) {
           // Ensure children is always an array when adding to results
           results.push({ ...item, children: children.length > 0 ? children : [] } as any);
         }
@@ -2355,46 +2743,93 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     // Safety check on sourceData before filtering
     if (!Array.isArray(sourceData)) {
-      console.warn('[Dashboard] sourceData is not an array:', sourceData);
+      console.warn("[Dashboard] sourceData is not an array:", sourceData);
       return [];
     }
 
     return filterRecursively(sourceData);
   }, [searchQuery, sourceData, entitiesTab, searchOptions]);
 
-  const fetchReasonerBundle = useCallback(async (reasonerType: string) => {
-    if (!projectId) {
-      throw new Error('No ontology loaded');
-    }
+  const fetchReasonerBundle = useCallback(
+    async (reasonerType: string) => {
+      if (!projectId) {
+        throw new Error("No ontology loaded");
+      }
 
-    const encodedProjectId = encodeURIComponent(projectId);
+      const encodedProjectId = encodeURIComponent(projectId);
 
-    const [classificationResponse, statsResponse] = await Promise.all([
-      apiClient.post(
-        `/plugin-service/api/reasoner/${encodedProjectId}/classify`,
-        { reasonerType }
-      ),
-      apiClient.get(
-        `/plugin-service/api/reasoner/${encodedProjectId}/stats?reasonerType=${reasonerType}`
-      ).catch(error => {
-        console.warn('[Dashboard] Reasoner stats request failed:', error);
-        return null;
-      })
-    ]);
+      // Start classification (async — returns a taskId)
+      const startResponse: any = await apiClient.post(`/plugin-service/api/reasoner/${encodedProjectId}/classify`, {
+        reasonerType,
+      });
 
-    return combineReasonerResults(classificationResponse, statsResponse ?? undefined);
-  }, [projectId]);
+      const startData = startResponse?.data ?? startResponse;
+
+      // If the backend returned a taskId, poll for completion
+      if (startData?.taskId) {
+        const taskId = startData.taskId;
+        const POLL_INTERVAL = 3000; // 3 seconds
+        const MAX_POLL_TIME = 600_000; // 10 minutes
+
+        const pollForResult = async (): Promise<any> => {
+          const deadline = Date.now() + MAX_POLL_TIME;
+          while (Date.now() < deadline) {
+            await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+            const statusResp: any = await apiClient.get(
+              `/plugin-service/api/reasoner/${encodedProjectId}/classify/status/${taskId}`,
+            );
+            const statusData = statusResp?.data ?? statusResp;
+            if (statusData?.status === "COMPLETED") {
+              return statusData;
+            }
+            if (statusData?.status === "FAILED") {
+              throw new Error(statusData?.error || "Classification failed");
+            }
+            // still RUNNING — continue polling
+          }
+          throw new Error("Classification timed out after 10 minutes");
+        };
+
+        const [classificationResponse, statsResponse] = await Promise.all([
+          pollForResult(),
+          apiClient
+            .get(`/plugin-service/api/reasoner/${encodedProjectId}/stats?reasonerType=${reasonerType}`)
+            .catch((error) => {
+              console.warn("[Dashboard] Reasoner stats request failed:", error);
+              return null;
+            }),
+        ]);
+
+        return combineReasonerResults(classificationResponse, statsResponse ?? undefined);
+      }
+
+      // Fallback: backend returned a synchronous result (older API)
+      const [statsResponse] = await Promise.all([
+        apiClient
+          .get(`/plugin-service/api/reasoner/${encodedProjectId}/stats?reasonerType=${reasonerType}`)
+          .catch((error) => {
+            console.warn("[Dashboard] Reasoner stats request failed:", error);
+            return null;
+          }),
+      ]);
+
+      return combineReasonerResults(startResponse, statsResponse ?? undefined);
+    },
+    [projectId],
+  );
 
   const loadInferredHierarchy = useCallback(async () => {
     if (!projectId) return;
-    console.log('[Dashboard] Loading full inferred class hierarchy...');
+    console.log("[Dashboard] Loading full inferred class hierarchy...");
     try {
-      const response = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-class-hierarchy?reasonerType=${selectedReasoner}`);
+      const response = await apiClient.get<any>(
+        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-class-hierarchy?reasonerType=${selectedReasoner}`,
+      );
       const payload = response?.data || response;
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
 
       if (!Array.isArray(hierarchy) || hierarchy.length === 0) {
-        console.warn('[Dashboard] No inferred classes found. Reasoner may not have been run yet.');
+        console.warn("[Dashboard] No inferred classes found. Reasoner may not have been run yet.");
         setInferredClassHierarchy([]);
         return;
       }
@@ -2403,104 +2838,134 @@ const Dashboard: React.FC<DashboardProps> = ({
       const normalizedHierarchy = hierarchy.map((node: any) => ({
         ...node,
         children: Array.isArray(node.children) ? node.children : [],
-        hasChildren: Array.isArray(node.children) && node.children.length > 0
+        hasChildren: Array.isArray(node.children) && node.children.length > 0,
       }));
 
-      console.log('[Dashboard] Full inferred hierarchy loaded with', normalizedHierarchy.length, 'root nodes');
-      console.log('[Dashboard] First root node:', normalizedHierarchy[0]);
-      console.log('[Dashboard] First root node children count:', normalizedHierarchy[0]?.children?.length || 0);
+      console.log("[Dashboard] Full inferred hierarchy loaded with", normalizedHierarchy.length, "root nodes");
+      console.log("[Dashboard] First root node:", normalizedHierarchy[0]);
+      console.log("[Dashboard] First root node children count:", normalizedHierarchy[0]?.children?.length || 0);
       if (normalizedHierarchy[0]?.children?.length > 0) {
-        console.log('[Dashboard] First few children:', normalizedHierarchy[0].children.slice(0, 3));
+        console.log("[Dashboard] First few children:", normalizedHierarchy[0].children.slice(0, 3));
       }
 
       const hierarchyWithCounts = applyInstanceCountsToTree(normalizedHierarchy, classInstanceCounts);
-      console.log('[Dashboard] After applying counts, hierarchy structure preserved:', hierarchyWithCounts[0]?.children?.length || 0, 'children');
+      console.log(
+        "[Dashboard] After applying counts, hierarchy structure preserved:",
+        hierarchyWithCounts[0]?.children?.length || 0,
+        "children",
+      );
       setInferredClassHierarchy(hierarchyWithCounts);
     } catch (error) {
-      console.error('[Dashboard] Failed to load full inferred class hierarchy:', error);
+      console.error("[Dashboard] Failed to load full inferred class hierarchy:", error);
       setInferredClassHierarchy([]);
     }
   }, [projectId, applyInstanceCountsToTree, classInstanceCounts, selectedReasoner]);
 
   const loadInferredObjectPropertyHierarchy = useCallback(async () => {
     if (!projectId) return;
-    console.log('[Dashboard] Loading inferred object property hierarchy...');
+    console.log("[Dashboard] Loading inferred object property hierarchy...");
     try {
-      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-object-property-hierarchy?reasonerType=${selectedReasoner}`);
+      const res = await apiClient.get<any>(
+        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-object-property-hierarchy?reasonerType=${selectedReasoner}`,
+      );
       const payload = res?.data || res;
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
-      console.log('[Dashboard] Inferred object properties loaded:', Array.isArray(hierarchy) ? hierarchy.length : 0, 'items');
+      console.log(
+        "[Dashboard] Inferred object properties loaded:",
+        Array.isArray(hierarchy) ? hierarchy.length : 0,
+        "items",
+      );
       setInferredObjectPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
     } catch (error) {
-      console.error('[Dashboard] Failed to load inferred object property hierarchy:', error);
+      console.error("[Dashboard] Failed to load inferred object property hierarchy:", error);
       setInferredObjectPropertyHierarchy([]);
     }
   }, [projectId, selectedReasoner]);
 
   const loadInferredDataPropertyHierarchy = useCallback(async () => {
     if (!projectId) return;
-    console.log('[Dashboard] Loading inferred data property hierarchy...');
+    console.log("[Dashboard] Loading inferred data property hierarchy...");
     try {
-      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-data-property-hierarchy?reasonerType=${selectedReasoner}`);
+      const res = await apiClient.get<any>(
+        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-data-property-hierarchy?reasonerType=${selectedReasoner}`,
+      );
       const payload = res?.data || res;
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
-      console.log('[Dashboard] Inferred data properties response:', payload);
-      console.log('[Dashboard] Inferred data properties loaded:', Array.isArray(hierarchy) ? hierarchy.length : 0, 'items');
+      console.log("[Dashboard] Inferred data properties response:", payload);
+      console.log(
+        "[Dashboard] Inferred data properties loaded:",
+        Array.isArray(hierarchy) ? hierarchy.length : 0,
+        "items",
+      );
       setInferredDataPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
     } catch (error) {
-      console.error('[Dashboard] Failed to load inferred data property hierarchy:', error);
+      console.error("[Dashboard] Failed to load inferred data property hierarchy:", error);
       setInferredDataPropertyHierarchy([]);
     }
   }, [projectId, selectedReasoner]);
 
   const loadInferredAnnotationPropertyHierarchy = useCallback(async () => {
     if (!projectId) return;
-    console.log('[Dashboard] Loading inferred annotation property hierarchy...');
+    console.log("[Dashboard] Loading inferred annotation property hierarchy...");
     try {
-      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-annotation-property-hierarchy?reasonerType=${selectedReasoner}`);
+      const res = await apiClient.get<any>(
+        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-annotation-property-hierarchy?reasonerType=${selectedReasoner}`,
+      );
       const payload = res?.data || res;
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
-      console.log('[Dashboard] Inferred annotation properties loaded:', Array.isArray(hierarchy) ? hierarchy.length : 0, 'items');
+      console.log(
+        "[Dashboard] Inferred annotation properties loaded:",
+        Array.isArray(hierarchy) ? hierarchy.length : 0,
+        "items",
+      );
       setInferredAnnotationPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
     } catch (error) {
-      console.error('[Dashboard] Failed to load inferred annotation property hierarchy:', error);
+      console.error("[Dashboard] Failed to load inferred annotation property hierarchy:", error);
       setInferredAnnotationPropertyHierarchy([]);
     }
   }, [projectId, selectedReasoner]);
 
   const loadInferredDatatypes = useCallback(async () => {
     if (!projectId) return;
-    console.log('[Dashboard] Loading inferred datatypes...');
+    console.log("[Dashboard] Loading inferred datatypes...");
     try {
-      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-datatypes?reasonerType=${selectedReasoner}`);
+      const res = await apiClient.get<any>(
+        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-datatypes?reasonerType=${selectedReasoner}`,
+      );
       const payload = res?.data || res;
       const datatypes = payload?.datatypes || payload?.data?.datatypes || [];
-      console.log('[Dashboard] Inferred datatypes loaded:', Array.isArray(datatypes) ? datatypes.length : 0, 'items');
+      console.log("[Dashboard] Inferred datatypes loaded:", Array.isArray(datatypes) ? datatypes.length : 0, "items");
       setInferredDatatypes(Array.isArray(datatypes) ? datatypes : []);
     } catch (error) {
-      console.error('[Dashboard] Failed to load inferred datatypes:', error);
+      console.error("[Dashboard] Failed to load inferred datatypes:", error);
       setInferredDatatypes([]);
     }
   }, [projectId, selectedReasoner]);
 
   const loadInferredIndividuals = useCallback(async () => {
     if (!projectId) return;
-    console.log('[Dashboard] Loading inferred individuals...');
+    console.log("[Dashboard] Loading inferred individuals...");
     try {
-      const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-individuals?reasonerType=${selectedReasoner}`);
+      const res = await apiClient.get<any>(
+        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-individuals?reasonerType=${selectedReasoner}`,
+      );
       const payload = res?.data || res;
       const individuals = payload?.individuals || payload?.data?.individuals || [];
-      console.log('[Dashboard] Inferred individuals loaded:', Array.isArray(individuals) ? individuals.length : 0, 'items');
+      console.log(
+        "[Dashboard] Inferred individuals loaded:",
+        Array.isArray(individuals) ? individuals.length : 0,
+        "items",
+      );
       setInferredIndividuals(Array.isArray(individuals) ? individuals : []);
     } catch (error) {
-      console.error('[Dashboard] Failed to load inferred individuals:', error);
+      console.error("[Dashboard] Failed to load inferred individuals:", error);
       setInferredIndividuals([]);
     }
   }, [projectId, selectedReasoner]);
 
   const startReasoner = useCallback(async () => {
     if (!projectId) {
-      notificationService.error('No Ontology Loaded', 'Please load an ontology first');
+      notificationService.error("No Ontology Loaded", "Please load an ontology first");
       return;
     }
 
@@ -2518,28 +2983,32 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       // After successful classification, load full recursive hierarchies from the main API
       // This ensures we have the full depth like Desktop Protégé, not just the bundle's view
-      console.log('[Dashboard] Reasoner completed, loading full recursive hierarchies...');
+      console.log("[Dashboard] Reasoner completed, loading full recursive hierarchies...");
 
-      // Load full hierarchies in parallel
-      await Promise.all([
-        loadInferredHierarchy(),
-        loadInferredObjectPropertyHierarchy(),
-        loadInferredDataPropertyHierarchy(),
-        loadInferredAnnotationPropertyHierarchy(),
-        loadInferredDatatypes(),
-        loadInferredIndividuals()
-      ]);
+      // Load hierarchies sequentially to avoid overwhelming GraphDB
+      await loadInferredHierarchy();
+      await loadInferredObjectPropertyHierarchy();
+      await loadInferredDataPropertyHierarchy();
+      await loadInferredAnnotationPropertyHierarchy();
+      await loadInferredDatatypes();
+      await loadInferredIndividuals();
 
-      console.log('[Dashboard] ✅ All inferred hierarchies processed');
+      console.log("[Dashboard] ✅ All inferred hierarchies processed");
 
       // Automatically switch Classes tab to inferred mode to show the inferred hierarchy
-      setHierarchyViewModes(prev => ({ ...prev, Classes: 'inferred' }));
-      console.log('[Dashboard] ✅ Automatically switched Classes tab to inferred mode');
+      setHierarchyViewModes((prev) => ({ ...prev, Classes: "inferred" }));
+      console.log("[Dashboard] ✅ Automatically switched Classes tab to inferred mode");
 
-      notificationService.success('Classification Complete', `${selectedReasoner} reasoner completed successfully. View inferred hierarchy in Entities > Classes tab.`);
+      notificationService.success(
+        "Classification Complete",
+        `${selectedReasoner} reasoner completed successfully. View inferred hierarchy in Entities > Classes tab.`,
+      );
     } catch (error: any) {
-      console.error('[Dashboard] Reasoner error:', error);
-      notificationService.error('Classification Failed', error?.response?.data?.error || error?.message || 'Classification failed');
+      console.error("[Dashboard] Reasoner error:", error);
+      notificationService.error(
+        "Classification Failed",
+        error?.response?.data?.error || error?.message || "Classification failed",
+      );
       setIsReasonerRunning(false);
     } finally {
       setIsReasonerLoading(false);
@@ -2554,52 +3023,55 @@ const Dashboard: React.FC<DashboardProps> = ({
     loadInferredDataPropertyHierarchy,
     loadInferredAnnotationPropertyHierarchy,
     loadInferredDatatypes,
-    loadInferredIndividuals
+    loadInferredIndividuals,
   ]);
 
   const stopReasoner = useCallback(() => {
     setIsReasonerRunning(false);
     setIsReasonerLoading(false);
     setReasonerResults(null);
-    notificationService.success('Reasoner Stopped', 'Reasoner has been stopped');
+    notificationService.success("Reasoner Stopped", "Reasoner has been stopped");
   }, []);
 
   const toggleReasonerSync = useCallback(() => {
     const newSyncState = !isReasonerSynced;
     setIsReasonerSynced(newSyncState);
-    console.log('[Dashboard] Reasoner auto-sync:', newSyncState ? 'enabled' : 'disabled');
+    console.log("[Dashboard] Reasoner auto-sync:", newSyncState ? "enabled" : "disabled");
     if (newSyncState) {
-      notificationService.success('Auto-sync Enabled', 'Reasoner will automatically re-run on changes');
+      notificationService.success("Auto-sync Enabled", "Reasoner will automatically re-run on changes");
     } else {
-      notificationService.info('Auto-sync Disabled', 'Reasoner will only run manually');
+      notificationService.info("Auto-sync Disabled", "Reasoner will only run manually");
     }
   }, [isReasonerSynced]);
 
-  const handleSelectReasoner = useCallback((reasoner: string) => {
-    // Stop current reasoner if running
-    if (isReasonerRunning) {
-      setIsReasonerRunning(false);
-      setReasonerResults(null);
-      notificationService.info('Reasoner Stopped', 'Previous reasoner stopped due to type change');
-    }
+  const handleSelectReasoner = useCallback(
+    (reasoner: string) => {
+      // Stop current reasoner if running
+      if (isReasonerRunning) {
+        setIsReasonerRunning(false);
+        setReasonerResults(null);
+        notificationService.info("Reasoner Stopped", "Previous reasoner stopped due to type change");
+      }
 
-    setSelectedReasoner(reasoner);
+      setSelectedReasoner(reasoner);
 
-    // Show reasoner description
-    const descriptions: Record<string, string> = {
-      'HermiT': 'Hypertableau-based reasoner with full OWL 2 DL support - best for complex ontologies',
-      'ELK': 'High-performance reasoner optimized for EL++ profile - best for large taxonomies',
-      'Pellet': 'Complete OWL DL reasoner with SWRL support',
-      'Openllet': 'Modern fork of Pellet with improved performance and OWL API 5 support',
-      'Structural': 'Lightweight structural reasoner - fast but limited inference'
-    };
+      // Show reasoner description
+      const descriptions: Record<string, string> = {
+        HermiT: "Hypertableau-based reasoner with full OWL 2 DL support - best for complex ontologies",
+        ELK: "High-performance reasoner optimized for EL++ profile - best for large taxonomies",
+        Pellet: "Complete OWL DL reasoner with SWRL support",
+        Openllet: "Modern fork of Pellet with improved performance and OWL API 5 support",
+        Structural: "Lightweight structural reasoner - fast but limited inference",
+      };
 
-    notificationService.info('Reasoner Selected', descriptions[reasoner] || `${reasoner} reasoner is now active`);
-  }, [isReasonerRunning]);
+      notificationService.info("Reasoner Selected", descriptions[reasoner] || `${reasoner} reasoner is now active`);
+    },
+    [isReasonerRunning],
+  );
 
   const checkConsistency = useCallback(async () => {
     if (!projectId) {
-      notificationService.error('No Ontology Loaded', 'Please load an ontology first');
+      notificationService.error("No Ontology Loaded", "Please load an ontology first");
       return;
     }
 
@@ -2607,23 +3079,22 @@ const Dashboard: React.FC<DashboardProps> = ({
       setIsConsistencyLoading(true);
       const reasonerType = normalizeReasonerType(selectedReasoner);
       const encodedProjectId = encodeURIComponent(projectId);
-      const resp = await apiClient.post(
-        `/plugin-service/api/reasoner/${encodedProjectId}/consistency`,
-        { reasonerType }
-      );
+      const resp = await apiClient.post(`/plugin-service/api/reasoner/${encodedProjectId}/consistency`, {
+        reasonerType,
+      });
       const data = extractResponseData(resp);
       setConsistencyResult(data);
 
       const inconsistent = data?.consistent === false || data?.isConsistent === false;
       if (inconsistent) {
-        notificationService.error('Ontology Inconsistent', 'Open the explanation to inspect the causes.');
+        notificationService.error("Ontology Inconsistent", "Open the explanation to inspect the causes.");
       } else {
-        notificationService.success('Consistency Checked', `${selectedReasoner} reports the ontology is consistent`);
+        notificationService.success("Consistency Checked", `${selectedReasoner} reports the ontology is consistent`);
       }
     } catch (error: any) {
-      console.error('[Dashboard] Consistency check failed:', error);
-      setConsistencyResult({ error: error?.message || 'Consistency check failed' });
-      notificationService.error('Consistency Check Failed', error?.message || 'Unable to check ontology consistency');
+      console.error("[Dashboard] Consistency check failed:", error);
+      setConsistencyResult({ error: error?.message || "Consistency check failed" });
+      notificationService.error("Consistency Check Failed", error?.message || "Unable to check ontology consistency");
     } finally {
       setIsConsistencyLoading(false);
     }
@@ -2631,7 +3102,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const explainInconsistency = useCallback(async () => {
     if (!projectId) {
-      notificationService.error('No Ontology Loaded', 'Please load an ontology first');
+      notificationService.error("No Ontology Loaded", "Please load an ontology first");
       return;
     }
 
@@ -2639,22 +3110,26 @@ const Dashboard: React.FC<DashboardProps> = ({
       setExplanationState({ open: true, loading: true, data: null, error: null });
       const reasonerType = normalizeReasonerType(selectedReasoner);
       const encodedProjectId = encodeURIComponent(projectId);
-      const resp = await apiClient.post(
-        `/plugin-service/api/reasoner/${encodedProjectId}/explain-inconsistency`,
-        { reasonerType }
-      );
+      const resp = await apiClient.post(`/plugin-service/api/reasoner/${encodedProjectId}/explain-inconsistency`, {
+        reasonerType,
+      });
       const data = extractResponseData(resp);
       setExplanationState({ open: true, loading: false, data, error: null });
-      notificationService.info('Explanation Ready', 'Review the inconsistency report.');
+      notificationService.info("Explanation Ready", "Review the inconsistency report.");
     } catch (error: any) {
-      console.error('[Dashboard] Explain inconsistency failed:', error);
-      setExplanationState({ open: true, loading: false, data: null, error: error?.message || 'Failed to explain inconsistency' });
-      notificationService.error('Explain Inconsistency Failed', error?.message || 'Could not compute explanation');
+      console.error("[Dashboard] Explain inconsistency failed:", error);
+      setExplanationState({
+        open: true,
+        loading: false,
+        data: null,
+        error: error?.message || "Failed to explain inconsistency",
+      });
+      notificationService.error("Explain Inconsistency Failed", error?.message || "Could not compute explanation");
     }
   }, [projectId, selectedReasoner]);
 
-  const setCurrentHierarchyViewMode = (mode: 'asserted' | 'inferred') => {
-    setHierarchyViewModes(prev => ({ ...prev, [entitiesTab]: mode }));
+  const setCurrentHierarchyViewMode = (mode: "asserted" | "inferred") => {
+    setHierarchyViewModes((prev) => ({ ...prev, [entitiesTab]: mode }));
   };
 
   const resolveDatatypeIri = (datatype?: string) => {
@@ -2663,18 +3138,18 @@ const Dashboard: React.FC<DashboardProps> = ({
   };
 
   const shortenDatatype = (datatype?: string) => {
-    if (!datatype) return 'xsd:string';
+    if (!datatype) return "xsd:string";
     const entry = Object.entries(DATATYPE_IRI_MAP).find(([, iri]) => iri === datatype);
     if (entry) return entry[0];
-    if (datatype.includes('#')) {
-      return `xsd:${datatype.split('#').pop()}`;
+    if (datatype.includes("#")) {
+      return `xsd:${datatype.split("#").pop()}`;
     }
     return datatype;
   };
 
   // Calculate active users count for current project
   const activeUsersInProject = Array.from(collaboration.state.activeUsers.values()).filter(
-    user => user.projectId === projectId
+    (user) => user.projectId === projectId,
   );
   const hasMultipleActiveUsers = activeUsersInProject.length > 1;
   // #endregion
@@ -2683,29 +3158,29 @@ const Dashboard: React.FC<DashboardProps> = ({
   // Plugin marketplace handlers
   const handleInstallPlugin = useCallback(async (pluginId: string) => {
     try {
-      setPluginLoadingStates(prev => ({ ...prev, [pluginId]: { loading: true, error: null } }));
+      setPluginLoadingStates((prev) => ({ ...prev, [pluginId]: { loading: true, error: null } }));
 
       // Use pluginLoader to install and load the plugin
       await pluginLoader.installPlugin(pluginId);
       await pluginLoader.loadPlugin(pluginId);
 
       // Only update state if installation and loading succeeded
-      setInstalledPlugins(prev => new Set([...prev, pluginId]));
-      setPluginLoadingStates(prev => ({ ...prev, [pluginId]: { loading: false, error: null } }));
+      setInstalledPlugins((prev) => new Set([...prev, pluginId]));
+      setPluginLoadingStates((prev) => ({ ...prev, [pluginId]: { loading: false, error: null } }));
 
       // Map plugin IDs to their corresponding tab IDs and add to visible tabs
       const pluginToTabMap: Record<string, string> = {
-        'swrl-editor-plugin': 'SWRL',
-        'graph-view-plugin': 'Graph',
-        'fuzzy-ontology-plugin': 'Fuzzy',
-        'change-assistant-plugin': 'Changes',
-        'sparql-query-plugin': 'SPARQL',
-        'reasoner-plugin': 'Reasoner'
+        "swrl-editor-plugin": "SWRL",
+        "graph-view-plugin": "Graph",
+        "fuzzy-ontology-plugin": "Fuzzy",
+        "change-assistant-plugin": "Changes",
+        "sparql-query-plugin": "SPARQL",
+        "reasoner-plugin": "Reasoner",
       };
 
       const tabId = pluginToTabMap[pluginId];
       if (tabId) {
-        setVisibleMainTabs(prev => {
+        setVisibleMainTabs((prev) => {
           if (!prev.includes(tabId)) {
             return [...prev, tabId];
           }
@@ -2714,20 +3189,23 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       console.log(`[Dashboard] Plugin ${pluginId} installed and loaded`);
-      notificationService.success('Plugin Installed', `${pluginId} has been installed successfully`);
+      notificationService.success("Plugin Installed", `${pluginId} has been installed successfully`);
     } catch (error) {
       console.error(`[Dashboard] Failed to install plugin ${pluginId}:`, error);
-      setPluginLoadingStates(prev => ({
+      setPluginLoadingStates((prev) => ({
         ...prev,
-        [pluginId]: { loading: false, error: error instanceof Error ? error.message : 'Unknown error' }
+        [pluginId]: { loading: false, error: error instanceof Error ? error.message : "Unknown error" },
       }));
-      notificationService.error('Plugin Installation Failed', `Failed to install ${pluginId}. ${error instanceof Error ? error.message : 'Please check console for details'}`);
+      notificationService.error(
+        "Plugin Installation Failed",
+        `Failed to install ${pluginId}. ${error instanceof Error ? error.message : "Please check console for details"}`,
+      );
 
       // Make sure to uninstall if loading failed
       try {
         await pluginLoader.uninstallPlugin(pluginId);
       } catch (uninstallError) {
-        console.error('Failed to cleanup after failed installation:', uninstallError);
+        console.error("Failed to cleanup after failed installation:", uninstallError);
       }
 
       throw error;
@@ -2737,25 +3215,28 @@ const Dashboard: React.FC<DashboardProps> = ({
   // Handler to retry loading an installed plugin
   const handleRetryLoadPlugin = useCallback(async (pluginId: string) => {
     try {
-      setPluginLoadingStates(prev => ({ ...prev, [pluginId]: { loading: true, error: null } }));
+      setPluginLoadingStates((prev) => ({ ...prev, [pluginId]: { loading: true, error: null } }));
 
       const component = await pluginLoader.loadPlugin(pluginId);
 
       if (component) {
-        setPluginLoadingStates(prev => ({ ...prev, [pluginId]: { loading: false, error: null } }));
+        setPluginLoadingStates((prev) => ({ ...prev, [pluginId]: { loading: false, error: null } }));
         // Force re-render by updating installedPlugins
-        setInstalledPlugins(prev => new Set([...prev]));
-        notificationService.success('Plugin Loaded', `${pluginId} has been loaded successfully`);
+        setInstalledPlugins((prev) => new Set([...prev]));
+        notificationService.success("Plugin Loaded", `${pluginId} has been loaded successfully`);
       } else {
-        throw new Error('Failed to load plugin component');
+        throw new Error("Failed to load plugin component");
       }
     } catch (error) {
       console.error(`[Dashboard] Failed to load plugin ${pluginId}:`, error);
-      setPluginLoadingStates(prev => ({
+      setPluginLoadingStates((prev) => ({
         ...prev,
-        [pluginId]: { loading: false, error: error instanceof Error ? error.message : 'Unknown error' }
+        [pluginId]: { loading: false, error: error instanceof Error ? error.message : "Unknown error" },
       }));
-      notificationService.error('Plugin Load Failed', `Failed to load ${pluginId}. ${error instanceof Error ? error.message : 'Please try again'}`);
+      notificationService.error(
+        "Plugin Load Failed",
+        `Failed to load ${pluginId}. ${error instanceof Error ? error.message : "Please try again"}`,
+      );
     }
   }, []);
 
@@ -2763,7 +3244,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     try {
       await pluginLoader.uninstallPlugin(pluginId);
 
-      setInstalledPlugins(prev => {
+      setInstalledPlugins((prev) => {
         const newSet = new Set(prev);
         newSet.delete(pluginId);
         return newSet;
@@ -2772,19 +3253,19 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Map plugin IDs to internal plugin IDs and deactivate
       // Remove the corresponding tab from visible tabs
       const pluginToTabMap: Record<string, string> = {
-        'swrl-editor-plugin': 'SWRL',
-        'graph-view-plugin': 'Graph',
-        'fuzzy-ontology-plugin': 'Fuzzy',
-        'change-assistant-plugin': 'Changes',
-        'sparql-query-plugin': 'SPARQL',
-        'reasoner-plugin': 'Reasoner'
+        "swrl-editor-plugin": "SWRL",
+        "graph-view-plugin": "Graph",
+        "fuzzy-ontology-plugin": "Fuzzy",
+        "change-assistant-plugin": "Changes",
+        "sparql-query-plugin": "SPARQL",
+        "reasoner-plugin": "Reasoner",
       };
 
       const tabId = pluginToTabMap[pluginId];
       if (tabId) {
-        setVisibleMainTabs(prev => prev.filter(t => t !== tabId));
+        setVisibleMainTabs((prev) => prev.filter((t) => t !== tabId));
         // Switch to Entities tab if the current tab is being removed
-        setMainTab(current => current === tabId ? 'Entities' : current);
+        setMainTab((current) => (current === tabId ? "Entities" : current));
       }
 
       console.log(`[Dashboard] Plugin ${pluginId} uninstalled`);
@@ -2795,623 +3276,710 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, []);
 
   // Check status once (no polling - rely on WebSocket notifications)
-  const waitForProcessingComplete = useCallback(async (currentProjectId: string): Promise<{ ready: boolean; error?: string; status?: string }> => {
-    try {
-      const statusRes = await apiClient.get<any>(`/api/ontology/status/${currentProjectId}`);
-      const status = statusRes?.data?.status || statusRes?.status;
+  const waitForProcessingComplete = useCallback(
+    async (currentProjectId: string): Promise<{ ready: boolean; error?: string; status?: string }> => {
+      try {
+        const statusRes = await apiClient.get<any>(`/api/ontology/status/${encodeProjectId(currentProjectId)}`);
+        const status = statusRes?.data?.status || statusRes?.status;
 
-      console.log(`[Dashboard] Project ${currentProjectId} status:`, status);
+        console.log(`[Dashboard] Project ${currentProjectId} status:`, status);
 
-      if (status === 'COMPLETED') {
+        if (status === "COMPLETED") {
+          return { ready: true, status };
+        }
+
+        if (status === "ERROR") {
+          console.error("[Dashboard] Project processing failed");
+          const errorMessage = statusRes?.data?.errorMessage || statusRes?.data?.error || "Import failed";
+          return { ready: false, error: errorMessage, status };
+        }
+
+        // If PROCESSING, WebSocket will notify when complete
+        if (status === "PROCESSING") {
+          console.log("[Dashboard] File is processing, waiting for WebSocket notification...");
+          return { ready: false, error: "File is still processing. Please wait a moment and try again.", status };
+        }
+
+        // Unknown status - allow loading attempt
+        console.warn("[Dashboard] Unknown status, allowing load attempt:", status);
         return { ready: true, status };
+      } catch (error) {
+        console.error("[Dashboard] Error checking project status:", error);
+        // Don't block on error - let the load attempt happen
+        return { ready: true };
       }
-
-      if (status === 'ERROR') {
-        console.error('[Dashboard] Project processing failed');
-        const errorMessage = statusRes?.data?.errorMessage || statusRes?.data?.error || 'Import failed';
-        return { ready: false, error: errorMessage, status };
-      }
-
-      // If PROCESSING, WebSocket will notify when complete
-      if (status === 'PROCESSING') {
-        console.log('[Dashboard] File is processing, waiting for WebSocket notification...');
-        return { ready: false, error: 'File is still processing. Please wait a moment and try again.', status };
-      }
-
-      // Unknown status - allow loading attempt
-      console.warn('[Dashboard] Unknown status, allowing load attempt:', status);
-      return { ready: true, status };
-    } catch (error) {
-      console.error('[Dashboard] Error checking project status:', error);
-      // Don't block on error - let the load attempt happen
-      return { ready: true };
-    }
-  }, []);
+    },
+    [],
+  );
 
   const resolveUserEmail = useCallback(() => {
     if (user?.email) return user.email;
-    const token = user?.token || (typeof localStorage !== 'undefined' ? localStorage.getItem('authToken') : null);
+    const token = user?.token || (typeof localStorage !== "undefined" ? localStorage.getItem("authToken") : null);
     return decodeTokenEmail(token);
   }, [user?.email, user?.token]);
 
-  const fetchData = useCallback(async (currentProjectId: string, waitForCompletion = false, parentProjectId?: string) => {
-    // Don't block UI - let user continue working
-    setSelectedItem(null);
-    setSearchQuery("");
-
-    // Show loading indicator if user chose to wait
-    if (waitForCompletion) {
-      setIsInitialLoading(true);
-    }
-
-    // Determine if we're in admin flow (parentProjectId provided means files should be loaded from project library)
-    const isAdminFlow = !!parentProjectId;
-
-    // Notify user that loading has started
-    console.log(`Loading ontology "${currentProjectId}"...`);
-    console.log('[Dashboard] 🔄 Fetching data for project:', currentProjectId);
-    console.log('[Dashboard]  Admin flow:', isAdminFlow, 'Parent project:', parentProjectId);
-    console.log('[Dashboard] 👤 User context:', {
-      email: user?.email,
-      username: user?.username,
-      isAdmin: user?.isAdmin,
-      workspaceId: user?.workspaceId
-    });
-
-    // Request collaboration status when loading a new file
-    if (window.vscode) {
-      window.vscode.postMessage({ type: 'requestCollaborationStatus' });
-    }
-
-    try {
-      // Wait for processing to complete before fetching data
-      console.log('[Dashboard] Waiting for file processing to complete...');
-      const result = await waitForProcessingComplete(currentProjectId);
-
-      if (!result.ready) {
-        const errorTitle = result.status === 'ERROR' ? 'Import Failed' : 'Loading Failed';
-        const errorMessage = result.error || 'Unable to load ontology';
-
-        console.error(`[Dashboard] Cannot load project: ${result.status}`, result.error);
-        notificationService.error(errorTitle, errorMessage);
+  const fetchData = useCallback(
+    async (currentProjectId: string, waitForCompletion = false, parentProjectId?: string, forceRefresh = false) => {
+      // Skip re-fetching if this project is already loaded and no force refresh requested
+      if (!forceRefresh && currentProjectId === projectId && classHierarchy.length > 0 && metadata) {
+        console.log("[Dashboard] ⚡ Project already loaded, skipping re-fetch:", currentProjectId);
         setIsInitialLoading(false);
-      return null;
-        return;
+        return null;
       }
 
-      console.log('[Dashboard] File processing complete, fetching ontology data...');
-      console.log('[Dashboard] 📡 Loading data from GraphDB database for:', currentProjectId);
+      // Don't block UI - let user continue working
+      setSelectedItem(null);
+      setSearchQuery("");
 
-      // Fetch data in background
-      const dataFetchPromise = Promise.all([
-        apiClient.get<any>(`/api/ontology/metadata/${currentProjectId}`),
-        apiClient.get<any>(`/api/ontology/classes/top-level/${currentProjectId}`),
-        apiClient.get<any>(`/api/ontology/classes/instance-counts/${currentProjectId}`).catch(() => null),
-        apiClient.get<any>(`/api/ontology/properties/${currentProjectId}`),
-        apiClient.get<any>(`/api/ontology/individuals/${currentProjectId}`),
-        apiClient.get<any>(`/api/ontology/annotation-properties/${currentProjectId}`),
-        apiClient.get<any>(`/api/ontology/datatypes/${currentProjectId}`),
-        apiClient.get<any>(`/api/ontology/metadata/${currentProjectId}/imports`),
-        apiClient.get<any>(`/api/ontology/ontology/gci/${currentProjectId}?limit=200`),
-        apiClient.get<any>(`/api/ontology/metadata/${currentProjectId}/annotations`),
-        apiClient.get<any>(`/api/ontology/ontology/prefixes/${currentProjectId}`)
-      ]);
-
-      // Allow UI to be responsive immediately if not waiting
-      if (!waitForCompletion) {
-        setTimeout(() => {
-          setIsInitialLoading(false);
-        }, 500);
+      // Show loading indicator if user chose to wait
+      if (waitForCompletion) {
+        setIsInitialLoading(true);
       }
 
-      // Continue loading in background
-      const [
-        metadataRes,
-        topLevelRes,
-        instanceCountsRes,
-        propertiesRes,
-        individualsRes,
-        annotationPropsRes,
-        datatypesRes,
-        importsRes,
-        gciRes,
-        ontologyAnnotationsRes,
-        prefixesRes
-      ] = await dataFetchPromise;
+      // Determine if we're in admin flow (parentProjectId provided means files should be loaded from project library)
+      const isAdminFlow = !!parentProjectId;
 
-      console.log('[Dashboard] ✅ Data loaded from GraphDB database successfully!');
-      console.log('[Dashboard] 📊 This data includes all saved changes from the database');
-
-      // Handle metadata response - backend returns {success: true, data: {counts: {...}, prefixes: [...], ontologyIRI: "...", ...}}
-      console.log("Metadata response:", metadataRes);
-
-      const metadataData = metadataRes?.data || metadataRes;
-      const annotationsData = metadataData?.annotations || [];
-      const imports = metadataData?.imports || [];
-      const gciAxioms = metadataData?.axioms || [];
-
-      if (metadataData?.filename) {
-        setActiveFileName(metadataData.filename);
-      }
-
-      console.log("Extracted annotations data:", annotationsData);
-      console.log("Extracted imports:", imports);
-      console.log("Extracted GCI axioms:", gciAxioms);
-
-      // Keep all metadata fields from backend (axiom counts, ontologyIRI, etc.)
-      const transformedMetadata = {
-        ...metadataData,
-        annotations: annotationsData,
-        // Also add flat structure for backward compatibility
-        classCount: metadataData?.classCount || metadataData?.counts?.classes || 0,
-        objectPropertyCount: metadataData?.objectPropertyCount || metadataData?.counts?.objectProperties || 0,
-        dataPropertyCount: metadataData?.dataPropertyCount || metadataData?.counts?.dataProperties || 0,
-        individualCount: metadataData?.individualCount || metadataData?.counts?.individuals || 0,
-        annotationPropertyCount: metadataData?.annotationPropertyCount || metadataData?.counts?.annotationProperties || 0,
-        tripleCount: metadataData?.tripleCount || metadataData?.counts?.triples || 0,
-        prefixes: metadataData?.prefixes || []
-      };
-      console.log("Transformed metadata:", transformedMetadata);
-      setMetadata(transformedMetadata);
-
-      const instanceCountsPayload = instanceCountsRes?.data || instanceCountsRes;
-      const instanceCountsData = instanceCountsPayload?.data || instanceCountsPayload || {};
-      if (instanceCountsData && typeof instanceCountsData === 'object') {
-        setClassInstanceCounts(instanceCountsData);
-      }
-
-      const importsPayload = importsRes?.data || importsRes;
-      const importsData = importsPayload?.data || importsPayload || [];
-      const validImportsData = Array.isArray(importsData) ? importsData : [];
-      console.log('[Dashboard] 📥 Initial imports loaded:', validImportsData);
-      console.log('[Dashboard] Local imports found:', validImportsData.filter((imp: string) => !imp.startsWith('http://') && !imp.startsWith('https://')));
-      setOntologyImports(validImportsData);
-
-      const gciPayload = gciRes?.data || gciRes;
-      const gciData = gciPayload?.data || gciPayload || [];
-      // Map backend fields to frontend expected structure
-      const mappedGciData = Array.isArray(gciData) ? gciData.map((axiom: any) => ({
-        value: axiom.value,
-        subClass: axiom.subClass || '',
-        superClass: axiom.superClass || '',
-        // Keep legacy field names for compatibility
-        definition: axiom.subClass || axiom.definition || '',
-        superClassIri: axiom.superClass || axiom.superClassIri || '',
-        subExpression: axiom.subClass || axiom.subExpression || ''
-      })) : [];
-      setGeneralClassAxioms(mappedGciData);
-
-      const ontologyAnnotationsPayload = ontologyAnnotationsRes?.data || ontologyAnnotationsRes;
-      const ontologyAnnotationsData = ontologyAnnotationsPayload?.data || ontologyAnnotationsPayload || [];
-      // Filter out invalid annotations and ensure all have required fields
-      const validAnnotations = (Array.isArray(ontologyAnnotationsData) ? ontologyAnnotationsData : [])
-        .filter(ann => ann && ann.propertyIri && ann.value !== undefined);
-      setOntologyAnnotations(validAnnotations);
-
-      const prefixesPayload = prefixesRes?.data || prefixesRes;
-      const prefixesData = prefixesPayload?.data || prefixesPayload || {};
-      const prefixList = Object.entries(prefixesData).map(([prefix, namespace]) => ({
-        // Ensure prefix has a colon for display if it's not empty
-        // If it's empty, it's the default namespace, show as ":"
-        prefix: prefix ? (prefix.endsWith(':') ? prefix : `${prefix}:`) : ':',
-        namespace: String(namespace)
-      }));
-      setPrefixMappings(prefixList);
-
-      // Handle classes response - backend returns {success: true, classes: [...]}
-      console.log("=== CLASSES RESPONSE DEBUG ===");
-      console.log("Raw topLevelRes:", JSON.stringify(topLevelRes, null, 2));
-      console.log("topLevelRes type:", typeof topLevelRes);
-      console.log("topLevelRes keys:", Object.keys(topLevelRes || {}));
-      console.log("topLevelRes?.success:", topLevelRes?.success);
-      console.log("topLevelRes?.classes:", topLevelRes?.classes);
-      console.log("Is topLevelRes.classes an array?", Array.isArray(topLevelRes?.classes));
-
-      // The response structure is: topLevelRes = {success: true, classes: [...]}
-      // But apiClient might wrap it in a data field, so check both
-      let classes: any[] = [];
-
-      if (Array.isArray(topLevelRes?.classes)) {
-        classes = topLevelRes.classes;
-        console.log("✅ Found classes in topLevelRes.classes, count:", classes.length);
-      } else if (Array.isArray(topLevelRes?.data?.classes)) {
-        classes = topLevelRes.data.classes;
-        console.log("✅ Found classes in topLevelRes.data.classes, count:", classes.length);
-      } else if (Array.isArray(topLevelRes?.data)) {
-        classes = topLevelRes.data;
-        console.log("✅ Found classes in topLevelRes.data (array), count:", classes.length);
-      } else if (Array.isArray(topLevelRes)) {
-        classes = topLevelRes;
-        console.log("✅ topLevelRes itself is an array, count:", classes.length);
-      } else {
-        console.error("❌ Could not find classes array in response structure!");
-        console.error("Available keys:", Object.keys(topLevelRes || {}));
-        if (topLevelRes?.data) {
-          console.error("Data keys:", Object.keys(topLevelRes.data || {}));
-        }
-        // Fallback: try to extract classes from any nested structure
-        if (topLevelRes && typeof topLevelRes === 'object') {
-          for (const key of Object.keys(topLevelRes)) {
-            console.log(`Checking key '${key}':`, topLevelRes[key]);
-            if (Array.isArray(topLevelRes[key])) {
-              console.log(`Found array at key '${key}' with length ${topLevelRes[key].length}`);
-            }
-          }
-        }
-      }
-
-      console.log("Extracted classes array length:", classes.length);
-      console.log("First 3 classes:", classes.slice(0, 3));
-      console.log("=== END CLASSES DEBUG ===");
-
-      // Nest all top-level classes under owl:Thing
-      const topLevelNodes: TreeNode[] = classes.map((c: TopLevelClass) => ({
-        ...c,
-        children: [],
-        hasChildren: c.hasChildren,
-        subClassOfAxioms: [{ id: 'sub1', type: 'SubClassOf', definition: 'Thing' }]
-      }));
-
-      console.log("=== OWL:THING HIERARCHY DEBUG ===");
-      console.log("topLevelNodes count:", topLevelNodes.length);
-      console.log("First 3 topLevelNodes:", topLevelNodes.slice(0, 3));
-
-      // Always include owl:Thing at the root with pre-loaded children
-      const owlThingNode: TreeNode = {
-        id: "http://www.w3.org/2002/07/owl#Thing",
-        label: "owl:Thing",
-        children: topLevelNodes,
-        hasChildren: topLevelNodes.length > 0,
-        annotations: {}
-      };
-
-      console.log("owlThingNode created with children count:", owlThingNode.children?.length);
-      console.log("owlThingNode full structure:", JSON.stringify(owlThingNode, null, 2));
-      console.log("Setting classHierarchy with owl:Thing");
-      console.log("=== END OWL:THING DEBUG ===");
-
-      const resolvedCounts = (instanceCountsData && typeof instanceCountsData === 'object')
-        ? instanceCountsData
-        : {};
-      const hierarchyWithCounts = applyInstanceCountsToTree([owlThingNode], resolvedCounts);
-      console.log("📊 Final classHierarchy being set:", JSON.stringify(hierarchyWithCounts, null, 2));
-      console.log("📊 classHierarchy root node children count:", hierarchyWithCounts[0]?.children?.length);
-      setClassHierarchy(hierarchyWithCounts);
-
-      // Handle properties response
-      console.log("=== PROPERTIES RESPONSE DEBUG ===");
-      console.log("Properties response:", propertiesRes);
-      const allProps = Array.isArray(propertiesRes?.data) ? propertiesRes.data :
-        Array.isArray(propertiesRes?.properties) ? propertiesRes.properties :
-          Array.isArray(propertiesRes) ? propertiesRes : [];
-      console.log("All props after extraction:", allProps);
-      console.log("All props length:", allProps.length);
-      const opList = allProps.filter((p: Property) => p.type === "ObjectProperty");
-      console.log("Object Properties filtered (opList):", opList);
-      console.log("Object Properties count:", opList.length);
-      setObjectProperties(opList);
-      console.log("=== END PROPERTIES DEBUG ===");
-
-      // Build Object Property Hierarchy
-      const opMap = new Map<string, any>();
-      // Create nodes
-      opList.forEach((p: Property) => {
-        opMap.set(p.id, { ...p, children: [], hasChildren: false });
+      // Notify user that loading has started
+      console.log(`Loading ontology "${currentProjectId}"...`);
+      console.log("[Dashboard] 🔄 Fetching data for project:", currentProjectId);
+      console.log("[Dashboard]  Admin flow:", isAdminFlow, "Parent project:", parentProjectId);
+      console.log("[Dashboard] 👤 User context:", {
+        email: user?.email,
+        username: user?.username,
+        isAdmin: user?.isAdmin,
+        workspaceId: user?.workspaceId,
       });
 
-      const topObjectProperty: any = {
-        id: 'http://www.w3.org/2002/07/owl#topObjectProperty',
-        label: 'owl:topObjectProperty',
-        type: 'ObjectProperty' as const,
-        children: [] as any[],
-        hasChildren: false,
-        annotations: {}
-      };
+      // Request collaboration status when loading a new file
+      if (window.vscode) {
+        window.vscode.postMessage({ type: "requestCollaborationStatus" });
+      }
 
-      // If topObjectProperty is not in the list (it usually isn't), we use our created one.
-      // If it IS in the list, we should use that one but ensure it's the root.
-      // Typically backend doesn't return built-in top properties in the list of user properties.
+      try {
+        // Skip status check for files being reopened (not fresh uploads)
+        // Only check status if this is a fresh import (isExpectingFileReady = true)
+        // This significantly improves load time for files already in GraphDB
+        if (!forceRefresh && !isExpectingFileReady) {
+          console.log("[Dashboard] ⚡ Skipping status check for existing file - loading directly from GraphDB");
+        } else if (!forceRefresh) {
+          // Wait for processing to complete before fetching data (fresh imports only)
+          console.log("[Dashboard] Waiting for file processing to complete...");
+          const result = await waitForProcessingComplete(currentProjectId);
 
-      opList.forEach((p: Property) => {
-        const node = opMap.get(p.id);
-        if (p.superProperties && p.superProperties.length > 0) {
-          let added = false;
-          p.superProperties.forEach(superId => {
-            if (superId === topObjectProperty.id) {
+          if (!result.ready) {
+            const errorTitle = result.status === "ERROR" ? "Import Failed" : "Loading Failed";
+            const errorMessage = result.error || "Unable to load ontology";
+
+            console.error(`[Dashboard] Cannot load project: ${result.status}`, result.error);
+            notificationService.error(errorTitle, errorMessage);
+            setIsInitialLoading(false);
+            return null;
+            return;
+          }
+        } else {
+          console.log("[Dashboard] ⚡ Force refresh mode - skipping processing status check");
+        }
+
+        console.log("[Dashboard] File processing complete, fetching ontology data...");
+        console.log("[Dashboard] 📡 Loading data from GraphDB database for:", currentProjectId);
+
+        // Encode project ID for use in URL paths (handles slashes in hierarchical project IDs)
+        const encodedProjectId = encodeURIComponent(currentProjectId);
+
+        // Add cache-busting parameter when forceRefresh is true to bypass any HTTP/browser caching
+        const cacheBuster = forceRefresh ? `?_t=${Date.now()}` : "";
+
+        // Abort any previous in-flight fetch and create a fresh controller for this load
+        if (fetchAbortControllerRef.current) {
+          fetchAbortControllerRef.current.abort();
+        }
+        const abortController = new AbortController();
+        fetchAbortControllerRef.current = abortController;
+        const signal = abortController.signal;
+
+        // Fetch data in parallel to improve performance (GraphDB can handle concurrent queries)
+        // Metadata endpoint now returns comprehensive cached data (annotations, imports, axioms, prefixes)
+        // Top-level classes are loaded eagerly now for instant display
+        // Instance counts are loaded in background (non-blocking) to not delay initial render
+        const dataFetchPromise = Promise.all([
+          apiClient.get<any>(`/api/ontology/metadata/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
+          apiClient
+            .get<any>(
+              `/api/ontology/classes/top-level/${encodedProjectId}?limit=200${cacheBuster ? "&" + cacheBuster.substring(1) : ""}`,
+              undefined,
+              { signal },
+            )
+            .catch((e: any) => {
+              if (e?.name === "AbortError" || e?.code === "ERR_CANCELED") throw e;
+              return null;
+            }),
+          apiClient.get<any>(`/api/ontology/properties/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
+          apiClient.get<any>(`/api/ontology/individuals/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
+          apiClient.get<any>(`/api/ontology/annotation-properties/${encodedProjectId}${cacheBuster}`, undefined, {
+            signal,
+          }),
+          apiClient.get<any>(`/api/ontology/datatypes/${encodedProjectId}${cacheBuster}`, undefined, { signal }),
+        ]);
+
+        // Load instance counts in background - don't block the main data fetch
+        const instanceCountsPromise = apiClient
+          .get<any>(`/api/ontology/classes/instance-counts/${encodedProjectId}${cacheBuster}`, undefined, { signal })
+          .catch((e: any) => {
+            console.warn("[Dashboard] Instance counts fetch failed (non-blocking):", e?.message);
+            return null;
+          });
+
+        // Allow UI to be responsive immediately if not waiting
+        if (!waitForCompletion) {
+          setTimeout(() => {
+            setIsInitialLoading(false);
+          }, 500);
+        }
+
+        // Continue loading in background
+        const [metadataRes, topLevelClassesRes, propertiesRes, individualsRes, annotationPropsRes, datatypesRes] =
+          await dataFetchPromise;
+
+        console.log("[Dashboard] ✅ Data loaded from GraphDB database successfully!");
+        console.log("[Dashboard] 📊 This data includes all saved changes from the database");
+
+        // Handle metadata response - backend returns {success: true, data: {counts: {...}, prefixes: [...], ontologyIRI: "...", ...}}
+        console.log("Metadata response:", metadataRes);
+
+        const metadataData = metadataRes?.data || metadataRes;
+        const annotationsData = metadataData?.annotations || [];
+        const imports = metadataData?.imports || [];
+        const gciAxioms = metadataData?.axioms || [];
+
+        if (metadataData?.filename) {
+          setActiveFileName(metadataData.filename);
+        }
+
+        console.log("Extracted annotations data:", annotationsData);
+        console.log("Extracted imports:", imports);
+        console.log("Extracted GCI axioms:", gciAxioms);
+
+        // Keep all metadata fields from backend (axiom counts, ontologyIRI, etc.)
+        const transformedMetadata = {
+          ...metadataData,
+          annotations: annotationsData,
+          // Also add flat structure for backward compatibility
+          classCount: metadataData?.classCount || metadataData?.counts?.classes || 0,
+          objectPropertyCount: metadataData?.objectPropertyCount || metadataData?.counts?.objectProperties || 0,
+          dataPropertyCount: metadataData?.dataPropertyCount || metadataData?.counts?.dataProperties || 0,
+          individualCount: metadataData?.individualCount || metadataData?.counts?.individuals || 0,
+          annotationPropertyCount:
+            metadataData?.annotationPropertyCount || metadataData?.counts?.annotationProperties || 0,
+          prefixes: metadataData?.prefixes || [],
+        };
+        console.log("Transformed metadata:", transformedMetadata);
+        setMetadata(transformedMetadata);
+
+        // Instance counts load in background - set empty initially, update when ready
+        let instanceCountsData: any = {};
+        setClassInstanceCounts({});
+
+        // When instance counts arrive (async), update state
+        instanceCountsPromise.then((instanceCountsRes: any) => {
+          if (instanceCountsRes) {
+            const payload = instanceCountsRes?.data || instanceCountsRes;
+            const data = payload?.data || payload || {};
+            if (data && typeof data === "object") {
+              setClassInstanceCounts(data);
+              instanceCountsData = data;
+            }
+          }
+        });
+
+        // Use imports from metadata response (already extracted above)
+        const validImportsData = Array.isArray(imports) ? imports : [];
+        console.log("[Dashboard] 📥 Initial imports loaded:", validImportsData);
+        console.log(
+          "[Dashboard] Local imports found:",
+          validImportsData.filter((imp: string) => !imp.startsWith("http://") && !imp.startsWith("https://")),
+        );
+        setOntologyImports(validImportsData);
+
+        // Use GCI axioms from metadata response (already extracted above)
+        // Map backend fields to frontend expected structure
+        const mappedGciData = Array.isArray(gciAxioms)
+          ? gciAxioms.map((axiom: any) => ({
+              value: axiom.value,
+              subClass: axiom.subClass || "",
+              superClass: axiom.superClass || "",
+              // Keep legacy field names for compatibility
+              definition: axiom.subClass || axiom.definition || "",
+              superClassIri: axiom.superClass || axiom.superClassIri || "",
+              subExpression: axiom.subClass || axiom.subExpression || "",
+            }))
+          : [];
+        setGeneralClassAxioms(mappedGciData);
+
+        // Use annotations from metadata response (already extracted above as annotationsData)
+        // Filter out invalid annotations and ensure all have required fields
+        const validAnnotations = (Array.isArray(annotationsData) ? annotationsData : []).filter(
+          (ann) => ann && (ann.propertyIri || ann.property) && ann.value !== undefined,
+        );
+        setOntologyAnnotations(validAnnotations);
+
+        // Use prefixes from metadata response (already in metadataData.prefixes)
+        const prefixesData = metadataData?.prefixes || {};
+        const prefixList = Object.entries(prefixesData).map(([prefix, namespace]) => ({
+          // Ensure prefix has a colon for display if it's not empty
+          // If it's empty, it's the default namespace, show as ":"
+          prefix: prefix ? (prefix.endsWith(":") ? prefix : `${prefix}:`) : ":",
+          namespace: String(namespace),
+        }));
+        setPrefixMappings(prefixList);
+
+        // ⚡ Load top-level classes eagerly so the user sees classes immediately
+        console.log("[Dashboard] ⚡ Loading top-level classes for instant display");
+
+        let topLevelClasses: any[] = [];
+        if (topLevelClassesRes) {
+          topLevelClasses = Array.isArray(topLevelClassesRes?.classes)
+            ? topLevelClassesRes.classes
+            : Array.isArray(topLevelClassesRes?.data?.classes)
+              ? topLevelClassesRes.data.classes
+              : Array.isArray(topLevelClassesRes?.data)
+                ? topLevelClassesRes.data
+                : Array.isArray(topLevelClassesRes)
+                  ? topLevelClassesRes
+                  : [];
+        }
+        console.log("[Dashboard] 📊 Got", topLevelClasses.length, "top-level classes");
+
+        const topLevelNodes: TreeNode[] = topLevelClasses.map((c: TopLevelClass) => ({
+          ...c,
+          children: [],
+          hasChildren: c.hasChildren !== false, // default true for lazy loading
+          subClassOfAxioms: [
+            { id: "http://www.w3.org/2002/07/owl#Thing", type: "SubClassOf", definition: "owl:Thing" },
+          ],
+        }));
+
+        const resolvedCounts = instanceCountsData && typeof instanceCountsData === "object" ? instanceCountsData : {};
+
+        // Build hierarchy with owl:Thing as root and top-level classes as children
+        const owlThingNode: TreeNode = {
+          id: "http://www.w3.org/2002/07/owl#Thing",
+          label: "owl:Thing",
+          children: applyInstanceCountsToTree(topLevelNodes, resolvedCounts),
+          hasChildren: topLevelNodes.length > 0,
+          annotations: {},
+        };
+
+        const hierarchyWithCounts = applyInstanceCountsToTree([owlThingNode], resolvedCounts);
+        console.log("[Dashboard] 📊 Class hierarchy loaded with", topLevelNodes.length, "top-level classes");
+        setClassHierarchy(hierarchyWithCounts);
+
+        // Handle properties response
+        console.log("=== PROPERTIES RESPONSE DEBUG ===");
+        console.log("Properties response:", propertiesRes);
+        const allProps = Array.isArray(propertiesRes?.data)
+          ? propertiesRes.data
+          : Array.isArray(propertiesRes?.properties)
+            ? propertiesRes.properties
+            : Array.isArray(propertiesRes)
+              ? propertiesRes
+              : [];
+        console.log("All props after extraction:", allProps);
+        console.log("All props length:", allProps.length);
+        const opList = allProps.filter((p: Property) => p.type === "ObjectProperty");
+        console.log("Object Properties filtered (opList):", opList);
+        console.log("Object Properties count:", opList.length);
+        setObjectProperties(opList);
+        console.log("=== END PROPERTIES DEBUG ===");
+
+        // Build Object Property Hierarchy
+        const opMap = new Map<string, any>();
+        // Create nodes
+        opList.forEach((p: Property) => {
+          opMap.set(p.id, { ...p, children: [], hasChildren: false });
+        });
+
+        const topObjectProperty: any = {
+          id: "http://www.w3.org/2002/07/owl#topObjectProperty",
+          label: "owl:topObjectProperty",
+          type: "ObjectProperty" as const,
+          children: [] as any[],
+          hasChildren: false,
+          annotations: {},
+        };
+
+        // If topObjectProperty is not in the list (it usually isn't), we use our created one.
+        // If it IS in the list, we should use that one but ensure it's the root.
+        // Typically backend doesn't return built-in top properties in the list of user properties.
+
+        opList.forEach((p: Property) => {
+          const node = opMap.get(p.id);
+          if (p.superProperties && p.superProperties.length > 0) {
+            let added = false;
+            p.superProperties.forEach((superId) => {
+              if (superId === topObjectProperty.id) {
+                topObjectProperty.children.push(node);
+                topObjectProperty.hasChildren = true;
+                added = true;
+              } else if (opMap.has(superId)) {
+                const parent = opMap.get(superId);
+                parent.children.push(node);
+                parent.hasChildren = true;
+                added = true;
+              }
+            });
+            // If has super properties but none found in map (e.g. external), add to top?
+            // Or if it has super properties, it shouldn't be at top level unless explicitly under top.
+            // If we didn't add it to any parent, and it's not explicitly under top, what to do?
+            // For now, if not added to any known parent, add to topObjectProperty as fallback
+            if (!added) {
               topObjectProperty.children.push(node);
               topObjectProperty.hasChildren = true;
-              added = true;
-            } else if (opMap.has(superId)) {
-              const parent = opMap.get(superId);
-              parent.children.push(node);
-              parent.hasChildren = true;
-              added = true;
             }
-          });
-          // If has super properties but none found in map (e.g. external), add to top?
-          // Or if it has super properties, it shouldn't be at top level unless explicitly under top.
-          // If we didn't add it to any parent, and it's not explicitly under top, what to do?
-          // For now, if not added to any known parent, add to topObjectProperty as fallback
-          if (!added) {
+          } else {
+            // No super properties -> child of topObjectProperty
             topObjectProperty.children.push(node);
             topObjectProperty.hasChildren = true;
           }
-        } else {
-          // No super properties -> child of topObjectProperty
-          topObjectProperty.children.push(node);
-          topObjectProperty.hasChildren = true;
-        }
-      });
+        });
 
-      setObjectPropertyHierarchy([topObjectProperty]);
+        setObjectPropertyHierarchy([topObjectProperty]);
 
-      const dpList = allProps.filter((p: Property) => p.type === "DatatypeProperty");
-      console.log("Data Properties filtered (dpList):", dpList);
-      console.log("Data Properties count:", dpList.length);
-      console.log("All property types:", allProps.map((p: Property) => ({ id: p.id, type: p.type })));
-      setDataProperties(dpList);
+        const dpList = allProps.filter((p: Property) => p.type === "DatatypeProperty");
+        console.log("Data Properties filtered (dpList):", dpList);
+        console.log("Data Properties count:", dpList.length);
+        console.log(
+          "All property types:",
+          allProps.map((p: Property) => ({ id: p.id, type: p.type })),
+        );
+        setDataProperties(dpList);
 
-      // Build Data Property Hierarchy
-      const dpMap = new Map<string, any>();
-      dpList.forEach((p: Property) => {
-        dpMap.set(p.id, { ...p, children: [], hasChildren: false });
-      });
+        // Build Data Property Hierarchy
+        const dpMap = new Map<string, any>();
+        dpList.forEach((p: Property) => {
+          dpMap.set(p.id, { ...p, children: [], hasChildren: false });
+        });
 
-      const topDataProperty: any = {
-        id: 'http://www.w3.org/2002/07/owl#topDataProperty',
-        label: 'owl:topDataProperty',
-        type: 'DatatypeProperty',
-        children: [] as any[],
-        hasChildren: false,
-        annotations: {}
-      };
+        const topDataProperty: any = {
+          id: "http://www.w3.org/2002/07/owl#topDataProperty",
+          label: "owl:topDataProperty",
+          type: "DatatypeProperty",
+          children: [] as any[],
+          hasChildren: false,
+          annotations: {},
+        };
 
-      dpList.forEach((p: Property) => {
-        const node = dpMap.get(p.id);
-        if (p.superProperties && p.superProperties.length > 0) {
-          let added = false;
-          p.superProperties.forEach(superId => {
-            if (superId === topDataProperty.id) {
+        dpList.forEach((p: Property) => {
+          const node = dpMap.get(p.id);
+          if (p.superProperties && p.superProperties.length > 0) {
+            let added = false;
+            p.superProperties.forEach((superId) => {
+              if (superId === topDataProperty.id) {
+                topDataProperty.children.push(node);
+                topDataProperty.hasChildren = true;
+                added = true;
+              } else if (dpMap.has(superId)) {
+                const parent = dpMap.get(superId);
+                parent.children.push(node);
+                parent.hasChildren = true;
+                added = true;
+              }
+            });
+            if (!added) {
               topDataProperty.children.push(node);
               topDataProperty.hasChildren = true;
-              added = true;
-            } else if (dpMap.has(superId)) {
-              const parent = dpMap.get(superId);
-              parent.children.push(node);
-              parent.hasChildren = true;
-              added = true;
             }
-          });
-          if (!added) {
+          } else {
             topDataProperty.children.push(node);
             topDataProperty.hasChildren = true;
           }
-        } else {
-          topDataProperty.children.push(node);
-          topDataProperty.hasChildren = true;
-        }
-      });
+        });
 
-      setDataPropertyHierarchy([topDataProperty]);
+        setDataPropertyHierarchy([topDataProperty]);
 
-      // Handle other responses with fallbacks
-      setIndividuals(Array.isArray(individualsRes?.data) ? individualsRes.data :
-        Array.isArray(individualsRes?.individuals) ? individualsRes.individuals : []);
-      setAnnotationProperties(Array.isArray(annotationPropsRes?.data) ? annotationPropsRes.data :
-        Array.isArray(annotationPropsRes?.annotationProperties) ? annotationPropsRes.annotationProperties : []);
-      setDatatypes(Array.isArray(datatypesRes?.data) ? datatypesRes.data :
-        Array.isArray(datatypesRes?.datatypes) ? datatypesRes.datatypes : []);
+        // Handle other responses with fallbacks
+        setIndividuals(
+          Array.isArray(individualsRes?.data)
+            ? individualsRes.data
+            : Array.isArray(individualsRes?.individuals)
+              ? individualsRes.individuals
+              : [],
+        );
+        setAnnotationProperties(
+          Array.isArray(annotationPropsRes?.data)
+            ? annotationPropsRes.data
+            : Array.isArray(annotationPropsRes?.annotationProperties)
+              ? annotationPropsRes.annotationProperties
+              : [],
+        );
+        setDatatypes(
+          Array.isArray(datatypesRes?.data)
+            ? datatypesRes.data
+            : Array.isArray(datatypesRes?.datatypes)
+              ? datatypesRes.datatypes
+              : [],
+        );
 
-      // Fetch files list separately (not in parallel to avoid blocking main data load)
-      // Admin flow will fetch project-specific files later, regular users fetch all their files here
-      console.log('[Dashboard] 🔍 File loading decision - isAdminFlow:', isAdminFlow);
-      if (!isAdminFlow) {
-        console.log('[Dashboard] ✅ Non-admin flow - fetching files for user');
-        try {
-          const lists = await fetchProjects();
-          if (!lists) {
-            console.warn('[Dashboard] ?? No project list available - defaulting to private mode');
-            setIsCurrentFileShared(false);
-            ontologyMutationService.setRealTimeSync(false);
-            setSyncMode('private');
-            console.log('[Dashboard] ?? File is private - using draft mode (click Save to apply changes)');
-          }
+        // Fetch files list separately (not in parallel to avoid blocking main data load)
+        // Admin flow will fetch project-specific files later, regular users fetch all their files here
+        console.log("[Dashboard] 🔍 File loading decision - isAdminFlow:", isAdminFlow);
+        if (!isAdminFlow) {
+          console.log("[Dashboard] ✅ Non-admin flow - fetching files for user");
+          try {
+            const lists = await fetchProjects();
 
-          const myProjectsList = Array.isArray(lists?.myFiles) ? lists.myFiles : [];
-          const sharedProjectsList = Array.isArray(lists?.sharedFiles) ? lists.sharedFiles : [];
+            // Non-workspace mode: always apply mutations directly to GraphDB
+            // (no collaboration, so draft mode causes data loss if user navigates away)
+            const isNonWorkspaceMode = !initialProjectId && !user?.workspaceId;
 
-          // Check if current file is shared (for real-time collaboration)
-          // Use the freshly fetched data, not state variables
-          // A file is shared if:
-          // 1. It's in sharedFiles list (shared WITH me by someone else)
-          // 2. It's in myFiles and has sharedWith array (shared BY me with others)
-          const isSharedWithMe = sharedProjectsList.some((f: any) => f.id === currentProjectId);
-          const isSharedByMe = myProjectsList.some((f: any) => f.id === currentProjectId && f.sharedWith && f.sharedWith.length > 0);
-          const isShared = isSharedWithMe || isSharedByMe;
-          setIsCurrentFileShared(isShared);
-
-          console.log('[Dashboard] 📊 File shared status:', isShared, 'for project:', currentProjectId);
-          console.log('[Dashboard] 📥 Shared WITH me:', isSharedWithMe);
-          console.log('[Dashboard] 📤 Shared BY me:', isSharedByMe);
-          console.log('[Dashboard] 📋 Shared files list:', sharedProjectsList.map((f: any) => f.id));
-          console.log('[Dashboard] 📋 My files list:', myProjectsList.map((f: any) => f.id));
-
-          // Configure mutation service based on whether file is shared
-          ontologyMutationService.setRealTimeSync(isShared);
-          setSyncMode(isShared ? 'public' : 'private');
-
-          // Only start monitoring for shared files (real-time collaboration)
-          if (isShared) {
-            console.log('[Dashboard] 📤 File is shared - enabling real-time collaboration');
-
-            // Start monitoring for changes from other users
-            const handleDataChanged = async (changedProjectId: string) => {
-              console.log('[Dashboard] 🔄 Change detected from another user! Refreshing data...');
-              notificationService.info('New Changes Available', 'Another user saved changes. Refreshing data...');
-
-              // Refresh data and restart monitoring for another 30 seconds
-              await fetchData(changedProjectId, false);
-              console.log('[Dashboard] ✅ Refresh complete, monitoring restarted');
-            };
-
-            try {
-              const timestampData = await apiClient.get<{ updatedAt: string }>(`/api/ontology/metadata/${currentProjectId}/timestamp`);
-              if (timestampData && timestampData.updatedAt) {
-                const currentTimestamp = new Date(timestampData.updatedAt).getTime();
-                syncService.startMonitoring(currentProjectId, handleDataChanged, currentTimestamp);
-                console.log('[Dashboard] 🔍 Started monitoring for changes (30 seconds)');
+            if (!lists) {
+              console.warn("[Dashboard] ?? No project list available");
+              setIsCurrentFileShared(false);
+              if (isNonWorkspaceMode) {
+                ontologyMutationService.setRealTimeSync(true);
+                setSyncMode("public");
+                console.log("[Dashboard] ?? Non-workspace mode - applying changes directly to GraphDB");
+              } else {
+                ontologyMutationService.setRealTimeSync(false);
+                setSyncMode("private");
+                console.log("[Dashboard] ?? File is private - using draft mode (click Save to apply changes)");
               }
-            } catch (error) {
-              console.warn('[Dashboard] Could not start change monitoring:', error);
             }
-          } else {
-            console.log('[Dashboard] 📝 File is private - using draft mode (click Save to apply changes)');
+
+            const myProjectsList = Array.isArray(lists?.myFiles) ? lists.myFiles : [];
+            const sharedProjectsList = Array.isArray(lists?.sharedFiles) ? lists.sharedFiles : [];
+
+            // Check if current file is shared (for real-time collaboration)
+            // Use the freshly fetched data, not state variables
+            // A file is shared if:
+            // 1. It's in sharedFiles list (shared WITH me by someone else)
+            // 2. It's in myFiles and has sharedWith array (shared BY me with others)
+            // 3. It's in myFiles and has project members > 1 (team collaboration)
+            const isSharedWithMe = sharedProjectsList.some((f: any) => f.id === currentProjectId);
+            const isSharedByMe = myProjectsList.some(
+              (f: any) => f.id === currentProjectId && f.sharedWith && f.sharedWith.length > 0,
+            );
+            const hasProjectMembers = myProjectsList.some(
+              (f: any) =>
+                f.id === currentProjectId &&
+                ((f.memberCount && f.memberCount > 1) || (f.members && f.members.length > 1)),
+            );
+            const isShared = isSharedWithMe || isSharedByMe || hasProjectMembers;
+            setIsCurrentFileShared(isShared);
+
+            console.log("[Dashboard] 📊 File shared status:", isShared, "for project:", currentProjectId);
+            console.log("[Dashboard] 📥 Shared WITH me:", isSharedWithMe);
+            console.log("[Dashboard] 📤 Shared BY me:", isSharedByMe);
+            console.log("[Dashboard] 👥 Has project members:", hasProjectMembers);
+            console.log(
+              "[Dashboard] 📋 Shared files list:",
+              sharedProjectsList.map((f: any) => f.id),
+            );
+            console.log(
+              "[Dashboard] 📋 My files list:",
+              myProjectsList.map((f: any) => f.id),
+            );
+
+            // Configure mutation service based on whether file is shared
+            // Non-workspace mode: always apply directly to GraphDB to prevent data loss
+            const shouldApplyDirectly = isShared || isNonWorkspaceMode;
+            ontologyMutationService.setRealTimeSync(shouldApplyDirectly);
+            setSyncMode(shouldApplyDirectly ? "public" : "private");
+            if (isNonWorkspaceMode && !isShared) {
+              console.log("[Dashboard] 📝 Non-workspace mode - mutations apply directly to GraphDB");
+            }
+
+            // Only start monitoring for shared files (real-time collaboration)
+            if (isShared) {
+              console.log("[Dashboard] 📤 File is shared - enabling real-time collaboration");
+
+              // Start monitoring for changes from other users
+              const handleDataChanged = async (changedProjectId: string) => {
+                console.log("[Dashboard] 🔄 Change detected from another user! Refreshing data...");
+                notificationService.info("New Changes Available", "Another user saved changes. Refreshing data...");
+
+                // Refresh data and restart monitoring for another 30 seconds
+                await fetchData(changedProjectId, false);
+                console.log("[Dashboard] ✅ Refresh complete, monitoring restarted");
+              };
+
+              try {
+                const timestampData = await apiClient.get<{ updatedAt: string }>(
+                  `/api/ontology/metadata/${currentProjectId}/timestamp`,
+                );
+                if (timestampData && timestampData.updatedAt) {
+                  const currentTimestamp = new Date(timestampData.updatedAt).getTime();
+                  syncService.startMonitoring(currentProjectId, handleDataChanged, currentTimestamp);
+                  console.log("[Dashboard] 🔍 Started monitoring for changes (30 seconds)");
+                }
+              } catch (error) {
+                console.warn("[Dashboard] Could not start change monitoring:", error);
+              }
+            } else {
+              console.log("[Dashboard] 📝 File is private - using draft mode (click Save to apply changes)");
+            }
+          } catch (fileError) {
+            console.error("[Dashboard] ❌ Failed to fetch files:", fileError);
+            console.error(
+              "[Dashboard] ❌ File error details:",
+              fileError instanceof Error ? fileError.message : fileError,
+            );
+            setListOfFiles([]);
+            setMyFiles([]);
+            setSharedFiles([]);
           }
-        } catch (fileError) {
-          console.error("[Dashboard] ❌ Failed to fetch files:", fileError);
-          console.error("[Dashboard] ❌ File error details:", fileError instanceof Error ? fileError.message : fileError);
-          setListOfFiles([]);
-          setMyFiles([]);
-          setSharedFiles([]);
+        } else {
+          console.log("[Dashboard] ℹ️ Admin flow detected - skipping user file fetch (will use project files)");
         }
-      } else {
-        console.log('[Dashboard] ℹ️ Admin flow detected - skipping user file fetch (will use project files)');
+        // End of !isAdminFlow block
+
+        // Stop any previous monitoring for this project
+        syncService.stopMonitoring(currentProjectId);
+
+        // Only fetch project-specific files in admin flow (from ProjectLibrary)
+        // Regular users and workspace members already have their files loaded above
+        if (isAdminFlow && parentProjectId) {
+          console.log("[Dashboard] 📂 Admin flow - Fetching files from project:", parentProjectId);
+          await fetchProjectFiles(parentProjectId);
+        } else {
+          console.log("[Dashboard] ℹ️ Regular user flow - files already loaded from user email query");
+        }
+
+        // Notify user that ontology is fully loaded
+        notificationService.success(
+          "Ontology Loaded",
+          `"${currentProjectId}" is ready! Found ${allProps.length} properties.`,
+        );
+      } catch (error: any) {
+        // Ignore cancellations – these happen when the user switches files mid-load
+        if (error?.name === "AbortError" || error?.code === "ERR_CANCELED" || error?.message?.includes("aborted")) {
+          console.log("[Dashboard] fetchData cancelled (user switched files)");
+          setIsInitialLoading(false);
+          return null;
+        }
+        console.error("Failed to fetch data:", error);
+
+        // Notify user of the error
+        notificationService.error("Loading Failed", `Failed to load ontology "${currentProjectId}". Please try again.`);
+      } finally {
+        setIsInitialLoading(false);
       }
-      // End of !isAdminFlow block
-
-      // Stop any previous monitoring for this project
-      syncService.stopMonitoring(currentProjectId);
-
-      // Only fetch project-specific files in admin flow (from ProjectLibrary)
-      // Regular users and workspace members already have their files loaded above
-      if (isAdminFlow && parentProjectId) {
-        console.log('[Dashboard] 📂 Admin flow - Fetching files from project:', parentProjectId);
-        await fetchProjectFiles(parentProjectId);
-      } else {
-        console.log('[Dashboard] ℹ️ Regular user flow - files already loaded from user email query');
-      }
-
-      // Notify user that ontology is fully loaded
-      notificationService.success(
-        'Ontology Loaded',
-        `"${currentProjectId}" is ready! Found ${classes.length} classes, ${allProps.length} properties.`
-      );
-    } catch (error) {
-      console.error("Failed to fetch data:", error);
-
-      // Notify user of the error
-      notificationService.error(
-        'Loading Failed',
-        `Failed to load ontology "${currentProjectId}". Please try again.`
-      );
-    } finally {
-      setIsInitialLoading(false);
-    }
-  }, [waitForProcessingComplete, applyInstanceCountsToTree, user, fetchProjectFiles, resolveUserEmail]); // collaboration removed - was only used for logging, caused infinite re-render
+    },
+    [waitForProcessingComplete, applyInstanceCountsToTree, user, fetchProjectFiles, resolveUserEmail],
+  ); // collaboration removed - was only used for logging, caused infinite re-render
 
   useEffect(() => {
     if (metadata?.ontologyIRI) {
       setOntologyIriDraft(metadata.ontologyIRI);
     }
     if (metadata?.versionIRI !== undefined) {
-      setVersionIriDraft(metadata.versionIRI || '');
+      setVersionIriDraft(metadata.versionIRI || "");
     }
   }, [metadata?.ontologyIRI, metadata?.versionIRI]);
 
   const refreshOntologyAnnotations = async () => {
     if (!projectId) return;
     try {
-      console.log('[Dashboard] 🔄 Refreshing ontology annotations for project:', projectId);
-      const response = await apiClient.get<any>(`/api/ontology/metadata/${projectId}/annotations`);
+      console.log("[Dashboard] 🔄 Refreshing ontology annotations for project:", projectId);
+      const response = await apiClient.get<any>(`/api/ontology/metadata/${encodeProjectId(projectId)}/annotations`);
       const payload = response?.data || response;
       const data = payload?.data || payload || [];
-      console.log('[Dashboard] 📥 Raw annotations data received:', data);
+      console.log("[Dashboard] 📥 Raw annotations data received:", data);
       // Filter out invalid annotations - backend returns propertyIri
-      const validAnnotations = (Array.isArray(data) ? data : [])
-        .filter(ann => ann && ann.propertyIri && ann.value !== undefined);
-      console.log('[Dashboard] ✅ Valid annotations after filtering:', validAnnotations);
+      const validAnnotations = (Array.isArray(data) ? data : []).filter(
+        (ann) => ann && ann.propertyIri && ann.value !== undefined,
+      );
+      console.log("[Dashboard] ✅ Valid annotations after filtering:", validAnnotations);
 
       // Only update if we got data, or if explicitly clearing (validAnnotations.length >= 0 always true, so always update)
       // But if backend returns empty and we have optimistic updates, keep them for a bit
-      setOntologyAnnotations(prev => {
+      setOntologyAnnotations((prev) => {
         if (validAnnotations.length === 0 && prev.length > 0) {
-          console.log('[Dashboard] ⚠️ Backend returned empty annotations, keeping optimistic updates');
+          console.log("[Dashboard] ⚠️ Backend returned empty annotations, keeping optimistic updates");
           return prev;
         }
         return validAnnotations;
       });
     } catch (error) {
-      console.error('[Dashboard] Failed to refresh ontology annotations:', error);
+      console.error("[Dashboard] Failed to refresh ontology annotations:", error);
     }
   };
 
   const refreshOntologyImports = async () => {
     if (!projectId) return;
     try {
-      const response = await apiClient.get<any>(`/api/ontology/metadata/${projectId}/imports`);
+      const response = await apiClient.get<any>(`/api/ontology/metadata/${encodeProjectId(projectId)}/imports`);
       const payload = response?.data || response;
       const data = payload?.data || payload || [];
       const validImports = Array.isArray(data) ? data : [];
-      console.log('[Dashboard] 📥 Loaded imports from backend:', validImports);
-      console.log('[Dashboard] Local imports:', validImports.filter((imp: string) => !imp.startsWith('http://') && !imp.startsWith('https://')));
+      console.log("[Dashboard] 📥 Loaded imports from backend:", validImports);
+      console.log(
+        "[Dashboard] Local imports:",
+        validImports.filter((imp: string) => !imp.startsWith("http://") && !imp.startsWith("https://")),
+      );
 
       // Don't overwrite optimistic updates with empty backend response
-      setOntologyImports(prev => {
+      setOntologyImports((prev) => {
         if (validImports.length === 0 && prev.length > 0) {
-          console.log('[Dashboard] ⚠️ Backend returned empty imports, keeping optimistic updates');
+          console.log("[Dashboard] ⚠️ Backend returned empty imports, keeping optimistic updates");
           return prev;
         }
         return validImports;
       });
     } catch (error) {
-      console.error('[Dashboard] Failed to refresh ontology imports:', error);
+      console.error("[Dashboard] Failed to refresh ontology imports:", error);
     }
   };
 
   const refreshPrefixes = async () => {
     if (!projectId) return;
     try {
-      const response = await apiClient.get<any>(`/api/ontology/ontology/prefixes/${projectId}`);
+      const response = await apiClient.get<any>(`/api/ontology/ontology/prefixes/${encodeProjectId(projectId)}`);
       const payload = response?.data || response;
       const data = payload?.data || payload || {};
       const list = Object.entries(data).map(([prefix, namespace]) => ({
         // Ensure prefix has a colon for display if it's not empty
         // If it's empty, it's the default namespace, show as ":"
-        prefix: prefix ? (prefix.endsWith(':') ? prefix : `${prefix}:`) : ':',
-        namespace: String(namespace)
+        prefix: prefix ? (prefix.endsWith(":") ? prefix : `${prefix}:`) : ":",
+        namespace: String(namespace),
       }));
       setPrefixMappings(list);
     } catch (error) {
-      console.error('[Dashboard] Failed to refresh prefixes:', error);
+      console.error("[Dashboard] Failed to refresh prefixes:", error);
     }
   };
 
   const handleSaveOntologyId = async () => {
     if (!projectId || !ontologyIriDraft.trim()) return;
     try {
-      await apiClient.put(`/api/ontology/ontology/id/${projectId}`, {
+      await apiClient.put(`/api/ontology/ontology/id/${encodeProjectId(projectId)}`, {
         ontologyIRI: ontologyIriDraft.trim(),
-        versionIRI: versionIriDraft.trim() || null
+        versionIRI: versionIriDraft.trim() || null,
       });
       setIsEditingOntologyId(false);
-      await apiClient.get(`/api/ontology/metadata/${projectId}`)
+      await apiClient
+        .get(`/api/ontology/metadata/${projectId}`)
         .then((res) => {
           const data = res?.data || res;
           setMetadata({ ...(metadata || {}), ...data });
         })
-        .catch(() => { });
+        .catch(() => {});
     } catch (error) {
-      console.error('[Dashboard] Failed to update ontology ID:', error);
-      notificationService.error('Update Failed', 'Could not update ontology IRI/version.');
+      console.error("[Dashboard] Failed to update ontology ID:", error);
+      notificationService.error("Update Failed", "Could not update ontology IRI/version.");
     }
   };
 
-  const handleAddOntologyAnnotation = async (propertyIri: string, value: string, datatype?: string, language?: string) => {
+  const handleAddOntologyAnnotation = async (
+    propertyIri: string,
+    value: string,
+    datatype?: string,
+    language?: string,
+  ) => {
     if (!projectId) return;
     try {
       const payload: any = {
         propertyIri,
-        value
+        value,
       };
 
       // Add language if provided
@@ -3429,7 +3997,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
       }
 
-      console.log('[Dashboard] Adding annotation with payload:', payload);
+      console.log("[Dashboard] Adding annotation with payload:", payload);
       await apiClient.post(`/api/ontology/metadata/${projectId}/annotations`, payload);
 
       // Immediate optimistic UI update
@@ -3437,29 +4005,36 @@ const Dashboard: React.FC<DashboardProps> = ({
         propertyIri,
         value,
         datatype: payload.datatype || datatype,
-        language: payload.language || language
+        language: payload.language || language,
       };
-      setOntologyAnnotations(prev => [...prev, newAnnotation]);
-      console.log('[Dashboard] ✅ Annotation added, optimistically updated UI');
+      setOntologyAnnotations((prev) => [...prev, newAnnotation]);
+      console.log("[Dashboard] ✅ Annotation added, optimistically updated UI");
 
       // Delay refresh to allow backend to process
       setTimeout(() => {
         refreshOntologyAnnotations();
       }, 300);
-      notificationService.success('Annotation Added', 'Ontology annotation added successfully.');
+      notificationService.success("Annotation Added", "Ontology annotation added successfully.");
     } catch (error) {
-      console.error('[Dashboard] Failed to add ontology annotation:', error);
-      notificationService.error('Annotation Failed', 'Could not add ontology annotation.');
+      console.error("[Dashboard] Failed to add ontology annotation:", error);
+      notificationService.error("Annotation Failed", "Could not add ontology annotation.");
     }
   };
 
-  const handleUpdateOntologyAnnotation = async (propertyIri: string, oldValue: string, newValue: string, oldDatatype?: string, newDatatype?: string, newLanguage?: string) => {
+  const handleUpdateOntologyAnnotation = async (
+    propertyIri: string,
+    oldValue: string,
+    newValue: string,
+    oldDatatype?: string,
+    newDatatype?: string,
+    newLanguage?: string,
+  ) => {
     if (!projectId) return;
     try {
       const payload: any = {
         propertyIri,
         oldValue,
-        newValue
+        newValue,
       };
 
       // Add language if provided
@@ -3475,25 +4050,30 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
       }
 
-      console.log('[Dashboard] Updating annotation with payload:', payload);
+      console.log("[Dashboard] Updating annotation with payload:", payload);
       await apiClient.put(`/api/ontology/metadata/${projectId}/annotations`, payload);
 
       // Immediate optimistic UI update
-      setOntologyAnnotations(prev =>
-        prev.map(ann =>
-          (ann.propertyIri === propertyIri && ann.value === oldValue && ann.datatype === oldDatatype)
-            ? { ...ann, value: newValue, datatype: payload.datatype || newDatatype, language: payload.language || newLanguage }
-            : ann
-        )
+      setOntologyAnnotations((prev) =>
+        prev.map((ann) =>
+          ann.propertyIri === propertyIri && ann.value === oldValue && ann.datatype === oldDatatype
+            ? {
+                ...ann,
+                value: newValue,
+                datatype: payload.datatype || newDatatype,
+                language: payload.language || newLanguage,
+              }
+            : ann,
+        ),
       );
-      console.log('[Dashboard] ✅ Annotation updated, optimistically updated UI');
+      console.log("[Dashboard] ✅ Annotation updated, optimistically updated UI");
 
       // Then refresh from server
       await refreshOntologyAnnotations();
-      notificationService.success('Annotation Updated', 'Ontology annotation updated successfully.');
+      notificationService.success("Annotation Updated", "Ontology annotation updated successfully.");
     } catch (error) {
-      console.error('[Dashboard] Failed to update ontology annotation:', error);
-      notificationService.error('Annotation Failed', 'Could not update ontology annotation.');
+      console.error("[Dashboard] Failed to update ontology annotation:", error);
+      notificationService.error("Annotation Failed", "Could not update ontology annotation.");
     }
   };
 
@@ -3517,12 +4097,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       await apiClient.delete(`/api/ontology/metadata/${projectId}/annotations?${queryString}`);
 
       // Immediate UI update
-      setOntologyAnnotations(prev =>
-        prev.filter(ann =>
-          !(ann.propertyIri === propertyIri &&
-            ann.value === value &&
-            ann.datatype === datatype)
-        )
+      setOntologyAnnotations((prev) =>
+        prev.filter((ann) => !(ann.propertyIri === propertyIri && ann.value === value && ann.datatype === datatype)),
       );
 
       // Delayed refresh
@@ -3530,38 +4106,41 @@ const Dashboard: React.FC<DashboardProps> = ({
         refreshOntologyAnnotations();
       }, 100);
 
-      notificationService.success('Annotation Deleted', 'Ontology annotation deleted successfully.');
+      notificationService.success("Annotation Deleted", "Ontology annotation deleted successfully.");
     } catch (error: any) {
-      console.error('[Dashboard] Failed to delete ontology annotation:', error);
-      console.error('[Dashboard] Error details:', {
+      console.error("[Dashboard] Failed to delete ontology annotation:", error);
+      console.error("[Dashboard] Error details:", {
         message: error?.message,
         status: error?.status || error?.response?.status,
         data: error?.data || error?.response?.data,
-        code: error?.code
+        code: error?.code,
       });
-      const errorMsg = error?.data?.message || error?.response?.data?.message || error?.message || 'Could not delete ontology annotation.';
-      notificationService.error('Annotation Failed', errorMsg);
+      const errorMsg =
+        error?.data?.message ||
+        error?.response?.data?.message ||
+        error?.message ||
+        "Could not delete ontology annotation.";
+      notificationService.error("Annotation Failed", errorMsg);
     }
   };
-
 
   const handleAddImport = async () => {
     if (!projectId || !importDraft.trim()) return;
     try {
       await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, {
-        importIri: importDraft.trim()
+        importIri: importDraft.trim(),
       });
-      setImportDraft('');
+      setImportDraft("");
       setEditingImportIndex(null);
       await refreshOntologyImports();
     } catch (error) {
-      console.error('[Dashboard] Failed to add import:', error);
-      notificationService.error('Import Failed', 'Could not add import.');
+      console.error("[Dashboard] Failed to add import:", error);
+      notificationService.error("Import Failed", "Could not add import.");
     }
   };
 
   const handleAddImportDialog = () => {
-    setImportDialogData({ iri: '', isEdit: false, originalIri: '' });
+    setImportDialogData({ iri: "", isEdit: false, originalIri: "" });
     setIsImportDialogOpen(true);
   };
 
@@ -3574,85 +4153,88 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!projectId || !iri.trim()) return;
     try {
       // Check if it's a URL (http/https/ftp)
-      const isUrl = iri.startsWith('http://') || iri.startsWith('https://') || iri.startsWith('ftp://');
+      const isUrl = iri.startsWith("http://") || iri.startsWith("https://") || iri.startsWith("ftp://");
 
       // Check if it's a local file import
-      const isLocalFile = !isUrl && (
-        /^[A-Za-z]:[\\\/]/.test(iri) ||  // Windows absolute path (C:\ or C:/)
-        iri.startsWith('/') ||  // Unix absolute path
-        iri.startsWith('./') || iri.startsWith('../') ||  // Relative paths with ./ or ../
-        iri.startsWith('file://') ||  // file:// protocol
-        /^[^:\/]+\.(?:owl|rdf|ttl|n3|nt|xml)$/i.test(iri)  // Simple filename like "file.owl"
-      );
+      const isLocalFile =
+        !isUrl &&
+        (/^[A-Za-z]:[\\\/]/.test(iri) || // Windows absolute path (C:\ or C:/)
+          iri.startsWith("/") || // Unix absolute path
+          iri.startsWith("./") ||
+          iri.startsWith("../") || // Relative paths with ./ or ../
+          iri.startsWith("file://") || // file:// protocol
+          /^[^:\/]+\.(?:owl|rdf|ttl|n3|nt|xml)$/i.test(iri)); // Simple filename like "file.owl"
 
-      console.log('[Dashboard] Import IRI:', iri);
-      console.log('[Dashboard] Is URL:', isUrl);
-      console.log('[Dashboard] Is local file:', isLocalFile);
+      console.log("[Dashboard] Import IRI:", iri);
+      console.log("[Dashboard] Is URL:", isUrl);
+      console.log("[Dashboard] Is local file:", isLocalFile);
 
       // Convert local file paths to proper URIs for backend storage
       let importIriForBackend = iri.trim();
 
-      if (isLocalFile && !iri.startsWith('file://') && !isUrl) {
+      if (isLocalFile && !iri.startsWith("file://") && !isUrl) {
         // Convert Windows backslashes to forward slashes
-        let normalizedPath = iri.replace(/\\/g, '/');
+        let normalizedPath = iri.replace(/\\/g, "/");
 
         if (/^[A-Za-z]:\//.test(normalizedPath)) {
           // Windows absolute path like C:/path/file.owl -> file:///C:/path/file.owl
-          importIriForBackend = 'file:///' + normalizedPath;
-        } else if (normalizedPath.startsWith('/')) {
+          importIriForBackend = "file:///" + normalizedPath;
+        } else if (normalizedPath.startsWith("/")) {
           // Unix absolute path like /path/file.owl -> file:///path/file.owl
-          importIriForBackend = 'file://' + normalizedPath;
-        } else if (normalizedPath.startsWith('./') || normalizedPath.startsWith('../')) {
+          importIriForBackend = "file://" + normalizedPath;
+        } else if (normalizedPath.startsWith("./") || normalizedPath.startsWith("../")) {
           // Strip relative path prefix - backend expects just the filename
-          importIriForBackend = normalizedPath.replace(/^\.\//, '').replace(/^\.\.\//, '');
+          importIriForBackend = normalizedPath.replace(/^\.\//, "").replace(/^\.\.\//, "");
         } else {
           // Simple filename like "file.owl" - send as-is
           importIriForBackend = normalizedPath;
         }
-        console.log('[Dashboard] Converted to URI:', importIriForBackend);
+        console.log("[Dashboard] Converted to URI:", importIriForBackend);
       }
 
       if (isEdit && originalIri !== importIriForBackend) {
         // Delete old and add new
-        await apiClient.delete(`/api/ontology/metadata/${projectId}/imports?importIri=${encodeURIComponent(originalIri)}`);
+        await apiClient.delete(
+          `/api/ontology/metadata/${projectId}/imports?importIri=${encodeURIComponent(originalIri)}`,
+        );
       }
 
       if (!isEdit || originalIri !== importIriForBackend) {
-        console.log('[Dashboard] Posting import IRI to backend:', importIriForBackend);
+        console.log("[Dashboard] Posting import IRI to backend:", importIriForBackend);
 
         // Immediate optimistic UI update BEFORE API call
         if (isEdit && originalIri !== importIriForBackend) {
           // Remove old import and add new one
-          setOntologyImports(prev => {
-            const filtered = prev.filter(i => i !== originalIri);
+          setOntologyImports((prev) => {
+            const filtered = prev.filter((i) => i !== originalIri);
             return [...filtered, importIriForBackend];
           });
         } else if (!isEdit) {
           // Just add new import
-          setOntologyImports(prev => [...prev, importIriForBackend]);
+          setOntologyImports((prev) => [...prev, importIriForBackend]);
         }
-        console.log('[Dashboard] ⚡ Optimistically added import to UI');
+        console.log("[Dashboard] ⚡ Optimistically added import to UI");
 
         await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, {
-          importIri: importIriForBackend
+          importIri: importIriForBackend,
         });
-        console.log('[Dashboard] ✅ Import IRI saved to backend');
+        console.log("[Dashboard] ✅ Import IRI saved to backend");
       }
 
       // If it's a local file WITH AN ACTUAL PATH (not just a filename), trigger upload to make it available in "My Files"
       // Only upload files with absolute paths (C:\path or /path) or file:// URIs
-      const hasActualPath = iri.startsWith('file://') || /^[A-Za-z]:[\\\/]/.test(iri) || iri.startsWith('/');
+      const hasActualPath = iri.startsWith("file://") || /^[A-Za-z]:[\\\/]/.test(iri) || iri.startsWith("/");
       if (isLocalFile && hasActualPath && window.vscode) {
-        console.log('[Dashboard] Local file with actual path detected, requesting upload:', iri);
+        console.log("[Dashboard] Local file with actual path detected, requesting upload:", iri);
         // Strip file:// protocol if present for the VSCode message
-        const cleanPath = iri.startsWith('file://') ? iri.replace('file:///', '').replace('file://', '') : iri;
+        const cleanPath = iri.startsWith("file://") ? iri.replace("file:///", "").replace("file://", "") : iri;
         window.vscode.postMessage({
-          type: 'importLocalFile',
+          type: "importLocalFile",
           filePath: cleanPath,
-          currentProjectId: projectId
+          currentProjectId: projectId,
         });
       } else if (isLocalFile && !hasActualPath) {
-        console.log('[Dashboard] Local file is a relative reference (filename only), skipping upload:', iri);
+        console.log("[Dashboard] Local file is a relative reference (filename only), skipping upload:", iri);
       }
 
       // Close dialog first for immediate feedback
@@ -3664,23 +4246,23 @@ const Dashboard: React.FC<DashboardProps> = ({
       }, 100);
 
       notificationService.success(
-        isEdit ? 'Import Updated' : 'Import Added',
-        isEdit ? 'Import updated successfully.' : 'Import added successfully.'
+        isEdit ? "Import Updated" : "Import Added",
+        isEdit ? "Import updated successfully." : "Import added successfully.",
       );
 
       if (isLocalFile) {
-        notificationService.info('File Upload', 'Local file reference added to imports.');
+        notificationService.info("File Upload", "Local file reference added to imports.");
       }
     } catch (error: any) {
-      console.error('[Dashboard] ❌ Failed to save import:', error);
-      console.error('[Dashboard] ❌ Error details:', {
+      console.error("[Dashboard] ❌ Failed to save import:", error);
+      console.error("[Dashboard] ❌ Error details:", {
         message: error?.message,
         response: error?.response?.data,
         status: error?.response?.status,
-        statusText: error?.response?.statusText
+        statusText: error?.response?.statusText,
       });
-      const errorMsg = error?.response?.data?.message || error?.message || 'Could not save import.';
-      notificationService.error('Import Failed', errorMsg);
+      const errorMsg = error?.response?.data?.message || error?.message || "Could not save import.";
+      notificationService.error("Import Failed", errorMsg);
     }
   };
 
@@ -3695,14 +4277,14 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Remove old and add new
       await apiClient.delete(`/api/ontology/metadata/${projectId}/imports?importIri=${encodeURIComponent(oldIri)}`);
       await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, {
-        importIri: importDraft.trim()
+        importIri: importDraft.trim(),
       });
-      setImportDraft('');
+      setImportDraft("");
       setEditingImportIndex(null);
       await refreshOntologyImports();
     } catch (error) {
-      console.error('[Dashboard] Failed to update import:', error);
-      notificationService.error('Import Failed', 'Could not update import.');
+      console.error("[Dashboard] Failed to update import:", error);
+      notificationService.error("Import Failed", "Could not update import.");
     }
   };
 
@@ -3712,17 +4294,17 @@ const Dashboard: React.FC<DashboardProps> = ({
       await apiClient.delete(`/api/ontology/metadata/${projectId}/imports?importIri=${encodeURIComponent(iri)}`);
 
       // Immediate UI update
-      setOntologyImports(prev => prev.filter(i => i !== iri));
+      setOntologyImports((prev) => prev.filter((i) => i !== iri));
 
       // Delayed refresh
       setTimeout(() => {
         refreshOntologyImports();
       }, 100);
 
-      notificationService.success('Import Removed', 'Import removed successfully.');
+      notificationService.success("Import Removed", "Import removed successfully.");
     } catch (error) {
-      console.error('[Dashboard] Failed to remove import:', error);
-      notificationService.error('Import Failed', 'Could not remove import.');
+      console.error("[Dashboard] Failed to remove import:", error);
+      notificationService.error("Import Failed", "Could not remove import.");
     }
   };
 
@@ -3731,7 +4313,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   };
 
   const handleAddPrefixDialog = () => {
-    setPrefixDialogData({ prefix: '', namespace: '', isEdit: false, originalPrefix: '' });
+    setPrefixDialogData({ prefix: "", namespace: "", isEdit: false, originalPrefix: "" });
     setIsPrefixDialogOpen(true);
   };
 
@@ -3743,33 +4325,33 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleSavePrefix = async (prefix: string, namespace: string, isEdit: boolean, originalPrefix: string) => {
     if (!projectId) return;
     try {
-      const cleanedPrefix = prefix.endsWith(':') ? prefix.slice(0, -1) : prefix;
-      const cleanedOriginal = originalPrefix.endsWith(':') ? originalPrefix.slice(0, -1) : originalPrefix;
+      const cleanedPrefix = prefix.endsWith(":") ? prefix.slice(0, -1) : prefix;
+      const cleanedOriginal = originalPrefix.endsWith(":") ? originalPrefix.slice(0, -1) : originalPrefix;
 
       // Backend expects POST with { prefix, iri, oldPrefix? }
       const payload: any = {
         prefix: cleanedPrefix,
-        iri: namespace
+        iri: namespace,
       };
 
       if (isEdit) {
         payload.oldPrefix = cleanedOriginal;
       }
 
-      console.log('[Dashboard] Saving prefix:', payload);
+      console.log("[Dashboard] Saving prefix:", payload);
       await apiClient.post(`/api/ontology/metadata/${projectId}/prefixes`, payload);
 
       // Refresh prefixes from server
       await refreshPrefixes();
 
       notificationService.success(
-        isEdit ? 'Prefix Updated' : 'Prefix Added',
-        isEdit ? 'Prefix updated successfully.' : 'Prefix added successfully.'
+        isEdit ? "Prefix Updated" : "Prefix Added",
+        isEdit ? "Prefix updated successfully." : "Prefix added successfully.",
       );
       setIsPrefixDialogOpen(false);
     } catch (error) {
-      console.error('[Dashboard] Failed to save prefix:', error);
-      notificationService.error('Prefix Failed', 'Could not save prefix.');
+      console.error("[Dashboard] Failed to save prefix:", error);
+      notificationService.error("Prefix Failed", "Could not save prefix.");
     }
   };
 
@@ -3777,18 +4359,20 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!projectId) return;
     try {
       // Normalize prefix by removing colon
-      const cleanedPrefix = prefix.endsWith(':') ? prefix.slice(0, -1) : prefix;
+      const cleanedPrefix = prefix.endsWith(":") ? prefix.slice(0, -1) : prefix;
 
-      console.log('[Dashboard] Deleting prefix:', cleanedPrefix);
-      await apiClient.delete(`/api/ontology/metadata/${projectId}/prefixes?prefix=${encodeURIComponent(cleanedPrefix)}`);
+      console.log("[Dashboard] Deleting prefix:", cleanedPrefix);
+      await apiClient.delete(
+        `/api/ontology/metadata/${projectId}/prefixes?prefix=${encodeURIComponent(cleanedPrefix)}`,
+      );
 
       // Refresh from server
       await refreshPrefixes();
 
-      notificationService.success('Prefix Deleted', 'Prefix deleted successfully.');
+      notificationService.success("Prefix Deleted", "Prefix deleted successfully.");
     } catch (error) {
-      console.error('[Dashboard] Failed to delete prefix:', error);
-      notificationService.error('Prefix Failed', 'Could not delete prefix.');
+      console.error("[Dashboard] Failed to delete prefix:", error);
+      notificationService.error("Prefix Failed", "Could not delete prefix.");
     }
   };
 
@@ -3802,41 +4386,49 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!axiomDefinition) return;
 
     try {
-      console.log('[Dashboard] Adding general class axiom:', { projectId, subClass: axiomDefinition, superClass: axiomSuperClass });
+      console.log("[Dashboard] Adding general class axiom:", {
+        projectId,
+        subClass: axiomDefinition,
+        superClass: axiomSuperClass,
+      });
       await apiClient.post(`/api/ontology/metadata/${projectId}/gci`, {
         subClass: axiomDefinition,
-        superClass: axiomSuperClass || ''
+        superClass: axiomSuperClass || "",
       });
 
       // Immediately update the UI with the new axiom
       const newAxiom = {
         value: `${axiomDefinition} SubClassOf ${axiomSuperClass}`,
         subClass: axiomDefinition,
-        superClass: axiomSuperClass || '',
+        superClass: axiomSuperClass || "",
         definition: axiomDefinition,
-        superClassIri: axiomSuperClass || '',
-        subExpression: axiomDefinition
+        superClassIri: axiomSuperClass || "",
+        subExpression: axiomDefinition,
       };
       setGeneralClassAxioms([...generalClassAxioms, newAxiom]);
 
-      setAxiomDraft({ definition: '', superClassIri: '' });
+      setAxiomDraft({ definition: "", superClassIri: "" });
       setAxiomDialogOpen(false);
       setEditingAxiomIndex(null);
 
       // Refresh from server to get complete data
       setTimeout(() => refreshGeneralClassAxioms(), 100);
 
-      notificationService.success('Axiom Added', 'General class axiom added successfully.');
+      notificationService.success("Axiom Added", "General class axiom added successfully.");
     } catch (error: any) {
-      console.error('[Dashboard] Failed to add axiom:', error);
-      console.error('[Dashboard] Error details:', {
+      console.error("[Dashboard] Failed to add axiom:", error);
+      console.error("[Dashboard] Error details:", {
         message: error?.message,
         status: error?.status || error?.response?.status,
         data: error?.data || error?.response?.data,
-        code: error?.code
+        code: error?.code,
       });
-      const errorMsg = error?.data?.message || error?.response?.data?.message || error?.message || 'Could not add general class axiom.';
-      notificationService.error('Axiom Failed', errorMsg);
+      const errorMsg =
+        error?.data?.message ||
+        error?.response?.data?.message ||
+        error?.message ||
+        "Could not add general class axiom.";
+      notificationService.error("Axiom Failed", errorMsg);
     }
   };
 
@@ -3844,8 +4436,8 @@ const Dashboard: React.FC<DashboardProps> = ({
     const axiom = generalClassAxioms[index];
     setEditingAxiomIndex(index);
     setAxiomDraft({
-      definition: axiom.subClass || axiom.definition || '',
-      superClassIri: axiom.superClass || axiom.superClassIri || ''
+      definition: axiom.subClass || axiom.definition || "",
+      superClassIri: axiom.superClass || axiom.superClassIri || "",
     });
     setAxiomDialogOpen(true);
   };
@@ -3856,13 +4448,17 @@ const Dashboard: React.FC<DashboardProps> = ({
       const oldAxiom = generalClassAxioms[editingAxiomIndex];
       const subClass = newSubClass !== undefined ? newSubClass : axiomDraft.definition;
       const superClass = newSuperClass !== undefined ? newSuperClass : axiomDraft.superClassIri;
-      console.log('[Dashboard] Updating general class axiom:', { projectId, oldAxiom, newAxiom: { subClass, superClass } });
+      console.log("[Dashboard] Updating general class axiom:", {
+        projectId,
+        oldAxiom,
+        newAxiom: { subClass, superClass },
+      });
 
       // Use PUT endpoint to update - backend expects oldValue as the full value string
       await apiClient.put(`/api/ontology/metadata/${projectId}/gci/${editingAxiomIndex}`, {
-        oldValue: oldAxiom.value || oldAxiom.subClass || oldAxiom.definition || '',
+        oldValue: oldAxiom.value || oldAxiom.subClass || oldAxiom.definition || "",
         subClass,
-        superClass: superClass || ''
+        superClass: superClass || "",
       });
 
       // Immediately update UI
@@ -3870,24 +4466,24 @@ const Dashboard: React.FC<DashboardProps> = ({
       updatedAxioms[editingAxiomIndex] = {
         value: `${subClass} SubClassOf ${superClass}`,
         subClass,
-        superClass: superClass || '',
+        superClass: superClass || "",
         definition: subClass,
-        superClassIri: superClass || '',
-        subExpression: subClass
+        superClassIri: superClass || "",
+        subExpression: subClass,
       };
       setGeneralClassAxioms(updatedAxioms);
 
-      setAxiomDraft({ definition: '', superClassIri: '' });
+      setAxiomDraft({ definition: "", superClassIri: "" });
       setEditingAxiomIndex(null);
       setAxiomDialogOpen(false);
 
       // Refresh from server
       setTimeout(() => refreshGeneralClassAxioms(), 100);
 
-      notificationService.success('Axiom Updated', 'General class axiom updated successfully.');
+      notificationService.success("Axiom Updated", "General class axiom updated successfully.");
     } catch (error) {
-      console.error('[Dashboard] Failed to update axiom:', error);
-      notificationService.error('Axiom Failed', 'Could not update general class axiom.');
+      console.error("[Dashboard] Failed to update axiom:", error);
+      notificationService.error("Axiom Failed", "Could not update general class axiom.");
     }
   };
 
@@ -3896,11 +4492,11 @@ const Dashboard: React.FC<DashboardProps> = ({
     try {
       const axiom = generalClassAxioms[index];
       // Backend expects the 'value' field or construct it from subClass
-      const value = axiom.value || axiom.subClass || axiom.definition || axiom.subExpression || '';
-      console.log('[Dashboard] Deleting general class axiom:', { projectId, axiom, value });
+      const value = axiom.value || axiom.subClass || axiom.definition || axiom.subExpression || "";
+      console.log("[Dashboard] Deleting general class axiom:", { projectId, axiom, value });
 
       if (!value) {
-        notificationService.error('Axiom Failed', 'Cannot delete axiom without a value.');
+        notificationService.error("Axiom Failed", "Cannot delete axiom without a value.");
         return;
       }
 
@@ -3913,10 +4509,10 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Refresh from server
       setTimeout(() => refreshGeneralClassAxioms(), 100);
 
-      notificationService.success('Axiom Deleted', 'General class axiom deleted successfully.');
+      notificationService.success("Axiom Deleted", "General class axiom deleted successfully.");
     } catch (error) {
-      console.error('[Dashboard] Failed to delete axiom:', error);
-      notificationService.error('Axiom Failed', 'Could not delete general class axiom.');
+      console.error("[Dashboard] Failed to delete axiom:", error);
+      notificationService.error("Axiom Failed", "Could not delete general class axiom.");
     }
   };
 
@@ -3927,17 +4523,19 @@ const Dashboard: React.FC<DashboardProps> = ({
       const payload = response?.data || response;
       const data = payload?.data || payload || [];
       // Map backend fields to frontend expected structure
-      const mappedData = Array.isArray(data) ? data.map((axiom: any) => ({
-        value: axiom.value,
-        subClass: axiom.subClass || '',
-        superClass: axiom.superClass || '',
-        definition: axiom.subClass || axiom.definition || '',
-        superClassIri: axiom.superClass || axiom.superClassIri || '',
-        subExpression: axiom.subClass || axiom.subExpression || ''
-      })) : [];
+      const mappedData = Array.isArray(data)
+        ? data.map((axiom: any) => ({
+            value: axiom.value,
+            subClass: axiom.subClass || "",
+            superClass: axiom.superClass || "",
+            definition: axiom.subClass || axiom.definition || "",
+            superClassIri: axiom.superClass || axiom.superClassIri || "",
+            subExpression: axiom.subClass || axiom.subExpression || "",
+          }))
+        : [];
       setGeneralClassAxioms(mappedData);
     } catch (error) {
-      console.error('[Dashboard] Failed to refresh general class axioms:', error);
+      console.error("[Dashboard] Failed to refresh general class axioms:", error);
     }
   };
 
@@ -3948,10 +4546,10 @@ const Dashboard: React.FC<DashboardProps> = ({
       // This bulk save is not supported by backend
       setIsPrefixEditing(false);
       await refreshPrefixes();
-      notificationService.info('Prefixes', 'Edit mode disabled. Use individual add/edit/delete operations.');
+      notificationService.info("Prefixes", "Edit mode disabled. Use individual add/edit/delete operations.");
     } catch (error) {
-      console.error('[Dashboard] Failed to save prefixes:', error);
-      notificationService.error('Prefixes Failed', 'Could not save prefixes.');
+      console.error("[Dashboard] Failed to save prefixes:", error);
+      notificationService.error("Prefixes Failed", "Could not save prefixes.");
     }
   };
 
@@ -3959,13 +4557,14 @@ const Dashboard: React.FC<DashboardProps> = ({
   useEffect(() => {
     if (!projectId) return;
 
-    const activeUsersInProject = Array.from(collaboration.state.activeUsers.values())
-      .filter(u => u.projectId === projectId && u.userId !== user?.id);
+    const activeUsersInProject = Array.from(collaboration.state.activeUsers.values()).filter(
+      (u) => u.projectId === projectId && u.userId !== user?.id,
+    );
 
     if (activeUsersInProject.length > 0) {
-      console.log('[Dashboard] 👥 Collaborators detected, enabling real-time sync');
+      console.log("[Dashboard] 👥 Collaborators detected, enabling real-time sync");
       ontologyMutationService.setRealTimeSync(true);
-      setSyncMode('public');
+      setSyncMode("public");
     }
   }, [projectId, collaboration.state.activeUsers, user?.id]);
 
@@ -3980,12 +4579,12 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Broadcast cursor position via vscode postMessage
       if (window.vscode) {
         window.vscode.postMessage({
-          type: 'broadcastCursor',
+          type: "broadcastCursor",
           projectId,
           userId: user.id,
-          userName: user.username || user.email || 'Anonymous',
+          userName: user.username || user.email || "Anonymous",
           position: newCursor,
-          timestamp: Date.now()
+          timestamp: Date.now(),
         });
       }
     };
@@ -4001,12 +4600,12 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     const throttledMouseMove = throttle(handleMouseMove, 50); // Throttle to 20fps
 
-    document.addEventListener('mousemove', throttledMouseMove);
-    document.addEventListener('click', handleClick); // Track all clicks
+    document.addEventListener("mousemove", throttledMouseMove);
+    document.addEventListener("click", handleClick); // Track all clicks
 
     return () => {
-      document.removeEventListener('mousemove', throttledMouseMove);
-      document.removeEventListener('click', handleClick);
+      document.removeEventListener("mousemove", throttledMouseMove);
+      document.removeEventListener("click", handleClick);
     };
   }, [projectId, user]);
 
@@ -4017,35 +4616,38 @@ const Dashboard: React.FC<DashboardProps> = ({
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
 
-      if (message.type === 'cursorUpdate' && message.userId !== user?.id) {
+      if (message.type === "cursorUpdate" && message.userId !== user?.id) {
         // Generate consistent color for each user
         const color = getUserColor(message.userId);
 
-        setCollaboratorCursors(prev => {
+        setCollaboratorCursors((prev) => {
           const updated = new Map(prev);
           updated.set(message.userId, {
             x: message.position.x,
             y: message.position.y,
             userName: message.userName,
             color,
-            timestamp: message.timestamp
+            timestamp: message.timestamp,
           });
           return updated;
         });
       }
     };
 
-    window.addEventListener('message', handleMessage);
+    window.addEventListener("message", handleMessage);
 
     // Clean up stale cursors every 3 seconds
     const cleanupInterval = setInterval(() => {
       const now = Date.now();
-      setCollaboratorCursors(prev => {
+      setCollaboratorCursors((prev) => {
         const updated = new Map(prev);
         let hasChanges = false;
 
         for (const [userId, cursor] of updated.entries()) {
-          if (now - (cursor as { x: number; y: number; userName: string; color: string; timestamp: number }).timestamp > 3000) {
+          if (
+            now - (cursor as { x: number; y: number; userName: string; color: string; timestamp: number }).timestamp >
+            3000
+          ) {
             updated.delete(userId);
             hasChanges = true;
           }
@@ -4056,7 +4658,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     }, 3000);
 
     return () => {
-      window.removeEventListener('message', handleMessage);
+      window.removeEventListener("message", handleMessage);
       clearInterval(cleanupInterval);
     };
   }, [projectId, user]);
@@ -4064,10 +4666,18 @@ const Dashboard: React.FC<DashboardProps> = ({
   // Helper function to generate consistent colors for users
   const getUserColor = (userId: string): string => {
     const colors = [
-      '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8',
-      '#F7DC6F', '#BB8FCE', '#85C1E2', '#F8B739', '#52C5B6'
+      "#FF6B6B",
+      "#4ECDC4",
+      "#45B7D1",
+      "#FFA07A",
+      "#98D8C8",
+      "#F7DC6F",
+      "#BB8FCE",
+      "#85C1E2",
+      "#F8B739",
+      "#52C5B6",
     ];
-    const hash = userId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    const hash = userId.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0);
     return colors[hash % colors.length];
   };
 
@@ -4091,13 +4701,13 @@ const Dashboard: React.FC<DashboardProps> = ({
     setClassInstancesLoading(true);
     try {
       const response = await apiClient.get<any>(
-        `/api/ontology/classes/instances/${projectId}?classIri=${encodeURIComponent(selectedClassForIndividuals.id)}`
+        `/api/ontology/classes/instances/${projectId}?classIri=${encodeURIComponent(selectedClassForIndividuals.id)}`,
       );
       const payload = response?.data || response;
       const instances = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
       setClassInstances(instances);
     } catch (error) {
-      console.error('[Dashboard] Failed to load class instances:', error);
+      console.error("[Dashboard] Failed to load class instances:", error);
       setClassInstances([]);
     } finally {
       setClassInstancesLoading(false);
@@ -4105,8 +4715,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, [projectId, selectedClassForIndividuals]);
 
   useEffect(() => {
-    setClassInstancesQuery('');
-    setClassInstancesView('direct');
+    setClassInstancesQuery("");
+    setClassInstancesView("direct");
     setSelectedClassIndividual(null);
     setSelectedClassIndividualDetails(null);
     loadClassInstances();
@@ -4120,7 +4730,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     setSelectedClassIndividualLoading(true);
     try {
       const response = await apiClient.get<any>(
-        `/api/ontology/individual-details/${projectId}?individualIri=${encodeURIComponent(selectedClassIndividual.id)}`
+        `/api/ontology/individual-details/${projectId}?individualIri=${encodeURIComponent(selectedClassIndividual.id)}`,
       );
       const details = response?.data || response;
       if (details) {
@@ -4128,11 +4738,11 @@ const Dashboard: React.FC<DashboardProps> = ({
           ...selectedClassIndividual,
           types: details.types || selectedClassIndividual.types,
           annotations: details.annotations || selectedClassIndividual.annotations,
-          propertyAssertions: details.propertyAssertions || []
+          propertyAssertions: details.propertyAssertions || [],
         });
       }
     } catch (error) {
-      console.error('[Dashboard] Failed to load individual details:', error);
+      console.error("[Dashboard] Failed to load individual details:", error);
       setSelectedClassIndividualDetails(null);
     } finally {
       setSelectedClassIndividualLoading(false);
@@ -4143,16 +4753,15 @@ const Dashboard: React.FC<DashboardProps> = ({
     refreshSelectedClassIndividualDetails();
   }, [refreshSelectedClassIndividualDetails]);
 
-
   const decodeTokenEmail = (token?: string | null) => {
     if (!token) return null;
     try {
-      const parts = token.split('.');
+      const parts = token.split(".");
       if (parts.length !== 3) return null;
-      const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+      const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
       return payload.email || null;
     } catch (error) {
-      console.warn('[Dashboard] Failed to decode token for email:', error);
+      console.warn("[Dashboard] Failed to decode token for email:", error);
       return null;
     }
   };
@@ -4161,37 +4770,46 @@ const Dashboard: React.FC<DashboardProps> = ({
     try {
       const resolvedEmail = resolveUserEmail();
       const isWorkspaceMode = !!user?.workspaceId;
-      const primaryEndpoint = isWorkspaceMode ? '/api/projects' : '/api/ontology/projects';
-      const fallbackEndpoint = isWorkspaceMode ? '/api/ontology/projects' : '/api/projects';
-      const projectsUrl = resolvedEmail
-        ? `${primaryEndpoint}?userEmail=${encodeURIComponent(resolvedEmail)}`
-        : primaryEndpoint;
-      console.log('[Dashboard] 📂 Fetching projects for user email:', resolvedEmail || '(none)', 'workspaceMode:', isWorkspaceMode);
+      const primaryEndpoint = isWorkspaceMode ? "/api/projects" : "/api/ontology/projects";
+      const fallbackEndpoint = isWorkspaceMode ? "/api/ontology/projects" : "/api/projects";
+      const params = new URLSearchParams();
+      if (resolvedEmail) {
+        params.set("userEmail", resolvedEmail);
+      }
+      const projectsUrl = params.toString() ? `${primaryEndpoint}?${params.toString()}` : primaryEndpoint;
+      console.log("[Dashboard] 📂 fetchProjects called");
+      console.log("[Dashboard] 📂 User:", { email: user?.email, workspaceId: user?.workspaceId, isWorkspaceMode });
+      console.log("[Dashboard] 📂 Fetching from:", projectsUrl);
+      console.log("[Dashboard] 📂 resolvedEmail:", resolvedEmail);
+
       let response;
       try {
         response = await apiClient.get<any>(projectsUrl);
+        console.log("[Dashboard] 📥 Primary endpoint response:", response);
       } catch (error: any) {
+        console.error("[Dashboard] ❌ Primary endpoint error:", error);
         const status = error?.status || error?.response?.status;
-        const allowFallback = primaryEndpoint === '/api/projects';
+        const allowFallback = primaryEndpoint === "/api/projects";
         if (status === 404 && fallbackEndpoint !== primaryEndpoint && allowFallback) {
           const fallbackUrl = resolvedEmail
             ? `${fallbackEndpoint}?userEmail=${encodeURIComponent(resolvedEmail)}`
             : fallbackEndpoint;
-          console.warn('[Dashboard] Projects endpoint missing, falling back to:', fallbackUrl);
+          console.warn("[Dashboard] ⚠️ Projects endpoint missing, falling back to:", fallbackUrl);
           response = await apiClient.get<any>(fallbackUrl);
+          console.log("[Dashboard] 📥 Fallback endpoint response:", response);
         } else {
           throw error;
         }
       }
 
-      console.log('[Dashboard] 📥 fetchProjects RAW response:', response);
-      console.log('[Dashboard] 📥 fetchProjects response type:', typeof response);
-      console.log('[Dashboard] 📥 fetchProjects response keys:', response ? Object.keys(response) : 'null');
+      console.log("[Dashboard] 📥 fetchProjects RAW response:", response);
+      console.log("[Dashboard] 📥 fetchProjects response type:", typeof response);
+      console.log("[Dashboard] 📥 fetchProjects response keys:", response ? Object.keys(response) : "null");
 
       // Handle case where response might be wrapped in a data property
       const data = response?.data || response;
 
-      console.log('[Dashboard] 📥 fetchProjects processed data:', {
+      console.log("[Dashboard] 📥 fetchProjects processed data:", {
         success: data?.success,
         hasMyFiles: data?.myFiles !== undefined,
         myFilesCount: data?.myFiles?.length || 0,
@@ -4200,7 +4818,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         hasProjects: data?.projects !== undefined,
         projectsCount: data?.projects?.length || 0,
         myFilesData: data?.myFiles,
-        sharedFilesData: data?.sharedFiles
+        sharedFilesData: data?.sharedFiles,
       });
       setHasFetchedProjects(true);
 
@@ -4211,7 +4829,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           const mapFileToProject = (p: any) => {
             // If this looks like a raw GridFS file (has only id, contentType, length), skip it
             if (p.contentType && p.length && !p.name && !p.filename) {
-              console.warn('[Dashboard] ⚠️ Skipping raw GridFS file entry:', p.id);
+              console.warn("[Dashboard] ⚠️ Skipping raw GridFS file entry:", p.id);
               return null;
             }
             return {
@@ -4224,30 +4842,35 @@ const Dashboard: React.FC<DashboardProps> = ({
               status: p.status,
               updatedAt: p.updatedAt,
               ownerEmail: p.ownerEmail,
-              metadata: p.metadata
+              metadata: p.metadata,
             };
           };
 
           const myFilesWithNames = (data.myFiles || []).map(mapFileToProject).filter(Boolean);
           const sharedFilesWithNames = (data.sharedFiles || []).map(mapFileToProject).filter(Boolean);
           const allProjects = [...myFilesWithNames, ...sharedFilesWithNames];
-          
+
           setAvailableProjects(allProjects);
           setMyFiles(myFilesWithNames);
           setSharedFiles(sharedFilesWithNames);
           setListOfFiles(allProjects);
-          
-          console.log('[Dashboard] ✅ Files loaded - My Files:', myFilesWithNames.length, 'Shared:', sharedFilesWithNames.length);
-          console.log('[Dashboard] 📋 Sample myFile:', myFilesWithNames[0]);
-          console.log('[Dashboard] 📋 Sample sharedFile:', sharedFilesWithNames[0]);
-          
+
+          console.log(
+            "[Dashboard] ✅ Files loaded - My Files:",
+            myFilesWithNames.length,
+            "Shared:",
+            sharedFilesWithNames.length,
+          );
+          console.log("[Dashboard] 📋 Sample myFile:", myFilesWithNames[0]);
+          console.log("[Dashboard] 📋 Sample sharedFile:", sharedFilesWithNames[0]);
+
           return { myFiles: myFilesWithNames, sharedFiles: sharedFilesWithNames };
         } else if (data.projects) {
           // Backward compatibility with old format
           const mapFileToProject = (p: any) => {
             // If this looks like a raw GridFS file, skip it
             if (p.contentType && p.length && !p.name && !p.filename) {
-              console.warn('[Dashboard] ⚠️ Skipping raw GridFS file entry:', p.id);
+              console.warn("[Dashboard] ⚠️ Skipping raw GridFS file entry:", p.id);
               return null;
             }
             return {
@@ -4258,43 +4881,48 @@ const Dashboard: React.FC<DashboardProps> = ({
               status: p.status,
               updatedAt: p.updatedAt,
               ownerEmail: p.ownerEmail,
-              metadata: p.metadata
+              metadata: p.metadata,
             };
           };
 
           const projectsWithNames = (data.projects || []).map(mapFileToProject).filter(Boolean);
           setAvailableProjects(projectsWithNames);
-          
+
           // Assume all projects are "myFiles" if no sharedBy field
           const myFilesList = projectsWithNames.filter((p: any) => !p.sharedBy);
           const sharedFilesList = projectsWithNames.filter((p: any) => p.sharedBy);
-          
+
           setMyFiles(myFilesList);
           setSharedFiles(sharedFilesList);
           setListOfFiles(projectsWithNames);
-          
-          console.log('[Dashboard] ✅ Files loaded (legacy format) - My Files:', myFilesList.length, 'Shared:', sharedFilesList.length);
-          console.log('[Dashboard] 📋 Sample project:', projectsWithNames[0]);
-          
+
+          console.log(
+            "[Dashboard] ✅ Files loaded (legacy format) - My Files:",
+            myFilesList.length,
+            "Shared:",
+            sharedFilesList.length,
+          );
+          console.log("[Dashboard] 📋 Sample project:", projectsWithNames[0]);
+
           return { myFiles: myFilesList, sharedFiles: sharedFilesList };
         } else {
-          console.log('[Dashboard] ⚠️ No myFiles/sharedFiles or projects in response - setting empty arrays');
-          console.log('[Dashboard] ⚠️ Full response data:', data);
+          console.log("[Dashboard] ⚠️ No myFiles/sharedFiles or projects in response - setting empty arrays");
+          console.log("[Dashboard] ⚠️ Full response data:", data);
           setMyFiles([]);
           setSharedFiles([]);
           setListOfFiles([]);
           return { myFiles: [], sharedFiles: [] };
         }
       } else {
-        console.log('[Dashboard] ⚠️ Response not successful:', data);
+        console.log("[Dashboard] ⚠️ Response not successful:", data);
         setMyFiles([]);
         setSharedFiles([]);
         setListOfFiles([]);
         return null;
       }
     } catch (error: any) {
-      console.error('[Dashboard] ❌ Failed to fetch projects:', error);
-      console.error('[Dashboard] ❌ Error details:', error?.response?.data || error?.message || error);
+      console.error("[Dashboard] ❌ Failed to fetch projects:", error);
+      console.error("[Dashboard] ❌ Error details:", error?.response?.data || error?.message || error);
       setMyFiles([]);
       setSharedFiles([]);
       setListOfFiles([]);
@@ -4325,7 +4953,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const confirmDeleteFile = useCallback(async () => {
     const targetProjectId = deleteFileDialog.projectId;
     const targetFileName = deleteFileDialog.fileName;
-    setDeleteFileDialog({ isOpen: false, projectId: '', fileName: '' });
+    setDeleteFileDialog({ isOpen: false, projectId: "", fileName: "" });
 
     if (!targetProjectId) {
       return;
@@ -4334,10 +4962,10 @@ const Dashboard: React.FC<DashboardProps> = ({
     try {
       const isWorkspaceMode = !!user?.workspaceId;
       const resolvedEmail = resolveUserEmail();
-      const ownerEmail = !isWorkspaceMode && resolvedEmail ? `?ownerEmail=${encodeURIComponent(resolvedEmail)}` : '';
-      const deleteEndpoint = isWorkspaceMode ? '/api/projects' : '/api/ontology/projects';
+      const ownerEmail = !isWorkspaceMode && resolvedEmail ? `?ownerEmail=${encodeURIComponent(resolvedEmail)}` : "";
+      const deleteEndpoint = isWorkspaceMode ? "/api/projects" : "/api/ontology/projects";
       await apiClient.delete(`${deleteEndpoint}/${encodeURIComponent(targetProjectId)}${ownerEmail}`);
-      notificationService.success('File Deleted', `"${targetFileName}" deleted successfully.`);
+      notificationService.success("File Deleted", `"${targetFileName}" deleted successfully.`);
       await fetchProjects();
 
       if (projectId === targetProjectId) {
@@ -4348,10 +4976,17 @@ const Dashboard: React.FC<DashboardProps> = ({
         setHasUserSelectedFile(false);
       }
     } catch (error: any) {
-      console.error('[Dashboard] Failed to delete file:', error);
-      notificationService.error('Delete Failed', error?.message || 'Could not delete the file.');
+      console.error("[Dashboard] Failed to delete file:", error);
+      notificationService.error("Delete Failed", error?.message || "Could not delete the file.");
     }
-  }, [deleteFileDialog.projectId, deleteFileDialog.fileName, fetchProjects, projectId, user?.workspaceId, resolveUserEmail]);
+  }, [
+    deleteFileDialog.projectId,
+    deleteFileDialog.fileName,
+    fetchProjects,
+    projectId,
+    user?.workspaceId,
+    resolveUserEmail,
+  ]);
 
   const handleOpenProjectSelector = useCallback(() => {
     // Fetch projects when user opens the selector
@@ -4363,13 +4998,13 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (classHierarchy.length > 0 && classHierarchy[0].id === "http://www.w3.org/2002/07/owl#Thing") {
       const owlThingId = classHierarchy[0].id;
       const childCount = classHierarchy[0].children?.length || 0;
-      console.log('[Dashboard] Class hierarchy loaded, owl:Thing has', childCount, 'top-level children');
+      console.log("[Dashboard] Class hierarchy loaded, owl:Thing has", childCount, "top-level children");
 
       // Auto-expand owl:Thing when it has children (preserve other expanded nodes)
       if (childCount > 0 && !expandedNodes.includes(owlThingId)) {
-        console.log('[Dashboard] Auto-expanding owl:Thing (preserving existing expanded nodes)');
-        console.log('[DEBUG] useEffect[classHierarchy] triggering setExpandedNodes');
-        setExpandedNodes(prev => prev.includes(owlThingId) ? prev : [...prev, owlThingId]);
+        console.log("[Dashboard] Auto-expanding owl:Thing (preserving existing expanded nodes)");
+        console.log("[DEBUG] useEffect[classHierarchy] triggering setExpandedNodes");
+        setExpandedNodes((prev) => (prev.includes(owlThingId) ? prev : [...prev, owlThingId]));
       }
     }
   }, [classHierarchy]);
@@ -4380,8 +5015,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       const childCount = inferredClassHierarchy[0].children?.length || 0;
 
       if (childCount > 0 && !expandedNodes.includes(owlThingId)) {
-        console.log('[Dashboard] Auto-expanding owl:Thing in inferred hierarchy');
-        setExpandedNodes(prev => prev.includes(owlThingId) ? prev : [...prev, owlThingId]);
+        console.log("[Dashboard] Auto-expanding owl:Thing in inferred hierarchy");
+        setExpandedNodes((prev) => (prev.includes(owlThingId) ? prev : [...prev, owlThingId]));
       }
     }
   }, [inferredClassHierarchy]);
@@ -4390,29 +5025,55 @@ const Dashboard: React.FC<DashboardProps> = ({
   // This populates the file selector dropdown when user clicks it
   useEffect(() => {
     if (!user) {
-      console.log('[Dashboard] Skipping initial fetch - user not available');
+      console.log("[Dashboard] Skipping initial fetch - user not available");
       return;
     }
 
     // Only run once on mount - use a ref to track if we've already fetched
-    console.log('[Dashboard] Initial mount - fetching projects list');
+    console.log("[Dashboard] Initial mount - fetching projects list");
     const resolvedEmail = resolveUserEmail();
-    console.log('[Dashboard] User details:', {
+    console.log("[Dashboard] User details:", {
       email: resolvedEmail || user.email,
       username: user.username,
       isAdmin: user.isAdmin,
-      workspaceId: user.workspaceId
+      workspaceId: user.workspaceId,
     });
-    console.log('[Dashboard] Component props:', {
+    console.log("[Dashboard] Component props:", {
       initialProjectId,
       projectId,
-      onBackToProjects: !!onBackToProjects
+      onBackToProjects: !!onBackToProjects,
     });
 
     // Always fetch user's files for the OpenFileDialog
     // This populates myFiles and sharedFiles based on user email
-    console.log('[Dashboard] ✅ Fetching all projects for user email:', resolvedEmail || '(none)');
+    console.log(
+      "[Dashboard] 🔍 useEffect triggered - user.email:",
+      user?.email,
+      "user.workspaceId:",
+      user?.workspaceId,
+    );
+    console.log("[Dashboard] ✅ Fetching all projects for user email:", resolvedEmail || "(none)");
     fetchProjects();
+
+    // Non-workspace mode: auto-load the last opened file from localStorage
+    if (isNonWorkspaceMode && storedProjectId && !hasUserSelectedFileRef.current) {
+      console.log("[Dashboard] 🔄 Non-workspace mode - restoring last opened file:", storedProjectId);
+      hasUserSelectedFileRef.current = true;
+      setHasUserSelectedFile(true);
+      setActiveFileName(storedProjectId);
+      fetchData(storedProjectId, false)
+        .then(() => {
+          console.log("[Dashboard] ✅ Last file restored:", storedProjectId);
+        })
+        .catch((err) => {
+          console.warn("[Dashboard] ⚠️ Failed to restore last file:", storedProjectId, err);
+          // Clear the stored project ID if it can't be loaded
+          localStorage.removeItem("ontocode_lastProjectId");
+          setProjectId(null);
+          setHasUserSelectedFile(false);
+          hasUserSelectedFileRef.current = false;
+        });
+    }
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.email, user?.workspaceId, resolveUserEmail]); // Only re-run when user identity changes
@@ -4427,27 +5088,30 @@ const Dashboard: React.FC<DashboardProps> = ({
   const fileLoadingRef = useRef(false);
   const lastLoadedFileRef = useRef<string | null>(null);
 
+  // AbortController for cancelling in-flight fetchData requests when the user switches files
+  const fetchAbortControllerRef = useRef<AbortController | null>(null);
+
   // Auto-load selected file from Project Library (admin flow)
   useEffect(() => {
     if (selectedFileId && selectedFileName && initialProjectId) {
       // Prevent loading the same file multiple times or loading while another load is in progress
       if (fileLoadingRef.current || lastLoadedFileRef.current === selectedFileId) {
-        console.log('[Dashboard] Skipping duplicate load for:', selectedFileId);
+        console.log("[Dashboard] Skipping duplicate load for:", selectedFileId);
         return;
       }
 
-      console.log('[Dashboard] Auto-loading selected file:', selectedFileId, selectedFileName);
-      console.log('[Dashboard] Parent project for file menu:', initialProjectId);
+      console.log("[Dashboard] Auto-loading selected file:", selectedFileId, selectedFileName);
+      console.log("[Dashboard] Parent project for file menu:", initialProjectId);
 
       // Mark as loading
       fileLoadingRef.current = true;
       lastLoadedFileRef.current = selectedFileId;
 
       // Clear any previous file state
-      console.log('[Dashboard] 🧹 Cleaning up previous file state...');
+      console.log("[Dashboard] 🧹 Cleaning up previous file state...");
       setIsInitialLoading(true);
-      setMainTab('Entities');
-      setEntitiesTab('Classes');
+      setMainTab("Entities");
+      setEntitiesTab("Classes");
 
       setHasUserSelectedFile(true); // Mark that file was selected
 
@@ -4462,7 +5126,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     // Cleanup when unmounting
     return () => {
-      console.log('[Dashboard] 🧹 Cleanup on unmount');
+      console.log("[Dashboard] 🧹 Cleanup on unmount");
     };
   }, [selectedFileId, selectedFileName, initialProjectId]);
 
@@ -4478,7 +5142,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const isMountedRef = useRef(false);
 
   // Send 'webviewReady' to extension when mounted
-  // NOTE: This useEffect runs BEFORE the message listener is attached, 
+  // NOTE: This useEffect runs BEFORE the message listener is attached,
   // but the actual webviewReady signal is sent from the message listener useEffect
   useEffect(() => {
     isMountedRef.current = true;
@@ -4488,32 +5152,32 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, []);
 
   const getLocalName = (iri?: string) => {
-    if (!iri) return '';
-    if (iri.includes('#')) {
-      return iri.split('#').pop() || iri;
+    if (!iri) return "";
+    if (iri.includes("#")) {
+      return iri.split("#").pop() || iri;
     }
-    const parts = iri.split('/');
+    const parts = iri.split("/");
     return parts[parts.length - 1] || iri;
   };
 
   const resolvePropertyIriByLabel = (labelOrIri: string, properties: Property[]) => {
     if (!labelOrIri) return undefined;
-    if (labelOrIri.startsWith('http://') || labelOrIri.startsWith('https://')) return labelOrIri;
+    if (labelOrIri.startsWith("http://") || labelOrIri.startsWith("https://")) return labelOrIri;
     const normalized = labelOrIri.toLowerCase();
-    const found = properties.find(prop => (prop.label || getLocalName(prop.id)).toLowerCase() === normalized);
+    const found = properties.find((prop) => (prop.label || getLocalName(prop.id)).toLowerCase() === normalized);
     return found?.id;
   };
 
   const resolveIndividualIriByLabel = (labelOrIri: string) => {
     if (!labelOrIri) return undefined;
-    if (labelOrIri.startsWith('http://') || labelOrIri.startsWith('https://')) return labelOrIri;
+    if (labelOrIri.startsWith("http://") || labelOrIri.startsWith("https://")) return labelOrIri;
     const normalized = labelOrIri.toLowerCase();
-    const found = individuals.find(ind => (ind.label || getLocalName(ind.id)).toLowerCase() === normalized);
+    const found = individuals.find((ind) => (ind.label || getLocalName(ind.id)).toLowerCase() === normalized);
     return found?.id;
   };
 
   const buildDefaultCopyName = (fileName: string, copyIndex: number = 1) => {
-    const dotIndex = fileName.lastIndexOf('.');
+    const dotIndex = fileName.lastIndexOf(".");
     if (dotIndex > 0) {
       const baseName = fileName.substring(0, dotIndex);
       const extension = fileName.substring(dotIndex);
@@ -4523,32 +5187,35 @@ const Dashboard: React.FC<DashboardProps> = ({
   };
 
   const extractExtension = (fileName: string) => {
-    const dotIndex = fileName.lastIndexOf('.');
-    return dotIndex > 0 ? fileName.substring(dotIndex) : '';
+    const dotIndex = fileName.lastIndexOf(".");
+    return dotIndex > 0 ? fileName.substring(dotIndex) : "";
   };
 
   const isSupportedOntologyExtension = (fileName: string) => {
     return /\.(owl|rdf|ttl|n3|nt|jsonld)$/i.test(fileName);
   };
 
-  const sendDuplicatePromptResponse = useCallback((action: 'open_existing' | 'replace' | 'create_copy' | 'cancel', copyName?: string) => {
-    if (!window.vscode || !duplicatePrompt.requestId) {
-      setDuplicatePrompt(prev => ({ ...prev, isOpen: false, requestId: null }));
-      return;
-    }
-    window.vscode.postMessage({
-      type: 'duplicateFilePromptResponse',
-      requestId: duplicatePrompt.requestId,
-      action,
-      copyName
-    });
-    setDuplicatePrompt(prev => ({ ...prev, isOpen: false, requestId: null }));
-    setDuplicateCopyError(null);
-    setDuplicateCopyName('');
-  }, [duplicatePrompt.requestId]);
+  const sendDuplicatePromptResponse = useCallback(
+    (action: "open_existing" | "replace" | "create_copy" | "cancel", copyName?: string) => {
+      if (!window.vscode || !duplicatePrompt.requestId) {
+        setDuplicatePrompt((prev) => ({ ...prev, isOpen: false, requestId: null }));
+        return;
+      }
+      window.vscode.postMessage({
+        type: "duplicateFilePromptResponse",
+        requestId: duplicatePrompt.requestId,
+        action,
+        copyName,
+      });
+      setDuplicatePrompt((prev) => ({ ...prev, isOpen: false, requestId: null }));
+      setDuplicateCopyError(null);
+      setDuplicateCopyName("");
+    },
+    [duplicatePrompt.requestId],
+  );
 
   const handleDuplicatePromptCancel = useCallback(() => {
-    sendDuplicatePromptResponse('cancel');
+    sendDuplicatePromptResponse("cancel");
   }, [sendDuplicatePromptResponse]);
 
   const handleDuplicateCreateCopy = useCallback(async () => {
@@ -4559,7 +5226,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const originalExt = extractExtension(duplicatePrompt.fileName);
     let candidateName = duplicateCopyName.trim();
     if (!candidateName) {
-      setDuplicateCopyError('Name is required.');
+      setDuplicateCopyError("Name is required.");
       return;
     }
 
@@ -4568,14 +5235,16 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
 
     if (!isSupportedOntologyExtension(candidateName)) {
-      setDuplicateCopyError('Unsupported file type.');
+      setDuplicateCopyError("Unsupported file type.");
       return;
     }
 
     try {
       setDuplicateCopySubmitting(true);
-      if (duplicatePrompt.context === 'project' && duplicatePrompt.projectId) {
-        const checkResponse = await apiClient.get(`/api/projects/${duplicatePrompt.projectId}/files/check?fileName=${encodeURIComponent(candidateName)}`);
+      if (duplicatePrompt.context === "project" && duplicatePrompt.projectId) {
+        const checkResponse = await apiClient.get(
+          `/api/projects/${duplicatePrompt.projectId}/files/check?fileName=${encodeURIComponent(candidateName)}`,
+        );
         const checkData = (checkResponse as any)?.data || checkResponse;
         if (checkData?.exists) {
           setDuplicateCopyError(`"${candidateName}" already exists. Please choose a different name.`);
@@ -4584,14 +5253,14 @@ const Dashboard: React.FC<DashboardProps> = ({
       } else {
         // Some deployments don't expose /api/ontology/check-duplicate via gateway.
         // For create-copy, it's safe to skip this check and let the backend resolve conflicts.
-        sendDuplicatePromptResponse('create_copy', candidateName);
+        sendDuplicatePromptResponse("create_copy", candidateName);
         return;
       }
 
-      sendDuplicatePromptResponse('create_copy', candidateName);
+      sendDuplicatePromptResponse("create_copy", candidateName);
     } catch (error) {
-      console.error('[Dashboard] Copy name duplicate check failed:', error);
-      setDuplicateCopyError('Unable to validate copy name. Please try again.');
+      console.error("[Dashboard] Copy name duplicate check failed:", error);
+      setDuplicateCopyError("Unable to validate copy name. Please try again.");
     } finally {
       setDuplicateCopySubmitting(false);
     }
@@ -4599,16 +5268,17 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // Handle loading choice dialog actions
   const handleWaitForLoading = useCallback(() => {
-    userLoadingChoice.current = 'wait';
+    userLoadingChoice.current = "wait";
     // Keep dialog open, show waiting state
-    console.log('[Dashboard] Wait for Loading clicked - keeping dialog open');
+    console.log("[Dashboard] Wait for Loading clicked - keeping dialog open");
     // Dialog will be closed by IMPORT_COMPLETED handler when data loads
   }, []);
 
   const handleContinueWorking = useCallback(() => {
-    userLoadingChoice.current = 'continue';
+    userLoadingChoice.current = "continue";
     setShowLoadingChoice(false);
-    console.log('[Dashboard] Continue Working clicked - closing dialog, will auto-load when import completes');
+    setBackgroundImportActive(true);
+    console.log("[Dashboard] Continue Working clicked - closing dialog, showing persistent progress banner");
     // Keep isExpectingFileReady=true so IMPORT_COMPLETED will auto-load
     // Reset choice after a short delay
     setTimeout(() => {
@@ -4619,30 +5289,30 @@ const Dashboard: React.FC<DashboardProps> = ({
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
-      console.log(message, 'message')
+      console.log(message, "message");
       // CRITICAL: Always handle showLoading even before mount - this is time-sensitive
       // The extension sends showLoading right after file selection, before the webview may be fully ready
-      if (message.type === 'showLoading') {
-        console.log('[Dashboard] showLoading received - file upload starting for project:', message.projectId);
+      if (message.type === "showLoading") {
+        console.log("[Dashboard] showLoading received - file upload starting for project:", message.projectId);
         setHasUserSelectedFile(true);
         hasUserSelectedFileRef.current = true;
         pendingImportProjectIdRef.current = message.projectId; // Track which project is being imported
-        console.log('[Dashboard] Set pendingImportProjectIdRef.current to:', pendingImportProjectIdRef.current);
+        console.log("[Dashboard] Set pendingImportProjectIdRef.current to:", pendingImportProjectIdRef.current);
         setIsExpectingFileReady(true);
         // Show loading dialog immediately
         setShowLoadingChoice(true);
-        setLoadingProjectName(message.projectId || 'Processing file upload...');
+        setLoadingProjectName(message.fileName || message.projectId || "Processing file upload...");
         // Don't fetch projects yet - wait for upload to complete
         return;
       }
 
       // Ignore other messages until component is fully mounted
       if (!isMountedRef.current) {
-        console.log('[Dashboard] Ignoring message before mount:', event.data.type);
+        console.log("[Dashboard] Ignoring message before mount:", event.data.type);
         return;
       }
 
-      console.log('[Dashboard] Received message:', message.type, message);
+      console.log("[Dashboard] Received message:", message.type, message);
       switch (message.type) {
         case "duplicateFilePrompt": {
           const defaultCopyName = message.defaultCopyName || buildDefaultCopyName(message.fileName, 1);
@@ -4650,22 +5320,35 @@ const Dashboard: React.FC<DashboardProps> = ({
             isOpen: true,
             requestId: message.requestId,
             fileName: message.fileName,
-            context: message.context || 'project',
+            context: message.context || "project",
             projectId: message.projectId,
             ownerEmail: message.ownerEmail,
             defaultCopyName,
             detail: message.detail,
             allowOpenExisting: message.allowOpenExisting !== false,
-            error: message.error
+            error: message.error,
           });
           setDuplicateCopyName(defaultCopyName);
           setDuplicateCopyError(message.error || null);
           break;
         }
         case "openProjectFile":
+          // Refresh file list in workspace mode to ensure new files are shown
+          if (initialProjectId) {
+            console.log("[Dashboard] 📋 Refreshing file list before opening project file");
+            fetchProjectFiles(initialProjectId).then(() => {
+              console.log("[Dashboard] ✅ File list refreshed, proceeding to open file");
+            });
+          }
+
           if (initialProjectId && message.projectId && message.projectId !== initialProjectId) {
-            console.warn('[Dashboard] openProjectFile project mismatch:', message.projectId, 'expected', initialProjectId);
-            notificationService.error('Open Failed', 'Selected file belongs to a different project.');
+            console.warn(
+              "[Dashboard] openProjectFile project mismatch:",
+              message.projectId,
+              "expected",
+              initialProjectId,
+            );
+            notificationService.error("Open Failed", "Selected file belongs to a different project.");
             break;
           }
           if (message.fileId && message.fileName) {
@@ -4677,125 +5360,252 @@ const Dashboard: React.FC<DashboardProps> = ({
           break;
         case "fileReady":
         case "fileLoaded":
+          // Always refresh file list in workspace mode when a fileReady message is received
+          if (initialProjectId) {
+            console.log(
+              "[Dashboard] 📋 File list refresh triggered by fileReady, initialProjectId:",
+              initialProjectId,
+              "message.projectId:",
+              message.projectId,
+              "uploadedFileId:",
+              message.uploadedFileId,
+              "uploadedFileName:",
+              message.uploadedFileName,
+            );
+            console.log("[Dashboard] 📋 Current projectFiles count before refresh:", projectFiles.length);
+
+            // Retry mechanism to ensure newly uploaded file appears in list
+            const fetchWithRetry = async (retries = 3, delay = 300) => {
+              for (let attempt = 1; attempt <= retries; attempt++) {
+                console.log(`[Dashboard] 📋 Fetch attempt ${attempt}/${retries}...`);
+                const fetchedFiles = await fetchProjectFiles(initialProjectId);
+
+                // If we're looking for a specific uploaded file, verify it's in the list
+                if (message.uploadedFileId) {
+                  const found = fetchedFiles.some((f) => f.id === message.uploadedFileId);
+                  console.log(
+                    `[Dashboard] 📋 Looking for file ${message.uploadedFileId} (${message.uploadedFileName}) in ${fetchedFiles.length} files, found: ${found}`,
+                  );
+                  console.log(
+                    `[Dashboard] 📋 File IDs in list:`,
+                    fetchedFiles.map((f) => f.id),
+                  );
+
+                  if (found) {
+                    console.log(`[Dashboard] ✅ File found in list after ${attempt} attempt(s)!`);
+                    return true;
+                  }
+
+                  if (attempt < retries) {
+                    console.log(`[Dashboard] ⏳ File not found, waiting ${delay}ms before retry ${attempt + 1}...`);
+                    await new Promise((resolve) => setTimeout(resolve, delay));
+                  } else {
+                    console.warn(`[Dashboard] ⚠️ File ${message.uploadedFileId} not found after ${retries} attempts`);
+                    console.warn(`[Dashboard] ⚠️ This may indicate a database synchronization delay`);
+                    return false;
+                  }
+                } else {
+                  // No specific file to look for, just refresh once
+                  console.log("[Dashboard] ✅ File list refreshed (no specific file verification)");
+                  return true;
+                }
+              }
+              return false;
+            };
+
+            fetchWithRetry()
+              .then((success) => {
+                console.log("[Dashboard] ✅ File list refresh complete, success:", success);
+                console.log("[Dashboard] 📋 ProjectFiles count after refresh:", projectFiles.length);
+              })
+              .catch((err) => {
+                console.error("[Dashboard] ❌ Failed to refresh file list:", err);
+              });
+          } else {
+            console.log("[Dashboard] ⚠️ fileReady received but no initialProjectId, cannot refresh");
+          }
+
           if (initialProjectId && message.projectId === initialProjectId) {
-            console.log('[Dashboard] File list updated for project, skipping ontology load:', message.projectId);
-            fetchProjectFiles(initialProjectId);
-            fetchProjects();
+            // If this fileReady came from creating/uploading a new file into the project,
+            // auto-load it so the user sees it immediately instead of requiring a manual click.
+            if (message.uploadedFileId && message.uploadedFileName) {
+              console.log(
+                "[Dashboard] 📂 New file created in project, auto-loading:",
+                message.uploadedFileId,
+                message.uploadedFileName,
+              );
+              // Wait for the file list refresh to complete, then load the new file
+              fetchProjects();
+              // Use a small delay to let the file list state update
+              setTimeout(() => {
+                handleLoadProjectFile(message.uploadedFileId, message.uploadedFileName);
+              }, 200);
+            } else {
+              console.log("[Dashboard] File list updated for project, skipping ontology load:", message.projectId);
+              fetchProjects();
+            }
             break;
           }
-          if (initialProjectId && pendingImportProjectIdRef.current && message.projectId === pendingImportProjectIdRef.current) {
-            console.log('[Dashboard] FileReady for project file import:', message.projectId);
+          if (
+            initialProjectId &&
+            pendingImportProjectIdRef.current &&
+            message.projectId === pendingImportProjectIdRef.current
+          ) {
+            console.log("[Dashboard] FileReady for project file import:", message);
             setHasUserSelectedFile(true);
             hasUserSelectedFileRef.current = true;
             setProjectId(message.projectId);
             setSelectedItem(null);
-            setLoadingProjectName(message.projectId);
+            setLoadingProjectName(message.uploadedFileName);
             // userLoadingChoice.current = null;
             // setShowLoadingChoice(true);
 
-            loadingPromiseRef.current = fetchData(message.projectId, false, initialProjectId)
-              .then(() => {
-                console.log('[Dashboard] Loading completed for:', message.projectId);
-                setShowLoadingChoice(false);
-                setShowQueueStatus(false);
-                setTimeout(() => fetchProjects(), 300);
-              })
-              .catch((error) => {
-                console.error('[Dashboard] Failed to load ontology:', error);
-                notificationService.error('Load Failed', `Could not load "${message.projectId}". The file may still be processing.`);
-                setShowLoadingChoice(false);
-              });
+            // Check if we're already loading this project to avoid duplicate fetches
+            if (loadingPromiseRef.current) {
+              console.log("[Dashboard] Already loading, skipping duplicate fetchData call");
+            } else {
+              loadingPromiseRef.current = fetchData(message.projectId, false, initialProjectId)
+                .then(() => {
+                  console.log("[Dashboard] Loading completed for:", message.projectId);
+                  setShowLoadingChoice(false);
+                  setShowQueueStatus(false);
+                  setQueuePosition(undefined);
+                  setTotalInQueue(undefined);
+                  setEstimatedWaitTimeMs(undefined);
+                  setIsInitialLoading(false);
+                  setTimeout(() => fetchProjects(), 300);
+                  loadingPromiseRef.current = null;
+                })
+                .catch((error) => {
+                  console.error("[Dashboard] Failed to load ontology:", error);
+                  notificationService.error(
+                    "Load Failed",
+                    `Could not load "${message.projectId}". The file may still be processing.`,
+                  );
+                  setShowLoadingChoice(false);
+                  setIsInitialLoading(false);
+                  loadingPromiseRef.current = null;
+                });
+            }
             break;
           }
           // Show loading choice dialog
-          console.log('[Dashboard] Loading project:', message.projectId);
+          console.log("[Dashboard] Loading project:", message.projectId);
           // Don't clear isExpectingFileReady here - let IMPORT_COMPLETED handler do it
           setHasUserSelectedFile(true);
           hasUserSelectedFileRef.current = true;
-          setProjectId(message.projectId);
+          // Only update projectId if it's different (ignoring timestamp suffixes)
+          const currentBaseId = projectId?.replace(/-\d+$/, "");
+          const newBaseId = message.projectId?.replace(/-\d+$/, "");
+          if (currentBaseId !== newBaseId) {
+            console.log("[Dashboard] Updating projectId from", projectId, "to", message.projectId);
+            setProjectId(message.projectId);
+          } else {
+            console.log("[Dashboard] ProjectId essentially same, keeping current:", projectId);
+          }
           // In free mode, projectId IS the file identifier, so set activeFileName for ACTIVE badge
           // Extract filename from projectId if it looks like a filename (has extension)
-          const projId = message.projectId || '';
-          console.log('[Dashboard] Setting active file name for projectId:', projId);
-          if (projId.includes('.owl') || projId.includes('.rdf') || projId.includes('.ttl')) {
+          const projId = message.projectId || "";
+          console.log("[Dashboard] Setting active file name for projectId:", projId);
+          if (projId.includes(".owl") || projId.includes(".rdf") || projId.includes(".ttl")) {
             setActiveFileName(projId);
           } else {
-            setActiveFileName(projId + '.owl'); // Default extension
+            setActiveFileName(projId + ".owl"); // Default extension
           }
           setActiveFileId(null); // In free mode, fileId is same as projectId
           setSelectedItem(null);
-          setLoadingProjectName(message.projectId);
+          console.log(message,"message=====>",projId)
+          setLoadingProjectName(message.uploadedFileName);
           userLoadingChoice.current = null; // Reset choice for new loading
           setShowLoadingChoice(true);
 
-          // Start loading in background and store the promise
-          loadingPromiseRef.current = fetchData(message.projectId, false)
-            .then(() => {
-              console.log('[Dashboard] Loading completed for:', message.projectId);
-              // Close loading dialog immediately on success
-              setShowLoadingChoice(false);
-              setShowQueueStatus(false);
-              // Refresh projects list
-              setTimeout(() => fetchProjects(), 300);
-              // Dialog will auto-close via importStatusUpdate message when IMPORT_COMPLETED
-            })
-            .catch((error) => {
-              console.error('[Dashboard] Failed to load ontology:', error);
-              notificationService.error('Load Failed', `Could not load "${message.projectId}". The file may still be processing.`);
-              setShowLoadingChoice(false);
-              // Dialog will auto-close via importStatusUpdate message when IMPORT_FAILED
-            });
+          // Start loading in background and store the promise (only if not already loading)
+          if (loadingPromiseRef.current) {
+            console.log("[Dashboard] Already loading, skipping duplicate fetchData call");
+          } else {
+            loadingPromiseRef.current = fetchData(message.projectId, false)
+              .then(() => {
+                console.log("[Dashboard] Loading completed for:", message.projectId);
+                // Close loading dialog immediately on success
+                setShowLoadingChoice(false);
+                setShowQueueStatus(false);
+                setQueuePosition(undefined);
+                setTotalInQueue(undefined);
+                setEstimatedWaitTimeMs(undefined);
+                // Refresh projects list
+                setTimeout(() => fetchProjects(), 300);
+                loadingPromiseRef.current = null;
+                // Dialog will auto-close via importStatusUpdate message when IMPORT_COMPLETED
+              })
+              .catch((error) => {
+                console.error("[Dashboard] Failed to load ontology:", error);
+                notificationService.error(
+                  "Load Failed",
+                  `Could not load "${message.projectId}". The file may still be processing.`,
+                );
+                setShowLoadingChoice(false);
+                loadingPromiseRef.current = null;
+                // Dialog will auto-close via importStatusUpdate message when IMPORT_FAILED
+              });
+          }
           break;
         case "loadingFailed":
           setIsInitialLoading(false);
           console.error("Loading failed:", message.error);
-          notificationService.error('Loading Failed', message.error);
+          notificationService.error("Loading Failed", message.error);
           break;
         case "switchView":
           // Switch to SWRL view (now handled via plugins)
-          if (message.view === 'swrl') {
-            setMainTab('SWRL');
+          if (message.view === "swrl") {
+            setMainTab("SWRL");
           }
           break;
         case "importStatusUpdate":
           // Handle import status updates from WebSocket
-          console.log(`[Dashboard] 📨 Import status update for "${message.status.projectId}": ${message.status.type}`, message.status);
-          console.log(`[Dashboard] 📍 Current projectId: ${projectId} | Message projectId: ${message.status.projectId}`);
+          console.log(
+            `[Dashboard] 📨 Import status update for "${message.status.projectId}": ${message.status.type}`,
+            message.status,
+          );
+          console.log(
+            `[Dashboard] 📍 Current projectId: ${projectId} | Message projectId: ${message.status.projectId}`,
+          );
           console.log(`[Dashboard] 🎯 Status: ${message.status.status} | Progress: ${message.status.progress}%`);
 
           // Update project-specific import status for ProjectSelector
           if (message.status.projectId) {
-            setProjectImportStatuses(prev => ({
+            setProjectImportStatuses((prev) => ({
               ...prev,
               [message.status.projectId]: {
                 type: message.status.type,
                 status: message.status.status,
-                progress: message.status.progress
-              }
+                progress: message.status.progress,
+              },
             }));
 
             // Update loading status message for user feedback
-            if (message.status.type === 'IMPORT_PROGRESS' && message.status.metadata?.message) {
+            if (message.status.type === "IMPORT_PROGRESS" && message.status.metadata?.message) {
               setLoadingStatusMessage(message.status.metadata.message);
-            } else if (message.status.type === 'IMPORT_PROGRESS' && message.status.metadata?.stage) {
+              if (message.status.progress !== undefined) setBackgroundImportProgress(message.status.progress);
+            } else if (message.status.type === "IMPORT_PROGRESS" && message.status.metadata?.stage) {
               const stage = message.status.metadata.stage;
               const stageMessages: Record<string, string> = {
-                'parsing': 'Parsing ontology file...',
-                'graphdb-loading': 'Loading data into GraphDB (this may take several minutes for large files)...',
-                'graphdb-load-complete': 'GraphDB load complete, computing metadata...',
-                'computing-metadata': 'Computing ontology statistics...'
+                parsing: "Parsing ontology file...",
+                "graphdb-loading": "Loading data into GraphDB (this may take several minutes for large files)...",
+                "graphdb-load-complete": "GraphDB load complete, computing metadata...",
+                "computing-metadata": "Computing ontology statistics...",
               };
-              setLoadingStatusMessage(stageMessages[stage] || 'Processing...');
+              setLoadingStatusMessage(stageMessages[stage] || "Processing...");
+              if (message.status.progress !== undefined) setBackgroundImportProgress(message.status.progress);
             }
           }
 
           // Handle import completion
-          if (message.status.type === 'IMPORT_COMPLETED') {
-            console.log('[Dashboard] ✅ IMPORT_COMPLETED for project:', message.status.projectId);
-            console.log('[Dashboard] User choice:', userLoadingChoice.current);
-            console.log('[Dashboard] Current projectId:', projectId);
-            console.log('[Dashboard] pendingImportProjectIdRef.current:', pendingImportProjectIdRef.current);
-            console.log('[Dashboard] isExpectingFileReady:', isExpectingFileReady);
+          if (message.status.type === "IMPORT_COMPLETED") {
+            console.log("[Dashboard] ✅ IMPORT_COMPLETED for project:", message.status.projectId);
+            console.log("[Dashboard] User choice:", userLoadingChoice.current);
+            console.log("[Dashboard] Current projectId:", projectId);
+            console.log("[Dashboard] pendingImportProjectIdRef.current:", pendingImportProjectIdRef.current);
+            console.log("[Dashboard] isExpectingFileReady:", isExpectingFileReady);
 
             const isCurrentProject = message.status.projectId === projectId;
             const isPendingImport = message.status.projectId === pendingImportProjectIdRef.current;
@@ -4805,13 +5615,27 @@ const Dashboard: React.FC<DashboardProps> = ({
             // 1. This is the current project being viewed, OR
             // 2. This matches the pendingImportProjectId (new upload)
             if (isCurrentProject || isPendingImport) {
-              console.log('[Dashboard] Should auto-load:', isPendingImport ? 'pending import' : 'current project');
+              console.log("[Dashboard] Should auto-load:", isPendingImport ? "pending import" : "current project");
 
               // For new uploads, always switch to the newly imported project
               if (isPendingImport) {
-                console.log('[Dashboard] Setting projectId to:', message.status.projectId);
-                setProjectId(message.status.projectId);
-                setLoadingProjectName(message.status.projectId);
+                console.log("[Dashboard] Setting projectId to:", message.status.projectId);
+                // Only update projectId if it's actually different (ignoring timestamp suffix)
+                const currentBaseId = projectId?.replace(/-\d+$/, "");
+                const newBaseId = message.status.projectId?.replace(/-\d+$/, "");
+                if (currentBaseId !== newBaseId) {
+                  console.log(
+                    "[Dashboard] ProjectId is different, updating from",
+                    projectId,
+                    "to",
+                    message.status.projectId,
+                  );
+                  setProjectId(message.status.projectId);
+                } else {
+                  console.log("[Dashboard] ProjectId is essentially the same (ignoring timestamp), skipping update");
+                }
+                console.log(message, "message--->");
+                setLoadingProjectName(message.status.filename || message.status.projectId);
                 // In free mode, mark the new file as active immediately
                 if (!initialProjectId) {
                   const nextFileName = message.status.filename || `${message.status.projectId}.owl`;
@@ -4822,132 +5646,191 @@ const Dashboard: React.FC<DashboardProps> = ({
 
               // Clear pending import tracking
               pendingImportProjectIdRef.current = null;
-              console.log('[Dashboard] Cleared pendingImportProjectIdRef');
+              console.log("[Dashboard] Cleared pendingImportProjectIdRef");
               setIsExpectingFileReady(false);
 
-              // Fetch the data
-              console.log('[Dashboard] Fetching data for:', message.status.projectId);
-              console.log('[Dashboard] Parent project for file menu:', initialProjectId);
-              fetchData(message.status.projectId, false, initialProjectId)
-                .then(() => {
-                  console.log('[Dashboard] ✅ Data loaded successfully');
-                  console.log('[Dashboard] Closing dialogs...');
-                  // Close all dialogs after successful load
-                  setShowLoadingChoice(false);
-                  setShowQueueStatus(false);
-                  setShowProjectSelector(false);
-                  setIsInitialLoading(false);
-                  // Reset user choice
-                  userLoadingChoice.current = null;
-                })
-                .catch((error) => {
-                  console.error('[Dashboard] ❌ Failed to fetch data:', error);
-                  setShowLoadingChoice(false);
-                  setIsInitialLoading(false);
-                  notificationService.error('Load Failed', 'Failed to load ontology data');
+              // Data loading is handled by the fileReady message (always sent before IMPORT_COMPLETED).
+              // Here we only clean up UI state. If fetchData is already in progress, chain cleanup onto it;
+              // otherwise close dialogs immediately.
+              const cleanupUI = () => {
+                console.log("[Dashboard] Closing dialogs after IMPORT_COMPLETED");
+                setShowLoadingChoice(false);
+                setShowQueueStatus(false);
+                setQueuePosition(undefined);
+                setTotalInQueue(undefined);
+                setEstimatedWaitTimeMs(undefined);
+                setShowProjectSelector(false);
+                setIsInitialLoading(false);
+                setBackgroundImportActive(false);
+                setBackgroundImportProgress(undefined);
+                userLoadingChoice.current = null;
+              };
+
+              // Show completion notification
+              const importedName = message.status.filename || message.status.projectId || "Ontology";
+              notificationService.success("Import Complete", `"${importedName}" has been loaded successfully.`);
+
+              if (loadingPromiseRef.current) {
+                console.log("[Dashboard] fetchData already in progress (from fileReady), chaining UI cleanup");
+                loadingPromiseRef.current.then(cleanupUI).catch(() => {
+                  cleanupUI();
                 });
+              } else {
+                console.log("[Dashboard] No fetchData in progress, cleaning up UI directly");
+                cleanupUI();
+              }
 
               // Refresh projects list
               setTimeout(() => fetchProjects(), 500);
             } else {
-              console.log('[Dashboard] Import completed for different project - not auto-loading');
+              console.log("[Dashboard] Import completed for different project - not auto-loading");
             }
           }
 
           // If import failed, handle it appropriately
-          if (message.status.type === 'IMPORT_FAILED') {
-            console.log('[Dashboard] ❌ IMPORT_FAILED for project:', message.status.projectId);
-            console.error('[Dashboard] Error details:', {
+          if (message.status.type === "IMPORT_FAILED") {
+            console.log("[Dashboard] ❌ IMPORT_FAILED for project:", message.status.projectId);
+            console.error("[Dashboard] Error details:", {
               statusMessage: message.status.statusMessage,
               error: message.status.metadata?.error,
-              status: message.status.status
+              status: message.status.status,
             });
 
-            const errorMessage = message.status.statusMessage || message.status.metadata?.error || 'Import failed';
-            const projectName = message.status.projectId || 'unknown';
+            const errorMessage = message.status.statusMessage || message.status.metadata?.error || "Import failed";
+            const projectName = message.status.projectId || "unknown";
 
             // Extract more user-friendly error message
             let displayError = errorMessage;
-            if (errorMessage.includes('UnknownHostException: graphdb') || errorMessage.includes('UnknownHostException')) {
-              displayError = 'Cannot connect to GraphDB. Please ensure GraphDB service is running and accessible.';
-              console.log('[Dashboard] 🔄 Translated error to user-friendly message (UnknownHost)');
-            } else if (errorMessage.includes('Connection refused') || errorMessage.includes('ConnectException')) {
-              displayError = 'GraphDB connection refused. Please verify GraphDB is running on the correct port.';
-              console.log('[Dashboard] 🔄 Translated error to user-friendly message (Connection refused)');
-            } else if (errorMessage.includes('HTTP error code 404')) {
-              displayError = 'Repository not found or not initialized. Please check GraphDB configuration.';
-              console.log('[Dashboard] 🔄 Translated error to user-friendly message (404)');
-            } else if (errorMessage.includes('unable to start transaction')) {
-              displayError = 'Unable to start database transaction. Please verify GraphDB is running and the repository exists.';
-              console.log('[Dashboard] 🔄 Translated error to user-friendly message (transaction)');
+            if (
+              errorMessage.includes("UnknownHostException: graphdb") ||
+              errorMessage.includes("UnknownHostException")
+            ) {
+              displayError = "Cannot connect to GraphDB. Please ensure GraphDB service is running and accessible.";
+              console.log("[Dashboard] 🔄 Translated error to user-friendly message (UnknownHost)");
+            } else if (errorMessage.includes("Connection refused") || errorMessage.includes("ConnectException")) {
+              displayError = "GraphDB connection refused. Please verify GraphDB is running on the correct port.";
+              console.log("[Dashboard] 🔄 Translated error to user-friendly message (Connection refused)");
+            } else if (errorMessage.includes("HTTP error code 404")) {
+              displayError = "Repository not found or not initialized. Please check GraphDB configuration.";
+              console.log("[Dashboard] 🔄 Translated error to user-friendly message (404)");
+            } else if (errorMessage.includes("unable to start transaction")) {
+              displayError =
+                "Unable to start database transaction. Please verify GraphDB is running and the repository exists.";
+              console.log("[Dashboard] 🔄 Translated error to user-friendly message (transaction)");
             }
 
-            console.log('[Dashboard] 📝 Display error:', displayError);
+            console.log("[Dashboard] 📝 Display error:", displayError);
 
             // Show notification for all failed imports
-            notificationService.error(
-              'Import Failed',
-              `Failed to import "${projectName}": ${displayError}`
-            );
+            notificationService.error("Import Failed", `Failed to import "${projectName}": ${displayError}`);
 
-            // Close dialogs if this is the current project
+            // Close dialogs and clear background progress if this is the current project
             if (message.status.projectId === projectId) {
-              console.log('[Dashboard] Closing dialogs for current project');
+              console.log("[Dashboard] Closing dialogs for current project");
               setTimeout(() => {
                 setShowLoadingChoice(false);
                 setShowQueueStatus(false);
+                setQueuePosition(undefined);
+                setTotalInQueue(undefined);
+                setEstimatedWaitTimeMs(undefined);
+                setBackgroundImportActive(false);
+                setBackgroundImportProgress(undefined);
               }, 2000);
             }
           }
 
           // Show queue status when import starts
-          if (message.status.type === 'IMPORT_STARTED' && message.status.projectId === projectId) {
+          if (message.status.type === "IMPORT_STARTED" && message.status.projectId === projectId) {
             setShowQueueStatus(true);
           }
 
           // Clear project-specific status after completion/failure
-          if (message.status.projectId && (message.status.type === 'IMPORT_COMPLETED' || message.status.type === 'IMPORT_FAILED')) {
-            setTimeout(() => {
-              setProjectImportStatuses(prev => {
-                const updated = { ...prev };
-                delete updated[message.status.projectId];
-                return updated;
-              });
-            }, message.status.type === 'IMPORT_COMPLETED' ? 3000 : 10000);
+          if (
+            message.status.projectId &&
+            (message.status.type === "IMPORT_COMPLETED" || message.status.type === "IMPORT_FAILED")
+          ) {
+            setTimeout(
+              () => {
+                setProjectImportStatuses((prev) => {
+                  const updated = { ...prev };
+                  delete updated[message.status.projectId];
+                  return updated;
+                });
+              },
+              message.status.type === "IMPORT_COMPLETED" ? 3000 : 10000,
+            );
           }
           break;
 
         case "importFailed":
-          console.error('[Dashboard] ❌ Import failed for project:', message.projectId, message.error);
+          console.error("[Dashboard] ❌ Import failed for project:", message.projectId, message.error);
           setShowLoadingChoice(false);
           setShowQueueStatus(false);
           setIsInitialLoading(false);
-          notificationService.error('Import Failed', `Failed to import ontology: ${message.error || 'Unknown error'}`);
+          setBackgroundImportActive(false);
+          setBackgroundImportProgress(undefined);
+          setQueuePosition(undefined);
+          setTotalInQueue(undefined);
+          setEstimatedWaitTimeMs(undefined);
+          notificationService.error("Import Failed", `Failed to import ontology: ${message.error || "Unknown error"}`);
           break;
 
         case "importTimeout":
-          console.error('[Dashboard] ⏱️ Import timeout for project:', message.projectId);
+          console.error("[Dashboard] ⏱️ Import timeout for project:", message.projectId);
           setShowLoadingChoice(false);
           setShowQueueStatus(false);
           setIsInitialLoading(false);
-          notificationService.error('Import Timeout', 'The import operation took too long. Your ontology may still be processing. Please check back later.');
+          setBackgroundImportActive(false);
+          setBackgroundImportProgress(undefined);
+          setQueuePosition(undefined);
+          setTotalInQueue(undefined);
+          setEstimatedWaitTimeMs(undefined);
+          notificationService.error(
+            "Import Timeout",
+            "The import operation took too long. Your ontology may still be processing. Please check back later.",
+          );
           break;
 
         case "updateLoadingStatus":
-          console.log('[Dashboard] 📊 Loading status update:', message.message, `(${message.attempt}/${message.maxAttempts})`);
+          console.log(
+            "[Dashboard] 📊 Loading status update:",
+            message.message,
+            `(${message.attempt}/${message.maxAttempts})`,
+          );
           setLoadingStatusMessage(message.message);
           break;
 
+        case "queueStatusUpdate":
+          if (message.status?.projectId === projectId) {
+            setQueuePosition(message.status.queuePosition);
+            setTotalInQueue(message.status.totalInQueue);
+            setEstimatedWaitTimeMs(message.status.estimatedWaitTimeMs);
+            if (message.status.status === "COMPLETED" || message.status.status === "FAILED") {
+              setQueuePosition(undefined);
+              setTotalInQueue(undefined);
+              setEstimatedWaitTimeMs(undefined);
+            }
+          }
+          break;
+
         case "citationFormatted":
-          // Handle formatted citation from extension
-          console.log('[Dashboard] 📚 Received formatted citation');
+          // Handle formatted citation from extension (legacy path)
+          console.log("[Dashboard] 📚 Received formatted citation");
           if (message.citation && message.projectId === projectId) {
-            // Append citation to code view content
-            setCodeViewContent(prev => prev + '\n\n' + message.citation);
-            
+            // Insert citation before closing tags for XML formats, or append for others
+            setCodeViewContent((prev) => {
+              if (!prev) return message.citation;
+              // For RDF/XML, insert before closing </rdf:RDF> tag
+              const closingTagMatch = prev.match(/(\s*<\/rdf:RDF\s*>\s*)$/i);
+              if (closingTagMatch && closingTagMatch.index !== undefined) {
+                return prev.substring(0, closingTagMatch.index) + "\n\n" + message.citation + "\n" + closingTagMatch[0];
+              }
+              return prev + "\n\n" + message.citation;
+            });
+
             // Show success notification
             if (message.metadata?.title) {
-              notificationService.success('Citation Inserted', `Added: ${message.metadata.title}`);
+              notificationService.success("Citation Inserted", `Added: ${message.metadata.title}`);
             }
           }
           break;
@@ -4959,54 +5842,135 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
     };
 
-    console.log('[Dashboard] 📢 Attaching message listener');
+    console.log("[Dashboard] 📢 Attaching message listener");
     window.addEventListener("message", handleMessage);
 
     // CRITICAL: Send webviewReady AFTER listener is attached, but ONLY ONCE
     // This ensures we receive any immediate messages (like showLoading) from the extension
     if (window.vscode && !webviewReadySentRef.current) {
       webviewReadySentRef.current = true;
-      console.log('[Dashboard] 📢 Sending webviewReady to extension (first time only)');
-      window.vscode.postMessage({ type: 'webviewReady' });
+      console.log("[Dashboard] 📢 Sending webviewReady to extension (first time only)");
+      window.vscode.postMessage({ type: "webviewReady" });
     }
 
     return () => {
-      console.log('[Dashboard] 📢 Removing message listener');
+      console.log("[Dashboard] 📢 Removing message listener");
       window.removeEventListener("message", handleMessage);
     };
   }, [projectId, initialProjectId, isExpectingFileReady]); // Remove fetchData to prevent infinite loop - it's captured in the closure
 
-  const loadChildren = useCallback(async (nodeId: string) => {
-    if (!projectId) return;
-    try {
-      console.log(`[loadChildren] Loading children for node: ${nodeId}`);
-      const response = await apiClient.get<any>(`/api/ontology/classes/children/${projectId}?parentIri=${encodeURIComponent(nodeId)}`);
-      console.log('[loadChildren] Children response:', response);
+  const loadChildren = useCallback(
+    async (nodeId: string) => {
+      if (!projectId) return;
+      try {
+        console.log(`[loadChildren] Loading children for node: ${nodeId}`);
 
-      // Extract array from response - handle both direct array and wrapped responses
-      const children = Array.isArray(response) ? response :
-        Array.isArray(response?.data) ? response.data :
-          Array.isArray(response?.classes) ? response.classes : [];
-      console.log('[loadChildren] Extracted children:', children);
+        // Special case: when loading children of owl:Thing, use the top-level endpoint
+        // which finds ALL top-level classes (not just those with explicit rdfs:subClassOf owl:Thing)
+        // OPTIMIZED: Use limit parameter for faster initial load (backend has caching)
+        const isOwlThing = nodeId === "http://www.w3.org/2002/07/owl#Thing";
+        const endpoint = isOwlThing
+          ? `/api/ontology/classes/top-level/${projectId}?limit=100`
+          : `/api/ontology/classes/children/${projectId}?parentIri=${encodeURIComponent(nodeId)}`;
+
+        console.log(`[loadChildren] Using endpoint: ${endpoint}`);
+        const response = await apiClient.get<any>(endpoint);
+        console.log("[loadChildren] Children response:", response);
+
+        // Extract array from response - handle both direct array and wrapped responses
+        const children = Array.isArray(response)
+          ? response
+          : Array.isArray(response?.data)
+            ? response.data
+            : Array.isArray(response?.classes)
+              ? response.classes
+              : [];
+        console.log("[loadChildren] Extracted children:", children);
+
+        const updateTree = (nodes: TreeNode[]): TreeNode[] =>
+          nodes.map((n: TreeNode) => {
+            if (n.id === nodeId) {
+              console.log(`[loadChildren] Found target node:`, n);
+              const mappedChildren = children.map((c: TopLevelClass) => ({
+                ...c,
+                children: c.hasChildren ? [] : undefined,
+                hasChildren: c.hasChildren,
+                subClassOfAxioms: [{ id: nodeId, type: "SubClassOf", definition: n.label }],
+              }));
+              console.log("[loadChildren] Mapped children:", mappedChildren);
+              const updatedNode = {
+                ...n,
+                children: applyInstanceCountsToTree(mappedChildren, classInstanceCounts),
+                hasChildren: mappedChildren.length > 0,
+              };
+              console.log("[loadChildren] Updated node:", updatedNode);
+              return updatedNode;
+            }
+            if (n.children) {
+              return { ...n, children: updateTree(n.children) };
+            }
+            return n;
+          });
+
+        console.log("[loadChildren] Updating class hierarchy...");
+        setClassHierarchy((prevHierarchy) => {
+          const updated = updateTree(prevHierarchy);
+          console.log("[loadChildren] New hierarchy:", updated);
+          return updated;
+        });
+        console.log(`[loadChildren] ✅ Loaded ${children.length} children for node: ${nodeId}`);
+      } catch (error) {
+        console.error(`Failed to load children for ${nodeId}`, error);
+      }
+    },
+    [projectId, classInstanceCounts, applyInstanceCountsToTree],
+  );
+
+  const fetchInferredChildren = useCallback(
+    async (nodeId: string) => {
+      if (!projectId) return [];
+      try {
+        const response = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-subclasses`, {
+          params: {
+            classIri: nodeId,
+            direct: true,
+            reasonerType: selectedReasoner,
+          },
+        });
+        const payload = response?.data || response;
+        const items = payload?.inferredSubClasses || payload?.data?.inferredSubClasses || [];
+        return Array.isArray(items) ? items : [];
+      } catch (error) {
+        console.error("[Dashboard] Failed to load inferred subclasses:", error);
+        return [];
+      }
+    },
+    [projectId, selectedReasoner],
+  );
+
+  const loadInferredChildren = useCallback(
+    async (nodeId: string) => {
+      if (!projectId) return;
+      const inferred = await fetchInferredChildren(nodeId);
+      const mappedChildren: TreeNode[] = inferred
+        .filter((item: any) => item?.iri && item.iri !== "http://www.w3.org/2002/07/owl#Nothing")
+        .map((item: any) => ({
+          id: item.iri,
+          label: item.label || getLocalName(item.iri),
+          children: [],
+          hasChildren: true,
+          subClassOfAxioms: [{ id: nodeId, type: "SubClassOf", definition: getLocalName(nodeId) || "Thing" }],
+        }));
 
       const updateTree = (nodes: TreeNode[]): TreeNode[] =>
         nodes.map((n: TreeNode) => {
           if (n.id === nodeId) {
-            console.log(`[loadChildren] Found target node:`, n);
-            const mappedChildren = children.map((c: TopLevelClass) => ({
-              ...c,
-              children: c.hasChildren ? [] : undefined,
-              hasChildren: c.hasChildren,
-              subClassOfAxioms: [{ id: nodeId, type: 'SubClassOf', definition: n.label }]
-            }));
-            console.log('[loadChildren] Mapped children:', mappedChildren);
-            const updatedNode = {
+            const withCounts = applyInstanceCountsToTree(mappedChildren, classInstanceCounts);
+            return {
               ...n,
-              children: applyInstanceCountsToTree(mappedChildren, classInstanceCounts),
-              hasChildren: mappedChildren.length > 0
+              children: withCounts,
+              hasChildren: withCounts.length > 0,
             };
-            console.log('[loadChildren] Updated node:', updatedNode);
-            return updatedNode;
           }
           if (n.children) {
             return { ...n, children: updateTree(n.children) };
@@ -5014,154 +5978,98 @@ const Dashboard: React.FC<DashboardProps> = ({
           return n;
         });
 
-      console.log('[loadChildren] Updating class hierarchy...');
-      setClassHierarchy(prevHierarchy => {
-        const updated = updateTree(prevHierarchy);
-        console.log('[loadChildren] New hierarchy:', updated);
-        return updated;
-      });
-      console.log(`[loadChildren] ✅ Loaded ${children.length} children for node: ${nodeId}`);
-    } catch (error) {
-      console.error(`Failed to load children for ${nodeId}`, error);
-    }
-  }, [projectId, classInstanceCounts, applyInstanceCountsToTree]);
+      setInferredClassHierarchy((prevHierarchy) => updateTree(prevHierarchy));
+    },
+    [projectId, fetchInferredChildren, applyInstanceCountsToTree, classInstanceCounts, getLocalName],
+  );
 
-  const fetchInferredChildren = useCallback(async (nodeId: string) => {
-    if (!projectId) return [];
-    try {
-      const response = await apiClient.get<any>(
-        `/api/ontology/${projectId}/reasoner/inferred-subclasses`,
-        {
-          params: {
-            classIri: nodeId,
-            direct: true,
-            reasonerType: selectedReasoner
+  const updateItemInState = useCallback(
+    (updatedItem: SelectableItem, markUnsaved: boolean = true) => {
+      console.log("[DEBUG] updateItemInState called for item:", updatedItem.id, "markUnsaved:", markUnsaved);
+      console.log("[CHANGE TRACKING] Entity updated:", {
+        entityId: updatedItem.id,
+        entityLabel: updatedItem.label,
+        entityType: entitiesTab,
+        modifiedBy: user?.username || "anonymous",
+        timestamp: new Date().toISOString(),
+      });
+
+      const updateRecursively = (items: SelectableItem[]): SelectableItem[] => {
+        return items.map((item) => {
+          if (item.id === updatedItem.id) {
+            // Preserve children from the existing item if the new item doesn't have them populated
+            // The updatedItem from details endpoint usually doesn't have the full children tree
+            const existingChildren = (item as TreeNode).children;
+            const newChildren = (updatedItem as TreeNode).children;
+
+            return {
+              ...updatedItem,
+              children: newChildren && newChildren.length > 0 ? newChildren : existingChildren,
+            };
           }
-        }
-      );
-      const payload = response?.data || response;
-      const items = payload?.inferredSubClasses || payload?.data?.inferredSubClasses || [];
-      return Array.isArray(items) ? items : [];
-    } catch (error) {
-      console.error('[Dashboard] Failed to load inferred subclasses:', error);
-      return [];
-    }
-  }, [projectId, selectedReasoner]);
+          const treeNode = item as TreeNode;
+          if (treeNode.children) {
+            return { ...item, children: updateRecursively(treeNode.children) };
+          }
+          return item;
+        });
+      };
 
-  const loadInferredChildren = useCallback(async (nodeId: string) => {
-    if (!projectId) return;
-    const inferred = await fetchInferredChildren(nodeId);
-    const mappedChildren: TreeNode[] = inferred
-      .filter((item: any) => item?.iri && item.iri !== 'http://www.w3.org/2002/07/owl#Nothing')
-      .map((item: any) => ({
-        id: item.iri,
-        label: item.label || getLocalName(item.iri),
-        children: [],
-        hasChildren: true,
-        subClassOfAxioms: [{ id: nodeId, type: 'SubClassOf', definition: getLocalName(nodeId) || 'Thing' }]
-      }));
-
-    const updateTree = (nodes: TreeNode[]): TreeNode[] =>
-      nodes.map((n: TreeNode) => {
-        if (n.id === nodeId) {
-          const withCounts = applyInstanceCountsToTree(mappedChildren, classInstanceCounts);
-          return {
-            ...n,
-            children: withCounts,
-            hasChildren: withCounts.length > 0
-          };
+      // Update selected item if it matches
+      setSelectedItem((prev) => {
+        if (prev?.id === updatedItem.id) {
+          console.log("[Dashboard] Updating selected item in state (ID match)");
+          return updatedItem;
         }
-        if (n.children) {
-          return { ...n, children: updateTree(n.children) };
-        }
-        return n;
+        return prev;
       });
 
-    setInferredClassHierarchy(prevHierarchy => updateTree(prevHierarchy));
-  }, [projectId, fetchInferredChildren, applyInstanceCountsToTree, classInstanceCounts, getLocalName]);
-
-  const updateItemInState = useCallback((updatedItem: SelectableItem, markUnsaved: boolean = true) => {
-    console.log('[DEBUG] updateItemInState called for item:', updatedItem.id, 'markUnsaved:', markUnsaved);
-    console.log('[CHANGE TRACKING] Entity updated:', {
-      entityId: updatedItem.id,
-      entityLabel: updatedItem.label,
-      entityType: entitiesTab,
-      modifiedBy: user?.username || 'anonymous',
-      timestamp: new Date().toISOString()
-    });
-
-    const updateRecursively = (items: SelectableItem[]): SelectableItem[] => {
-      return items.map(item => {
-        if (item.id === updatedItem.id) {
-          // Preserve children from the existing item if the new item doesn't have them populated
-          // The updatedItem from details endpoint usually doesn't have the full children tree
-          const existingChildren = (item as TreeNode).children;
-          const newChildren = (updatedItem as TreeNode).children;
-
-          return {
-            ...updatedItem,
-            children: newChildren && newChildren.length > 0 ? newChildren : existingChildren
-          };
-        }
-        const treeNode = item as TreeNode;
-        if (treeNode.children) {
-          return { ...item, children: updateRecursively(treeNode.children) };
-        }
-        return item;
-      });
-    };
-
-    // Update selected item if it matches
-    setSelectedItem(prev => {
-      if (prev?.id === updatedItem.id) {
-        console.log('[Dashboard] Updating selected item in state (ID match)');
-        return updatedItem;
+      switch (entitiesTab) {
+        case "Classes":
+          setClassHierarchy((prev) => updateRecursively(prev) as TreeNode[]);
+          break;
+        case "ObjectProperties":
+          setObjectProperties((prev) => prev.map((p) => (p.id === updatedItem.id ? (updatedItem as Property) : p)));
+          break;
+        case "DataProperties":
+          setDataProperties((prev) => prev.map((p) => (p.id === updatedItem.id ? (updatedItem as Property) : p)));
+          break;
+        case "AnnotationProperties":
+          setAnnotationProperties((prev) =>
+            prev.map((p) => (p.id === updatedItem.id ? (updatedItem as AnnotationProperty) : p)),
+          );
+          break;
+        case "Individuals":
+          setIndividuals((prev) => prev.map((i) => (i.id === updatedItem.id ? (updatedItem as Individual) : i)));
+          break;
+        case "Datatypes":
+          setDatatypes((prev) => prev.map((d) => (d.id === updatedItem.id ? (updatedItem as Datatype) : d)));
+          break;
       }
-      return prev;
-    });
 
-    switch (entitiesTab) {
-      case 'Classes':
-        setClassHierarchy(prev => updateRecursively(prev) as TreeNode[]);
-        break;
-      case 'ObjectProperties':
-        setObjectProperties(prev => prev.map(p => p.id === updatedItem.id ? updatedItem as Property : p));
-        break;
-      case 'DataProperties':
-        setDataProperties(prev => prev.map(p => p.id === updatedItem.id ? updatedItem as Property : p));
-        break;
-      case 'AnnotationProperties':
-        setAnnotationProperties(prev => prev.map(p => p.id === updatedItem.id ? updatedItem as AnnotationProperty : p));
-        break;
-      case 'Individuals':
-        setIndividuals(prev => prev.map(i => i.id === updatedItem.id ? updatedItem as Individual : i));
-        break;
-      case 'Datatypes':
-        setDatatypes(prev => prev.map(d => d.id === updatedItem.id ? updatedItem as Datatype : d));
-        break;
-    }
-
-    // Mark as unsaved to enable Save button (only if markUnsaved is true)
-    if (markUnsaved) {
-      setHasUnsavedChanges(true);
-    }
-  }, [entitiesTab, user]);
+      // Mark as unsaved to enable Save button (only if markUnsaved is true)
+      if (markUnsaved) {
+        setHasUnsavedChanges(true);
+      }
+    },
+    [entitiesTab, user],
+  );
 
   const refreshClassHierarchy = useCallback(async () => {
     if (!projectId) return;
     const now = Date.now();
     if (classHierarchyRefreshInFlight.current) {
-      console.warn('[Dashboard] Skipping class hierarchy refresh: already in flight');
+      console.warn("[Dashboard] Skipping class hierarchy refresh: already in flight");
       return;
     }
     if (now - lastClassHierarchyRefreshAt.current < 2000) {
-      console.warn('[Dashboard] Skipping class hierarchy refresh: throttled');
+      console.warn("[Dashboard] Skipping class hierarchy refresh: throttled");
       return;
     }
     classHierarchyRefreshInFlight.current = true;
     lastClassHierarchyRefreshAt.current = now;
     try {
-      const topLevelRes = await apiClient.get<any>(`/api/ontology/classes/top-level/${projectId}`);
+      const topLevelRes = await apiClient.get<any>(`/api/ontology/classes/top-level/${encodeProjectId(projectId)}`);
 
       let classes: any[] = [];
       if (Array.isArray(topLevelRes?.classes)) {
@@ -5178,7 +6086,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         ...c,
         children: [],
         hasChildren: c.hasChildren,
-        subClassOfAxioms: [{ id: 'sub1', type: 'SubClassOf', definition: 'Thing' }]
+        subClassOfAxioms: [{ id: "sub1", type: "SubClassOf", definition: "Thing" }],
       }));
 
       const owlThingNode: TreeNode = {
@@ -5186,16 +6094,18 @@ const Dashboard: React.FC<DashboardProps> = ({
         label: "owl:Thing",
         children: topLevelNodes,
         hasChildren: topLevelNodes.length > 0,
-        annotations: {}
+        annotations: {},
       };
 
       const hierarchyWithCounts = applyInstanceCountsToTree([owlThingNode], classInstanceCounts);
       setClassHierarchy(hierarchyWithCounts);
-      console.log('[Dashboard] ✅ Class hierarchy refreshed via refreshClassHierarchy');
+      console.log("[Dashboard] ✅ Class hierarchy refreshed via refreshClassHierarchy");
 
       // Re-load children for all previously expanded nodes to preserve tree state
       // We need to reload children in order (parent before child) to maintain tree structure
-      const currentExpandedNodes = expandedNodesRef.current.filter(id => id !== "http://www.w3.org/2002/07/owl#Thing");
+      const currentExpandedNodes = expandedNodesRef.current.filter(
+        (id) => id !== "http://www.w3.org/2002/07/owl#Thing",
+      );
       for (const nodeId of currentExpandedNodes) {
         try {
           await loadChildren(nodeId);
@@ -5205,23 +6115,23 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
       }
     } catch (error) {
-      console.error('[Dashboard] Failed to refresh class hierarchy:', error);
+      console.error("[Dashboard] Failed to refresh class hierarchy:", error);
     } finally {
       classHierarchyRefreshInFlight.current = false;
     }
   }, [projectId, loadChildren, classInstanceCounts, applyInstanceCountsToTree]);
 
   useEffect(() => {
-    if (!projectId || mainTab !== 'Entities' || entitiesTab !== 'Classes') return;
+    if (!projectId || mainTab !== "Entities" || entitiesTab !== "Classes") return;
 
-    console.log('[Dashboard] Classes tab active, view mode:', currentHierarchyViewMode);
-    if (currentHierarchyViewMode === 'inferred') {
+    console.log("[Dashboard] Classes tab active, view mode:", currentHierarchyViewMode);
+    if (currentHierarchyViewMode === "inferred") {
       // Always load full recursive hierarchy from API when in inferred mode
       // to ensure we have the full depth like Desktop Protégé
-      console.log('[Dashboard] Loading inferred hierarchy from API...');
+      console.log("[Dashboard] Loading inferred hierarchy from API...");
       loadInferredHierarchy();
     } else {
-      console.log('[Dashboard] Refreshing asserted hierarchy...');
+      console.log("[Dashboard] Refreshing asserted hierarchy...");
       refreshClassHierarchy();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -5229,11 +6139,11 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // Load inferred object property hierarchy when switching to inferred mode
   useEffect(() => {
-    if (!projectId || mainTab !== 'Entities' || entitiesTab !== 'ObjectProperties') return;
-    console.log('[Dashboard] ObjectProperties tab active, view mode:', hierarchyViewModes.ObjectProperties);
-    if (hierarchyViewModes.ObjectProperties === 'inferred') {
+    if (!projectId || mainTab !== "Entities" || entitiesTab !== "ObjectProperties") return;
+    console.log("[Dashboard] ObjectProperties tab active, view mode:", hierarchyViewModes.ObjectProperties);
+    if (hierarchyViewModes.ObjectProperties === "inferred") {
       // Always reload to ensure fresh data from the reasoner
-      console.log('[Dashboard] Loading inferred object property hierarchy from API...');
+      console.log("[Dashboard] Loading inferred object property hierarchy from API...");
       loadInferredObjectPropertyHierarchy();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -5241,15 +6151,47 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // Load inferred data property hierarchy when switching to inferred mode
   useEffect(() => {
-    if (!projectId || mainTab !== 'Entities' || entitiesTab !== 'DataProperties') return;
-    console.log('[Dashboard] DataProperties tab active, view mode:', hierarchyViewModes.DataProperties);
-    if (hierarchyViewModes.DataProperties === 'inferred') {
+    if (!projectId || mainTab !== "Entities" || entitiesTab !== "DataProperties") return;
+    console.log("[Dashboard] DataProperties tab active, view mode:", hierarchyViewModes.DataProperties);
+    if (hierarchyViewModes.DataProperties === "inferred") {
       // Always reload to ensure fresh data from the reasoner
-      console.log('[Dashboard] Loading inferred data property hierarchy from API...');
+      console.log("[Dashboard] Loading inferred data property hierarchy from API...");
       loadInferredDataPropertyHierarchy();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, mainTab, entitiesTab, hierarchyViewModes.DataProperties]);
+
+  // On-demand property detail loading: when a property is selected, fetch full details (domains, ranges, etc.)
+  useEffect(() => {
+    if (!projectId || !selectedItem) return;
+    const isProperty = (selectedItem as any).type === "ObjectProperty" || (selectedItem as any).type === "DataProperty";
+    if (!isProperty) return;
+    // Skip if details already loaded (has domains array)
+    if (Array.isArray((selectedItem as any).domains) && (selectedItem as any).domains.length > 0) return;
+    // Also skip for built-in top properties
+    if (
+      selectedItem.id === "http://www.w3.org/2002/07/owl#topObjectProperty" ||
+      selectedItem.id === "http://www.w3.org/2002/07/owl#topDataProperty"
+    )
+      return;
+
+    const encodedProjectId = encodeURIComponent(projectId);
+    const encodedIri = encodeURIComponent(selectedItem.id);
+    apiClient
+      .get<any>(`/api/ontology/properties/detail/${encodedProjectId}?iri=${encodedIri}`)
+      .then((res: any) => {
+        const detail = res?.data || res;
+        if (detail && detail.id) {
+          // Merge detail fields into the selected item
+          setSelectedItem((prev) => {
+            if (prev?.id !== detail.id) return prev;
+            return { ...prev, ...detail };
+          });
+        }
+      })
+      .catch((e: any) => console.warn("[Dashboard] Property detail fetch failed (non-critical):", e?.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, selectedItem?.id]);
 
   // Handle remote edits from collaborative users in real-time
   useEffect(() => {
@@ -5257,11 +6199,11 @@ const Dashboard: React.FC<DashboardProps> = ({
       const customEvent = event as CustomEvent;
       const edit = customEvent.detail;
 
-      console.log('[Dashboard] 🔄 Handling remote edit event:', edit);
+      console.log("[Dashboard] 🔄 Handling remote edit event:", edit);
 
       // Immediately reload the affected data based on edit type
       if (!projectId) {
-        console.warn('[Dashboard] No project ID, cannot apply remote edit');
+        console.warn("[Dashboard] No project ID, cannot apply remote edit");
         return;
       }
 
@@ -5269,14 +6211,14 @@ const Dashboard: React.FC<DashboardProps> = ({
       const editUserId = (edit as any).userId || (edit as any).user?.id || (edit as any).user;
       const currentUserId = user?.email || user?.id;
       if (editUserId && currentUserId && editUserId === currentUserId) {
-        console.log('[Dashboard] ⏭️ Skipping refresh - edit was made by current user');
+        console.log("[Dashboard] ⏭️ Skipping refresh - edit was made by current user");
         return;
       }
 
       // Map edit type to which data needs refreshing
       switch (edit.type) {
-        case 'CLASS_ADDED':
-          console.log('[Dashboard] 📚 Class added by another user, refreshing hierarchy');
+        case "CLASS_ADDED":
+          console.log("[Dashboard] 📚 Class added by another user, refreshing hierarchy");
           // If we have parent info, try to refresh just that part of the tree
           if ((edit as any).parent) {
             const parentId = (edit as any).parent;
@@ -5288,8 +6230,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
           break;
 
-        case 'CLASS_DELETED':
-          console.log('[Dashboard] 🗑️ Class deleted, refreshing hierarchy');
+        case "CLASS_DELETED":
+          console.log("[Dashboard] 🗑️ Class deleted, refreshing hierarchy");
           if ((edit as any).parent) {
             const parentId = (edit as any).parent;
             console.log(`[Dashboard] Refreshing children of parent: ${parentId}`);
@@ -5300,9 +6242,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
           break;
 
-        case 'CLASS_MODIFIED':
-        case 'CLASS_RENAMED':
-          console.log('[Dashboard] ✏️ Class modified/renamed:', edit);
+        case "CLASS_MODIFIED":
+        case "CLASS_RENAMED":
+          console.log("[Dashboard] ✏️ Class modified/renamed:", edit);
           // For modification, we can just fetch details and update state
           // This preserves the tree structure
           const classId = (edit as any).iri || (edit as any).id;
@@ -5310,30 +6252,31 @@ const Dashboard: React.FC<DashboardProps> = ({
             console.log(`[Dashboard] Fetching details for modified class: ${classId}`);
             // Add delay to ensure backend is ready
             setTimeout(() => {
-              apiClient.get(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(classId)}`)
-                .then(response => {
+              apiClient
+                .get(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(classId)}`)
+                .then((response) => {
                   const newData = response.data || response;
                   // Ensure ID is present
                   if (!newData.id && newData.iri) {
                     newData.id = newData.iri;
                   }
-                  console.log('[Dashboard] Received updated class data:', newData);
+                  console.log("[Dashboard] Received updated class data:", newData);
                   updateItemInState(newData);
-                  console.log('[Dashboard] ✅ Class updated in state');
+                  console.log("[Dashboard] ✅ Class updated in state");
                 })
-                .catch(error => console.error('[Dashboard] Failed to refresh class details:', error));
+                .catch((error) => console.error("[Dashboard] Failed to refresh class details:", error));
             }, 200);
           } else {
             // Fallback
-            console.warn('[Dashboard] No class ID in edit event, falling back to full refresh');
+            console.warn("[Dashboard] No class ID in edit event, falling back to full refresh");
             refreshClassHierarchy();
           }
           break;
 
-        case 'ANNOTATION_ADDED':
-        case 'ANNOTATION_MODIFIED':
-        case 'ANNOTATION_DELETED':
-          console.log('[Dashboard] 📝 Refreshing annotation due to annotation edit:', edit);
+        case "ANNOTATION_ADDED":
+        case "ANNOTATION_MODIFIED":
+        case "ANNOTATION_DELETED":
+          console.log("[Dashboard] 📝 Refreshing annotation due to annotation edit:", edit);
 
           // Add a small delay to ensure backend consistency
           setTimeout(() => {
@@ -5345,142 +6288,156 @@ const Dashboard: React.FC<DashboardProps> = ({
               const editSubject = (edit as any).subject || (edit as any).iri || (edit as any).id;
 
               if (editSubject && editSubject !== entityId) {
-                console.log(`[Dashboard] Edit subject (${editSubject}) does not match selected item (${entityId}), but refreshing anyway to be safe`);
+                console.log(
+                  `[Dashboard] Edit subject (${editSubject}) does not match selected item (${entityId}), but refreshing anyway to be safe`,
+                );
               }
 
               console.log(`[Dashboard] Refreshing selected item: ${entityId}`);
 
               // Use the appropriate endpoint based on entity type to ensure we get full details (including annotations)
               let url = `/api/ontology/class/${projectId}/${encodeURIComponent(entityId)}`;
-              if (entitiesTab === 'Classes') {
+              if (entitiesTab === "Classes") {
                 url = `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(entityId)}`;
               }
 
-              apiClient.get(url)
-                .then(response => {
+              apiClient
+                .get(url)
+                .then((response) => {
                   const newData = response.data || response;
                   // Ensure ID is present (map IRI to ID if needed)
                   if (!newData.id && newData.iri) {
                     newData.id = newData.iri;
                   }
 
-                  console.log('[Dashboard] Received updated entity data:', newData);
+                  console.log("[Dashboard] Received updated entity data:", newData);
                   // Update both selected item and the item in the state/tree
                   updateItemInState(newData);
-                  console.log('[Dashboard] ✅ Selected item refreshed with new annotations');
+                  console.log("[Dashboard] ✅ Selected item refreshed with new annotations");
                 })
-                .catch(error => console.error('[Dashboard] Failed to refresh selected item:', error));
+                .catch((error) => console.error("[Dashboard] Failed to refresh selected item:", error));
             } else {
-              console.log('[Dashboard] No item selected, skipping annotation refresh');
+              console.log("[Dashboard] No item selected, skipping annotation refresh");
             }
           }, 200); // 200ms delay
           break;
 
-        case 'PROPERTY_ADDED':
-        case 'PROPERTY_MODIFIED':
-        case 'PROPERTY_DELETED':
-          console.log('[Dashboard] 🔗 Refreshing properties due to property edit');
+        case "PROPERTY_ADDED":
+        case "PROPERTY_MODIFIED":
+        case "PROPERTY_DELETED":
+          console.log("[Dashboard] 🔗 Refreshing properties due to property edit");
           // Trigger refresh of properties
-          apiClient.get(`/api/ontology/properties/${projectId}`)
-            .then(response => {
-              const allProps = Array.isArray(response.data) ? response.data :
-                Array.isArray(response.properties) ? response.properties :
-                  Array.isArray(response) ? response : [];
+          apiClient
+            .get(`/api/ontology/properties/${encodeProjectId(projectId)}`)
+            .then((response) => {
+              const allProps = Array.isArray(response.data)
+                ? response.data
+                : Array.isArray(response.properties)
+                  ? response.properties
+                  : Array.isArray(response)
+                    ? response
+                    : [];
               const opList = allProps.filter((p: any) => p.type === "ObjectProperty");
               setObjectProperties(opList);
-              console.log('[Dashboard] ✅ Object properties refreshed');
+              console.log("[Dashboard] ✅ Object properties refreshed");
             })
-            .catch(error => console.error('[Dashboard] Failed to refresh properties:', error));
+            .catch((error) => console.error("[Dashboard] Failed to refresh properties:", error));
           break;
 
-        case 'INDIVIDUAL_ADDED':
-        case 'INDIVIDUAL_MODIFIED':
-        case 'INDIVIDUAL_DELETED':
-          console.log('[Dashboard] 👤 Refreshing individuals due to individual edit');
+        case "INDIVIDUAL_ADDED":
+        case "INDIVIDUAL_MODIFIED":
+        case "INDIVIDUAL_DELETED":
+          console.log("[Dashboard] 👤 Refreshing individuals due to individual edit");
           // Trigger refresh of individuals
-          apiClient.get(`/api/ontology/individuals/${projectId}`)
-            .then(response => {
+          apiClient
+            .get(`/api/ontology/individuals/${projectId}`)
+            .then((response) => {
               setIndividuals(response.data || []);
-              console.log('[Dashboard] ✅ Individuals refreshed');
+              console.log("[Dashboard] ✅ Individuals refreshed");
             })
-            .catch(error => console.error('[Dashboard] Failed to refresh individuals:', error));
+            .catch((error) => console.error("[Dashboard] Failed to refresh individuals:", error));
           break;
 
         // Handle SPARQL updates - need full refresh since we don't know what changed
-        case 'SPARQL_UPDATE':
-          console.log('[Dashboard] 📊 SPARQL update detected, refreshing all data');
-          showNotification(`${(edit as any).username || 'Someone'} executed a SPARQL update. Refreshing...`, 'info');
+        case "SPARQL_UPDATE":
+          console.log("[Dashboard] 📊 SPARQL update detected, refreshing all data");
+          showNotification(`${(edit as any).username || "Someone"} executed a SPARQL update. Refreshing...`, "info");
           // Full refresh since SPARQL can change anything
           fetchData(projectId, false);
           break;
 
         // Handle change reverts - need full refresh
-        case 'CHANGE_REVERTED':
-          console.log('[Dashboard] ⏪ Change reverted, refreshing all data');
-          showNotification(`${(edit as any).username || 'Someone'} reverted a change. Refreshing...`, 'info');
+        case "CHANGE_REVERTED":
+          console.log("[Dashboard] ⏪ Change reverted, refreshing all data");
+          showNotification(`${(edit as any).username || "Someone"} reverted a change. Refreshing...`, "info");
           // Full refresh to get the reverted state
           fetchData(projectId, false);
           break;
 
         // Handle project saved by another user
-        case 'PROJECT_SAVED':
-          console.log('[Dashboard] 💾 Project saved by another user');
-          showNotification(`${(edit as any).username || 'Someone'} saved the project with ${(edit as any).appliedChanges || 0} changes`, 'info');
+        case "PROJECT_SAVED":
+          console.log("[Dashboard] 💾 Project saved by another user");
+          showNotification(
+            `${(edit as any).username || "Someone"} saved the project with ${(edit as any).appliedChanges || 0} changes`,
+            "info",
+          );
           // Refresh to get the latest saved state
           fetchData(projectId, false);
           break;
 
         // Handle disjoint axiom changes
-        case 'DISJOINT_ADDED':
-        case 'DISJOINT_REMOVED':
-          console.log('[Dashboard] 🔗 Disjoint axiom changed, refreshing class hierarchy');
+        case "DISJOINT_ADDED":
+        case "DISJOINT_REMOVED":
+          console.log("[Dashboard] 🔗 Disjoint axiom changed, refreshing class hierarchy");
           refreshClassHierarchy();
           break;
 
         // Handle equivalent class axiom changes
-        case 'EQUIVALENT_ADDED':
-        case 'EQUIVALENT_REMOVED':
-          console.log('[Dashboard] ⚖️ Equivalent class axiom changed, refreshing selected item:', edit);
+        case "EQUIVALENT_ADDED":
+        case "EQUIVALENT_REMOVED":
+          console.log("[Dashboard] ⚖️ Equivalent class axiom changed, refreshing selected item:", edit);
           // If the edit is for the currently selected class, refresh its details
           if (selectedItem && selectedItem.id === (edit as any).nodeId) {
-            console.log('[Dashboard] Refreshing selected class details for equivalent axiom change');
+            console.log("[Dashboard] Refreshing selected class details for equivalent axiom change");
             // Use 1000ms delay to allow ClassEditor's 800ms refresh to complete first
             setTimeout(() => {
-              apiClient.get(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(selectedItem.id)}`)
-                .then(response => {
+              apiClient
+                .get(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(selectedItem.id)}`)
+                .then((response) => {
                   const details = response?.data?.data || response?.data || response;
-                  console.log('[Dashboard] ✅ Class details refreshed with equivalent axioms:', details);
+                  console.log("[Dashboard] ✅ Class details refreshed with equivalent axioms:", details);
                   updateItemInState({
                     ...selectedItem,
-                    equivalentClassesAxioms: details.equivalentClassesAxioms || []
+                    equivalentClassesAxioms: details.equivalentClassesAxioms || [],
                   });
                 })
-                .catch(error => console.error('[Dashboard] Failed to refresh class details:', error));
+                .catch((error) => console.error("[Dashboard] Failed to refresh class details:", error));
             }, 1000);
           }
           break;
 
         // Handle subclass axiom changes
-        case 'SUBCLASS_ADDED':
-        case 'SUBCLASS_REMOVED':
-          console.log('[Dashboard] ⬆️ Subclass axiom changed, refreshing selected item:', edit);
+        case "SUBCLASS_ADDED":
+        case "SUBCLASS_REMOVED":
+          console.log("[Dashboard] ⬆️ Subclass axiom changed, refreshing selected item:", edit);
           // If the edit is for the currently selected class, refresh its details
           if (selectedItem && selectedItem.id === (edit as any).nodeId) {
-            console.log('[Dashboard] Refreshing selected class details for subclass axiom change');
+            console.log("[Dashboard] Refreshing selected class details for subclass axiom change");
             // Use 1000ms delay to allow ClassEditor's 800ms refresh to complete first
             setTimeout(() => {
-              apiClient.get(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(selectedItem.id)}`)
-                .then(response => {
+              apiClient
+                .get(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(selectedItem.id)}`)
+                .then((response) => {
                   const details = response?.data?.data || response?.data || response;
-                  console.log('[Dashboard] ✅ Class details refreshed with subclass axioms:', details);
+                  console.log("[Dashboard] ✅ Class details refreshed with subclass axioms:", details);
                   updateItemInState({
                     ...selectedItem,
-                    subClassOfAxioms: details.subClassOfAxioms || []
+                    subClassOfAxioms: details.subClassOfAxioms || [],
                   });
                   // Also refresh class hierarchy since parent relationships changed
                   refreshClassHierarchy();
                 })
-                .catch(error => console.error('[Dashboard] Failed to refresh class details:', error));
+                .catch((error) => console.error("[Dashboard] Failed to refresh class details:", error));
             }, 1000);
           } else {
             // Still refresh hierarchy for subclass changes
@@ -5489,30 +6446,31 @@ const Dashboard: React.FC<DashboardProps> = ({
           break;
 
         default:
-          console.log('[Dashboard] 🔄 Generic remote edit, refreshing metadata');
+          console.log("[Dashboard] 🔄 Generic remote edit, refreshing metadata");
           // Generic refresh for other edit types
-          apiClient.get(`/api/ontology/metadata/${projectId}`)
-            .then(response => {
+          apiClient
+            .get(`/api/ontology/metadata/${projectId}`)
+            .then((response) => {
               setMetadata(response.data);
-              console.log('[Dashboard] ✅ Metadata refreshed');
+              console.log("[Dashboard] ✅ Metadata refreshed");
             })
-            .catch(error => console.error('[Dashboard] Failed to refresh metadata:', error));
+            .catch((error) => console.error("[Dashboard] Failed to refresh metadata:", error));
       }
 
       // Refresh collaboration panel changes list to show the new edit immediately
       if (collaborationPanelRef.current) {
-        console.log('[Dashboard] 🔄 Refreshing collaboration panel changes');
+        console.log("[Dashboard] 🔄 Refreshing collaboration panel changes");
         collaborationPanelRef.current.refreshChanges();
       }
     };
 
     // Listen for remoteEditReceived events
-    window.addEventListener('remoteEditReceived', handleRemoteEdit as EventListener);
-    console.log('[Dashboard] 🎧 Registered listener for remote edits');
+    window.addEventListener("remoteEditReceived", handleRemoteEdit as EventListener);
+    console.log("[Dashboard] 🎧 Registered listener for remote edits");
 
     return () => {
-      window.removeEventListener('remoteEditReceived', handleRemoteEdit as EventListener);
-      console.log('[Dashboard] 🎧 Unregistered listener for remote edits');
+      window.removeEventListener("remoteEditReceived", handleRemoteEdit as EventListener);
+      console.log("[Dashboard] 🎧 Unregistered listener for remote edits");
     };
   }, [projectId, selectedItem, entitiesTab]); // Removed fetchData, showNotification to prevent infinite loop
 
@@ -5521,14 +6479,14 @@ const Dashboard: React.FC<DashboardProps> = ({
     const handleRollback = (event: Event) => {
       const customEvent = event as CustomEvent;
       const detail = customEvent.detail;
-      console.log('[Dashboard] 🔄 Rollback event received:', detail);
+      console.log("[Dashboard] 🔄 Rollback event received:", detail);
 
       if (!projectId || detail?.projectId !== projectId) {
         return;
       }
 
-      const rollbackUser = detail.username || 'Someone';
-      const originalAuthor = detail.originalAuthor || 'Unknown';
+      const rollbackUser = detail.username || "Someone";
+      const originalAuthor = detail.originalAuthor || "Unknown";
       const oldValue = detail.oldValue;
       const newValue = detail.newValue;
 
@@ -5539,16 +6497,16 @@ const Dashboard: React.FC<DashboardProps> = ({
       } else if (newValue) {
         message += ` (restored to "${newValue}")`;
       }
-      message += '. Refreshing data...';
+      message += ". Refreshing data...";
 
-      showNotification(message, 'info');
+      showNotification(message, "info");
 
       // Check if this is a rollback of an "added" change (which means deleting the entity)
-      const isAddedRollback = detail.action && detail.action.toLowerCase() === 'added';
+      const isAddedRollback = detail.action && detail.action.toLowerCase() === "added";
 
       if (isAddedRollback) {
         // Entity was deleted by rollback - remove it from UI
-        console.log('[Dashboard] 🗑️ Rollback of added change - removing entity from UI:', detail.entityIRI);
+        console.log("[Dashboard] 🗑️ Rollback of added change - removing entity from UI:", detail.entityIRI);
 
         // Clear selection if this was the selected item
         if (selectedItem?.id === detail.entityIRI) {
@@ -5556,14 +6514,14 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
 
         // Remove from class hierarchy
-        if (entitiesTab === 'Classes' || detail.changeType?.toLowerCase().includes('class')) {
-          setClassHierarchy(prevHierarchy => {
+        if (entitiesTab === "Classes" || detail.changeType?.toLowerCase().includes("class")) {
+          setClassHierarchy((prevHierarchy) => {
             const removeNodeFromTree = (nodes: TreeNode[]): TreeNode[] => {
               return nodes
-                .filter(node => node.id !== detail.entityIRI)
-                .map(node => ({
+                .filter((node) => node.id !== detail.entityIRI)
+                .map((node) => ({
                   ...node,
-                  children: node.children ? removeNodeFromTree(node.children) : []
+                  children: node.children ? removeNodeFromTree(node.children) : [],
                 }));
             };
             return removeNodeFromTree(prevHierarchy);
@@ -5571,17 +6529,17 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
 
         // Remove from properties lists
-        if (detail.changeType?.toLowerCase().includes('objectproperty')) {
-          setObjectProperties(prev => prev.filter(p => p.id !== detail.entityIRI));
-        } else if (detail.changeType?.toLowerCase().includes('dataproperty')) {
-          setDataProperties(prev => prev.filter(p => p.id !== detail.entityIRI));
-        } else if (detail.changeType?.toLowerCase().includes('annotationproperty')) {
-          setAnnotationProperties(prev => prev.filter(p => p.id !== detail.entityIRI));
+        if (detail.changeType?.toLowerCase().includes("objectproperty")) {
+          setObjectProperties((prev) => prev.filter((p) => p.id !== detail.entityIRI));
+        } else if (detail.changeType?.toLowerCase().includes("dataproperty")) {
+          setDataProperties((prev) => prev.filter((p) => p.id !== detail.entityIRI));
+        } else if (detail.changeType?.toLowerCase().includes("annotationproperty")) {
+          setAnnotationProperties((prev) => prev.filter((p) => p.id !== detail.entityIRI));
         }
 
         // Remove from individuals list
-        if (detail.changeType?.toLowerCase().includes('individual')) {
-          setIndividuals(prev => prev.filter(i => i.id !== detail.entityIRI));
+        if (detail.changeType?.toLowerCase().includes("individual")) {
+          setIndividuals((prev) => prev.filter((i) => i.id !== detail.entityIRI));
         }
 
         return; // Don't try to fetch the deleted entity
@@ -5591,45 +6549,53 @@ const Dashboard: React.FC<DashboardProps> = ({
       setTimeout(() => {
         // If we have the entity IRI, refresh its details first
         if (detail?.entityIRI) {
-          console.log('[Dashboard] 🔄 Refreshing entity details after rollback for:', detail.entityIRI);
-          console.log('[Dashboard] 🔄 Entity type from event:', detail.entityType, 'Current tab:', entitiesTab);
+          console.log("[Dashboard] 🔄 Refreshing entity details after rollback for:", detail.entityIRI);
+          console.log("[Dashboard] 🔄 Entity type from event:", detail.entityType, "Current tab:", entitiesTab);
 
           // Determine the correct API endpoint based on current tab first, then entity type
           // Annotation changes should use the entity's actual type (class, property, individual)
-          const entityType = detail.entityType ? detail.entityType.toLowerCase() : '';
-          let apiEndpoint = '';
-
+          const entityType = detail.entityType ? detail.entityType.toLowerCase() : "";
+          let apiEndpoint = "";
 
           // For annotation changes, we need to refresh the entity that has the annotation
           // The entityIRI is the entity whose annotation was changed
           // Use entitiesTab as primary indicator since that's what the user is viewing
-          if (entitiesTab === 'Classes' || entityType.includes('class') || entityType.includes('annotation')) {
+          if (entitiesTab === "Classes" || entityType.includes("class") || entityType.includes("annotation")) {
             // For annotation changes on classes, fetch class details
             apiEndpoint = `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(detail.entityIRI)}`;
-          } else if (entitiesTab === 'ObjectProperties' || entityType.includes('objectproperty') || entityType.includes('object_property')) {
+          } else if (
+            entitiesTab === "ObjectProperties" ||
+            entityType.includes("objectproperty") ||
+            entityType.includes("object_property")
+          ) {
             apiEndpoint = `/api/ontology/${projectId}/object-properties/${encodeURIComponent(detail.entityIRI)}`;
-          } else if (entitiesTab === 'DataProperties' || entityType.includes('dataproperty') || entityType.includes('data_property')) {
+          } else if (
+            entitiesTab === "DataProperties" ||
+            entityType.includes("dataproperty") ||
+            entityType.includes("data_property")
+          ) {
             apiEndpoint = `/api/ontology/${projectId}/data-properties/${encodeURIComponent(detail.entityIRI)}`;
-          } else if (entitiesTab === 'AnnotationProperties') {
+          } else if (entitiesTab === "AnnotationProperties") {
             apiEndpoint = `/api/ontology/${projectId}/annotation-properties/${encodeURIComponent(detail.entityIRI)}`;
-          } else if (entitiesTab === 'Individuals' || entityType.includes('individual')) {
+          } else if (entitiesTab === "Individuals" || entityType.includes("individual")) {
             apiEndpoint = `/api/ontology/${projectId}/individuals/${encodeURIComponent(detail.entityIRI)}`;
           } else {
             // Fallback: try to determine by the entityIRI or default to class details
-            console.log('[Dashboard] 🔄 No specific tab match, using current entitiesTab:', entitiesTab);
+            console.log("[Dashboard] 🔄 No specific tab match, using current entitiesTab:", entitiesTab);
             // Default to class details as most common case
             apiEndpoint = `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(detail.entityIRI)}`;
           }
 
           if (apiEndpoint) {
-            apiClient.get(apiEndpoint)
-              .then(response => {
+            apiClient
+              .get(apiEndpoint)
+              .then((response) => {
                 const newData = response.data || response;
                 if (!newData.id && newData.iri) {
                   newData.id = newData.iri;
                 }
-                console.log('[Dashboard] ✅ Refreshed entity after rollback:', newData);
-                console.log('[Dashboard] 📝 Updated label:', newData.label);
+                console.log("[Dashboard] ✅ Refreshed entity after rollback:", newData);
+                console.log("[Dashboard] 📝 Updated label:", newData.label);
 
                 // Update the entity in the appropriate list (don't mark as unsaved - rollback is already in DB)
                 updateItemInState(newData, false);
@@ -5641,15 +6607,14 @@ const Dashboard: React.FC<DashboardProps> = ({
 
                 // For annotation changes, just update the node in place without refreshing hierarchy
                 // This prevents the tree from collapsing
-                const isAnnotationChange = entityType.includes('annotation') ||
-                  (oldValue && newValue); // Has old/new values = annotation change
+                const isAnnotationChange = entityType.includes("annotation") || (oldValue && newValue); // Has old/new values = annotation change
 
-                if (isAnnotationChange && (entitiesTab === 'Classes' || entityType.includes('class'))) {
-                  console.log('[Dashboard] 📝 Soft refresh: updating class node annotations in place');
+                if (isAnnotationChange && (entitiesTab === "Classes" || entityType.includes("class"))) {
+                  console.log("[Dashboard] 📝 Soft refresh: updating class node annotations in place");
                   // Update the class hierarchy node without reloading the tree
-                  setClassHierarchy(prevHierarchy => {
+                  setClassHierarchy((prevHierarchy) => {
                     const updateNodeInTree = (nodes: TreeNode[]): TreeNode[] => {
-                      return nodes.map(node => {
+                      return nodes.map((node) => {
                         if (node.id === detail.entityIRI) {
                           // Update this node's annotations
                           return { ...node, annotations: newData.annotations || node.annotations };
@@ -5665,74 +6630,78 @@ const Dashboard: React.FC<DashboardProps> = ({
                   });
                 } else {
                   // For non-annotation changes, do a full refresh
-                  if (entitiesTab === 'Classes' || entityType.includes('class')) {
+                  if (entitiesTab === "Classes" || entityType.includes("class")) {
                     refreshClassHierarchy();
-                  } else if (entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties' || entitiesTab === 'AnnotationProperties') {
+                  } else if (
+                    entitiesTab === "ObjectProperties" ||
+                    entitiesTab === "DataProperties" ||
+                    entitiesTab === "AnnotationProperties"
+                  ) {
                     refreshProperties();
-                  } else if (entitiesTab === 'Individuals') {
+                  } else if (entitiesTab === "Individuals") {
                     // Refresh individuals list
-                    fetchData();
+                    if (projectId) fetchData(projectId, false);
                   }
                 }
               })
-              .catch(error => {
-                console.error('[Dashboard] Failed to refresh entity after rollback:', error);
+              .catch((error) => {
+                console.error("[Dashboard] Failed to refresh entity after rollback:", error);
                 // If specific entity fetch fails, try a full data refresh
-                console.log('[Dashboard] Attempting full data refresh after rollback error');
-                fetchData();
+                console.log("[Dashboard] Attempting full data refresh after rollback error");
+                if (projectId) fetchData(projectId, false);
               });
           } else {
             // No specific endpoint, do a full refresh
-            console.log('[Dashboard] No API endpoint matched, doing full refresh');
-            fetchData();
+            console.log("[Dashboard] No API endpoint matched, doing full refresh");
+            if (projectId) fetchData(projectId, false);
           }
         }
       }, 1500); // Increased delay to ensure GraphDB fully processes the rollback
     };
 
-    window.addEventListener('ontologyRollback', handleRollback as EventListener);
-    console.log('[Dashboard] 🎧 Registered listener for rollback events');
+    window.addEventListener("ontologyRollback", handleRollback as EventListener);
+    console.log("[Dashboard] 🎧 Registered listener for rollback events");
 
     return () => {
-      window.removeEventListener('ontologyRollback', handleRollback as EventListener);
+      window.removeEventListener("ontologyRollback", handleRollback as EventListener);
     };
   }, [projectId, selectedItem, entitiesTab]); // Removed fetchData, showNotification to prevent infinite loop
 
   // Handle file share notifications
   useEffect(() => {
     const handleFileShared = (event: CustomEvent) => {
-      console.log('[Dashboard] 📨 File shared event received:', event.detail);
+      console.log("[Dashboard] 📨 File shared event received:", event.detail);
       const notification = event.detail;
 
       // Show toast notification
       showToast(
         `${notification.sharedByUsername} shared "${notification.fileName}" with you (${notification.permission} access)`,
-        'info'
+        "info",
       );
 
       // Refresh the file list to show the new shared file
       if (projectId) {
-        console.log('[Dashboard] Refreshing data after file share...');
+        console.log("[Dashboard] Refreshing data after file share...");
         setTimeout(() => {
           fetchData(projectId, false);
         }, 500);
       }
     };
 
-    window.addEventListener('fileShared', handleFileShared as EventListener);
-    console.log('[Dashboard] 🎧 Registered listener for file share events');
+    window.addEventListener("fileShared", handleFileShared as EventListener);
+    console.log("[Dashboard] 🎧 Registered listener for file share events");
 
     return () => {
-      window.removeEventListener('fileShared', handleFileShared as EventListener);
+      window.removeEventListener("fileShared", handleFileShared as EventListener);
     };
   }, [projectId]); // Removed fetchData, showToast to prevent infinite loop
 
   // Handle reconnection after WebSocket disconnect - refresh data to sync
   useEffect(() => {
     const handleReconnection = (event: Event) => {
-      console.log('[Dashboard] 🔄 Collaboration reconnected, refreshing data...');
+      console.log("[Dashboard] 🔄 Collaboration reconnected, refreshing data...");
       if (projectId) {
-        showNotification('Reconnected! Refreshing data...', 'info');
+        showNotification("Reconnected! Refreshing data...", "info");
         // Give server a moment to be ready
         setTimeout(() => {
           fetchData(projectId, false);
@@ -5740,10 +6709,10 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
     };
 
-    window.addEventListener('collaborationReconnected', handleReconnection as EventListener);
+    window.addEventListener("collaborationReconnected", handleReconnection as EventListener);
 
     return () => {
-      window.removeEventListener('collaborationReconnected', handleReconnection as EventListener);
+      window.removeEventListener("collaborationReconnected", handleReconnection as EventListener);
     };
   }, [projectId]); // Removed fetchData, showNotification to prevent infinite loop
 
@@ -5754,15 +6723,15 @@ const Dashboard: React.FC<DashboardProps> = ({
       collaboration.addNotification({
         type: options.type,
         message: `${options.title}: ${options.message}`,
-        userId: 'system',
-        username: 'System',
-        userColor: '#6366f1',
-        timestamp: Date.now()
+        userId: "system",
+        username: "System",
+        userColor: "#6366f1",
+        timestamp: Date.now(),
       });
     });
 
     // Request notification permission for web browsers
-    if (typeof window !== 'undefined' && !window.vscode) {
+    if (typeof window !== "undefined" && !window.vscode) {
       notificationService.requestPermission();
     }
   }, []); // Empty deps - collaboration.addNotification is stable
@@ -5775,27 +6744,25 @@ const Dashboard: React.FC<DashboardProps> = ({
         const installed = pluginLoader.getInstalledPlugins();
 
         // Update state with installed plugin IDs
-        const pluginIds = installed.map(p => p.id);
+        const pluginIds = installed.map((p) => p.id);
         setInstalledPlugins(new Set(pluginIds));
 
         // Map plugin IDs to tab IDs and show tabs for installed plugins
         const pluginToTabMap: Record<string, string> = {
-          'swrl-editor-plugin': 'SWRL',
-          'graph-view-plugin': 'Graph',
-          'fuzzy-ontology-plugin': 'Fuzzy',
-          'change-assistant-plugin': 'Changes',
-          'sparql-query-plugin': 'SPARQL',
-          'reasoner-plugin': 'Reasoner'
+          "swrl-editor-plugin": "SWRL",
+          "graph-view-plugin": "Graph",
+          "fuzzy-ontology-plugin": "Fuzzy",
+          "change-assistant-plugin": "Changes",
+          "sparql-query-plugin": "SPARQL",
+          "reasoner-plugin": "Reasoner",
         };
 
-        const tabsToShow = pluginIds
-          .map(id => pluginToTabMap[id])
-          .filter(Boolean);
+        const tabsToShow = pluginIds.map((id) => pluginToTabMap[id]).filter(Boolean);
 
         if (tabsToShow.length > 0) {
-          setVisibleMainTabs(prev => {
+          setVisibleMainTabs((prev) => {
             const newTabs = [...prev];
-            tabsToShow.forEach(tab => {
+            tabsToShow.forEach((tab) => {
               if (!newTabs.includes(tab)) {
                 newTabs.push(tab);
               }
@@ -5808,21 +6775,21 @@ const Dashboard: React.FC<DashboardProps> = ({
         const loadPluginPromises = installed.map(async (plugin) => {
           try {
             // Set loading state
-            setPluginLoadingStates(prev => ({ ...prev, [plugin.id]: { loading: true, error: null } }));
+            setPluginLoadingStates((prev) => ({ ...prev, [plugin.id]: { loading: true, error: null } }));
 
             await pluginLoader.loadPlugin(plugin.id);
             console.log(`[Dashboard] Auto-loaded plugin: ${plugin.id}`);
 
             // Clear loading state on success
-            setPluginLoadingStates(prev => ({ ...prev, [plugin.id]: { loading: false, error: null } }));
+            setPluginLoadingStates((prev) => ({ ...prev, [plugin.id]: { loading: false, error: null } }));
             // Force re-render
-            setInstalledPlugins(prev => new Set([...prev]));
+            setInstalledPlugins((prev) => new Set([...prev]));
           } catch (error) {
             console.warn(`[Dashboard] Failed to auto-load plugin ${plugin.id}:`, error);
             // Set error state
-            setPluginLoadingStates(prev => ({
+            setPluginLoadingStates((prev) => ({
               ...prev,
-              [plugin.id]: { loading: false, error: error instanceof Error ? error.message : 'Failed to load plugin' }
+              [plugin.id]: { loading: false, error: error instanceof Error ? error.message : "Failed to load plugin" },
             }));
           }
         });
@@ -5831,7 +6798,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         await Promise.all(loadPluginPromises);
         console.log(`[Dashboard] All plugins loaded in parallel`);
       } catch (error) {
-        console.error('[Dashboard] Failed to load installed plugins:', error);
+        console.error("[Dashboard] Failed to load installed plugins:", error);
       }
     };
 
@@ -5842,59 +6809,80 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // #region Event Handlers
 
+  const toggleNode = useCallback(
+    async (nodeId: string) => {
+      console.log("[toggleNode] 🔄 Called for nodeId:", nodeId);
+      console.log("[toggleNode] Current expandedNodes:", expandedNodes);
+      console.log("[toggleNode] entitiesTab:", entitiesTab);
+      console.log("[toggleNode] currentHierarchyViewMode:", currentHierarchyViewMode);
 
-  const toggleNode = useCallback(async (nodeId: string) => {
-    console.log('[toggleNode] 🔄 Called for nodeId:', nodeId);
-    console.log('[toggleNode] Current expandedNodes:', expandedNodes);
-    console.log('[toggleNode] entitiesTab:', entitiesTab);
-    console.log('[toggleNode] currentHierarchyViewMode:', currentHierarchyViewMode);
-
-    if (expandedNodes.includes(nodeId)) {
-      console.log('[toggleNode] ⬇️ Collapsing node:', nodeId);
-      setExpandedNodes(prev => prev.filter(id => id !== nodeId));
-    } else {
-      console.log('[toggleNode] ➡️ Expanding node:', nodeId);
-      const findNode = (nodes: TreeNode[], id: string): TreeNode | null => {
-        for (const node of nodes) {
-          if (node.id === id) return node;
-          if (node.children) {
-            const found = findNode(node.children, id);
-            if (found) return found;
-          }
-        }
-        return null;
-      };
-      const currentHierarchy = entitiesTab === 'Classes'
-        ? (currentHierarchyViewMode === 'inferred' ? inferredClassHierarchy : classHierarchy)
-        : (entitiesTab === 'ObjectProperties'
-          ? (hierarchyViewModes.ObjectProperties === 'inferred' ? inferredObjectPropertyHierarchy : objectPropertyHierarchy)
-          : (hierarchyViewModes.DataProperties === 'inferred' ? inferredDataPropertyHierarchy : dataPropertyHierarchy)
-        );
-
-      const node = findNode(currentHierarchy as TreeNode[], nodeId);
-
-      setExpandedNodes(prev => {
-        const updated = [...prev, nodeId];
-        return updated;
-      });
-
-      if (node && node.hasChildren && (!node.children || node.children.length === 0)) {
-        console.log(`Node ${nodeId} needs children loaded`);
-        if (entitiesTab === 'Classes') {
-          if (currentHierarchyViewMode === 'inferred') {
-            await loadInferredChildren(nodeId);
-          } else {
-            await loadChildren(nodeId);
-          }
-        } else if (entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties') {
-          // Properties usually don't have on-demand loading in this UI yet, 
-          // but we could add it here if needed.
-        }
+      if (expandedNodes.includes(nodeId)) {
+        console.log("[toggleNode] ⬇️ Collapsing node:", nodeId);
+        setExpandedNodes((prev) => prev.filter((id) => id !== nodeId));
       } else {
-        console.log('[toggleNode] ℹ️ Node already has children or hasChildren is false');
+        console.log("[toggleNode] ➡️ Expanding node:", nodeId);
+        const findNode = (nodes: TreeNode[], id: string): TreeNode | null => {
+          for (const node of nodes) {
+            if (node.id === id) return node;
+            if (node.children) {
+              const found = findNode(node.children, id);
+              if (found) return found;
+            }
+          }
+          return null;
+        };
+        const currentHierarchy =
+          entitiesTab === "Classes"
+            ? currentHierarchyViewMode === "inferred"
+              ? inferredClassHierarchy
+              : classHierarchy
+            : entitiesTab === "ObjectProperties"
+              ? hierarchyViewModes.ObjectProperties === "inferred"
+                ? inferredObjectPropertyHierarchy
+                : objectPropertyHierarchy
+              : hierarchyViewModes.DataProperties === "inferred"
+                ? inferredDataPropertyHierarchy
+                : dataPropertyHierarchy;
+
+        const node = findNode(currentHierarchy as TreeNode[], nodeId);
+
+        setExpandedNodes((prev) => {
+          const updated = [...prev, nodeId];
+          return updated;
+        });
+
+        if (node && node.hasChildren && (!node.children || node.children.length === 0)) {
+          console.log(`Node ${nodeId} needs children loaded`);
+          if (entitiesTab === "Classes") {
+            if (currentHierarchyViewMode === "inferred") {
+              await loadInferredChildren(nodeId);
+            } else {
+              await loadChildren(nodeId);
+            }
+          } else if (entitiesTab === "ObjectProperties" || entitiesTab === "DataProperties") {
+            // Properties usually don't have on-demand loading in this UI yet,
+            // but we could add it here if needed.
+          }
+        } else {
+          console.log("[toggleNode] ℹ️ Node already has children or hasChildren is false");
+        }
       }
-    }
-  }, [expandedNodes, classHierarchy, inferredClassHierarchy, objectPropertyHierarchy, dataPropertyHierarchy, inferredObjectPropertyHierarchy, inferredDataPropertyHierarchy, hierarchyViewModes, loadChildren, loadInferredChildren, entitiesTab, currentHierarchyViewMode]);
+    },
+    [
+      expandedNodes,
+      classHierarchy,
+      inferredClassHierarchy,
+      objectPropertyHierarchy,
+      dataPropertyHierarchy,
+      inferredObjectPropertyHierarchy,
+      inferredDataPropertyHierarchy,
+      hierarchyViewModes,
+      loadChildren,
+      loadInferredChildren,
+      entitiesTab,
+      currentHierarchyViewMode,
+    ],
+  );
 
   // Expose a safe global for bundles/minified code paths that still reference toggleNode
   useEffect(() => {
@@ -5906,19 +6894,17 @@ const Dashboard: React.FC<DashboardProps> = ({
     };
   }, [toggleNode]);
 
-
-
   // Update draft count
   const updateDraftCount = useCallback(async () => {
     if (!projectId) return;
     try {
-      console.log('[Dashboard] Updating draft count for project:', projectId);
+      console.log("[Dashboard] Updating draft count for project:", projectId);
       const stats = await draftTrackingService.getDraftStats(projectId);
-      console.log('[Dashboard] Draft stats received:', stats);
+      console.log("[Dashboard] Draft stats received:", stats);
       setDraftCount(stats.unappliedDrafts);
       setHasUnsavedChanges(stats.unappliedDrafts > 0);
     } catch (error) {
-      console.error('[Dashboard] Failed to update draft count:', error);
+      console.error("[Dashboard] Failed to update draft count:", error);
       // Don't show error notification - just log it
       // The user can still work, we'll try again later
     }
@@ -5926,23 +6912,23 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // Mark as unsaved (called after mutations)
   const markAsUnsaved = useCallback(() => {
-    console.log('[DEBUG] markAsUnsaved called');
+    console.log("[DEBUG] markAsUnsaved called");
     setHasUnsavedChanges(true);
     // Update draft count after a short delay
     setTimeout(() => updateDraftCount(), 500);
 
     // Auto-sync reasoner if enabled
     if (isReasonerSynced && isReasonerRunning && projectId) {
-      console.log('[DEBUG] Auto-sync: Re-running reasoner after ontology change');
+      console.log("[DEBUG] Auto-sync: Re-running reasoner after ontology change");
       // Debounce reasoner re-run to avoid too many calls
       setTimeout(async () => {
         try {
           const reasonerType = normalizeReasonerType(selectedReasoner);
           const results = await fetchReasonerBundle(reasonerType);
           setReasonerResults(results);
-          console.log('[DEBUG] Auto-sync: Reasoner updated successfully');
+          console.log("[DEBUG] Auto-sync: Reasoner updated successfully");
         } catch (error) {
-          console.error('[DEBUG] Auto-sync: Reasoner update failed', error);
+          console.error("[DEBUG] Auto-sync: Reasoner update failed", error);
         }
       }, 2000); // Wait 2 seconds after last change
     }
@@ -5950,20 +6936,20 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // Save changes to backend (applies drafts to GraphDB)
   const handleSave = useCallback(async () => {
-    console.log('[DEBUG] handleSave called');
+    console.log("[DEBUG] handleSave called");
     if (!projectId || isSaving) return;
 
     try {
       setIsSaving(true);
-      console.log('[Dashboard] 💾 Saving changes to backend...');
+      console.log("[Dashboard] 💾 Saving changes to backend...");
 
       // Notify sync service about local save to avoid triggering refresh for current user
       syncService.notifyLocalSave(projectId);
 
       // Save will apply all drafts to GraphDB and export
       const startTime = Date.now();
-      const saveUrl = `/api/ontology/save/${projectId}?userId=${user?.id || 'anonymous'}&username=${encodeURIComponent(user?.username || 'Anonymous')}`;
-      console.log('[Dashboard] 📤 Save URL:', saveUrl);
+      const saveUrl = `/api/ontology/save/${projectId}?userId=${user?.id || "anonymous"}&username=${encodeURIComponent(user?.username || "Anonymous")}`;
+      console.log("[Dashboard] 📤 Save URL:", saveUrl);
       const response = await apiClient.post(saveUrl);
       const duration = Date.now() - startTime;
 
@@ -5976,16 +6962,18 @@ const Dashboard: React.FC<DashboardProps> = ({
         setHasUnsavedChanges(false);
         setDraftCount(0);
 
-        console.log('[Dashboard] ✅ Changes saved to GraphDB database!');
-        console.log('[Dashboard] 📊 Applied drafts:', data.appliedDrafts || 0);
-        console.log('[Dashboard] 📝 History recorded in database');
+        console.log("[Dashboard] ✅ Changes saved to GraphDB database!");
+        console.log("[Dashboard] 📊 Applied drafts:", data.appliedDrafts || 0);
+        console.log("[Dashboard] 📝 History recorded in database");
 
-        notificationService.success('Saved to Database',
-          `${data.appliedDrafts || 0} change${(data.appliedDrafts || 0) !== 1 ? 's' : ''} saved to GraphDB and history recorded.`);
-        console.log('[Dashboard] Save complete:', data);
+        notificationService.success(
+          "Saved to Database",
+          `${data.appliedDrafts || 0} change${(data.appliedDrafts || 0) !== 1 ? "s" : ""} saved to GraphDB and history recorded.`,
+        );
+        console.log("[Dashboard] Save complete:", data);
 
         // Refresh the current file to show saved changes
-        console.log('[Dashboard] 🔄 Refreshing current file after save...');
+        console.log("[Dashboard] 🔄 Refreshing current file after save...");
         await fetchData(projectId, false);
 
         // Monitoring is automatically restarted by fetchData
@@ -5993,209 +6981,290 @@ const Dashboard: React.FC<DashboardProps> = ({
         // Refresh collaboration panel to show recent changes
         collaborationPanelRef.current?.refreshChanges();
       } else {
-        const errorMsg = (data && data.error) || 'Save failed - no response from server';
-        console.error('[Dashboard] Save response was invalid:', response);
+        const errorMsg = (data && data.error) || "Save failed - no response from server";
+        console.error("[Dashboard] Save response was invalid:", response);
         throw new Error(errorMsg);
       }
     } catch (error) {
-      console.error('[Dashboard] Save failed with error:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Could not save changes. Please try again.';
-      notificationService.error('Save Failed', errorMessage);
+      console.error("[Dashboard] Save failed with error:", error);
+      const errorMessage = error instanceof Error ? error.message : "Could not save changes. Please try again.";
+      notificationService.error("Save Failed", errorMessage);
     } finally {
       setIsSaving(false);
     }
   }, [projectId, isSaving, user?.id, user?.username]);
 
   // Switch to a different file (with unsaved changes check)
-  const handleSwitchFile = useCallback((newProjectId: string) => {
-    const switchFile = async () => {
-      console.log('[Dashboard] 🔄 Switching to file:', newProjectId);
-      console.log('[Dashboard] 🧹 Clearing current state for:', projectId);
+  const handleSwitchFile = useCallback(
+    (newProjectId: string) => {
+      const switchFile = async () => {
+        console.log("[Dashboard] 🔄 Switching to file:", newProjectId);
+        console.log("[Dashboard] 🧹 Clearing current state for:", projectId);
 
-      // Clear all current state
-      setClassHierarchy([]);
-      setObjectProperties([]);
-      setDataProperties([]);
-      setAnnotationProperties([]);
-      setIndividuals([]);
-      setSelectedItem(null);
-      setSearchQuery('');
-      setActiveFileId(null);
-      setActiveFileName(newProjectId); // Use new project ID as file name if no explicit file ID Provided
+        // Clear all current state (including metadata so old counts don't persist)
+        setClassHierarchy([]);
+        setObjectProperties([]);
+        setDataProperties([]);
+        setAnnotationProperties([]);
+        setIndividuals([]);
+        setDatatypes([]);
+        setMetadata(null);
+        setSelectedItem(null);
+        setSearchQuery("");
+        setActiveFileId(null);
+        setActiveFileName(newProjectId); // Use new project ID as file name if no explicit file ID Provided
+        setHasUnsavedChanges(false);
+        setDraftCount(0);
 
-      if (window.vscode) {
-        window.vscode.postMessage({
-          type: "fileLoaded",
-          projectId: newProjectId,
-        });
+        // Update projectId so the Dashboard knows which file is active
+        setProjectId(newProjectId);
+        hasUserSelectedFileRef.current = true;
+        setHasUserSelectedFile(true);
+
+        // Cancel any in-flight HTTP requests for the previous file before starting the new load
+        if (fetchAbortControllerRef.current) {
+          fetchAbortControllerRef.current.abort();
+          fetchAbortControllerRef.current = null;
+        }
+
+        if (window.vscode) {
+          // Show loading dialog immediately before the round-trip to the extension
+          setShowLoadingChoice(true);
+          setLoadingProjectName(newProjectId);
+          window.vscode.postMessage({
+            type: "fileLoaded",
+            projectId: newProjectId,
+          });
+        } else {
+          // Browser mode: show LoadingDialog and load data directly from GraphDB
+          console.log("[Dashboard] 🌐 Browser mode - loading file via fetchData:", newProjectId);
+          setIsInitialLoading(true);
+          fetchData(newProjectId, true);
+        }
+
+        console.log("[Dashboard] ✅ State cleared, loading new file:", newProjectId);
+      };
+
+      // If no unsaved changes or draft count is 0, switch directly
+      if (!hasUnsavedChanges || draftCount === 0) {
+        console.log("[Dashboard] No unsaved changes, switching directly");
+        switchFile();
+        return;
       }
-      setHasUnsavedChanges(false);
-      setDraftCount(0);
 
-      console.log('[Dashboard] ✅ State cleared, loading new file:', newProjectId);
+      // Show unsaved-changes warning
+      setUnsavedChangesDialog({
+        isOpen: true,
+        onLeave: () => {
+          setUnsavedChangesDialog((prev) => ({ ...prev, isOpen: false }));
+          switchFile();
+        },
+      });
+    },
+    [
+      hasUnsavedChanges,
+      draftCount,
+      projectId,
+      fetchData,
+      setProjectId,
+      setIsInitialLoading,
+      setShowLoadingChoice,
+      setLoadingProjectName,
+    ],
+  );
+
+  // Back to projects (with unsaved changes check)
+  const handleBackToProjects = useCallback(() => {
+    if (!onBackToProjects) return;
+
+    // If no unsaved changes or draft count is 0, navigate directly
+    if (!hasUnsavedChanges || draftCount === 0) {
+      onBackToProjects();
+      return;
+    }
+
+    // Show unsaved-changes warning
+    setUnsavedChangesDialog({
+      isOpen: true,
+      onLeave: () => {
+        setUnsavedChangesDialog((prev) => ({ ...prev, isOpen: false }));
+        onBackToProjects();
+      },
+    });
+  }, [onBackToProjects, hasUnsavedChanges, draftCount]);
+
+  // Intercept browser/VS Code back navigation when there are unsaved changes
+  useEffect(() => {
+    if (!hasUnsavedChanges || draftCount === 0) return;
+
+    const handlePopState = () => {
+      // Push state back to cancel the navigation
+      window.history.pushState(null, "", window.location.href);
+      // Show the unsaved changes warning
+      setUnsavedChangesDialog({
+        isOpen: true,
+        onLeave: () => {
+          setUnsavedChangesDialog((prev) => ({ ...prev, isOpen: false }));
+          // Actually go back now
+          window.history.go(-2);
+        },
+      });
     };
 
-    // If no unsaved changes or draft count is 0, switch directly
-    if (!hasUnsavedChanges || draftCount === 0) {
-      console.log('[Dashboard] No unsaved changes, switching directly');
-      switchFile();
-      return;
-    }
+    // Push an extra history entry so we can intercept the back
+    window.history.pushState(null, "", window.location.href);
+    window.addEventListener("popstate", handlePopState);
 
-    // Show confirmation dialog only if there are actual unsaved changes
-    setConfirmDialog({
-      isOpen: true,
-      title: 'Unsaved Changes',
-      message: `You have ${draftCount} unsaved change${draftCount !== 1 ? 's' : ''} in "${projectId}". Do you want to save before switching?`,
-      onConfirm: async () => {
-        await handleSave();
-        switchFile();
-      },
-      onCancel: async () => {
-        // Discard drafts
-        if (projectId) {
-          try {
-            await draftTrackingService.discardDrafts(projectId);
-            console.log('[Dashboard] Discarded drafts');
-          } catch (error) {
-            console.error('[Dashboard] Failed to discard drafts:', error);
-          }
-        }
-        switchFile();
-      }
-    });
-  }, [hasUnsavedChanges, draftCount, projectId, handleSave]);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, [hasUnsavedChanges, draftCount]);
 
   // Load a file from the project (admin flow) - fetch content and upload to ontology editor
-  const handleLoadProjectFile = useCallback(async (fileId: string, fileName: string) => {
-    if (!initialProjectId) {
-      console.error('[Dashboard] Cannot load project file without parent project ID');
-      return;
-    }
-
-    try {
-      console.log('[Dashboard] 📂 Loading file from project:', fileId, fileName);
-      setActiveFileId(fileId);
-      setActiveFileName(fileName);
-      if (onFileSelected) onFileSelected(fileId, fileName);
-      notificationService.info('Loading File', `Loading ${fileName}...`);
-
-      // Reset all entity state before loading new file
-      console.log('[Dashboard] 🔄 Resetting state for new file...');
-      setClassHierarchy([]);
-      setObjectProperties([]);
-      setDataProperties([]);
-      setAnnotationProperties([]);
-      setIndividuals([]);
-      setDatatypes([]);
-      setSelectedItem(null);
-      setExpandedNodes(['http://www.w3.org/2002/07/owl#Thing']);
-      setSearchQuery('');
-      setHasUnsavedChanges(false);
-      setDraftCount(0);
-
-      // Fetch file content from auth service
-      const fileContent = await apiClient.get<{ id: string; name: string; content: string; type: string; size: number }>(
-        `/api/projects/${initialProjectId}/files/${fileId}/content`
-      );
-
-      if (!fileContent || !fileContent.content) {
-        throw new Error('File content not found');
+  const handleLoadProjectFile = useCallback(
+    async (fileId: string, fileName: string) => {
+      if (!initialProjectId) {
+        console.error("[Dashboard] Cannot load project file without parent project ID");
+        return;
       }
 
-      console.log('[Dashboard] 📥 File content retrieved, uploading to ontology editor...');
+      // If this file is already loaded, skip re-fetching all data
+      const ontologyProjectIdCheck = `${initialProjectId}--${fileId}`;
+      if (projectId === ontologyProjectIdCheck && classHierarchy.length > 0) {
+        console.log("[Dashboard] ✅ File already loaded, skipping re-fetch:", fileId);
+        setActiveFileId(fileId);
+        setActiveFileName(fileName);
+        if (onFileSelected) onFileSelected(fileId, fileName);
+        return;
+      }
 
-      // Create a unique project ID for this file (remove extension and add timestamp)
-      const baseFileName = fileName.replace(/\.[^/.]+$/, '');
-      const ontologyProjectId = `${baseFileName}-${Date.now()}`;
+      try {
+        console.log("[Dashboard] 📂 Loading file from project:", fileId, fileName);
 
-      // Extract pure base64 data (remove data URL prefix if present)
-      const base64Data = fileContent.content.includes(',')
-        ? fileContent.content.split(',')[1]
-        : fileContent.content;
+        // Mark refs so the auto-load useEffect won't double-fire when
+        // onFileSelected updates the selectedFileId prop from the parent.
+        lastLoadedFileRef.current = fileId;
+        fileLoadingRef.current = true;
 
-      // Set the project ID first so IMPORT_COMPLETED knows which project to load
-      setProjectId(ontologyProjectId);
-      pendingImportProjectIdRef.current = ontologyProjectId;
+        setActiveFileId(fileId);
+        setActiveFileName(fileName);
+        if (onFileSelected) onFileSelected(fileId, fileName);
 
-      // Upload to ontology editor service
-      if (window.vscode) {
-        // In VS Code, use message passing
-        const resolvedEmail = resolveUserEmail();
-          window.vscode.postMessage({
-            type: 'uploadOntology',
-            projectId: ontologyProjectId,
-            fileName: fileName,
-            fileContent: base64Data,
-            ownerEmail: resolvedEmail || undefined,
-            skipDuplicateCheck: true,
-            importMode,
-            partition: partitionStrategy
-          });
+        const ontologyProjectId = `${initialProjectId}--${fileId}`;
 
-        // The fileReady message will trigger fetchData via IMPORT_COMPLETED
-        setIsExpectingFileReady(true);
-        console.log('[Dashboard] ✅ Upload request sent to extension');
-        console.log('[Dashboard] Pending import project:', ontologyProjectId);
-        notificationService.info('Uploading', `Uploading ${fileName} to GraphDB...`);
-      } else {
-        // In browser, convert base64 to blob and use FormData
-        const byteCharacters = atob(base64Data);
-        const byteNumbers = new Array(byteCharacters.length);
-        for (let i = 0; i < byteCharacters.length; i++) {
-          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        // ⚡ FAST PATH: Check if data already exists in GraphDB — skip MongoDB fetch + re-upload
+        try {
+          const graphCheck = await apiClient.get<{
+            success: boolean;
+            exists: boolean;
+            graphSize?: number;
+          }>(
+            `/api/ontology/${encodeProjectId(ontologyProjectId)}/graphdb/check?fileName=${encodeURIComponent(fileName)}&fileId=${encodeURIComponent(fileId)}`,
+          );
+
+          if (graphCheck?.exists && (graphCheck.graphSize ?? 0) > 0) {
+            console.log(`[Dashboard] ⚡ File already in GraphDB (${graphCheck.graphSize} triples), loading directly`);
+            setProjectId(ontologyProjectId);
+            setLoadingProjectName(fileName);
+            notificationService.info("Loading", `Loading ${fileName} from cache...`);
+            await fetchData(ontologyProjectId, true, initialProjectId);
+            setShowLoadingChoice(false);
+            setShowQueueStatus(false);
+            setQueuePosition(undefined);
+            setTotalInQueue(undefined);
+            setEstimatedWaitTimeMs(undefined);
+            setShowProjectSelector(false);
+            setIsInitialLoading(false);
+            return;
+          }
+        } catch (checkErr) {
+          console.warn("[Dashboard] GraphDB check failed, falling back to full upload:", checkErr);
         }
-        const byteArray = new Uint8Array(byteNumbers);
-        const blob = new Blob([byteArray], { type: 'application/rdf+xml' });
 
-        // Create FormData
-        const formData = new FormData();
-        formData.append('file', blob, fileName);
+        notificationService.info("Loading File", `Loading ${fileName}...`);
 
-        // Upload using axios directly (apiClient doesn't support FormData)
-        const token = localStorage.getItem('authToken');
+        // Reset all entity state before loading new file
+        console.log("[Dashboard] 🔄 Resetting state for new file...");
+        setClassHierarchy([]);
+        setObjectProperties([]);
+        setDataProperties([]);
+        setAnnotationProperties([]);
+        setIndividuals([]);
+        setDatatypes([]);
+        setSelectedItem(null);
+        setExpandedNodes(["http://www.w3.org/2002/07/owl#Thing"]);
+        setSearchQuery("");
+        setHasUnsavedChanges(false);
+        setDraftCount(0);
+
+        // Fetch file content from auth service
+        const fileContent = await apiClient.get<{
+          id: string;
+          name: string;
+          content: string;
+          type: string;
+          size: number;
+        }>(`/api/projects/${initialProjectId}/files/${fileId}/content`);
+
+        if (!fileContent || !fileContent.content) {
+          throw new Error("File content not found");
+        }
+
+        console.log("[Dashboard] 📥 File content retrieved, uploading to ontology editor...");
+
+        // Use hierarchical naming: project--fileId
+        // This organizes all files under their MongoDB project in GraphDB
+        // e.g., http://ontocode.org/project/project-123--file-456
+        // Note: Using -- instead of / to avoid URL encoding issues (%2F blocked by gateway)
+
+        // Extract pure base64 data (remove data URL prefix if present)
+        const base64Data = fileContent.content.includes(",") ? fileContent.content.split(",")[1] : fileContent.content;
+
+        // Set the project ID first so IMPORT_COMPLETED knows which project to load
+        setProjectId(ontologyProjectId);
+        pendingImportProjectIdRef.current = ontologyProjectId;
+
+        // Upload to ontology editor service via VSCodeBridge (works in both VS Code and browser)
         const resolvedEmail = resolveUserEmail();
-        // Use deployment-aware URL
-        const uploadBaseUrl = window.API_BASE_URL || (localStorage.getItem('deploymentType') === 'self-hosted' ? 'http://localhost:80' : 'https://ontocodeapi.selfresearch.org');
-        const query = new URLSearchParams();
-        query.set('ownerEmail', resolvedEmail || '');
-        query.set('importMode', importMode);
-        query.set('partition', partitionStrategy);
-        const uploadResponse = await fetch(`${uploadBaseUrl}/api/ontology/upload/${ontologyProjectId}?${query.toString()}`, {
-          method: 'POST',
-          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-          body: formData
+        // Workspace files use hierarchical IDs (proj--fileId). Skip duplicate check
+        // because the file is scoped to this project — a standalone file with the same
+        // name should NOT short-circuit the upload.
+        const isWorkspaceFile = ontologyProjectId.includes("--");
+        window.vscode.postMessage({
+          type: "uploadOntology",
+          projectId: ontologyProjectId,
+          fileName: fileName,
+          fileContent: base64Data,
+          ownerEmail: resolvedEmail || undefined,
+          skipDuplicateCheck: isWorkspaceFile,
+          importMode,
+          partition: partitionStrategy,
         });
 
-        console.log(uploadResponse,"upload-response")
-
-        if (uploadResponse.ok) {
-          console.log('[Dashboard] ✅ File uploaded successfully');
-          setProjectId(ontologyProjectId);
-
-          // Wait a moment for processing then fetch data with parentProjectId for file menu
-          setTimeout(() => {
-            fetchData(ontologyProjectId, false, initialProjectId);
-          }, 2000);
-
-          notificationService.success('File Loaded', `${fileName} is ready for editing`);
-        } else {
-          const errorData = await uploadResponse.json().catch(() => ({ error: 'Upload failed' }));
-          throw new Error(errorData.error || 'Upload failed');
-        }
+        // The fileReady message will trigger fetchData via the message handler
+        setIsExpectingFileReady(true);
+        console.log("[Dashboard] ✅ Upload request sent via VSCodeBridge");
+        console.log("[Dashboard] Pending import project:", ontologyProjectId);
+        notificationService.info("Loading", `Loading ${fileName}...`);
+      } catch (error: any) {
+        console.error("[Dashboard] ❌ Failed to load project file:", error);
+        notificationService.error("Load Failed", error?.message || "Failed to load file");
+      } finally {
+        // Allow new loads after a brief delay to prevent rapid re-triggers
+        setTimeout(() => {
+          fileLoadingRef.current = false;
+        }, 1000);
       }
-    } catch (error: any) {
-      console.error('[Dashboard] ❌ Failed to load project file:', error);
-      notificationService.error('Load Failed', error?.message || 'Failed to load file');
-    }
-    }, [initialProjectId, resolveUserEmail, importMode, partitionStrategy]); // Removed fetchData to prevent infinite loop
+    },
+    [initialProjectId, resolveUserEmail, importMode, partitionStrategy, fetchData],
+  );
 
   // Create Property from Class Expression Dialog
   const handleCreatePropertyFromDialog = useCallback(() => {
-    setEntitiesTab('ObjectProperties');
+    setEntitiesTab("ObjectProperties");
     setSelectedItem(null);
-    setAddPropertyType('root');
-    setPropertyParentLabel('owl:topObjectProperty');
+    setAddPropertyType("root");
+    setPropertyParentLabel("owl:topObjectProperty");
     setAddPropertyDialogOpen(true);
     setIsClassExpressionDialogOpen(false);
   }, []);
@@ -6211,14 +7280,14 @@ const Dashboard: React.FC<DashboardProps> = ({
           const age = Date.now() - draft.timestamp;
           // Only restore drafts less than 24 hours old
           if (age < 24 * 60 * 60 * 1000) {
-            console.log('[Dashboard] Found draft, restoring...', draft);
+            console.log("[Dashboard] Found draft, restoring...", draft);
             // Could show a dialog asking if user wants to restore draft
             setHasUnsavedChanges(true);
           } else {
             localStorage.removeItem(draftKey);
           }
         } catch (e) {
-          console.error('[Dashboard] Failed to parse draft:', e);
+          console.error("[Dashboard] Failed to parse draft:", e);
           localStorage.removeItem(draftKey);
         }
       }
@@ -6227,277 +7296,344 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // Keyboard shortcut for Save (Ctrl+S)
 
-
   const handleAddAnnotation = useCallback(async () => {
     if (!projectId) return;
-    if (mainTab !== 'ActiveOntology' && !selectedItem) return;
+    if (mainTab !== "ActiveOntology" && !selectedItem) return;
     setAddAnnotationDialogOpen(true);
   }, [selectedItem, projectId, mainTab]);
 
   const updateActiveOntologyAnnotations = useCallback((updater: (annotations: any[]) => any[]) => {
-    setMetadata(prev => {
+    setMetadata((prev) => {
       if (!prev) {
         return prev;
       }
 
-      const currentAnnotations = Array.isArray((prev as any).annotations)
-        ? [...(prev as any).annotations]
-        : [];
+      const currentAnnotations = Array.isArray((prev as any).annotations) ? [...(prev as any).annotations] : [];
 
       const nextAnnotations = updater(currentAnnotations);
       return {
         ...(prev as any),
-        annotations: nextAnnotations
+        annotations: nextAnnotations,
       } as OntologyMetadata;
     });
   }, []);
 
-  const handleAnnotationDialogAdd = useCallback(async (propertyIri: string, value: string, datatype?: string, lang?: string) => {
-    if (!projectId) return;
+  const handleAnnotationDialogAdd = useCallback(
+    async (propertyIri: string, value: string, datatype?: string, lang?: string) => {
+      if (!projectId) return;
 
-    const isEntityAnnotation = mainTab !== 'ActiveOntology' && !!selectedItem;
+      const isEntityAnnotation = mainTab !== "ActiveOntology" && !!selectedItem;
 
-    try {
-      if (isEntityAnnotation && selectedItem) {
-        // Entity annotation
-        await ontologyMutationService.addAnnotation(projectId, selectedItem.id, propertyIri, value, user?.email || 'anonymous', user?.username || 'Anonymous');
-
-        // Update local state
-        const updatedAnnotations = { ...selectedItem.annotations, [propertyIri]: value };
-        const updatedItem = { ...selectedItem, annotations: updatedAnnotations };
-        updateItemInState(updatedItem);
-        markAsUnsaved();
-      } else {
-        // Ontology annotation
-        updateActiveOntologyAnnotations(current => ([
-          ...current,
-          {
-            property: propertyIri,
+      try {
+        if (isEntityAnnotation && selectedItem) {
+          // Entity annotation
+          await ontologyMutationService.addAnnotation(
+            projectId,
+            selectedItem.id,
+            propertyIri,
             value,
-            language: lang || undefined,
-            datatype
-          }
-        ]));
-
-        await apiClient.post(`/api/ontology/metadata/${projectId}/annotations`, {
-          propertyIri,
-          value,
-          language: lang,
-          datatype
-        });
-
-        await refreshOntologyAnnotations();
-      }
-
-      showNotification('Annotation added successfully!', 'info');
-    } catch (error) {
-      console.error('Failed to add annotation:', error);
-      if (!isEntityAnnotation) {
-        await refreshOntologyAnnotations();
-      }
-      showNotification('Failed to add annotation. See console for details.', 'error');
-    }
-  }, [selectedItem, updateItemInState, projectId, user, mainTab, updateActiveOntologyAnnotations, refreshOntologyAnnotations]);
-
-  const handleEditAnnotation = useCallback(async (propertyIri: string, currentValue: string) => {
-    if (!projectId) return;
-
-    // Open dialog with current value pre-filled
-    setEditAnnotationData({
-      propertyIri,
-      originalPropertyIri: propertyIri,
-      currentValue,
-      entityId: (mainTab !== 'ActiveOntology' && selectedItem) ? selectedItem.id : 'ONTOLOGY'
-    });
-    setEditAnnotationDialogOpen(true);
-  }, [selectedItem, projectId, mainTab]);
-
-  const handleAnnotationDialogEdit = useCallback(async (
-    propertyIri: string,
-    oldValue: string,
-    newValue: string,
-    datatype?: string,
-    lang?: string,
-    originalPropertyIri?: string,
-    oldLang?: string,
-    oldDatatype?: string
-  ) => {
-    console.log('[Dashboard] handleAnnotationDialogEdit called with:', propertyIri, oldValue, newValue);
-    if (!projectId) return;
-
-    const isEntityAnnotation = mainTab !== 'ActiveOntology' && !!selectedItem;
-    const targetPropertyIri = originalPropertyIri || propertyIri;
-
-    try {
-      if (isEntityAnnotation && selectedItem) {
-        // Entity annotation
-        await ontologyMutationService.updateAnnotation(projectId, selectedItem.id, propertyIri, newValue, user?.email || 'anonymous', user?.username || 'Anonymous', oldValue);
-
-        // Update local state
-        const updatedAnnotations = { ...selectedItem.annotations, [propertyIri]: newValue };
-        const updatedItem = { ...selectedItem, annotations: updatedAnnotations };
-        updateItemInState(updatedItem);
-        markAsUnsaved();
-      } else {
-        // Ontology annotation
-        updateActiveOntologyAnnotations(current => {
-          const matchIndex = current.findIndex((annotation: any) => {
-            if (!annotation) {
-              return false;
-            }
-
-            const matchesProperty = annotation.property === targetPropertyIri;
-            const existingValue = annotation.value?.toString?.() ?? annotation.value;
-            const matchesValue = existingValue === oldValue;
-            const matchesLanguage = (annotation.language || '') === (oldLang || '');
-            const matchesDatatype = (annotation.datatype || '') === (oldDatatype || '');
-            return matchesProperty && matchesValue && matchesLanguage && matchesDatatype;
-          });
-
-          const nextValue = {
-            ...(matchIndex >= 0 ? current[matchIndex] : {}),
-            property: propertyIri,
-            value: newValue,
-            language: lang || undefined,
-            datatype
-          };
-
-          if (matchIndex >= 0) {
-            current[matchIndex] = nextValue;
-          } else {
-            current.push(nextValue);
-          }
-
-          return current;
-        });
-
-        await apiClient.put(`/api/ontology/metadata/${projectId}/annotations`, {
-          propertyIri,
-          originalPropertyIri: originalPropertyIri || propertyIri,
-          oldValue,
-          newValue,
-          language: lang,
-          datatype
-        });
-
-        await refreshOntologyAnnotations();
-      }
-
-      showNotification('Annotation updated successfully!', 'info');
-    } catch (error) {
-      console.error('Failed to update annotation:', error);
-      if (!isEntityAnnotation) {
-        await refreshOntologyAnnotations();
-      }
-      showNotification('Failed to update annotation. See console for details.', 'error');
-    }
-  }, [selectedItem, updateItemInState, projectId, user, mainTab, updateActiveOntologyAnnotations, refreshOntologyAnnotations]);
-
-  const handleSaveOntologyIRIs = useCallback(async (ontologyIri: string, versionIri: string) => {
-    if (!projectId) return;
-    try {
-      await apiClient.put(`/api/ontology/metadata/${projectId}/iri`, { ontologyIri, versionIri });
-
-      // Refresh metadata
-      const metadataRes = await apiClient.get(`/api/ontology/metadata/${projectId}`);
-      setMetadata(metadataRes.data || metadataRes);
-
-      showNotification('Ontology IRIs updated successfully!', 'info');
-    } catch (error) {
-      console.error('Failed to update ontology IRIs:', error);
-      showNotification('Failed to update ontology IRIs.', 'error');
-    }
-  }, [projectId]);
-
-  const handleSaveGCI = useCallback(async (subClass: string, superClass: string) => {
-    if (!projectId) return;
-    try {
-      if (editGCIData) {
-        // Update existing GCI
-        await apiClient.put(`/api/ontology/metadata/${projectId}/gci/${editGCIData.index}`, {
-          subClass,
-          superClass,
-          oldValue: editGCIData.value
-        });
-      } else {
-        // Add new GCI
-        await apiClient.post(`/api/ontology/metadata/${projectId}/gci`, { subClass, superClass });
-      }
-
-      // Refresh GCIs
-      const gciRes = await apiClient.get(`/api/ontology/metadata/${projectId}/gci`);
-      const gciData = Array.isArray(gciRes?.data) ? gciRes.data : (Array.isArray(gciRes?.axioms) ? gciRes.axioms : (Array.isArray(gciRes) ? gciRes : []));
-      setGeneralClassAxioms(gciData);
-
-      showNotification(editGCIData ? 'GCI updated successfully!' : 'GCI added successfully!', 'info');
-      setEditGCIData(null);
-    } catch (error) {
-      console.error('Failed to save GCI:', error);
-      showNotification('Failed to save GCI.', 'error');
-    }
-  }, [projectId, editGCIData]);
-
-  const handleDeleteGCI = useCallback(async (axiom: any, index: number) => {
-    if (!projectId) return;
-
-    setConfirmDialog({
-      isOpen: true,
-      title: 'Delete GCI',
-      message: `Are you sure you want to delete this General Class Axiom?`,
-      onConfirm: async () => {
-        try {
-          await apiClient.delete(`/api/ontology/metadata/${projectId}/gci`, { value: axiom.value });
-
-          // Refresh GCIs
-          const gciRes = await apiClient.get(`/api/ontology/metadata/${projectId}/gci`);
-          const gciData = Array.isArray(gciRes?.data) ? gciRes.data : (Array.isArray(gciRes?.axioms) ? gciRes.axioms : (Array.isArray(gciRes) ? gciRes : []));
-          setGeneralClassAxioms(gciData);
-
-          showNotification('GCI deleted successfully!', 'info');
-        } catch (error) {
-          console.error('Failed to delete GCI:', error);
-          showNotification('Failed to delete GCI.', 'error');
-        }
-      }
-    });
-  }, [projectId]);
-
-  const handleDeleteAnnotation = useCallback(async (key: string) => {
-    if (!selectedItem || !selectedItem.annotations || !projectId) return;
-
-    // Show confirm dialog instead of using confirm()
-    setConfirmDialog({
-      isOpen: true,
-      title: 'Delete Annotation',
-      message: `Are you sure you want to delete the annotation "${key}"?`,
-      onConfirm: async () => {
-        try {
-          const value = selectedItem.annotations[key];
-          // Call backend API
-          await ontologyMutationService.deleteAnnotation(projectId, selectedItem.id, key, value, user?.email || 'anonymous', user?.username || 'Anonymous');
+            user?.email || "anonymous",
+            user?.username || "Anonymous",
+          );
 
           // Update local state
-          const remainingAnnotations = { ...selectedItem.annotations };
-          delete remainingAnnotations[key];
-          const updatedItem = { ...selectedItem, annotations: remainingAnnotations };
+          const updatedAnnotations = { ...selectedItem.annotations, [propertyIri]: value };
+          const updatedItem = { ...selectedItem, annotations: updatedAnnotations };
           updateItemInState(updatedItem);
           markAsUnsaved();
-          showNotification('Annotation deleted successfully!', 'info');
-        } catch (error) {
-          console.error('Failed to delete annotation:', error);
-          showNotification('Failed to delete annotation. See console for details.', 'error');
-        }
-      }
-    });
-  }, [selectedItem, updateItemInState, projectId]);
+        } else {
+          // Ontology annotation
+          updateActiveOntologyAnnotations((current) => [
+            ...current,
+            {
+              property: propertyIri,
+              value,
+              language: lang || undefined,
+              datatype,
+            },
+          ]);
 
+          await apiClient.post(`/api/ontology/metadata/${projectId}/annotations`, {
+            propertyIri,
+            value,
+            language: lang,
+            datatype,
+          });
+
+          await refreshOntologyAnnotations();
+        }
+
+        showNotification("Annotation added successfully!", "info");
+      } catch (error) {
+        console.error("Failed to add annotation:", error);
+        if (!isEntityAnnotation) {
+          await refreshOntologyAnnotations();
+        }
+        showNotification("Failed to add annotation. See console for details.", "error");
+      }
+    },
+    [
+      selectedItem,
+      updateItemInState,
+      projectId,
+      user,
+      mainTab,
+      updateActiveOntologyAnnotations,
+      refreshOntologyAnnotations,
+    ],
+  );
+
+  const handleEditAnnotation = useCallback(
+    async (propertyIri: string, currentValue: string) => {
+      if (!projectId) return;
+
+      // Open dialog with current value pre-filled
+      setEditAnnotationData({
+        propertyIri,
+        originalPropertyIri: propertyIri,
+        currentValue,
+        entityId: mainTab !== "ActiveOntology" && selectedItem ? selectedItem.id : "ONTOLOGY",
+      });
+      setEditAnnotationDialogOpen(true);
+    },
+    [selectedItem, projectId, mainTab],
+  );
+
+  const handleAnnotationDialogEdit = useCallback(
+    async (
+      propertyIri: string,
+      oldValue: string,
+      newValue: string,
+      datatype?: string,
+      lang?: string,
+      originalPropertyIri?: string,
+      oldLang?: string,
+      oldDatatype?: string,
+    ) => {
+      console.log("[Dashboard] handleAnnotationDialogEdit called with:", propertyIri, oldValue, newValue);
+      if (!projectId) return;
+
+      const isEntityAnnotation = mainTab !== "ActiveOntology" && !!selectedItem;
+      const targetPropertyIri = originalPropertyIri || propertyIri;
+
+      try {
+        if (isEntityAnnotation && selectedItem) {
+          // Entity annotation
+          await ontologyMutationService.updateAnnotation(
+            projectId,
+            selectedItem.id,
+            propertyIri,
+            newValue,
+            user?.email || "anonymous",
+            user?.username || "Anonymous",
+            oldValue,
+          );
+
+          // Update local state
+          const updatedAnnotations = { ...selectedItem.annotations, [propertyIri]: newValue };
+          const updatedItem = { ...selectedItem, annotations: updatedAnnotations };
+          updateItemInState(updatedItem);
+          markAsUnsaved();
+        } else {
+          // Ontology annotation
+          updateActiveOntologyAnnotations((current) => {
+            const matchIndex = current.findIndex((annotation: any) => {
+              if (!annotation) {
+                return false;
+              }
+
+              const matchesProperty = annotation.property === targetPropertyIri;
+              const existingValue = annotation.value?.toString?.() ?? annotation.value;
+              const matchesValue = existingValue === oldValue;
+              const matchesLanguage = (annotation.language || "") === (oldLang || "");
+              const matchesDatatype = (annotation.datatype || "") === (oldDatatype || "");
+              return matchesProperty && matchesValue && matchesLanguage && matchesDatatype;
+            });
+
+            const nextValue = {
+              ...(matchIndex >= 0 ? current[matchIndex] : {}),
+              property: propertyIri,
+              value: newValue,
+              language: lang || undefined,
+              datatype,
+            };
+
+            if (matchIndex >= 0) {
+              current[matchIndex] = nextValue;
+            } else {
+              current.push(nextValue);
+            }
+
+            return current;
+          });
+
+          await apiClient.put(`/api/ontology/metadata/${projectId}/annotations`, {
+            propertyIri,
+            originalPropertyIri: originalPropertyIri || propertyIri,
+            oldValue,
+            newValue,
+            language: lang,
+            datatype,
+          });
+
+          await refreshOntologyAnnotations();
+        }
+
+        showNotification("Annotation updated successfully!", "info");
+      } catch (error) {
+        console.error("Failed to update annotation:", error);
+        if (!isEntityAnnotation) {
+          await refreshOntologyAnnotations();
+        }
+        showNotification("Failed to update annotation. See console for details.", "error");
+      }
+    },
+    [
+      selectedItem,
+      updateItemInState,
+      projectId,
+      user,
+      mainTab,
+      updateActiveOntologyAnnotations,
+      refreshOntologyAnnotations,
+    ],
+  );
+
+  const handleSaveOntologyIRIs = useCallback(
+    async (ontologyIri: string, versionIri: string) => {
+      if (!projectId) return;
+      try {
+        await apiClient.put(`/api/ontology/metadata/${projectId}/iri`, { ontologyIri, versionIri });
+
+        // Refresh metadata
+        const metadataRes = await apiClient.get(`/api/ontology/metadata/${projectId}`);
+        setMetadata(metadataRes.data || metadataRes);
+
+        showNotification("Ontology IRIs updated successfully!", "info");
+      } catch (error) {
+        console.error("Failed to update ontology IRIs:", error);
+        showNotification("Failed to update ontology IRIs.", "error");
+      }
+    },
+    [projectId],
+  );
+
+  const handleSaveGCI = useCallback(
+    async (subClass: string, superClass: string) => {
+      if (!projectId) return;
+      try {
+        if (editGCIData) {
+          // Update existing GCI
+          await apiClient.put(`/api/ontology/metadata/${projectId}/gci/${editGCIData.index}`, {
+            subClass,
+            superClass,
+            oldValue: editGCIData.value,
+          });
+        } else {
+          // Add new GCI
+          await apiClient.post(`/api/ontology/metadata/${projectId}/gci`, { subClass, superClass });
+        }
+
+        // Refresh GCIs
+        const gciRes = await apiClient.get(`/api/ontology/metadata/${projectId}/gci`);
+        const gciData = Array.isArray(gciRes?.data)
+          ? gciRes.data
+          : Array.isArray(gciRes?.axioms)
+            ? gciRes.axioms
+            : Array.isArray(gciRes)
+              ? gciRes
+              : [];
+        setGeneralClassAxioms(gciData);
+
+        showNotification(editGCIData ? "GCI updated successfully!" : "GCI added successfully!", "info");
+        setEditGCIData(null);
+      } catch (error) {
+        console.error("Failed to save GCI:", error);
+        showNotification("Failed to save GCI.", "error");
+      }
+    },
+    [projectId, editGCIData],
+  );
+
+  const handleDeleteGCI = useCallback(
+    async (axiom: any, index: number) => {
+      if (!projectId) return;
+
+      setConfirmDialog({
+        isOpen: true,
+        title: "Delete GCI",
+        message: `Are you sure you want to delete this General Class Axiom?`,
+        onConfirm: async () => {
+          try {
+            await apiClient.delete(`/api/ontology/metadata/${projectId}/gci`, { value: axiom.value });
+
+            // Refresh GCIs
+            const gciRes = await apiClient.get(`/api/ontology/metadata/${projectId}/gci`);
+            const gciData = Array.isArray(gciRes?.data)
+              ? gciRes.data
+              : Array.isArray(gciRes?.axioms)
+                ? gciRes.axioms
+                : Array.isArray(gciRes)
+                  ? gciRes
+                  : [];
+            setGeneralClassAxioms(gciData);
+
+            showNotification("GCI deleted successfully!", "info");
+          } catch (error) {
+            console.error("Failed to delete GCI:", error);
+            showNotification("Failed to delete GCI.", "error");
+          }
+        },
+      });
+    },
+    [projectId],
+  );
+
+  const handleDeleteAnnotation = useCallback(
+    async (key: string) => {
+      if (!selectedItem || !selectedItem.annotations || !projectId) return;
+
+      // Show confirm dialog instead of using confirm()
+      setConfirmDialog({
+        isOpen: true,
+        title: "Delete Annotation",
+        message: `Are you sure you want to delete the annotation "${key}"?`,
+        onConfirm: async () => {
+          try {
+            const value = selectedItem.annotations[key];
+            // Call backend API
+            await ontologyMutationService.deleteAnnotation(
+              projectId,
+              selectedItem.id,
+              key,
+              value,
+              user?.email || "anonymous",
+              user?.username || "Anonymous",
+            );
+
+            // Update local state
+            const remainingAnnotations = { ...selectedItem.annotations };
+            delete remainingAnnotations[key];
+            const updatedItem = { ...selectedItem, annotations: remainingAnnotations };
+            updateItemInState(updatedItem);
+            markAsUnsaved();
+            showNotification("Annotation deleted successfully!", "info");
+          } catch (error) {
+            console.error("Failed to delete annotation:", error);
+            showNotification("Failed to delete annotation. See console for details.", "error");
+          }
+        },
+      });
+    },
+    [selectedItem, updateItemInState, projectId],
+  );
 
   // Function to refresh only properties (not classes) to avoid closing dialogs
   const refreshProperties = useCallback(async () => {
     if (!projectId) return;
 
     try {
-      console.log('[refreshProperties] Starting property refresh...');
+      console.log("[refreshProperties] Starting property refresh...");
       const propertiesRes = await apiClient.get<any>(`/api/ontology/properties/${projectId}`);
 
       const allProps = Array.isArray(propertiesRes?.data)
@@ -6508,13 +7644,13 @@ const Dashboard: React.FC<DashboardProps> = ({
             ? propertiesRes
             : [];
 
-      console.log('[refreshProperties] Total properties fetched:', allProps.length);
+      console.log("[refreshProperties] Total properties fetched:", allProps.length);
 
-      const opList = allProps.filter((p: any) => p.type === 'ObjectProperty');
-      console.log('[refreshProperties] Object properties:', opList.length);
+      const opList = allProps.filter((p: any) => p.type === "ObjectProperty");
+      console.log("[refreshProperties] Object properties:", opList.length);
       setObjectProperties(opList);
 
-      console.log('[Dashboard] ✅ Properties refreshed');
+      console.log("[Dashboard] ✅ Properties refreshed");
       // Build object property hierarchy
       const opMap = new Map<string, TreeNode>();
       opList.forEach((p: any) => {
@@ -6522,12 +7658,12 @@ const Dashboard: React.FC<DashboardProps> = ({
       });
 
       const topOpNode: TreeNode = {
-        id: 'http://www.w3.org/2002/07/owl#topObjectProperty',
-        label: 'owl:topObjectProperty',
-        type: 'ObjectProperty',
+        id: "http://www.w3.org/2002/07/owl#topObjectProperty",
+        label: "owl:topObjectProperty",
+        type: "ObjectProperty",
         children: [],
         hasChildren: false,
-        annotations: {}
+        annotations: {},
       };
 
       opList.forEach((p: any) => {
@@ -6556,13 +7692,17 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
       });
 
-      console.log('[refreshProperties] Built object property hierarchy with', topOpNode.children?.length, 'top-level properties');
+      console.log(
+        "[refreshProperties] Built object property hierarchy with",
+        topOpNode.children?.length,
+        "top-level properties",
+      );
       // Create a new array to ensure React detects the change
       setObjectPropertyHierarchy([{ ...topOpNode, children: [...(topOpNode.children || [])] }]);
 
       // Build data property hierarchy
-      const dpList = allProps.filter((p: any) => p.type === 'DatatypeProperty');
-      console.log('[refreshProperties] Data properties:', dpList.length);
+      const dpList = allProps.filter((p: any) => p.type === "DatatypeProperty");
+      console.log("[refreshProperties] Data properties:", dpList.length);
       setDataProperties(dpList);
 
       const dpMap = new Map<string, TreeNode>();
@@ -6571,12 +7711,12 @@ const Dashboard: React.FC<DashboardProps> = ({
       });
 
       const topDpNode: TreeNode = {
-        id: 'http://www.w3.org/2002/07/owl#topDataProperty',
-        label: 'owl:topDataProperty',
-        type: 'DatatypeProperty',
+        id: "http://www.w3.org/2002/07/owl#topDataProperty",
+        label: "owl:topDataProperty",
+        type: "DatatypeProperty",
         children: [],
         hasChildren: false,
-        annotations: {}
+        annotations: {},
       };
 
       dpList.forEach((p: any) => {
@@ -6605,327 +7745,460 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
       });
 
-      console.log('[refreshProperties] Built data property hierarchy with', topDpNode.children?.length, 'top-level properties');
+      console.log(
+        "[refreshProperties] Built data property hierarchy with",
+        topDpNode.children?.length,
+        "top-level properties",
+      );
       // Create a new array to ensure React detects the change
       setDataPropertyHierarchy([{ ...topDpNode, children: [...(topDpNode.children || [])] }]);
-      console.log('[refreshProperties] Property refresh complete');
+      console.log("[refreshProperties] Property refresh complete");
     } catch (error) {
-      console.error('Failed to refresh properties:', error);
+      console.error("Failed to refresh properties:", error);
     }
   }, [projectId]);
 
   useEffect(() => {
-    if (!projectId || mainTab !== 'Entities' || entitiesTab !== 'ObjectProperties') return;
-    if (hierarchyViewModes.ObjectProperties === 'inferred') {
+    if (!projectId || mainTab !== "Entities" || entitiesTab !== "ObjectProperties") return;
+    if (hierarchyViewModes.ObjectProperties === "inferred") {
       loadInferredObjectPropertyHierarchy();
     } else {
       refreshProperties();
     }
-  }, [projectId, mainTab, entitiesTab, hierarchyViewModes.ObjectProperties, loadInferredObjectPropertyHierarchy, refreshProperties]);
+  }, [
+    projectId,
+    mainTab,
+    entitiesTab,
+    hierarchyViewModes.ObjectProperties,
+    loadInferredObjectPropertyHierarchy,
+    refreshProperties,
+  ]);
 
   useEffect(() => {
-    if (!projectId || mainTab !== 'Entities' || entitiesTab !== 'DataProperties') return;
-    if (hierarchyViewModes.DataProperties === 'inferred') {
+    if (!projectId || mainTab !== "Entities" || entitiesTab !== "DataProperties") return;
+    if (hierarchyViewModes.DataProperties === "inferred") {
       loadInferredDataPropertyHierarchy();
     } else {
       refreshProperties();
     }
-  }, [projectId, mainTab, entitiesTab, hierarchyViewModes.DataProperties, loadInferredDataPropertyHierarchy, refreshProperties]);
+  }, [
+    projectId,
+    mainTab,
+    entitiesTab,
+    hierarchyViewModes.DataProperties,
+    loadInferredDataPropertyHierarchy,
+    refreshProperties,
+  ]);
 
   // Handler for creating object properties with name parameter
-  const handleAddObjectProperty = useCallback(async (
-    type: 'subclass' | 'sibling',
-    parentId?: string,
-    name?: string
-  ) => {
-    if (!projectId) return;
+  const handleAddObjectProperty = useCallback(
+    async (type: "subclass" | "sibling", parentId?: string, name?: string) => {
+      if (!projectId) return;
 
-    try {
-      console.log('[handleAddObjectProperty] Creating property:', name, 'type:', type, 'parentId:', parentId);
-      const baseIri = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
-      const cleanName = (name || 'NewObjectProperty').replace(/\s+/g, '_');
-      const newIri = `${baseIri}${baseIri.endsWith('#') || baseIri.endsWith('/') ? '' : '#'}${cleanName}`;
+      try {
+        console.log("[handleAddObjectProperty] Creating property:", name, "type:", type, "parentId:", parentId);
+        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
+        const cleanName = (name || "NewObjectProperty").replace(/\s+/g, "_");
+        const newIri = `${baseIri}${baseIri.endsWith("#") || baseIri.endsWith("/") ? "" : "#"}${cleanName}`;
 
-      let parentIri = 'http://www.w3.org/2002/07/owl#topObjectProperty';
+        let parentIri = "http://www.w3.org/2002/07/owl#topObjectProperty";
 
-      if (parentId) {
-        if (type === 'subclass') {
-          parentIri = parentId;
-        } else if (type === 'sibling') {
-          const parent = findParentNode(objectPropertyHierarchy, parentId);
-          if (parent) parentIri = parent.id;
+        if (parentId) {
+          if (type === "subclass") {
+            parentIri = parentId;
+          } else if (type === "sibling") {
+            const parent = findParentNode(objectPropertyHierarchy, parentId);
+            if (parent) parentIri = parent.id;
+          }
         }
+
+        console.log("[handleAddObjectProperty] Creating with IRI:", newIri, "parent:", parentIri);
+        await ontologyMutationService.createObjectProperty(
+          projectId,
+          newIri,
+          name || "NewObjectProperty",
+          parentIri,
+          user?.email || "anonymous",
+          user?.username || "Anonymous",
+        );
+
+        console.log("[handleAddObjectProperty] Property created, refreshing...");
+        // Add a small delay to ensure backend has processed the property
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        await refreshProperties();
+        console.log("[handleAddObjectProperty] Refresh complete");
+        showNotification(`Object property "${name}" created successfully!`);
+      } catch (error) {
+        console.error("Failed to create object property:", error);
+        showNotification("Failed to create object property. See console for details.", "error");
+        throw error;
       }
-
-      console.log('[handleAddObjectProperty] Creating with IRI:', newIri, 'parent:', parentIri);
-      await ontologyMutationService.createObjectProperty(
-        projectId,
-        newIri,
-        name || 'NewObjectProperty',
-        parentIri,
-        user?.email || 'anonymous',
-        user?.username || 'Anonymous'
-      );
-
-      console.log('[handleAddObjectProperty] Property created, refreshing...');
-      // Add a small delay to ensure backend has processed the property
-      await new Promise(resolve => setTimeout(resolve, 300));
-      await refreshProperties();
-      console.log('[handleAddObjectProperty] Refresh complete');
-      showNotification(`Object property "${name}" created successfully!`);
-    } catch (error) {
-      console.error('Failed to create object property:', error);
-      showNotification('Failed to create object property. See console for details.', 'error');
-      throw error;
-    }
-  }, [projectId, metadata, objectPropertyHierarchy, user, refreshProperties, showNotification]);
-
+    },
+    [projectId, metadata, objectPropertyHierarchy, user, refreshProperties, showNotification],
+  );
 
   // Handler for creating data properties with name parameter
-  const handleAddDataProperty = useCallback(async (
-    type: 'subclass' | 'sibling',
-    parentId?: string,
-    name?: string
-  ) => {
-    if (!projectId) return;
+  const handleAddDataProperty = useCallback(
+    async (type: "subclass" | "sibling", parentId?: string, name?: string) => {
+      if (!projectId) return;
 
-    try {
-      console.log('[handleAddDataProperty] Creating property:', name, 'type:', type, 'parentId:', parentId);
-      const baseIri = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
-      const cleanName = (name || 'NewDataProperty').replace(/\s+/g, '_');
-      const newIri = `${baseIri}${baseIri.endsWith('#') || baseIri.endsWith('/') ? '' : '#'}${cleanName}`;
+      try {
+        console.log("[handleAddDataProperty] Creating property:", name, "type:", type, "parentId:", parentId);
+        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
+        const cleanName = (name || "NewDataProperty").replace(/\s+/g, "_");
+        const newIri = `${baseIri}${baseIri.endsWith("#") || baseIri.endsWith("/") ? "" : "#"}${cleanName}`;
 
-      let parentIri = 'http://www.w3.org/2002/07/owl#topDataProperty';
+        let parentIri = "http://www.w3.org/2002/07/owl#topDataProperty";
 
-      if (parentId) {
-        if (type === 'subclass') {
-          parentIri = parentId;
-        } else if (type === 'sibling') {
-          const parent = findParentNode(dataPropertyHierarchy, parentId);
-          if (parent) parentIri = parent.id;
+        if (parentId) {
+          if (type === "subclass") {
+            parentIri = parentId;
+          } else if (type === "sibling") {
+            const parent = findParentNode(dataPropertyHierarchy, parentId);
+            if (parent) parentIri = parent.id;
+          }
         }
+
+        console.log("[handleAddDataProperty] Creating with IRI:", newIri, "parent:", parentIri);
+        await ontologyMutationService.createDataProperty(
+          projectId,
+          newIri,
+          name || "NewDataProperty",
+          parentIri,
+          user?.email || "anonymous",
+          user?.username || "Anonymous",
+        );
+
+        console.log("[handleAddDataProperty] Property created, refreshing...");
+        // Add a small delay to ensure backend has processed the property
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        await refreshProperties();
+        console.log("[handleAddDataProperty] Refresh complete");
+        showNotification(`Data property "${name}" created successfully!`);
+      } catch (error) {
+        console.error("Failed to create data property:", error);
+        showNotification("Failed to create data property. See console for details.", "error");
+        throw error;
       }
-
-      console.log('[handleAddDataProperty] Creating with IRI:', newIri, 'parent:', parentIri);
-      await ontologyMutationService.createDataProperty(
-        projectId,
-        newIri,
-        name || 'NewDataProperty',
-        parentIri,
-        user?.email || 'anonymous',
-        user?.username || 'Anonymous'
-      );
-
-      console.log('[handleAddDataProperty] Property created, refreshing...');
-      // Add a small delay to ensure backend has processed the property
-      await new Promise(resolve => setTimeout(resolve, 300));
-      await refreshProperties();
-      console.log('[handleAddDataProperty] Refresh complete');
-      showNotification(`Data property "${name}" created successfully!`);
-    } catch (error) {
-      console.error('Failed to create data property:', error);
-      showNotification('Failed to create data property. See console for details.', 'error');
-      throw error;
-    }
-  }, [projectId, metadata, dataPropertyHierarchy, user, refreshProperties, showNotification]);
+    },
+    [projectId, metadata, dataPropertyHierarchy, user, refreshProperties, showNotification],
+  );
 
   // Handler for creating classes with name parameter (for inline creation in dialogs)
-  const handleAddClassInline = useCallback(async (
-    type: 'subclass' | 'sibling',
-    parentId?: string,
-    name?: string
-  ) => {
-    if (!projectId) return;
+  const handleAddClassInline = useCallback(
+    async (type: "subclass" | "sibling", parentId?: string, name?: string) => {
+      if (!projectId) return;
 
-    try {
-      console.log('[handleAddClassInline] Creating class:', name, 'type:', type, 'parentId:', parentId);
-      const baseIri = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
-      const cleanName = (name || 'NewClass').replace(/\s+/g, '_');
-      const newIri = `${baseIri}${baseIri.endsWith('#') || baseIri.endsWith('/') ? '' : '#'}${cleanName}`;
+      try {
+        console.log("[handleAddClassInline] Creating class:", name, "type:", type, "parentId:", parentId);
+        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
+        const cleanName = (name || "NewClass").replace(/\s+/g, "_");
+        const newIri = `${baseIri}${baseIri.endsWith("#") || baseIri.endsWith("/") ? "" : "#"}${cleanName}`;
 
-      let parentIri = 'http://www.w3.org/2002/07/owl#Thing';
+        let parentIri = "http://www.w3.org/2002/07/owl#Thing";
 
-      if (parentId) {
-        if (type === 'subclass') {
-          parentIri = parentId;
-        } else if (type === 'sibling') {
-          const parent = findParentNode(classHierarchy, parentId);
-          if (parent) parentIri = parent.id;
+        if (parentId) {
+          if (type === "subclass") {
+            parentIri = parentId;
+          } else if (type === "sibling") {
+            const parent = findParentNode(classHierarchy, parentId);
+            if (parent) parentIri = parent.id;
+          }
         }
+
+        console.log("[handleAddClassInline] Creating with IRI:", newIri, "parent:", parentIri);
+        await ontologyMutationService.createClass(
+          projectId,
+          newIri,
+          name || "NewClass",
+          parentIri,
+          user?.email || "anonymous",
+          user?.username || "Anonymous",
+        );
+
+        // Optimistic local state update so the class appears immediately
+        const newNode: TreeNode = {
+          id: newIri,
+          label: name || "NewClass",
+          children: undefined,
+          hasChildren: false,
+          annotations: { "rdfs:label": name || "NewClass" },
+        };
+
+        setExpandedNodes((prev) => {
+          if (parentIri && !prev.includes(parentIri)) {
+            return [...prev, parentIri];
+          }
+          return prev;
+        });
+
+        setClassHierarchy((prev) => {
+          const addNodeRecursively = (nodes: TreeNode[]): TreeNode[] => {
+            return nodes.map((node) => {
+              if (type === "subclass" && node.id === parentIri) {
+                const children = node.children ? [...node.children, newNode] : [newNode];
+                return { ...node, children, hasChildren: true };
+              }
+              if (type === "sibling" && node.children?.some((child: TreeNode) => child.id === parentId)) {
+                return { ...node, children: [...(node.children || []), newNode] };
+              }
+              if (node.children) {
+                return { ...node, children: addNodeRecursively(node.children) };
+              }
+              return node;
+            });
+          };
+          return addNodeRecursively(prev);
+        });
+
+        markAsUnsaved();
+
+        console.log("[handleAddClassInline] Class created, refreshing from GraphDB...");
+        // Add a small delay to ensure backend has processed the class
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        await refreshClassHierarchy();
+
+        // Re-expand the parent node after refresh to ensure it stays open
+        if (parentIri && !expandedNodes.includes(parentIri)) {
+          setExpandedNodes((prev) => [...prev, parentIri]);
+        }
+
+        console.log("[handleAddClassInline] Refresh complete");
+        showNotification(`Class "${name}" created successfully!`);
+      } catch (error) {
+        console.error("Failed to create class:", error);
+        showNotification("Failed to create class. See console for details.", "error");
+        throw error;
       }
+    },
+    [projectId, metadata, classHierarchy, user, refreshClassHierarchy, showNotification, expandedNodes, markAsUnsaved],
+  );
 
-      console.log('[handleAddClassInline] Creating with IRI:', newIri, 'parent:', parentIri);
-      await ontologyMutationService.createClass(
-        projectId,
-        newIri,
-        name || 'NewClass',
-        parentIri,
-        user?.email || 'anonymous',
-        user?.username || 'Anonymous'
-      );
+  const handleAddItem = useCallback(
+    async (type: "subclass" | "sibling" | "individual") => {
+      if (!projectId) return;
 
-      console.log('[handleAddClassInline] Class created, refreshing...');
-      // Add a small delay to ensure backend has processed the class
-      await new Promise(resolve => setTimeout(resolve, 300));
-
-      // Ensure parent node is in expanded nodes before refresh
-      if (parentIri && !expandedNodes.includes(parentIri)) {
-        setExpandedNodes(prev => [...prev, parentIri]);
-      }
-
-      await refreshClassHierarchy();
-
-      // Re-expand the parent node after refresh to ensure it stays open
-      if (parentIri && !expandedNodes.includes(parentIri)) {
-        setExpandedNodes(prev => [...prev, parentIri]);
-      }
-
-      console.log('[handleAddClassInline] Refresh complete');
-      showNotification(`Class "${name}" created successfully!`);
-    } catch (error) {
-      console.error('Failed to create class:', error);
-      showNotification('Failed to create class. See console for details.', 'error');
-      throw error;
-    }
-  }, [projectId, metadata, classHierarchy, user, refreshClassHierarchy, showNotification, expandedNodes]);
-
-  const handleAddItem = useCallback(async (type: 'subclass' | 'sibling' | 'individual') => {
-    if (!projectId) return;
-
-    if (type === 'individual') {
-      setCreateIndividualModalOpen(true);
-      return;
-    }
-
-    if (entitiesTab === 'ObjectProperties') {
-      if (!selectedItem) {
-        showNotification('Select an object property first.', 'warning');
+      if (type === "individual") {
+        setCreateIndividualModalOpen(true);
         return;
       }
 
-      // Prevent creating sibling of top-level object property
-      if (type === 'sibling') {
-        const parent = findParentNode(objectPropertyHierarchy, selectedItem.id);
-        const isTopLevel = !parent ||
-          selectedItem.id.includes('topObjectProperty') ||
-          selectedItem.label === 'owl:topObjectProperty';
+      if (entitiesTab === "ObjectProperties") {
+        if (!selectedItem) {
+          showNotification("Select an object property first.", "warning");
+          return;
+        }
+
+        // Prevent creating sibling of top-level object property
+        if (type === "sibling") {
+          const parent = findParentNode(objectPropertyHierarchy, selectedItem.id);
+          const isTopLevel =
+            !parent || selectedItem.id.includes("topObjectProperty") || selectedItem.label === "owl:topObjectProperty";
+
+          if (isTopLevel) {
+            showNotification(
+              "Cannot create sibling of top-level object property. Please create a subproperty instead.",
+              "warning",
+            );
+            return;
+          }
+        }
+
+        const parentLabel =
+          type === "subclass"
+            ? selectedItem.label
+            : findParentNode(objectPropertyHierarchy, selectedItem.id)?.label || "owl:topObjectProperty";
+
+        setAddPropertyType(type === "subclass" ? "subproperty" : "sibling");
+        setPropertyParentLabel(parentLabel);
+        setAddPropertyDialogOpen(true);
+        return;
+      }
+
+      if (entitiesTab === "DataProperties") {
+        if (!selectedItem) {
+          showNotification("Select a data property first.", "warning");
+          return;
+        }
+
+        // Prevent creating sibling of top-level data property
+        if (type === "sibling") {
+          const parent = findParentNode(dataPropertyHierarchy, selectedItem.id);
+          const isTopLevel =
+            !parent || selectedItem.id.includes("topDataProperty") || selectedItem.label === "owl:topDataProperty";
+
+          if (isTopLevel) {
+            showNotification(
+              "Cannot create sibling of top-level data property. Please create a subproperty instead.",
+              "warning",
+            );
+            return;
+          }
+        }
+
+        const parentLabel =
+          type === "subclass"
+            ? selectedItem.label
+            : findParentNode(dataPropertyHierarchy, selectedItem.id)?.label || "owl:topDataProperty";
+
+        setAddPropertyType(type === "subclass" ? "subproperty" : "sibling");
+        setPropertyParentLabel(parentLabel);
+        setAddPropertyDialogOpen(true);
+        return;
+      }
+
+      if (entitiesTab === "AnnotationProperties") {
+        setAddPropertyType("root");
+        setPropertyParentLabel("Annotation Property");
+        setAddPropertyDialogOpen(true);
+        return;
+      }
+
+      if (entitiesTab === "Datatypes") {
+        setAddDatatypeDialogOpen(true);
+        return;
+      }
+
+      if ((type === "subclass" || type === "sibling") && !selectedItem) {
+        showNotification("Please select a class first.", "warning");
+        return;
+      }
+
+      if (entitiesTab !== "Classes") {
+        showNotification("This action is available only for classes right now.", "warning");
+        return;
+      }
+
+      // Prevent creating sibling of top-level class
+      if (type === "sibling") {
+        const parent = findParentNode(classHierarchy, selectedItem.id);
+        const isTopLevel = !parent || selectedItem.id.includes("Thing") || selectedItem.label === "owl:Thing";
 
         if (isTopLevel) {
-          showNotification('Cannot create sibling of top-level object property. Please create a subproperty instead.', 'warning');
+          showNotification("Cannot create sibling of owl:Thing. Please create a subclass instead.", "warning");
           return;
         }
       }
 
-      const parentLabel = type === 'subclass'
-        ? selectedItem.label
-        : (findParentNode(objectPropertyHierarchy, selectedItem.id)?.label || 'owl:topObjectProperty');
-
-      setAddPropertyType(type === 'subclass' ? 'subproperty' : 'sibling');
-      setPropertyParentLabel(parentLabel);
-      setAddPropertyDialogOpen(true);
-      return;
-    }
-
-    if (entitiesTab === 'DataProperties') {
-      if (!selectedItem) {
-        showNotification('Select a data property first.', 'warning');
-        return;
+      // For parent label, we'll compute it from state accessor
+      let parentLabel = selectedItem.label;
+      if (type === "sibling") {
+        // Use functional update to get parent label without dependency
+        setClassHierarchy((currentHierarchy) => {
+          const parent = findParentNode(currentHierarchy, selectedItem.id);
+          parentLabel = parent?.label || "owl:Thing";
+          return currentHierarchy; // No change
+        });
       }
 
-      // Prevent creating sibling of top-level data property
-      if (type === 'sibling') {
-        const parent = findParentNode(dataPropertyHierarchy, selectedItem.id);
-        const isTopLevel = !parent ||
-          selectedItem.id.includes('topDataProperty') ||
-          selectedItem.label === 'owl:topDataProperty';
+      setAddClassType(type);
+      setClassParentLabel(parentLabel);
+      setAddClassDialogOpen(true);
+    },
+    [projectId, entitiesTab, selectedItem, showNotification],
+  );
 
-        if (isTopLevel) {
-          showNotification('Cannot create sibling of top-level data property. Please create a subproperty instead.', 'warning');
-          return;
-        }
-      }
+  const handleCreateClass = useCallback(
+    async (name: string) => {
+      if (!projectId || !selectedItem) return;
 
-      const parentLabel = type === 'subclass'
-        ? selectedItem.label
-        : (findParentNode(dataPropertyHierarchy, selectedItem.id)?.label || 'owl:topDataProperty');
+      const type = addClassType;
 
-      setAddPropertyType(type === 'subclass' ? 'subproperty' : 'sibling');
-      setPropertyParentLabel(parentLabel);
-      setAddPropertyDialogOpen(true);
-      return;
-    }
+      try {
+        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
+        const newIri = `${baseIri}#${name.replace(/\s+/g, "_")}`;
 
-    if (entitiesTab === 'AnnotationProperties') {
-      setAddPropertyType('root');
-      setPropertyParentLabel('Annotation Property');
-      setAddPropertyDialogOpen(true);
-      return;
-    }
+        // Determine parent IRI based on type
+        let parentIri = "http://www.w3.org/2002/07/owl#Thing";
 
-    if (entitiesTab === 'Datatypes') {
-      setAddDatatypeDialogOpen(true);
-      return;
-    }
+        if (entitiesTab === "Classes") {
+          if (type === "subclass" && selectedItem?.id) {
+            parentIri = selectedItem.id;
+          } else if (type === "sibling" && selectedItem?.id) {
+            // Use functional update to find parent without dependency
+            let foundParentIri = "http://www.w3.org/2002/07/owl#Thing";
+            setClassHierarchy((currentHierarchy) => {
+              const findParent = (
+                nodes: TreeNode[],
+                targetId: string,
+                parent: TreeNode | null = null,
+              ): TreeNode | null => {
+                for (const node of nodes) {
+                  if (node.id === targetId) return parent;
+                  if (node.children) {
+                    const found = findParent(node.children, targetId, node);
+                    if (found) return found;
+                  }
+                }
+                return null;
+              };
+              const parent = findParent(currentHierarchy, selectedItem.id);
+              foundParentIri = parent?.id || "http://www.w3.org/2002/07/owl#Thing";
+              return currentHierarchy; // No change yet
+            });
+            parentIri = foundParentIri;
+          }
 
-    if ((type === 'subclass' || type === 'sibling') && !selectedItem) {
-      showNotification("Please select a class first.", 'warning');
-      return;
-    }
+          // Call backend API with user info
+          await ontologyMutationService.createClass(
+            projectId,
+            newIri,
+            name,
+            parentIri,
+            user?.email || "anonymous",
+            user?.username || "Anonymous",
+          );
 
-    if (entitiesTab !== 'Classes') {
-      showNotification('This action is available only for classes right now.', 'warning');
-      return;
-    }
+          // Update local state
+          const newNode: TreeNode = {
+            id: newIri,
+            label: name,
+            children: undefined,
+            hasChildren: false,
+            annotations: { "rdfs:label": name },
+          };
 
-    // Prevent creating sibling of top-level class
-    if (type === 'sibling') {
-      const parent = findParentNode(classHierarchy, selectedItem.id);
-      const isTopLevel = !parent ||
-        selectedItem.id.includes('Thing') ||
-        selectedItem.label === 'owl:Thing';
+          setExpandedNodes((prev) => {
+            if (type === "subclass" && selectedItem?.id && !prev.includes(selectedItem.id)) {
+              return [...prev, selectedItem.id];
+            }
+            return prev;
+          });
 
-      if (isTopLevel) {
-        showNotification('Cannot create sibling of owl:Thing. Please create a subclass instead.', 'warning');
-        return;
-      }
-    }
+          setClassHierarchy((prev) => {
+            const addNodeRecursively = (nodes: TreeNode[]): TreeNode[] => {
+              return nodes.map((node) => {
+                if (type === "subclass" && node.id === selectedItem?.id) {
+                  const children = node.children ? [...node.children, newNode] : [newNode];
+                  return { ...node, children, hasChildren: true };
+                }
+                if (type === "sibling" && node.children?.some((child: TreeNode) => child.id === selectedItem?.id)) {
+                  return { ...node, children: [...(node.children || []), newNode] };
+                }
+                if (node.children) {
+                  return { ...node, children: addNodeRecursively(node.children) };
+                }
+                return node;
+              });
+            };
 
-    // For parent label, we'll compute it from state accessor
-    let parentLabel = selectedItem.label;
-    if (type === 'sibling') {
-      // Use functional update to get parent label without dependency
-      setClassHierarchy(currentHierarchy => {
-        const parent = findParentNode(currentHierarchy, selectedItem.id);
-        parentLabel = parent?.label || 'owl:Thing';
-        return currentHierarchy; // No change
-      });
-    }
-
-    setAddClassType(type);
-    setClassParentLabel(parentLabel);
-    setAddClassDialogOpen(true);
-  }, [projectId, entitiesTab, selectedItem, showNotification]);
-
-  const handleCreateClass = useCallback(async (name: string) => {
-    if (!projectId || !selectedItem) return;
-
-    const type = addClassType;
-
-    try {
-      const baseIri = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
-      const newIri = `${baseIri}#${name.replace(/\s+/g, '_')}`;
-
-      // Determine parent IRI based on type
-      let parentIri = 'http://www.w3.org/2002/07/owl#Thing';
-
-      if (entitiesTab === 'Classes') {
-        if (type === 'subclass' && selectedItem?.id) {
-          parentIri = selectedItem.id;
-        } else if (type === 'sibling' && selectedItem?.id) {
-          // Use functional update to find parent without dependency
-          let foundParentIri = 'http://www.w3.org/2002/07/owl#Thing';
-          setClassHierarchy(currentHierarchy => {
-            const findParent = (nodes: TreeNode[], targetId: string, parent: TreeNode | null = null): TreeNode | null => {
+            // If adding sibling at root level
+            if (type === "sibling" && prev.some((node) => node.id === selectedItem.id)) {
+              return [...prev, newNode];
+            } else {
+              return addNodeRecursively(prev);
+            }
+          });
+          markAsUnsaved();
+        } else if (entitiesTab === "ObjectProperties") {
+          // Handle Object Property Creation
+          parentIri = "http://www.w3.org/2002/07/owl#topObjectProperty";
+          if (type === "subclass" && selectedItem?.id) {
+            parentIri = selectedItem.id;
+          } else if (type === "sibling" && selectedItem?.id) {
+            // Find parent of selected item in hierarchy
+            const findParent = (nodes: any[], targetId: string, parent: any | null = null): any | null => {
               for (const node of nodes) {
                 if (node.id === targetId) return parent;
                 if (node.children) {
@@ -6935,48 +8208,36 @@ const Dashboard: React.FC<DashboardProps> = ({
               }
               return null;
             };
-            const parent = findParent(currentHierarchy, selectedItem.id);
-            foundParentIri = parent?.id || 'http://www.w3.org/2002/07/owl#Thing';
-            return currentHierarchy; // No change yet
-          });
-          parentIri = foundParentIri;
-        }
-
-        // Call backend API with user info
-        await ontologyMutationService.createClass(
-          projectId,
-          newIri,
-          name,
-          parentIri,
-          user?.email || 'anonymous',
-          user?.username || 'Anonymous'
-        );
-
-        // Update local state
-        const newNode: TreeNode = {
-          id: newIri,
-          label: name,
-          children: undefined,
-          hasChildren: false,
-          annotations: { 'rdfs:label': name }
-        };
-
-        setExpandedNodes(prev => {
-          if (type === 'subclass' && selectedItem?.id && !prev.includes(selectedItem.id)) {
-            return [...prev, selectedItem.id];
+            const parent = findParent(objectPropertyHierarchy, selectedItem.id);
+            parentIri = parent?.id || "http://www.w3.org/2002/07/owl#topObjectProperty";
           }
-          return prev;
-        });
 
-        setClassHierarchy(prev => {
-          const addNodeRecursively = (nodes: TreeNode[]): TreeNode[] => {
-            return nodes.map(node => {
-              if (type === 'subclass' && node.id === selectedItem?.id) {
-                const children = node.children ? [...node.children, newNode] : [newNode];
+          await ontologyMutationService.createObjectProperty(
+            projectId,
+            newIri,
+            name,
+            parentIri,
+            user?.email || "anonymous",
+            user?.username || "Anonymous",
+          );
+
+          const newProp: Property & TreeNode = {
+            id: newIri,
+            label: name,
+            type: "ObjectProperty" as const,
+            annotations: { "rdfs:label": name },
+            children: [],
+            hasChildren: false,
+          };
+
+          setObjectProperties((prev) => [...prev, newProp]);
+
+          // Update Hierarchy
+          const addNodeRecursively = (nodes: any[]): any[] => {
+            return nodes.map((node) => {
+              if (node.id === parentIri) {
+                const children = node.children ? [...node.children, newProp] : [newProp];
                 return { ...node, children, hasChildren: true };
-              }
-              if (type === 'sibling' && node.children?.some((child: TreeNode) => child.id === selectedItem?.id)) {
-                return { ...node, children: [...(node.children || []), newNode] };
               }
               if (node.children) {
                 return { ...node, children: addNodeRecursively(node.children) };
@@ -6985,51 +8246,56 @@ const Dashboard: React.FC<DashboardProps> = ({
             });
           };
 
-          // If adding sibling at root level
-          if (type === 'sibling' && prev.some(node => node.id === selectedItem.id)) {
-            return [...prev, newNode];
-          } else {
-            return addNodeRecursively(prev);
+          setObjectPropertyHierarchy((prev) => addNodeRecursively(prev));
+
+          if (parentIri && !expandedNodes.includes(parentIri)) {
+            setExpandedNodes((prev) => [...prev, parentIri]);
           }
-        });
-        markAsUnsaved();
-      } else if (entitiesTab === 'ObjectProperties') {
-        // Handle Object Property Creation
-        parentIri = 'http://www.w3.org/2002/07/owl#topObjectProperty';
-        if (type === 'subclass' && selectedItem?.id) {
-          parentIri = selectedItem.id;
-        } else if (type === 'sibling' && selectedItem?.id) {
-          // Find parent of selected item in hierarchy
-          const findParent = (nodes: any[], targetId: string, parent: any | null = null): any | null => {
-            for (const node of nodes) {
-              if (node.id === targetId) return parent;
-              if (node.children) {
-                const found = findParent(node.children, targetId, node);
-                if (found) return found;
-              }
-            }
-            return null;
-          };
-          const parent = findParent(objectPropertyHierarchy, selectedItem.id);
-          parentIri = parent?.id || 'http://www.w3.org/2002/07/owl#topObjectProperty';
         }
 
-        await ontologyMutationService.createObjectProperty(projectId, newIri, name, parentIri, user?.email || 'anonymous', user?.username || 'Anonymous');
+        showNotification(`${entitiesTab === "Classes" ? "Class" : "Property"} created successfully!`, "info");
+        setAddClassDialogOpen(false);
+      } catch (error) {
+        console.error("Failed to create entity:", error);
+        showNotification("Failed to create entity. See console for details.", "error");
+      }
+    },
+    [projectId, selectedItem, addClassType, entitiesTab, metadata, markAsUnsaved],
+  );
+
+  const handleCreateObjectProperty = useCallback(
+    async (name: string) => {
+      if (!projectId) return;
+
+      const type = addPropertyType;
+
+      try {
+        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
+        const newIri = `${baseIri}#${name.replace(/\s+/g, "_")}`;
+
+        let parentIri = "http://www.w3.org/2002/07/owl#topObjectProperty";
+        if (type === "subproperty" && selectedItem?.id) {
+          parentIri = selectedItem.id;
+        } else if (type === "sibling" && selectedItem?.id) {
+          const parent = findParentNode(objectPropertyHierarchy, selectedItem.id);
+          parentIri = parent?.id || "http://www.w3.org/2002/07/owl#topObjectProperty";
+        }
+
+        await ontologyMutationService.createObjectProperty(projectId, newIri, name, parentIri);
 
         const newProp: Property & TreeNode = {
           id: newIri,
           label: name,
-          type: 'ObjectProperty' as const,
-          annotations: { 'rdfs:label': name },
+          type: "ObjectProperty",
+          annotations: { "rdfs:label": name },
           children: [],
-          hasChildren: false
+          hasChildren: false,
         };
 
-        setObjectProperties(prev => [...prev, newProp]);
+        setObjectProperties((prev) => [...prev, newProp]);
 
-        // Update Hierarchy
         const addNodeRecursively = (nodes: any[]): any[] => {
-          return nodes.map(node => {
+          return nodes.map((node) => {
             if (node.id === parentIri) {
               const children = node.children ? [...node.children, newProp] : [newProp];
               return { ...node, children, hasChildren: true };
@@ -7041,230 +8307,191 @@ const Dashboard: React.FC<DashboardProps> = ({
           });
         };
 
-        setObjectPropertyHierarchy(prev => addNodeRecursively(prev));
+        setObjectPropertyHierarchy((prev) => addNodeRecursively(prev));
 
         if (parentIri && !expandedNodes.includes(parentIri)) {
-          setExpandedNodes(prev => [...prev, parentIri]);
+          setExpandedNodes((prev) => [...prev, parentIri]);
         }
+
+        markAsUnsaved();
+        showNotification("Property created successfully!", "info");
+        setAddPropertyDialogOpen(false);
+        setPropertyParentLabel("owl:topObjectProperty");
+      } catch (error) {
+        console.error("Failed to create property:", error);
+        showNotification("Failed to create property. See console for details.", "error");
+      }
+    },
+    [projectId, selectedItem, addPropertyType, objectPropertyHierarchy, expandedNodes, metadata, markAsUnsaved],
+  );
+
+  const handleCreateDataProperty = useCallback(
+    async (name: string) => {
+      if (!projectId) return;
+
+      const type = addPropertyType;
+
+      try {
+        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
+        const newIri = `${baseIri}#${name.replace(/\s+/g, "_")}`;
+
+        let parentIri = "http://www.w3.org/2002/07/owl#topDataProperty";
+        if (type === "subproperty" && selectedItem?.id) {
+          parentIri = selectedItem.id;
+        } else if (type === "sibling" && selectedItem?.id) {
+          const parent = findParentNode(dataPropertyHierarchy, selectedItem.id);
+          parentIri = parent?.id || "http://www.w3.org/2002/07/owl#topDataProperty";
+        }
+
+        await ontologyMutationService.createDataProperty(projectId, newIri, name, parentIri);
+
+        const newProp: Property & TreeNode = {
+          id: newIri,
+          label: name,
+          type: "DatatypeProperty" as const,
+          annotations: { "rdfs:label": name },
+          children: [],
+          hasChildren: false,
+        };
+
+        setDataProperties((prev) => [...prev, newProp]);
+
+        const addNodeRecursively = (nodes: any[]): any[] => {
+          return nodes.map((node) => {
+            if (node.id === parentIri) {
+              const children = node.children ? [...node.children, newProp] : [newProp];
+              return { ...node, children, hasChildren: true };
+            }
+            if (node.children) {
+              return { ...node, children: addNodeRecursively(node.children) };
+            }
+            return node;
+          });
+        };
+
+        setDataPropertyHierarchy((prev) => addNodeRecursively(prev));
+
+        if (parentIri && !expandedNodes.includes(parentIri)) {
+          setExpandedNodes((prev) => [...prev, parentIri]);
+        }
+
+        markAsUnsaved();
+        showNotification("Data property created successfully!", "info");
+        setAddPropertyDialogOpen(false);
+        setPropertyParentLabel("owl:topDataProperty");
+      } catch (error) {
+        console.error("Failed to create data property:", error);
+        showNotification("Failed to create data property. See console for details.", "error");
+      }
+    },
+    [projectId, selectedItem, addPropertyType, dataPropertyHierarchy, expandedNodes, metadata, markAsUnsaved],
+  );
+
+  const handleCreateDatatype = useCallback(
+    async (name: string) => {
+      if (!projectId) return;
+
+      try {
+        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
+        const newIri = `${baseIri}#${name.replace(/\s+/g, "_")}`;
+
+        await ontologyMutationService.createDatatype(
+          projectId,
+          newIri,
+          name,
+          user?.email || "anonymous",
+          user?.username || "Anonymous",
+        );
+
+        const newDatatype: Datatype = {
+          id: newIri,
+          label: name,
+          annotations: { "rdfs:label": name },
+        };
+
+        setDatatypes((prev) => [...prev, newDatatype]);
+
+        markAsUnsaved();
+        showNotification("Datatype created successfully!", "info");
+        setAddDatatypeDialogOpen(false);
+      } catch (error) {
+        console.error("Failed to create datatype:", error);
+        showNotification("Failed to create datatype. See console for details.", "error");
+      }
+    },
+    [projectId, metadata, markAsUnsaved, showNotification],
+  );
+
+  const handleCreateAnnotationProperty = useCallback(
+    async (name: string) => {
+      if (!projectId) return;
+
+      try {
+        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
+        const newIri = `${baseIri}#${name.replace(/\s+/g, "_")}`;
+
+        await ontologyMutationService.createAnnotationProperty(projectId, newIri, name);
+
+        const newProp: AnnotationProperty = {
+          id: newIri,
+          label: name,
+          annotations: { "rdfs:label": name },
+        };
+
+        setAnnotationProperties((prev) => [...prev, newProp]);
+
+        markAsUnsaved();
+        showNotification("Annotation property created successfully!", "info");
+        setAddPropertyDialogOpen(false);
+      } catch (error) {
+        console.error("Failed to create annotation property:", error);
+        showNotification("Failed to create annotation property. See console for details.", "error");
+      }
+    },
+    [projectId, metadata, markAsUnsaved, showNotification],
+  );
+
+  const handleAddIndividual = useCallback(
+    async (name: string) => {
+      if (!projectId) {
+        showNotification("No project loaded.", "error");
+        return;
       }
 
-      showNotification(`${entitiesTab === 'Classes' ? 'Class' : 'Property'} created successfully!`, 'info');
-      setAddClassDialogOpen(false);
-    } catch (error) {
-      console.error('Failed to create entity:', error);
-      showNotification('Failed to create entity. See console for details.', 'error');
-    }
-  }, [projectId, selectedItem, addClassType, entitiesTab, metadata, markAsUnsaved]);
+      const base = (metadata as any)?.ontologyIRI || "http://example.com/onto";
+      const id = `${base}#${name.replace(/\s+/g, "_")}`;
 
-  const handleCreateObjectProperty = useCallback(async (name: string) => {
-    if (!projectId) return;
+      // Determine the class IRI - use selected class if available, otherwise owl:Thing
+      const classIri =
+        entitiesTab === "Classes" && selectedItem?.id ? selectedItem.id : "http://www.w3.org/2002/07/owl#Thing";
 
-    const type = addPropertyType;
+      try {
+        // Call the mutation service to persist the individual
+        await ontologyMutationService.createIndividual(projectId, id, name, classIri);
 
-    try {
-      const baseIri = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
-      const newIri = `${baseIri}#${name.replace(/\s+/g, '_')}`;
+        // Update local state
+        const newIndividual: Individual = {
+          id,
+          iri: id,
+          label: name,
+          annotations: { "rdfs:label": name },
+          types: [classIri],
+        };
+        setIndividuals((prev) => [...prev, newIndividual]);
 
-      let parentIri = 'http://www.w3.org/2002/07/owl#topObjectProperty';
-      if (type === 'subproperty' && selectedItem?.id) {
-        parentIri = selectedItem.id;
-      } else if (type === 'sibling' && selectedItem?.id) {
-        const parent = findParentNode(objectPropertyHierarchy, selectedItem.id);
-        parentIri = parent?.id || 'http://www.w3.org/2002/07/owl#topObjectProperty';
+        markAsUnsaved();
+        showNotification(`Individual "${name}" created successfully!`, "info");
+      } catch (error) {
+        console.error("Failed to create individual:", error);
+        showNotification("Failed to create individual. See console for details.", "error");
       }
-
-      await ontologyMutationService.createObjectProperty(projectId, newIri, name, parentIri);
-
-      const newProp: Property & TreeNode = {
-        id: newIri,
-        label: name,
-        type: 'ObjectProperty',
-        annotations: { 'rdfs:label': name },
-        children: [],
-        hasChildren: false
-      };
-
-      setObjectProperties(prev => [...prev, newProp]);
-
-      const addNodeRecursively = (nodes: any[]): any[] => {
-        return nodes.map(node => {
-          if (node.id === parentIri) {
-            const children = node.children ? [...node.children, newProp] : [newProp];
-            return { ...node, children, hasChildren: true };
-          }
-          if (node.children) {
-            return { ...node, children: addNodeRecursively(node.children) };
-          }
-          return node;
-        });
-      };
-
-      setObjectPropertyHierarchy(prev => addNodeRecursively(prev));
-
-      if (parentIri && !expandedNodes.includes(parentIri)) {
-        setExpandedNodes(prev => [...prev, parentIri]);
-      }
-
-      markAsUnsaved();
-      showNotification('Property created successfully!', 'info');
-      setAddPropertyDialogOpen(false);
-      setPropertyParentLabel('owl:topObjectProperty');
-    } catch (error) {
-      console.error('Failed to create property:', error);
-      showNotification('Failed to create property. See console for details.', 'error');
-    }
-  }, [projectId, selectedItem, addPropertyType, objectPropertyHierarchy, expandedNodes, metadata, markAsUnsaved]);
-
-  const handleCreateDataProperty = useCallback(async (name: string) => {
-    if (!projectId) return;
-
-    const type = addPropertyType;
-
-    try {
-      const baseIri = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
-      const newIri = `${baseIri}#${name.replace(/\s+/g, '_')}`;
-
-      let parentIri = 'http://www.w3.org/2002/07/owl#topDataProperty';
-      if (type === 'subproperty' && selectedItem?.id) {
-        parentIri = selectedItem.id;
-      } else if (type === 'sibling' && selectedItem?.id) {
-        const parent = findParentNode(dataPropertyHierarchy, selectedItem.id);
-        parentIri = parent?.id || 'http://www.w3.org/2002/07/owl#topDataProperty';
-      }
-
-      await ontologyMutationService.createDataProperty(projectId, newIri, name, parentIri);
-
-      const newProp: Property & TreeNode = {
-        id: newIri,
-        label: name,
-        type: 'DatatypeProperty' as const,
-        annotations: { 'rdfs:label': name },
-        children: [],
-        hasChildren: false
-      };
-
-      setDataProperties(prev => [...prev, newProp]);
-
-      const addNodeRecursively = (nodes: any[]): any[] => {
-        return nodes.map(node => {
-          if (node.id === parentIri) {
-            const children = node.children ? [...node.children, newProp] : [newProp];
-            return { ...node, children, hasChildren: true };
-          }
-          if (node.children) {
-            return { ...node, children: addNodeRecursively(node.children) };
-          }
-          return node;
-        });
-      };
-
-      setDataPropertyHierarchy(prev => addNodeRecursively(prev));
-
-      if (parentIri && !expandedNodes.includes(parentIri)) {
-        setExpandedNodes(prev => [...prev, parentIri]);
-      }
-
-      markAsUnsaved();
-      showNotification('Data property created successfully!', 'info');
-      setAddPropertyDialogOpen(false);
-      setPropertyParentLabel('owl:topDataProperty');
-    } catch (error) {
-      console.error('Failed to create data property:', error);
-      showNotification('Failed to create data property. See console for details.', 'error');
-    }
-  }, [projectId, selectedItem, addPropertyType, dataPropertyHierarchy, expandedNodes, metadata, markAsUnsaved]);
-
-  const handleCreateDatatype = useCallback(async (name: string) => {
-    if (!projectId) return;
-
-    try {
-      const baseIri = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
-      const newIri = `${baseIri}#${name.replace(/\s+/g, '_')}`;
-
-      await ontologyMutationService.createDatatype(projectId, newIri, name, user?.email || 'anonymous', user?.username || 'Anonymous');
-
-      const newDatatype: Datatype = {
-        id: newIri,
-        label: name,
-        annotations: { 'rdfs:label': name }
-      };
-
-      setDatatypes(prev => [...prev, newDatatype]);
-
-      markAsUnsaved();
-      showNotification('Datatype created successfully!', 'info');
-      setAddDatatypeDialogOpen(false);
-    } catch (error) {
-      console.error('Failed to create datatype:', error);
-      showNotification('Failed to create datatype. See console for details.', 'error');
-    }
-  }, [projectId, metadata, markAsUnsaved, showNotification]);
-
-  const handleCreateAnnotationProperty = useCallback(async (name: string) => {
-    if (!projectId) return;
-
-    try {
-      const baseIri = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
-      const newIri = `${baseIri}#${name.replace(/\s+/g, '_')}`;
-
-      await ontologyMutationService.createAnnotationProperty(projectId, newIri, name);
-
-      const newProp: AnnotationProperty = {
-        id: newIri,
-        label: name,
-        annotations: { 'rdfs:label': name }
-      };
-
-      setAnnotationProperties(prev => [...prev, newProp]);
-
-      markAsUnsaved();
-      showNotification('Annotation property created successfully!', 'info');
-      setAddPropertyDialogOpen(false);
-    } catch (error) {
-      console.error('Failed to create annotation property:', error);
-      showNotification('Failed to create annotation property. See console for details.', 'error');
-    }
-  }, [projectId, metadata, markAsUnsaved, showNotification]);
-
-  const handleAddIndividual = useCallback(async (name: string) => {
-    if (!projectId) {
-      showNotification('No project loaded.', 'error');
-      return;
-    }
-
-    const base = (metadata as any)?.ontologyIRI || 'http://example.com/onto';
-    const id = `${base}#${name.replace(/\s+/g, '_')}`;
-
-    // Determine the class IRI - use selected class if available, otherwise owl:Thing
-    const classIri = (entitiesTab === 'Classes' && selectedItem?.id)
-      ? selectedItem.id
-      : 'http://www.w3.org/2002/07/owl#Thing';
-
-    try {
-      // Call the mutation service to persist the individual
-      await ontologyMutationService.createIndividual(projectId, id, name, classIri);
-
-      // Update local state
-      const newIndividual: Individual = {
-        id,
-        iri: id,
-        label: name,
-        annotations: { 'rdfs:label': name },
-        types: [classIri]
-      };
-      setIndividuals(prev => [...prev, newIndividual]);
-
-      markAsUnsaved();
-      showNotification(`Individual "${name}" created successfully!`, 'info');
-    } catch (error) {
-      console.error('Failed to create individual:', error);
-      showNotification('Failed to create individual. See console for details.', 'error');
-    }
-  }, [projectId, metadata, entitiesTab, selectedItem, markAsUnsaved, showNotification]);
+    },
+    [projectId, metadata, entitiesTab, selectedItem, markAsUnsaved, showNotification],
+  );
 
   const handleMakeSiblingsDisjoint = useCallback(async () => {
-    console.log('[DEBUG] handleMakeSiblingsDisjoint called');
-    if (!projectId || !selectedItem || entitiesTab !== 'Classes') return;
+    console.log("[DEBUG] handleMakeSiblingsDisjoint called");
+    if (!projectId || !selectedItem || entitiesTab !== "Classes") return;
 
     // Find siblings of selected class - use classHierarchy directly as a dependency
     const findSiblings = (nodes: TreeNode[], targetId: string, parent: TreeNode | null = null): TreeNode[] => {
@@ -7284,25 +8511,30 @@ const Dashboard: React.FC<DashboardProps> = ({
     const siblings = findSiblings(classHierarchy, selectedItem.id);
 
     if (siblings.length === 0) {
-      showNotification('No siblings found for the selected class.', 'info');
+      showNotification("No siblings found for the selected class.", "info");
       return;
     }
 
     // Show confirmation dialog
     setConfirmDialog({
       isOpen: true,
-      title: 'Make Siblings Disjoint',
+      title: "Make Siblings Disjoint",
       message: `This will make ${siblings.length + 1} sibling classes pairwise disjoint. Continue?`,
       onConfirm: async () => {
         try {
           // Include the selected class itself in the disjoint set
           const allClasses = [selectedItem as TreeNode, ...siblings];
-          const classIds = allClasses.map(c => c.id);
+          const classIds = allClasses.map((c) => c.id);
 
           // Call backend to create pairwise disjoint axioms
-          await ontologyMutationService.makeSiblingsDisjoint(projectId, classIds, user?.email || 'anonymous', user?.username || 'Anonymous');
+          await ontologyMutationService.makeSiblingsDisjoint(
+            projectId,
+            classIds,
+            user?.email || "anonymous",
+            user?.username || "Anonymous",
+          );
 
-          showNotification(`Successfully made ${classIds.length} classes pairwise disjoint.`, 'info');
+          showNotification(`Successfully made ${classIds.length} classes pairwise disjoint.`, "info");
 
           // Optionally refresh the selected item to show updated axioms
           if (selectedItem) {
@@ -7310,180 +8542,245 @@ const Dashboard: React.FC<DashboardProps> = ({
             updateItemInState(updated);
           }
         } catch (error) {
-          console.error('Failed to make siblings disjoint:', error);
-          showNotification('Failed to make siblings disjoint. See console for details.', 'error');
+          console.error("Failed to make siblings disjoint:", error);
+          showNotification("Failed to make siblings disjoint. See console for details.", "error");
         }
-      }
+      },
     });
   }, [projectId, selectedItem, entitiesTab, classHierarchy, updateItemInState]);
 
-  const handleDeleteItem = useCallback(async (itemOverride?: SelectableItem, tabOverride?: typeof entitiesTab) => {
-    const item = itemOverride || selectedItem;
-    const activeTab = tabOverride || entitiesTab;
-    if (!item || !projectId) return;
+  const handleDeleteItem = useCallback(
+    async (itemOverride?: SelectableItem, tabOverride?: typeof entitiesTab) => {
+      const item = itemOverride || selectedItem;
+      const activeTab = tabOverride || entitiesTab;
+      if (!item || !projectId) return;
 
-    // Validate item has a valid IRI
-    if (!item.id) {
-      console.error('[DELETE] Item has no IRI:', item);
-      showNotification('Cannot delete: item has no valid IRI', 'error');
-      return;
-    }
-
-    // Show confirm dialog instead of using confirm()
-    setConfirmDialog({
-      isOpen: true,
-      title: 'Delete Item',
-      message: `Are you sure you want to delete "${item.label}"? This action cannot be undone.`,
-      onConfirm: async () => {
-        try {
-          console.log('[DELETE] Deleting item:', { id: item.id, label: item.label, tab: activeTab });
-
-          // Call backend API based on entity type
-          switch (activeTab) {
-            case 'Classes':
-              await ontologyMutationService.deleteClass(projectId, item.id, user?.email || 'anonymous', user?.username || 'Anonymous');
-              break;
-            case 'Individuals':
-              await ontologyMutationService.deleteIndividual(projectId, item.id, user?.email || 'anonymous', user?.username || 'Anonymous');
-              break;
-            case 'ObjectProperties':
-              await ontologyMutationService.deleteObjectProperty(projectId, item.id, user?.email || 'anonymous', user?.username || 'Anonymous');
-              break;
-            case 'DataProperties':
-              await ontologyMutationService.deleteDataProperty(projectId, item.id, user?.email || 'anonymous', user?.username || 'Anonymous');
-              break;
-            case 'AnnotationProperties':
-              await ontologyMutationService.deleteAnnotationProperty(projectId, item.id, user?.email || 'anonymous', user?.username || 'Anonymous');
-              break;
-            case 'Datatypes':
-              await ontologyMutationService.deleteDatatype(projectId, item.id, user?.email || 'anonymous', user?.username || 'Anonymous');
-              break;
-          }
-
-          // Update local state
-          switch (activeTab) {
-            case 'Classes': {
-              const removeNodeRecursively = (nodes: TreeNode[], id: string): TreeNode[] =>
-                nodes
-                  .filter(node => node.id !== id)
-                  .map(node => node.children ? { ...node, children: removeNodeRecursively(node.children, id) } : node);
-              setClassHierarchy(prev => removeNodeRecursively(prev, item.id));
-              break;
-            }
-            case 'Individuals':
-              setIndividuals(prev => prev.filter(ind => ind.id !== item.id));
-              break;
-            case 'ObjectProperties': {
-              setObjectProperties(prev => prev.filter(p => p.id !== item.id));
-              const removeOpRecursively = (nodes: any[], id: string): any[] =>
-                nodes
-                  .filter(node => node.id !== id)
-                  .map(node => node.children ? { ...node, children: removeOpRecursively(node.children, id) } : node);
-              setObjectPropertyHierarchy(prev => removeOpRecursively(prev, item.id));
-              break;
-            }
-            case 'DataProperties': {
-              setDataProperties(prev => prev.filter(p => p.id !== item.id));
-              const removeDpRecursively = (nodes: any[], id: string): any[] =>
-                nodes
-                  .filter(node => node.id !== id)
-                  .map(node => node.children ? { ...node, children: removeDpRecursively(node.children, id) } : node);
-              setDataPropertyHierarchy(prev => removeDpRecursively(prev, item.id));
-              break;
-            }
-            case 'AnnotationProperties':
-              setAnnotationProperties(prev => prev.filter(p => p.id !== item.id));
-              break;
-            case 'Datatypes':
-              setDatatypes(prev => prev.filter(d => d.id !== item.id));
-              break;
-          }
-          setSelectedItem(prev => (prev?.id === item.id ? null : prev));
-          showNotification(`"${item.label}" deleted successfully!`, 'info');
-        } catch (error) {
-          console.error('Failed to delete item:', error);
-          showNotification('Failed to delete item. See console for details.', 'error');
-        }
+      // Validate item has a valid IRI
+      if (!item.id) {
+        console.error("[DELETE] Item has no IRI:", item);
+        showNotification("Cannot delete: item has no valid IRI", "error");
+        return;
       }
-    });
-  }, [selectedItem, entitiesTab, projectId]);
 
-  const handleRenameItem = useCallback(async (itemId: string, newLabel: string) => {
-    console.log('[DEBUG] handleRenameItem called for itemId:', itemId, 'newLabel:', newLabel);
-    if (!projectId || !newLabel.trim()) return;
+      // Show confirm dialog instead of using confirm()
+      setConfirmDialog({
+        isOpen: true,
+        title: "Delete Item",
+        message: `Are you sure you want to delete "${item.label}"? This action cannot be undone.`,
+        onConfirm: async () => {
+          try {
+            console.log("[DELETE] Deleting item:", { id: item.id, label: item.label, tab: activeTab });
 
-    try {
-      // Update the label via backend
-      // We'll use the itemId directly rather than searching for the item
-      // The backend knows the entity type from the IRI
+            // Call backend API based on entity type
+            switch (activeTab) {
+              case "Classes":
+                await ontologyMutationService.deleteClass(
+                  projectId,
+                  item.id,
+                  user?.email || "anonymous",
+                  user?.username || "Anonymous",
+                );
+                break;
+              case "Individuals":
+                await ontologyMutationService.deleteIndividual(
+                  projectId,
+                  item.id,
+                  user?.email || "anonymous",
+                  user?.username || "Anonymous",
+                );
+                break;
+              case "ObjectProperties":
+                await ontologyMutationService.deleteObjectProperty(
+                  projectId,
+                  item.id,
+                  user?.email || "anonymous",
+                  user?.username || "Anonymous",
+                );
+                break;
+              case "DataProperties":
+                await ontologyMutationService.deleteDataProperty(
+                  projectId,
+                  item.id,
+                  user?.email || "anonymous",
+                  user?.username || "Anonymous",
+                );
+                break;
+              case "AnnotationProperties":
+                await ontologyMutationService.deleteAnnotationProperty(
+                  projectId,
+                  item.id,
+                  user?.email || "anonymous",
+                  user?.username || "Anonymous",
+                );
+                break;
+              case "Datatypes":
+                await ontologyMutationService.deleteDatatype(
+                  projectId,
+                  item.id,
+                  user?.email || "anonymous",
+                  user?.username || "Anonymous",
+                );
+                break;
+            }
 
-      // Try to update via class label endpoint first (works for classes)
+            // Update local state
+            switch (activeTab) {
+              case "Classes": {
+                const removeNodeRecursively = (nodes: TreeNode[], id: string): TreeNode[] =>
+                  nodes
+                    .filter((node) => node.id !== id)
+                    .map((node) =>
+                      node.children ? { ...node, children: removeNodeRecursively(node.children, id) } : node,
+                    );
+                setClassHierarchy((prev) => removeNodeRecursively(prev, item.id));
+                break;
+              }
+              case "Individuals":
+                setIndividuals((prev) => prev.filter((ind) => ind.id !== item.id));
+                break;
+              case "ObjectProperties": {
+                setObjectProperties((prev) => prev.filter((p) => p.id !== item.id));
+                const removeOpRecursively = (nodes: any[], id: string): any[] =>
+                  nodes
+                    .filter((node) => node.id !== id)
+                    .map((node) =>
+                      node.children ? { ...node, children: removeOpRecursively(node.children, id) } : node,
+                    );
+                setObjectPropertyHierarchy((prev) => removeOpRecursively(prev, item.id));
+                break;
+              }
+              case "DataProperties": {
+                setDataProperties((prev) => prev.filter((p) => p.id !== item.id));
+                const removeDpRecursively = (nodes: any[], id: string): any[] =>
+                  nodes
+                    .filter((node) => node.id !== id)
+                    .map((node) =>
+                      node.children ? { ...node, children: removeDpRecursively(node.children, id) } : node,
+                    );
+                setDataPropertyHierarchy((prev) => removeDpRecursively(prev, item.id));
+                break;
+              }
+              case "AnnotationProperties":
+                setAnnotationProperties((prev) => prev.filter((p) => p.id !== item.id));
+                break;
+              case "Datatypes":
+                setDatatypes((prev) => prev.filter((d) => d.id !== item.id));
+                break;
+            }
+            setSelectedItem((prev) => (prev?.id === item.id ? null : prev));
+            showNotification(`"${item.label}" deleted successfully!`, "info");
+          } catch (error) {
+            console.error("Failed to delete item:", error);
+            showNotification("Failed to delete item. See console for details.", "error");
+          }
+        },
+      });
+    },
+    [selectedItem, entitiesTab, projectId],
+  );
+
+  const handleRenameItem = useCallback(
+    async (itemId: string, newLabel: string) => {
+      console.log("[DEBUG] handleRenameItem called for itemId:", itemId, "newLabel:", newLabel);
+      if (!projectId || !newLabel.trim()) return;
+
       try {
-        await ontologyMutationService.updateClassLabel(projectId, itemId, newLabel, user?.email || 'anonymous', user?.username || 'Anonymous');
-      } catch (classError) {
-        // If class update fails, try annotation-based update (for other entity types)
-        // Note: We need to get the current label - we'll use selectedItem if it matches
-        const currentLabel = selectedItem?.id === itemId ? selectedItem.label : 'Unknown';
-        await ontologyMutationService.deleteAnnotation(projectId, itemId, 'http://www.w3.org/2000/01/rdf-schema#label', currentLabel, user?.email || 'anonymous', user?.username || 'Anonymous');
-        await ontologyMutationService.addAnnotation(projectId, itemId, 'http://www.w3.org/2000/01/rdf-schema#label', newLabel, user?.email || 'anonymous', user?.username || 'Anonymous');
-      }
+        // Update the label via backend
+        // We'll use the itemId directly rather than searching for the item
+        // The backend knows the entity type from the IRI
 
-      // Update local state by creating a minimal updated item
-      const updatedItem = {
-        ...(selectedItem || { id: itemId, label: newLabel }),
-        label: newLabel
-      } as SelectableItem;
-      updateItemInState(updatedItem);
-
-      showNotification(`Renamed to "${newLabel}"`, 'info');
-    } catch (error) {
-      console.error('Failed to rename item:', error);
-      showNotification('Failed to rename item. See console for details.', 'error');
-    }
-  }, [projectId, selectedItem, updateItemInState]);
-
-  const handleGraphNodeClick = useCallback((nodeId: string) => {
-    console.log('[DEBUG] handleGraphNodeClick called for nodeId:', nodeId);
-    const flatten = (nodes: TreeNode[]): TreeNode[] =>
-      nodes.flatMap(n => [n, ...(n.children ? flatten(n.children) : [])]);
-
-    const allItems: SelectableItem[] = [
-      ...flatten(classHierarchy),
-      ...individuals,
-    ];
-    const item = allItems.find((i: SelectableItem) => i.id === nodeId);
-    if (item) {
-      let tab = 'Classes';
-      if ('types' in item) tab = 'Individuals';
-
-      setEntitiesTab(tab);
-      setSelectedItem(item);
-      setMainTab('Entities');
-    }
-  }, [classHierarchy, individuals]);
-
-  const findClassNodeById = useCallback((targetId: string): TreeNode | null => {
-    const traverse = (nodes: TreeNode[]): TreeNode | null => {
-      for (const node of nodes) {
-        if (node.id === targetId) {
-          return node;
+        // Try to update via class label endpoint first (works for classes)
+        try {
+          await ontologyMutationService.updateClassLabel(
+            projectId,
+            itemId,
+            newLabel,
+            user?.email || "anonymous",
+            user?.username || "Anonymous",
+          );
+        } catch (classError) {
+          // If class update fails, try annotation-based update (for other entity types)
+          // Note: We need to get the current label - we'll use selectedItem if it matches
+          const currentLabel = selectedItem?.id === itemId ? selectedItem.label : "Unknown";
+          await ontologyMutationService.deleteAnnotation(
+            projectId,
+            itemId,
+            "http://www.w3.org/2000/01/rdf-schema#label",
+            currentLabel,
+            user?.email || "anonymous",
+            user?.username || "Anonymous",
+          );
+          await ontologyMutationService.addAnnotation(
+            projectId,
+            itemId,
+            "http://www.w3.org/2000/01/rdf-schema#label",
+            newLabel,
+            user?.email || "anonymous",
+            user?.username || "Anonymous",
+          );
         }
-        if (node.children) {
-          const found = traverse(node.children);
-          if (found) {
-            return found;
+
+        // Update local state by creating a minimal updated item
+        const updatedItem = {
+          ...(selectedItem || { id: itemId, label: newLabel }),
+          label: newLabel,
+        } as SelectableItem;
+        updateItemInState(updatedItem);
+
+        showNotification(`Renamed to "${newLabel}"`, "info");
+      } catch (error) {
+        console.error("Failed to rename item:", error);
+        showNotification("Failed to rename item. See console for details.", "error");
+      }
+    },
+    [projectId, selectedItem, updateItemInState],
+  );
+
+  const handleGraphNodeClick = useCallback(
+    (nodeId: string) => {
+      console.log("[DEBUG] handleGraphNodeClick called for nodeId:", nodeId);
+      const flatten = (nodes: TreeNode[]): TreeNode[] =>
+        nodes.flatMap((n) => [n, ...(n.children ? flatten(n.children) : [])]);
+
+      const allItems: SelectableItem[] = [...flatten(classHierarchy), ...individuals];
+      const item = allItems.find((i: SelectableItem) => i.id === nodeId);
+      if (item) {
+        let tab = "Classes";
+        if ("types" in item) tab = "Individuals";
+
+        setEntitiesTab(tab);
+        setSelectedItem(item);
+        setMainTab("Entities");
+      }
+    },
+    [classHierarchy, individuals],
+  );
+
+  const findClassNodeById = useCallback(
+    (targetId: string): TreeNode | null => {
+      const traverse = (nodes: TreeNode[]): TreeNode | null => {
+        for (const node of nodes) {
+          if (node.id === targetId) {
+            return node;
+          }
+          if (node.children) {
+            const found = traverse(node.children);
+            if (found) {
+              return found;
+            }
           }
         }
-      }
-      return null;
-    };
-    return traverse(classHierarchy);
-  }, [classHierarchy]);
+        return null;
+      };
+      return traverse(classHierarchy);
+    },
+    [classHierarchy],
+  );
 
   useEffect(() => {
     const handleGraphAddClass = (event: Event) => {
       const custom = event as CustomEvent<{
-        action: 'subclass' | 'sibling';
+        action: "subclass" | "sibling";
         targetNodeId: string;
         targetNodeLabel?: string;
         parentId?: string | null;
@@ -7499,30 +8796,30 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       const targetNode = findClassNodeById(detail.targetNodeId);
       if (!targetNode) {
-        showNotification('Selected class not found in hierarchy. Please refresh the graph and try again.', 'warning');
+        showNotification("Selected class not found in hierarchy. Please refresh the graph and try again.", "warning");
         return;
       }
 
-      setMainTab('Entities');
-      setEntitiesTab('Classes');
+      setMainTab("Entities");
+      setEntitiesTab("Classes");
       setSelectedItem(targetNode);
 
-      if (detail.action === 'sibling') {
+      if (detail.action === "sibling") {
         const parent = detail.parentId
           ? findClassNodeById(detail.parentId)
           : findParentNode(classHierarchy, targetNode.id);
-        setClassParentLabel(parent?.label || detail.parentLabel || 'owl:Thing');
-        setAddClassType('sibling');
+        setClassParentLabel(parent?.label || detail.parentLabel || "owl:Thing");
+        setAddClassType("sibling");
       } else {
         setClassParentLabel(targetNode.label);
-        setAddClassType('subclass');
+        setAddClassType("subclass");
       }
 
       setAddClassDialogOpen(true);
     };
 
-    window.addEventListener('graph-view:add-class', handleGraphAddClass as EventListener);
-    return () => window.removeEventListener('graph-view:add-class', handleGraphAddClass as EventListener);
+    window.addEventListener("graph-view:add-class", handleGraphAddClass as EventListener);
+    return () => window.removeEventListener("graph-view:add-class", handleGraphAddClass as EventListener);
   }, [classHierarchy, findClassNodeById, projectId, showNotification]);
 
   useEffect(() => {
@@ -7540,87 +8837,75 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       const targetNode = findClassNodeById(detail.nodeId);
       if (!targetNode) {
-        showNotification(`Class "${detail.nodeLabel || detail.nodeId}" not found in hierarchy.`, 'warning');
+        showNotification(`Class "${detail.nodeLabel || detail.nodeId}" not found in hierarchy.`, "warning");
         return;
       }
 
-      setMainTab('Entities');
-      setEntitiesTab('Classes');
+      setMainTab("Entities");
+      setEntitiesTab("Classes");
       setSelectedItem(targetNode);
-      handleDeleteItem(targetNode, 'Classes');
+      handleDeleteItem(targetNode, "Classes");
     };
 
-    window.addEventListener('graph-view:delete-class', handleGraphDelete as EventListener);
-    return () => window.removeEventListener('graph-view:delete-class', handleGraphDelete as EventListener);
+    window.addEventListener("graph-view:delete-class", handleGraphDelete as EventListener);
+    return () => window.removeEventListener("graph-view:delete-class", handleGraphDelete as EventListener);
   }, [findClassNodeById, handleDeleteItem, projectId, showNotification]);
-
-  useEffect(() => {
-    const handleShowCollaboration = (event: Event) => {
-      const custom = event as CustomEvent<{ projectId?: string }>;
-      const detail = custom.detail;
-      if (detail?.projectId && projectId && detail.projectId !== projectId) {
-        return;
-      }
-      setShowCollaborationPanel(true);
-    };
-
-    window.addEventListener('graph-view:show-collaboration', handleShowCollaboration as EventListener);
-    return () => window.removeEventListener('graph-view:show-collaboration', handleShowCollaboration as EventListener);
-  }, [projectId]);
 
   // Keyboard shortcuts (Protégé-style) - must be after handleAddItem and handleDeleteItem
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignore if user is typing in input/textarea
       const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
         return;
       }
 
       // Only handle shortcuts when Entities tab is active
-      if (mainTab !== 'Entities') return;
+      if (mainTab !== "Entities") return;
 
       // F2 - Rename (works for all entity types)
-      if (e.key === 'F2' && selectedItem) {
+      if (e.key === "F2" && selectedItem) {
         e.preventDefault();
         // Trigger rename by posting message to EntityHierarchy
         // We'll use a custom event since we can't directly access EntityHierarchy's state
-        const renameEvent = new CustomEvent('triggerRename', { detail: { itemId: selectedItem.id } });
+        const renameEvent = new CustomEvent("triggerRename", { detail: { itemId: selectedItem.id } });
         window.dispatchEvent(renameEvent);
         return;
       }
 
       // Other shortcuts only for Classes tab
-      if (entitiesTab !== 'Classes') return;
+      if (entitiesTab !== "Classes") return;
 
       // Ctrl+\ or Cmd+\ - Add Subclass
-      if ((e.ctrlKey || e.metaKey) && e.key === '\\') {
+      if ((e.ctrlKey || e.metaKey) && e.key === "\\") {
         e.preventDefault();
-        handleAddItem('subclass');
+        handleAddItem("subclass");
       }
       // Ctrl+/ or Cmd+/ - Add Sibling
-      else if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+      else if ((e.ctrlKey || e.metaKey) && e.key === "/") {
         e.preventDefault();
-        handleAddItem('sibling');
+        handleAddItem("sibling");
       }
       // Ctrl+Backspace or Cmd+Backspace - Delete
-      else if ((e.ctrlKey || e.metaKey) && e.key === 'Backspace') {
+      else if ((e.ctrlKey || e.metaKey) && e.key === "Backspace") {
         e.preventDefault();
         handleDeleteItem();
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, [mainTab, entitiesTab, handleAddItem, handleDeleteItem, selectedItem]);
 
   const handleExecuteDlQuery = () => {
     setIsDlQueryLoading(true);
     setDlQueryResults(null);
     setTimeout(() => {
-      if (dlQuery.toLowerCase().includes('pizza')) {
-        const pizzaResults = individuals.filter(i => i.label.toLowerCase().includes('pizza')).map(i => i.label);
-        setDlQueryResults(pizzaResults.length > 0 ? pizzaResults : ['MargheritaPizza', 'AmericanHotPizza', 'SohoPizza']);
+      if (dlQuery.toLowerCase().includes("pizza")) {
+        const pizzaResults = individuals.filter((i) => i.label.toLowerCase().includes("pizza")).map((i) => i.label);
+        setDlQueryResults(
+          pizzaResults.length > 0 ? pizzaResults : ["MargheritaPizza", "AmericanHotPizza", "SohoPizza"],
+        );
       } else {
         setDlQueryResults([]);
       }
@@ -7642,59 +8927,73 @@ const Dashboard: React.FC<DashboardProps> = ({
   // #endregion
 
   // #region Render Methods
-  const fetchCodeViewContent = useCallback(async (format: 'rdfxml' | 'turtle' | 'ntriples' | 'owlxml' | 'manchester' | 'functional', forceRefresh: boolean = false, forceReload: boolean = false) => {
-    if (!projectId) return;
-    
-    // If clicking same format without force refresh/reload, just return (prevents unnecessary reloads)
-    if (format === codeViewFormat && !forceRefresh && !forceReload && codeViewContent) {
-      console.log('[Dashboard] Same format clicked, content already loaded');
-      return;
-    }
-    
-    // If force refresh, clear the cache so we get fresh content from GraphDB
-    if (forceRefresh) {
-      console.log('[Dashboard] Force refresh - clearing code view cache');
-      try {
-        await apiClient.delete(`/api/ontology/${projectId}/code-view-cache`);
-        console.log('[Dashboard] Code view cache cleared');
-      } catch (cacheError) {
-        console.warn('[Dashboard] Failed to clear code view cache:', cacheError);
+  const fetchCodeViewContent = useCallback(
+    async (
+      format: "rdfxml" | "turtle" | "ntriples" | "owlxml" | "manchester" | "functional",
+      forceRefresh: boolean = false,
+      forceReload: boolean = false,
+    ) => {
+      if (!projectId) return;
+
+      // If clicking same format without force refresh/reload, just return (prevents unnecessary reloads)
+      if (format === codeViewFormat && !forceRefresh && !forceReload && codeViewContent) {
+        console.log("[Dashboard] Same format clicked, content already loaded");
+        return;
       }
-    }
-    
-    setCodeViewLoading(true);
-    try {
-      const response = await apiClient.get<{ success: boolean; content: string; format: string; cached?: boolean; error?: string }>(
-        `/api/ontology/${projectId}/content`,
-        { format, forceRefresh: forceRefresh ? 'true' : 'false' }
-      );
-      if (response.success) {
-        setCodeViewContent(response.content);
-        setCodeViewFormat(format);
-        setHasLocalCodeViewChanges(false);
-        if (response.cached) {
-          console.log('[Dashboard] Content loaded from cache (line positions preserved)');
-        } else {
-          console.log('[Dashboard] Content loaded fresh from GraphDB');
+
+      // If force refresh, clear the cache so we get fresh content from GraphDB
+      if (forceRefresh) {
+        console.log("[Dashboard] Force refresh - clearing code view cache");
+        try {
+          await apiClient.delete(`/api/ontology/${projectId}/code-view-cache`);
+          console.log("[Dashboard] Code view cache cleared");
+        } catch (cacheError) {
+          console.warn("[Dashboard] Failed to clear code view cache:", cacheError);
         }
-      } else {
-        console.error('[Dashboard] Code view content fetch returned success=false:', response.error);
-        setCodeViewContent(`// Error loading ${format} content: ${response.error || 'Unknown error'}\n// Try using Turtle or RDF/XML format instead.`);
-        setCodeViewFormat(format);
       }
-    } catch (error: any) {
-      console.error('Failed to fetch code view content:', error);
-      const msg = error?.message || error?.toString() || 'Unknown error';
-      setCodeViewContent(`// Error loading ${format} content: ${msg}\n// The backend may not support this format for this ontology.\n// Try using Turtle or RDF/XML format instead.`);
-      setCodeViewFormat(format);
-    } finally {
-      setCodeViewLoading(false);
-    }
-  }, [projectId, codeViewFormat, codeViewContent]);
+
+      setCodeViewLoading(true);
+      try {
+        const response = await apiClient.get<{
+          success: boolean;
+          content: string;
+          format: string;
+          cached?: boolean;
+          error?: string;
+        }>(`/api/ontology/${projectId}/content`, { format, forceRefresh: forceRefresh ? "true" : "false" });
+        if (response.success) {
+          setCodeViewContent(response.content);
+          setCodeViewFormat(format);
+          setHasLocalCodeViewChanges(false);
+          if (response.cached) {
+            console.log("[Dashboard] Content loaded from cache (line positions preserved)");
+          } else {
+            console.log("[Dashboard] Content loaded fresh from GraphDB");
+          }
+        } else {
+          console.error("[Dashboard] Code view content fetch returned success=false:", response.error);
+          setCodeViewContent(
+            `// Error loading ${format} content: ${response.error || "Unknown error"}\n// Try using Turtle or RDF/XML format instead.`,
+          );
+          setCodeViewFormat(format);
+        }
+      } catch (error: any) {
+        console.error("Failed to fetch code view content:", error);
+        const msg = error?.message || error?.toString() || "Unknown error";
+        setCodeViewContent(
+          `// Error loading ${format} content: ${msg}\n// The backend may not support this format for this ontology.\n// Try using Turtle or RDF/XML format instead.`,
+        );
+        setCodeViewFormat(format);
+      } finally {
+        setCodeViewLoading(false);
+      }
+    },
+    [projectId, codeViewFormat, codeViewContent],
+  );
 
   // Citation insertion handlers
   const handleCitationSelection = useCallback((citation: any) => {
-    if (citation === 'manual') {
+    if (citation === "manual") {
       setShowCitationPicker(false);
       setShowManualCitationDialog(true);
       return;
@@ -7713,676 +9012,809 @@ const Dashboard: React.FC<DashboardProps> = ({
       title: citationData.title,
       data: {
         title: citationData.title,
-        creators: citationData.authors.split(',').map((author: string) => {
-          const parts = author.trim().split(' ');
+        creators: citationData.authors.split(",").map((author: string) => {
+          const parts = author.trim().split(" ");
           return {
-            firstName: parts.slice(0, -1).join(' '),
-            lastName: parts[parts.length - 1] || '',
-            creatorType: 'author'
+            firstName: parts.slice(0, -1).join(" "),
+            lastName: parts[parts.length - 1] || "",
+            creatorType: "author",
           };
         }),
         date: citationData.year,
         doi: citationData.doi,
         url: citationData.url,
         itemType: citationData.itemType,
-        publicationTitle: citationData.publicationTitle
-      }
+        publicationTitle: citationData.publicationTitle,
+      },
     };
 
-    console.log('[Dashboard] Manual citation created:', manualCitation);
+    console.log("[Dashboard] Manual citation created:", manualCitation);
 
     // Set up for search-based insertion (same flow as Zotero citations)
     setPendingCitation(manualCitation);
     setCitationInsertionMode(true);
     setShowManualCitationDialog(false);
-    
-    console.log('[Dashboard] Citation insertion mode enabled - search for location to insert');
+
+    console.log("[Dashboard] Citation insertion mode enabled - search for location to insert");
   }, []);
 
   // Handle code content changes from editable code view
   const handleCodeContentChange = useCallback((newContent: string) => {
     setCodeViewContent(newContent);
     setHasLocalCodeViewChanges(true);
-    console.log('[Dashboard] Code view content updated via editing');
+    console.log("[Dashboard] Code view content updated via editing");
   }, []);
 
   // Handle saving code content to backend
-  const handleSaveCodeContent = useCallback(async (content: string) => {
-    if (!projectId) {
-      console.error('[Dashboard] No projectId available for save');
-      notificationService.error('Save Failed', 'No project selected');
-      return;
-    }
+  const handleSaveCodeContent = useCallback(
+    async (content: string) => {
+      if (!projectId) {
+        console.error("[Dashboard] No projectId available for save");
+        notificationService.error("Save Failed", "No project selected");
+        return;
+      }
 
-    try {
-      console.log('[Dashboard] Saving code view content to backend, format:', codeViewFormat, 'size:', content.length);
-      
-      const response = await apiClient.post(
-        `/api/ontology/${projectId}/code-view-cache`,
-        {
-          content: content,
-          format: codeViewFormat
-        }
-      );
+      try {
+        console.log(
+          "[Dashboard] Saving code view content to backend, format:",
+          codeViewFormat,
+          "size:",
+          content.length,
+        );
 
-      if (response.success) {
-        console.log('[Dashboard] Code view content saved successfully');
-        notificationService.success('Saved', 'Code content saved to backend');
-        setHasLocalCodeViewChanges(false);
-      } else {
-        console.error('[Dashboard] Save failed:', response.error || 'Unknown error');
-        notificationService.error('Save Failed', response.error || 'Failed to save content');
-      }
-    } catch (error: any) {
-      console.error('[Dashboard] Error saving code content:', error);
-      notificationService.error('Save Failed', error.message || 'Failed to save content to backend');
-    }
-  }, [projectId, codeViewFormat]);
-
-  // Handle insertion at selected location in code view
-  const handleInsertCitationAtLocation = useCallback(async (lineNumber: number) => {
-    if (!pendingCitation || !codeViewContent) {
-      console.error('[Dashboard] Missing pendingCitation or codeViewContent');
-      return;
-    }
-
-    // Show loading notification
-    notificationService.info('Inserting Citation', 'Adding citation to all formats...');
-
-    let insertAtIndex = 0; // Declare at function scope
-    
-    try {
-      // Extract citation data - Zotero citations have data nested in .data property
-      const citationData = pendingCitation.data || pendingCitation;
-      const citationKey = pendingCitation.key || `citation_${Date.now()}`;
-      
-      // Split code into lines
-      const lines = codeViewContent.split('\n');
-      
-      console.log('[Dashboard] Citation insertion triggered at line:', lineNumber);
-      console.log('[Dashboard] Total lines in content:', lines.length);
-      console.log('[Dashboard] Pending citation:', pendingCitation);
-      console.log('[Dashboard] Citation data extracted:', citationData);
-      
-      // Ensure line number is within bounds (lineNumber is 0-based)
-      insertAtIndex = Math.max(0, Math.min(lineNumber, lines.length));
-      console.log('[Dashboard] Citation will be inserted at index:', insertAtIndex);
-      
-      // Extract entity name/IRI from the clicked line for reference in other formats
-      // Supports ALL OWL constructs: classes, properties, individuals, axioms, restrictions, annotations
-      const clickedLine = lines[Math.min(lineNumber, lines.length - 1)] || '';
-      let referencedEntity = '';
-      
-      // ========== COMPREHENSIVE OWL ELEMENT EXTRACTION ==========
-      // PRIORITY 1: RDF/XML and OWL/XML attribute patterns (extract URLs first)
-      const rdfAboutMatch = clickedLine.match(/rdf:about="([^"]+)"/);
-      const rdfIdMatch = clickedLine.match(/rdf:ID="([^"]+)"/);
-      const rdfResourceMatch = clickedLine.match(/rdf:resource="([^"]+)"/);
-      const owlXmlIriMatch = clickedLine.match(/\bIRI="([^"]+)"/);
-      const owlXmlAbbrevMatch = clickedLine.match(/abbreviatedIRI="([^"]+)"/);
-      
-      // PRIORITY 2: Full URI patterns (all formats) - MUST be a valid URI, not an XML tag
-      // Only match URIs that start with http(s):, urn:, file:, or contain ://
-      const fullUriMatch = clickedLine.match(/<((?:https?|urn|file):[^\s>]+|[^\s>]*:\/\/[^\s>]+)>/);
-      
-      // PRIORITY 3: Prefixed name patterns (Turtle, Manchester) - only if no URL found
-      const prefixedNameMatch = clickedLine.match(/\b([a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]+)\b/);
-      
-      // 4. Manchester syntax patterns (Class:, Individual:, ObjectProperty:, etc.)
-      const manchesterDeclMatch = clickedLine.match(/(?:Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):\s*([<:][^\s]+|[a-zA-Z_][a-zA-Z0-9_:-]*)/);
-      
-      // 5. Functional syntax patterns - extract from Declaration, ClassAssertion, etc.
-      const functionalEntityMatch = clickedLine.match(/(?:Declaration|ClassAssertion|ObjectPropertyAssertion|DataPropertyAssertion|AnnotationAssertion|SubClassOf|EquivalentClasses|DisjointClasses|SubObjectPropertyOf|EquivalentObjectProperties|SubDataPropertyOf|ObjectPropertyDomain|ObjectPropertyRange|DataPropertyDomain|DataPropertyRange|SameIndividual|DifferentIndividuals)\s*\(\s*(?:[^(]*\()?\s*([<][^>]+[>]|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*)/);
-      
-      // 6. OWL axiom patterns in Turtle (SubClassOf, EquivalentClass, etc.)
-      const owlAxiomMatch = clickedLine.match(/(?:owl:equivalentClass|owl:disjointWith|rdfs:subClassOf|rdfs:subPropertyOf|owl:inverseOf|owl:propertyChainAxiom|owl:hasKey)\s+([<][^>]+[>]|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*)/);
-      
-      // 7. Property restriction patterns
-      const restrictionMatch = clickedLine.match(/(?:owl:onProperty|owl:someValuesFrom|owl:allValuesFrom|owl:hasValue|owl:onClass|owl:onDataRange|owl:minCardinality|owl:maxCardinality|owl:cardinality|owl:minQualifiedCardinality|owl:maxQualifiedCardinality|owl:qualifiedCardinality)\s+([<][^>]+[>]|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*|\d+)/);
-      
-      // 8. Annotation patterns
-      const annotationMatch = clickedLine.match(/(?:rdfs:label|rdfs:comment|rdfs:seeAlso|rdfs:isDefinedBy|owl:versionInfo|dc:title|dc:description|dc:creator|skos:prefLabel|skos:altLabel|skos:definition|skos:example|skos:note)\s+(?:"[^"]*"|([<][^>]+[>]|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*))/);
-      
-      // 9. SWRL rule patterns
-      const swrlMatch = clickedLine.match(/(?:swrl:body|swrl:head|swrl:argument1|swrl:argument2|swrl:classPredicate|swrl:propertyPredicate)\s+([<][^>]+[>]|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*)/);
-      
-      // 10. RDF/XML OWL element tags
-      const xmlOwlElementMatch = clickedLine.match(/<owl:(Class|ObjectProperty|DatatypeProperty|AnnotationProperty|NamedIndividual|Restriction|AllDifferent|AllDisjointClasses|AllDisjointProperties|NegativePropertyAssertion|Datatype|FunctionalProperty|InverseFunctionalProperty|TransitiveProperty|SymmetricProperty|AsymmetricProperty|ReflexiveProperty|IrreflexiveProperty)/);
-      
-      // 11. Import declaration - comprehensive pattern for all formats
-      // Matches: owl:imports <URI>, Import(<URI>), Import: <URI>, rdf:resource in owl:imports context
-      const importMatch = clickedLine.match(/(?:owl:imports|Import)\s*[:(]?\s*<([^>]+)>/);
-      
-      // 12. Datatype patterns
-      const datatypeMatch = clickedLine.match(/\^\^([<][^>]+[>]|xsd:[a-zA-Z]+|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*)/);
-      
-      // 14. N-Triples subject pattern
-      const ntriplesSubjectMatch = clickedLine.match(/^([<][^>]+[>])\s+[<]/);
-      
-      // Priority order for entity extraction - XML attributes FIRST (most precise for URLs)
-      console.log('[Dashboard] Entity extraction patterns - checking in priority order...');
-      console.log('[Dashboard] Clicked line:', clickedLine.substring(0, 150));
-      
-      // PRIORITY 1: XML attribute patterns (extract full URLs from rdf:about, IRI, etc.)
-      if (rdfAboutMatch) {
-        referencedEntity = rdfAboutMatch[1];
-        console.log('[Dashboard] ✓ Extracted from rdf:about:', referencedEntity);
-      } else if (rdfIdMatch) {
-        referencedEntity = rdfIdMatch[1];
-        console.log('[Dashboard] ✓ Extracted from rdf:ID:', referencedEntity);
-      } else if (owlXmlIriMatch) {
-        referencedEntity = owlXmlIriMatch[1];
-        console.log('[Dashboard] ✓ Extracted from IRI attribute:', referencedEntity);
-      } else if (owlXmlAbbrevMatch) {
-        referencedEntity = owlXmlAbbrevMatch[1];
-        console.log('[Dashboard] ✓ Extracted from abbreviatedIRI:', referencedEntity);
-      } else if (rdfResourceMatch) {
-        referencedEntity = rdfResourceMatch[1];
-        console.log('[Dashboard] ✓ Extracted from rdf:resource:', referencedEntity);
-      } 
-      // PRIORITY 2: Import declarations (HIGH priority for import lines)
-      else if (importMatch) {
-        referencedEntity = importMatch[1];
-        console.log('[Dashboard] ✓ Extracted from import declaration:', referencedEntity);
-      }
-      // PRIORITY 3: Full URI in angle brackets
-      else if (fullUriMatch) {
-        referencedEntity = fullUriMatch[1];
-        console.log('[Dashboard] ✓ Extracted full URI from angle brackets:', referencedEntity);
-      }
-      // PRIORITY 4: N-Triples subject (full URI)
-      else if (ntriplesSubjectMatch) {
-        referencedEntity = ntriplesSubjectMatch[1].replace(/^</, '').replace(/>$/, '');
-        console.log('[Dashboard] ✓ Extracted from N-Triples subject:', referencedEntity);
-      }
-      // PRIORITY 5: Format-specific declarations
-      else if (manchesterDeclMatch) {
-        referencedEntity = manchesterDeclMatch[1].replace(/^[<:]/, '').replace(/>$/, '');
-        console.log('[Dashboard] ✓ Extracted from Manchester declaration:', referencedEntity);
-      } else if (functionalEntityMatch) {
-        referencedEntity = functionalEntityMatch[1].replace(/^</, '').replace(/>$/, '');
-        console.log('[Dashboard] ✓ Extracted from Functional syntax:', referencedEntity);
-      }
-      // PRIORITY 6: OWL axioms and properties
-      else if (owlAxiomMatch) {
-        referencedEntity = owlAxiomMatch[1].replace(/^</, '').replace(/>$/, '');
-        console.log('[Dashboard] ✓ Extracted from OWL axiom:', referencedEntity);
-      } else if (restrictionMatch && !restrictionMatch[1].match(/^\d+$/)) {
-        referencedEntity = restrictionMatch[1].replace(/^</, '').replace(/>$/, '');
-        console.log('[Dashboard] ✓ Extracted from restriction:', referencedEntity);
-      } else if (annotationMatch && annotationMatch[1]) {
-        referencedEntity = annotationMatch[1].replace(/^</, '').replace(/>$/, '');
-        console.log('[Dashboard] ✓ Extracted from annotation:', referencedEntity);
-      } else if (swrlMatch) {
-        referencedEntity = swrlMatch[1].replace(/^</, '').replace(/>$/, '');
-        console.log('[Dashboard] ✓ Extracted from SWRL rule:', referencedEntity);
-      }
-      // PRIORITY 7: Prefixed names (lowest priority)
-      else if (prefixedNameMatch) {
-        referencedEntity = prefixedNameMatch[1];
-        console.log('[Dashboard] ✓ Extracted prefixed name:', referencedEntity);
-      }
-      // PRIORITY 7: XML element tags (look nearby for entity reference)
-      else if (xmlOwlElementMatch) {
-        console.log('[Dashboard] Found OWL XML element tag, looking for nearby entity...');
-        // For OWL element tags, look for rdf:about or rdf:ID on same or nearby lines
-        const nearbyLines = lines.slice(Math.max(0, lineNumber - 2), Math.min(lines.length, lineNumber + 3)).join(' ');
-        const nearbyAbout = nearbyLines.match(/rdf:about="([^"]+)"/);
-        const nearbyId = nearbyLines.match(/rdf:ID="([^"]+)"/);
-        if (nearbyAbout) {
-          referencedEntity = nearbyAbout[1];
-          console.log('[Dashboard] ✓ Extracted from nearby rdf:about:', referencedEntity);
-        } else if (nearbyId) {
-          referencedEntity = nearbyId[1];
-          console.log('[Dashboard] ✓ Extracted from nearby rdf:ID:', referencedEntity);
-        }
-      }
-      
-      if (!referencedEntity) {
-        console.log('[Dashboard] ✗ No entity found from primary patterns, trying fallbacks...');
-      }
-      
-      // AGGRESSIVE FALLBACK: If still no entity found, extract any IRI or prefixed name from the line
-      if (!referencedEntity) {
-        // Try to find any full IRI in angle brackets (must be a URL, not an XML tag)
-        // Must start with http(s): or urn: or file: or contain :// to be considered a URI
-        const anyIriMatch = clickedLine.match(/<((?:https?|urn|file):[^\s>]+|[^\s>]*:\/\/[^\s>]+)>/);
-        if (anyIriMatch) {
-          referencedEntity = anyIriMatch[1];
-          console.log('[Dashboard] FALLBACK: Extracted IRI from angle brackets:', referencedEntity);
-        }
-        
-        // Try to find any prefixed name (e.g., ex:Person, foaf:name)
-        if (!referencedEntity) {
-          const anyPrefixedMatch = clickedLine.match(/\b([a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]+)\b/);
-          if (anyPrefixedMatch && !anyPrefixedMatch[1].startsWith('http:') && !anyPrefixedMatch[1].startsWith('https:')) {
-            referencedEntity = anyPrefixedMatch[1];
-            console.log('[Dashboard] FALLBACK: Extracted prefixed name:', referencedEntity);
-          }
-        }
-        
-        // Super aggressive fallback: look at nearby lines for context (URLs only)
-        if (!referencedEntity && lineNumber >= 0) {
-          console.log('[Dashboard] SUPER FALLBACK: Searching nearby lines (±3) for entity URL...');
-          const contextLines = lines.slice(Math.max(0, lineNumber - 3), Math.min(lines.length, lineNumber + 3));
-          for (let i = 0; i < contextLines.length; i++) {
-            const contextLine = contextLines[i];
-            // ONLY try to extract URLs from XML attributes (most precise)
-            const contextAbout = contextLine.match(/rdf:about="([^"]+)"/);
-            const contextIri = contextLine.match(/IRI="([^"]+)"/);
-            const contextResource = contextLine.match(/rdf:resource="([^"]+)"/);
-            
-            if (contextAbout) {
-              referencedEntity = contextAbout[1];
-              console.log(`[Dashboard] SUPER FALLBACK: Found rdf:about in line ${lineNumber - 3 + i}:`, referencedEntity);
-              break;
-            } else if (contextIri) {
-              referencedEntity = contextIri[1];
-              console.log(`[Dashboard] SUPER FALLBACK: Found IRI in line ${lineNumber - 3 + i}:`, referencedEntity);
-              break;
-            } else if (contextResource) {
-              referencedEntity = contextResource[1];
-              console.log(`[Dashboard] SUPER FALLBACK: Found rdf:resource in line ${lineNumber - 3 + i}:`, referencedEntity);
-              break;
-            }
-          }
-          
-          // If still nothing, try angle brackets for URLs
-          if (!referencedEntity) {
-            for (let i = 0; i < contextLines.length; i++) {
-              const contextLine = contextLines[i];
-              // Only match actual URIs, not XML tags
-              const contextIri = contextLine.match(/<((?:https?|urn|file):[^\s>]+|[^\s>]*:\/\/[^\s>]+)>/);
-              if (contextIri) {
-              referencedEntity = contextIri[1];
-              console.log('[Dashboard] SUPER FALLBACK: Found IRI in nearby line:', referencedEntity);
-              break;
-            }
-            // Try prefixed name
-            const contextPrefixed = contextLine.match(/\b([a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*)\b/);
-            if (contextPrefixed && !contextPrefixed[1].startsWith('http:') && !contextPrefixed[1].startsWith('https:')) {
-              referencedEntity = contextPrefixed[1];
-              console.log('[Dashboard] SUPER FALLBACK: Found prefixed name in nearby line:', referencedEntity);
-              break;
-            }
-          }
-        }
-      }
-      } // Close aggressive fallback if (!referencedEntity) block started around line 7936
-      
-      console.log('[Dashboard] ========== ENTITY EXTRACTION DEBUG ==========');
-      console.log('[Dashboard] Clicked line content:', clickedLine);
-      console.log('[Dashboard] Format:', codeViewFormat);
-      console.log('[Dashboard] Referenced entity extracted:', referencedEntity || '(none detected)');
-      console.log('[Dashboard] =============================================');
-      
-      // Helper function to escape Turtle strings
-      const escapeTurtle = (str: string): string => {
-        if (!str) return '';
-        return str
-          .replace(/\\/g, '\\\\')
-          .replace(/"/g, '\\"')
-          .replace(/\n/g, '\\n')
-          .replace(/\r/g, '\\r')
-          .replace(/\t/g, '\\t');
-      };
-      
-      // Helper function to escape XML strings
-      const escapeXml = (str: string): string => {
-        if (!str) return '';
-        return str
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;')
-          .replace(/'/g, '&apos;');
-      };
-      
-      // Extract all citation fields
-      const title = citationData.title || 'Untitled';
-      const authors = citationData.creators?.map((c: any) => 
-        `${c.firstName || ''} ${c.lastName || ''}`.trim()
-      ).join(', ') || 'Unknown';
-      const year = citationData.date ? (citationData.date.match(/\d{4}/)?.[0] || '') : '';
-      const doi = citationData.DOI || citationData.doi || '';
-      const url = citationData.url || '';
-      const abstractNote = citationData.abstractNote || '';
-      const publicationTitle = citationData.publicationTitle || '';
-      const volume = citationData.volume || '';
-      const issue = citationData.issue || '';
-      const pages = citationData.pages || '';
-      const publisher = citationData.publisher || '';
-      const itemType = citationData.itemType || 'document';
-      const tags = citationData.tags?.map((t: any) => t.tag || t).filter(Boolean) || [];
-      const isbn = citationData.ISBN || '';
-      const issn = citationData.ISSN || '';
-      const language = citationData.language || '';
-      const rights = citationData.rights || '';
-      
-      // Generate complete citation block
-      const citationLines: string[] = [];
-      
-      if (codeViewFormat === 'turtle' || codeViewFormat === 'ntriples') {
-        // Generate comprehensive Turtle format with all Zotero details
-        citationLines.push('');
-        citationLines.push('###  Zotero Citation: ' + escapeTurtle(title));
-        citationLines.push(`<urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}> rdf:type owl:NamedIndividual ,`);
-        citationLines.push('         prov:Entity ;');
-        citationLines.push(`    dc:title "${escapeTurtle(title)}" ;`);
-        citationLines.push(`    dc:creator "${escapeTurtle(authors)}" ;`);
-        
-        if (year) {
-          citationLines.push(`    dc:date "${year}"^^xsd:gYear ;`);
-        }
-        
-        if (publicationTitle) {
-          citationLines.push(`    dc:source "${escapeTurtle(publicationTitle)}" ;`);
-        }
-        
-        if (publisher) {
-          citationLines.push(`    dc:publisher "${escapeTurtle(publisher)}" ;`);
-        }
-        
-        if (doi) {
-          citationLines.push(`    dc:identifier "doi:${escapeTurtle(doi)}" ;`);
-          citationLines.push(`    bibo:doi "${escapeTurtle(doi)}" ;`);
-        }
-        
-        if (isbn) {
-          citationLines.push(`    bibo:isbn "${escapeTurtle(isbn)}" ;`);
-        }
-        
-        if (issn) {
-          citationLines.push(`    bibo:issn "${escapeTurtle(issn)}" ;`);
-        }
-        
-        if (url) {
-          citationLines.push(`    foaf:homepage <${url}> ;`);
-        }
-        
-        if (volume) {
-          citationLines.push(`    bibo:volume "${escapeTurtle(volume)}" ;`);
-        }
-        
-        if (issue) {
-          citationLines.push(`    bibo:issue "${escapeTurtle(issue)}" ;`);
-        }
-        
-        if (pages) {
-          citationLines.push(`    bibo:pages "${escapeTurtle(pages)}" ;`);
-        }
-        
-        if (language) {
-          citationLines.push(`    dc:language "${escapeTurtle(language)}" ;`);
-        }
-        
-        if (rights) {
-          citationLines.push(`    dc:rights "${escapeTurtle(rights)}" ;`);
-        }
-        
-        if (itemType) {
-          citationLines.push(`    dc:type "${escapeTurtle(itemType)}" ;`);
-        }
-        
-        // Add tags as dc:subject
-        if (tags.length > 0) {
-          tags.forEach((tag: string) => {
-            citationLines.push(`    dc:subject "${escapeTurtle(tag)}" ;`);
+        // Try the save-and-sync endpoint first (reimports into GraphDB, clears other format caches)
+        let response: any;
+        let synced = false;
+        try {
+          response = await apiClient.post(`/api/ontology/${projectId}/code-view-save`, {
+            content: content,
+            format: codeViewFormat,
           });
+          synced = response.success;
+        } catch (syncError: any) {
+          console.warn(
+            "[Dashboard] code-view-save endpoint not available, falling back to cache-only save:",
+            syncError.message,
+          );
         }
-        
-        // Add full abstract (not truncated)
-        if (abstractNote) {
-          citationLines.push(`    dc:description "${escapeTurtle(abstractNote)}" ;`);
-        }
-        
-        // Replace last semicolon with period
-        citationLines[citationLines.length - 1] = citationLines[citationLines.length - 1].replace(/ ;$/, ' .');
-        citationLines.push('');
-        
-      } else if (codeViewFormat === 'manchester') {
-        // Generate Manchester OWL syntax format
-        const escManchester = (s: string) => s.replace(/"/g, '\\"').replace(/\n/g, ' ');
-        citationLines.push('');
-        citationLines.push(`# Zotero Citation: ${title}`);
-        citationLines.push(`Individual: <urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}>`);
-        citationLines.push(`    Types: prov:Entity`);
-        citationLines.push(`    Annotations:`);
-        citationLines.push(`        dc:title "${escManchester(title)}",`);
-        citationLines.push(`        dc:creator "${escManchester(authors)}"${year || publicationTitle || doi || abstractNote ? ',' : ''}`);
-        if (year) citationLines.push(`        dc:date "${year}"^^xsd:gYear${publicationTitle || doi || abstractNote ? ',' : ''}`);
-        if (publicationTitle) citationLines.push(`        dc:source "${escManchester(publicationTitle)}"${doi || abstractNote ? ',' : ''}`);
-        if (publisher) citationLines.push(`        dc:publisher "${escManchester(publisher)}"${doi || abstractNote ? ',' : ''}`);
-        if (doi) citationLines.push(`        bibo:doi "${escManchester(doi)}"${abstractNote ? ',' : ''}`);
-        if (url) citationLines.push(`        foaf:homepage <${url}>${abstractNote ? ',' : ''}`);
-        if (abstractNote) citationLines.push(`        dc:description "${escManchester(abstractNote)}"`);
-        citationLines.push('');
-        
-      } else if (codeViewFormat === 'functional') {
-        // Generate OWL 2 Functional syntax format
-        const escFunc = (s: string) => s.replace(/"/g, '\\"').replace(/\n/g, ' ');
-        const citUri = `<urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}>`;
-        citationLines.push('');
-        citationLines.push(`# Zotero Citation: ${title}`);
-        citationLines.push(`Declaration(NamedIndividual(${citUri}))`);
-        citationLines.push(`ClassAssertion(<http://www.w3.org/ns/prov#Entity> ${citUri})`);
-        citationLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/title> ${citUri} "${escFunc(title)}")`);
-        citationLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/creator> ${citUri} "${escFunc(authors)}")`);
-        if (year) citationLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/date> ${citUri} "${year}"^^xsd:gYear)`);
-        if (publicationTitle) citationLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/source> ${citUri} "${escFunc(publicationTitle)}")`);
-        if (publisher) citationLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/publisher> ${citUri} "${escFunc(publisher)}")`);
-        if (doi) citationLines.push(`AnnotationAssertion(<http://purl.org/ontology/bibo/doi> ${citUri} "${escFunc(doi)}")`);
-        if (url) citationLines.push(`AnnotationAssertion(<http://xmlns.com/foaf/0.1/homepage> ${citUri} <${url}>)`);
-        if (abstractNote) citationLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/description> ${citUri} "${escFunc(abstractNote)}")`);
-        citationLines.push('');
-        
-      } else if (codeViewFormat === 'owlxml') {
-        // Generate OWL/XML format
-        citationLines.push('');
-        citationLines.push(`    <!-- Zotero Citation: ${escapeXml(title)} -->`);
-        citationLines.push(`    <Declaration>`);
-        citationLines.push(`        <NamedIndividual IRI="urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}"/>`);
-        citationLines.push(`    </Declaration>`);
-        citationLines.push(`    <ClassAssertion>`);
-        citationLines.push(`        <Class IRI="http://www.w3.org/ns/prov#Entity"/>`);
-        citationLines.push(`        <NamedIndividual IRI="urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}"/>`);
-        citationLines.push(`    </ClassAssertion>`);
-        citationLines.push(`    <AnnotationAssertion>`);
-        citationLines.push(`        <AnnotationProperty IRI="http://purl.org/dc/elements/1.1/title"/>`);
-        citationLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}</IRI>`);
-        citationLines.push(`        <Literal>${escapeXml(title)}</Literal>`);
-        citationLines.push(`    </AnnotationAssertion>`);
-        citationLines.push(`    <AnnotationAssertion>`);
-        citationLines.push(`        <AnnotationProperty IRI="http://purl.org/dc/elements/1.1/creator"/>`);
-        citationLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}</IRI>`);
-        citationLines.push(`        <Literal>${escapeXml(authors)}</Literal>`);
-        citationLines.push(`    </AnnotationAssertion>`);
-        if (year) {
-          citationLines.push(`    <AnnotationAssertion>`);
-          citationLines.push(`        <AnnotationProperty IRI="http://purl.org/dc/elements/1.1/date"/>`);
-          citationLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}</IRI>`);
-          citationLines.push(`        <Literal datatypeIRI="http://www.w3.org/2001/XMLSchema#gYear">${year}</Literal>`);
-          citationLines.push(`    </AnnotationAssertion>`);
-        }
-        if (doi) {
-          citationLines.push(`    <AnnotationAssertion>`);
-          citationLines.push(`        <AnnotationProperty IRI="http://purl.org/ontology/bibo/doi"/>`);
-          citationLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}</IRI>`);
-          citationLines.push(`        <Literal>${escapeXml(doi)}</Literal>`);
-          citationLines.push(`    </AnnotationAssertion>`);
-        }
-        if (abstractNote) {
-          citationLines.push(`    <AnnotationAssertion>`);
-          citationLines.push(`        <AnnotationProperty IRI="http://purl.org/dc/elements/1.1/description"/>`);
-          citationLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}</IRI>`);
-          citationLines.push(`        <Literal>${escapeXml(abstractNote)}</Literal>`);
-          citationLines.push(`    </AnnotationAssertion>`);
-        }
-        citationLines.push('');
-        
-      } else if (codeViewFormat === 'rdfxml') {
-        // Generate comprehensive RDF/XML format with all Zotero details
-        citationLines.push('');
-        citationLines.push(`    <!-- Zotero Citation: ${escapeXml(title)} -->`);
-        citationLines.push(`    <owl:NamedIndividual rdf:about="urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}">`);
-        citationLines.push(`        <rdf:type rdf:resource="http://www.w3.org/ns/prov#Entity"/>`);
-        citationLines.push(`        <dc:title>${escapeXml(title)}</dc:title>`);
-        citationLines.push(`        <dc:creator>${escapeXml(authors)}</dc:creator>`);
-        
-        if (year) {
-          citationLines.push(`        <dc:date rdf:datatype="http://www.w3.org/2001/XMLSchema#gYear">${year}</dc:date>`);
-        }
-        
-        if (publicationTitle) {
-          citationLines.push(`        <dc:source>${escapeXml(publicationTitle)}</dc:source>`);
-        }
-        
-        if (publisher) {
-          citationLines.push(`        <dc:publisher>${escapeXml(publisher)}</dc:publisher>`);
-        }
-        
-        if (doi) {
-          citationLines.push(`        <dc:identifier>doi:${escapeXml(doi)}</dc:identifier>`);
-          citationLines.push(`        <bibo:doi xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(doi)}</bibo:doi>`);
-        }
-        
-        if (isbn) {
-          citationLines.push(`        <bibo:isbn xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(isbn)}</bibo:isbn>`);
-        }
-        
-        if (issn) {
-          citationLines.push(`        <bibo:issn xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(issn)}</bibo:issn>`);
-        }
-        
-        if (url) {
-          citationLines.push(`        <foaf:homepage rdf:resource="${escapeXml(url)}"/>`);
-        }
-        
-        if (volume) {
-          citationLines.push(`        <bibo:volume xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(volume)}</bibo:volume>`);
-        }
-        
-        if (issue) {
-          citationLines.push(`        <bibo:issue xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(issue)}</bibo:issue>`);
-        }
-        
-        if (pages) {
-          citationLines.push(`        <bibo:pages xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(pages)}</bibo:pages>`);
-        }
-        
-        if (language) {
-          citationLines.push(`        <dc:language>${escapeXml(language)}</dc:language>`);
-        }
-        
-        if (rights) {
-          citationLines.push(`        <dc:rights>${escapeXml(rights)}</dc:rights>`);
-        }
-        
-        if (itemType) {
-          citationLines.push(`        <dc:type>${escapeXml(itemType)}</dc:type>`);
-        }
-        
-        // Add tags as dc:subject
-        if (tags.length > 0) {
-          tags.forEach((tag: string) => {
-            citationLines.push(`        <dc:subject>${escapeXml(tag)}</dc:subject>`);
+
+        if (!synced) {
+          // Fallback: save to cache only (old endpoint)
+          response = await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+            content: content,
+            format: codeViewFormat,
           });
-        }
-        
-        // Add full abstract (not truncated)
-        if (abstractNote) {
-          citationLines.push(`        <dc:description>${escapeXml(abstractNote)}</dc:description>`);
-        }
-        
-        citationLines.push(`    </owl:NamedIndividual>`);
-        citationLines.push('');
-      }
-      
-      console.log('[Dashboard] Inserting full citation details at index:', insertAtIndex);
-      console.log('[Dashboard] Citation lines count:', citationLines.length);
-      console.log('[Dashboard] Total lines before insertion:', lines.length);
-      
-      // For RDF/XML and OWL/XML formats, ensure insertion is AFTER the root element opening tag
-      // to prevent "Content is not allowed in prolog" errors
-      if (codeViewFormat === 'rdfxml' || codeViewFormat === 'owlxml') {
-        // Find the line with the opening <rdf:RDF> or <Ontology> root element
-        let rootElementLine = -1;
-        for (let i = 0; i < Math.min(50, lines.length); i++) {
-          const trimmed = lines[i].trim();
-          if (trimmed.startsWith('<rdf:RDF') || trimmed.startsWith('<Ontology') || 
-              trimmed.startsWith('<owl:Ontology')) {
-            rootElementLine = i;
-            break;
-          }
-        }
-        
-        // Find the actual closing > of the root tag (may span multiple lines with xmlns)
-        let rootTagCloseLine = rootElementLine;
-        if (rootElementLine >= 0) {
-          for (let j = rootElementLine; j < Math.min(rootElementLine + 100, lines.length); j++) {
-            if (lines[j].includes('>')) {
-              const lastQuote = lines[j].lastIndexOf('"');
-              const lastGt = lines[j].lastIndexOf('>');
-              if (lastGt > lastQuote || lastQuote === -1) {
-                rootTagCloseLine = j;
-                break;
+          // Also clear other format caches so they re-export fresh when switched to
+          const allFormats = ["turtle", "rdfxml", "ntriples", "owlxml", "manchester", "functional"] as const;
+          for (const fmt of allFormats) {
+            if (fmt !== codeViewFormat) {
+              try {
+                await apiClient.delete(`/api/ontology/${projectId}/code-view-cache`, { format: fmt });
+              } catch {
+                /* ignore */
               }
             }
           }
         }
-        
-        if (rootElementLine >= 0 && insertAtIndex <= rootTagCloseLine) {
-          // User clicked before or inside the root element opening tag - insert after it
-          insertAtIndex = rootTagCloseLine + 1;
-          console.log(`[Dashboard] ${codeViewFormat.toUpperCase()}: Adjusted insertion to line`, insertAtIndex, 'to respect XML structure');
+
+        if (response.success) {
+          console.log("[Dashboard] Code view content saved successfully, synced:", synced);
+          notificationService.success(
+            "Saved",
+            synced ? "Code content saved and synced across all formats" : "Code content saved",
+          );
+          setHasLocalCodeViewChanges(false);
+        } else {
+          console.error("[Dashboard] Save failed:", response.error || "Unknown error");
+          notificationService.error("Save Failed", response.error || "Failed to save content");
         }
-        
-        // Also check if trying to insert after the closing tag
-        for (let i = lines.length - 1; i >= Math.max(0, lines.length - 10); i--) {
-          const trimmed = lines[i].trim();
-          if (trimmed === '</rdf:RDF>' || trimmed === '</Ontology>' || trimmed === '</owl:Ontology>') {
-            if (insertAtIndex > i) {
-              insertAtIndex = i; // Insert before the closing tag
-              console.log(`[Dashboard] ${codeViewFormat.toUpperCase()}: Adjusted insertion to line`, insertAtIndex, 'to stay inside root element');
-            }
-            break;
+      } catch (error: any) {
+        console.error("[Dashboard] Error saving code content:", error);
+        notificationService.error("Save Failed", error.message || "Failed to save content to backend");
+      }
+    },
+    [projectId, codeViewFormat],
+  );
+
+  // Handle insertion at selected location in code view
+  const handleInsertCitationAtLocation = useCallback(
+    async (lineNumber: number) => {
+      if (!pendingCitation || !codeViewContent) {
+        console.error("[Dashboard] Missing pendingCitation or codeViewContent");
+        return;
+      }
+
+      // Show loading notification
+      notificationService.info("Inserting Citation", "Adding citation to all formats...");
+
+      let insertAtIndex = 0; // Declare at function scope
+
+      try {
+        // Extract citation data - Zotero citations have data nested in .data property
+        const citationData = pendingCitation.data || pendingCitation;
+        const citationKey = pendingCitation.key || `citation_${Date.now()}`;
+
+        // Split code into lines
+        const lines = codeViewContent.split("\n");
+
+        console.log("[Dashboard] Citation insertion triggered at line:", lineNumber);
+        console.log("[Dashboard] Total lines in content:", lines.length);
+        console.log("[Dashboard] Pending citation:", pendingCitation);
+        console.log("[Dashboard] Citation data extracted:", citationData);
+
+        // Ensure line number is within bounds (lineNumber is 0-based)
+        insertAtIndex = Math.max(0, Math.min(lineNumber, lines.length));
+        console.log("[Dashboard] Citation will be inserted at index:", insertAtIndex);
+
+        // Extract entity name/IRI from the clicked line for reference in other formats
+        // Supports ALL OWL constructs: classes, properties, individuals, axioms, restrictions, annotations
+        const clickedLine = lines[Math.min(lineNumber, lines.length - 1)] || "";
+        let referencedEntity = "";
+
+        // ========== COMPREHENSIVE OWL ELEMENT EXTRACTION ==========
+        // PRIORITY 1: RDF/XML and OWL/XML attribute patterns (extract URLs first)
+        const rdfAboutMatch = clickedLine.match(/rdf:about="([^"]+)"/);
+        const rdfIdMatch = clickedLine.match(/rdf:ID="([^"]+)"/);
+        const rdfResourceMatch = clickedLine.match(/rdf:resource="([^"]+)"/);
+        const owlXmlIriMatch = clickedLine.match(/\bIRI="([^"]+)"/);
+        const owlXmlAbbrevMatch = clickedLine.match(/abbreviatedIRI="([^"]+)"/);
+
+        // PRIORITY 2: Full URI patterns (all formats) - MUST be a valid URI, not an XML tag
+        // Only match URIs that start with http(s):, urn:, file:, or contain ://
+        const fullUriMatch = clickedLine.match(/<((?:https?|urn|file):[^\s>]+|[^\s>]*:\/\/[^\s>]+)>/);
+
+        // PRIORITY 3: Prefixed name patterns (Turtle, Manchester) - only if no URL found
+        const prefixedNameMatch = clickedLine.match(/\b([a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]+)\b/);
+
+        // 4. Manchester syntax patterns (Class:, Individual:, ObjectProperty:, etc.)
+        const manchesterDeclMatch = clickedLine.match(
+          /(?:Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):\s*([<:][^\s]+|[a-zA-Z_][a-zA-Z0-9_:-]*)/,
+        );
+
+        // 5. Functional syntax patterns - extract from Declaration, ClassAssertion, etc.
+        const functionalEntityMatch = clickedLine.match(
+          /(?:Declaration|ClassAssertion|ObjectPropertyAssertion|DataPropertyAssertion|AnnotationAssertion|SubClassOf|EquivalentClasses|DisjointClasses|SubObjectPropertyOf|EquivalentObjectProperties|SubDataPropertyOf|ObjectPropertyDomain|ObjectPropertyRange|DataPropertyDomain|DataPropertyRange|SameIndividual|DifferentIndividuals)\s*\(\s*(?:[^(]*\()?\s*([<][^>]+[>]|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*)/,
+        );
+
+        // 6. OWL axiom patterns in Turtle (SubClassOf, EquivalentClass, etc.)
+        const owlAxiomMatch = clickedLine.match(
+          /(?:owl:equivalentClass|owl:disjointWith|rdfs:subClassOf|rdfs:subPropertyOf|owl:inverseOf|owl:propertyChainAxiom|owl:hasKey)\s+([<][^>]+[>]|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*)/,
+        );
+
+        // 7. Property restriction patterns
+        const restrictionMatch = clickedLine.match(
+          /(?:owl:onProperty|owl:someValuesFrom|owl:allValuesFrom|owl:hasValue|owl:onClass|owl:onDataRange|owl:minCardinality|owl:maxCardinality|owl:cardinality|owl:minQualifiedCardinality|owl:maxQualifiedCardinality|owl:qualifiedCardinality)\s+([<][^>]+[>]|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*|\d+)/,
+        );
+
+        // 8. Annotation patterns
+        const annotationMatch = clickedLine.match(
+          /(?:rdfs:label|rdfs:comment|rdfs:seeAlso|rdfs:isDefinedBy|owl:versionInfo|dc:title|dc:description|dc:creator|skos:prefLabel|skos:altLabel|skos:definition|skos:example|skos:note)\s+(?:"[^"]*"|([<][^>]+[>]|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*))/,
+        );
+
+        // 9. SWRL rule patterns
+        const swrlMatch = clickedLine.match(
+          /(?:swrl:body|swrl:head|swrl:argument1|swrl:argument2|swrl:classPredicate|swrl:propertyPredicate)\s+([<][^>]+[>]|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*)/,
+        );
+
+        // 10. RDF/XML OWL element tags
+        const xmlOwlElementMatch = clickedLine.match(
+          /<owl:(Class|ObjectProperty|DatatypeProperty|AnnotationProperty|NamedIndividual|Restriction|AllDifferent|AllDisjointClasses|AllDisjointProperties|NegativePropertyAssertion|Datatype|FunctionalProperty|InverseFunctionalProperty|TransitiveProperty|SymmetricProperty|AsymmetricProperty|ReflexiveProperty|IrreflexiveProperty)/,
+        );
+
+        // 11. Import declaration - comprehensive pattern for all formats
+        // Matches: owl:imports <URI>, Import(<URI>), Import: <URI>, rdf:resource in owl:imports context
+        const importMatch = clickedLine.match(/(?:owl:imports|Import)\s*[:(]?\s*<([^>]+)>/);
+
+        // 12. Datatype patterns
+        const datatypeMatch = clickedLine.match(
+          /\^\^([<][^>]+[>]|xsd:[a-zA-Z]+|[a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*)/,
+        );
+
+        // 14. N-Triples subject pattern
+        const ntriplesSubjectMatch = clickedLine.match(/^([<][^>]+[>])\s+[<]/);
+
+        // Priority order for entity extraction - XML attributes FIRST (most precise for URLs)
+        console.log("[Dashboard] Entity extraction patterns - checking in priority order...");
+        console.log("[Dashboard] Clicked line:", clickedLine.substring(0, 150));
+
+        // PRIORITY 1: XML attribute patterns (extract full URLs from rdf:about, IRI, etc.)
+        if (rdfAboutMatch) {
+          referencedEntity = rdfAboutMatch[1];
+          console.log("[Dashboard] ✓ Extracted from rdf:about:", referencedEntity);
+        } else if (rdfIdMatch) {
+          referencedEntity = rdfIdMatch[1];
+          console.log("[Dashboard] ✓ Extracted from rdf:ID:", referencedEntity);
+        } else if (owlXmlIriMatch) {
+          referencedEntity = owlXmlIriMatch[1];
+          console.log("[Dashboard] ✓ Extracted from IRI attribute:", referencedEntity);
+        } else if (owlXmlAbbrevMatch) {
+          referencedEntity = owlXmlAbbrevMatch[1];
+          console.log("[Dashboard] ✓ Extracted from abbreviatedIRI:", referencedEntity);
+        } else if (rdfResourceMatch) {
+          referencedEntity = rdfResourceMatch[1];
+          console.log("[Dashboard] ✓ Extracted from rdf:resource:", referencedEntity);
+        }
+        // PRIORITY 2: Import declarations (HIGH priority for import lines)
+        else if (importMatch) {
+          referencedEntity = importMatch[1];
+          console.log("[Dashboard] ✓ Extracted from import declaration:", referencedEntity);
+        }
+        // PRIORITY 3: Full URI in angle brackets
+        else if (fullUriMatch) {
+          referencedEntity = fullUriMatch[1];
+          console.log("[Dashboard] ✓ Extracted full URI from angle brackets:", referencedEntity);
+        }
+        // PRIORITY 4: N-Triples subject (full URI)
+        else if (ntriplesSubjectMatch) {
+          referencedEntity = ntriplesSubjectMatch[1].replace(/^</, "").replace(/>$/, "");
+          console.log("[Dashboard] ✓ Extracted from N-Triples subject:", referencedEntity);
+        }
+        // PRIORITY 5: Format-specific declarations
+        else if (manchesterDeclMatch) {
+          referencedEntity = manchesterDeclMatch[1].replace(/^[<:]/, "").replace(/>$/, "");
+          console.log("[Dashboard] ✓ Extracted from Manchester declaration:", referencedEntity);
+        } else if (functionalEntityMatch) {
+          referencedEntity = functionalEntityMatch[1].replace(/^</, "").replace(/>$/, "");
+          console.log("[Dashboard] ✓ Extracted from Functional syntax:", referencedEntity);
+        }
+        // PRIORITY 6: OWL axioms and properties
+        else if (owlAxiomMatch) {
+          referencedEntity = owlAxiomMatch[1].replace(/^</, "").replace(/>$/, "");
+          console.log("[Dashboard] ✓ Extracted from OWL axiom:", referencedEntity);
+        } else if (restrictionMatch && !restrictionMatch[1].match(/^\d+$/)) {
+          referencedEntity = restrictionMatch[1].replace(/^</, "").replace(/>$/, "");
+          console.log("[Dashboard] ✓ Extracted from restriction:", referencedEntity);
+        } else if (annotationMatch && annotationMatch[1]) {
+          referencedEntity = annotationMatch[1].replace(/^</, "").replace(/>$/, "");
+          console.log("[Dashboard] ✓ Extracted from annotation:", referencedEntity);
+        } else if (swrlMatch) {
+          referencedEntity = swrlMatch[1].replace(/^</, "").replace(/>$/, "");
+          console.log("[Dashboard] ✓ Extracted from SWRL rule:", referencedEntity);
+        }
+        // PRIORITY 7: Prefixed names (lowest priority)
+        else if (prefixedNameMatch) {
+          referencedEntity = prefixedNameMatch[1];
+          console.log("[Dashboard] ✓ Extracted prefixed name:", referencedEntity);
+        }
+        // PRIORITY 7: XML element tags (look nearby for entity reference)
+        else if (xmlOwlElementMatch) {
+          console.log("[Dashboard] Found OWL XML element tag, looking for nearby entity...");
+          // For OWL element tags, look for rdf:about or rdf:ID on same or nearby lines
+          const nearbyLines = lines
+            .slice(Math.max(0, lineNumber - 2), Math.min(lines.length, lineNumber + 3))
+            .join(" ");
+          const nearbyAbout = nearbyLines.match(/rdf:about="([^"]+)"/);
+          const nearbyId = nearbyLines.match(/rdf:ID="([^"]+)"/);
+          if (nearbyAbout) {
+            referencedEntity = nearbyAbout[1];
+            console.log("[Dashboard] ✓ Extracted from nearby rdf:about:", referencedEntity);
+          } else if (nearbyId) {
+            referencedEntity = nearbyId[1];
+            console.log("[Dashboard] ✓ Extracted from nearby rdf:ID:", referencedEntity);
           }
         }
-      }
-      
-      console.log('[Dashboard] Final insertion index after adjustments:', insertAtIndex);
-      
-      // Insert the citation details AT the adjusted line
-      lines.splice(insertAtIndex, 0, ...citationLines);
-      
-      console.log('[Dashboard] Total lines after insertion:', lines.length);
-      
-      // Create modified content with the citation details inserted
-      const modifiedContent = lines.join('\n');
-      console.log('[Dashboard] Modified content length:', modifiedContent.length, 'bytes');
-      
-      // Step 1: Update local code view immediately for UX feedback
-      setCodeViewContent(modifiedContent);
-      setHasLocalCodeViewChanges(true); // Mark that we have local modifications
-      console.log('[Dashboard] Code view updated locally with full citation at line', insertAtIndex);
-      
-      // Step 2: Cache the modified content and insert citation in ALL formats
-      // The modified content is stored in the code view cache, which the export endpoint will use
-      // This preserves the exact line positions (no GraphDB re-serialization)
-      // Current format: at clicked line, Other formats: near the referenced entity
-      console.log('[Dashboard] Inserting citation - current format at line', insertAtIndex, ', other formats near entity:', referencedEntity || '(none)');
-      
-      // Define all supported formats for multi-format sync
-      const allFormats = ['turtle', 'rdfxml', 'ntriples', 'owlxml', 'manchester', 'functional'] as const;
-      const otherFormats = allFormats.filter(f => f !== codeViewFormat);
-      
-      // Helper to generate citation in Turtle format
-      function generateTurtleCitationBlock(): string[] {
+
+        if (!referencedEntity) {
+          console.log("[Dashboard] ✗ No entity found from primary patterns, trying fallbacks...");
+        }
+
+        // AGGRESSIVE FALLBACK: If still no entity found, extract any IRI or prefixed name from the line
+        if (!referencedEntity) {
+          // Try to find any full IRI in angle brackets (must be a URL, not an XML tag)
+          // Must start with http(s): or urn: or file: or contain :// to be considered a URI
+          const anyIriMatch = clickedLine.match(/<((?:https?|urn|file):[^\s>]+|[^\s>]*:\/\/[^\s>]+)>/);
+          if (anyIriMatch) {
+            referencedEntity = anyIriMatch[1];
+            console.log("[Dashboard] FALLBACK: Extracted IRI from angle brackets:", referencedEntity);
+          }
+
+          // Try to find any prefixed name (e.g., ex:Person, foaf:name)
+          if (!referencedEntity) {
+            const anyPrefixedMatch = clickedLine.match(/\b([a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]+)\b/);
+            if (
+              anyPrefixedMatch &&
+              !anyPrefixedMatch[1].startsWith("http:") &&
+              !anyPrefixedMatch[1].startsWith("https:")
+            ) {
+              referencedEntity = anyPrefixedMatch[1];
+              console.log("[Dashboard] FALLBACK: Extracted prefixed name:", referencedEntity);
+            }
+          }
+
+          // Super aggressive fallback: look at nearby lines for context (URLs only)
+          if (!referencedEntity && lineNumber >= 0) {
+            console.log("[Dashboard] SUPER FALLBACK: Searching nearby lines (±3) for entity URL...");
+            const contextLines = lines.slice(Math.max(0, lineNumber - 3), Math.min(lines.length, lineNumber + 3));
+            for (let i = 0; i < contextLines.length; i++) {
+              const contextLine = contextLines[i];
+              // ONLY try to extract URLs from XML attributes (most precise)
+              const contextAbout = contextLine.match(/rdf:about="([^"]+)"/);
+              const contextIri = contextLine.match(/IRI="([^"]+)"/);
+              const contextResource = contextLine.match(/rdf:resource="([^"]+)"/);
+
+              if (contextAbout) {
+                referencedEntity = contextAbout[1];
+                console.log(
+                  `[Dashboard] SUPER FALLBACK: Found rdf:about in line ${lineNumber - 3 + i}:`,
+                  referencedEntity,
+                );
+                break;
+              } else if (contextIri) {
+                referencedEntity = contextIri[1];
+                console.log(`[Dashboard] SUPER FALLBACK: Found IRI in line ${lineNumber - 3 + i}:`, referencedEntity);
+                break;
+              } else if (contextResource) {
+                referencedEntity = contextResource[1];
+                console.log(
+                  `[Dashboard] SUPER FALLBACK: Found rdf:resource in line ${lineNumber - 3 + i}:`,
+                  referencedEntity,
+                );
+                break;
+              }
+            }
+
+            // If still nothing, try angle brackets for URLs
+            if (!referencedEntity) {
+              for (let i = 0; i < contextLines.length; i++) {
+                const contextLine = contextLines[i];
+                // Only match actual URIs, not XML tags
+                const contextIri = contextLine.match(/<((?:https?|urn|file):[^\s>]+|[^\s>]*:\/\/[^\s>]+)>/);
+                if (contextIri) {
+                  referencedEntity = contextIri[1];
+                  console.log("[Dashboard] SUPER FALLBACK: Found IRI in nearby line:", referencedEntity);
+                  break;
+                }
+                // Try prefixed name
+                const contextPrefixed = contextLine.match(/\b([a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]*)\b/);
+                if (
+                  contextPrefixed &&
+                  !contextPrefixed[1].startsWith("http:") &&
+                  !contextPrefixed[1].startsWith("https:")
+                ) {
+                  referencedEntity = contextPrefixed[1];
+                  console.log("[Dashboard] SUPER FALLBACK: Found prefixed name in nearby line:", referencedEntity);
+                  break;
+                }
+              }
+            }
+          }
+        } // Close aggressive fallback if (!referencedEntity) block started around line 7936
+
+        console.log("[Dashboard] ========== ENTITY EXTRACTION DEBUG ==========");
+        console.log("[Dashboard] Clicked line content:", clickedLine);
+        console.log("[Dashboard] Format:", codeViewFormat);
+        console.log("[Dashboard] Referenced entity extracted:", referencedEntity || "(none detected)");
+        console.log("[Dashboard] =============================================");
+
+        // Helper function to escape Turtle strings
+        const escapeTurtle = (str: string): string => {
+          if (!str) return "";
+          return str
+            .replace(/\\/g, "\\\\")
+            .replace(/"/g, '\\"')
+            .replace(/\n/g, "\\n")
+            .replace(/\r/g, "\\r")
+            .replace(/\t/g, "\\t");
+        };
+
+        // Helper function to escape XML strings
+        const escapeXml = (str: string): string => {
+          if (!str) return "";
+          return str
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&apos;");
+        };
+
+        // Extract all citation fields
+        const title = citationData.title || "Untitled";
+        const authors =
+          citationData.creators?.map((c: any) => `${c.firstName || ""} ${c.lastName || ""}`.trim()).join(", ") ||
+          "Unknown";
+        const year = citationData.date ? citationData.date.match(/\d{4}/)?.[0] || "" : "";
+        const doi = citationData.DOI || citationData.doi || "";
+        const url = citationData.url || "";
+        const abstractNote = citationData.abstractNote || "";
+        const publicationTitle = citationData.publicationTitle || "";
+        const volume = citationData.volume || "";
+        const issue = citationData.issue || "";
+        const pages = citationData.pages || "";
+        const publisher = citationData.publisher || "";
+        const itemType = citationData.itemType || "document";
+        const tags = citationData.tags?.map((t: any) => t.tag || t).filter(Boolean) || [];
+        const isbn = citationData.ISBN || "";
+        const issn = citationData.ISSN || "";
+        const language = citationData.language || "";
+        const rights = citationData.rights || "";
+
+        // Generate complete citation block
+        const citationLines: string[] = [];
+
+        if (codeViewFormat === "turtle" || codeViewFormat === "ntriples") {
+          // Generate comprehensive Turtle format with all Zotero details
+          citationLines.push("");
+          citationLines.push("###  Zotero Citation: " + escapeTurtle(title));
+          citationLines.push(
+            `<urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}> rdf:type owl:NamedIndividual ,`,
+          );
+          citationLines.push("         prov:Entity ;");
+          citationLines.push(`    dc:title "${escapeTurtle(title)}" ;`);
+          citationLines.push(`    dc:creator "${escapeTurtle(authors)}" ;`);
+
+          if (year) {
+            citationLines.push(`    dc:date "${year}"^^xsd:gYear ;`);
+          }
+
+          if (publicationTitle) {
+            citationLines.push(`    dc:source "${escapeTurtle(publicationTitle)}" ;`);
+          }
+
+          if (publisher) {
+            citationLines.push(`    dc:publisher "${escapeTurtle(publisher)}" ;`);
+          }
+
+          if (doi) {
+            citationLines.push(`    dc:identifier "doi:${escapeTurtle(doi)}" ;`);
+            citationLines.push(`    bibo:doi "${escapeTurtle(doi)}" ;`);
+          }
+
+          if (isbn) {
+            citationLines.push(`    bibo:isbn "${escapeTurtle(isbn)}" ;`);
+          }
+
+          if (issn) {
+            citationLines.push(`    bibo:issn "${escapeTurtle(issn)}" ;`);
+          }
+
+          if (url) {
+            citationLines.push(`    foaf:homepage <${url}> ;`);
+          }
+
+          if (volume) {
+            citationLines.push(`    bibo:volume "${escapeTurtle(volume)}" ;`);
+          }
+
+          if (issue) {
+            citationLines.push(`    bibo:issue "${escapeTurtle(issue)}" ;`);
+          }
+
+          if (pages) {
+            citationLines.push(`    bibo:pages "${escapeTurtle(pages)}" ;`);
+          }
+
+          if (language) {
+            citationLines.push(`    dc:language "${escapeTurtle(language)}" ;`);
+          }
+
+          if (rights) {
+            citationLines.push(`    dc:rights "${escapeTurtle(rights)}" ;`);
+          }
+
+          if (itemType) {
+            citationLines.push(`    dc:type "${escapeTurtle(itemType)}" ;`);
+          }
+
+          // Add tags as dc:subject
+          if (tags.length > 0) {
+            tags.forEach((tag: string) => {
+              citationLines.push(`    dc:subject "${escapeTurtle(tag)}" ;`);
+            });
+          }
+
+          // Add full abstract (not truncated)
+          if (abstractNote) {
+            citationLines.push(`    dc:description "${escapeTurtle(abstractNote)}" ;`);
+          }
+
+          // Replace last semicolon with period
+          citationLines[citationLines.length - 1] = citationLines[citationLines.length - 1].replace(/ ;$/, " .");
+          citationLines.push("");
+        } else if (codeViewFormat === "manchester") {
+          // Generate Manchester OWL syntax format
+          const escManchester = (s: string) => s.replace(/"/g, '\\"').replace(/\n/g, " ");
+          citationLines.push("");
+          citationLines.push(`# Zotero Citation: ${title}`);
+          citationLines.push(`Individual: <urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}>`);
+          citationLines.push(`    Types: prov:Entity`);
+          citationLines.push(`    Annotations:`);
+          citationLines.push(`        dc:title "${escManchester(title)}",`);
+          citationLines.push(
+            `        dc:creator "${escManchester(authors)}"${year || publicationTitle || doi || abstractNote ? "," : ""}`,
+          );
+          if (year)
+            citationLines.push(
+              `        dc:date "${year}"^^xsd:gYear${publicationTitle || doi || abstractNote ? "," : ""}`,
+            );
+          if (publicationTitle)
+            citationLines.push(
+              `        dc:source "${escManchester(publicationTitle)}"${doi || abstractNote ? "," : ""}`,
+            );
+          if (publisher)
+            citationLines.push(`        dc:publisher "${escManchester(publisher)}"${doi || abstractNote ? "," : ""}`);
+          if (doi) citationLines.push(`        bibo:doi "${escManchester(doi)}"${abstractNote ? "," : ""}`);
+          if (url) citationLines.push(`        foaf:homepage <${url}>${abstractNote ? "," : ""}`);
+          if (abstractNote) citationLines.push(`        dc:description "${escManchester(abstractNote)}"`);
+          citationLines.push("");
+        } else if (codeViewFormat === "functional") {
+          // Generate OWL 2 Functional syntax format
+          const escFunc = (s: string) => s.replace(/"/g, '\\"').replace(/\n/g, " ");
+          const citUri = `<urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}>`;
+          citationLines.push("");
+          citationLines.push(`# Zotero Citation: ${title}`);
+          citationLines.push(`Declaration(NamedIndividual(${citUri}))`);
+          citationLines.push(`ClassAssertion(<http://www.w3.org/ns/prov#Entity> ${citUri})`);
+          citationLines.push(
+            `AnnotationAssertion(<http://purl.org/dc/elements/1.1/title> ${citUri} "${escFunc(title)}")`,
+          );
+          citationLines.push(
+            `AnnotationAssertion(<http://purl.org/dc/elements/1.1/creator> ${citUri} "${escFunc(authors)}")`,
+          );
+          if (year)
+            citationLines.push(
+              `AnnotationAssertion(<http://purl.org/dc/elements/1.1/date> ${citUri} "${year}"^^xsd:gYear)`,
+            );
+          if (publicationTitle)
+            citationLines.push(
+              `AnnotationAssertion(<http://purl.org/dc/elements/1.1/source> ${citUri} "${escFunc(publicationTitle)}")`,
+            );
+          if (publisher)
+            citationLines.push(
+              `AnnotationAssertion(<http://purl.org/dc/elements/1.1/publisher> ${citUri} "${escFunc(publisher)}")`,
+            );
+          if (doi)
+            citationLines.push(`AnnotationAssertion(<http://purl.org/ontology/bibo/doi> ${citUri} "${escFunc(doi)}")`);
+          if (url) citationLines.push(`AnnotationAssertion(<http://xmlns.com/foaf/0.1/homepage> ${citUri} <${url}>)`);
+          if (abstractNote)
+            citationLines.push(
+              `AnnotationAssertion(<http://purl.org/dc/elements/1.1/description> ${citUri} "${escFunc(abstractNote)}")`,
+            );
+          citationLines.push("");
+        } else if (codeViewFormat === "owlxml") {
+          // Generate OWL/XML format
+          citationLines.push("");
+          citationLines.push(`    <!-- Zotero Citation: ${escapeXml(title)} -->`);
+          citationLines.push(`    <Declaration>`);
+          citationLines.push(
+            `        <NamedIndividual IRI="urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}"/>`,
+          );
+          citationLines.push(`    </Declaration>`);
+          citationLines.push(`    <ClassAssertion>`);
+          citationLines.push(`        <Class IRI="http://www.w3.org/ns/prov#Entity"/>`);
+          citationLines.push(
+            `        <NamedIndividual IRI="urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}"/>`,
+          );
+          citationLines.push(`    </ClassAssertion>`);
+          citationLines.push(`    <AnnotationAssertion>`);
+          citationLines.push(`        <AnnotationProperty IRI="http://purl.org/dc/elements/1.1/title"/>`);
+          citationLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}</IRI>`);
+          citationLines.push(`        <Literal>${escapeXml(title)}</Literal>`);
+          citationLines.push(`    </AnnotationAssertion>`);
+          citationLines.push(`    <AnnotationAssertion>`);
+          citationLines.push(`        <AnnotationProperty IRI="http://purl.org/dc/elements/1.1/creator"/>`);
+          citationLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}</IRI>`);
+          citationLines.push(`        <Literal>${escapeXml(authors)}</Literal>`);
+          citationLines.push(`    </AnnotationAssertion>`);
+          if (year) {
+            citationLines.push(`    <AnnotationAssertion>`);
+            citationLines.push(`        <AnnotationProperty IRI="http://purl.org/dc/elements/1.1/date"/>`);
+            citationLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}</IRI>`);
+            citationLines.push(
+              `        <Literal datatypeIRI="http://www.w3.org/2001/XMLSchema#gYear">${year}</Literal>`,
+            );
+            citationLines.push(`    </AnnotationAssertion>`);
+          }
+          if (doi) {
+            citationLines.push(`    <AnnotationAssertion>`);
+            citationLines.push(`        <AnnotationProperty IRI="http://purl.org/ontology/bibo/doi"/>`);
+            citationLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}</IRI>`);
+            citationLines.push(`        <Literal>${escapeXml(doi)}</Literal>`);
+            citationLines.push(`    </AnnotationAssertion>`);
+          }
+          if (abstractNote) {
+            citationLines.push(`    <AnnotationAssertion>`);
+            citationLines.push(`        <AnnotationProperty IRI="http://purl.org/dc/elements/1.1/description"/>`);
+            citationLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}</IRI>`);
+            citationLines.push(`        <Literal>${escapeXml(abstractNote)}</Literal>`);
+            citationLines.push(`    </AnnotationAssertion>`);
+          }
+          citationLines.push("");
+        } else if (codeViewFormat === "rdfxml") {
+          // Generate comprehensive RDF/XML format with all Zotero details
+          citationLines.push("");
+          citationLines.push(`    <!-- Zotero Citation: ${escapeXml(title)} -->`);
+          citationLines.push(
+            `    <owl:NamedIndividual rdf:about="urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}">`,
+          );
+          citationLines.push(`        <rdf:type rdf:resource="http://www.w3.org/ns/prov#Entity"/>`);
+          citationLines.push(`        <dc:title>${escapeXml(title)}</dc:title>`);
+          citationLines.push(`        <dc:creator>${escapeXml(authors)}</dc:creator>`);
+
+          if (year) {
+            citationLines.push(
+              `        <dc:date rdf:datatype="http://www.w3.org/2001/XMLSchema#gYear">${year}</dc:date>`,
+            );
+          }
+
+          if (publicationTitle) {
+            citationLines.push(`        <dc:source>${escapeXml(publicationTitle)}</dc:source>`);
+          }
+
+          if (publisher) {
+            citationLines.push(`        <dc:publisher>${escapeXml(publisher)}</dc:publisher>`);
+          }
+
+          if (doi) {
+            citationLines.push(`        <dc:identifier>doi:${escapeXml(doi)}</dc:identifier>`);
+            citationLines.push(
+              `        <bibo:doi xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(doi)}</bibo:doi>`,
+            );
+          }
+
+          if (isbn) {
+            citationLines.push(
+              `        <bibo:isbn xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(isbn)}</bibo:isbn>`,
+            );
+          }
+
+          if (issn) {
+            citationLines.push(
+              `        <bibo:issn xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(issn)}</bibo:issn>`,
+            );
+          }
+
+          if (url) {
+            citationLines.push(`        <foaf:homepage rdf:resource="${escapeXml(url)}"/>`);
+          }
+
+          if (volume) {
+            citationLines.push(
+              `        <bibo:volume xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(volume)}</bibo:volume>`,
+            );
+          }
+
+          if (issue) {
+            citationLines.push(
+              `        <bibo:issue xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(issue)}</bibo:issue>`,
+            );
+          }
+
+          if (pages) {
+            citationLines.push(
+              `        <bibo:pages xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(pages)}</bibo:pages>`,
+            );
+          }
+
+          if (language) {
+            citationLines.push(`        <dc:language>${escapeXml(language)}</dc:language>`);
+          }
+
+          if (rights) {
+            citationLines.push(`        <dc:rights>${escapeXml(rights)}</dc:rights>`);
+          }
+
+          if (itemType) {
+            citationLines.push(`        <dc:type>${escapeXml(itemType)}</dc:type>`);
+          }
+
+          // Add tags as dc:subject
+          if (tags.length > 0) {
+            tags.forEach((tag: string) => {
+              citationLines.push(`        <dc:subject>${escapeXml(tag)}</dc:subject>`);
+            });
+          }
+
+          // Add full abstract (not truncated)
+          if (abstractNote) {
+            citationLines.push(`        <dc:description>${escapeXml(abstractNote)}</dc:description>`);
+          }
+
+          citationLines.push(`    </owl:NamedIndividual>`);
+          citationLines.push("");
+        }
+
+        console.log("[Dashboard] Inserting full citation details at index:", insertAtIndex);
+        console.log("[Dashboard] Citation lines count:", citationLines.length);
+        console.log("[Dashboard] Total lines before insertion:", lines.length);
+
+        // For RDF/XML and OWL/XML formats, ensure insertion is AFTER the root element opening tag
+        // to prevent "Content is not allowed in prolog" errors
+        if (codeViewFormat === "rdfxml" || codeViewFormat === "owlxml") {
+          // Find the line with the opening <rdf:RDF> or <Ontology> root element
+          let rootElementLine = -1;
+          for (let i = 0; i < Math.min(50, lines.length); i++) {
+            const trimmed = lines[i].trim();
+            if (
+              trimmed.startsWith("<rdf:RDF") ||
+              trimmed.startsWith("<Ontology") ||
+              trimmed.startsWith("<owl:Ontology")
+            ) {
+              rootElementLine = i;
+              break;
+            }
+          }
+
+          // Find the actual closing > of the root tag (may span multiple lines with xmlns)
+          let rootTagCloseLine = rootElementLine;
+          if (rootElementLine >= 0) {
+            for (let j = rootElementLine; j < Math.min(rootElementLine + 100, lines.length); j++) {
+              if (lines[j].includes(">")) {
+                const lastQuote = lines[j].lastIndexOf('"');
+                const lastGt = lines[j].lastIndexOf(">");
+                if (lastGt > lastQuote || lastQuote === -1) {
+                  rootTagCloseLine = j;
+                  break;
+                }
+              }
+            }
+          }
+
+          if (rootElementLine >= 0 && insertAtIndex <= rootTagCloseLine) {
+            // User clicked before or inside the root element opening tag - insert after it
+            insertAtIndex = rootTagCloseLine + 1;
+            console.log(
+              `[Dashboard] ${codeViewFormat.toUpperCase()}: Adjusted insertion to line`,
+              insertAtIndex,
+              "to respect XML structure",
+            );
+          }
+
+          // Also check if trying to insert after the closing tag
+          for (let i = lines.length - 1; i >= Math.max(0, lines.length - 10); i--) {
+            const trimmed = lines[i].trim();
+            if (trimmed === "</rdf:RDF>" || trimmed === "</Ontology>" || trimmed === "</owl:Ontology>") {
+              if (insertAtIndex > i) {
+                insertAtIndex = i; // Insert before the closing tag
+                console.log(
+                  `[Dashboard] ${codeViewFormat.toUpperCase()}: Adjusted insertion to line`,
+                  insertAtIndex,
+                  "to stay inside root element",
+                );
+              }
+              break;
+            }
+          }
+        }
+
+        console.log("[Dashboard] Final insertion index after adjustments:", insertAtIndex);
+
+        // Insert the citation details AT the adjusted line
+        lines.splice(insertAtIndex, 0, ...citationLines);
+
+        console.log("[Dashboard] Total lines after insertion:", lines.length);
+
+        // Create modified content with the citation details inserted
+        const modifiedContent = lines.join("\n");
+        console.log("[Dashboard] Modified content length:", modifiedContent.length, "bytes");
+
+        // Step 1: Update local code view immediately for UX feedback
+        setCodeViewContent(modifiedContent);
+        setHasLocalCodeViewChanges(true); // Mark that we have local modifications
+        console.log("[Dashboard] Code view updated locally with full citation at line", insertAtIndex);
+
+        // Step 2: Cache the modified content and insert citation in ALL formats
+        // The modified content is stored in the code view cache, which the export endpoint will use
+        // This preserves the exact line positions (no GraphDB re-serialization)
+        // Current format: at clicked line, Other formats: near the referenced entity
+        console.log(
+          "[Dashboard] Inserting citation - current format at line",
+          insertAtIndex,
+          ", other formats near entity:",
+          referencedEntity || "(none)",
+        );
+
+        // Define all supported formats for multi-format sync
+        const allFormats = ["turtle", "rdfxml", "ntriples", "owlxml", "manchester", "functional"] as const;
+        const otherFormats = allFormats.filter((f) => f !== codeViewFormat);
+
+        // Helper to generate citation in Turtle format
+        function generateTurtleCitationBlock(): string[] {
           const citLines: string[] = [];
-          citLines.push('');
-          citLines.push('###  Zotero Citation: ' + escapeTurtle(title));
-          citLines.push(`<urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}> rdf:type owl:NamedIndividual ,`);
-          citLines.push('         prov:Entity ;');
+          citLines.push("");
+          citLines.push("###  Zotero Citation: " + escapeTurtle(title));
+          citLines.push(`<urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}> rdf:type owl:NamedIndividual ,`);
+          citLines.push("         prov:Entity ;");
           citLines.push(`    dc:title "${escapeTurtle(title)}" ;`);
           citLines.push(`    dc:creator "${escapeTurtle(authors)}" ;`);
           if (year) citLines.push(`    dc:date "${year}"^^xsd:gYear ;`);
@@ -8405,33 +9837,51 @@ const Dashboard: React.FC<DashboardProps> = ({
             citLines.push(`    dc:subject "${escapeTurtle(tag)}" ;`);
           });
           if (abstractNote) citLines.push(`    dc:description "${escapeTurtle(abstractNote)}" ;`);
-          citLines[citLines.length - 1] = citLines[citLines.length - 1].replace(/ ;$/, ' .');
-          citLines.push('');
+          citLines[citLines.length - 1] = citLines[citLines.length - 1].replace(/ ;$/, " .");
+          citLines.push("");
           return citLines;
         }
 
         // Helper to generate citation in RDF/XML format
         function generateRdfXmlCitationBlock(): string[] {
           const citLines: string[] = [];
-          citLines.push('');
+          citLines.push("");
           citLines.push(`    <!-- Zotero Citation: ${escapeXml(title)} -->`);
-          citLines.push(`    <owl:NamedIndividual rdf:about="urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}">`);
+          citLines.push(
+            `    <owl:NamedIndividual rdf:about="urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}">`,
+          );
           citLines.push(`        <rdf:type rdf:resource="http://www.w3.org/ns/prov#Entity"/>`);
           citLines.push(`        <dc:title>${escapeXml(title)}</dc:title>`);
           citLines.push(`        <dc:creator>${escapeXml(authors)}</dc:creator>`);
-          if (year) citLines.push(`        <dc:date rdf:datatype="http://www.w3.org/2001/XMLSchema#gYear">${year}</dc:date>`);
+          if (year)
+            citLines.push(`        <dc:date rdf:datatype="http://www.w3.org/2001/XMLSchema#gYear">${year}</dc:date>`);
           if (publicationTitle) citLines.push(`        <dc:source>${escapeXml(publicationTitle)}</dc:source>`);
           if (publisher) citLines.push(`        <dc:publisher>${escapeXml(publisher)}</dc:publisher>`);
           if (doi) {
             citLines.push(`        <dc:identifier>doi:${escapeXml(doi)}</dc:identifier>`);
             citLines.push(`        <bibo:doi xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(doi)}</bibo:doi>`);
           }
-          if (isbn) citLines.push(`        <bibo:isbn xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(isbn)}</bibo:isbn>`);
-          if (issn) citLines.push(`        <bibo:issn xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(issn)}</bibo:issn>`);
+          if (isbn)
+            citLines.push(
+              `        <bibo:isbn xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(isbn)}</bibo:isbn>`,
+            );
+          if (issn)
+            citLines.push(
+              `        <bibo:issn xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(issn)}</bibo:issn>`,
+            );
           if (url) citLines.push(`        <foaf:homepage rdf:resource="${escapeXml(url)}"/>`);
-          if (volume) citLines.push(`        <bibo:volume xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(volume)}</bibo:volume>`);
-          if (issue) citLines.push(`        <bibo:issue xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(issue)}</bibo:issue>`);
-          if (pages) citLines.push(`        <bibo:pages xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(pages)}</bibo:pages>`);
+          if (volume)
+            citLines.push(
+              `        <bibo:volume xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(volume)}</bibo:volume>`,
+            );
+          if (issue)
+            citLines.push(
+              `        <bibo:issue xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(issue)}</bibo:issue>`,
+            );
+          if (pages)
+            citLines.push(
+              `        <bibo:pages xmlns:bibo="http://purl.org/ontology/bibo/">${escapeXml(pages)}</bibo:pages>`,
+            );
           if (language) citLines.push(`        <dc:language>${escapeXml(language)}</dc:language>`);
           if (rights) citLines.push(`        <dc:rights>${escapeXml(rights)}</dc:rights>`);
           if (itemType) citLines.push(`        <dc:type>${escapeXml(itemType)}</dc:type>`);
@@ -8440,23 +9890,32 @@ const Dashboard: React.FC<DashboardProps> = ({
           });
           if (abstractNote) citLines.push(`        <dc:description>${escapeXml(abstractNote)}</dc:description>`);
           citLines.push(`    </owl:NamedIndividual>`);
-          citLines.push('');
+          citLines.push("");
           return citLines;
         }
 
         // Helper to generate citation in N-Triples format
         function generateNTriplesCitationBlock(): string[] {
           const citLines: string[] = [];
-          const uri = `<urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}>`;
-          const escNt = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
-          citLines.push('');
+          const uri = `<urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}>`;
+          const escNt = (s: string) =>
+            s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r");
+          citLines.push("");
           citLines.push(`# Zotero Citation: ${title}`);
-          citLines.push(`${uri} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .`);
-          citLines.push(`${uri} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/ns/prov#Entity> .`);
+          citLines.push(
+            `${uri} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .`,
+          );
+          citLines.push(
+            `${uri} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/ns/prov#Entity> .`,
+          );
           citLines.push(`${uri} <http://purl.org/dc/elements/1.1/title> "${escNt(title)}" .`);
           citLines.push(`${uri} <http://purl.org/dc/elements/1.1/creator> "${escNt(authors)}" .`);
-          if (year) citLines.push(`${uri} <http://purl.org/dc/elements/1.1/date> "${year}"^^<http://www.w3.org/2001/XMLSchema#gYear> .`);
-          if (publicationTitle) citLines.push(`${uri} <http://purl.org/dc/elements/1.1/source> "${escNt(publicationTitle)}" .`);
+          if (year)
+            citLines.push(
+              `${uri} <http://purl.org/dc/elements/1.1/date> "${year}"^^<http://www.w3.org/2001/XMLSchema#gYear> .`,
+            );
+          if (publicationTitle)
+            citLines.push(`${uri} <http://purl.org/dc/elements/1.1/source> "${escNt(publicationTitle)}" .`);
           if (publisher) citLines.push(`${uri} <http://purl.org/dc/elements/1.1/publisher> "${escNt(publisher)}" .`);
           if (doi) {
             citLines.push(`${uri} <http://purl.org/dc/elements/1.1/identifier> "doi:${escNt(doi)}" .`);
@@ -8464,210 +9923,291 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
           if (isbn) citLines.push(`${uri} <http://purl.org/ontology/bibo/isbn> "${escNt(isbn)}" .`);
           if (url) citLines.push(`${uri} <http://xmlns.com/foaf/0.1/homepage> <${url}> .`);
-          if (abstractNote) citLines.push(`${uri} <http://purl.org/dc/elements/1.1/description> "${escNt(abstractNote)}" .`);
-          citLines.push('');
+          if (abstractNote)
+            citLines.push(`${uri} <http://purl.org/dc/elements/1.1/description> "${escNt(abstractNote)}" .`);
+          citLines.push("");
           return citLines;
         }
 
         // Helper to generate citation in Manchester syntax format
         function generateManchesterCitationBlock(): string[] {
           const citLines: string[] = [];
-          const escManchester = (s: string) => s.replace(/"/g, '\\"').replace(/\n/g, ' ');
-          citLines.push('');
+          const escManchester = (s: string) => s.replace(/"/g, '\\"').replace(/\n/g, " ");
+          citLines.push("");
           citLines.push(`# Zotero Citation: ${title}`);
-          citLines.push(`Individual: <urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}>`);
+          citLines.push(`Individual: <urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}>`);
           citLines.push(`    Types: prov:Entity`);
           citLines.push(`    Annotations:`);
           citLines.push(`        dc:title "${escManchester(title)}",`);
-          citLines.push(`        dc:creator "${escManchester(authors)}"${year || publicationTitle || doi || abstractNote ? ',' : ''}`);
-          if (year) citLines.push(`        dc:date "${year}"^^xsd:gYear${publicationTitle || doi || abstractNote ? ',' : ''}`);
-          if (publicationTitle) citLines.push(`        dc:source "${escManchester(publicationTitle)}"${doi || abstractNote ? ',' : ''}`);
-          if (doi) citLines.push(`        bibo:doi "${escManchester(doi)}"${abstractNote ? ',' : ''}`);
+          citLines.push(
+            `        dc:creator "${escManchester(authors)}"${year || publicationTitle || doi || abstractNote ? "," : ""}`,
+          );
+          if (year)
+            citLines.push(`        dc:date "${year}"^^xsd:gYear${publicationTitle || doi || abstractNote ? "," : ""}`);
+          if (publicationTitle)
+            citLines.push(`        dc:source "${escManchester(publicationTitle)}"${doi || abstractNote ? "," : ""}`);
+          if (doi) citLines.push(`        bibo:doi "${escManchester(doi)}"${abstractNote ? "," : ""}`);
           if (abstractNote) citLines.push(`        dc:description "${escManchester(abstractNote)}"`);
-          citLines.push('');
+          citLines.push("");
           return citLines;
         }
 
         // Helper to generate citation in OWL Functional syntax format
         function generateFunctionalCitationBlock(): string[] {
           const citLines: string[] = [];
-          const escFunc = (s: string) => s.replace(/"/g, '\\"').replace(/\n/g, ' ');
-          const citUri = `<urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}>`;
-          citLines.push('');
+          const escFunc = (s: string) => s.replace(/"/g, '\\"').replace(/\n/g, " ");
+          const citUri = `<urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}>`;
+          citLines.push("");
           citLines.push(`# Zotero Citation: ${title}`);
           citLines.push(`Declaration(NamedIndividual(${citUri}))`);
           citLines.push(`ClassAssertion(<http://www.w3.org/ns/prov#Entity> ${citUri})`);
           citLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/title> ${citUri} "${escFunc(title)}")`);
-          citLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/creator> ${citUri} "${escFunc(authors)}")`);
-          if (year) citLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/date> ${citUri} "${year}"^^xsd:gYear)`);
-          if (publicationTitle) citLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/source> ${citUri} "${escFunc(publicationTitle)}")`);
-          if (doi) citLines.push(`AnnotationAssertion(<http://purl.org/ontology/bibo/doi> ${citUri} "${escFunc(doi)}")`);
-          if (abstractNote) citLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/description> ${citUri} "${escFunc(abstractNote)}")`);
-          citLines.push('');
+          citLines.push(
+            `AnnotationAssertion(<http://purl.org/dc/elements/1.1/creator> ${citUri} "${escFunc(authors)}")`,
+          );
+          if (year)
+            citLines.push(`AnnotationAssertion(<http://purl.org/dc/elements/1.1/date> ${citUri} "${year}"^^xsd:gYear)`);
+          if (publicationTitle)
+            citLines.push(
+              `AnnotationAssertion(<http://purl.org/dc/elements/1.1/source> ${citUri} "${escFunc(publicationTitle)}")`,
+            );
+          if (doi)
+            citLines.push(`AnnotationAssertion(<http://purl.org/ontology/bibo/doi> ${citUri} "${escFunc(doi)}")`);
+          if (abstractNote)
+            citLines.push(
+              `AnnotationAssertion(<http://purl.org/dc/elements/1.1/description> ${citUri} "${escFunc(abstractNote)}")`,
+            );
+          citLines.push("");
           return citLines;
         }
 
         // Helper to generate citation in OWL/XML format
         function generateOwlXmlCitationBlock(): string[] {
           const citLines: string[] = [];
-          citLines.push('');
+          citLines.push("");
           citLines.push(`    <!-- Zotero Citation: ${escapeXml(title)} -->`);
           citLines.push(`    <Declaration>`);
-          citLines.push(`        <NamedIndividual IRI="urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}"/>`);
+          citLines.push(`        <NamedIndividual IRI="urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}"/>`);
           citLines.push(`    </Declaration>`);
           citLines.push(`    <ClassAssertion>`);
           citLines.push(`        <Class IRI="http://www.w3.org/ns/prov#Entity"/>`);
-          citLines.push(`        <NamedIndividual IRI="urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}"/>`);
+          citLines.push(`        <NamedIndividual IRI="urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}"/>`);
           citLines.push(`    </ClassAssertion>`);
           citLines.push(`    <AnnotationAssertion>`);
           citLines.push(`        <AnnotationProperty IRI="http://purl.org/dc/elements/1.1/title"/>`);
-          citLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}</IRI>`);
+          citLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}</IRI>`);
           citLines.push(`        <Literal>${escapeXml(title)}</Literal>`);
           citLines.push(`    </AnnotationAssertion>`);
           citLines.push(`    <AnnotationAssertion>`);
           citLines.push(`        <AnnotationProperty IRI="http://purl.org/dc/elements/1.1/creator"/>`);
-          citLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}</IRI>`);
+          citLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}</IRI>`);
           citLines.push(`        <Literal>${escapeXml(authors)}</Literal>`);
           citLines.push(`    </AnnotationAssertion>`);
           if (year) {
             citLines.push(`    <AnnotationAssertion>`);
             citLines.push(`        <AnnotationProperty IRI="http://purl.org/dc/elements/1.1/date"/>`);
-            citLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}</IRI>`);
+            citLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}</IRI>`);
             citLines.push(`        <Literal datatypeIRI="http://www.w3.org/2001/XMLSchema#gYear">${year}</Literal>`);
             citLines.push(`    </AnnotationAssertion>`);
           }
           if (doi) {
             citLines.push(`    <AnnotationAssertion>`);
             citLines.push(`        <AnnotationProperty IRI="http://purl.org/ontology/bibo/doi"/>`);
-            citLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}</IRI>`);
+            citLines.push(`        <IRI>urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}</IRI>`);
             citLines.push(`        <Literal>${escapeXml(doi)}</Literal>`);
             citLines.push(`    </AnnotationAssertion>`);
           }
-          citLines.push('');
+          citLines.push("");
           return citLines;
         }
 
         // Store modified content for current format (already modified with citation at clicked line)
         // Note: We do NOT clear caches first - this preserves previously added citations
         // Also store citation-entity mapping for smart repositioning when exporting from GraphDB
-        const citationUrn = `urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, '')}`;
+        const citationUrn = `urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}`;
         try {
           await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
             content: modifiedContent,
             format: codeViewFormat,
             citationUrn: citationUrn,
-            referencedEntity: referencedEntity || ''
+            referencedEntity: referencedEntity || "",
           });
-          console.log('[Dashboard] Current format cache stored:', codeViewFormat);
-          console.log('[Dashboard] Stored citation-entity mapping:', citationUrn, '->', referencedEntity || '(none)');
+          console.log("[Dashboard] Current format cache stored:", codeViewFormat);
+          console.log("[Dashboard] Stored citation-entity mapping:", citationUrn, "->", referencedEntity || "(none)");
         } catch (e) {
-          console.warn('[Dashboard] Failed to store current format cache:', e);
+          console.warn("[Dashboard] Failed to store current format cache:", e);
         }
 
         // Now fetch and update ALL other formats with citation near the same entity
         // Helper to find entity location in content - supports ALL OWL formats
         function findEntityLocation(content: string, entity: string): number {
           if (!entity) {
-            console.log('[findEntityLocation] No entity provided');
+            console.log("[findEntityLocation] No entity provided");
             return -1;
           }
-          
-          const lines = content.split('\n');
-          
+
+          const lines = content.split("\n");
+
           // Extract just the local name from the entity for matching
           // If entity has a fragment (#), use that; else use last path segment
-          let localName = entity.includes('#') ? entity.split('#').pop() || '' :
-                          entity.includes('/') ? entity.split('/').pop() || '' :
-                          entity.includes(':') && !entity.includes('://') ? entity.split(':').pop() || '' : entity;
-          
+          let localName = entity.includes("#")
+            ? entity.split("#").pop() || ""
+            : entity.includes("/")
+              ? entity.split("/").pop() || ""
+              : entity.includes(":") && !entity.includes("://")
+                ? entity.split(":").pop() || ""
+                : entity;
+
           // Clean up any trailing quotes or special characters
-          localName = localName.replace(/["'>]+$/, '').replace(/^["'<]+/, '');
-          
+          localName = localName.replace(/["'>]+$/, "").replace(/^["'<]+/, "");
+
           // Also extract the prefix if it's a prefixed name
-          const prefix = entity.includes(':') && !entity.includes('://') ? entity.split(':')[0] : '';
-          
+          const prefix = entity.includes(":") && !entity.includes("://") ? entity.split(":")[0] : "";
+
           console.log(`[findEntityLocation] ========== SEARCHING FOR ENTITY ==========`);
           console.log(`[findEntityLocation] Full entity: '${entity}'`);
           console.log(`[findEntityLocation] Local name: '${localName}'`);
-          console.log(`[findEntityLocation] Prefix: '${prefix || '(none)'}'`);
+          console.log(`[findEntityLocation] Prefix: '${prefix || "(none)"}'`);
           console.log(`[findEntityLocation] Total lines to search: ${lines.length}`);
           console.log(`[findEntityLocation] =============================================`);
-          
+
           // Escape special regex characters in entity and localName
-          const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
           const safeEntity = escapeRegex(entity);
           const safeLocalName = escapeRegex(localName);
-          const safePrefix = prefix ? escapeRegex(prefix) : '';
-          
+          const safePrefix = prefix ? escapeRegex(prefix) : "";
+
           // Build comprehensive search patterns for ALL formats - ORDERED BY PRIORITY
-          const patterns: Array<{pattern: string | RegExp, desc: string, priority: number}> = [
+          const patterns: Array<{ pattern: string | RegExp; desc: string; priority: number }> = [
             // HIGHEST PRIORITY (100): Exact full entity match
-            { pattern: entity, desc: 'Exact entity string', priority: 100 },
-            { pattern: `<${entity}>`, desc: 'Entity in angle brackets', priority: 99 },
-            
+            { pattern: entity, desc: "Exact entity string", priority: 100 },
+            { pattern: `<${entity}>`, desc: "Entity in angle brackets", priority: 99 },
+
             // HIGH PRIORITY (90-95): Exact entity in XML/RDF attributes
-            { pattern: `rdf:about="${entity}"`, desc: 'RDF about attribute', priority: 95 },
-            { pattern: `rdf:resource="${entity}"`, desc: 'RDF resource attribute', priority: 94 },
-            { pattern: `IRI="${entity}"`, desc: 'OWL/XML IRI attribute', priority: 93 },
-            ...(prefix ? [{ pattern: `abbreviatedIRI="${prefix}:${localName}"`, desc: 'OWL/XML abbreviated IRI', priority: 92 }] : []),
-            
+            { pattern: `rdf:about="${entity}"`, desc: "RDF about attribute", priority: 95 },
+            { pattern: `rdf:resource="${entity}"`, desc: "RDF resource attribute", priority: 94 },
+            { pattern: `IRI="${entity}"`, desc: "OWL/XML IRI attribute", priority: 93 },
+            ...(prefix
+              ? [{ pattern: `abbreviatedIRI="${prefix}:${localName}"`, desc: "OWL/XML abbreviated IRI", priority: 92 }]
+              : []),
+
             // MEDIUM-HIGH PRIORITY (80-89): Prefixed name matches
-            ...(prefix ? [{ pattern: new RegExp(`\\b${safePrefix}:${safeLocalName}(?![a-zA-Z0-9_-])`), desc: 'Exact prefixed name', priority: 88 }] : []),
-            { pattern: new RegExp(`\\b[a-zA-Z_][a-zA-Z0-9_-]*:${safeLocalName}(?![a-zA-Z0-9_-])`), desc: 'Any prefix with local name', priority: 85 },
-            
+            ...(prefix
+              ? [
+                  {
+                    pattern: new RegExp(`\\b${safePrefix}:${safeLocalName}(?![a-zA-Z0-9_-])`),
+                    desc: "Exact prefixed name",
+                    priority: 88,
+                  },
+                ]
+              : []),
+            {
+              pattern: new RegExp(`\\b[a-zA-Z_][a-zA-Z0-9_-]*:${safeLocalName}(?![a-zA-Z0-9_-])`),
+              desc: "Any prefix with local name",
+              priority: 85,
+            },
+
             // MEDIUM PRIORITY (70-79): Fragment/path patterns for URIs
-            ...(entity.includes('#') || entity.includes('/') ? [
-              { pattern: `#${localName}>`, desc: 'Fragment in angle brackets', priority: 78 },
-              { pattern: `#${localName}`, desc: 'Fragment reference', priority: 77 },
-              { pattern: `/${localName}>`, desc: 'Path in angle brackets', priority: 76 },
-              { pattern: `/${localName}`, desc: 'Path reference', priority: 75 },
-            ] : []),
-            
+            ...(entity.includes("#") || entity.includes("/")
+              ? [
+                  { pattern: `#${localName}>`, desc: "Fragment in angle brackets", priority: 78 },
+                  { pattern: `#${localName}`, desc: "Fragment reference", priority: 77 },
+                  { pattern: `/${localName}>`, desc: "Path in angle brackets", priority: 76 },
+                  { pattern: `/${localName}`, desc: "Path reference", priority: 75 },
+                ]
+              : []),
+
             // MEDIUM-LOW PRIORITY (60-69): Fragment/local name in attributes
-            { pattern: `rdf:about="#${localName}"`, desc: 'RDF about with fragment', priority: 68 },
-            { pattern: `rdf:ID="${localName}"`, desc: 'RDF ID attribute', priority: 67 },
-            { pattern: `rdf:resource="#${localName}"`, desc: 'RDF resource with fragment', priority: 66 },
-            { pattern: `IRI="#${localName}"`, desc: 'IRI with fragment', priority: 65 },
-            { pattern: new RegExp(`abbreviatedIRI="[^"]*:${safeLocalName}"`), desc: 'Abbreviated IRI any prefix', priority: 64 },
-            
+            { pattern: `rdf:about="#${localName}"`, desc: "RDF about with fragment", priority: 68 },
+            { pattern: `rdf:ID="${localName}"`, desc: "RDF ID attribute", priority: 67 },
+            { pattern: `rdf:resource="#${localName}"`, desc: "RDF resource with fragment", priority: 66 },
+            { pattern: `IRI="#${localName}"`, desc: "IRI with fragment", priority: 65 },
+            {
+              pattern: new RegExp(`abbreviatedIRI="[^"]*:${safeLocalName}"`),
+              desc: "Abbreviated IRI any prefix",
+              priority: 64,
+            },
+
             // LOW PRIORITY (40-59): Declaration patterns
-            { pattern: new RegExp(`(?:Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):\\s*<[^>]*${safeLocalName}>`), desc: 'Manchester declaration with IRI', priority: 55 },
-            { pattern: new RegExp(`(?:Class|Individual|ObjectProperty|DataProperty):\\s*[a-zA-Z_][a-zA-Z0-9_-]*:${safeLocalName}(?![a-zA-Z0-9_-])`), desc: 'Manchester declaration prefixed', priority: 54 },
-            { pattern: new RegExp(`Declaration\\s*\\([^)]*<[^>]*${safeLocalName}>`), desc: 'Functional declaration', priority: 53 },
-            { pattern: new RegExp(`(?:NamedIndividual|Class|ObjectProperty|DataProperty)\\s*\\(<[^>]*${safeLocalName}>`), desc: 'Functional construct', priority: 52 },
-            ...(prefix ? [{ pattern: new RegExp(`(?:Declaration|ClassAssertion|SubClassOf)\\s*\\([^)]*${safePrefix}:${safeLocalName}`), desc: 'Functional with prefix', priority: 51 }] : []),
-            
+            {
+              pattern: new RegExp(
+                `(?:Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):\\s*<[^>]*${safeLocalName}>`,
+              ),
+              desc: "Manchester declaration with IRI",
+              priority: 55,
+            },
+            {
+              pattern: new RegExp(
+                `(?:Class|Individual|ObjectProperty|DataProperty):\\s*[a-zA-Z_][a-zA-Z0-9_-]*:${safeLocalName}(?![a-zA-Z0-9_-])`,
+              ),
+              desc: "Manchester declaration prefixed",
+              priority: 54,
+            },
+            {
+              pattern: new RegExp(`Declaration\\s*\\([^)]*<[^>]*${safeLocalName}>`),
+              desc: "Functional declaration",
+              priority: 53,
+            },
+            {
+              pattern: new RegExp(
+                `(?:NamedIndividual|Class|ObjectProperty|DataProperty)\\s*\\(<[^>]*${safeLocalName}>`,
+              ),
+              desc: "Functional construct",
+              priority: 52,
+            },
+            ...(prefix
+              ? [
+                  {
+                    pattern: new RegExp(
+                      `(?:Declaration|ClassAssertion|SubClassOf)\\s*\\([^)]*${safePrefix}:${safeLocalName}`,
+                    ),
+                    desc: "Functional with prefix",
+                    priority: 51,
+                  },
+                ]
+              : []),
+
             // VERY LOW PRIORITY (20-39): N-Triples and word boundary
-            { pattern: new RegExp(`^<[^>]*${safeLocalName}>\\s+<`), desc: 'N-Triples subject', priority: 35 },
-            { pattern: new RegExp(`\\b${safeLocalName}\\b`, 'i'), desc: 'Word boundary match (case-insensitive)', priority: 20 },
+            { pattern: new RegExp(`^<[^>]*${safeLocalName}>\\s+<`), desc: "N-Triples subject", priority: 35 },
+            {
+              pattern: new RegExp(`\\b${safeLocalName}\\b`, "i"),
+              desc: "Word boundary match (case-insensitive)",
+              priority: 20,
+            },
           ];
-          
+
           let bestMatch = -1;
           let bestMatchPriority = -1;
-          let bestMatchDesc = '';
+          let bestMatchDesc = "";
           let matchCount = 0;
-          
+
           for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
             const line = lines[lineIdx];
-            
-            for (const {pattern, desc, priority} of patterns) {
+
+            for (const { pattern, desc, priority } of patterns) {
               const matched = pattern instanceof RegExp ? pattern.test(line) : line.includes(pattern);
-              
+
               if (matched) {
                 matchCount++;
-                console.log(`[findEntityLocation] ✓ Match #${matchCount} at line ${lineIdx} (priority ${priority}): ${desc}`);
-                console.log(`[findEntityLocation]   Line preview: ${line.substring(0, 120)}${line.length > 120 ? '...' : ''}`);
-                
+                console.log(
+                  `[findEntityLocation] ✓ Match #${matchCount} at line ${lineIdx} (priority ${priority}): ${desc}`,
+                );
+                console.log(
+                  `[findEntityLocation]   Line preview: ${line.substring(0, 120)}${line.length > 120 ? "..." : ""}`,
+                );
+
                 // Keep track of best match (highest priority, or first if same priority)
                 if (priority > bestMatchPriority) {
                   bestMatch = lineIdx;
                   bestMatchPriority = priority;
                   bestMatchDesc = desc;
                   console.log(`[findEntityLocation]   >>> NEW BEST MATCH (priority ${priority})`);
-                  
+
                   // If we found a very high-priority match (>= 90), use it immediately
                   if (priority >= 90) {
-                    console.log(`[findEntityLocation] High-priority match found (${priority} >= 90), using immediately`);
+                    console.log(
+                      `[findEntityLocation] High-priority match found (${priority} >= 90), using immediately`,
+                    );
                     const endLine = findEntityBlockEnd(lines, lineIdx);
                     console.log(`[findEntityLocation] ========== MATCH FOUND ==========`);
                     console.log(`[findEntityLocation] Line: ${lineIdx}, End: ${endLine}, Reason: ${desc}`);
@@ -8678,7 +10218,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               }
             }
           }
-          
+
           // If we found any match, use the best one
           if (bestMatch >= 0) {
             const endLine = findEntityBlockEnd(lines, bestMatch);
@@ -8691,7 +10231,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             console.log(`[findEntityLocation] =====================================`);
             return endLine;
           }
-          
+
           console.log(`[findEntityLocation] ========== NO MATCH FOUND ==========`);
           console.log(`[findEntityLocation] Entity '${entity}' not found in ${lines.length} lines`);
           console.log(`[findEntityLocation] Showing first 10 lines for debugging:`);
@@ -8699,133 +10239,184 @@ const Dashboard: React.FC<DashboardProps> = ({
             console.log(`[findEntityLocation]   Line ${i}: ${lines[i].substring(0, 100)}`);
           }
           console.log(`[findEntityLocation] ===================================`);
-          
+
           return -1;
         }
-        
+
         // Helper to find the end of an entity's definition block
         function findEntityBlockEnd(lines: string[], startLine: number): number {
           const line = lines[startLine];
-          
+
           // Detect format based on line content
-          const isTurtle = line.includes('@prefix') || line.match(/^\s*[<:a-zA-Z].*[;.]$/);
-          const isXml = line.includes('<owl:') || line.includes('<rdf:') || line.includes('<rdfs:') || line.includes('IRI=');
+          const isTurtle = line.includes("@prefix") || line.match(/^\s*[<:a-zA-Z].*[;.]$/);
+          const isXml =
+            line.includes("<owl:") || line.includes("<rdf:") || line.includes("<rdfs:") || line.includes("IRI=");
           const isManchester = line.match(/(?:Class|Individual|ObjectProperty|DataProperty):/);
           const isFunctional = line.match(/(?:Declaration|ClassAssertion|SubClassOf)\s*\(/);
           const isNTriples = line.match(/^<[^>]+>\s+<[^>]+>\s+/);
-          
+
           // Find the end of this entity's definition block
           for (let j = startLine; j < lines.length; j++) {
             const checkLine = lines[j];
-            
+
             // Turtle: ends with .
-            if ((isTurtle || isNTriples) && checkLine.trim().endsWith('.') && !checkLine.trim().startsWith('@')) {
+            if ((isTurtle || isNTriples) && checkLine.trim().endsWith(".") && !checkLine.trim().startsWith("@")) {
               return j + 1;
             }
-            
+
             // XML: closing tag
-            if (isXml && (checkLine.includes('</owl:') || checkLine.includes('</rdf:') || checkLine.includes('</rdfs:') || 
-                         checkLine.includes('</Declaration>') || checkLine.includes('</ClassAssertion>') ||
-                         checkLine.includes('</AnnotationAssertion>') || checkLine.includes('</NamedIndividual>'))) {
+            if (
+              isXml &&
+              (checkLine.includes("</owl:") ||
+                checkLine.includes("</rdf:") ||
+                checkLine.includes("</rdfs:") ||
+                checkLine.includes("</Declaration>") ||
+                checkLine.includes("</ClassAssertion>") ||
+                checkLine.includes("</AnnotationAssertion>") ||
+                checkLine.includes("</NamedIndividual>"))
+            ) {
               return j + 1;
             }
-            
+
             // Manchester: next declaration block starts
-            if (isManchester && j > startLine && checkLine.match(/^(?:Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):/)) {
+            if (
+              isManchester &&
+              j > startLine &&
+              checkLine.match(/^(?:Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):/)
+            ) {
               return j;
             }
-            
+
             // Functional: closing parenthesis or next declaration
             if (isFunctional && j > startLine && (checkLine.match(/^\)/) || checkLine.match(/^[A-Z][a-zA-Z]+\s*\(/))) {
               return j;
             }
-            
+
             // Blank line after definition
-            if (j > startLine && checkLine.trim() === '') {
+            if (j > startLine && checkLine.trim() === "") {
               return j;
             }
-            
+
             // Safety: don't look more than 50 lines ahead
             if (j > startLine + 50) {
               return startLine + 1;
             }
           }
-          
+
           return startLine + 1;
         }
-        
+
+        const succeededFormats: string[] = [codeViewFormat];
+        const failedFormats: string[] = [];
+
         for (const fmt of otherFormats) {
           try {
             // Fetch cached content for this format to preserve existing citations
-            const response = await apiClient.get<{ success: boolean; content: string }>(
-              `/api/ontology/${projectId}/content`,
-              { format: fmt, forceRefresh: 'false' }
-            );
-            
-            if (response.success && response.content) {
-              const fmtLines = response.content.split('\n');
-              
-              console.log(`[Dashboard] Processing format ${fmt}: ${fmtLines.length} lines, searching for entity: '${referencedEntity || '(none)'}'`);
-              
+            let fmtContent: string | null = null;
+            try {
+              const response = await apiClient.get<{ success: boolean; content: string }>(
+                `/api/ontology/${projectId}/content`,
+                { format: fmt, forceRefresh: "false" },
+              );
+              if (response.success && response.content) {
+                fmtContent = response.content;
+              }
+            } catch (fetchError) {
+              console.warn(
+                `[Dashboard] Could not fetch ${fmt} content from server, will generate minimal document:`,
+                fetchError,
+              );
+            }
+
+            // If we couldn't get format content, generate a minimal skeleton
+            if (!fmtContent) {
+              console.log(`[Dashboard] Generating minimal ${fmt} skeleton for citation storage`);
+              if (fmt === "turtle") {
+                fmtContent = `@prefix owl: <http://www.w3.org/2002/07/owl#> .\n@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n@prefix dc: <http://purl.org/dc/elements/1.1/> .\n@prefix bibo: <http://purl.org/ontology/bibo/> .\n\n`;
+              } else if (fmt === "rdfxml") {
+                fmtContent = `<?xml version="1.0"?>\n<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\n    xmlns:owl="http://www.w3.org/2002/07/owl#"\n    xmlns:dc="http://purl.org/dc/elements/1.1/"\n    xmlns:bibo="http://purl.org/ontology/bibo/">\n\n</rdf:RDF>\n`;
+              } else if (fmt === "owlxml") {
+                fmtContent = `<?xml version="1.0"?>\n<Ontology xmlns="http://www.w3.org/2002/07/owl#"\n    xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n\n</Ontology>\n`;
+              } else if (fmt === "manchester") {
+                fmtContent = `Prefix: owl: <http://www.w3.org/2002/07/owl#>\nPrefix: dc: <http://purl.org/dc/elements/1.1/>\nPrefix: bibo: <http://purl.org/ontology/bibo/>\n\nOntology:\n\n`;
+              } else if (fmt === "functional") {
+                fmtContent = `Prefix(owl:=<http://www.w3.org/2002/07/owl#>)\nPrefix(dc:=<http://purl.org/dc/elements/1.1/>)\nPrefix(bibo:=<http://purl.org/ontology/bibo/>)\n\nOntology(\n\n)\n`;
+              } else if (fmt === "ntriples") {
+                fmtContent = ``;
+              }
+            }
+
+            if (fmtContent !== null) {
+              const fmtLines = fmtContent.split("\n");
+
+              console.log(
+                `[Dashboard] Processing format ${fmt}: ${fmtLines.length} lines, searching for entity: '${referencedEntity || "(none)"}'`,
+              );
+
               // Generate citation in appropriate format
               let fmtCitationLines: string[] = [];
-              if (fmt === 'turtle') {
+              if (fmt === "turtle") {
                 fmtCitationLines = generateTurtleCitationBlock();
-              } else if (fmt === 'manchester') {
+              } else if (fmt === "manchester") {
                 fmtCitationLines = generateManchesterCitationBlock();
-              } else if (fmt === 'functional') {
+              } else if (fmt === "functional") {
                 fmtCitationLines = generateFunctionalCitationBlock();
-              } else if (fmt === 'rdfxml') {
+              } else if (fmt === "rdfxml") {
                 fmtCitationLines = generateRdfXmlCitationBlock();
-              } else if (fmt === 'owlxml') {
+              } else if (fmt === "owlxml") {
                 fmtCitationLines = generateOwlXmlCitationBlock();
-              } else if (fmt === 'ntriples') {
+              } else if (fmt === "ntriples") {
                 fmtCitationLines = generateNTriplesCitationBlock();
               }
-              
+
               // Find where to insert based on referenced entity
               let fmtInsertIndex = -1;
               if (referencedEntity) {
                 console.log(`[Dashboard] Searching for entity '${referencedEntity}' in ${fmt} format...`);
-                fmtInsertIndex = findEntityLocation(response.content, referencedEntity);
+                fmtInsertIndex = findEntityLocation(fmtContent, referencedEntity);
                 if (fmtInsertIndex >= 0) {
                   console.log(`[Dashboard] ✓ Found entity '${referencedEntity}' at line ${fmtInsertIndex} in ${fmt}`);
                 } else {
                   console.log(`[Dashboard] ✗ Entity '${referencedEntity}' NOT found in ${fmt}`);
                   // Show first few lines and clicked line for debugging
-                  console.log(`[Dashboard] First 5 lines of ${fmt}:`, fmtLines.slice(0, 5).join('\n'));
+                  console.log(`[Dashboard] First 5 lines of ${fmt}:`, fmtLines.slice(0, 5).join("\n"));
                   console.log(`[Dashboard] Original clicked line:`, clickedLine.substring(0, 150));
                 }
               }
-              
+
               // If entity not found, insert near end of file (safer default than proportional positioning)
               if (fmtInsertIndex < 0) {
                 // Find a safe insertion point near the end
                 // For XML formats, this will be adjusted later to be before closing tags
                 fmtInsertIndex = Math.max(0, fmtLines.length - 5);
-                console.log(`[Dashboard] No entity found - inserting near end of file at line ${fmtInsertIndex} (will be adjusted for XML formats)`);
+                console.log(
+                  `[Dashboard] No entity found - inserting near end of file at line ${fmtInsertIndex} (will be adjusted for XML formats)`,
+                );
               }
-              
+
               // For RDF/XML and OWL/XML formats, ensure insertion is AFTER the root element opening tag
-              if (fmt === 'rdfxml' || fmt === 'owlxml') {
+              if (fmt === "rdfxml" || fmt === "owlxml") {
                 // Find the line with the opening <rdf:RDF> or <Ontology> root element
                 let rootElementLine = -1;
                 for (let i = 0; i < Math.min(50, fmtLines.length); i++) {
                   const trimmed = fmtLines[i].trim();
-                  if (trimmed.startsWith('<rdf:RDF') || trimmed.startsWith('<Ontology') || 
-                      trimmed.startsWith('<owl:Ontology')) {
+                  if (
+                    trimmed.startsWith("<rdf:RDF") ||
+                    trimmed.startsWith("<Ontology") ||
+                    trimmed.startsWith("<owl:Ontology")
+                  ) {
                     rootElementLine = i;
                     break;
                   }
                 }
-                
+
                 // Find the actual closing > of the root tag (may span multiple lines with xmlns)
                 let rootTagCloseLine = rootElementLine;
                 if (rootElementLine >= 0) {
                   for (let j = rootElementLine; j < Math.min(rootElementLine + 100, fmtLines.length); j++) {
-                    if (fmtLines[j].includes('>')) {
+                    if (fmtLines[j].includes(">")) {
                       const lastQuote = fmtLines[j].lastIndexOf('"');
-                      const lastGt = fmtLines[j].lastIndexOf('>');
+                      const lastGt = fmtLines[j].lastIndexOf(">");
                       if (lastGt > lastQuote || lastQuote === -1) {
                         rootTagCloseLine = j;
                         break;
@@ -8833,495 +10424,561 @@ const Dashboard: React.FC<DashboardProps> = ({
                     }
                   }
                 }
-                
+
                 if (rootElementLine >= 0 && fmtInsertIndex <= rootTagCloseLine) {
                   fmtInsertIndex = rootTagCloseLine + 1;
-                  console.log(`[Dashboard] ${fmt.toUpperCase()}: Adjusted insertion to line ${fmtInsertIndex} to respect XML structure`);
+                  console.log(
+                    `[Dashboard] ${fmt.toUpperCase()}: Adjusted insertion to line ${fmtInsertIndex} to respect XML structure`,
+                  );
                 }
-                
+
                 // Check if trying to insert after the closing tag
                 for (let i = fmtLines.length - 1; i >= Math.max(0, fmtLines.length - 10); i--) {
                   const trimmed = fmtLines[i].trim();
-                  if (trimmed === '</rdf:RDF>' || trimmed === '</Ontology>' || trimmed === '</owl:Ontology>') {
+                  if (trimmed === "</rdf:RDF>" || trimmed === "</Ontology>" || trimmed === "</owl:Ontology>") {
                     if (fmtInsertIndex > i) {
                       fmtInsertIndex = i;
-                      console.log(`[Dashboard] ${fmt.toUpperCase()}: Adjusted insertion to line ${fmtInsertIndex} to stay inside root element`);
+                      console.log(
+                        `[Dashboard] ${fmt.toUpperCase()}: Adjusted insertion to line ${fmtInsertIndex} to stay inside root element`,
+                      );
                     }
                     break;
                   }
                 }
               }
-              
+
               // Insert citation at found location
               fmtLines.splice(fmtInsertIndex, 0, ...fmtCitationLines);
-              
+
               // Store in cache with citation-entity mapping for smart repositioning
-              const fmtModifiedContent = fmtLines.join('\n');
+              const fmtModifiedContent = fmtLines.join("\n");
               await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
                 content: fmtModifiedContent,
                 format: fmt,
                 citationUrn: citationUrn,
-                referencedEntity: referencedEntity || ''
+                referencedEntity: referencedEntity || "",
               });
-              console.log('[Dashboard] Format cache stored with citation near entity:', fmt);
+              console.log("[Dashboard] Format cache stored with citation near entity:", fmt);
+              succeededFormats.push(fmt);
             }
           } catch (fmtError) {
             console.warn(`[Dashboard] Failed to update format ${fmt}:`, fmtError);
+            failedFormats.push(fmt);
           }
         }
-        
-        console.log('[Dashboard] Citation inserted near entity in all formats');
+
+        if (failedFormats.length > 0) {
+          console.warn(`[Dashboard] Citation sync failed for formats: ${failedFormats.join(", ")}`);
+        }
+        console.log(`[Dashboard] Citation inserted in formats: ${succeededFormats.join(", ")}`);
         setHasLocalCodeViewChanges(false);
-        
+
         // Step 3: GraphDB insertion disabled (endpoint not available)
         // Citations are persisted in code-view-cache for all formats
         // GraphDB will be updated when user saves/exports the ontology
-        console.log('[Dashboard] Citations stored in cache for all formats, GraphDB will be updated on save/export');
-        
-        console.log('[Dashboard] ========== CITATION INSERTION SUMMARY ==========');
-        console.log('[Dashboard] Current format:', codeViewFormat);
-        console.log('[Dashboard] Inserted at line:', insertAtIndex);
-        console.log('[Dashboard] Referenced entity:', referencedEntity || '(NONE - citations went to default location)');
-        console.log('[Dashboard] Entity was', referencedEntity ? 'FOUND and used for cross-format placement' : 'NOT FOUND - fallback to default location used');
-        console.log('[Dashboard] ================================================');
-        
-        notificationService.success('Citation Inserted', `Added "${title}" - synced to all formats (${allFormats.join(', ')})`);
-        
-        // Step 4: Mark that citation was just inserted so format switches will force refresh
+        console.log("[Dashboard] Citations stored in cache for all formats, GraphDB will be updated on save/export");
+
+        console.log("[Dashboard] ========== CITATION INSERTION SUMMARY ==========");
+        console.log("[Dashboard] Current format:", codeViewFormat);
+        console.log("[Dashboard] Inserted at line:", insertAtIndex);
+        console.log(
+          "[Dashboard] Referenced entity:",
+          referencedEntity || "(NONE - citations went to default location)",
+        );
+        console.log(
+          "[Dashboard] Entity was",
+          referencedEntity
+            ? "FOUND and used for cross-format placement"
+            : "NOT FOUND - fallback to default location used",
+        );
+        console.log("[Dashboard] ================================================");
+
+        notificationService.success(
+          "Citation Inserted",
+          failedFormats.length === 0
+            ? `Added "${title}" - synced to all formats (${succeededFormats.join(", ")})`
+            : `Added "${title}" - synced to ${succeededFormats.join(", ")}${failedFormats.length > 0 ? `. Could not sync: ${failedFormats.join(", ")} (will sync when format is loaded)` : ""}`,
+        );
+
+        // Step 4: Mark that citation was just inserted so format switches will reload from cache
         setCitationJustInserted(true);
-        console.log('[Dashboard] Citation insertion flag set - next format switch will force refresh');
-        
-       
-    } catch (error) {
-      console.error('[Dashboard] Error inserting citation at location:', error);
-      notificationService.error('Citation Error', 'Failed to insert citation at location');
-      // Reset citation insertion mode and clear flag on error
-      setPendingCitation(null);
-      setCitationInsertionMode(false);
-      setSelectedInsertionLine(null);
-      setCitationJustInserted(false);
-      console.log('[Dashboard] Citation insertion mode reset due to error');
-    }
-  }, [pendingCitation, projectId, codeViewFormat, codeViewContent]);
+        console.log("[Dashboard] Citation insertion flag set - next format switch will reload from cache");
+
+        // Step 5: Reset citation insertion mode after successful insertion
+        setPendingCitation(null);
+        setCitationInsertionMode(false);
+        setSelectedInsertionLine(null);
+        console.log("[Dashboard] Citation insertion mode reset after successful insertion");
+      } catch (error) {
+        console.error("[Dashboard] Error inserting citation at location:", error);
+        notificationService.error("Citation Error", "Failed to insert citation at location");
+        // Reset citation insertion mode and clear flag on error
+        setPendingCitation(null);
+        setCitationInsertionMode(false);
+        setSelectedInsertionLine(null);
+        setCitationJustInserted(false);
+        console.log("[Dashboard] Citation insertion mode reset due to error");
+      }
+    },
+    [pendingCitation, projectId, codeViewFormat, codeViewContent],
+  );
 
   // Handler for removing citations from the code view
-  const handleRemoveCitationAtLocation = useCallback(async (lineNumber: number) => {
-    if (!codeViewContent) {
-      console.warn('[Dashboard] No code view content available for citation removal');
-      return;
-    }
-
-    // Show loading notification
-    notificationService.info('Removing Citation', 'Scanning for citation and removing from all formats...');
-
-    console.log('[Dashboard] ========================================');
-    console.log('[Dashboard] Attempting to remove citation at line:', lineNumber);
-    
-    const lines = codeViewContent.split('\n');
-    
-    // Find the citation block boundaries (start and end lines)
-    const clickedLine = lines[lineNumber] || '';
-    console.log('[Dashboard] Clicked line content:', clickedLine.substring(0, 100));
-    console.log('[Dashboard] Current format:', codeViewFormat);
-    console.log('[Dashboard] Total lines in content:', lines.length);
-    
-    // Citation detection pattern
-    const citationUriPattern = /urn:citation:([a-zA-Z0-9]+)/i;
-    
-    // Extract citation URI from the clicked line or nearby lines
-    let citationUri = '';
-    const searchRange = 20; // Search 20 lines up and down
-    console.log('[Dashboard] Searching for citation URI from line', Math.max(0, lineNumber - searchRange), 'to', Math.min(lines.length, lineNumber + searchRange));
-    
-    for (let i = Math.max(0, lineNumber - searchRange); i < Math.min(lines.length, lineNumber + searchRange); i++) {
-      const match = lines[i].match(citationUriPattern);
-      if (match) {
-        citationUri = match[1];
-        console.log('[Dashboard] Found citation URI at line', i, ':', citationUri);
-        console.log('[Dashboard] Full match:', match[0]);
-        console.log('[Dashboard] Line content:', lines[i].substring(0, 100));
-        break;
+  const handleRemoveCitationAtLocation = useCallback(
+    async (lineNumber: number) => {
+      if (!codeViewContent) {
+        console.warn("[Dashboard] No code view content available for citation removal");
+        return;
       }
-    }
-    
-    if (!citationUri) {
-      console.warn('[Dashboard] No citation URI found near clicked line');
-      console.warn('[Dashboard] Searched lines', Math.max(0, lineNumber - searchRange), 'to', Math.min(lines.length, lineNumber + searchRange));
-      notificationService.warning('Remove Citation', `Could not identify a citation near line ${lineNumber + 1}. Please click on a line that is part of a citation block (highlighted in red when in removal mode).`);
-      return;
-    }
-    
-    console.log('[Dashboard] Citation URI to remove:', citationUri);
-    
-    // Find citation block using a more reliable approach
-    // Step 1: Find all lines that contain the citation URI
-    const citationUriLines: number[] = [];
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].includes(`urn:citation:${citationUri}`)) {
-        citationUriLines.push(i);
+
+      // Show loading notification
+      notificationService.info("Removing Citation", "Scanning for citation and removing from all formats...");
+
+      console.log("[Dashboard] ========================================");
+      console.log("[Dashboard] Attempting to remove citation at line:", lineNumber);
+
+      const lines = codeViewContent.split("\n");
+
+      // Find the citation block boundaries (start and end lines)
+      const clickedLine = lines[lineNumber] || "";
+      console.log("[Dashboard] Clicked line content:", clickedLine.substring(0, 100));
+      console.log("[Dashboard] Current format:", codeViewFormat);
+      console.log("[Dashboard] Total lines in content:", lines.length);
+
+      // Citation detection pattern
+      const citationUriPattern = /urn:citation:([a-zA-Z0-9]+)/i;
+
+      // Extract citation URI from the clicked line or nearby lines
+      let citationUri = "";
+      const searchRange = 20; // Search 20 lines up and down
+      console.log(
+        "[Dashboard] Searching for citation URI from line",
+        Math.max(0, lineNumber - searchRange),
+        "to",
+        Math.min(lines.length, lineNumber + searchRange),
+      );
+
+      for (let i = Math.max(0, lineNumber - searchRange); i < Math.min(lines.length, lineNumber + searchRange); i++) {
+        const match = lines[i].match(citationUriPattern);
+        if (match) {
+          citationUri = match[1];
+          console.log("[Dashboard] Found citation URI at line", i, ":", citationUri);
+          console.log("[Dashboard] Full match:", match[0]);
+          console.log("[Dashboard] Line content:", lines[i].substring(0, 100));
+          break;
+        }
       }
-    }
-    
-    if (citationUriLines.length === 0) {
-      notificationService.warning('Remove Citation', 'Could not find the citation in the content.');
-      return;
-    }
-    
-    console.log('[Dashboard] Lines containing citation URI:', citationUriLines);
-    
-    // Step 2: Find the complete block boundaries
-    const linesToRemove = new Set<number>();
-    
-    // Format-specific block detection
-    const isXmlFormat = codeViewFormat === 'rdfxml' || codeViewFormat === 'owlxml';
-    const isTurtleFormat = codeViewFormat === 'turtle' || codeViewFormat === 'ntriples';
-    const isManchesterFormat = codeViewFormat === 'manchester';
-    const isFunctionalFormat = codeViewFormat === 'functional';
-    
-    for (const uriLineNum of citationUriLines) {
-      // Find block start (look backwards for comment or opening tag)
-      let blockStart = uriLineNum;
-      let foundComment = false;
-      
-      for (let i = uriLineNum - 1; i >= Math.max(0, uriLineNum - 15); i--) {
-        const line = lines[i].trim();
-        
-        // Check for comment line (Zotero Citation marker)
-        if (line.includes('Zotero Citation') || line.startsWith('###') || line.startsWith('<!--')) {
-          blockStart = i;
-          foundComment = true;
-          // Continue searching backwards for any blank lines before the comment
-          for (let j = i - 1; j >= Math.max(0, i - 2); j--) {
-            if (lines[j].trim() === '') {
-              blockStart = j;
-            } else {
+
+      if (!citationUri) {
+        console.warn("[Dashboard] No citation URI found near clicked line");
+        console.warn(
+          "[Dashboard] Searched lines",
+          Math.max(0, lineNumber - searchRange),
+          "to",
+          Math.min(lines.length, lineNumber + searchRange),
+        );
+        notificationService.warning(
+          "Remove Citation",
+          `Could not identify a citation near line ${lineNumber + 1}. Please click on a line that is part of a citation block (highlighted in red when in removal mode).`,
+        );
+        return;
+      }
+
+      console.log("[Dashboard] Citation URI to remove:", citationUri);
+
+      // Find citation block using a more reliable approach
+      // Step 1: Find all lines that contain the citation URI
+      const citationUriLines: number[] = [];
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].includes(`urn:citation:${citationUri}`)) {
+          citationUriLines.push(i);
+        }
+      }
+
+      if (citationUriLines.length === 0) {
+        notificationService.warning("Remove Citation", "Could not find the citation in the content.");
+        return;
+      }
+
+      console.log("[Dashboard] Lines containing citation URI:", citationUriLines);
+
+      // Step 2: Find the complete block boundaries
+      const linesToRemove = new Set<number>();
+
+      // Format-specific block detection
+      const isXmlFormat = codeViewFormat === "rdfxml" || codeViewFormat === "owlxml";
+      const isTurtleFormat = codeViewFormat === "turtle" || codeViewFormat === "ntriples";
+      const isManchesterFormat = codeViewFormat === "manchester";
+      const isFunctionalFormat = codeViewFormat === "functional";
+
+      for (const uriLineNum of citationUriLines) {
+        // Find block start (look backwards for comment or opening tag)
+        let blockStart = uriLineNum;
+        let foundComment = false;
+
+        for (let i = uriLineNum - 1; i >= Math.max(0, uriLineNum - 15); i--) {
+          const line = lines[i].trim();
+
+          // Check for comment line (Zotero Citation marker)
+          if (line.includes("Zotero Citation") || line.startsWith("###") || line.startsWith("<!--")) {
+            blockStart = i;
+            foundComment = true;
+            // Continue searching backwards for any blank lines before the comment
+            for (let j = i - 1; j >= Math.max(0, i - 2); j--) {
+              if (lines[j].trim() === "") {
+                blockStart = j;
+              } else {
+                break;
+              }
+            }
+            break;
+          }
+
+          // For XML, check for opening tag
+          if (
+            isXmlFormat &&
+            (line.startsWith("<Declaration>") ||
+              line.startsWith("<owl:NamedIndividual") ||
+              line.startsWith("<ClassAssertion>"))
+          ) {
+            blockStart = i;
+          }
+
+          // Keep going backwards until we hit non-empty content that's not part of citation
+          if (line !== "" && !line.includes("urn:citation:") && !isXmlFormat) {
+            // Found content that's not part of this citation
+            break;
+          }
+        }
+
+        // Find block end (look forwards for closing statement)
+        let blockEnd = uriLineNum;
+        for (let i = uriLineNum; i < Math.min(lines.length, uriLineNum + 50); i++) {
+          const line = lines[i];
+          const trimmedLine = line.trim();
+
+          linesToRemove.add(i);
+
+          if (isXmlFormat) {
+            // End at closing tag
+            if (
+              trimmedLine === "</owl:NamedIndividual>" ||
+              trimmedLine === "</Declaration>" ||
+              trimmedLine === "</ClassAssertion>" ||
+              trimmedLine === "</AnnotationAssertion>"
+            ) {
+              blockEnd = i;
+              // Include trailing blank line
+              if (i + 1 < lines.length && lines[i + 1].trim() === "") {
+                linesToRemove.add(i + 1);
+                blockEnd = i + 1;
+              }
+              break;
+            }
+          } else if (isTurtleFormat) {
+            // End at line ending with .
+            if (trimmedLine.endsWith(".") && !trimmedLine.startsWith("@") && !trimmedLine.startsWith("#")) {
+              blockEnd = i;
+              // Include trailing blank line
+              if (i + 1 < lines.length && lines[i + 1].trim() === "") {
+                linesToRemove.add(i + 1);
+                blockEnd = i + 1;
+              }
+              break;
+            }
+          } else if (isManchesterFormat) {
+            // End at blank line or next declaration
+            if (
+              trimmedLine === "" ||
+              trimmedLine.match(/^(Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):/)
+            ) {
+              if (trimmedLine === "") {
+                linesToRemove.add(i);
+              }
+              blockEnd = i;
+              break;
+            }
+          } else if (isFunctionalFormat) {
+            // End at blank line (each statement is one line, but citation has multiple)
+            if (trimmedLine === "") {
+              linesToRemove.add(i);
+              blockEnd = i;
               break;
             }
           }
-          break;
         }
-        
-        // For XML, check for opening tag
-        if (isXmlFormat && (line.startsWith('<Declaration>') || line.startsWith('<owl:NamedIndividual') || line.startsWith('<ClassAssertion>'))) {
-          blockStart = i;
+
+        // Add all lines from blockStart to blockEnd
+        for (let i = blockStart; i <= blockEnd; i++) {
+          linesToRemove.add(i);
         }
-        
-        // Keep going backwards until we hit non-empty content that's not part of citation
-        if (line !== '' && !line.includes('urn:citation:') && !isXmlFormat) {
-          // Found content that's not part of this citation
-          break;
-        }
+
+        console.log(`[Dashboard] Citation block: lines ${blockStart} to ${blockEnd}`);
       }
-      
-      // Find block end (look forwards for closing statement)
-      let blockEnd = uriLineNum;
-      for (let i = uriLineNum; i < Math.min(lines.length, uriLineNum + 50); i++) {
-        const line = lines[i];
-        const trimmedLine = line.trim();
-        
-        linesToRemove.add(i);
-        
-        if (isXmlFormat) {
-          // End at closing tag
-          if (trimmedLine === '</owl:NamedIndividual>' || trimmedLine === '</Declaration>' || 
-              trimmedLine === '</ClassAssertion>' || trimmedLine === '</AnnotationAssertion>') {
-            blockEnd = i;
-            // Include trailing blank line
-            if (i + 1 < lines.length && lines[i + 1].trim() === '') {
-              linesToRemove.add(i + 1);
-              blockEnd = i + 1;
-            }
-            break;
-          }
-        } else if (isTurtleFormat) {
-          // End at line ending with .
-          if (trimmedLine.endsWith('.') && !trimmedLine.startsWith('@') && !trimmedLine.startsWith('#')) {
-            blockEnd = i;
-            // Include trailing blank line
-            if (i + 1 < lines.length && lines[i + 1].trim() === '') {
-              linesToRemove.add(i + 1);
-              blockEnd = i + 1;
-            }
-            break;
-          }
-        } else if (isManchesterFormat) {
-          // End at blank line or next declaration
-          if (trimmedLine === '' || trimmedLine.match(/^(Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):/)) {
-            if (trimmedLine === '') {
+
+      // Also capture preceding comment lines (### Zotero Citation) that might be separate
+      const sortedLines = [...linesToRemove].sort((a, b) => a - b);
+      if (sortedLines.length > 0) {
+        const firstLine = sortedLines[0];
+        // Check lines before for comments
+        for (let i = firstLine - 1; i >= Math.max(0, firstLine - 3); i--) {
+          const line = lines[i].trim();
+          if (line.includes("Zotero Citation") || (line.startsWith("#") && line.includes("Citation"))) {
+            linesToRemove.add(i);
+          } else if (line === "") {
+            // Include blank line before comment
+            if (i > 0 && lines[i - 1].includes("Zotero Citation")) {
               linesToRemove.add(i);
             }
-            blockEnd = i;
-            break;
-          }
-        } else if (isFunctionalFormat) {
-          // End at blank line (each statement is one line, but citation has multiple)
-          if (trimmedLine === '') {
-            linesToRemove.add(i);
-            blockEnd = i;
+          } else {
             break;
           }
         }
       }
-      
-      // Add all lines from blockStart to blockEnd
-      for (let i = blockStart; i <= blockEnd; i++) {
-        linesToRemove.add(i);
+
+      // Sort and deduplicate lines to remove (descending for safe removal)
+      const uniqueLinesToRemove = [...linesToRemove].sort((a, b) => b - a);
+
+      if (uniqueLinesToRemove.length === 0) {
+        console.error("[Dashboard] No lines to remove - this should not happen");
+        notificationService.warning("Remove Citation", "Could not find the citation block to remove.");
+        return;
       }
-      
-      console.log(`[Dashboard] Citation block: lines ${blockStart} to ${blockEnd}`);
-    }
-    
-    // Also capture preceding comment lines (### Zotero Citation) that might be separate
-    const sortedLines = [...linesToRemove].sort((a, b) => a - b);
-    if (sortedLines.length > 0) {
-      const firstLine = sortedLines[0];
-      // Check lines before for comments
-      for (let i = firstLine - 1; i >= Math.max(0, firstLine - 3); i--) {
-        const line = lines[i].trim();
-        if (line.includes('Zotero Citation') || (line.startsWith('#') && line.includes('Citation'))) {
-          linesToRemove.add(i);
-        } else if (line === '') {
-          // Include blank line before comment
-          if (i > 0 && lines[i - 1].includes('Zotero Citation')) {
-            linesToRemove.add(i);
-          }
-        } else {
-          break;
-        }
-      }
-    }
-    
-    // Sort and deduplicate lines to remove (descending for safe removal)
-    const uniqueLinesToRemove = [...linesToRemove].sort((a, b) => b - a);
-    
-    if (uniqueLinesToRemove.length === 0) {
-      console.error('[Dashboard] No lines to remove - this should not happen');
-      notificationService.warning('Remove Citation', 'Could not find the citation block to remove.');
-      return;
-    }
-    
-    console.log('[Dashboard] ========================================');
-    console.log('[Dashboard] Lines to remove (descending):', uniqueLinesToRemove);
-    console.log('[Dashboard] Total lines to remove:', uniqueLinesToRemove.length);
-    console.log('[Dashboard] Lines content preview (first 10):');
-    uniqueLinesToRemove.slice(0, 10).forEach(idx => {
-      console.log(`  Line ${idx}: ${lines[idx]?.substring(0, 80)}...`);
-    });
-    console.log('[Dashboard] ========================================');
-    
-    // Confirm removal with user using custom dialog
-    const lineCount = uniqueLinesToRemove.length;
-    setConfirmDialog({
-      isOpen: true,
-      title: 'Remove Citation',
-      message: `Are you sure you want to remove this citation? ${lineCount} line${lineCount !== 1 ? 's' : ''} will be deleted.`,
-      onConfirm: async () => {
-        try {
-          console.log('[Dashboard] ========================================');
-          console.log('[Dashboard] User confirmed citation removal');
-          console.log('[Dashboard] Performing citation removal for URI:', citationUri);
-          console.log('[Dashboard] Removing', uniqueLinesToRemove.length, 'lines');
-          
-          // Remove lines from content (remove from end to start to preserve indices)
-          const newLines = [...lines];
-          console.log('[Dashboard] Original line count:', newLines.length);
-          
-          for (const lineIdx of uniqueLinesToRemove) {
-            console.log('[Dashboard] Removing line', lineIdx, ':', newLines[lineIdx]?.substring(0, 60));
-            newLines.splice(lineIdx, 1);
-          }
-          
-          console.log('[Dashboard] New line count:', newLines.length);
-          console.log('[Dashboard] Lines removed:', lines.length - newLines.length);
-          
-          const modifiedContent = newLines.join('\n');
-          console.log('[Dashboard] Modified content length:', modifiedContent.length, 'characters');
-          
-          // Update local code view
-          setCodeViewContent(modifiedContent);
-          setHasLocalCodeViewChanges(true);
-          console.log('[Dashboard] Code view content updated with modified content');
-          console.log('[Dashboard] hasLocalCodeViewChanges set to true');
-          
-          // Clear all format caches
-          try {
-            await apiClient.delete(`/api/ontology/${projectId}/code-view-cache`);
-            console.log('[Dashboard] All format caches cleared for removal');
-          } catch (e) {
-            console.warn('[Dashboard] Failed to clear caches:', e);
-          }
-          
-          // Store modified content for current format
-          try {
-            await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
-              content: modifiedContent,
-              format: codeViewFormat
-            });
-            console.log('[Dashboard] Current format cache stored after removal');
-          } catch (e) {
-            console.warn('[Dashboard] Failed to store current format cache:', e);
-          }
-          
-          // Upload modified content to backend
-          if (window.vscode) {
-            window.vscode.postMessage({
-              type: 'uploadOntologyContent',
-              content: modifiedContent,
-              format: codeViewFormat,
-              projectId: projectId
-            });
-            
-            await new Promise(resolve => setTimeout(resolve, 500));
-          }
-          
-          // Remove citation from all other format caches
-          const allFormats = ['turtle', 'rdfxml', 'ntriples', 'owlxml', 'manchester', 'functional'] as const;
-          const otherFormats = allFormats.filter(f => f !== codeViewFormat);
-          
-          for (const fmt of otherFormats) {
-            try {
-              // Fetch content from cache to preserve other citations
-              const response = await apiClient.get<{ success: boolean; content: string }>(
-                `/api/ontology/${projectId}/content`,
-                { format: fmt, forceRefresh: 'false' }
-              );
-              
-              if (response.success && response.content) {
-                // Remove citation from this format too using same logic
-                const fmtLines = response.content.split('\n');
-                const fmtLinesToRemove = new Set<number>();
-                
-                const fmtIsXml = fmt === 'rdfxml' || fmt === 'owlxml';
-                const fmtIsTurtle = fmt === 'turtle' || fmt === 'ntriples';
-                const fmtIsManchester = fmt === 'manchester';
-                const fmtIsFunctional = fmt === 'functional';
-                
-                // Find all lines with citation URI
-                const fmtCitationLines: number[] = [];
-                for (let i = 0; i < fmtLines.length; i++) {
-                  if (fmtLines[i].includes(`urn:citation:${citationUri}`)) {
-                    fmtCitationLines.push(i);
-                  }
-                }
-                
-                for (const uriLineNum of fmtCitationLines) {
-                  // Find block start
-                  let blockStart = uriLineNum;
-                  for (let i = uriLineNum - 1; i >= Math.max(0, uriLineNum - 10); i--) {
-                    const line = fmtLines[i].trim();
-                    if (line.includes('Zotero Citation') || line.startsWith('###') || line.startsWith('<!--')) {
-                      blockStart = i;
-                      break;
-                    }
-                    if (line === '') break;
-                    if (fmtIsXml && (line.startsWith('<Declaration>') || line.startsWith('<owl:NamedIndividual') || line.startsWith('<ClassAssertion>'))) {
-                      blockStart = i;
-                    }
-                  }
-                  
-                  // Find block end
-                  for (let i = uriLineNum; i < Math.min(fmtLines.length, uriLineNum + 50); i++) {
-                    const line = fmtLines[i];
-                    const trimmedLine = line.trim();
-                    fmtLinesToRemove.add(i);
-                    
-                    if (fmtIsXml) {
-                      if (trimmedLine === '</owl:NamedIndividual>' || trimmedLine === '</Declaration>' || 
-                          trimmedLine === '</ClassAssertion>' || trimmedLine === '</AnnotationAssertion>') {
-                        if (i + 1 < fmtLines.length && fmtLines[i + 1].trim() === '') {
-                          fmtLinesToRemove.add(i + 1);
-                        }
-                        break;
-                      }
-                    } else if (fmtIsTurtle) {
-                      if (trimmedLine.endsWith('.') && !trimmedLine.startsWith('@') && !trimmedLine.startsWith('#')) {
-                        if (i + 1 < fmtLines.length && fmtLines[i + 1].trim() === '') {
-                          fmtLinesToRemove.add(i + 1);
-                        }
-                        break;
-                      }
-                    } else if (fmtIsManchester || fmtIsFunctional) {
-                      if (trimmedLine === '' || (fmtIsManchester && trimmedLine.match(/^(Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):/))) {
-                        if (trimmedLine === '') fmtLinesToRemove.add(i);
-                        break;
-                      }
-                    }
-                  }
-                  
-                  // Add all lines from blockStart
-                  for (let i = blockStart; i < uriLineNum; i++) {
-                    fmtLinesToRemove.add(i);
-                  }
-                }
-                
-                // Check for preceding comment lines
-                const sortedFmtLines = [...fmtLinesToRemove].sort((a, b) => a - b);
-                if (sortedFmtLines.length > 0) {
-                  const firstLine = sortedFmtLines[0];
-                  for (let i = firstLine - 1; i >= Math.max(0, firstLine - 3); i--) {
-                    const line = fmtLines[i].trim();
-                    if (line.includes('Zotero Citation') || (line.startsWith('#') && line.includes('Citation'))) {
-                      fmtLinesToRemove.add(i);
-                    } else if (line === '') {
-                      if (i > 0 && fmtLines[i - 1].includes('Zotero Citation')) {
-                        fmtLinesToRemove.add(i);
-                      }
-                    } else {
-                      break;
-                    }
-                  }
-                }
-                
-                // Remove lines
-                const uniqueFmtLinesToRemove = [...fmtLinesToRemove].sort((a, b) => b - a);
-                const newFmtLines = [...fmtLines];
-                for (const lineIdx of uniqueFmtLinesToRemove) {
-                  newFmtLines.splice(lineIdx, 1);
-                }
-                
-                // Store in cache
-                const fmtModifiedContent = newFmtLines.join('\n');
-                await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
-                  content: fmtModifiedContent,
-                  format: fmt
-                });
-                console.log(`[Dashboard] Format ${fmt} cache updated after removal (${uniqueFmtLinesToRemove.length} lines removed)`);
-              }
-            } catch (fmtError) {
-              console.warn(`[Dashboard] Failed to update format ${fmt} after removal:`, fmtError);
-            }
-          }
-      
-      // Remove citation from GraphDB
-      console.log('[Dashboard] Removing citation from GraphDB:', citationUri);
-      window.vscode?.postMessage({
-        type: 'removeCitationFromGraphDB',
-        citationUri: `urn:citation:${citationUri}`,
-        projectId: projectId
+
+      console.log("[Dashboard] ========================================");
+      console.log("[Dashboard] Lines to remove (descending):", uniqueLinesToRemove);
+      console.log("[Dashboard] Total lines to remove:", uniqueLinesToRemove.length);
+      console.log("[Dashboard] Lines content preview (first 10):");
+      uniqueLinesToRemove.slice(0, 10).forEach((idx) => {
+        console.log(`  Line ${idx}: ${lines[idx]?.substring(0, 80)}...`);
       });
-      
-      notificationService.success('Citation Removed', `Successfully removed citation from all formats`);
-      
-      // Reset removal mode
-      setCitationRemovalMode(false);
-      console.log('[Dashboard] Citation removal mode reset');
-      
-      // Close dialog after successful removal
-      setConfirmDialog(prev => ({ ...prev, isOpen: false }));
-        } catch (error) {
-          console.error('[Dashboard] Error in citation removal:', error);
-          notificationService.error('Citation Error', 'Failed to remove citation');
-          // Close dialog even on error
-          setConfirmDialog(prev => ({ ...prev, isOpen: false }));
-        }
-      },
-      onCancel: () => {
-        console.log('[Dashboard] Citation removal cancelled by user');
-        setConfirmDialog(prev => ({ ...prev, isOpen: false }));
-      }
-    });
-  }, [projectId, codeViewFormat, codeViewContent]);
-  
+      console.log("[Dashboard] ========================================");
+
+      // Confirm removal with user using custom dialog
+      const lineCount = uniqueLinesToRemove.length;
+      setConfirmDialog({
+        isOpen: true,
+        title: "Remove Citation",
+        message: `Are you sure you want to remove this citation? ${lineCount} line${lineCount !== 1 ? "s" : ""} will be deleted.`,
+        onConfirm: async () => {
+          try {
+            console.log("[Dashboard] ========================================");
+            console.log("[Dashboard] User confirmed citation removal");
+            console.log("[Dashboard] Performing citation removal for URI:", citationUri);
+            console.log("[Dashboard] Removing", uniqueLinesToRemove.length, "lines");
+
+            // Remove lines from content (remove from end to start to preserve indices)
+            const newLines = [...lines];
+            console.log("[Dashboard] Original line count:", newLines.length);
+
+            for (const lineIdx of uniqueLinesToRemove) {
+              console.log("[Dashboard] Removing line", lineIdx, ":", newLines[lineIdx]?.substring(0, 60));
+              newLines.splice(lineIdx, 1);
+            }
+
+            console.log("[Dashboard] New line count:", newLines.length);
+            console.log("[Dashboard] Lines removed:", lines.length - newLines.length);
+
+            const modifiedContent = newLines.join("\n");
+            console.log("[Dashboard] Modified content length:", modifiedContent.length, "characters");
+
+            // Update local code view
+            setCodeViewContent(modifiedContent);
+            setHasLocalCodeViewChanges(true);
+            console.log("[Dashboard] Code view content updated with modified content");
+            console.log("[Dashboard] hasLocalCodeViewChanges set to true");
+
+            // Store modified content for current format cache
+            // (Don't clear all caches — other format caches are needed for cross-format removal below)
+            try {
+              await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+                content: modifiedContent,
+                format: codeViewFormat,
+              });
+              console.log("[Dashboard] Current format cache stored after removal");
+            } catch (e) {
+              console.warn("[Dashboard] Failed to store current format cache:", e);
+            }
+
+            // Upload modified content to backend
+            if (window.vscode) {
+              window.vscode.postMessage({
+                type: "uploadOntologyContent",
+                content: modifiedContent,
+                format: codeViewFormat,
+                projectId: projectId,
+              });
+
+              await new Promise((resolve) => setTimeout(resolve, 500));
+            }
+
+            // Remove citation from all other format caches
+            const allFormats = ["turtle", "rdfxml", "ntriples", "owlxml", "manchester", "functional"] as const;
+            const otherFormats = allFormats.filter((f) => f !== codeViewFormat);
+
+            for (const fmt of otherFormats) {
+              try {
+                // Fetch content from cache to preserve other citations
+                const response = await apiClient.get<{ success: boolean; content: string }>(
+                  `/api/ontology/${projectId}/content`,
+                  { format: fmt, forceRefresh: "false" },
+                );
+
+                if (response.success && response.content) {
+                  // Remove citation from this format too using same logic
+                  const fmtLines = response.content.split("\n");
+                  const fmtLinesToRemove = new Set<number>();
+
+                  const fmtIsXml = fmt === "rdfxml" || fmt === "owlxml";
+                  const fmtIsTurtle = fmt === "turtle" || fmt === "ntriples";
+                  const fmtIsManchester = fmt === "manchester";
+                  const fmtIsFunctional = fmt === "functional";
+
+                  // Find all lines with citation URI
+                  const fmtCitationLines: number[] = [];
+                  for (let i = 0; i < fmtLines.length; i++) {
+                    if (fmtLines[i].includes(`urn:citation:${citationUri}`)) {
+                      fmtCitationLines.push(i);
+                    }
+                  }
+
+                  for (const uriLineNum of fmtCitationLines) {
+                    // Find block start
+                    let blockStart = uriLineNum;
+                    for (let i = uriLineNum - 1; i >= Math.max(0, uriLineNum - 10); i--) {
+                      const line = fmtLines[i].trim();
+                      if (line.includes("Zotero Citation") || line.startsWith("###") || line.startsWith("<!--")) {
+                        blockStart = i;
+                        break;
+                      }
+                      if (line === "") break;
+                      if (
+                        fmtIsXml &&
+                        (line.startsWith("<Declaration>") ||
+                          line.startsWith("<owl:NamedIndividual") ||
+                          line.startsWith("<ClassAssertion>"))
+                      ) {
+                        blockStart = i;
+                      }
+                    }
+
+                    // Find block end
+                    for (let i = uriLineNum; i < Math.min(fmtLines.length, uriLineNum + 50); i++) {
+                      const line = fmtLines[i];
+                      const trimmedLine = line.trim();
+                      fmtLinesToRemove.add(i);
+
+                      if (fmtIsXml) {
+                        if (
+                          trimmedLine === "</owl:NamedIndividual>" ||
+                          trimmedLine === "</Declaration>" ||
+                          trimmedLine === "</ClassAssertion>" ||
+                          trimmedLine === "</AnnotationAssertion>"
+                        ) {
+                          if (i + 1 < fmtLines.length && fmtLines[i + 1].trim() === "") {
+                            fmtLinesToRemove.add(i + 1);
+                          }
+                          break;
+                        }
+                      } else if (fmtIsTurtle) {
+                        if (trimmedLine.endsWith(".") && !trimmedLine.startsWith("@") && !trimmedLine.startsWith("#")) {
+                          if (i + 1 < fmtLines.length && fmtLines[i + 1].trim() === "") {
+                            fmtLinesToRemove.add(i + 1);
+                          }
+                          break;
+                        }
+                      } else if (fmtIsManchester || fmtIsFunctional) {
+                        if (
+                          trimmedLine === "" ||
+                          (fmtIsManchester &&
+                            trimmedLine.match(
+                              /^(Class|Individual|ObjectProperty|DataProperty|AnnotationProperty|Datatype):/,
+                            ))
+                        ) {
+                          if (trimmedLine === "") fmtLinesToRemove.add(i);
+                          break;
+                        }
+                      }
+                    }
+
+                    // Add all lines from blockStart
+                    for (let i = blockStart; i < uriLineNum; i++) {
+                      fmtLinesToRemove.add(i);
+                    }
+                  }
+
+                  // Check for preceding comment lines
+                  const sortedFmtLines = [...fmtLinesToRemove].sort((a, b) => a - b);
+                  if (sortedFmtLines.length > 0) {
+                    const firstLine = sortedFmtLines[0];
+                    for (let i = firstLine - 1; i >= Math.max(0, firstLine - 3); i--) {
+                      const line = fmtLines[i].trim();
+                      if (line.includes("Zotero Citation") || (line.startsWith("#") && line.includes("Citation"))) {
+                        fmtLinesToRemove.add(i);
+                      } else if (line === "") {
+                        if (i > 0 && fmtLines[i - 1].includes("Zotero Citation")) {
+                          fmtLinesToRemove.add(i);
+                        }
+                      } else {
+                        break;
+                      }
+                    }
+                  }
+
+                  // Remove lines
+                  const uniqueFmtLinesToRemove = [...fmtLinesToRemove].sort((a, b) => b - a);
+                  const newFmtLines = [...fmtLines];
+                  for (const lineIdx of uniqueFmtLinesToRemove) {
+                    newFmtLines.splice(lineIdx, 1);
+                  }
+
+                  // Store in cache
+                  const fmtModifiedContent = newFmtLines.join("\n");
+                  await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+                    content: fmtModifiedContent,
+                    format: fmt,
+                  });
+                  console.log(
+                    `[Dashboard] Format ${fmt} cache updated after removal (${uniqueFmtLinesToRemove.length} lines removed)`,
+                  );
+                }
+              } catch (fmtError) {
+                console.warn(`[Dashboard] Failed to update format ${fmt} after removal:`, fmtError);
+              }
+            }
+
+            // Remove citation from GraphDB
+            console.log("[Dashboard] Removing citation from GraphDB:", citationUri);
+            window.vscode?.postMessage({
+              type: "removeCitationFromGraphDB",
+              citationUri: `urn:citation:${citationUri}`,
+              projectId: projectId,
+            });
+
+            notificationService.success("Citation Removed", `Successfully removed citation from all formats`);
+
+            // Reset removal mode
+            setCitationRemovalMode(false);
+            console.log("[Dashboard] Citation removal mode reset");
+
+            // Close dialog after successful removal
+            setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+          } catch (error) {
+            console.error("[Dashboard] Error in citation removal:", error);
+            notificationService.error("Citation Error", "Failed to remove citation");
+            // Close dialog even on error
+            setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+          }
+        },
+        onCancel: () => {
+          console.log("[Dashboard] Citation removal cancelled by user");
+          setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+        },
+      });
+    },
+    [projectId, codeViewFormat, codeViewContent],
+  );
+
   // Helper function to check if a line is related to a citation block
   function isCitationRelatedLine(line: string, format: string): boolean {
     const commonPatterns = [
@@ -9347,32 +11004,42 @@ const Dashboard: React.FC<DashboardProps> = ({
       /owl:NamedIndividual/i,
       /rdf:type/i,
     ];
-    
+
     // XML-specific closing tags
-    if (format === 'rdfxml' || format === 'owlxml') {
-      if (line.trim().startsWith('</')) return true;
-      if (line.trim().startsWith('<')) return true;
+    if (format === "rdfxml" || format === "owlxml") {
+      if (line.trim().startsWith("</")) return true;
+      if (line.trim().startsWith("<")) return true;
     }
-    
+
     // Turtle continuation (ends with ; or has property assertions)
-    if (format === 'turtle' || format === 'ntriples') {
-      if (line.trim().endsWith(';')) return true;
-      if (line.trim().startsWith('dc:') || line.trim().startsWith('bibo:') || 
-          line.trim().startsWith('foaf:') || line.trim().startsWith('prov:')) return true;
+    if (format === "turtle" || format === "ntriples") {
+      if (line.trim().endsWith(";")) return true;
+      if (
+        line.trim().startsWith("dc:") ||
+        line.trim().startsWith("bibo:") ||
+        line.trim().startsWith("foaf:") ||
+        line.trim().startsWith("prov:")
+      )
+        return true;
     }
-    
+
     // Manchester annotations continuation
-    if (format === 'manchester') {
-      if (line.trim().startsWith('dc:') || line.trim().startsWith('bibo:') ||
-          line.includes('Annotations:') || line.includes('Types:')) return true;
+    if (format === "manchester") {
+      if (
+        line.trim().startsWith("dc:") ||
+        line.trim().startsWith("bibo:") ||
+        line.includes("Annotations:") ||
+        line.includes("Types:")
+      )
+        return true;
     }
-    
+
     // Functional syntax assertions
-    if (format === 'functional') {
-      if (line.includes('AnnotationAssertion(') || line.includes('ClassAssertion(')) return true;
+    if (format === "functional") {
+      if (line.includes("AnnotationAssertion(") || line.includes("ClassAssertion(")) return true;
     }
-    
-    return commonPatterns.some(pattern => pattern.test(line));
+
+    return commonPatterns.some((pattern) => pattern.test(line));
   }
 
   // Cleanup sync service when switching projects
@@ -9380,14 +11047,14 @@ const Dashboard: React.FC<DashboardProps> = ({
     return () => {
       if (projectId) {
         syncService.stopMonitoring(projectId);
-        console.log('[Dashboard] Stopped monitoring for project:', projectId);
+        console.log("[Dashboard] Stopped monitoring for project:", projectId);
       }
     };
   }, [projectId]);
 
   // Load code view content when switching to CodeView tab
   useEffect(() => {
-    if (mainTab === 'CodeView' && projectId && !codeViewContent) {
+    if (mainTab === "CodeView" && projectId && !codeViewContent) {
       fetchCodeViewContent(codeViewFormat);
     }
   }, [mainTab, projectId, codeViewContent, codeViewFormat, fetchCodeViewContent]);
@@ -9413,13 +11080,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
         >
-          {node.children && node.children.length > 0 && (
-            <ChevronRight size={12} className="text-gray-400" />
-          )}
+          {node.children && node.children.length > 0 && <ChevronRight size={12} className="text-gray-400" />}
           <span className="font-mono text-blue-700">{node.name || node.label || node}</span>
-          {node.inferred && (
-            <span className="text-[10px] bg-green-100 text-green-700 px-1 rounded">inferred</span>
-          )}
+          {node.inferred && <span className="text-[10px] bg-green-100 text-green-700 px-1 rounded">inferred</span>}
         </div>
 
         {/* Explanation Tooltip */}
@@ -9429,7 +11092,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             style={{
               left: `${tooltipPos.x + 10}px`,
               top: `${tooltipPos.y + 10}px`,
-              pointerEvents: 'none'
+              pointerEvents: "none",
             }}
           >
             <div className="text-xs font-semibold text-gray-800 mb-1">Why inferred:</div>
@@ -9437,9 +11100,11 @@ const Dashboard: React.FC<DashboardProps> = ({
           </div>
         )}
 
-        {Array.isArray(node.children) && node.children.length > 0 && node.children.map((child: any, idx: number) => (
-          <ClassHierarchyNode key={idx} node={child} level={level + 1} />
-        ))}
+        {Array.isArray(node.children) &&
+          node.children.length > 0 &&
+          node.children.map((child: any, idx: number) => (
+            <ClassHierarchyNode key={idx} node={child} level={level + 1} />
+          ))}
       </div>
     );
   };
@@ -9449,7 +11114,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!Array.isArray(nodes) || nodes.length === 0) return null;
 
     // Filter out null/undefined nodes
-    const validNodes = nodes.filter(node => node && (node.iri || node.id));
+    const validNodes = nodes.filter((node) => node && (node.iri || node.id));
 
     return validNodes.map((node: any, idx: number) => (
       <ClassHierarchyNode key={node.iri || node.id || idx} node={node} level={0} />
@@ -9458,9 +11123,9 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const renderMainContent = () => {
     switch (mainTab) {
-      case 'CodeView':
+      case "CodeView":
         return (
-          <div className="flex h-full" style={{ backgroundColor: 'var(--color-background)' }}>
+          <div className="flex h-full" style={{ backgroundColor: "var(--color-background)" }}>
             <div className="flex-1 flex flex-col bg-theme-surface">
               <div className="p-4 border-b border-gray-200">
                 <h2 className="text-lg font-semibold">OWL/RDF Code View</h2>
@@ -9469,74 +11134,80 @@ const Dashboard: React.FC<DashboardProps> = ({
               <div className="flex-1 flex flex-col overflow-hidden p-4">
                 <div className="mb-4 flex gap-2 flex-wrap flex-shrink-0">
                   <button
-                    onClick={() => { 
-                      fetchCodeViewContent('turtle', citationJustInserted, citationJustInserted); 
+                    onClick={() => {
+                      fetchCodeViewContent("turtle", false, citationJustInserted);
                       setCitationJustInserted(false);
                     }}
-                    className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === 'turtle'
-                      ? 'bg-purple-600 text-white hover:bg-purple-700'
-                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                      }`}
+                    className={`px-3 py-1 text-sm rounded-md ${
+                      codeViewFormat === "turtle"
+                        ? "bg-purple-600 text-white hover:bg-purple-700"
+                        : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                    }`}
                   >
                     Turtle
                   </button>
                   <button
-                    onClick={() => { 
-                      fetchCodeViewContent('rdfxml', citationJustInserted, citationJustInserted); 
+                    onClick={() => {
+                      fetchCodeViewContent("rdfxml", false, citationJustInserted);
                       setCitationJustInserted(false);
                     }}
-                    className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === 'rdfxml'
-                      ? 'bg-purple-600 text-white hover:bg-purple-700'
-                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                      }`}
+                    className={`px-3 py-1 text-sm rounded-md ${
+                      codeViewFormat === "rdfxml"
+                        ? "bg-purple-600 text-white hover:bg-purple-700"
+                        : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                    }`}
                   >
                     RDF/XML
                   </button>
                   <button
-                    onClick={() => { 
-                      fetchCodeViewContent('ntriples', citationJustInserted, citationJustInserted); 
+                    onClick={() => {
+                      fetchCodeViewContent("ntriples", false, citationJustInserted);
                       setCitationJustInserted(false);
                     }}
-                    className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === 'ntriples'
-                      ? 'bg-purple-600 text-white hover:bg-purple-700'
-                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                      }`}
+                    className={`px-3 py-1 text-sm rounded-md ${
+                      codeViewFormat === "ntriples"
+                        ? "bg-purple-600 text-white hover:bg-purple-700"
+                        : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                    }`}
                   >
                     N-Triples
                   </button>
                   <button
-                    onClick={() => { 
-                      fetchCodeViewContent('owlxml', citationJustInserted, citationJustInserted); 
+                    onClick={() => {
+                      fetchCodeViewContent("owlxml", false, citationJustInserted);
                       setCitationJustInserted(false);
                     }}
-                    className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === 'owlxml'
-                      ? 'bg-purple-600 text-white hover:bg-purple-700'
-                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                      }`}
+                    className={`px-3 py-1 text-sm rounded-md ${
+                      codeViewFormat === "owlxml"
+                        ? "bg-purple-600 text-white hover:bg-purple-700"
+                        : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                    }`}
                   >
                     OWL/XML
                   </button>
                   <button
-                    onClick={() => { 
-                      fetchCodeViewContent('manchester', citationJustInserted, citationJustInserted); 
+                    onClick={() => {
+                      fetchCodeViewContent("manchester", false, citationJustInserted);
                       setCitationJustInserted(false);
                     }}
-                    className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === 'manchester'
-                      ? 'bg-purple-600 text-white hover:bg-purple-700'
-                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                      }`}
+                    className={`px-3 py-1 text-sm rounded-md ${
+                      codeViewFormat === "manchester"
+                        ? "bg-purple-600 text-white hover:bg-purple-700"
+                        : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                    }`}
                   >
                     Manchester
                   </button>
                   <button
-                    onClick={() => { 
-                      fetchCodeViewContent('functional', citationJustInserted, citationJustInserted); 
+                    onClick={() => {
+                      fetchCodeViewContent("functional", false, citationJustInserted);
                       setCitationJustInserted(false);
                     }}
-                    className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === 'functional'
-                      ? 'bg-purple-600 text-white hover:bg-purple-700'
-                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                      }`}
+                    className={`px-3 py-1 text-sm rounded-md ${
+                      codeViewFormat === "functional"
+                        ? "bg-purple-600 text-white hover:bg-purple-700"
+                        : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                    }`}
                   >
                     Functional
                   </button>
@@ -9571,8 +11242,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                     }}
                     className={`px-3 py-1 text-sm rounded-md flex items-center gap-1 ${
                       citationRemovalMode
-                        ? 'bg-red-700 text-white hover:bg-red-800'
-                        : 'bg-red-600 text-white hover:bg-red-700'
+                        ? "bg-red-700 text-white hover:bg-red-800"
+                        : "bg-red-600 text-white hover:bg-red-700"
                     }`}
                     title="Click to enter removal mode, then click on a citation to remove it"
                   >
@@ -9588,7 +11259,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                     disabled={codeViewLoading}
                     title="Reload content (preserves inserted citations)"
                   >
-                    {codeViewLoading ? 'Refreshing...' : 'Refresh'}
+                    {codeViewLoading ? "Refreshing..." : "Refresh"}
                   </button>
                   {/* <button
                     onClick={() => {
@@ -9609,7 +11280,9 @@ const Dashboard: React.FC<DashboardProps> = ({
                       <div className="flex-1">
                         <strong>📍 Citation Insertion Mode Active</strong>
                         <div className="text-xs mt-1">
-                          Search for the location in your ontology where you want to insert the citation "{pendingCitation?.title || 'Citation'}", then click <strong>Insert Here</strong> on the matching line.
+                          Search for the location in your ontology where you want to insert the citation "
+                          {pendingCitation?.title || "Citation"}", then click <strong>Insert Here</strong> on the
+                          matching line.
                         </div>
                       </div>
                       <button
@@ -9628,7 +11301,9 @@ const Dashboard: React.FC<DashboardProps> = ({
                       <div className="flex-1">
                         <strong>🗑️ Citation Removal Mode Active</strong>
                         <div className="text-xs mt-1">
-                          Citation lines are highlighted in <span className="bg-red-800 px-1 rounded">red</span>. Click on any citation line to remove it. Search for "Zotero Citation" or "urn:citation" to find citations.
+                          Citation lines are highlighted in <span className="bg-red-800 px-1 rounded">red</span>. Click
+                          on any citation line to remove it. Search for "Zotero Citation" or "urn:citation" to find
+                          citations.
                         </div>
                       </div>
                       <button
@@ -9647,7 +11322,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                     </div>
                   ) : (
                     <CodeHighlighter
-                      content={codeViewContent || '// No content available'}
+                      content={codeViewContent || "// No content available"}
                       format={codeViewFormat}
                       citationInsertionMode={citationInsertionMode}
                       citationRemovalMode={citationRemovalMode}
@@ -9664,10 +11339,10 @@ const Dashboard: React.FC<DashboardProps> = ({
             </div>
           </div>
         );
-      case 'SPARQL': {
+      case "SPARQL": {
         // Use dynamically loaded SPARQL Query Plugin
-        const sparqlPlugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === 'sparql-query-plugin');
-        const sparqlLoadingState = pluginLoadingStates['sparql-query-plugin'];
+        const sparqlPlugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === "sparql-query-plugin");
+        const sparqlLoadingState = pluginLoadingStates["sparql-query-plugin"];
 
         if (sparqlPlugin?.component && projectId) {
           const SparqlPluginComponent = sparqlPlugin.component;
@@ -9677,9 +11352,9 @@ const Dashboard: React.FC<DashboardProps> = ({
               prefixes={(metadata as any)?.prefixes || []}
               context={{
                 apiClient,
-                showNotification: (msg: string, type: 'info' | 'success' | 'warning' | 'error') => {
+                showNotification: (msg: string, type: "info" | "success" | "warning" | "error") => {
                   console.log(`[${type}] ${msg}`);
-                }
+                },
               }}
             />
           );
@@ -9697,38 +11372,40 @@ const Dashboard: React.FC<DashboardProps> = ({
               "Live query execution",
               "Results in table or JSON",
               "CSV/JSON export",
-              "Prefix management"
+              "Prefix management",
             ]}
             accentColor="from-purple-500 via-indigo-500 to-blue-600"
-            onInstall={() => handleInstallPlugin('sparql-query-plugin')}
-            onRetryLoad={() => handleRetryLoadPlugin('sparql-query-plugin')}
-            isInstalled={installedPlugins.has('sparql-query-plugin')}
+            onInstall={() => handleInstallPlugin("sparql-query-plugin")}
+            onRetryLoad={() => handleRetryLoadPlugin("sparql-query-plugin")}
+            isInstalled={installedPlugins.has("sparql-query-plugin")}
             isLoading={sparqlLoadingState?.loading || false}
             error={sparqlLoadingState?.error}
           />
         );
       }
-      case 'Graph': {
+      case "Graph": {
         // Use dynamically loaded Graph View Plugin
-        const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === 'graph-view-plugin');
-        const loadingState = pluginLoadingStates['graph-view-plugin'];
+        const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === "graph-view-plugin");
+        const loadingState = pluginLoadingStates["graph-view-plugin"];
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
-          return <PluginComponent
-            projectId={projectId}
-            context={{
-              projectId,
-              apiBaseUrl: (window as any).API_BASE_URL || (localStorage.getItem('deploymentType') === 'self-hosted' ? 'http://localhost:80' : 'https://ontocodeapi.selfresearch.org'),
-              permissions: {
-                canEdit: !readonlyMode,
-                canDelete: !readonlyMode,
-                canShare: true,
-                canExport: true
-              }
-            }}
-            onNodeClick={handleGraphNodeClick}
-          />;
+          return (
+            <PluginComponent
+              projectId={projectId}
+              context={{
+                projectId,
+                apiBaseUrl: getBaseUrl(),
+                permissions: {
+                  canEdit: !readonlyMode,
+                  canDelete: !readonlyMode,
+                  canShare: true,
+                  canExport: true,
+                },
+              }}
+              onNodeClick={handleGraphNodeClick}
+            />
+          );
         }
 
         return (
@@ -9743,20 +11420,20 @@ const Dashboard: React.FC<DashboardProps> = ({
               "Drag-and-drop nodes",
               "Multi-select support",
               "SVG/PNG export",
-              "Physics simulation"
+              "Physics simulation",
             ]}
             accentColor="from-cyan-500 via-blue-500 to-indigo-600"
-            onInstall={() => handleInstallPlugin('graph-view-plugin')}
-            onRetryLoad={() => handleRetryLoadPlugin('graph-view-plugin')}
-            isInstalled={installedPlugins.has('graph-view-plugin')}
+            onInstall={() => handleInstallPlugin("graph-view-plugin")}
+            onRetryLoad={() => handleRetryLoadPlugin("graph-view-plugin")}
+            isInstalled={installedPlugins.has("graph-view-plugin")}
             isLoading={loadingState?.loading || false}
             error={loadingState?.error}
           />
         );
       }
-      case 'SWRL': {
-        const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === 'swrl-editor-plugin');
-        const loadingState = pluginLoadingStates['swrl-editor-plugin'];
+      case "SWRL": {
+        const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === "swrl-editor-plugin");
+        const loadingState = pluginLoadingStates["swrl-editor-plugin"];
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
@@ -9775,20 +11452,20 @@ const Dashboard: React.FC<DashboardProps> = ({
               "Built-in functions",
               "Rule execution engine",
               "Template library",
-              "Inference results"
+              "Inference results",
             ]}
             accentColor="from-purple-500 via-violet-500 to-indigo-600"
-            onInstall={() => handleInstallPlugin('swrl-editor-plugin')}
-            onRetryLoad={() => handleRetryLoadPlugin('swrl-editor-plugin')}
-            isInstalled={installedPlugins.has('swrl-editor-plugin')}
+            onInstall={() => handleInstallPlugin("swrl-editor-plugin")}
+            onRetryLoad={() => handleRetryLoadPlugin("swrl-editor-plugin")}
+            isInstalled={installedPlugins.has("swrl-editor-plugin")}
             isLoading={loadingState?.loading || false}
             error={loadingState?.error}
           />
         );
       }
-      case 'Fuzzy': {
-        const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === 'fuzzy-ontology-plugin');
-        const loadingState = pluginLoadingStates['fuzzy-ontology-plugin'];
+      case "Fuzzy": {
+        const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === "fuzzy-ontology-plugin");
+        const loadingState = pluginLoadingStates["fuzzy-ontology-plugin"];
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
@@ -9807,20 +11484,20 @@ const Dashboard: React.FC<DashboardProps> = ({
               "Visual canvas editor",
               "Real-time curve rendering",
               "T-norms/T-conorms",
-              "SPARQL integration"
+              "SPARQL integration",
             ]}
             accentColor="from-amber-500 via-orange-500 to-red-500"
-            onInstall={() => handleInstallPlugin('fuzzy-ontology-plugin')}
-            onRetryLoad={() => handleRetryLoadPlugin('fuzzy-ontology-plugin')}
-            isInstalled={installedPlugins.has('fuzzy-ontology-plugin')}
+            onInstall={() => handleInstallPlugin("fuzzy-ontology-plugin")}
+            onRetryLoad={() => handleRetryLoadPlugin("fuzzy-ontology-plugin")}
+            isInstalled={installedPlugins.has("fuzzy-ontology-plugin")}
             isLoading={loadingState?.loading || false}
             error={loadingState?.error}
           />
         );
       }
-      case 'Changes': {
-        const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === 'change-assistant-plugin');
-        const loadingState = pluginLoadingStates['change-assistant-plugin'];
+      case "Changes": {
+        const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === "change-assistant-plugin");
+        const loadingState = pluginLoadingStates["change-assistant-plugin"];
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
@@ -9839,27 +11516,27 @@ const Dashboard: React.FC<DashboardProps> = ({
               "Approval workflows",
               "Diff visualization",
               "Team comments",
-              "Rollback support"
+              "Rollback support",
             ]}
             accentColor="from-emerald-500 via-teal-500 to-cyan-600"
-            onInstall={() => handleInstallPlugin('change-assistant-plugin')}
-            onRetryLoad={() => handleRetryLoadPlugin('change-assistant-plugin')}
-            isInstalled={installedPlugins.has('change-assistant-plugin')}
+            onInstall={() => handleInstallPlugin("change-assistant-plugin")}
+            onRetryLoad={() => handleRetryLoadPlugin("change-assistant-plugin")}
+            isInstalled={installedPlugins.has("change-assistant-plugin")}
             isLoading={loadingState?.loading || false}
             error={loadingState?.error}
           />
         );
       }
-      case 'Reasoner': {
-        const plugin = pluginLoader.getInstalledPlugins().find(p => p.id === 'reasoner-plugin');
-        const loadingState = pluginLoadingStates['reasoner-plugin'];
+      case "Reasoner": {
+        const plugin = pluginLoader.getInstalledPlugins().find((p) => p.id === "reasoner-plugin");
+        const loadingState = pluginLoadingStates["reasoner-plugin"];
 
         if (plugin?.component) {
           const PluginComponent = plugin.component;
           return (
             <PluginComponent
-              projectId={projectId || ''}
-              apiBaseUrl={window.API_BASE_URL}
+              projectId={projectId || ""}
+              apiBaseUrl={getBaseUrl()}
               selectedReasoner={selectedReasoner}
               isReasonerRunning={isReasonerRunning}
               isReasonerLoading={isReasonerLoading}
@@ -9889,31 +11566,39 @@ const Dashboard: React.FC<DashboardProps> = ({
               "Consistency checks with unsat explanations",
               "Auto-sync with ontology edits",
               "Export inferred hierarchy (JSON/CSV)",
-              "Detailed reasoner statistics"
+              "Detailed reasoner statistics",
             ]}
             accentColor="from-indigo-500 via-purple-500 to-pink-500"
-            onInstall={() => handleInstallPlugin('reasoner-plugin')}
-            onRetryLoad={() => handleRetryLoadPlugin('reasoner-plugin')}
-            isInstalled={installedPlugins.has('reasoner-plugin')}
+            onInstall={() => handleInstallPlugin("reasoner-plugin")}
+            onRetryLoad={() => handleRetryLoadPlugin("reasoner-plugin")}
+            isInstalled={installedPlugins.has("reasoner-plugin")}
             isLoading={loadingState?.loading || false}
             error={loadingState?.error}
           />
         );
       }
-      case 'ActiveOntology':
+      case "ActiveOntology":
         return (
-          <div className="flex h-full" style={{ backgroundColor: 'var(--surface-2)' }}>
-            <div className="flex-1 flex flex-col border-r m-2 rounded shadow-sm overflow-hidden" style={{ backgroundColor: 'var(--bg)', borderColor: 'var(--border)' }}>
+          <div className="flex h-full" style={{ backgroundColor: "var(--surface-2)" }}>
+            <div
+              className="flex-1 flex flex-col border-r m-2 rounded shadow-sm overflow-hidden"
+              style={{ backgroundColor: "var(--bg)", borderColor: "var(--border)" }}
+            >
               {/* Ontology Header Section */}
-              <div className="p-4 border-b" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--surface-2)' }}>
+              <div
+                className="p-4 border-b"
+                style={{ borderColor: "var(--border)", backgroundColor: "var(--surface-2)" }}
+              >
                 <div className="flex justify-between items-start mb-4">
-                  <h2 className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-primary)' }}>Ontology header</h2>
+                  <h2 className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--text-primary)" }}>
+                    Ontology header
+                  </h2>
                   <button
                     onClick={() => setEditOntologyIRIDialogOpen(true)}
                     className="p-1 rounded transition-colors"
-                    style={{ color: 'var(--accent)' }}
-                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-overlay)'}
-                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                    style={{ color: "var(--accent)" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-overlay)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
                     title="Edit Ontology IRIs"
                   >
                     <Edit2 size={14} />
@@ -9921,21 +11606,37 @@ const Dashboard: React.FC<DashboardProps> = ({
                 </div>
 
                 <div className="grid grid-cols-1 gap-4">
-                  <div className="p-3 border rounded shadow-sm" style={{ backgroundColor: 'var(--bg)', borderColor: 'var(--border)' }}>
-                    <div className="text-[10px] font-bold uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>Ontology IRI</div>
+                  <div
+                    className="p-3 border rounded shadow-sm"
+                    style={{ backgroundColor: "var(--bg)", borderColor: "var(--border)" }}
+                  >
+                    <div className="text-[10px] font-bold uppercase mb-1" style={{ color: "var(--text-tertiary)" }}>
+                      Ontology IRI
+                    </div>
                     <div className="flex items-center gap-2">
-                      <Globe size={14} className="flex-shrink-0" style={{ color: 'var(--accent)' }} />
-                      <a href={(metadata as any)?.ontologyIRI || "#"} target="_blank" rel="noopener noreferrer" className="text-xs break-all font-medium hover:underline" style={{ color: 'var(--accent)' }}>
+                      <Globe size={14} className="flex-shrink-0" style={{ color: "var(--accent)" }} />
+                      <a
+                        href={(metadata as any)?.ontologyIRI || "#"}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs break-all font-medium hover:underline"
+                        style={{ color: "var(--accent)" }}
+                      >
                         {(metadata as any)?.ontologyIRI || "http://www.semanticweb.org/ontology"}
                       </a>
                     </div>
                   </div>
 
-                  <div className="p-3 border rounded shadow-sm" style={{ backgroundColor: 'var(--bg)', borderColor: 'var(--border)' }}>
-                    <div className="text-[10px] font-bold uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>Ontology Version IRI</div>
+                  <div
+                    className="p-3 border rounded shadow-sm"
+                    style={{ backgroundColor: "var(--bg)", borderColor: "var(--border)" }}
+                  >
+                    <div className="text-[10px] font-bold uppercase mb-1" style={{ color: "var(--text-tertiary)" }}>
+                      Ontology Version IRI
+                    </div>
                     <div className="flex items-center gap-2">
-                      <LinkIcon size={14} className="flex-shrink-0" style={{ color: 'var(--success)' }} />
-                      <div className="text-xs break-all font-medium" style={{ color: 'var(--text-primary)' }}>
+                      <LinkIcon size={14} className="flex-shrink-0" style={{ color: "var(--success)" }} />
+                      <div className="text-xs break-all font-medium" style={{ color: "var(--text-primary)" }}>
                         {(metadata as any)?.versionIRI || "Not specified"}
                       </div>
                     </div>
@@ -9946,74 +11647,116 @@ const Dashboard: React.FC<DashboardProps> = ({
               {/* Annotations Section */}
               <div className="flex-1 overflow-y-auto p-4" style={{ minHeight: 0 }}>
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>Annotations</h3>
+                  <h3 className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>
+                    Annotations
+                  </h3>
                   <button
                     onClick={() => {
                       setOntologyAnnotationEditTarget(null);
                       setIsOntologyAnnotationDialogOpen(true);
                     }}
                     className="px-2 py-1 text-xs rounded transition-colors"
-                    style={{ backgroundColor: 'var(--accent)', color: 'var(--on-accent)' }}
-                    onMouseEnter={(e) => e.currentTarget.style.opacity = '0.9'}
-                    onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+                    style={{ backgroundColor: "var(--accent)", color: "var(--on-accent)" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.9")}
+                    onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
                   >
                     Add
                   </button>
                 </div>
                 {ontologyAnnotations.length > 0 ? (
                   <div className="space-y-2">
-                    {ontologyAnnotations.filter(ann => ann && ann.propertyIri).map((annotation, idx) => {
-                      const key = `${annotation.property}-${annotation.value}-${idx}`;
-                      const propertyIri = annotation.property || '';
-                      const propertyLabel = propertyIri.includes('#') ? propertyIri.split('#').pop() :
-                        propertyIri.includes('/') ? propertyIri.split('/').pop() : propertyIri;
-                      return (
-                        <div key={key} className="border rounded-md transition-colors" style={{ borderColor: 'var(--border)' }} onMouseEnter={(e) => e.currentTarget.style.borderColor = 'var(--accent)'} onMouseLeave={(e) => e.currentTarget.style.borderColor = 'var(--border)'}>
-                          <div className="px-3 py-2 border-b flex items-center justify-between" style={{ backgroundColor: 'var(--accent-tint)', borderColor: 'var(--border)' }}>
-                            <div>
-                              <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>{propertyLabel}</div>
-                              <div className="text-[10px] font-mono truncate" style={{ color: 'var(--text-tertiary)' }} title={annotation.propertyIri}>{annotation.propertyIri}</div>
+                    {ontologyAnnotations
+                      .filter((ann) => ann && ann.propertyIri)
+                      .map((annotation, idx) => {
+                        const key = `${annotation.property}-${annotation.value}-${idx}`;
+                        const propertyIri = annotation.property || "";
+                        const propertyLabel = propertyIri.includes("#")
+                          ? propertyIri.split("#").pop()
+                          : propertyIri.includes("/")
+                            ? propertyIri.split("/").pop()
+                            : propertyIri;
+                        return (
+                          <div
+                            key={key}
+                            className="border rounded-md transition-colors"
+                            style={{ borderColor: "var(--border)" }}
+                            onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--accent)")}
+                            onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
+                          >
+                            <div
+                              className="px-3 py-2 border-b flex items-center justify-between"
+                              style={{ backgroundColor: "var(--accent-tint)", borderColor: "var(--border)" }}
+                            >
+                              <div>
+                                <div className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>
+                                  {propertyLabel}
+                                </div>
+                                <div
+                                  className="text-[10px] font-mono truncate"
+                                  style={{ color: "var(--text-tertiary)" }}
+                                  title={annotation.propertyIri}
+                                >
+                                  {annotation.propertyIri}
+                                </div>
+                              </div>
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => {
+                                    setOntologyAnnotationEditTarget({
+                                      propertyIri: annotation.propertyIri,
+                                      value: annotation.value,
+                                      datatype: annotation.datatype,
+                                    });
+                                    setIsOntologyAnnotationDialogOpen(true);
+                                  }}
+                                  className="px-2 py-1 text-[10px] rounded transition-colors"
+                                  style={{ backgroundColor: "var(--surface-2)", color: "var(--text-primary)" }}
+                                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-overlay)")}
+                                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "var(--surface-2)")}
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  onClick={() =>
+                                    handleDeleteOntologyAnnotation(
+                                      annotation.propertyIri,
+                                      annotation.value,
+                                      annotation.datatype,
+                                    )
+                                  }
+                                  className="px-2 py-1 text-[10px] rounded transition-colors"
+                                  style={{ backgroundColor: "var(--error-tint)", color: "var(--error)" }}
+                                  onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.8")}
+                                  onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
+                                >
+                                  Delete
+                                </button>
+                              </div>
                             </div>
-                            <div className="flex gap-2">
-                              <button
-                                onClick={() => {
-                                  setOntologyAnnotationEditTarget({
-                                    propertyIri: annotation.propertyIri,
-                                    value: annotation.value,
-                                    datatype: annotation.datatype
-                                  });
-                                  setIsOntologyAnnotationDialogOpen(true);
-                                }}
-                                className="px-2 py-1 text-[10px] rounded transition-colors"
-                                style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text-primary)' }}
-                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-overlay)'}
-                                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--surface-2)'}
-                              >
-                                Edit
-                              </button>
-                              <button
-                                onClick={() => handleDeleteOntologyAnnotation(annotation.propertyIri, annotation.value, annotation.datatype)}
-                                className="px-2 py-1 text-[10px] rounded transition-colors"
-                                style={{ backgroundColor: 'var(--error-tint)', color: 'var(--error)' }}
-                                onMouseEnter={(e) => e.currentTarget.style.opacity = '0.8'}
-                                onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
-                              >
-                                Delete
-                              </button>
+                            <div
+                              className="px-3 py-2 text-xs"
+                              style={{ backgroundColor: "var(--bg)", color: "var(--text-primary)" }}
+                            >
+                              <div className="break-words">{annotation.value}</div>
+                              {annotation.datatype && (
+                                <div className="text-[10px] mt-1" style={{ color: "var(--text-tertiary)" }}>
+                                  Datatype: {shortenDatatype(annotation.datatype)}
+                                </div>
+                              )}
                             </div>
                           </div>
-                          <div className="px-3 py-2 text-xs" style={{ backgroundColor: 'var(--bg)', color: 'var(--text-primary)' }}>
-                            <div className="break-words">{annotation.value}</div>
-                            {annotation.datatype && (
-                              <div className="text-[10px] mt-1" style={{ color: 'var(--text-tertiary)' }}>Datatype: {shortenDatatype(annotation.datatype)}</div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
                   </div>
                 ) : (
-                  <div className="text-xs italic p-8 text-center border border-dashed rounded" style={{ color: 'var(--text-tertiary)', backgroundColor: 'var(--surface-2)', borderColor: 'var(--border)' }}>
+                  <div
+                    className="text-xs italic p-8 text-center border border-dashed rounded"
+                    style={{
+                      color: "var(--text-tertiary)",
+                      backgroundColor: "var(--surface-2)",
+                      borderColor: "var(--border)",
+                    }}
+                  >
                     No annotations defined for this ontology
                   </div>
                 )}
@@ -10023,9 +11766,9 @@ const Dashboard: React.FC<DashboardProps> = ({
               <div
                 className="relative cursor-ns-resize group"
                 style={{
-                  height: '6px',
-                  backgroundColor: isResizing ? 'var(--accent)' : 'var(--border)',
-                  transition: 'background-color 0.2s'
+                  height: "6px",
+                  backgroundColor: isResizing ? "var(--accent)" : "var(--border)",
+                  transition: "background-color 0.2s",
                 }}
                 onMouseDown={(e) => {
                   setIsResizing(true);
@@ -10040,71 +11783,104 @@ const Dashboard: React.FC<DashboardProps> = ({
 
                   const handleMouseUp = () => {
                     setIsResizing(false);
-                    document.removeEventListener('mousemove', handleMouseMove);
-                    document.removeEventListener('mouseup', handleMouseUp);
+                    document.removeEventListener("mousemove", handleMouseMove);
+                    document.removeEventListener("mouseup", handleMouseUp);
                   };
 
-                  document.addEventListener('mousemove', handleMouseMove);
-                  document.addEventListener('mouseup', handleMouseUp);
+                  document.addEventListener("mousemove", handleMouseMove);
+                  document.addEventListener("mouseup", handleMouseUp);
                 }}
               >
-                <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-1 mx-auto w-12 rounded-full opacity-0 group-hover:opacity-100 transition-opacity" style={{ backgroundColor: 'var(--accent)' }} />
+                <div
+                  className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-1 mx-auto w-12 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                  style={{ backgroundColor: "var(--accent)" }}
+                />
               </div>
 
               {/* Bottom Tabs Section (Imports, GCIs, Prefixes) */}
-              <div className="border-t flex flex-col" style={{
-                borderColor: 'var(--border)',
-                backgroundColor: 'var(--surface-2)',
-                height: `${bottomTabsHeight}px`,
-                minHeight: '150px'
-              }}>
-                <div className="flex text-[10px] font-bold uppercase tracking-tighter border-b" style={{ backgroundColor: 'var(--surface-3)', borderColor: 'var(--border)' }}>
+              <div
+                className="border-t flex flex-col"
+                style={{
+                  borderColor: "var(--border)",
+                  backgroundColor: "var(--surface-2)",
+                  height: `${bottomTabsHeight}px`,
+                  minHeight: "150px",
+                }}
+              >
+                <div
+                  className="flex text-[10px] font-bold uppercase tracking-tighter border-b"
+                  style={{ backgroundColor: "var(--surface-3)", borderColor: "var(--border)" }}
+                >
                   {[
-                    { id: 'prefixes', label: 'Ontology Prefixes', icon: Hash },
-                    { id: 'imports', label: 'Ontology Imports', icon: Download },
-                    { id: 'axioms', label: 'General Class Axioms', icon: Code }
-                  ].map(t => (
-                    <button key={t.id} onClick={() => setActiveOntologySubTab(t.id)}
+                    { id: "prefixes", label: "Ontology Prefixes", icon: Hash },
+                    { id: "imports", label: "Ontology Imports", icon: Download },
+                    { id: "axioms", label: "General Class Axioms", icon: Code },
+                  ].map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => setActiveOntologySubTab(t.id)}
                       className="px-4 py-2 flex items-center gap-2 border-r transition-all"
                       style={{
-                        borderColor: 'var(--border)',
-                        backgroundColor: activeOntologySubTab === t.id ? 'var(--bg)' : 'transparent',
-                        color: activeOntologySubTab === t.id ? 'var(--accent)' : 'var(--text-secondary)',
-                        borderBottom: activeOntologySubTab === t.id ? '2px solid var(--accent)' : 'none'
+                        borderColor: "var(--border)",
+                        backgroundColor: activeOntologySubTab === t.id ? "var(--bg)" : "transparent",
+                        color: activeOntologySubTab === t.id ? "var(--accent)" : "var(--text-secondary)",
+                        borderBottom: activeOntologySubTab === t.id ? "2px solid var(--accent)" : "none",
                       }}
-                      onMouseEnter={(e) => { if (activeOntologySubTab !== t.id) e.currentTarget.style.backgroundColor = 'var(--hover-overlay)'; }}
-                      onMouseLeave={(e) => { if (activeOntologySubTab !== t.id) e.currentTarget.style.backgroundColor = 'transparent'; }}
+                      onMouseEnter={(e) => {
+                        if (activeOntologySubTab !== t.id)
+                          e.currentTarget.style.backgroundColor = "var(--hover-overlay)";
+                      }}
+                      onMouseLeave={(e) => {
+                        if (activeOntologySubTab !== t.id) e.currentTarget.style.backgroundColor = "transparent";
+                      }}
                     >
                       <t.icon size={12} />
                       {t.label}
                     </button>
                   ))}
                 </div>
-                <div className="p-2 text-sm overflow-hidden flex-1 flex flex-col" style={{ backgroundColor: 'var(--bg)' }}>
-                  {activeOntologySubTab === 'prefixes' && (
-                    <div className="border rounded flex flex-col flex-1 overflow-hidden" style={{ borderColor: 'var(--border)' }}>
-                      <div className="flex items-center justify-between px-3 py-2 border-b flex-shrink-0" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--surface-2)' }}>
-                        <div className="text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>Prefix mappings</div>
+                <div
+                  className="p-2 text-sm overflow-hidden flex-1 flex flex-col"
+                  style={{ backgroundColor: "var(--bg)" }}
+                >
+                  {activeOntologySubTab === "prefixes" && (
+                    <div
+                      className="border rounded flex flex-col flex-1 overflow-hidden"
+                      style={{ borderColor: "var(--border)" }}
+                    >
+                      <div
+                        className="flex items-center justify-between px-3 py-2 border-b flex-shrink-0"
+                        style={{ borderColor: "var(--border)", backgroundColor: "var(--surface-2)" }}
+                      >
+                        <div className="text-[11px] font-semibold" style={{ color: "var(--text-primary)" }}>
+                          Prefix mappings
+                        </div>
                         <button
                           onClick={handleAddPrefixDialog}
                           className="px-2 py-1 text-[10px] rounded flex items-center gap-1"
-                          style={{ backgroundColor: 'var(--accent)', color: 'var(--on-accent)' }}
+                          style={{ backgroundColor: "var(--accent)", color: "var(--on-accent)" }}
                         >
                           <Plus size={12} /> Add Prefix
                         </button>
                       </div>
                       <div className="flex-1 overflow-y-auto">
                         {prefixMappings.length === 0 ? (
-                          <div className="p-4 text-center text-xs italic" style={{ color: 'var(--text-tertiary)' }}>
+                          <div className="p-4 text-center text-xs italic" style={{ color: "var(--text-tertiary)" }}>
                             No prefix mappings defined
                           </div>
                         ) : (
                           <table className="w-full text-left text-xs">
-                            <thead className="sticky top-0" style={{ backgroundColor: 'var(--surface-1)' }}>
-                              <tr className="border-b" style={{ borderColor: 'var(--border)' }}>
-                                <th className="p-2 font-semibold w-1/4" style={{ color: 'var(--text-primary)' }}>Prefix</th>
-                                <th className="p-2 font-semibold" style={{ color: 'var(--text-primary)' }}>Namespace IRI</th>
-                                <th className="p-2 w-24" style={{ color: 'var(--text-primary)' }}>Actions</th>
+                            <thead className="sticky top-0" style={{ backgroundColor: "var(--surface-1)" }}>
+                              <tr className="border-b" style={{ borderColor: "var(--border)" }}>
+                                <th className="p-2 font-semibold w-1/4" style={{ color: "var(--text-primary)" }}>
+                                  Prefix
+                                </th>
+                                <th className="p-2 font-semibold" style={{ color: "var(--text-primary)" }}>
+                                  Namespace IRI
+                                </th>
+                                <th className="p-2 w-24" style={{ color: "var(--text-primary)" }}>
+                                  Actions
+                                </th>
                               </tr>
                             </thead>
                             <tbody>
@@ -10112,18 +11888,22 @@ const Dashboard: React.FC<DashboardProps> = ({
                                 <tr
                                   key={`${p.prefix}-${idx}`}
                                   className="border-b"
-                                  style={{ borderColor: 'var(--border)' }}
-                                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-overlay)'}
-                                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                                  style={{ borderColor: "var(--border)" }}
+                                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-overlay)")}
+                                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
                                 >
-                                  <td className="p-2 font-mono" style={{ color: 'var(--text-primary)' }}>{p.prefix}</td>
-                                  <td className="p-2 break-all" style={{ color: 'var(--accent)' }}>{p.namespace}</td>
+                                  <td className="p-2 font-mono" style={{ color: "var(--text-primary)" }}>
+                                    {p.prefix}
+                                  </td>
+                                  <td className="p-2 break-all" style={{ color: "var(--accent)" }}>
+                                    {p.namespace}
+                                  </td>
                                   <td className="p-2">
                                     <div className="flex gap-1">
                                       <button
                                         onClick={() => handleEditPrefixDialog(p.prefix, p.namespace)}
                                         className="p-1 rounded text-[10px]"
-                                        style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)' }}
+                                        style={{ backgroundColor: "var(--surface-3)", color: "var(--text-primary)" }}
                                         title="Edit"
                                       >
                                         <Edit2 size={12} />
@@ -10131,7 +11911,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                                       <button
                                         onClick={() => handleDeletePrefix(p.prefix)}
                                         className="p-1 rounded text-[10px]"
-                                        style={{ backgroundColor: 'var(--error-tint)', color: 'var(--error)' }}
+                                        style={{ backgroundColor: "var(--error-tint)", color: "var(--error)" }}
                                         title="Delete"
                                       >
                                         <Trash2 size={12} />
@@ -10146,17 +11926,33 @@ const Dashboard: React.FC<DashboardProps> = ({
                       </div>
                     </div>
                   )}
-                  {activeOntologySubTab === 'imports' && (
-                    <div className="border rounded flex flex-col flex-1 overflow-hidden" style={{ borderColor: 'var(--border)' }}>
-                      <div className="flex items-center justify-between px-3 py-2 border-b flex-shrink-0" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--surface-2)' }}>
+                  {activeOntologySubTab === "imports" && (
+                    <div
+                      className="border rounded flex flex-col flex-1 overflow-hidden"
+                      style={{ borderColor: "var(--border)" }}
+                    >
+                      <div
+                        className="flex items-center justify-between px-3 py-2 border-b flex-shrink-0"
+                        style={{ borderColor: "var(--border)", backgroundColor: "var(--surface-2)" }}
+                      >
                         <div className="flex items-center gap-3">
-                          <div className="text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>Ontology Imports</div>
-                          <div className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
-                            <span>({ontologyImports.length} {ontologyImports.length === 1 ? 'import' : 'imports'})</span>
+                          <div className="text-[11px] font-semibold" style={{ color: "var(--text-primary)" }}>
+                            Ontology Imports
+                          </div>
+                          <div
+                            className="flex items-center gap-1 text-[10px]"
+                            style={{ color: "var(--text-tertiary)" }}
+                          >
+                            <span>
+                              ({ontologyImports.length} {ontologyImports.length === 1 ? "import" : "imports"})
+                            </span>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <label className="flex items-center gap-1.5 text-[10px] cursor-pointer" style={{ color: 'var(--text-secondary)' }}>
+                          <label
+                            className="flex items-center gap-1.5 text-[10px] cursor-pointer"
+                            style={{ color: "var(--text-secondary)" }}
+                          >
                             <input
                               type="checkbox"
                               checked={showImportClosure}
@@ -10168,7 +11964,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                           <button
                             onClick={handleAddImportDialog}
                             className="px-2 py-1 text-[10px] rounded flex items-center gap-1"
-                            style={{ backgroundColor: 'var(--accent)', color: 'var(--on-accent)' }}
+                            style={{ backgroundColor: "var(--accent)", color: "var(--on-accent)" }}
                           >
                             <Plus size={12} /> Add Import
                           </button>
@@ -10177,25 +11973,31 @@ const Dashboard: React.FC<DashboardProps> = ({
                       <div className="flex-1 overflow-y-auto">
                         {ontologyImports.length === 0 ? (
                           <div className="p-6 text-center">
-                            <div className="mb-2" style={{ color: 'var(--text-tertiary)' }}>
+                            <div className="mb-2" style={{ color: "var(--text-tertiary)" }}>
                               <Download size={32} className="mx-auto opacity-30" />
                             </div>
-                            <div className="text-xs italic" style={{ color: 'var(--text-tertiary)' }}>No ontology imports</div>
-                            <div className="text-[10px] mt-1" style={{ color: 'var(--text-quaternary)' }}>Click "Add Import" to import an ontology</div>
+                            <div className="text-xs italic" style={{ color: "var(--text-tertiary)" }}>
+                              No ontology imports
+                            </div>
+                            <div className="text-[10px] mt-1" style={{ color: "var(--text-quaternary)" }}>
+                              Click "Add Import" to import an ontology
+                            </div>
                           </div>
                         ) : (
-                          <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                          <div className="divide-y" style={{ borderColor: "var(--border)" }}>
                             {ontologyImports.map((iri, idx) => {
-                              const fileName = iri.substring(iri.lastIndexOf('/') + 1) || iri;
-                              const isLocal = iri.startsWith('file://') || (!iri.startsWith('http://') && !iri.startsWith('https://'));
+                              const fileName = iri.substring(iri.lastIndexOf("/") + 1) || iri;
+                              const isLocal =
+                                iri.startsWith("file://") ||
+                                (!iri.startsWith("http://") && !iri.startsWith("https://"));
                               const isExpanded = expandedImports.has(iri);
 
                               return (
                                 <div
                                   key={`${iri}-${idx}`}
                                   className="group"
-                                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-overlay)'}
-                                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-overlay)")}
+                                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
                                 >
                                   <div className="flex items-start gap-2 p-2.5">
                                     {showImportClosure && (
@@ -10210,34 +12012,54 @@ const Dashboard: React.FC<DashboardProps> = ({
                                           setExpandedImports(newExpanded);
                                         }}
                                         className="p-0.5 rounded hover:bg-opacity-10"
-                                        style={{ color: 'var(--text-tertiary)' }}
+                                        style={{ color: "var(--text-tertiary)" }}
                                       >
                                         {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                                       </button>
                                     )}
                                     <div className="flex-shrink-0 mt-0.5">
                                       {isLocal ? (
-                                        <FileCode size={14} style={{ color: 'var(--accent)' }} />
+                                        <FileCode size={14} style={{ color: "var(--accent)" }} />
                                       ) : (
-                                        <Globe size={14} style={{ color: 'var(--accent)' }} />
+                                        <Globe size={14} style={{ color: "var(--accent)" }} />
                                       )}
                                     </div>
                                     <div className="flex-1 min-w-0">
-                                      <div className="text-[11px] font-medium truncate" style={{ color: 'var(--text-primary)' }} title={fileName}>
+                                      <div
+                                        className="text-[11px] font-medium truncate"
+                                        style={{ color: "var(--text-primary)" }}
+                                        title={fileName}
+                                      >
                                         {fileName}
                                       </div>
-                                      <div className="text-[10px] font-mono break-all mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+                                      <div
+                                        className="text-[10px] font-mono break-all mt-0.5"
+                                        style={{ color: "var(--text-tertiary)" }}
+                                      >
                                         {iri}
                                       </div>
                                       {isLocal && (
                                         <div className="flex items-center gap-1 mt-1">
-                                          <span className="px-1.5 py-0.5 text-[9px] rounded" style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-secondary)' }}>LOCAL</span>
+                                          <span
+                                            className="px-1.5 py-0.5 text-[9px] rounded"
+                                            style={{
+                                              backgroundColor: "var(--surface-3)",
+                                              color: "var(--text-secondary)",
+                                            }}
+                                          >
+                                            LOCAL
+                                          </span>
                                         </div>
                                       )}
                                       {showImportClosure && isExpanded && (
-                                        <div className="mt-2 ml-4 pl-3 border-l-2 text-[10px]" style={{ borderColor: 'var(--border)', color: 'var(--text-tertiary)' }}>
+                                        <div
+                                          className="mt-2 ml-4 pl-3 border-l-2 text-[10px]"
+                                          style={{ borderColor: "var(--border)", color: "var(--text-tertiary)" }}
+                                        >
                                           <div className="italic">Transitive imports would appear here</div>
-                                          <div className="text-[9px] mt-1" style={{ color: 'var(--text-quaternary)' }}>(Feature requires backend support)</div>
+                                          <div className="text-[9px] mt-1" style={{ color: "var(--text-quaternary)" }}>
+                                            (Feature requires backend support)
+                                          </div>
                                         </div>
                                       )}
                                     </div>
@@ -10245,7 +12067,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                                       <button
                                         onClick={() => handleEditImportDialog(iri)}
                                         className="p-1.5 rounded"
-                                        style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)' }}
+                                        style={{ backgroundColor: "var(--surface-3)", color: "var(--text-primary)" }}
                                         title="Edit import"
                                       >
                                         <Edit2 size={11} />
@@ -10253,7 +12075,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                                       <button
                                         onClick={() => handleRemoveImport(iri)}
                                         className="p-1.5 rounded"
-                                        style={{ backgroundColor: 'var(--error-tint)', color: 'var(--error)' }}
+                                        style={{ backgroundColor: "var(--error-tint)", color: "var(--error)" }}
                                         title="Remove import"
                                       >
                                         <Trash2 size={11} />
@@ -10267,7 +12089,14 @@ const Dashboard: React.FC<DashboardProps> = ({
                         )}
                       </div>
                       {ontologyImports.length > 0 && (
-                        <div className="px-3 py-2 border-t text-[10px] flex items-center justify-between" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--surface-2)', color: 'var(--text-tertiary)' }}>
+                        <div
+                          className="px-3 py-2 border-t text-[10px] flex items-center justify-between"
+                          style={{
+                            borderColor: "var(--border)",
+                            backgroundColor: "var(--surface-2)",
+                            color: "var(--text-tertiary)",
+                          }}
+                        >
                           <div className="flex items-center gap-2">
                             <Info size={12} />
                             <span>Direct imports only. Enable "Show import closure" to see transitive imports.</span>
@@ -10276,42 +12105,60 @@ const Dashboard: React.FC<DashboardProps> = ({
                       )}
                     </div>
                   )}
-                  {activeOntologySubTab === 'axioms' && (
-                    <div className="border rounded flex flex-col flex-1 overflow-hidden" style={{ borderColor: 'var(--border)' }}>
-                      <div className="flex items-center justify-between px-3 py-2 border-b flex-shrink-0" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--surface-2)' }}>
-                        <div className="text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>General Class Axioms</div>
+                  {activeOntologySubTab === "axioms" && (
+                    <div
+                      className="border rounded flex flex-col flex-1 overflow-hidden"
+                      style={{ borderColor: "var(--border)" }}
+                    >
+                      <div
+                        className="flex items-center justify-between px-3 py-2 border-b flex-shrink-0"
+                        style={{ borderColor: "var(--border)", backgroundColor: "var(--surface-2)" }}
+                      >
+                        <div className="text-[11px] font-semibold" style={{ color: "var(--text-primary)" }}>
+                          General Class Axioms
+                        </div>
                         <button
                           onClick={() => {
                             setEditingAxiomIndex(null);
-                            setAxiomDraft({ definition: '', superClassIri: '' });
+                            setAxiomDraft({ definition: "", superClassIri: "" });
                             setAxiomDialogOpen(true);
                           }}
                           className="px-2 py-1 text-[10px] rounded flex items-center gap-1"
-                          style={{ backgroundColor: 'var(--accent)', color: 'var(--on-accent)' }}
+                          style={{ backgroundColor: "var(--accent)", color: "var(--on-accent)" }}
                         >
                           <Plus size={12} /> Add Axiom
                         </button>
                       </div>
                       <div className="flex-1 overflow-y-auto">
                         {generalClassAxioms.length === 0 ? (
-                          <div className="p-4 text-center italic text-xs" style={{ color: 'var(--text-tertiary)' }}>No general class axioms detected</div>
+                          <div className="p-4 text-center italic text-xs" style={{ color: "var(--text-tertiary)" }}>
+                            No general class axioms detected
+                          </div>
                         ) : (
-                          <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                          <div className="divide-y" style={{ borderColor: "var(--border)" }}>
                             {generalClassAxioms.map((axiom, idx) => (
                               <div
                                 key={`${axiom.subExpression}-${idx}`}
                                 className="p-3"
-                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-overlay)'}
-                                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-overlay)")}
+                                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
                               >
                                 <div className="flex items-start justify-between gap-2">
                                   <div className="flex-1">
-                                    <div className="text-[10px] font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>Axiom #{idx + 1}</div>
-                                    <div className="font-medium text-xs mb-1" style={{ color: 'var(--text-primary)' }}>
-                                      {axiom.subClass || axiom.definition || 'Anonymous class expression'}
+                                    <div
+                                      className="text-[10px] font-semibold mb-1"
+                                      style={{ color: "var(--text-secondary)" }}
+                                    >
+                                      Axiom #{idx + 1}
+                                    </div>
+                                    <div className="font-medium text-xs mb-1" style={{ color: "var(--text-primary)" }}>
+                                      {axiom.subClass || axiom.definition || "Anonymous class expression"}
                                     </div>
                                     {(axiom.superClass || axiom.superClassIri) && (
-                                      <div className="text-[10px] font-mono break-all" style={{ color: 'var(--text-tertiary)' }}>
+                                      <div
+                                        className="text-[10px] font-mono break-all"
+                                        style={{ color: "var(--text-tertiary)" }}
+                                      >
                                         SubClassOf: {axiom.superClass || axiom.superClassIri}
                                       </div>
                                     )}
@@ -10320,7 +12167,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                                     <button
                                       onClick={() => handleEditAxiom(idx)}
                                       className="p-1 rounded"
-                                      style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)' }}
+                                      style={{ backgroundColor: "var(--surface-3)", color: "var(--text-primary)" }}
                                       title="Edit axiom"
                                     >
                                       <Edit2 size={12} />
@@ -10328,7 +12175,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                                     <button
                                       onClick={() => handleDeleteAxiom(idx)}
                                       className="p-1 rounded"
-                                      style={{ backgroundColor: 'var(--error-tint)', color: 'var(--error)' }}
+                                      style={{ backgroundColor: "var(--error-tint)", color: "var(--error)" }}
                                       title="Delete axiom"
                                     >
                                       <Trash2 size={12} />
@@ -10345,83 +12192,96 @@ const Dashboard: React.FC<DashboardProps> = ({
                 </div>
               </div>
             </div>
-            <div className="w-80 p-4 overflow-y-auto space-y-4" style={{ backgroundColor: 'var(--bg)' }}>
+            <div className="w-80 p-4 overflow-y-auto space-y-4" style={{ backgroundColor: "var(--bg)" }}>
               {[
                 {
-                  title: 'Ontology metrics', data: {
+                  title: "Ontology metrics",
+                  data: {
                     Axiom: (metadata as any)?.axiomCount,
-                    'Logical axiom': (metadata as any)?.logicalAxiomCount,
-                    'Declaration axiom': (metadata as any)?.declarationAxiomCount,
-                    'Class': (metadata as any)?.classCount,
-                    'Object property': (metadata as any)?.objectPropertyCount,
-                    'Data property': (metadata as any)?.dataPropertyCount,
-                    'Individual': (metadata as any)?.individualCount,
-                    'Annotation property': (metadata as any)?.annotationPropertyCount ?? annotationProperties.length,
-                    'Datatype': (metadata as any)?.datatypeCount,
-                    'Imports': (metadata as any)?.importsCount,
-                    'Prefixes': (metadata as any)?.prefixCount,
-                    'Triples': (metadata as any)?.tripleCount
-                  }
+                    "Logical axiom": (metadata as any)?.logicalAxiomCount,
+                    "Declaration axiom": (metadata as any)?.declarationAxiomCount,
+                    Class: (metadata as any)?.classCount,
+                    "Object property": (metadata as any)?.objectPropertyCount,
+                    "Data property": (metadata as any)?.dataPropertyCount,
+                    Individual: (metadata as any)?.individualCount,
+                    "Annotation property": (metadata as any)?.annotationPropertyCount ?? annotationProperties.length,
+                    Datatype: (metadata as any)?.datatypeCount,
+                    Imports: (metadata as any)?.importsCount,
+                    Prefixes: (metadata as any)?.prefixCount,
+                    Triples: (metadata as any)?.tripleCount,
+                  },
                 },
                 {
-                  title: 'Class axioms', data: {
+                  title: "Class axioms",
+                  data: {
                     SubClassOf: (metadata as any)?.subClassOfAxiomCount,
                     EquivalentClasses: (metadata as any)?.equivalentClassesAxiomCount,
                     DisjointClasses: (metadata as any)?.disjointClassesAxiomCount,
-                    'GCI count': (metadata as any)?.gciCount,
-                    'Hidden GCI Count': (metadata as any)?.hiddenGciCount
-                  }
+                    "GCI count": (metadata as any)?.gciCount,
+                    "Hidden GCI Count": (metadata as any)?.hiddenGciCount,
+                  },
                 },
                 {
-                  title: 'Property axioms', data: {
+                  title: "Property axioms",
+                  data: {
                     SubObjectPropertyOf: (metadata as any)?.subObjectPropertyOfAxiomCount,
                     InverseObjectProperties: (metadata as any)?.inverseObjectPropertiesAxiomCount,
-                    'Object domain': (metadata as any)?.objectPropertyDomainAxiomCount,
-                    'Object range': (metadata as any)?.objectPropertyRangeAxiomCount,
-                    'Data domain': (metadata as any)?.dataPropertyDomainAxiomCount,
-                    'Data range': (metadata as any)?.dataPropertyRangeAxiomCount
-                  }
+                    "Object domain": (metadata as any)?.objectPropertyDomainAxiomCount,
+                    "Object range": (metadata as any)?.objectPropertyRangeAxiomCount,
+                    "Data domain": (metadata as any)?.dataPropertyDomainAxiomCount,
+                    "Data range": (metadata as any)?.dataPropertyRangeAxiomCount,
+                  },
                 },
                 {
-                  title: 'Assertion axioms', data: {
-                    'Class assertions': (metadata as any)?.classAssertionAxiomCount,
-                    'Object assertions': (metadata as any)?.objectPropertyAssertionCount,
-                    'Data assertions': (metadata as any)?.dataPropertyAssertionCount,
-                    'Annotation assertions': (metadata as any)?.annotationAssertionCount
-                  }
-                }
-              ].map(metricSection => (
-
+                  title: "Assertion axioms",
+                  data: {
+                    "Class assertions": (metadata as any)?.classAssertionAxiomCount,
+                    "Object assertions": (metadata as any)?.objectPropertyAssertionCount,
+                    "Data assertions": (metadata as any)?.dataPropertyAssertionCount,
+                    "Annotation assertions": (metadata as any)?.annotationAssertionCount,
+                  },
+                },
+              ].map((metricSection) => (
                 <div key={metricSection.title}>
-                  <h3 className="font-semibold text-sm mb-2 border-b pb-1" style={{ color: 'var(--text-primary)', borderColor: 'var(--border)' }}>{metricSection.title}</h3>
+                  <h3
+                    className="font-semibold text-sm mb-2 border-b pb-1"
+                    style={{ color: "var(--text-primary)", borderColor: "var(--border)" }}
+                  >
+                    {metricSection.title}
+                  </h3>
                   <div className="space-y-1 text-xs">
-                    {Object.entries(metricSection.data).map(([key, value]) => (value ?? null) !== null && (
-                      <div key={key} className="flex justify-between items-center">
-                        <span style={{ color: 'var(--text-primary)' }}>{key}</span>
-                        <span className="font-bold px-1.5 py-0.5 rounded" style={{ color: 'var(--text-primary)', backgroundColor: 'var(--surface-2)' }}>{Number(value).toLocaleString()}</span>
-                      </div>
-                    ))}
+                    {Object.entries(metricSection.data).map(
+                      ([key, value]) =>
+                        (value ?? null) !== null && (
+                          <div key={key} className="flex justify-between items-center">
+                            <span style={{ color: "var(--text-primary)" }}>{key}</span>
+                            <span
+                              className="font-bold px-1.5 py-0.5 rounded"
+                              style={{ color: "var(--text-primary)", backgroundColor: "var(--surface-2)" }}
+                            >
+                              {Number(value).toLocaleString()}
+                            </span>
+                          </div>
+                        ),
+                    )}
                   </div>
                 </div>
               ))}
             </div>
           </div>
         );
-      case 'IndividualsByClass': {
+      case "IndividualsByClass": {
         const filteredInstances = classInstances.filter((ind) => {
           if (!classInstancesQuery) return true;
           const query = classInstancesQuery.toLowerCase();
-          return (
-            (ind.label || '').toLowerCase().includes(query) ||
-            (ind.id || '').toLowerCase().includes(query)
-          );
+          return (ind.label || "").toLowerCase().includes(query) || (ind.id || "").toLowerCase().includes(query);
         });
-        const directInstances = filteredInstances.filter(ind => !ind.isInferred);
-        const inferredInstances = filteredInstances.filter(ind => ind.isInferred);
+        const directInstances = filteredInstances.filter((ind) => !ind.isInferred);
+        const inferredInstances = filteredInstances.filter((ind) => ind.isInferred);
         const visibleInstances =
-          classInstancesView === 'direct'
+          classInstancesView === "direct"
             ? directInstances
-            : classInstancesView === 'inferred'
+            : classInstancesView === "inferred"
               ? inferredInstances
               : filteredInstances;
 
@@ -10444,8 +12304,12 @@ const Dashboard: React.FC<DashboardProps> = ({
                   onSearchQueryChange={setClassTreeSearchQuery}
                   onSelectItem={(item) => setSelectedClassForIndividuals(item as TreeNode)}
                   onToggleNode={toggleNode}
-                  onAddItem={() => { /* not used here */ }}
-                  onDeleteItem={() => { /* not used here */ }}
+                  onAddItem={() => {
+                    /* not used here */
+                  }}
+                  onDeleteItem={() => {
+                    /* not used here */
+                  }}
                 />
               </div>
             </aside>
@@ -10454,20 +12318,20 @@ const Dashboard: React.FC<DashboardProps> = ({
                 <div className="flex items-center justify-between text-xs border-b flex-shrink-0">
                   <div className="flex">
                     <button
-                      onClick={() => setClassInstancesView('direct')}
-                      className={`px-3 py-1.5 border-r font-semibold ${classInstancesView === 'direct' ? 'bg-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                      onClick={() => setClassInstancesView("direct")}
+                      className={`px-3 py-1.5 border-r font-semibold ${classInstancesView === "direct" ? "bg-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"}`}
                     >
                       Direct instances ({directInstances.length})
                     </button>
                     <button
-                      onClick={() => setClassInstancesView('inferred')}
-                      className={`px-3 py-1.5 border-r font-semibold ${classInstancesView === 'inferred' ? 'bg-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                      onClick={() => setClassInstancesView("inferred")}
+                      className={`px-3 py-1.5 border-r font-semibold ${classInstancesView === "inferred" ? "bg-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"}`}
                     >
                       Inferred ({inferredInstances.length})
                     </button>
                     <button
-                      onClick={() => setClassInstancesView('all')}
-                      className={`px-3 py-1.5 font-semibold ${classInstancesView === 'all' ? 'bg-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                      onClick={() => setClassInstancesView("all")}
+                      className={`px-3 py-1.5 font-semibold ${classInstancesView === "all" ? "bg-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"}`}
                     >
                       All ({filteredInstances.length})
                     </button>
@@ -10485,11 +12349,15 @@ const Dashboard: React.FC<DashboardProps> = ({
                           const name = window.prompt(`Create individual in ${selectedClassForIndividuals.label}`);
                           if (!name || !projectId) return;
                           try {
-                            await ontologyMutationService.addIndividual(projectId, name, selectedClassForIndividuals.id);
+                            await ontologyMutationService.addIndividual(
+                              projectId,
+                              name,
+                              selectedClassForIndividuals.id,
+                            );
                             await loadClassInstances();
                           } catch (error) {
-                            console.error('[Dashboard] Failed to create individual:', error);
-                            notificationService.error('Create Failed', 'Could not create individual.');
+                            console.error("[Dashboard] Failed to create individual:", error);
+                            notificationService.error("Create Failed", "Could not create individual.");
                           }
                         }}
                         className="px-2 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-700"
@@ -10507,17 +12375,19 @@ const Dashboard: React.FC<DashboardProps> = ({
                           Loading individuals for {selectedClassForIndividuals.label}...
                         </div>
                       ) : visibleInstances.length > 0 ? (
-                        visibleInstances.map(ind => (
+                        visibleInstances.map((ind) => (
                           <div
                             key={ind.id}
                             onClick={() => setSelectedClassIndividual(ind)}
-                            className={`group flex items-center justify-between p-1.5 text-xs hover:bg-gray-100 rounded cursor-pointer ${selectedClassIndividual?.id === ind.id ? 'bg-purple-50' : ''}`}
+                            className={`group flex items-center justify-between p-1.5 text-xs hover:bg-gray-100 rounded cursor-pointer ${selectedClassIndividual?.id === ind.id ? "bg-purple-50" : ""}`}
                           >
                             <div className="flex items-center">
                               <User size={12} className="mr-2 text-purple-600" />
                               {ind.label}
                               {ind.isInferred && (
-                                <span className="ml-2 px-1.5 py-0.5 text-[10px] rounded bg-purple-100 text-purple-700">Inferred</span>
+                                <span className="ml-2 px-1.5 py-0.5 text-[10px] rounded bg-purple-100 text-purple-700">
+                                  Inferred
+                                </span>
                               )}
                             </div>
                             {!ind.isInferred && (
@@ -10529,12 +12399,12 @@ const Dashboard: React.FC<DashboardProps> = ({
                                     await ontologyMutationService.removeClassAssertion(
                                       projectId,
                                       ind.id,
-                                      selectedClassForIndividuals.id
+                                      selectedClassForIndividuals.id,
                                     );
                                     await loadClassInstances();
                                   } catch (error) {
-                                    console.error('[Dashboard] Failed to remove class assertion:', error);
-                                    notificationService.error('Remove Failed', 'Could not remove class assertion.');
+                                    console.error("[Dashboard] Failed to remove class assertion:", error);
+                                    notificationService.error("Remove Failed", "Could not remove class assertion.");
                                   }
                                 }}
                                 className="opacity-0 group-hover:opacity-100 px-2 py-0.5 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
@@ -10559,7 +12429,9 @@ const Dashboard: React.FC<DashboardProps> = ({
                         <div className="p-3 space-y-3 text-xs">
                           <div className="bg-white border border-gray-200 rounded p-2">
                             <div className="font-semibold text-gray-800">{selectedClassIndividualDetails.label}</div>
-                            <div className="text-[11px] text-gray-500 font-mono break-all">{selectedClassIndividualDetails.id}</div>
+                            <div className="text-[11px] text-gray-500 font-mono break-all">
+                              {selectedClassIndividualDetails.id}
+                            </div>
                           </div>
                           <div className="bg-white border border-gray-200 rounded p-2">
                             <div className="flex items-center justify-between mb-1">
@@ -10573,8 +12445,11 @@ const Dashboard: React.FC<DashboardProps> = ({
                             </div>
                             {selectedClassIndividualDetails.types?.length ? (
                               <div className="space-y-1">
-                                {selectedClassIndividualDetails.types.map(type => (
-                                  <div key={type} className="group flex items-center justify-between text-[11px] text-gray-600">
+                                {selectedClassIndividualDetails.types.map((type) => (
+                                  <div
+                                    key={type}
+                                    className="group flex items-center justify-between text-[11px] text-gray-600"
+                                  >
                                     <span className="truncate">{getLocalName(type)}</span>
                                     <button
                                       onClick={async () => {
@@ -10583,15 +12458,18 @@ const Dashboard: React.FC<DashboardProps> = ({
                                           await ontologyMutationService.removeClassAssertion(
                                             projectId,
                                             selectedClassIndividualDetails.id,
-                                            type
+                                            type,
                                           );
                                           if (selectedClassForIndividuals?.id === type) {
                                             await loadClassInstances();
                                           }
                                           await refreshSelectedClassIndividualDetails();
                                         } catch (error) {
-                                          console.error('[Dashboard] Failed to remove type assertion:', error);
-                                          notificationService.error('Remove Failed', 'Could not remove type assertion.');
+                                          console.error("[Dashboard] Failed to remove type assertion:", error);
+                                          notificationService.error(
+                                            "Remove Failed",
+                                            "Could not remove type assertion.",
+                                          );
                                         }
                                       }}
                                       className="opacity-0 group-hover:opacity-100 px-2 py-0.5 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
@@ -10615,10 +12493,14 @@ const Dashboard: React.FC<DashboardProps> = ({
                                 Add
                               </button>
                             </div>
-                            {selectedClassIndividualDetails.annotations && Object.keys(selectedClassIndividualDetails.annotations).length > 0 ? (
+                            {selectedClassIndividualDetails.annotations &&
+                            Object.keys(selectedClassIndividualDetails.annotations).length > 0 ? (
                               <div className="space-y-1">
                                 {Object.entries(selectedClassIndividualDetails.annotations).map(([key, value]) => (
-                                  <div key={key} className="group flex items-center justify-between text-[11px] text-gray-600">
+                                  <div
+                                    key={key}
+                                    className="group flex items-center justify-between text-[11px] text-gray-600"
+                                  >
                                     <span className="truncate">
                                       <span className="font-mono">{getLocalName(key) || key}</span>: {String(value)}
                                     </span>
@@ -10630,12 +12512,12 @@ const Dashboard: React.FC<DashboardProps> = ({
                                             projectId,
                                             selectedClassIndividualDetails.id,
                                             key,
-                                            String(value)
+                                            String(value),
                                           );
                                           await refreshSelectedClassIndividualDetails();
                                         } catch (error) {
-                                          console.error('[Dashboard] Failed to remove annotation:', error);
-                                          notificationService.error('Remove Failed', 'Could not remove annotation.');
+                                          console.error("[Dashboard] Failed to remove annotation:", error);
+                                          notificationService.error("Remove Failed", "Could not remove annotation.");
                                         }
                                       }}
                                       className="opacity-0 group-hover:opacity-100 px-2 py-0.5 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
@@ -10675,11 +12557,15 @@ const Dashboard: React.FC<DashboardProps> = ({
                             </div>
                             {selectedClassIndividualDetails.propertyAssertions?.length ? (
                               <div className="space-y-1">
-                                {selectedClassIndividualDetails.propertyAssertions.map(assertion => (
-                                  <div key={assertion.id} className="group flex items-center justify-between text-[11px] text-gray-600">
+                                {selectedClassIndividualDetails.propertyAssertions.map((assertion) => (
+                                  <div
+                                    key={assertion.id}
+                                    className="group flex items-center justify-between text-[11px] text-gray-600"
+                                  >
                                     <span className="truncate">
                                       <span className="font-semibold">{assertion.propertyLabel}</span>
-                                      {assertion.isNegative ? ' (not)' : ''}: {assertion.targetLabel || assertion.targetIri || assertion.targetLiteral}
+                                      {assertion.isNegative ? " (not)" : ""}:{" "}
+                                      {assertion.targetLabel || assertion.targetIri || assertion.targetLiteral}
                                     </span>
                                     <button
                                       onClick={async () => {
@@ -10693,14 +12579,14 @@ const Dashboard: React.FC<DashboardProps> = ({
                                                 projectId,
                                                 selectedClassIndividualDetails.id,
                                                 assertion.propertyIri,
-                                                target
+                                                target,
                                               );
                                             } else {
                                               await ontologyMutationService.deleteObjectPropertyAssertion(
                                                 projectId,
                                                 selectedClassIndividualDetails.id,
                                                 assertion.propertyIri,
-                                                target
+                                                target,
                                               );
                                             }
                                           } else {
@@ -10711,21 +12597,24 @@ const Dashboard: React.FC<DashboardProps> = ({
                                                 projectId,
                                                 selectedClassIndividualDetails.id,
                                                 assertion.propertyIri,
-                                                value
+                                                value,
                                               );
                                             } else {
                                               await ontologyMutationService.deleteDataPropertyAssertion(
                                                 projectId,
                                                 selectedClassIndividualDetails.id,
                                                 assertion.propertyIri,
-                                                value
+                                                value,
                                               );
                                             }
                                           }
                                           await refreshSelectedClassIndividualDetails();
                                         } catch (error) {
-                                          console.error('[Dashboard] Failed to remove property assertion:', error);
-                                          notificationService.error('Remove Failed', 'Could not remove property assertion.');
+                                          console.error("[Dashboard] Failed to remove property assertion:", error);
+                                          notificationService.error(
+                                            "Remove Failed",
+                                            "Could not remove property assertion.",
+                                          );
                                         }
                                       }}
                                       className="opacity-0 group-hover:opacity-100 px-2 py-0.5 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
@@ -10757,12 +12646,12 @@ const Dashboard: React.FC<DashboardProps> = ({
           </div>
         );
       }
-      case 'DLQuery':
+      case "DLQuery":
         // Built-in OWL IRIs to exclude from counts
         const builtInIris = new Set([
-          'http://www.w3.org/2002/07/owl#Thing',
-          'http://www.w3.org/2002/07/owl#topObjectProperty',
-          'http://www.w3.org/2002/07/owl#topDataProperty'
+          "http://www.w3.org/2002/07/owl#Thing",
+          "http://www.w3.org/2002/07/owl#topObjectProperty",
+          "http://www.w3.org/2002/07/owl#topDataProperty",
         ]);
 
         // Flatten the class hierarchy tree to get all classes (excluding owl:Thing)
@@ -10801,16 +12690,16 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         return (
           <DLQueryPanel
-            projectId={projectId || ''}
+            projectId={projectId || ""}
             classes={flattenClassHierarchy(classHierarchy)}
             objectProperties={flattenPropertyHierarchy(objectPropertyHierarchy)}
             dataProperties={flattenPropertyHierarchy(dataPropertyHierarchy)}
-            individuals={individuals.map(i => ({ id: i.id, label: i.label }))}
+            individuals={individuals.map((i) => ({ id: i.id, label: i.label }))}
             metrics={{
               classCount: (metadata as any)?.classCount,
               objectPropertyCount: (metadata as any)?.objectPropertyCount,
               dataPropertyCount: (metadata as any)?.dataPropertyCount,
-              individualCount: (metadata as any)?.individualCount
+              individualCount: (metadata as any)?.individualCount,
             }}
             apiClient={apiClient}
             onAddToOntology={async (expression, className) => {
@@ -10818,9 +12707,9 @@ const Dashboard: React.FC<DashboardProps> = ({
                 await apiClient.post(`/api/ontology/${projectId}/dl/add`, {
                   expression,
                   className,
-                  userEmail: user?.email || 'anonymous'
+                  userEmail: user?.email || "anonymous",
                 });
-                showToast(`Created class "${className}"`, 'success');
+                showToast(`Created class "${className}"`, "success");
                 // Refresh class hierarchy and metadata after successful class creation
                 await refreshClassHierarchy();
                 await fetchData(projectId, false);
@@ -10828,59 +12717,62 @@ const Dashboard: React.FC<DashboardProps> = ({
                 // Fallback for older backend versions: create via the existing mutations endpoint.
                 const status = (e as any)?.status ?? (e as any)?.response?.status ?? (e as any)?.data?.status;
                 if (status !== 404) {
-                  console.warn('DL add failed:', e);
-                  showToast(`Failed to create class: ${className}`, 'error');
+                  console.warn("DL add failed:", e);
+                  showToast(`Failed to create class: ${className}`, "error");
                   return;
                 }
 
                 // Resolve target IRI from known classes (supports simple expressions like "Course").
-                const normalizedExpr = (expression || '').trim();
-                const byIri = normalizedExpr.startsWith('http://') || normalizedExpr.startsWith('https://');
+                const normalizedExpr = (expression || "").trim();
+                const byIri = normalizedExpr.startsWith("http://") || normalizedExpr.startsWith("https://");
                 const target = byIri
                   ? normalizedExpr
-                  : flattenClassHierarchy(classHierarchy).find(c => c.label?.toLowerCase() === normalizedExpr.toLowerCase())?.id;
+                  : flattenClassHierarchy(classHierarchy).find(
+                      (c) => c.label?.toLowerCase() === normalizedExpr.toLowerCase(),
+                    )?.id;
 
                 if (!target) {
-                  showToast('Only simple class names are supported for Add to Ontology right now.', 'warning');
+                  showToast("Only simple class names are supported for Add to Ontology right now.", "warning");
                   return;
                 }
 
-                const normalizedClassName = (className || '').trim().replace(/\s+/g, '_');
-                const base =
-                  target.includes('#') ? target.split('#')[0] + '#' :
-                    target.includes('/') ? target.substring(0, target.lastIndexOf('/') + 1) :
-                      'http://example.com/ont#';
+                const normalizedClassName = (className || "").trim().replace(/\s+/g, "_");
+                const base = target.includes("#")
+                  ? target.split("#")[0] + "#"
+                  : target.includes("/")
+                    ? target.substring(0, target.lastIndexOf("/") + 1)
+                    : "http://example.com/ont#";
 
                 const newIri = base + normalizedClassName;
 
                 const mutationBody = {
                   ops: [
                     {
-                      type: 'createClass',
+                      type: "createClass",
                       iri: newIri,
                       label: className,
-                      parent: 'http://www.w3.org/2002/07/owl#Thing',
+                      parent: "http://www.w3.org/2002/07/owl#Thing",
                     },
                     {
-                      type: 'addEquivalentClass',
+                      type: "addEquivalentClass",
                       iri: newIri,
                       target,
                     },
                   ],
-                  userId: user?.email || 'anonymous',
-                  username: user?.username || user?.email || 'Anonymous',
+                  userId: user?.email || "anonymous",
+                  username: user?.username || user?.email || "Anonymous",
                   sessionId: `dl-add-${Date.now()}`,
                 };
 
                 try {
                   await apiClient.post(`/api/ontology/mutations/${projectId}?draft=false`, mutationBody);
-                  showToast(`Created class "${className}"`, 'success');
+                  showToast(`Created class "${className}"`, "success");
                   // Refresh class hierarchy and metadata after successful class creation
                   await refreshClassHierarchy();
                   await fetchData(projectId, false);
                 } catch (e2) {
-                  console.warn('Mutation fallback failed:', e2);
-                  showToast(`Failed to create class: ${className}`, 'error');
+                  console.warn("Mutation fallback failed:", e2);
+                  showToast(`Failed to create class: ${className}`, "error");
                 }
               }
             }}
@@ -10894,11 +12786,11 @@ const Dashboard: React.FC<DashboardProps> = ({
   // #endregion
 
   // #region Selector Handlers
-  const handleOpenClassSelector = (target: 'domain' | 'range') => {
+  const handleOpenClassSelector = (target: "domain" | "range") => {
     setSelectorTarget(target);
 
     // For Data Property ranges, show the datatype selector instead of class expression
-    if (target === 'range' && selectedItem?.type === 'DatatypeProperty') {
+    if (target === "range" && selectedItem?.type === "DatatypeProperty") {
       setIsDataPropertyRangeDialogOpen(true);
     } else {
       setIsClassExpressionDialogOpen(true);
@@ -10912,16 +12804,16 @@ const Dashboard: React.FC<DashboardProps> = ({
     try {
       // Get display label for the datatype with proper prefix
       const getDisplayLabel = (iri: string): string => {
-        if (iri.includes('XMLSchema#')) {
-          return 'xsd:' + iri.split('#').pop();
-        } else if (iri.includes('rdf-syntax-ns#')) {
-          return 'rdf:' + iri.split('#').pop();
-        } else if (iri.includes('rdf-schema#') || iri.includes('2000/01/rdf-schema#')) {
-          return 'rdfs:' + iri.split('#').pop();
-        } else if (iri.includes('owl#')) {
-          return 'owl:' + iri.split('#').pop();
+        if (iri.includes("XMLSchema#")) {
+          return "xsd:" + iri.split("#").pop();
+        } else if (iri.includes("rdf-syntax-ns#")) {
+          return "rdf:" + iri.split("#").pop();
+        } else if (iri.includes("rdf-schema#") || iri.includes("2000/01/rdf-schema#")) {
+          return "rdfs:" + iri.split("#").pop();
+        } else if (iri.includes("owl#")) {
+          return "owl:" + iri.split("#").pop();
         }
-        return iri.split('#').pop() || iri;
+        return iri.split("#").pop() || iri;
       };
 
       const displayLabel = getDisplayLabel(datatypeIri);
@@ -10930,19 +12822,19 @@ const Dashboard: React.FC<DashboardProps> = ({
         projectId,
         selectedItem.id,
         datatypeIri,
-        user?.email || 'anonymous',
-        user?.username || 'Anonymous'
+        user?.email || "anonymous",
+        user?.username || "Anonymous",
       );
       updateItemInState({ ...selectedItem, ranges: [...((selectedItem as Property).ranges || []), displayLabel] });
     } catch (error) {
-      console.error('Failed to add data property range', error);
+      console.error("Failed to add data property range", error);
     } finally {
       setIsDataPropertyRangeDialogOpen(false);
       setSelectorTarget(null);
     }
   };
 
-  const handleOpenPropertySelector = (target: 'subProperty' | 'inverse' | 'disjoint' | 'equivalent') => {
+  const handleOpenPropertySelector = (target: "subProperty" | "inverse" | "disjoint" | "equivalent") => {
     setSelectorTarget(target);
     // Use the new ObjectPropertyExpressionDialog for equivalent, inverse, subProperty, and disjoint
     // This provides the Protégé-style property selection with inverse checkbox
@@ -10954,25 +12846,25 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     try {
       switch (selectorTarget) {
-        case 'domain':
+        case "domain":
           await ontologyMutationService.addPropertyDomain(
             projectId,
             selectedItem.id,
             expression,
-            user?.email || 'anonymous',
-            user?.username || 'Anonymous',
-            restrictionData
+            user?.email || "anonymous",
+            user?.username || "Anonymous",
+            restrictionData,
           );
           updateItemInState({ ...selectedItem, domains: [...((selectedItem as Property).domains || []), expression] });
           break;
-        case 'range':
+        case "range":
           await ontologyMutationService.addPropertyRange(
             projectId,
             selectedItem.id,
             expression,
-            user?.email || 'anonymous',
-            user?.username || 'Anonymous',
-            restrictionData
+            user?.email || "anonymous",
+            user?.username || "Anonymous",
+            restrictionData,
           );
           updateItemInState({ ...selectedItem, ranges: [...((selectedItem as Property).ranges || []), expression] });
           break;
@@ -10991,21 +12883,54 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     try {
       switch (selectorTarget) {
-        case 'subProperty':
-          await ontologyMutationService.addSubPropertyOf(projectId, selectedItem.id, expression, user?.email || 'anonymous', user?.username || 'Anonymous');
-          updateItemInState({ ...selectedItem, superProperties: [...((selectedItem as Property).superProperties || []), expression] });
+        case "subProperty":
+          await ontologyMutationService.addSubPropertyOf(
+            projectId,
+            selectedItem.id,
+            expression,
+            user?.email || "anonymous",
+            user?.username || "Anonymous",
+          );
+          updateItemInState({
+            ...selectedItem,
+            superProperties: [...((selectedItem as Property).superProperties || []), expression],
+          });
           break;
-        case 'inverse':
-          await ontologyMutationService.addInverseProperty(projectId, selectedItem.id, expression, user?.email || 'anonymous', user?.username || 'Anonymous');
-          updateItemInState({ ...selectedItem, inverseProperties: [...((selectedItem as Property).inverseProperties || []), expression] });
+        case "inverse":
+          await ontologyMutationService.addInverseProperty(
+            projectId,
+            selectedItem.id,
+            expression,
+            user?.email || "anonymous",
+            user?.username || "Anonymous",
+          );
+          updateItemInState({
+            ...selectedItem,
+            inverseProperties: [...((selectedItem as Property).inverseProperties || []), expression],
+          });
           break;
-        case 'disjoint':
-          await ontologyMutationService.addDisjointProperty(projectId, selectedItem.id, expression, user?.email || 'anonymous', user?.username || 'Anonymous');
-          updateItemInState({ ...selectedItem, disjointProperties: [...((selectedItem as Property).disjointProperties || []), expression] });
+        case "disjoint":
+          await ontologyMutationService.addDisjointProperty(
+            projectId,
+            selectedItem.id,
+            expression,
+            user?.email || "anonymous",
+            user?.username || "Anonymous",
+          );
+          updateItemInState({
+            ...selectedItem,
+            disjointProperties: [...((selectedItem as Property).disjointProperties || []), expression],
+          });
           break;
-        case 'equivalent': {
+        case "equivalent": {
           const existing = (selectedItem as Property).equivalentProperties || [];
-          await ontologyMutationService.addEquivalentProperty(projectId, selectedItem.id, expression, user?.email || 'anonymous', user?.username || 'Anonymous');
+          await ontologyMutationService.addEquivalentProperty(
+            projectId,
+            selectedItem.id,
+            expression,
+            user?.email || "anonymous",
+            user?.username || "Anonymous",
+          );
           updateItemInState({ ...selectedItem, equivalentProperties: [...existing, expression] });
           break;
         }
@@ -11027,21 +12952,54 @@ const Dashboard: React.FC<DashboardProps> = ({
       const finalExpression = isInverse ? `inverse(${expression})` : expression;
 
       switch (selectorTarget) {
-        case 'subProperty':
-          await ontologyMutationService.addSubPropertyOf(projectId, selectedItem.id, finalExpression, user?.email || 'anonymous', user?.username || 'Anonymous');
-          updateItemInState({ ...selectedItem, superProperties: [...((selectedItem as Property).superProperties || []), finalExpression] });
+        case "subProperty":
+          await ontologyMutationService.addSubPropertyOf(
+            projectId,
+            selectedItem.id,
+            finalExpression,
+            user?.email || "anonymous",
+            user?.username || "Anonymous",
+          );
+          updateItemInState({
+            ...selectedItem,
+            superProperties: [...((selectedItem as Property).superProperties || []), finalExpression],
+          });
           break;
-        case 'inverse':
-          await ontologyMutationService.addInverseProperty(projectId, selectedItem.id, expression, user?.email || 'anonymous', user?.username || 'Anonymous');
-          updateItemInState({ ...selectedItem, inverseProperties: [...((selectedItem as Property).inverseProperties || []), expression] });
+        case "inverse":
+          await ontologyMutationService.addInverseProperty(
+            projectId,
+            selectedItem.id,
+            expression,
+            user?.email || "anonymous",
+            user?.username || "Anonymous",
+          );
+          updateItemInState({
+            ...selectedItem,
+            inverseProperties: [...((selectedItem as Property).inverseProperties || []), expression],
+          });
           break;
-        case 'disjoint':
-          await ontologyMutationService.addDisjointProperty(projectId, selectedItem.id, finalExpression, user?.email || 'anonymous', user?.username || 'Anonymous');
-          updateItemInState({ ...selectedItem, disjointProperties: [...((selectedItem as Property).disjointProperties || []), finalExpression] });
+        case "disjoint":
+          await ontologyMutationService.addDisjointProperty(
+            projectId,
+            selectedItem.id,
+            finalExpression,
+            user?.email || "anonymous",
+            user?.username || "Anonymous",
+          );
+          updateItemInState({
+            ...selectedItem,
+            disjointProperties: [...((selectedItem as Property).disjointProperties || []), finalExpression],
+          });
           break;
-        case 'equivalent': {
+        case "equivalent": {
           const existing = (selectedItem as Property).equivalentProperties || [];
-          await ontologyMutationService.addEquivalentProperty(projectId, selectedItem.id, finalExpression, user?.email || 'anonymous', user?.username || 'Anonymous');
+          await ontologyMutationService.addEquivalentProperty(
+            projectId,
+            selectedItem.id,
+            finalExpression,
+            user?.email || "anonymous",
+            user?.username || "Anonymous",
+          );
           updateItemInState({ ...selectedItem, equivalentProperties: [...existing, finalExpression] });
           break;
         }
@@ -11056,19 +13014,19 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // Handlers for Annotation Property Description Dialogs (Protégé-style)
   const handleOpenAnnotationDomainDialog = () => {
-    if (entitiesTab === 'AnnotationProperties') {
+    if (entitiesTab === "AnnotationProperties") {
       setIsAnnotationDomainDialogOpen(true);
     }
   };
 
   const handleOpenAnnotationRangeDialog = () => {
-    if (entitiesTab === 'AnnotationProperties') {
+    if (entitiesTab === "AnnotationProperties") {
       setIsAnnotationRangeDialogOpen(true);
     }
   };
 
   const handleOpenAnnotationSuperpropertyDialog = () => {
-    if (entitiesTab === 'AnnotationProperties') {
+    if (entitiesTab === "AnnotationProperties") {
       setIsAnnotationSuperpropertyDialogOpen(true);
     }
   };
@@ -11077,14 +13035,20 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!selectedItem || !projectId) return;
 
     try {
-      await ontologyMutationService.addPropertyDomain(projectId, selectedItem.id, domainIri, user?.email || 'anonymous', user?.username || 'Anonymous');
+      await ontologyMutationService.addPropertyDomain(
+        projectId,
+        selectedItem.id,
+        domainIri,
+        user?.email || "anonymous",
+        user?.username || "Anonymous",
+      );
       const extendedItem = selectedItem as AnnotationProperty & { domains?: string[] };
       updateItemInState({
         ...selectedItem,
-        domains: [...(extendedItem.domains || []), domainIri]
+        domains: [...(extendedItem.domains || []), domainIri],
       });
     } catch (error) {
-      console.error('Failed to add annotation property domain', error);
+      console.error("Failed to add annotation property domain", error);
     } finally {
       setIsAnnotationDomainDialogOpen(false);
     }
@@ -11094,14 +13058,20 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!selectedItem || !projectId) return;
 
     try {
-      await ontologyMutationService.addPropertyRange(projectId, selectedItem.id, rangeIri, user?.email || 'anonymous', user?.username || 'Anonymous');
+      await ontologyMutationService.addPropertyRange(
+        projectId,
+        selectedItem.id,
+        rangeIri,
+        user?.email || "anonymous",
+        user?.username || "Anonymous",
+      );
       const extendedItem = selectedItem as AnnotationProperty & { ranges?: string[] };
       updateItemInState({
         ...selectedItem,
-        ranges: [...(extendedItem.ranges || []), rangeIri]
+        ranges: [...(extendedItem.ranges || []), rangeIri],
       });
     } catch (error) {
-      console.error('Failed to add annotation property range', error);
+      console.error("Failed to add annotation property range", error);
     } finally {
       setIsAnnotationRangeDialogOpen(false);
     }
@@ -11111,14 +13081,20 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!selectedItem || !projectId) return;
 
     try {
-      await ontologyMutationService.addSubPropertyOf(projectId, selectedItem.id, superpropertyIri, user?.email || 'anonymous', user?.username || 'Anonymous');
+      await ontologyMutationService.addSubPropertyOf(
+        projectId,
+        selectedItem.id,
+        superpropertyIri,
+        user?.email || "anonymous",
+        user?.username || "Anonymous",
+      );
       const extendedItem = selectedItem as AnnotationProperty & { superProperties?: string[] };
       updateItemInState({
         ...selectedItem,
-        superProperties: [...(extendedItem.superProperties || []), superpropertyIri]
+        superProperties: [...(extendedItem.superProperties || []), superpropertyIri],
       });
     } catch (error) {
-      console.error('Failed to add annotation property superproperty', error);
+      console.error("Failed to add annotation property superproperty", error);
     } finally {
       setIsAnnotationSuperpropertyDialogOpen(false);
     }
@@ -11127,14 +13103,9 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // #region Main Render
   // Define apiBaseUrl for plugin usage - use deployment-aware fallback
-  const getApiBaseUrl = () => {
-    if (window.API_BASE_URL) return window.API_BASE_URL;
-    const deployType = localStorage.getItem('deploymentType');
-    return deployType === 'self-hosted' ? 'http://localhost:80' : 'https://ontocodeapi.selfresearch.org';
-  };
-  const apiBaseUrl = getApiBaseUrl();
+  const apiBaseUrl = getBaseUrl();
 
-  const ALL_MAIN_TABS: Record<string, { label: string, icon: React.ElementType }> = {
+  const ALL_MAIN_TABS: Record<string, { label: string; icon: React.ElementType }> = {
     ActiveOntology: { label: "Active ontology", icon: FileText },
     Entities: { label: "Entities", icon: List },
     Graph: { label: "Graph", icon: Share2 },
@@ -11154,8 +13125,20 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   return (
     <>
-      <LoadingDialog isOpen={isInitialLoading} />
-      <CreateIndividualModal isOpen={isCreateIndividualModalOpen} onClose={() => setCreateIndividualModalOpen(false)} onCreate={handleAddIndividual} />
+      <LoadingDialog
+        isOpen={isInitialLoading || showLoadingChoice}
+        projectName={loadingProjectName || undefined}
+        loadingStatusMessage={loadingStatusMessage || undefined}
+        progress={backgroundImportProgress}
+        queuePosition={queuePosition}
+        totalInQueue={totalInQueue}
+        estimatedWaitTimeMs={estimatedWaitTimeMs}
+      />
+      <CreateIndividualModal
+        isOpen={isCreateIndividualModalOpen}
+        onClose={() => setCreateIndividualModalOpen(false)}
+        onCreate={handleAddIndividual}
+      />
       <AddClassDialog
         isOpen={isAddClassDialogOpen}
         onClose={() => setAddClassDialogOpen(false)}
@@ -11166,13 +13149,18 @@ const Dashboard: React.FC<DashboardProps> = ({
       <AddObjectPropertyDialog
         isOpen={isAddPropertyDialogOpen}
         onClose={() => setAddPropertyDialogOpen(false)}
-        onCreate={entitiesTab === 'ObjectProperties' ? handleCreateObjectProperty :
-          entitiesTab === 'DataProperties' ? handleCreateDataProperty :
-            handleCreateAnnotationProperty}
+        onCreate={
+          entitiesTab === "ObjectProperties"
+            ? handleCreateObjectProperty
+            : entitiesTab === "DataProperties"
+              ? handleCreateDataProperty
+              : handleCreateAnnotationProperty
+        }
         type={addPropertyType}
         parentLabel={propertyParentLabel}
-        propertyType={entitiesTab === 'ObjectProperties' ? 'object' :
-          entitiesTab === 'DataProperties' ? 'data' : 'annotation'}
+        propertyType={
+          entitiesTab === "ObjectProperties" ? "object" : entitiesTab === "DataProperties" ? "data" : "annotation"
+        }
       />
       <AddDatatypeDialog
         isOpen={isAddDatatypeDialogOpen}
@@ -11188,7 +13176,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           classes: classHierarchy,
           objectProperties: objectProperties,
           dataProperties: dataProperties,
-          individuals: individuals
+          individuals: individuals,
         }}
       />
       <AddAnnotationDialog
@@ -11207,7 +13195,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               lang,
               editAnnotationData.originalPropertyIri || editAnnotationData.propertyIri,
               editAnnotationData.language,
-              editAnnotationData.datatype
+              editAnnotationData.datatype,
             );
           }
           setEditAnnotationDialogOpen(false);
@@ -11218,14 +13206,13 @@ const Dashboard: React.FC<DashboardProps> = ({
           classes: classHierarchy,
           objectProperties: objectProperties,
           dataProperties: dataProperties,
-          individuals: individuals
+          individuals: individuals,
         }}
         editMode={true}
-        initialProperty={editAnnotationData?.propertyIri || ''}
-        initialValue={editAnnotationData?.currentValue || ''}
-        initialLang={editAnnotationData?.language || ''}
-        initialDatatype={editAnnotationData?.datatype || ''}
-
+        initialProperty={editAnnotationData?.propertyIri || ""}
+        initialValue={editAnnotationData?.currentValue || ""}
+        initialLang={editAnnotationData?.language || ""}
+        initialDatatype={editAnnotationData?.datatype || ""}
       />
       <AddImportDialog
         isOpen={showImportDialog}
@@ -11234,9 +13221,15 @@ const Dashboard: React.FC<DashboardProps> = ({
           if (!projectId) return;
           await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, { importIri });
           const importsRes = await apiClient.get(`/api/ontology/metadata/${projectId}/imports`);
-          const importsData = Array.isArray(importsRes?.data) ? importsRes.data : (Array.isArray(importsRes?.imports) ? importsRes.imports : (Array.isArray(importsRes) ? importsRes : []));
+          const importsData = Array.isArray(importsRes?.data)
+            ? importsRes.data
+            : Array.isArray(importsRes?.imports)
+              ? importsRes.imports
+              : Array.isArray(importsRes)
+                ? importsRes
+                : [];
           setOntologyImports(importsData);
-          showNotification('Import added successfully', 'info');
+          showNotification("Import added successfully", "info");
         }}
       />
       <GCIEditorDialog
@@ -11268,15 +13261,15 @@ const Dashboard: React.FC<DashboardProps> = ({
         isOpen={isEditOntologyIRIDialogOpen}
         onClose={() => setEditOntologyIRIDialogOpen(false)}
         onSave={handleSaveOntologyIRIs}
-        initialOntologyIri={(metadata as any)?.ontologyIRI || ''}
-        initialVersionIri={(metadata as any)?.versionIRI || ''}
+        initialOntologyIri={(metadata as any)?.ontologyIRI || ""}
+        initialVersionIri={(metadata as any)?.versionIRI || ""}
       />
       <GCIEditorDialog
         isOpen={axiomDialogOpen}
         onClose={() => {
           setAxiomDialogOpen(false);
           setEditingAxiomIndex(null);
-          setAxiomDraft({ definition: '', superClassIri: '' });
+          setAxiomDraft({ definition: "", superClassIri: "" });
         }}
         onSave={async (subClass, superClass) => {
           if (editingAxiomIndex !== null) {
@@ -11317,7 +13310,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               value,
               ontologyAnnotationEditTarget.datatype,
               datatype,
-              lang
+              lang,
             );
           } else {
             handleAddOntologyAnnotation(propertyIri, value, datatype, lang);
@@ -11327,8 +13320,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         }}
         availableProperties={annotationProperties}
         editMode={!!ontologyAnnotationEditTarget}
-        initialProperty={ontologyAnnotationEditTarget?.propertyIri || ''}
-        initialValue={ontologyAnnotationEditTarget?.value || ''}
+        initialProperty={ontologyAnnotationEditTarget?.propertyIri || ""}
+        initialValue={ontologyAnnotationEditTarget?.value || ""}
         initialDatatype={shortenDatatype(ontologyAnnotationEditTarget?.datatype)}
       />
       <AddAnnotationDialog
@@ -11348,9 +13341,9 @@ const Dashboard: React.FC<DashboardProps> = ({
                 quickEditNoteItem.id,
                 propertyIri,
                 value,
-                user?.email || 'anonymous',
-                user?.username || 'Anonymous',
-                String(existingValue)
+                user?.email || "anonymous",
+                user?.username || "Anonymous",
+                String(existingValue),
               );
             } else {
               await ontologyMutationService.addAnnotation(
@@ -11358,17 +13351,17 @@ const Dashboard: React.FC<DashboardProps> = ({
                 quickEditNoteItem.id,
                 propertyIri,
                 value,
-                user?.email || 'anonymous',
-                user?.username || 'Anonymous'
+                user?.email || "anonymous",
+                user?.username || "Anonymous",
               );
             }
             updateItemInState({
               ...quickEditNoteItem,
-              annotations: { ...annotations, [propertyIri]: value }
+              annotations: { ...annotations, [propertyIri]: value },
             } as SelectableItem);
           } catch (error) {
-            console.error('[Dashboard] Failed to save quick note:', error);
-            notificationService.error('Quick Note Failed', 'Could not save note.');
+            console.error("[Dashboard] Failed to save quick note:", error);
+            notificationService.error("Quick Note Failed", "Could not save note.");
           } finally {
             setQuickNoteDialogOpen(false);
             setQuickEditNoteItem(null);
@@ -11376,11 +13369,11 @@ const Dashboard: React.FC<DashboardProps> = ({
         }}
         availableProperties={annotationProperties}
         editMode={true}
-        initialProperty={'http://www.w3.org/2000/01/rdf-schema#comment'}
+        initialProperty={"http://www.w3.org/2000/01/rdf-schema#comment"}
         initialValue={
           quickEditNoteItem && (quickEditNoteItem as any).annotations
-            ? String((quickEditNoteItem as any).annotations['http://www.w3.org/2000/01/rdf-schema#comment'] || '')
-            : ''
+            ? String((quickEditNoteItem as any).annotations["http://www.w3.org/2000/01/rdf-schema#comment"] || "")
+            : ""
         }
       />
       <AddAnnotationDialog
@@ -11393,12 +13386,12 @@ const Dashboard: React.FC<DashboardProps> = ({
               projectId,
               selectedClassIndividualDetails.id,
               propertyIri,
-              value
+              value,
             );
             await refreshSelectedClassIndividualDetails();
           } catch (error) {
-            console.error('[Dashboard] Failed to add annotation:', error);
-            notificationService.error('Annotation Failed', 'Could not add annotation.');
+            console.error("[Dashboard] Failed to add annotation:", error);
+            notificationService.error("Annotation Failed", "Could not add annotation.");
           }
         }}
         availableProperties={annotationProperties}
@@ -11409,18 +13402,14 @@ const Dashboard: React.FC<DashboardProps> = ({
         onSelect={async (node) => {
           if (!projectId || !selectedClassIndividualDetails) return;
           try {
-            await ontologyMutationService.addClassAssertion(
-              projectId,
-              selectedClassIndividualDetails.id,
-              node.id
-            );
+            await ontologyMutationService.addClassAssertion(projectId, selectedClassIndividualDetails.id, node.id);
             if (selectedClassForIndividuals?.id === node.id) {
               await loadClassInstances();
             }
             await refreshSelectedClassIndividualDetails();
           } catch (error) {
-            console.error('[Dashboard] Failed to add type assertion:', error);
-            notificationService.error('Type Failed', 'Could not add type assertion.');
+            console.error("[Dashboard] Failed to add type assertion:", error);
+            notificationService.error("Type Failed", "Could not add type assertion.");
           } finally {
             setClassIndividualTypeDialogOpen(false);
           }
@@ -11436,7 +13425,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       />
       <PropertyAssertionDialog
         isOpen={isClassIndividualPropertyDialogOpen}
-        title={classIndividualPropertyIsObject ? 'Add object property assertion' : 'Add data property assertion'}
+        title={classIndividualPropertyIsObject ? "Add object property assertion" : "Add data property assertion"}
         isObjectProperty={classIndividualPropertyIsObject}
         objectPropertiesTree={objectPropertyHierarchy}
         dataPropertiesTree={dataPropertyHierarchy}
@@ -11447,32 +13436,32 @@ const Dashboard: React.FC<DashboardProps> = ({
               const propertyIri = resolvePropertyIriByLabel(data.propertyLabel, objectProperties);
               const targetIri = resolveIndividualIriByLabel(data.targetLabel);
               if (!propertyIri || !targetIri) {
-                notificationService.error('Add Failed', 'Property or target individual not found.');
+                notificationService.error("Add Failed", "Property or target individual not found.");
                 return;
               }
               await ontologyMutationService.addObjectPropertyAssertion(
                 projectId,
                 selectedClassIndividualDetails.id,
                 propertyIri,
-                targetIri
+                targetIri,
               );
             } else {
               const propertyIri = resolvePropertyIriByLabel(data.propertyLabel, dataProperties);
               if (!propertyIri) {
-                notificationService.error('Add Failed', 'Data property not found.');
+                notificationService.error("Add Failed", "Data property not found.");
                 return;
               }
               await ontologyMutationService.addDataPropertyAssertion(
                 projectId,
                 selectedClassIndividualDetails.id,
                 propertyIri,
-                data.targetLabel
+                data.targetLabel,
               );
             }
             await refreshSelectedClassIndividualDetails();
           } catch (error) {
-            console.error('[Dashboard] Failed to add property assertion:', error);
-            notificationService.error('Add Failed', 'Could not add property assertion.');
+            console.error("[Dashboard] Failed to add property assertion:", error);
+            notificationService.error("Add Failed", "Could not add property assertion.");
           } finally {
             setClassIndividualPropertyDialogOpen(false);
           }
@@ -11491,7 +13480,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               propertyIri,
               ontologyAnnotationEditTarget.value,
               value,
-              ontologyAnnotationEditTarget.datatype
+              ontologyAnnotationEditTarget.datatype,
             );
           } else {
             handleAddOntologyAnnotation(propertyIri, value, datatype);
@@ -11501,8 +13490,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         }}
         availableProperties={annotationProperties}
         editMode={!!ontologyAnnotationEditTarget}
-        initialProperty={ontologyAnnotationEditTarget?.propertyIri || ''}
-        initialValue={ontologyAnnotationEditTarget?.value || ''}
+        initialProperty={ontologyAnnotationEditTarget?.propertyIri || ""}
+        initialValue={ontologyAnnotationEditTarget?.value || ""}
         initialDatatype={shortenDatatype(ontologyAnnotationEditTarget?.datatype)}
       />
       <AddAnnotationDialog
@@ -11522,9 +13511,9 @@ const Dashboard: React.FC<DashboardProps> = ({
                 quickEditNoteItem.id,
                 propertyIri,
                 value,
-                user?.email || 'anonymous',
-                user?.username || 'Anonymous',
-                String(existingValue)
+                user?.email || "anonymous",
+                user?.username || "Anonymous",
+                String(existingValue),
               );
             } else {
               await ontologyMutationService.addAnnotation(
@@ -11532,17 +13521,17 @@ const Dashboard: React.FC<DashboardProps> = ({
                 quickEditNoteItem.id,
                 propertyIri,
                 value,
-                user?.email || 'anonymous',
-                user?.username || 'Anonymous'
+                user?.email || "anonymous",
+                user?.username || "Anonymous",
               );
             }
             updateItemInState({
               ...quickEditNoteItem,
-              annotations: { ...annotations, [propertyIri]: value }
+              annotations: { ...annotations, [propertyIri]: value },
             } as SelectableItem);
           } catch (error) {
-            console.error('[Dashboard] Failed to save quick note:', error);
-            notificationService.error('Quick Note Failed', 'Could not save note.');
+            console.error("[Dashboard] Failed to save quick note:", error);
+            notificationService.error("Quick Note Failed", "Could not save note.");
           } finally {
             setQuickNoteDialogOpen(false);
             setQuickEditNoteItem(null);
@@ -11550,11 +13539,11 @@ const Dashboard: React.FC<DashboardProps> = ({
         }}
         availableProperties={annotationProperties}
         editMode={true}
-        initialProperty={'http://www.w3.org/2000/01/rdf-schema#comment'}
+        initialProperty={"http://www.w3.org/2000/01/rdf-schema#comment"}
         initialValue={
           quickEditNoteItem && (quickEditNoteItem as any).annotations
-            ? String((quickEditNoteItem as any).annotations['http://www.w3.org/2000/01/rdf-schema#comment'] || '')
-            : ''
+            ? String((quickEditNoteItem as any).annotations["http://www.w3.org/2000/01/rdf-schema#comment"] || "")
+            : ""
         }
       />
       <AddAnnotationDialog
@@ -11567,12 +13556,12 @@ const Dashboard: React.FC<DashboardProps> = ({
               projectId,
               selectedClassIndividualDetails.id,
               propertyIri,
-              value
+              value,
             );
             await refreshSelectedClassIndividualDetails();
           } catch (error) {
-            console.error('[Dashboard] Failed to add annotation:', error);
-            notificationService.error('Annotation Failed', 'Could not add annotation.');
+            console.error("[Dashboard] Failed to add annotation:", error);
+            notificationService.error("Annotation Failed", "Could not add annotation.");
           }
         }}
         availableProperties={annotationProperties}
@@ -11583,18 +13572,14 @@ const Dashboard: React.FC<DashboardProps> = ({
         onSelect={async (node) => {
           if (!projectId || !selectedClassIndividualDetails) return;
           try {
-            await ontologyMutationService.addClassAssertion(
-              projectId,
-              selectedClassIndividualDetails.id,
-              node.id
-            );
+            await ontologyMutationService.addClassAssertion(projectId, selectedClassIndividualDetails.id, node.id);
             if (selectedClassForIndividuals?.id === node.id) {
               await loadClassInstances();
             }
             await refreshSelectedClassIndividualDetails();
           } catch (error) {
-            console.error('[Dashboard] Failed to add type assertion:', error);
-            notificationService.error('Type Failed', 'Could not add type assertion.');
+            console.error("[Dashboard] Failed to add type assertion:", error);
+            notificationService.error("Type Failed", "Could not add type assertion.");
           } finally {
             setClassIndividualTypeDialogOpen(false);
           }
@@ -11610,7 +13595,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       />
       <PropertyAssertionDialog
         isOpen={isClassIndividualPropertyDialogOpen}
-        title={classIndividualPropertyIsObject ? 'Add object property assertion' : 'Add data property assertion'}
+        title={classIndividualPropertyIsObject ? "Add object property assertion" : "Add data property assertion"}
         isObjectProperty={classIndividualPropertyIsObject}
         objectPropertiesTree={objectPropertyHierarchy}
         dataPropertiesTree={dataPropertyHierarchy}
@@ -11621,32 +13606,32 @@ const Dashboard: React.FC<DashboardProps> = ({
               const propertyIri = resolvePropertyIriByLabel(data.propertyLabel, objectProperties);
               const targetIri = resolveIndividualIriByLabel(data.targetLabel);
               if (!propertyIri || !targetIri) {
-                notificationService.error('Add Failed', 'Property or target individual not found.');
+                notificationService.error("Add Failed", "Property or target individual not found.");
                 return;
               }
               await ontologyMutationService.addObjectPropertyAssertion(
                 projectId,
                 selectedClassIndividualDetails.id,
                 propertyIri,
-                targetIri
+                targetIri,
               );
             } else {
               const propertyIri = resolvePropertyIriByLabel(data.propertyLabel, dataProperties);
               if (!propertyIri) {
-                notificationService.error('Add Failed', 'Data property not found.');
+                notificationService.error("Add Failed", "Data property not found.");
                 return;
               }
               await ontologyMutationService.addDataPropertyAssertion(
                 projectId,
                 selectedClassIndividualDetails.id,
                 propertyIri,
-                data.targetLabel
+                data.targetLabel,
               );
             }
             await refreshSelectedClassIndividualDetails();
           } catch (error) {
-            console.error('[Dashboard] Failed to add property assertion:', error);
-            notificationService.error('Add Failed', 'Could not add property assertion.');
+            console.error("[Dashboard] Failed to add property assertion:", error);
+            notificationService.error("Add Failed", "Could not add property assertion.");
           } finally {
             setClassIndividualPropertyDialogOpen(false);
           }
@@ -11656,7 +13641,14 @@ const Dashboard: React.FC<DashboardProps> = ({
       <OpenFileDialog
         isOpen={showOpenDialog}
         onClose={() => {
-          console.log('[Dashboard] Closing OpenFileDialog. myFiles:', myFiles.length, 'sharedFiles:', sharedFiles.length);
+          console.log(
+            "[Dashboard] Closing OpenFileDialog. myFiles:",
+            myFiles.length,
+            "sharedFiles:",
+            sharedFiles.length,
+            "projectFiles:",
+            projectFiles.length,
+          );
           setShowOpenDialog(false);
         }}
         myFiles={myFiles}
@@ -11673,6 +13665,15 @@ const Dashboard: React.FC<DashboardProps> = ({
         partitionStrategy={partitionStrategy}
         onImportModeChange={setImportMode}
         onPartitionStrategyChange={setPartitionStrategy}
+        isWorkspaceMode={!!user?.workspaceId}
+        onRefresh={
+          initialProjectId
+            ? () => {
+                console.log("[Dashboard] 🔄 Refresh triggered from OpenFileDialog");
+                fetchProjectFiles(initialProjectId);
+              }
+            : undefined
+        }
       />
       <DuplicateFileDialog
         isOpen={duplicatePrompt.isOpen}
@@ -11680,8 +13681,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         detail={duplicatePrompt.detail}
         copyName={duplicateCopyName}
         onCopyNameChange={setDuplicateCopyName}
-        onOpenExisting={() => sendDuplicatePromptResponse('open_existing')}
-        onReplace={() => sendDuplicatePromptResponse('replace')}
+        onOpenExisting={() => sendDuplicatePromptResponse("open_existing")}
+        onReplace={() => sendDuplicatePromptResponse("replace")}
         onCreateCopy={handleDuplicateCreateCopy}
         onCancel={handleDuplicatePromptCancel}
         allowOpenExisting={duplicatePrompt.allowOpenExisting}
@@ -11690,17 +13691,56 @@ const Dashboard: React.FC<DashboardProps> = ({
       />
       <ConfirmDialog
         isOpen={confirmDialog.isOpen}
-        onClose={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+        onClose={() => setConfirmDialog((prev) => ({ ...prev, isOpen: false }))}
         onConfirm={confirmDialog.onConfirm}
         onCancel={confirmDialog.onCancel}
         title={confirmDialog.title}
         message={confirmDialog.message}
+        confirmLabel={confirmDialog.confirmLabel}
+        cancelLabel={confirmDialog.cancelLabel}
       />
+      {/* Dedicated Unsaved Changes Warning Dialog */}
+      {unsavedChangesDialog.isOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999]">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-yellow-100 flex items-center justify-center">
+                <svg className="w-5 h-5 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900">Unsaved Changes</h3>
+            </div>
+            <p className="text-sm text-gray-600 mb-6">
+              You have unsaved changes. Are you sure you want to leave? Your changes will be lost.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setUnsavedChangesDialog((prev) => ({ ...prev, isOpen: false }))}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Stay
+              </button>
+              <button
+                onClick={unsavedChangesDialog.onLeave}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700"
+              >
+                Leave
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <ConfirmDialog
         isOpen={deleteFileDialog.isOpen}
-        onClose={() => setDeleteFileDialog({ isOpen: false, projectId: '', fileName: '' })}
+        onClose={() => setDeleteFileDialog({ isOpen: false, projectId: "", fileName: "" })}
         onConfirm={confirmDeleteFile}
-        onCancel={() => setDeleteFileDialog({ isOpen: false, projectId: '', fileName: '' })}
+        onCancel={() => setDeleteFileDialog({ isOpen: false, projectId: "", fileName: "" })}
         title="Delete File"
         message={`Are you sure you want to delete "${deleteFileDialog.fileName}"? This action cannot be undone.`}
         confirmLabel="Delete"
@@ -11718,7 +13758,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       />
       <ReasonerExplanationModal
         isOpen={explanationState.open}
-        onClose={() => setExplanationState(prev => ({ ...prev, open: false }))}
+        onClose={() => setExplanationState((prev) => ({ ...prev, open: false }))}
         data={explanationState.data}
         loading={explanationState.loading}
         error={explanationState.error}
@@ -11733,6 +13773,27 @@ const Dashboard: React.FC<DashboardProps> = ({
       />
 
       <div className="h-screen bg-gray-50 flex flex-col text-sm max-h-screen">
+        {/* Persistent background import progress banner */}
+        {backgroundImportActive && (
+          <div className="flex items-center gap-2 px-4 py-1.5 bg-blue-50 border-b border-blue-200 text-blue-800 text-xs z-40 shrink-0">
+            <Loader2 size={14} className="animate-spin text-blue-600" />
+            <span className="font-medium">
+              Loading "{loadingProjectName}" in the background
+              {loadingStatusMessage ? ` — ${loadingStatusMessage}` : "..."}
+            </span>
+            {backgroundImportProgress !== undefined && backgroundImportProgress > 0 && (
+              <>
+                <div className="w-32 h-1.5 bg-blue-200 rounded-full overflow-hidden ml-2">
+                  <div
+                    className="h-full bg-blue-600 transition-all duration-300 rounded-full"
+                    style={{ width: `${backgroundImportProgress}%` }}
+                  />
+                </div>
+                <span className="text-blue-600 font-semibold">{Math.round(backgroundImportProgress)}%</span>
+              </>
+            )}
+          </div>
+        )}
         <TopMenuBar
           fileList={listOfFiles}
           myFiles={myFiles}
@@ -11751,15 +13812,29 @@ const Dashboard: React.FC<DashboardProps> = ({
           onOpenPluginMarketplace={() => setShowPluginMarketplace(true)}
           onOpenHistory={() => setIsHistoryPanelOpen(true)}
           onReportIssue={() => setIsReportIssueModalOpen(true)}
+          onOpenUserGuide={() => setIsUserGuideOpen(true)}
+          onOpenMergeWizard={async () => {
+            setMergeWizardOpen(true);
+            // Fetch files from the current project to show in merge wizard
+            if (projectId && !initialProjectId) {
+              // Only fetch if not in admin flow (admin flow already has projectFiles loaded)
+              try {
+                console.log("[Dashboard] 📂 Fetching project files for merge wizard:", projectId);
+                await fetchProjectFiles(projectId);
+              } catch (error) {
+                console.warn("[Dashboard] ⚠️ Could not fetch project files:", error);
+              }
+            }
+          }}
           syncMode={syncMode}
           onToggleSyncMode={() => {
-            const newMode = syncMode === 'public' ? 'private' : 'public';
+            const newMode = syncMode === "public" ? "private" : "public";
             setSyncMode(newMode);
-            ontologyMutationService.setRealTimeSync(newMode === 'public');
-            if (newMode === 'public') {
-              notificationService.success('Live Mode Enabled', 'Changes will be broadcast immediately.');
+            ontologyMutationService.setRealTimeSync(newMode === "public");
+            if (newMode === "public") {
+              notificationService.success("Live Mode Enabled", "Changes will be broadcast immediately.");
             } else {
-              notificationService.info('Draft Mode Enabled', 'Changes will be saved locally until you save.');
+              notificationService.info("Draft Mode Enabled", "Changes will be saved locally until you save.");
             }
           }}
           isReasonerRunning={isReasonerRunning}
@@ -11797,30 +13872,37 @@ const Dashboard: React.FC<DashboardProps> = ({
               {isCloudDeployment && projectId && (
                 <button
                   onClick={() => {
-                    console.log('[Dashboard] Collaboration button clicked', { subscription, deploymentType, isCloudDeployment });
-                    
+                    console.log("[Dashboard] Collaboration button clicked", {
+                      subscription,
+                      deploymentType,
+                      isCloudDeployment,
+                    });
+
                     // Only cloud deployment with free version doesn't have access to collaboration
                     if (isCloudDeployment && subscription.isFree) {
-                      showToast('Collaboration is only available in Pro and Enterprise plans. Upgrade to enable real-time collaboration.', 'warning');
+                      showToast(
+                        "Collaboration is only available in Pro and Enterprise plans. Upgrade to enable real-time collaboration.",
+                        "warning",
+                      );
                       return;
                     }
-                    
+
                     setShowCollaborationPanel(!showCollaborationPanel);
                   }}
                   // disabled={isCloudDeployment && subscription.isFree}
                   className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors ${
                     isCloudDeployment && subscription.isFree
-                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed opacity-50'
+                      ? "bg-gray-100 text-gray-400 cursor-not-allowed opacity-50"
                       : showCollaborationPanel
-                        ? 'bg-blue-600 text-white hover:bg-blue-700'
+                        ? "bg-blue-600 text-white hover:bg-blue-700"
                         : isCurrentFileShared
-                          ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                    }`}
+                          ? "bg-green-100 text-green-700 hover:bg-green-200"
+                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}
                   title={
                     isCloudDeployment && subscription.isFree
-                      ? 'Collaboration is only available in Pro and Enterprise plans'
-                      : `Toggle Collaboration Panel${hasMultipleActiveUsers ? ` (${activeUsersInProject.length} users)` : isCurrentFileShared ? ' (Shared file)' : ' (Enable sharing to collaborate)'}`
+                      ? "Collaboration is only available in Pro and Enterprise plans"
+                      : `Toggle Collaboration Panel${hasMultipleActiveUsers ? ` (${activeUsersInProject.length} users)` : isCurrentFileShared ? " (Shared file)" : " (Enable sharing to collaborate)"}`
                   }
                 >
                   <Users size={14} />
@@ -11855,7 +13937,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 </button>
               )} */}
               <span className="text-xs text-gray-600">
-                Welcome, {user?.username || 'Guest'}
+                Welcome, {user?.username || "Guest"}
                 {user?.workspaceName && (
                   <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px] font-medium">
                     {user.workspaceName}
@@ -11871,7 +13953,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               </button>
               {onBackToProjects && (
                 <button
-                  onClick={onBackToProjects}
+                  onClick={handleBackToProjects}
                   className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50 p-2 rounded-md cursor-pointer"
                   title="Back to Projects"
                 >
@@ -11879,7 +13961,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                   Projects
                 </button>
               )}
-              <button onClick={logout} className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-md cursor-pointer">
+              <button
+                onClick={logout}
+                className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-md cursor-pointer"
+              >
                 <LogOut size={14} />
                 Logout
               </button>
@@ -11887,7 +13972,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           </div>
         </div>
 
-        {mainTab === 'Entities' && (
+        {mainTab === "Entities" && (
           <div className="bg-gray-100 border-b border-gray-200 px-4 flex-shrink-0">
             <div className="flex items-center flex-nowrap overflow-x-auto no-scrollbar gap-1">
               {entitiesTabs.map((tab) => (
@@ -11895,7 +13980,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                   key={tab.id}
                   title={tab.label}
                   className={`flex items-center gap-2 px-3 py-1 text-xs font-medium border-t-2 mt-px whitespace-nowrap flex-shrink-0 ${entitiesTab === tab.id ? "bg-white text-purple-600 border-purple-600" : "text-gray-500 hover:text-gray-800 border-transparent hover:bg-gray-200 rounded-t"}`}
-                  onClick={() => { setEntitiesTab(tab.id); setSelectedItem(null); }}
+                  onClick={() => {
+                    setEntitiesTab(tab.id);
+                    setSelectedItem(null);
+                  }}
                 >
                   <tab.icon size={14} />
                   <span>{tab.label}</span>
@@ -11927,9 +14015,9 @@ const Dashboard: React.FC<DashboardProps> = ({
                 onRenameItem={handleRenameItem}
                 onQuickSetParent={(item) => {
                   setQuickEditParentItem(item);
-                  if (entitiesTab === 'Classes') {
+                  if (entitiesTab === "Classes") {
                     setQuickParentDialogOpen(true);
-                  } else if (entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties') {
+                  } else if (entitiesTab === "ObjectProperties" || entitiesTab === "DataProperties") {
                     setQuickPropertyParentDialogOpen(true);
                   }
                 }}
@@ -11954,12 +14042,12 @@ const Dashboard: React.FC<DashboardProps> = ({
                     onAddAnnotation={handleAddAnnotation}
                     onEditAnnotation={handleEditAnnotation}
                     onDeleteAnnotation={handleDeleteAnnotation}
-                    onAddDomainClick={() => handleOpenClassSelector('domain')}
-                    onAddRangeClick={() => handleOpenClassSelector('range')}
-                    onAddSubPropertyClick={() => handleOpenPropertySelector('subProperty')}
-                    onAddInverseClick={() => handleOpenPropertySelector('inverse')}
-                    onAddDisjointClick={() => handleOpenPropertySelector('disjoint')}
-                    onAddEquivalentClick={() => handleOpenPropertySelector('equivalent')}
+                    onAddDomainClick={() => handleOpenClassSelector("domain")}
+                    onAddRangeClick={() => handleOpenClassSelector("range")}
+                    onAddSubPropertyClick={() => handleOpenPropertySelector("subProperty")}
+                    onAddInverseClick={() => handleOpenPropertySelector("inverse")}
+                    onAddDisjointClick={() => handleOpenPropertySelector("disjoint")}
+                    onAddEquivalentClick={() => handleOpenPropertySelector("equivalent")}
                     onAddAnnotationDomainClick={handleOpenAnnotationDomainDialog}
                     onAddAnnotationRangeClick={handleOpenAnnotationRangeDialog}
                     onAddAnnotationSuperpropertyClick={handleOpenAnnotationSuperpropertyDialog}
@@ -11985,9 +14073,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               </section>
             </>
           ) : (
-            <section className="flex-1 overflow-y-auto bg-white">
-              {renderMainContent()}
-            </section>
+            <section className="flex-1 overflow-y-auto bg-white">{renderMainContent()}</section>
           )}
         </main>
       </div>
@@ -12006,7 +14092,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         dataProperties={dataProperties}
         objectPropertiesTree={objectPropertyHierarchy}
         dataPropertiesTree={dataPropertyHierarchy}
-        title={`Add ${selectorTarget === 'domain' ? 'Domain' : 'Range'} Class Expression`}
+        title={`Add ${selectorTarget === "domain" ? "Domain" : "Range"} Class Expression`}
         expandedNodes={expandedNodes}
         onToggleNode={toggleNode}
         onAddClass={(type) => handleAddItem(type)}
@@ -12022,57 +14108,82 @@ const Dashboard: React.FC<DashboardProps> = ({
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-[500px]">
             <h3 className="text-lg font-semibold mb-4">Add Ontology Import</h3>
-            <form onSubmit={async (e) => {
-              e.preventDefault();
-              const formData = new FormData(e.currentTarget);
-              const importIRI = formData.get('importIRI') as string;
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const formData = new FormData(e.currentTarget);
+                const importIRI = formData.get("importIRI") as string;
 
-              if (!projectId || !importIRI) return;
+                if (!projectId || !importIRI) return;
 
-              try {
-                await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, { importIri: importIRI });
+                try {
+                  await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, { importIri: importIRI });
 
-                // Refresh all metadata related state
-                const [metadataRes, annotationsRes, importsRes, gciRes] = await Promise.all([
-                  apiClient.get(`/api/ontology/metadata/${projectId}`),
-                  apiClient.get(`/api/ontology/metadata/${projectId}/annotations`),
-                  apiClient.get(`/api/ontology/metadata/${projectId}/imports`),
-                  apiClient.get(`/api/ontology/metadata/${projectId}/gci`)
-                ]);
+                  // Refresh all metadata related state sequentially
+                  const metadataRes = await apiClient.get(`/api/ontology/metadata/${projectId}`);
+                  const annotationsRes = await apiClient.get(`/api/ontology/metadata/${projectId}/annotations`);
+                  const importsRes = await apiClient.get(`/api/ontology/metadata/${projectId}/imports`);
+                  const gciRes = await apiClient.get(`/api/ontology/metadata/${projectId}/gci`);
 
-                // Extract data with fallbacks
-                const annotationsData = Array.isArray(annotationsRes?.data) ? annotationsRes.data :
-                  (Array.isArray(annotationsRes) ? annotationsRes : []);
-                const importsData = Array.isArray(importsRes?.data) ? importsRes.data : (Array.isArray(importsRes?.imports) ? importsRes.imports : (Array.isArray(importsRes) ? importsRes : []));
-                const gciData = Array.isArray(gciRes?.data) ? gciRes.data : (Array.isArray(gciRes?.axioms) ? gciRes.axioms : (Array.isArray(gciRes) ? gciRes : []));
+                  // Extract data with fallbacks
+                  const annotationsData = Array.isArray(annotationsRes?.data)
+                    ? annotationsRes.data
+                    : Array.isArray(annotationsRes)
+                      ? annotationsRes
+                      : [];
+                  const importsData = Array.isArray(importsRes?.data)
+                    ? importsRes.data
+                    : Array.isArray(importsRes?.imports)
+                      ? importsRes.imports
+                      : Array.isArray(importsRes)
+                        ? importsRes
+                        : [];
+                  const gciData = Array.isArray(gciRes?.data)
+                    ? gciRes.data
+                    : Array.isArray(gciRes?.axioms)
+                      ? gciRes.axioms
+                      : Array.isArray(gciRes)
+                        ? gciRes
+                        : [];
 
-                const updatedMetadata = {
-                  ...(metadataRes.data || metadataRes),
-                  annotations: annotationsData
-                };
+                  const updatedMetadata = {
+                    ...(metadataRes.data || metadataRes),
+                    annotations: annotationsData,
+                  };
 
-                setMetadata(updatedMetadata);
-                setOntologyImports(importsData);
-                setGeneralClassAxioms(gciData);
-                setShowImportDialog(false);
-              } catch (err) {
-                console.error('Failed to add import:', err);
-              }
-            }}>
+                  setMetadata(updatedMetadata);
+                  setOntologyImports(importsData);
+                  setGeneralClassAxioms(gciData);
+                  setShowImportDialog(false);
+                } catch (err) {
+                  console.error("Failed to add import:", err);
+                }
+              }}
+            >
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium mb-1">Ontology IRI to Import</label>
-                  <input type="url" name="importIRI"
+                  <input
+                    type="url"
+                    name="importIRI"
                     placeholder="https://example.com/ontology.owl"
-                    className="w-full px-3 py-2 border rounded text-sm" required />
+                    className="w-full px-3 py-2 border rounded text-sm"
+                    required
+                  />
                   <div className="text-xs text-gray-500 mt-1">Enter the full IRI of the ontology to import</div>
                 </div>
               </div>
               <div className="flex justify-end gap-2 mt-6">
-                <button type="button" onClick={() => setShowImportDialog(false)}
-                  className="px-4 py-2 border rounded hover:bg-gray-50 text-sm">Cancel</button>
-                <button type="submit"
-                  className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm">Add Import</button>
+                <button
+                  type="button"
+                  onClick={() => setShowImportDialog(false)}
+                  className="px-4 py-2 border rounded hover:bg-gray-50 text-sm"
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm">
+                  Add Import
+                </button>
               </div>
             </form>
           </div>
@@ -12112,13 +14223,13 @@ const Dashboard: React.FC<DashboardProps> = ({
               projectId,
               quickEditParentItem.id,
               node.id,
-              user?.email || 'anonymous',
-              user?.username || 'Anonymous'
+              user?.email || "anonymous",
+              user?.username || "Anonymous",
             );
             await refreshClassHierarchy();
           } catch (error) {
-            console.error('[Dashboard] Failed to set parent class:', error);
-            notificationService.error('Parent Failed', 'Could not set parent class.');
+            console.error("[Dashboard] Failed to set parent class:", error);
+            notificationService.error("Parent Failed", "Could not set parent class.");
           } finally {
             setQuickParentDialogOpen(false);
             setQuickEditParentItem(null);
@@ -12143,8 +14254,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         }}
         onConfirm={handlePropertySelected}
         propertyHierarchy={objectPropertyHierarchy}
-        propertyType={selectedItem?.type === 'DataProperty' ? 'data' : 'object'}
-        title={`Select ${selectorTarget ? selectorTarget.charAt(0).toUpperCase() + selectorTarget.slice(1) : 'Property'}`}
+        propertyType={selectedItem?.type === "DataProperty" ? "data" : "object"}
+        title={`Select ${selectorTarget ? selectorTarget.charAt(0).toUpperCase() + selectorTarget.slice(1) : "Property"}`}
       />
       <PropertyExpressionDialog
         isOpen={isQuickPropertyParentDialogOpen}
@@ -12159,24 +14270,22 @@ const Dashboard: React.FC<DashboardProps> = ({
               projectId,
               quickEditParentItem.id,
               expression,
-              user?.email || 'anonymous',
-              user?.username || 'Anonymous'
+              user?.email || "anonymous",
+              user?.username || "Anonymous",
             );
             await refreshProperties();
           } catch (error) {
-            console.error('[Dashboard] Failed to set parent property:', error);
-            notificationService.error('Parent Failed', 'Could not set parent property.');
+            console.error("[Dashboard] Failed to set parent property:", error);
+            notificationService.error("Parent Failed", "Could not set parent property.");
           } finally {
             setQuickPropertyParentDialogOpen(false);
             setQuickEditParentItem(null);
           }
         }}
         propertyHierarchy={
-          (quickEditParentItem as any)?.type === 'DatatypeProperty'
-            ? dataPropertyHierarchy
-            : objectPropertyHierarchy
+          (quickEditParentItem as any)?.type === "DatatypeProperty" ? dataPropertyHierarchy : objectPropertyHierarchy
         }
-        propertyType={(quickEditParentItem as any)?.type === 'DatatypeProperty' ? 'data' : 'object'}
+        propertyType={(quickEditParentItem as any)?.type === "DatatypeProperty" ? "data" : "object"}
         title="Set parent property"
       />
 
@@ -12188,12 +14297,16 @@ const Dashboard: React.FC<DashboardProps> = ({
           setSelectorTarget(null);
         }}
         onConfirm={handleObjectPropertySelected}
-        objectPropertyHierarchy={selectedItem?.type === 'DatatypeProperty' ? dataPropertyHierarchy : objectPropertyHierarchy}
-        title={selectedItem ? `'${(selectedItem as Property).label || selectedItem.id.split('#').pop()}'` : 'Select Property'}
+        objectPropertyHierarchy={
+          selectedItem?.type === "DatatypeProperty" ? dataPropertyHierarchy : objectPropertyHierarchy
+        }
+        title={
+          selectedItem ? `'${(selectedItem as Property).label || selectedItem.id.split("#").pop()}'` : "Select Property"
+        }
         projectId={projectId || undefined}
         onRefresh={refreshProperties}
-        showInverseOption={selectedItem?.type !== 'DatatypeProperty'}
-        propertyType={selectedItem?.type === 'DatatypeProperty' ? 'data' : 'object'}
+        showInverseOption={selectedItem?.type !== "DatatypeProperty"}
+        propertyType={selectedItem?.type === "DatatypeProperty" ? "data" : "object"}
       />
 
       {/* Annotation Property Domain Dialog (Protégé-style) */}
@@ -12224,12 +14337,12 @@ const Dashboard: React.FC<DashboardProps> = ({
         isOpen={isAnnotationSuperpropertyDialogOpen}
         onClose={() => setIsAnnotationSuperpropertyDialogOpen(false)}
         onConfirm={handleAnnotationSuperpropertyConfirm}
-        annotationPropertyHierarchy={annotationProperties.map(ap => ({
+        annotationPropertyHierarchy={annotationProperties.map((ap) => ({
           id: ap.id,
           label: ap.label,
-          type: 'AnnotationProperty' as const,
+          type: "AnnotationProperty" as const,
           children: [],
-          hasChildren: false
+          hasChildren: false,
         }))}
         currentPropertyId={selectedItem?.id}
         title="Superproperties"
@@ -12245,7 +14358,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         }}
         onConfirm={handleDataPropertyRangeConfirm}
         datatypes={datatypes}
-        title={selectedItem ? `'${(selectedItem as Property).label || selectedItem.id.split('#').pop()}'` : 'Select Range'}
+        title={
+          selectedItem ? `'${(selectedItem as Property).label || selectedItem.id.split("#").pop()}'` : "Select Range"
+        }
         selectedRanges={(selectedItem as Property)?.ranges}
       />
 
@@ -12259,19 +14374,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         />
       )}
 
-      {/* Loading Choice Dialog */}
-      <LoadingChoiceDialog
-        isOpen={showLoadingChoice}
-        projectName={loadingProjectName}
-        loadingStatusMessage={loadingStatusMessage}
-        onWait={handleWaitForLoading}
-        onContinue={handleContinueWorking}
-      />
-
       {/* Collaboration Panel - Toggle visibility manually */}
-      {showCollaborationPanel && (
-        <CollaborationPanel ref={collaborationPanelRef} projectId={projectId || undefined} />
-      )}
+      {showCollaborationPanel && <CollaborationPanel ref={collaborationPanelRef} projectId={projectId || undefined} />}
 
       {/* Share Dialog */}
       {shareFileId && (
@@ -12282,9 +14386,203 @@ const Dashboard: React.FC<DashboardProps> = ({
             setShareFileId(null);
           }}
           projectId={shareFileId}
-          userEmail={user?.email || ''}
+          userEmail={user?.email || ""}
         />
       )}
+
+      {/* Merge Wizard */}
+      <MergeWizard
+        isOpen={isMergeWizardOpen}
+        onClose={() => setMergeWizardOpen(false)}
+        projectId={projectId || ""}
+        projectTitle={activeFileName || myFiles.find((f) => f.projectId === projectId)?.filename || "Unknown"}
+        initialProjectId={initialProjectId || undefined}
+        availableFiles={
+          // Show files from the current project, not all user's projects
+          projectFiles.length > 0
+            ? projectFiles.map((f: any) => ({
+                id: f.id,
+                filename: f.filename,
+              }))
+            : // Fallback: show only the current file if projectFiles not loaded
+              [
+                {
+                  id: projectId || "",
+                  filename: activeFileName || "Current File",
+                },
+              ]
+        }
+        onMergeComplete={async (targetProjectId: string, isNewFile?: boolean) => {
+          try {
+            console.log("[Dashboard] 🔄 Merge complete - targetProjectId:", targetProjectId, "isNewFile:", isNewFile);
+
+            if (isNewFile) {
+              // "Save as new file" — MergeWizard already uploaded the file to
+              // the auth service. Just refresh the project file list so the
+              // new file shows up. Current loaded file is NOT affected.
+              console.log("[Dashboard] ✅ New file merge — refreshing project file list only");
+              if (initialProjectId) {
+                await fetchProjectFiles(initialProjectId);
+              }
+              await fetchProjects();
+              notificationService.success("Merge Complete", "Merged ontology saved as a new file in your project!");
+              return;
+            }
+
+            // "Merge into current/existing file" — poll and refresh as before
+            console.log("[Dashboard] Current projectId:", projectId);
+
+            // If merge was to current file, refresh it completely
+            if (targetProjectId === projectId) {
+              console.log("[Dashboard] ✅ Refreshing current file data after merge");
+
+              // Show loading screen during the wait
+              setIsInitialLoading(true);
+              notificationService.info("Processing Merge", "Waiting for GraphDB to finish importing merged data...");
+
+              // Clear ALL current state to ensure fully fresh data
+              setClassHierarchy([]);
+              setObjectProperties([]);
+              setDataProperties([]);
+              setObjectPropertyHierarchy([]);
+              setDataPropertyHierarchy([]);
+              setAnnotationProperties([]);
+              setIndividuals([]);
+              setDatatypes([]);
+              setMetadata(null);
+              setSelectedItem(null);
+              setClassInstanceCounts({});
+
+              // Poll the backend status until the GraphDB re-import completes.
+              // After merge, the backend calls importService.submitImport() which sets
+              // status to PROCESSING and does an async GraphDB bulk load. We must wait
+              // for it to reach COMPLETED before fetching data, otherwise the queries
+              // will return stale/empty results.
+              // Use escalating backoff so small ontologies finish fast while
+              // large ones (90k+ classes) get up to ~10 minutes of polling.
+              const maxPollAttempts = 90;
+              const getPollDelay = (att: number) => {
+                if (att <= 5) return 2000; // first 5: 2s  (10s)
+                if (att <= 15) return 3000; // next 10: 3s  (30s)
+                if (att <= 30) return 5000; // next 15: 5s  (75s)
+                return 10000; // rest 60: 10s (600s)  => total ~715s ≈ 12 min
+              };
+              let importCompleted = false;
+
+              console.log("[Dashboard] ⏳ Polling for GraphDB import completion...");
+              for (let attempt = 1; attempt <= maxPollAttempts; attempt++) {
+                try {
+                  const statusRes = await apiClient.get<any>(
+                    `/api/ontology/status/${encodeURIComponent(targetProjectId)}?_t=${Date.now()}`,
+                  );
+                  const status = statusRes?.data?.status || statusRes?.status;
+                  if (attempt <= 10 || attempt % 10 === 0) {
+                    console.log(`[Dashboard] Poll attempt ${attempt}/${maxPollAttempts}: status = ${status}`);
+                  }
+
+                  if (status === "COMPLETED") {
+                    importCompleted = true;
+                    console.log("[Dashboard] ✅ GraphDB import completed!");
+                    break;
+                  }
+
+                  if (status === "ERROR") {
+                    console.error("[Dashboard] ❌ Import failed during merge re-import");
+                    notificationService.error("Import Failed", "The merged file failed to import into GraphDB.");
+                    setIsInitialLoading(false);
+                    return;
+                  }
+
+                  // Still PROCESSING - wait and try again
+                  await new Promise((resolve) => setTimeout(resolve, getPollDelay(attempt)));
+                } catch (pollError) {
+                  console.warn(`[Dashboard] Poll attempt ${attempt} error:`, pollError);
+                  await new Promise((resolve) => setTimeout(resolve, getPollDelay(attempt)));
+                }
+              }
+
+              if (!importCompleted) {
+                console.warn("[Dashboard] ⚠️ Timed out waiting for import to complete, attempting to fetch anyway");
+                notificationService.warning(
+                  "Import Taking Long",
+                  "GraphDB import is taking longer than expected. Attempting to load current data...",
+                );
+              }
+
+              console.log("[Dashboard] 🔄 Starting data fetch with force refresh...");
+
+              // Reload all ontology data with forceRefresh=true:
+              // - Skips waitForProcessingComplete (we already polled above)
+              // - Adds cache-busting timestamps to all API URLs
+              // - waitForCompletion=true shows loading screen until all data is loaded
+              try {
+                await fetchData(targetProjectId, true, undefined, true);
+                console.log("[Dashboard] ✅ Data fetch completed successfully");
+              } catch (fetchError) {
+                console.error("[Dashboard] ❌ Failed to fetch data after merge:", fetchError);
+                notificationService.error("Refresh Failed", "Could not load merged data. Please refresh manually.");
+                setIsInitialLoading(false);
+                setMergeWizardOpen(false);
+                return;
+              }
+
+              console.log("[Dashboard] 📊 Data refresh complete");
+              notificationService.success("Merge Complete", "Your ontology has been updated with the merged data!");
+
+              // Rebuild the full class hierarchy (re-expand previously expanded
+              // nodes).  fetchData only sets a flat 1-level tree under owl:Thing;
+              // refreshClassHierarchy reloads children for all expanded nodes so
+              // the user sees the complete tree without manually re-expanding.
+              try {
+                await refreshClassHierarchy();
+              } catch (_) {
+                // Non-critical — the flat tree from fetchData is still visible
+              }
+            } else {
+              // Merge was to a different existing file — poll for import and notify.
+              // The user's currently loaded file is not affected.
+              console.log("[Dashboard] ⚠️ Merge targeted a different existing file:", targetProjectId);
+
+              // Poll for the target file's import completion
+              const maxPollAttempts2 = 90;
+              const getPollDelay2 = (att: number) => {
+                if (att <= 5) return 2000;
+                if (att <= 15) return 3000;
+                if (att <= 30) return 5000;
+                return 10000;
+              };
+
+              for (let attempt = 1; attempt <= maxPollAttempts2; attempt++) {
+                try {
+                  const statusRes = await apiClient.get<any>(
+                    `/api/ontology/status/${encodeURIComponent(targetProjectId)}?_t=${Date.now()}`,
+                  );
+                  const status = statusRes?.data?.status || statusRes?.status;
+                  if (status === "COMPLETED" || status === "ERROR") break;
+                  await new Promise((resolve) => setTimeout(resolve, getPollDelay2(attempt)));
+                } catch {
+                  await new Promise((resolve) => setTimeout(resolve, getPollDelay2(attempt)));
+                }
+              }
+
+              notificationService.success(
+                "Merge Complete",
+                "Ontology merged into the selected file. Open that file to view the changes.",
+              );
+            }
+
+            // Also refresh the projects list
+            await fetchProjects();
+          } catch (error) {
+            console.warn("[Dashboard] Failed to refresh data after merge:", error);
+            setIsInitialLoading(false);
+            notificationService.error(
+              "Refresh Failed",
+              "Failed to refresh ontology data after merge. Please reload manually.",
+            );
+          }
+        }}
+      />
 
       {/* Report Issue Modal */}
       {isReportIssueModalOpen && (
@@ -12296,9 +14594,12 @@ const Dashboard: React.FC<DashboardProps> = ({
         />
       )}
 
+      {/* User Guide Modal - only in cloud mode */}
+      {isCloudDeployment && <UserGuideModal isOpen={isUserGuideOpen} onClose={() => setIsUserGuideOpen(false)} />}
+
       {/* Toast Notifications */}
       <div className="fixed top-4 right-4 z-[9999] space-y-2">
-        {collaboration.state.notifications.map(notification => (
+        {collaboration.state.notifications.map((notification) => (
           <ToastNotification
             key={notification.id}
             type={notification.type}
@@ -12322,87 +14623,93 @@ const Dashboard: React.FC<DashboardProps> = ({
       />
 
       {/* Queue Status Indicator */}
-      <QueueStatusIndicator
-        projectId={projectId || ''}
-        visible={showQueueStatus && !!projectId}
-      />
+      <QueueStatusIndicator projectId={projectId || ""} visible={showQueueStatus && !!projectId} />
 
       {/* Global Queue Stats */}
       <GlobalQueueStats visible={true} />
 
       {/* Theme Settings */}
-      <ThemeSettings
-        isOpen={showThemeSettings}
-        onClose={() => setShowThemeSettings(false)}
-      />
+      <ThemeSettings isOpen={showThemeSettings} onClose={() => setShowThemeSettings(false)} />
 
       {/* History Panel */}
       {projectId && (
-        <HistoryPanel
-          projectId={projectId}
-          isOpen={isHistoryPanelOpen}
-          onClose={() => setIsHistoryPanelOpen(false)}
-        />
+        <HistoryPanel projectId={projectId} isOpen={isHistoryPanelOpen} onClose={() => setIsHistoryPanelOpen(false)} />
       )}
 
       {/* Prefix Dialog */}
       {isPrefixDialogOpen && (
         <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4" style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border)' }}>
-            <div className="px-5 py-3 border-b flex items-center justify-between" style={{ borderColor: 'var(--border)' }}>
-              <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{prefixDialogData.isEdit ? 'Edit Prefix' : 'Add Prefix'}</h3>
-              <button onClick={() => setIsPrefixDialogOpen(false)} className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+          <div
+            className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4"
+            style={{ backgroundColor: "var(--surface-1)", border: "1px solid var(--border)" }}
+          >
+            <div
+              className="px-5 py-3 border-b flex items-center justify-between"
+              style={{ borderColor: "var(--border)" }}
+            >
+              <h3 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+                {prefixDialogData.isEdit ? "Edit Prefix" : "Add Prefix"}
+              </h3>
+              <button
+                onClick={() => setIsPrefixDialogOpen(false)}
+                className="text-xs"
+                style={{ color: "var(--text-secondary)" }}
+              >
                 <X size={16} />
               </button>
             </div>
             <div className="p-5 space-y-4">
               <div>
-                <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Prefix</label>
+                <label className="block text-xs font-medium mb-1" style={{ color: "var(--text-primary)" }}>
+                  Prefix
+                </label>
                 <input
                   type="text"
                   value={prefixDialogData.prefix}
                   onChange={(e) => setPrefixDialogData({ ...prefixDialogData, prefix: e.target.value })}
                   placeholder="owl"
                   className="w-full px-3 py-2 text-sm border rounded"
-                  style={{ backgroundColor: 'var(--bg)', color: 'var(--text-primary)', borderColor: 'var(--border)' }}
+                  style={{ backgroundColor: "var(--bg)", color: "var(--text-primary)", borderColor: "var(--border)" }}
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Namespace IRI</label>
+                <label className="block text-xs font-medium mb-1" style={{ color: "var(--text-primary)" }}>
+                  Namespace IRI
+                </label>
                 <input
                   type="text"
                   value={prefixDialogData.namespace}
                   onChange={(e) => setPrefixDialogData({ ...prefixDialogData, namespace: e.target.value })}
                   placeholder="http://www.w3.org/2002/07/owl#"
                   className="w-full px-3 py-2 text-sm border rounded"
-                  style={{ backgroundColor: 'var(--bg)', color: 'var(--text-primary)', borderColor: 'var(--border)' }}
+                  style={{ backgroundColor: "var(--bg)", color: "var(--text-primary)", borderColor: "var(--border)" }}
                 />
               </div>
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   onClick={() => setIsPrefixDialogOpen(false)}
                   className="px-3 py-1.5 text-xs rounded"
-                  style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)' }}
+                  style={{ backgroundColor: "var(--surface-3)", color: "var(--text-primary)" }}
                 >
                   Cancel
                 </button>
                 <button
                   onClick={() => {
                     if (!prefixDialogData.prefix || !prefixDialogData.namespace) {
-                      notificationService.error('Validation Error', 'Both prefix and namespace are required.');
+                      notificationService.error("Validation Error", "Both prefix and namespace are required.");
                       return;
                     }
                     handleSavePrefix(
                       prefixDialogData.prefix,
                       prefixDialogData.namespace,
                       prefixDialogData.isEdit,
-                      prefixDialogData.originalPrefix
+                      prefixDialogData.originalPrefix,
                     );
                   }}
                   className="px-3 py-1.5 text-xs rounded"
-                  style={{ backgroundColor: 'var(--accent)', color: 'var(--on-accent)' }}
+                  style={{ backgroundColor: "var(--accent)", color: "var(--on-accent)" }}
                 >
-                  {prefixDialogData.isEdit ? 'Update Prefix' : 'Add Prefix'}
+                  {prefixDialogData.isEdit ? "Update Prefix" : "Add Prefix"}
                 </button>
               </div>
             </div>
@@ -12413,23 +14720,42 @@ const Dashboard: React.FC<DashboardProps> = ({
       {/* Import Dialog - Protégé Style */}
       {isImportDialogOpen && (
         <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center">
-          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4" style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border)' }}>
-            <div className="px-5 py-3 border-b flex items-center justify-between" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--surface-2)' }}>
+          <div
+            className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4"
+            style={{ backgroundColor: "var(--surface-1)", border: "1px solid var(--border)" }}
+          >
+            <div
+              className="px-5 py-3 border-b flex items-center justify-between"
+              style={{ borderColor: "var(--border)", backgroundColor: "var(--surface-2)" }}
+            >
               <div className="flex items-center gap-2">
-                <Download size={16} style={{ color: 'var(--accent)' }} />
-                <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{importDialogData.isEdit ? 'Edit Ontology Import' : 'Import Ontology'}</h3>
+                <Download size={16} style={{ color: "var(--accent)" }} />
+                <h3 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+                  {importDialogData.isEdit ? "Edit Ontology Import" : "Import Ontology"}
+                </h3>
               </div>
-              <button onClick={() => setIsImportDialogOpen(false)} className="text-xs hover:opacity-70" style={{ color: 'var(--text-secondary)' }}>
+              <button
+                onClick={() => setIsImportDialogOpen(false)}
+                className="text-xs hover:opacity-70"
+                style={{ color: "var(--text-secondary)" }}
+              >
                 <X size={16} />
               </button>
             </div>
             <div className="p-5 space-y-4">
               {/* Import IRI Section */}
               <div>
-                <label className="block text-xs font-medium mb-2" style={{ color: 'var(--text-primary)' }}>Import IRI or File Path</label>
-                <div className="text-[11px] mb-3 p-2 rounded flex items-start gap-2" style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text-secondary)' }}>
-                  <Info size={12} className="flex-shrink-0 mt-0.5" style={{ color: 'var(--accent)' }} />
-                  <span>Specify the IRI of the ontology to import. This can be a web URL (http/https) or a local file path.</span>
+                <label className="block text-xs font-medium mb-2" style={{ color: "var(--text-primary)" }}>
+                  Import IRI or File Path
+                </label>
+                <div
+                  className="text-[11px] mb-3 p-2 rounded flex items-start gap-2"
+                  style={{ backgroundColor: "var(--surface-2)", color: "var(--text-secondary)" }}
+                >
+                  <Info size={12} className="flex-shrink-0 mt-0.5" style={{ color: "var(--accent)" }} />
+                  <span>
+                    Specify the IRI of the ontology to import. This can be a web URL (http/https) or a local file path.
+                  </span>
                 </div>
 
                 {/* IRI Input */}
@@ -12441,27 +14767,38 @@ const Dashboard: React.FC<DashboardProps> = ({
                       onChange={(e) => setImportDialogData({ ...importDialogData, iri: e.target.value })}
                       placeholder="Enter ontology IRI or file path (e.g., C:\\ontologies\\import.owl)"
                       className="flex-1 px-3 py-2.5 text-sm border rounded font-mono"
-                      style={{ backgroundColor: 'var(--bg)', color: 'var(--text-primary)', borderColor: 'var(--border)' }}
+                      style={{
+                        backgroundColor: "var(--bg)",
+                        color: "var(--text-primary)",
+                        borderColor: "var(--border)",
+                      }}
                       autoFocus
                     />
                   </div>
 
                   {/* File Picker */}
                   <div className="flex items-center gap-2">
-                    <div className="flex-1 h-px" style={{ backgroundColor: 'var(--border)' }}></div>
-                    <span className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>OR</span>
-                    <div className="flex-1 h-px" style={{ backgroundColor: 'var(--border)' }}></div>
+                    <div className="flex-1 h-px" style={{ backgroundColor: "var(--border)" }}></div>
+                    <span className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>
+                      OR
+                    </span>
+                    <div className="flex-1 h-px" style={{ backgroundColor: "var(--border)" }}></div>
                   </div>
 
-                  <label className="flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed rounded cursor-pointer transition-all"
-                    style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
-                    onMouseEnter={(e) => e.currentTarget.style.borderColor = 'var(--accent)'}
-                    onMouseLeave={(e) => e.currentTarget.style.borderColor = 'var(--border)'}
+                  <label
+                    className="flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed rounded cursor-pointer transition-all"
+                    style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--accent)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
                   >
                     <FileCode size={18} />
                     <div className="text-xs">
-                      <div className="font-medium" style={{ color: 'var(--text-primary)' }}>Browse for local ontology file</div>
-                      <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-tertiary)' }}>Supports .owl, .rdf, .ttl, .n3, .nt files</div>
+                      <div className="font-medium" style={{ color: "var(--text-primary)" }}>
+                        Browse for local ontology file
+                      </div>
+                      <div className="text-[10px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>
+                        Supports .owl, .rdf, .ttl, .n3, .nt files
+                      </div>
                     </div>
                     <input
                       type="file"
@@ -12482,24 +14819,27 @@ const Dashboard: React.FC<DashboardProps> = ({
 
               {/* Common Ontology IRIs */}
               <div>
-                <div className="text-xs font-medium mb-2" style={{ color: 'var(--text-primary)' }}>Common Ontology Libraries</div>
+                <div className="text-xs font-medium mb-2" style={{ color: "var(--text-primary)" }}>
+                  Common Ontology Libraries
+                </div>
                 <div className="grid grid-cols-2 gap-2">
                   {[
-                    { label: 'OWL', iri: 'http://www.w3.org/2002/07/owl#' },
-                    { label: 'RDFS', iri: 'http://www.w3.org/2000/01/rdf-schema#' },
-                    { label: 'Dublin Core', iri: 'http://purl.org/dc/elements/1.1/' },
-                    { label: 'FOAF', iri: 'http://xmlns.com/foaf/0.1/' },
-                    { label: 'SKOS', iri: 'http://www.w3.org/2004/02/skos/core#' },
-                    { label: 'Schema.org', iri: 'http://schema.org/' },
+                    { label: "OWL", iri: "http://www.w3.org/2002/07/owl#" },
+                    { label: "RDFS", iri: "http://www.w3.org/2000/01/rdf-schema#" },
+                    { label: "Dublin Core", iri: "http://purl.org/dc/elements/1.1/" },
+                    { label: "FOAF", iri: "http://xmlns.com/foaf/0.1/" },
+                    { label: "SKOS", iri: "http://www.w3.org/2004/02/skos/core#" },
+                    { label: "Schema.org", iri: "http://schema.org/" },
                   ].map((ontology) => (
                     <button
                       key={ontology.iri}
                       onClick={() => setImportDialogData({ ...importDialogData, iri: ontology.iri })}
                       className="px-3 py-2 text-[11px] rounded text-left border transition-colors"
                       style={{
-                        backgroundColor: importDialogData.iri === ontology.iri ? 'var(--accent-tint)' : 'var(--surface-2)',
-                        color: importDialogData.iri === ontology.iri ? 'var(--accent)' : 'var(--text-primary)',
-                        borderColor: importDialogData.iri === ontology.iri ? 'var(--accent)' : 'var(--border)'
+                        backgroundColor:
+                          importDialogData.iri === ontology.iri ? "var(--accent-tint)" : "var(--surface-2)",
+                        color: importDialogData.iri === ontology.iri ? "var(--accent)" : "var(--text-primary)",
+                        borderColor: importDialogData.iri === ontology.iri ? "var(--accent)" : "var(--border)",
                       }}
                     >
                       <div className="font-medium">{ontology.label}</div>
@@ -12510,8 +14850,8 @@ const Dashboard: React.FC<DashboardProps> = ({
               </div>
 
               {/* Actions */}
-              <div className="flex justify-between items-center pt-3 border-t" style={{ borderColor: 'var(--border)' }}>
-                <div className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+              <div className="flex justify-between items-center pt-3 border-t" style={{ borderColor: "var(--border)" }}>
+                <div className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>
                   <Info size={10} className="inline mr-1" />
                   The imported ontology will be added to your imports list
                 </div>
@@ -12519,27 +14859,23 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <button
                     onClick={() => setIsImportDialogOpen(false)}
                     className="px-4 py-2 text-xs rounded transition-colors"
-                    style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)' }}
+                    style={{ backgroundColor: "var(--surface-3)", color: "var(--text-primary)" }}
                   >
                     Cancel
                   </button>
                   <button
                     onClick={() => {
                       if (!importDialogData.iri.trim()) {
-                        notificationService.error('Validation Error', 'Import IRI is required.');
+                        notificationService.error("Validation Error", "Import IRI is required.");
                         return;
                       }
-                      handleSaveImport(
-                        importDialogData.iri,
-                        importDialogData.isEdit,
-                        importDialogData.originalIri
-                      );
+                      handleSaveImport(importDialogData.iri, importDialogData.isEdit, importDialogData.originalIri);
                     }}
                     className="px-4 py-2 text-xs rounded transition-colors flex items-center gap-1.5"
-                    style={{ backgroundColor: 'var(--accent)', color: 'var(--on-accent)' }}
+                    style={{ backgroundColor: "var(--accent)", color: "var(--on-accent)" }}
                   >
                     <Download size={12} />
-                    {importDialogData.isEdit ? 'Update Import' : 'Import Ontology'}
+                    {importDialogData.isEdit ? "Update Import" : "Import Ontology"}
                   </button>
                 </div>
               </div>
@@ -12556,7 +14892,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         isOpen={showCitationPicker}
         onClose={() => setShowCitationPicker(false)}
         onSelectCitation={handleCitationSelection}
-        format={codeViewFormat === 'turtle' ? 'turtle' : 'rdfxml'}
+        format={codeViewFormat === "turtle" ? "turtle" : "rdfxml"}
       />
 
       {/* Manual Citation Dialog */}
@@ -12579,7 +14915,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           setConfirmDialog({ ...confirmDialog, isOpen: false });
         }}
       />
-
     </>
   );
 };

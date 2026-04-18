@@ -1,5 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import apiClient from './apiClient';
+import { getApiBaseUrl } from '../config/deploymentConfig';
+
+/**
+ * Resolve the API base URL for plugin service calls.
+ * In VS Code Desktop, window.API_BASE_URL is injected by the extension host.
+ * In standalone browser mode (npm run dev), fall back to the gateway URL
+ * based on deployment type, matching apiClient behavior.
+ */
+function getPluginApiBaseUrl(): string {
+  return getApiBaseUrl();
+}
 
 export interface PluginManifest {
   name: string;
@@ -56,15 +67,15 @@ class PluginLoaderService {
       if (isBuiltIn) {
         // For built-in plugins, just fetch metadata (no .vsix download needed)
         console.log(`[PluginLoader] Installing built-in plugin: ${pluginId}`);
-        
+
         const token = this.getAuthToken();
         const headers: HeadersInit = { 'Content-Type': 'application/json' };
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }
-        
+
         try {
-          const manifestResponse = await fetch(`${window.API_BASE_URL}/api/plugins/${pluginId}`, {
+          const manifestResponse = await fetch(`${getPluginApiBaseUrl()}/api/plugins/${pluginId}`, {
             method: 'GET',
             headers
           });
@@ -101,14 +112,14 @@ class PluginLoaderService {
       } else {
         // For external plugins, download the .vsix package
         console.log(`[PluginLoader] Downloading external plugin: ${pluginId}`);
-        
+
         const token = this.getAuthToken();
         const headers: HeadersInit = {};
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }
-        
-        const response = await fetch(`${window.API_BASE_URL}/api/plugins/${pluginId}/download`, {
+
+        const response = await fetch(`${getPluginApiBaseUrl()}/api/plugins/${pluginId}/download`, {
           method: 'GET',
           headers
         });
@@ -123,8 +134,8 @@ class PluginLoaderService {
         if (token2) {
           headers2['Authorization'] = `Bearer ${token2}`;
         }
-        
-        const manifestResponse = await fetch(`${window.API_BASE_URL}/api/plugins/${pluginId}`, {
+
+        const manifestResponse = await fetch(`${getPluginApiBaseUrl()}/api/plugins/${pluginId}`, {
           method: 'GET',
           headers: headers2
         });
@@ -146,10 +157,10 @@ class PluginLoaderService {
       };
 
       this.installedPlugins.set(pluginId, plugin);
-      
+
       // Persist to localStorage for persistence across sessions
       this.saveToStorage();
-      
+
       // Track installation on backend (best effort - don't fail if this fails)
       try {
         const trackToken = this.getAuthToken();
@@ -157,15 +168,15 @@ class PluginLoaderService {
         if (trackToken) {
           trackHeaders['Authorization'] = `Bearer ${trackToken}`;
         }
-        
-        await fetch(`${window.API_BASE_URL}/api/plugins/${pluginId}/install?version=${manifest.version}`, {
+
+        await fetch(`${getPluginApiBaseUrl()}/api/plugins/${pluginId}/install?version=${manifest.version}`, {
           method: 'POST',
           headers: trackHeaders
         });
       } catch (error) {
         console.warn('[PluginLoader] Failed to track installation on backend:', error);
       }
-      
+
       // Notify listeners
       this.notifyListeners();
 
@@ -183,7 +194,7 @@ class PluginLoaderService {
     if (this.installedPlugins.has(pluginId)) {
       this.installedPlugins.delete(pluginId);
       this.saveToStorage();
-      
+
       // Track uninstallation on backend
       try {
         const uninstallToken = this.getAuthToken();
@@ -191,15 +202,15 @@ class PluginLoaderService {
         if (uninstallToken) {
           uninstallHeaders['Authorization'] = `Bearer ${uninstallToken}`;
         }
-        
-        await fetch(`${window.API_BASE_URL}/api/plugins/${pluginId}/uninstall`, {
+
+        await fetch(`${getPluginApiBaseUrl()}/api/plugins/${pluginId}/uninstall`, {
           method: 'POST',
           headers: uninstallHeaders
         });
       } catch (error) {
         console.warn('[PluginLoader] Failed to track uninstallation:', error);
       }
-      
+
       this.notifyListeners();
       console.log(`[PluginLoader] Uninstalled plugin: ${pluginId}`);
     }
@@ -222,17 +233,17 @@ class PluginLoaderService {
 
     try {
       // Download and dynamically load the plugin bundle
-      const bundleUrl = `${(window as any).API_BASE_URL}/api/plugins/${pluginId}/download`;
-      
+      const bundleUrl = `${getPluginApiBaseUrl()}/api/plugins/${pluginId}/download`;
+
       console.log(`[PluginLoader] 📥 Loading plugin bundle from ${bundleUrl}`);
-      
+
       // Create a script element that loads directly from URL
       // This avoids CSP issues with inline scripts and blob URLs
       const script = document.createElement('script');
       script.src = bundleUrl;
       script.type = 'text/javascript';
       // Note: Don't set crossOrigin when using wildcard CORS (*)
-      
+
       // Wait for script to load
       await new Promise<void>((resolve, reject) => {
         script.onload = () => {
@@ -264,25 +275,25 @@ class PluginLoaderService {
 
       // Get the component from the global scope - UMD export should be directly on window
       const pluginModule = (window as any)[libraryName];
-      
+
       if (!pluginModule) {
         throw new Error(`Plugin ${pluginId} library not found on window`);
       }
 
       // Get the default export (the React component)
       const component = pluginModule.default || pluginModule.WebVOWL || pluginModule;
-      
+
       if (!component) {
         throw new Error(`Plugin ${pluginId} did not export a default component`);
       }
 
       plugin.component = component;
       plugin.loaded = true;
-      
+
       console.log(`[PluginLoader] ✅ Successfully loaded plugin ${pluginId}`);
-      
+
       this.notifyListeners();
-      
+
       return component;
     } catch (error) {
       console.error(`[PluginLoader] Failed to load plugin ${pluginId}:`, error);
@@ -375,7 +386,7 @@ class PluginLoaderService {
       if (!token) {
         throw new Error('Please log in to rate plugins');
       }
-      
+
       await apiClient.post(`/api/plugins/${pluginId}/rate`, {
         stars,
         review,
@@ -405,7 +416,7 @@ class PluginLoaderService {
         // No auth token - user not logged in, return null silently
         return null;
       }
-      
+
       const response = await apiClient.get(`/api/plugins/${pluginId}/my-rating`);
       return response;
     } catch (error: any) {
@@ -428,8 +439,8 @@ class PluginLoaderService {
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
       }
-      
-      const response = await fetch(`${window.API_BASE_URL}/api/plugins/${pluginId}/ratings`, {
+
+      const response = await fetch(`${getPluginApiBaseUrl()}/api/plugins/${pluginId}/ratings`, {
         method: 'GET',
         headers
       });
@@ -455,8 +466,8 @@ class PluginLoaderService {
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
       }
-      
-      const response = await fetch(`${window.API_BASE_URL}/api/plugins/${pluginId}/stats`, {
+
+      const response = await fetch(`${getPluginApiBaseUrl()}/api/plugins/${pluginId}/stats`, {
         method: 'GET',
         headers
       });

@@ -30,6 +30,12 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
         
+        <!-- Actuator (for health checks) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        
         <!-- WebFlux (Reactive WebClient for SPARQL) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -151,13 +157,6 @@
             <groupId>commons-io</groupId>
             <artifactId>commons-io</artifactId>
             <version>2.15.1</version>
-        </dependency>
-
-        <!-- ELK Reasoner - Fast and scalable EL reasoner -->
-        <dependency>
-            <groupId>org.semanticweb.elk</groupId>
-            <artifactId>elk-owlapi</artifactId>
-            <version>0.4.3</version>
         </dependency>
 
         <dependency>

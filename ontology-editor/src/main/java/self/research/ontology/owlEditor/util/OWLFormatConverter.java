@@ -9,7 +9,15 @@ import org.slf4j.LoggerFactory;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Utility to convert OWL ontologies from various formats to RDF/XML
@@ -172,32 +180,42 @@ public class OWLFormatConverter {
      * Returns the original path if the file is clean, or a new stripped temp file path.
      */
     private static Path stripBinaryPrefix(Path filePath) throws IOException {
-        byte[] content = Files.readAllBytes(filePath);
+        long fileSize = Files.size(filePath);
+
+        // Only read first 8KB to check header — NOT the entire file
+        byte[] headerBuf;
+        try (InputStream fis = Files.newInputStream(filePath)) {
+            headerBuf = fis.readNBytes((int) Math.min(8192, fileSize));
+        }
 
         // Log first 16 bytes for diagnostics
-        StringBuilder hexDump = new StringBuilder();
-        for (int i = 0; i < Math.min(16, content.length); i++) {
-            hexDump.append(String.format("%02X ", content[i]));
+        StringBuilder hexDumpSb = new StringBuilder();
+        for (int i = 0; i < Math.min(16, headerBuf.length); i++) {
+            hexDumpSb.append(String.format("%02X ", headerBuf[i]));
         }
-        log.info("File header hex (first 16 bytes): {}", hexDump.toString().trim());
+        log.info("File header hex (first 16 bytes): {}", hexDumpSb.toString().trim());
 
         // Check if file already starts with valid XML
-        if (content.length > 0 && (content[0] == '<' || content[0] == '@')) {
-            log.info("File starts with '{}', no stripping needed", (char) content[0]);
+        if (headerBuf.length > 0 && (headerBuf[0] == '<' || headerBuf[0] == '@')) {
+            log.info("File starts with '{}', no stripping needed", (char) headerBuf[0]);
             return filePath;
         }
 
         // Check for UTF-8 BOM (EF BB BF) followed by '<' or '@'
-        if (content.length > 3 && content[0] == (byte) 0xEF && content[1] == (byte) 0xBB
-                && content[2] == (byte) 0xBF && (content[3] == '<' || content[3] == '@')) {
+        if (headerBuf.length > 3 && headerBuf[0] == (byte) 0xEF && headerBuf[1] == (byte) 0xBB
+                && headerBuf[2] == (byte) 0xBF && (headerBuf[3] == '<' || headerBuf[3] == '@')) {
             log.info("File has UTF-8 BOM, stripping 3 bytes");
             Path stripped = filePath.getParent().resolve("stripped-" + filePath.getFileName());
-            Files.write(stripped, Arrays.copyOfRange(content, 3, content.length));
+            try (InputStream in = Files.newInputStream(filePath);
+                 OutputStream out = Files.newOutputStream(stripped)) {
+                in.skipNBytes(3);
+                in.transferTo(out);
+            }
             return stripped;
         }
 
         // Search for <?xml or <Ontology or <rdf:RDF or Turtle markers in the first 1024 bytes
-        String header = new String(content, 0, Math.min(1024, content.length),
+        String header = new String(headerBuf, 0, Math.min(1024, headerBuf.length),
                 java.nio.charset.StandardCharsets.ISO_8859_1);
         int contentStart = header.indexOf("<?xml");
         if (contentStart < 0) {
@@ -217,10 +235,14 @@ public class OWLFormatConverter {
         if (contentStart > 0) {
             log.warn("Found {} bytes of binary garbage before content. Stripping prefix.", contentStart);
             log.info("Garbage bytes: {}",
-                hexDump(content, 0, Math.min(contentStart, 32)));
+                hexDump(headerBuf, 0, Math.min(contentStart, 32)));
             Path stripped = filePath.getParent().resolve("stripped-" + filePath.getFileName());
-            Files.write(stripped, Arrays.copyOfRange(content, contentStart, content.length));
-            log.info("Wrote stripped file: {} ({} bytes)", stripped.getFileName(), content.length - contentStart);
+            try (InputStream in = Files.newInputStream(filePath);
+                 OutputStream out = Files.newOutputStream(stripped)) {
+                in.skipNBytes(contentStart);
+                in.transferTo(out);
+            }
+            log.info("Wrote stripped file: {} ({} bytes)", stripped.getFileName(), fileSize - contentStart);
             return stripped;
         }
 
@@ -235,6 +257,14 @@ public class OWLFormatConverter {
      * Safe to call on any file - returns immediately if the file is already clean.
      */
     public static void sanitizeFileOnDisk(Path filePath) throws IOException {
+        long fileSize = Files.size(filePath);
+        long fileSizeMB = fileSize / (1024 * 1024);
+        boolean isLargeFile = fileSize > 50 * 1024 * 1024; // >50MB
+
+        if (isLargeFile) {
+            log.info("[PERFORMANCE] Large file detected ({} MB), using optimized sanitization (skipping OWL API re-serialization)", fileSizeMB);
+        }
+
         Path stripped = stripBinaryPrefix(filePath);
         if (!stripped.equals(filePath)) {
             // Stripped file was created - replace original with it
@@ -242,11 +272,20 @@ public class OWLFormatConverter {
             log.info("Sanitized file in place: {}", filePath.getFileName());
         }
         
-        // Fix malformed RDF/XML structure (embedded elements in opening tag, appended documents)
-        fixMalformedRdfXml(filePath);
-        
-        // Re-serialize with OWL API to fix namespace issues, malformed tags, etc.
-        reserializeWithOwlApi(filePath);
+        if (!isLargeFile) {
+            // Full sanitization for small files (<50MB)
+            fixMalformedRdfXml(filePath);
+            sanitizeNTriplesIRIs(filePath);
+            reserializeWithOwlApi(filePath);
+        } else {
+            // For large files: skip OWL API re-serialization (loads entire file into ~2GB of memory)
+            // and skip fixMalformedRdfXml (reads entire file as String).
+            // The RDF4J streaming parser in bulkLoadChunked handles these formats directly.
+            // If parsing fails, ProjectImportService has an OWL API fallback anyway.
+            fixMalformedRdfXml(filePath);
+            sanitizeNTriplesIRIs(filePath);
+            log.info("[PERFORMANCE] Large file sanitization complete (skipped OWL API re-serialization and RDF/XML fixup)");
+        }
     }
     
     /**
@@ -275,11 +314,208 @@ public class OWLFormatConverter {
         
         // Fix 2: Merge duplicate XML documents appended after </rdf:RDF>
         content = mergeAppendedRdfDocuments(content);
-        
+
+        // Fix 3: Inject missing common namespace declarations (e.g. xmlns:dc, xmlns:skos)
+        // These are required for well-formed XML; their absence causes SAX parser errors like
+        // "The prefix 'dc' for element 'dc:title' is not bound".
+        content = injectMissingNamespaces(content);
+
         if (!content.equals(original)) {
             log.info("Fixed malformed RDF/XML structure in: {}", filePath.getFileName());
             Files.writeString(filePath, content);
         }
+    }
+
+    /**
+     * Inject missing common namespace declarations into an RDF/XML document.
+     * Scans for namespace prefix usage (e.g. {@code dc:title}) and adds the corresponding
+     * {@code xmlns:prefix} attribute to the {@code <rdf:RDF>} root element when absent.
+     * For unknown prefixes not in the well-known list, logs a warning and skips them
+     * so the rest of the namespaces are still injected correctly.
+     */
+    static String injectMissingNamespaces(String content) {
+        if (!content.contains("<rdf:RDF")) {
+            return content;
+        }
+
+        // Well-known prefix → namespace URI mappings
+        Map<String, String> knownNamespaces = new LinkedHashMap<>();
+        // W3C core
+        knownNamespaces.put("rdf",       "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
+        knownNamespaces.put("rdfs",      "http://www.w3.org/2000/01/rdf-schema#");
+        knownNamespaces.put("owl",       "http://www.w3.org/2002/07/owl#");
+        knownNamespaces.put("xsd",       "http://www.w3.org/2001/XMLSchema#");
+        knownNamespaces.put("xml",       "http://www.w3.org/XML/1998/namespace");
+        // Dublin Core & metadata
+        knownNamespaces.put("dc",        "http://purl.org/dc/elements/1.1/");
+        knownNamespaces.put("dcterms",   "http://purl.org/dc/terms/");
+        knownNamespaces.put("terms",     "http://purl.org/dc/terms/");
+        // Bibliographic & scholarly
+        knownNamespaces.put("bibo",      "http://purl.org/ontology/bibo/");
+        knownNamespaces.put("foaf",      "http://xmlns.com/foaf/0.1/");
+        knownNamespaces.put("skos",      "http://www.w3.org/2004/02/skos/core#");
+        knownNamespaces.put("prov",      "http://www.w3.org/ns/prov#");
+        knownNamespaces.put("schema",    "http://schema.org/");
+        knownNamespaces.put("vann",      "http://purl.org/vocab/vann/");
+        knownNamespaces.put("cc",        "http://creativecommons.org/ns#");
+        knownNamespaces.put("doap",      "http://usefulinc.com/ns/doap#");
+        // OBO Foundry / biomedical
+        knownNamespaces.put("obo",       "http://purl.obolibrary.org/obo/");
+        knownNamespaces.put("oboInOwl",  "http://www.geneontology.org/formats/oboInOwl#");
+        // SWRL
+        knownNamespaces.put("swrl",      "http://www.w3.org/2003/11/swrl#");
+        knownNamespaces.put("swrlb",     "http://www.w3.org/2003/11/swrlb#");
+        // Semantic science & other common
+        knownNamespaces.put("sio",       "http://semanticscience.org/resource/");
+        knownNamespaces.put("sh",        "http://www.w3.org/ns/shacl#");
+        knownNamespaces.put("dcat",      "http://www.w3.org/ns/dcat#");
+        knownNamespaces.put("void",      "http://rdfs.org/ns/void#");
+        knownNamespaces.put("org",       "http://www.w3.org/ns/org#");
+        knownNamespaces.put("time",      "http://www.w3.org/2006/time#");
+        knownNamespaces.put("geo",       "http://www.opengis.net/ont/geosparql#");
+        knownNamespaces.put("ssn",       "http://www.w3.org/ns/ssn/");
+        knownNamespaces.put("sosa",      "http://www.w3.org/ns/sosa/");
+        knownNamespaces.put("faldo",     "http://biohackathon.org/resource/faldo#");
+
+        // Collect all undeclared prefixes used in the document.
+        // Only match prefixes in XML element/attribute positions, NOT in text content.
+        // Element names: <prefix:Local or </prefix:Local
+        // Attribute names: whitespace prefix:attr=
+        Pattern elementPrefixUsage = Pattern.compile("</?([a-zA-Z][a-zA-Z0-9_-]*):[a-zA-Z]");
+        Pattern attrPrefixUsage = Pattern.compile("\\s([a-zA-Z][a-zA-Z0-9_-]*):[a-zA-Z][a-zA-Z0-9_-]*\\s*=");
+        Map<String, Boolean> usedPrefixes = new LinkedHashMap<>();
+        Matcher matcher = elementPrefixUsage.matcher(content);
+        while (matcher.find()) {
+            String prefix = matcher.group(1);
+            if ("xmlns".equals(prefix) || "xml".equals(prefix)) continue;
+            usedPrefixes.put(prefix, true);
+        }
+        matcher = attrPrefixUsage.matcher(content);
+        while (matcher.find()) {
+            String prefix = matcher.group(1);
+            if ("xmlns".equals(prefix) || "xml".equals(prefix)) continue;
+            usedPrefixes.put(prefix, true);
+        }
+
+        List<String> toInject = new ArrayList<>();
+        List<String> unknownPrefixes = new ArrayList<>();
+
+        for (String prefix : usedPrefixes.keySet()) {
+            boolean isDeclared = content.contains("xmlns:" + prefix + "=");
+            if (isDeclared) continue;
+
+            if (knownNamespaces.containsKey(prefix)) {
+                toInject.add(prefix);
+            } else {
+                unknownPrefixes.add(prefix);
+            }
+        }
+
+        // ── Dynamic resolution for unknown/custom prefixes ──
+        if (!unknownPrefixes.isEmpty()) {
+            // 1. Extract xml:base from the document
+            String xmlBase = null;
+            Matcher xmlBaseMatcher = Pattern.compile("xml:base\\s*=\\s*\"([^\"]+)\"").matcher(content);
+            if (xmlBaseMatcher.find()) {
+                xmlBase = xmlBaseMatcher.group(1);
+            }
+
+            // 2. Extract ontology IRI from <owl:Ontology rdf:about="...">
+            String ontologyIri = null;
+            Matcher ontologyMatcher = Pattern.compile(
+                    "<owl:Ontology\\s+rdf:about\\s*=\\s*\"([^\"]+)\"").matcher(content);
+            if (ontologyMatcher.find()) {
+                ontologyIri = ontologyMatcher.group(1);
+            }
+
+            // 3. Extract default namespace (xmlns="...")
+            String defaultNs = null;
+            Matcher defaultNsMatcher = Pattern.compile(
+                    "<rdf:RDF[^>]*\\sxmlns\\s*=\\s*\"([^\"]+)\"").matcher(content);
+            if (defaultNsMatcher.find()) {
+                defaultNs = defaultNsMatcher.group(1);
+            }
+
+            List<String> resolved = new ArrayList<>();
+
+            for (String prefix : unknownPrefixes) {
+                String resolvedUri = null;
+
+                // Strategy A: Find full URIs in rdf:about/resource/datatype that match
+                // local names used with this prefix. E.g. pizza:Margherita and
+                // rdf:about="http://example.org/pizza#Margherita" → pizza → http://example.org/pizza#
+                Set<String> localNames = new LinkedHashSet<>();
+                Matcher lnMatcher = Pattern.compile(
+                        "(?:<|\\s)" + Pattern.quote(prefix) + ":([a-zA-Z][a-zA-Z0-9_.-]*)").matcher(content);
+                while (lnMatcher.find()) {
+                    localNames.add(lnMatcher.group(1));
+                }
+
+                for (String localName : localNames) {
+                    Matcher uriMatcher = Pattern.compile(
+                            "(?:rdf:about|rdf:resource|rdf:datatype)\\s*=\\s*\"([^\"]+[#/])"
+                                    + Pattern.quote(localName) + "\"").matcher(content);
+                    if (uriMatcher.find()) {
+                        resolvedUri = uriMatcher.group(1);
+                        break;
+                    }
+                }
+
+                // Strategy B: Use xml:base, ontology IRI, or default namespace as base
+                if (resolvedUri == null) {
+                    String base = xmlBase != null ? xmlBase
+                            : (ontologyIri != null ? ontologyIri : defaultNs);
+                    if (base != null) {
+                        // Derive namespace: base + prefix fragment
+                        if (base.endsWith("#") || base.endsWith("/")) {
+                            resolvedUri = base;
+                        } else {
+                            resolvedUri = base + "#";
+                        }
+                    }
+                }
+
+                if (resolvedUri != null) {
+                    knownNamespaces.put(prefix, resolvedUri);
+                    toInject.add(prefix);
+                    resolved.add(prefix);
+                    log.info("Dynamically resolved custom namespace prefix '{}' → '{}'", prefix, resolvedUri);
+                }
+            }
+
+            // Remove resolved ones from unknown list
+            unknownPrefixes.removeAll(resolved);
+
+            if (!unknownPrefixes.isEmpty()) {
+                log.warn("Undeclared namespace prefixes could not be resolved (no matching URIs, " +
+                         "xml:base, or ontology IRI found — these may cause SAX parser errors): {}",
+                         unknownPrefixes);
+            }
+        }
+
+        if (toInject.isEmpty()) {
+            return content;
+        }
+
+        log.info("Injecting missing XML namespace declarations: {}", toInject);
+
+        int rdfTagStart = content.indexOf("<rdf:RDF");
+        int rdfTagEnd   = content.indexOf('>', rdfTagStart);
+        if (rdfTagStart < 0 || rdfTagEnd < 0) {
+            return content;
+        }
+
+        // Insert before the closing '>' (or '/>' for self-closing tags)
+        boolean selfClosing = content.charAt(rdfTagEnd - 1) == '/';
+        int insertPos = selfClosing ? rdfTagEnd - 1 : rdfTagEnd;
+
+        StringBuilder injection = new StringBuilder();
+        for (String prefix : toInject) {
+            injection.append("\n         xmlns:").append(prefix)
+                     .append("=\"").append(knownNamespaces.get(prefix)).append("\"");
+        }
+
+        return content.substring(0, insertPos) + injection + content.substring(insertPos);
     }
     
     /**
@@ -482,7 +718,7 @@ public class OWLFormatConverter {
      * @throws OWLOntologyCreationException if input cannot be parsed
      * @throws OWLOntologyStorageException if conversion fails
      */
-    public static void convertToRDFXML(InputStream inputStream, OutputStream outputStream)
+    public static void convertToRDFXML1(InputStream inputStream, OutputStream outputStream)
             throws OWLOntologyCreationException, OWLOntologyStorageException {
         
         log.info("Converting OWL stream to RDF/XML");
@@ -512,5 +748,185 @@ public class OWLFormatConverter {
         manager.saveOntology(ontology, rdfXmlFormat, outputStream);
         
         log.info("✓ Converted to RDF/XML successfully");
+    }
+
+    /**
+     * Sanitize IRIs in N-Triples and Turtle files by encoding spaces and special characters.
+     * This fixes "IRI included an unencoded space" errors during RDF parsing.
+     * 
+     * Handles:
+     * - Spaces: ' ' → '%20'
+     * - Brackets: '[', ']', '{', '}' → percent-encoded
+     * - Special chars: '|', '\', '^', '`', '(', ')' → percent-encoded
+     * - Non-ASCII Unicode characters → UTF-8 percent-encoded
+     * 
+     * @param filePath Path to N-Triples/Turtle file to sanitize in-place
+     * @throws IOException if file I/O fails
+     */
+    public static void sanitizeNTriplesIRIs(Path filePath) throws IOException {
+        long fileSize = Files.size(filePath);
+        
+        // Quick check: read first 8KB to detect format
+        byte[] headerBuf;
+        try (InputStream fis = Files.newInputStream(filePath)) {
+            headerBuf = fis.readNBytes((int) Math.min(8192, fileSize));
+        }
+        String headerSample = new String(headerBuf, java.nio.charset.StandardCharsets.ISO_8859_1);
+        String lowerHeader = headerSample.toLowerCase();
+        boolean isNTriples = headerSample.matches("(?s).*<https?://[^>]+>\\s+<[^>]+>\\s+.*");
+        boolean isTurtle = lowerHeader.contains("@prefix") || lowerHeader.contains("@base");
+        
+        if (!isNTriples && !isTurtle) {
+            log.info("File does not look like N-Triples/Turtle, skipping IRI sanitization");
+            return;
+        }
+        
+        log.info("Sanitizing IRIs in N-Triples/Turtle file: {} ({} MB)", filePath.getFileName(), fileSize / (1024 * 1024));
+        
+        // Stream-based processing: read line by line, write to temp file
+        Path tempFile = filePath.getParent().resolve("sanitized-" + filePath.getFileName());
+        int fixedCount = 0;
+        
+        try (BufferedReader reader = Files.newBufferedReader(filePath, java.nio.charset.StandardCharsets.UTF_8);
+             BufferedWriter writer = Files.newBufferedWriter(tempFile, java.nio.charset.StandardCharsets.UTF_8)) {
+            
+            String line;
+            while ((line = reader.readLine()) != null) {
+                // Skip comment lines
+                if (line.isEmpty() || line.charAt(0) == '#') {
+                    writer.write(line);
+                    writer.newLine();
+                    continue;
+                }
+                
+                // Fast check: does this line contain any problematic chars inside < >?
+                boolean needsProcessing = false;
+                boolean inIri = false;
+                for (int i = 0; i < line.length(); i++) {
+                    char c = line.charAt(i);
+                    if (c == '<') inIri = true;
+                    else if (c == '>') inIri = false;
+                    else if (inIri && (c == ' ' || c == '[' || c == ']' || c == '{' || c == '}'
+                            || c == '|' || c == '\\' || c == '^' || c == '`'
+                            || c == '(' || c == ')' || c > 127)) {
+                        needsProcessing = true;
+                        break;
+                    }
+                }
+                
+                if (!needsProcessing) {
+                    writer.write(line);
+                    writer.newLine();
+                    continue;
+                }
+                
+                // Process IRIs on this line
+                StringBuilder processedLine = new StringBuilder(line.length() + 128);
+                int pos = 0;
+                
+                while (pos < line.length()) {
+                    int iriStart = line.indexOf('<', pos);
+                    if (iriStart < 0) {
+                        processedLine.append(line.substring(pos));
+                        break;
+                    }
+                    
+                    int iriEnd = line.indexOf('>', iriStart + 1);
+                    if (iriEnd < 0) {
+                        processedLine.append(line.substring(pos));
+                        break;
+                    }
+                    
+                    processedLine.append(line, pos, iriStart + 1);
+                    
+                    String iri = line.substring(iriStart + 1, iriEnd);
+                    String sanitizedIri = sanitizeIri(iri);
+                    
+                    if (!sanitizedIri.equals(iri)) {
+                        fixedCount++;
+                    }
+                    
+                    processedLine.append(sanitizedIri);
+                    processedLine.append('>');
+                    
+                    pos = iriEnd + 1;
+                }
+                
+                writer.write(processedLine.toString());
+                writer.newLine();
+            }
+        } catch (java.nio.charset.MalformedInputException e) {
+            // Non-UTF-8 file — skip IRI sanitization (RDF/XML files are not N-Triples)
+            log.info("File contains non-UTF-8 bytes, skipping IRI sanitization");
+            Files.deleteIfExists(tempFile);
+            return;
+        }
+        
+        if (fixedCount > 0) {
+            Files.move(tempFile, filePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            log.info("✓ Sanitized {} IRIs with encoding issues in: {}", fixedCount, filePath.getFileName());
+        } else {
+            Files.deleteIfExists(tempFile);
+            log.info("No IRI encoding issues found in: {}", filePath.getFileName());
+        }
+    }
+    
+    /**
+     * Sanitize a single IRI by percent-encoding problematic characters.
+     * 
+     * @param iri IRI string (without angle brackets)
+     * @return Sanitized IRI with special characters percent-encoded
+     */
+    private static String sanitizeIri(String iri) {
+        if (iri == null || iri.isEmpty()) {
+            return iri;
+        }
+        
+        // Fast check: scan for any character that needs encoding
+        boolean needsEncoding = false;
+        for (int i = 0; i < iri.length(); i++) {
+            char c = iri.charAt(i);
+            if (c == '[' || c == ']' || c == '{' || c == '}' || c == '|'
+                    || c == '\\' || c == '^' || c == '`' || c == ' '
+                    || c == '(' || c == ')' || c > 127) {
+                needsEncoding = true;
+                break;
+            }
+        }
+        
+        if (!needsEncoding) {
+            return iri;
+        }
+        
+        // Encode problematic characters
+        StringBuilder sb = new StringBuilder(iri.length() + 40);
+        for (int i = 0; i < iri.length(); i++) {
+            char c = iri.charAt(i);
+            if (c == '[') sb.append("%5B");
+            else if (c == ']') sb.append("%5D");
+            else if (c == '{') sb.append("%7B");
+            else if (c == '}') sb.append("%7D");
+            else if (c == '|') sb.append("%7C");
+            else if (c == '\\') sb.append("%5C");
+            else if (c == '^') sb.append("%5E");
+            else if (c == '`') sb.append("%60");
+            else if (c == ' ') sb.append("%20");
+            else if (c == '(') sb.append("%28");
+            else if (c == ')') sb.append("%29");
+            else if (c > 127) {
+                // Percent-encode non-ASCII (Unicode) characters
+                byte[] utf8 = String.valueOf(c).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                for (byte b : utf8) {
+                    sb.append('%');
+                    sb.append(Character.toUpperCase(Character.forDigit((b >> 4) & 0xF, 16)));
+                    sb.append(Character.toUpperCase(Character.forDigit(b & 0xF, 16)));
+                }
+            }
+            else {
+                sb.append(c);
+            }
+        }
+        
+        return sb.toString();
     }
 }

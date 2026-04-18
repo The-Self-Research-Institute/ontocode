@@ -218,6 +218,41 @@ public class ProjectService {
     }
 
     /**
+     * Update a member's role in a project
+     */
+    public Project updateMemberRole(String projectId, String userId, String targetUserId, String newRole) {
+        Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
+        if (projectOpt.isEmpty()) {
+            throw new IllegalArgumentException("Project not found");
+        }
+
+        Project project = projectOpt.get();
+
+        // Only project owner or workspace owner can update roles
+        if (!canManageProject(project, userId)) {
+            throw new SecurityException("Only project owner or workspace owner can update member roles");
+        }
+
+        // Cannot change the owner's role
+        if (project.getOwnerId().equals(targetUserId)) {
+            throw new IllegalArgumentException("Cannot change the project owner's role");
+        }
+
+        // Validate role
+        if (!List.of("ADMIN", "EDITOR", "VIEWER").contains(newRole)) {
+            throw new IllegalArgumentException("Invalid role. Must be ADMIN, EDITOR, or VIEWER");
+        }
+
+        Project.ProjectMember member = project.getMember(targetUserId);
+        if (member == null) {
+            throw new IllegalArgumentException("User is not a member of this project");
+        }
+
+        member.setRole(newRole);
+        return projectRepository.save(project);
+    }
+
+    /**
      * Remove a member from a project
      */
     public Project removeMember(String projectId, String userId, String targetUserId) {
@@ -337,7 +372,25 @@ public class ProjectService {
      */
     public boolean hasAccess(String projectId, String userId) {
         Optional<Project> projectOpt = projectRepository.findByProjectId(projectId);
-        return projectOpt.isPresent() && projectOpt.get().hasMember(userId);
+        if (projectOpt.isEmpty()) {
+            return false;
+        }
+        Project project = projectOpt.get();
+        // Check direct project membership first
+        if (project.hasMember(userId)) {
+            return true;
+        }
+        // Workspace owners and admins have access to all projects in their workspace
+        Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(project.getWorkspaceId());
+        if (workspaceOpt.isPresent()) {
+            Workspace workspace = workspaceOpt.get();
+            Workspace.WorkspaceMember wsMember = workspace.getMember(userId);
+            if (wsMember != null) {
+                Workspace.WorkspaceRole role = wsMember.getRole();
+                return role == Workspace.WorkspaceRole.OWNER || role == Workspace.WorkspaceRole.ADMIN;
+            }
+        }
+        return false;
     }
 
     /**
@@ -349,7 +402,21 @@ public class ProjectService {
         }
         
         Project.ProjectMember member = project.getMember(userId);
-        return member != null && ("OWNER".equals(member.getRole()) || "EDITOR".equals(member.getRole()));
+        if (member != null) {
+            String role = member.getRole();
+            return "OWNER".equals(role) || "ADMIN".equals(role) || "EDITOR".equals(role);
+        }
+        
+        // Workspace owners/admins also have edit permission
+        Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(project.getWorkspaceId());
+        if (workspaceOpt.isPresent()) {
+            Workspace.WorkspaceMember wsMember = workspaceOpt.get().getMember(userId);
+            if (wsMember != null) {
+                Workspace.WorkspaceRole wsRole = wsMember.getRole();
+                return wsRole == Workspace.WorkspaceRole.OWNER || wsRole == Workspace.WorkspaceRole.ADMIN;
+            }
+        }
+        return false;
     }
 
     /**
@@ -474,6 +541,15 @@ public class ProjectService {
         // Check if user has edit permission
         if (!hasEditPermission(project, userId)) {
             throw new SecurityException("You don't have permission to remove files from this project");
+        }
+        
+        // Editors can only delete their own files
+        Project.ProjectMember member = project.getMember(userId);
+        if (member != null && "EDITOR".equals(member.getRole()) && !project.getOwnerId().equals(userId)) {
+            Project.FileMetadataInfo fileInfo = project.getFile(fileId);
+            if (fileInfo != null && fileInfo.getUploadedBy() != null && !fileInfo.getUploadedBy().equals(userId)) {
+                throw new SecurityException("Editors can only delete files they uploaded");
+            }
         }
         
         // Mark file as deleted in project metadata
