@@ -320,10 +320,91 @@ public class OWLFormatConverter {
         // "The prefix 'dc' for element 'dc:title' is not bound".
         content = injectMissingNamespaces(content);
 
+        // Fix 4: Remove control characters from IRI-bearing attributes (rdf:about, rdf:resource, etc.)
+        // GraphDB throws InvalidValueException for IRIs containing control chars (0x00-0x1F, 0x7F).
+        // This must happen before any upload path (server-side, direct, or chunked).
+        content = sanitizeRdfXmlIris(content);
+
         if (!content.equals(original)) {
             log.info("Fixed malformed RDF/XML structure in: {}", filePath.getFileName());
             Files.writeString(filePath, content);
         }
+    }
+
+    /**
+     * Sanitize IRIs in RDF/XML attribute values by percent-encoding control characters
+     * and other characters that GraphDB rejects (InvalidValueException).
+     * Targets: rdf:about, rdf:resource, rdf:datatype, rdf:ID, xml:base, xmlns:* values.
+     */
+    static String sanitizeRdfXmlIris(String content) {
+        // Match IRI-bearing attributes in RDF/XML
+        // rdf:about="...", rdf:resource="...", rdf:datatype="...", rdf:ID="..."
+        Pattern iriAttrPattern = Pattern.compile(
+            "(rdf:about|rdf:resource|rdf:datatype|rdf:ID|xml:base)\\s*=\\s*\"([^\"]*)\"");
+        
+        Matcher m = iriAttrPattern.matcher(content);
+        StringBuilder sb = null;
+        int lastEnd = 0;
+        int fixCount = 0;
+        
+        while (m.find()) {
+            String attrValue = m.group(2);
+            String sanitized = sanitizeIriValue(attrValue);
+            if (!sanitized.equals(attrValue)) {
+                if (sb == null) {
+                    sb = new StringBuilder(content.length() + 256);
+                }
+                sb.append(content, lastEnd, m.start(2));
+                sb.append(sanitized);
+                lastEnd = m.end(2);
+                fixCount++;
+            }
+        }
+        
+        if (sb == null) {
+            return content;
+        }
+        
+        sb.append(content, lastEnd, content.length());
+        log.info("Sanitized {} IRI attribute values in RDF/XML (control chars / invalid chars)", fixCount);
+        return sb.toString();
+    }
+
+    /**
+     * Percent-encode control characters and other GraphDB-rejected characters in an IRI value.
+     */
+    private static String sanitizeIriValue(String iri) {
+        boolean needsEncoding = false;
+        for (int i = 0; i < iri.length(); i++) {
+            char c = iri.charAt(i);
+            if (c < 0x20 || c == 0x7F || c == ' ' || c == '[' || c == ']'
+                    || c == '{' || c == '}' || c == '|' || c == '\\' || c == '^' || c == '`') {
+                needsEncoding = true;
+                break;
+            }
+        }
+        if (!needsEncoding) return iri;
+        
+        StringBuilder sb = new StringBuilder(iri.length() + 40);
+        for (int i = 0; i < iri.length(); i++) {
+            char c = iri.charAt(i);
+            if (c < 0x20 || c == 0x7F) {
+                sb.append('%');
+                sb.append(Character.toUpperCase(Character.forDigit((c >> 4) & 0xF, 16)));
+                sb.append(Character.toUpperCase(Character.forDigit(c & 0xF, 16)));
+            }
+            else if (c == ' ') sb.append("%20");
+            else if (c == '[') sb.append("%5B");
+            else if (c == ']') sb.append("%5D");
+            else if (c == '{') sb.append("%7B");
+            else if (c == '}') sb.append("%7D");
+            else if (c == '|') sb.append("%7C");
+            else if (c == '\\') sb.append("%5C");
+            else if (c == '^') sb.append("%5E");
+            else if (c == '`') sb.append("%60");
+            else sb.append(c);
+        }
+        return sb.toString();
     }
 
     /**
@@ -806,7 +887,8 @@ public class OWLFormatConverter {
                     char c = line.charAt(i);
                     if (c == '<') inIri = true;
                     else if (c == '>') inIri = false;
-                    else if (inIri && (c == ' ' || c == '[' || c == ']' || c == '{' || c == '}'
+                    else if (inIri && (c < 0x20 || c == 0x7F
+                            || c == ' ' || c == '[' || c == ']' || c == '{' || c == '}'
                             || c == '|' || c == '\\' || c == '^' || c == '`'
                             || c == '(' || c == ')' || c > 127)) {
                         needsProcessing = true;
@@ -886,7 +968,8 @@ public class OWLFormatConverter {
         boolean needsEncoding = false;
         for (int i = 0; i < iri.length(); i++) {
             char c = iri.charAt(i);
-            if (c == '[' || c == ']' || c == '{' || c == '}' || c == '|'
+            if (c < 0x20 || c == 0x7F
+                    || c == '[' || c == ']' || c == '{' || c == '}' || c == '|'
                     || c == '\\' || c == '^' || c == '`' || c == ' '
                     || c == '(' || c == ')' || c > 127) {
                 needsEncoding = true;
@@ -902,7 +985,13 @@ public class OWLFormatConverter {
         StringBuilder sb = new StringBuilder(iri.length() + 40);
         for (int i = 0; i < iri.length(); i++) {
             char c = iri.charAt(i);
-            if (c == '[') sb.append("%5B");
+            // Control characters (0x00-0x1F, 0x7F) — GraphDB rejects these
+            if (c < 0x20 || c == 0x7F) {
+                sb.append('%');
+                sb.append(Character.toUpperCase(Character.forDigit((c >> 4) & 0xF, 16)));
+                sb.append(Character.toUpperCase(Character.forDigit(c & 0xF, 16)));
+            }
+            else if (c == '[') sb.append("%5B");
             else if (c == ']') sb.append("%5D");
             else if (c == '{') sb.append("%7B");
             else if (c == '}') sb.append("%7D");

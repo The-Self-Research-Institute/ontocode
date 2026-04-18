@@ -18,7 +18,6 @@ import { optimizedUpload, shouldCompressFile, ChunkMetadata } from './utils/uplo
 // Configure axios for browser compatibility - disable automatic decompression
 // to avoid zlib issues in web workers
 axios.defaults.decompress = false;
-axios.defaults.headers.common['Accept-Encoding'] = 'identity';
 
 /**
  * Utility: Convert Uint8Array to base64 string (web-compatible)
@@ -90,9 +89,9 @@ function getUrlsForDeployment(deploymentType: 'self-hosted' | 'cloud'): { gatewa
         };
     } else {
         return {
-            gateway: process.env.CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org',
-            editor: process.env.CLOUD_EDITOR_URL || 'https://ontocodeapi.selfresearch.org',
-            plugin: process.env.CLOUD_PLUGIN_URL || 'https://ontocodeapi.selfresearch.org:8087'
+            gateway: process.env.CLOUD_GATEWAY_URL || 'http://localhost:80',
+            editor: process.env.CLOUD_EDITOR_URL || 'http://localhost:80',
+            plugin: process.env.CLOUD_PLUGIN_URL || 'http://localhost:8087'
         };
     }
 }
@@ -1601,9 +1600,11 @@ class OntoCodePanel {
                 const FormData = require('form-data');
                 const form = new FormData();
                 // Reconstruct the file from the transferred byte array
-                if (body._fileBuffer && body._fileFieldName) {
-                    const buf = Buffer.from(body._fileBuffer);
-                    console.log(`[Proxy] Reconstructing FormData: file=${body._originalFileName}, size=${buf.length}, type=${body.fileType}`);
+                if ((body._fileBase64 || body._fileBuffer) && body._fileFieldName) {
+                    const buf = body._fileBase64
+                        ? Buffer.from(body._fileBase64, 'base64')
+                        : Buffer.from(body._fileBuffer);
+                    console.log(`[Proxy] Reconstructing FormData: file=${body._originalFileName}, size=${buf.length}, type=${body.fileType}, encoding=${body._fileBase64 ? 'base64' : 'array'}`);
                     form.append(body._fileFieldName, buf, {
                         filename: body._originalFileName || 'upload',
                         contentType: body.fileType || 'application/octet-stream',
@@ -2313,8 +2314,10 @@ class OntoCodePanel {
             }
 
             // Optional: Compress file if it's a compressible format and > 1MB
+            // Skip compression for localhost uploads where there's no network benefit
             let dataToUpload = buffer;
-            const enableCompression = shouldCompressFile(fileName) && buffer.length > 1024 * 1024;
+            const isLocalUpload = GATEWAY_URL.includes('localhost') || GATEWAY_URL.includes('127.0.0.1');
+            const enableCompression = !isLocalUpload && shouldCompressFile(fileName) && buffer.length > 1024 * 1024;
 
             if (enableCompression) {
                 console.log(`[OntoCode] File is ${(buffer.length / (1024 * 1024)).toFixed(2)}MB, attempting compression...`);
@@ -2526,8 +2529,13 @@ class OntoCodePanel {
 
                 vscode.window.showInformationMessage(message);
 
+                // For replacements, show loading state but do NOT send fileReady yet.
+                // The import is async — sending fileReady before COMPLETED causes the
+                // Dashboard to fetch data while status is still PROCESSING, which fails.
+                // The fallback status polling below (or WebSocket IMPORT_COMPLETED) will
+                // send fileReady once the import actually completes.
                 if (isReplacement && this._isWebviewReady) {
-                    this.postMessage({ type: 'fileReady', projectId: uploadProjectId });
+                    this.postMessage({ type: 'showLoading', projectId: uploadProjectId, fileName: finalFileName });
                 }
 
                 // Fallback: check status and trigger fileReady if COMPLETED (covers cases where WebSocket misses IMPORT_COMPLETED)
@@ -3483,9 +3491,9 @@ class OntoCodePanel {
                     SELF_HOSTED_GATEWAY_URL: '${process.env.SELF_HOSTED_GATEWAY_URL || 'http://localhost:80'}',
                     SELF_HOSTED_EDITOR_URL: '${process.env.SELF_HOSTED_EDITOR_URL || 'http://localhost:80'}',
                     SELF_HOSTED_PLUGIN_URL: '${process.env.SELF_HOSTED_PLUGIN_URL || 'http://localhost:8087'}',
-                    CLOUD_GATEWAY_URL: '${process.env.CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org'}',
-                    CLOUD_EDITOR_URL: '${process.env.CLOUD_EDITOR_URL || 'https://ontocodeapi.selfresearch.org'}',
-                    CLOUD_PLUGIN_URL: '${process.env.CLOUD_PLUGIN_URL || 'https://ontocodeapi.selfresearch.org:8087'}',
+                    CLOUD_GATEWAY_URL: '${process.env.CLOUD_GATEWAY_URL || 'http://localhost:80'}',
+                    CLOUD_EDITOR_URL: '${process.env.CLOUD_EDITOR_URL || 'http://localhost:80'}',
+                    CLOUD_PLUGIN_URL: '${process.env.CLOUD_PLUGIN_URL || 'http://localhost:8087'}',
                     DEFAULT_DEPLOYMENT_TYPE: '${process.env.DEFAULT_DEPLOYMENT_TYPE || 'cloud'}',
                     IS_WEB_EXTENSION: ${isWebExtension}
                 };
@@ -3525,7 +3533,7 @@ class OntoCodePanel {
                 script-src 'nonce-${nonce}' https://cdn.tailwindcss.com https://unpkg.com https://aistudiocdn.com ${webview.cspSource} 'unsafe-eval' ${GATEWAY_URL} ${PLUGIN_SERVICE_URL} http://localhost:* http://127.0.0.1:*;
                 style-src ${webview.cspSource} 'unsafe-inline' https://unpkg.com https://cdn.tailwindcss.com;
                 font-src ${webview.cspSource} https://unpkg.com data:; 
-                connect-src 'self' https://ontocodeapi.selfresearch.org https: wss: https://ontocodeapi.selfresearch.org:* ws://13.218.153.101:* http://localhost:* http://127.0.0.1:* ${GATEWAY_URL} ${PLUGIN_SERVICE_URL};
+                connect-src 'self' https://ontocodeapi.selfresearch.org https: wss: ws: https://ontocodeapi.selfresearch.org:* ws://13.218.153.101:* http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* ${GATEWAY_URL} ${PLUGIN_SERVICE_URL};
             ">
             ${vscodeApiInjectionScript}`
         );

@@ -43,6 +43,18 @@ public class OntologyQueryController {
         }
     }
 
+    @GetMapping("/classes/all/{projectId:.+}")
+    public ResponseEntity<?> allClasses(@PathVariable String projectId,
+                                        @RequestParam(defaultValue = "10000") int limit) {
+        try {
+            return ResponseEntity.ok(Map.of("success", true, "classes",
+                    queryService.allClasses(projectId, limit)));
+        } catch (Exception e) {
+            return ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("success", false, "error", "Query timed out or failed: " + e.getMessage()));
+        }
+    }
+
     @GetMapping("/classes/children/{projectId:.+}")
     public ResponseEntity<?> children(@PathVariable String projectId,
                                       @RequestParam String parentIri,

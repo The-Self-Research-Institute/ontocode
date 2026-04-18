@@ -107,6 +107,69 @@ public class OntologyQueryService {
 
 
     /**
+     * Get ALL classes (including children) in a single SPARQL query.
+     * Used by the graph visualization to render the full class hierarchy.
+     */
+    @Cacheable(value = "allClasses", key = "#projectId + '_' + #limit")
+    public List<OntologyDto.TreeNode> allClasses(String projectId, int limit) {
+        long startTime = System.currentTimeMillis();
+
+        String query = PREFIXES + """
+            SELECT DISTINCT ?c ?label ?description ?parent
+            WHERE {
+              {
+                ?c a owl:Class .
+              } UNION {
+                ?c rdfs:subClassOf ?any .
+              } UNION {
+                ?any rdfs:subClassOf ?c .
+              }
+              FILTER(isIRI(?c))
+              FILTER(?c != <http://www.w3.org/2002/07/owl#Thing>)
+              OPTIONAL { ?c rdfs:label ?label }
+              OPTIONAL { ?c rdfs:comment ?description }
+              OPTIONAL {
+                ?c rdfs:subClassOf ?parent .
+                FILTER(isIRI(?parent) && ?parent != ?c)
+              }
+            }
+            ORDER BY COALESCE(LCASE(?label), STR(?c))
+            LIMIT %d
+            """.formatted(Math.max(1, limit));
+
+        TupleQueryResult rs = datasetService.execSelect(projectId, query);
+        Map<String, OntologyDto.TreeNode> nodeMap = new LinkedHashMap<>();
+
+        while (rs.hasNext()) {
+            BindingSet sol = rs.next();
+            String iri = resource(sol, "c");
+            if (iri == null) continue;
+
+            OntologyDto.TreeNode node = nodeMap.get(iri);
+            if (node == null) {
+                node = new OntologyDto.TreeNode();
+                node.setId(iri);
+                String lbl = literal(sol, "label");
+                node.setLabel(lbl.isBlank() ? localName(iri) : lbl);
+                node.setDescription(literal(sol, "description"));
+                node.setHasChildren(true);
+                nodeMap.put(iri, node);
+            }
+
+            String parentIri = resource(sol, "parent");
+            if (parentIri != null) {
+                node.setParent(parentIri);
+            }
+        }
+
+        List<OntologyDto.TreeNode> result = new ArrayList<>(nodeMap.values());
+        long duration = System.currentTimeMillis() - startTime;
+        log.info("✅ [PERF] Loaded {} total classes in {}ms for project {}", result.size(), duration, projectId);
+
+        return result;
+    }
+
+    /**
      * Get children of a specific class.
      * OPTIMIZED: Results are cached for faster subsequent access.
      * hasChildren is assumed true for lazy loading - verified on expand.
@@ -203,6 +266,7 @@ public class OntologyQueryService {
      * Called on-demand when a property is selected in the UI.
      */
     public PropertyDto propertyDetail(String projectId, String propertyIri) {
+        long startTime = System.currentTimeMillis();
         String query = PREFIXES + """
             SELECT ?prop (SAMPLE(?lbl) AS ?label) (SAMPLE(?cmt) AS ?description) ?kind
                    (GROUP_CONCAT(DISTINCT STR(?domain); SEPARATOR="|") AS ?domains)
@@ -264,8 +328,12 @@ public class OntologyQueryService {
                     .map(charIri -> localName(charIri).replace("Property", ""))
                     .toList());
             }
+            long duration = System.currentTimeMillis() - startTime;
+            log.info("[PERF] propertyDetail for {} completed in {}ms project={}", localName(propertyIri), duration, projectId);
             return dto;
         }
+        long duration = System.currentTimeMillis() - startTime;
+        log.warn("[PERF] propertyDetail for {} returned empty in {}ms project={}", propertyIri, duration, projectId);
         return new PropertyDto();
     }
 
@@ -275,6 +343,7 @@ public class OntologyQueryService {
      */
     @Cacheable(value = "ontologyIndividuals", key = "#projectId + '_' + #limit + '_' + #offset")
     public List<IndividualDto> individuals(String projectId, int limit, int offset) {
+        long startTime = System.currentTimeMillis();
         String query = PREFIXES + """
             SELECT ?ind (SAMPLE(?lbl) AS ?label) (SAMPLE(?cmt) AS ?description)
                    (GROUP_CONCAT(DISTINCT ?type; SEPARATOR="|") AS ?types)
@@ -310,28 +379,36 @@ public class OntologyQueryService {
             dto.setTypes(splitPipe(literal(sol, "types")));
             individuals.add(dto);
         }
+        long duration = System.currentTimeMillis() - startTime;
+        log.info("[PERF] individuals loaded {} in {}ms project={}", individuals.size(), duration, projectId);
         return individuals;
     }
 
+    @Cacheable(value = "individualCount", key = "#projectId")
     public long individualCount(String projectId) {
+        long startTime = System.currentTimeMillis();
         String query = PREFIXES + """
             SELECT (COUNT(DISTINCT ?ind) AS ?count)
             WHERE { ?ind a owl:NamedIndividual . }
             """;
         TupleQueryResult rs = datasetService.execSelect(projectId, query);
+        long count = 0;
         if (rs.hasNext()) {
             BindingSet sol = rs.next();
             if (sol.hasBinding("count")) {
                 Value countValue = sol.getValue("count");
                 if (countValue.isLiteral()) {
-                    return Long.parseLong(countValue.stringValue());
+                    count = Long.parseLong(countValue.stringValue());
                 }
             }
         }
-        return 0L;
+        long duration = System.currentTimeMillis() - startTime;
+        log.info("[PERF] individualCount={} in {}ms project={}", count, duration, projectId);
+        return count;
     }
 
     public List<AnnotationPropertyDto> annotationProperties(String projectId, int limit, int offset) {
+        long startTime = System.currentTimeMillis();
         String query = PREFIXES + """
             SELECT DISTINCT ?prop (SAMPLE(?lbl) AS ?label) (SAMPLE(?cmt) AS ?description)
             WHERE {
@@ -366,7 +443,8 @@ public class OntologyQueryService {
             dto.setDescription(description);
             props.add(dto);
         }
-        System.out.println("=== ANNOTATION PROPERTIES QUERY RETURNED " + count + " ROWS, " + props.size() + " PROPERTIES ===");
+        long duration = System.currentTimeMillis() - startTime;
+        log.info("[PERF] annotationProperties loaded {} (rows={}) in {}ms project={}", props.size(), count, duration, projectId);
         return props;
     }
 
@@ -751,7 +829,9 @@ public class OntologyQueryService {
         return axioms;
     }
 
+    @Cacheable(value = "debugInfo", key = "#projectId")
     public Map<String, Object> debugInfo(String projectId) {
+        long startTime = System.currentTimeMillis();
         // Count all triples
         String countQuery = "SELECT (COUNT(*) AS ?count) WHERE { ?s ?p ?o }";
         TupleQueryResult rs1 = datasetService.execSelect(projectId, countQuery);
@@ -809,6 +889,8 @@ public class OntologyQueryService {
             sampleTriples.add(sol.getValue("s") + " " + sol.getValue("p") + " " + sol.getValue("o"));
         }
 
+        long duration = System.currentTimeMillis() - startTime;
+        log.info("[PERF] debugInfo totalTriples={} classes={} in {}ms project={}", totalTriples, classCount, duration, projectId);
         return Map.of(
             "totalTriples", totalTriples,
             "classCount", classCount,
@@ -1246,26 +1328,13 @@ public class OntologyQueryService {
         return usages;
     }
 
+    @Cacheable(value = "classDetails", key = "#projectId + '_' + #classIri")
     public Map<String, Object> classDetails(String projectId, String classIri) {
+        long startTime = System.currentTimeMillis();
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("id", classIri);
         
-        // Get label
-        String labelQuery = PREFIXES + """
-            SELECT ?label WHERE {
-              <%s> rdfs:label ?label
-            } LIMIT 1
-            """.formatted(classIri);
-        TupleQueryResult labelRs = datasetService.execSelect(projectId, labelQuery);
-        if (labelRs.hasNext()) {
-            BindingSet labelSol = labelRs.next();
-            details.put("label", literal(labelSol, "label"));
-        } else {
-            details.put("label", localName(classIri));
-        }
-        
-        // Get all annotation properties for this class
-        // Include both explicitly declared annotation properties AND standard RDFS annotation properties
+        // OPTIMIZED: Combined label + annotations in a single query
         String annQuery = PREFIXES + """
             SELECT ?prop ?value WHERE {
               <%s> ?prop ?value .
@@ -1273,23 +1342,26 @@ public class OntologyQueryService {
               {
                 ?prop a owl:AnnotationProperty .
               } UNION {
-                # Standard RDFS annotation properties that may not be declared as owl:AnnotationProperty
                 VALUES ?prop { rdfs:label rdfs:comment rdfs:seeAlso rdfs:isDefinedBy }
               }
             }
             """.formatted(classIri);
         TupleQueryResult annRs = datasetService.execSelect(projectId, annQuery);
         Map<String, Object> annotations = new LinkedHashMap<>();
+        String label = null;
         while (annRs.hasNext()) {
             BindingSet sol = annRs.next();
             String propIri = resource(sol, "prop");
             if (propIri != null && sol.hasBinding("value")) {
-                String propLabel = localName(propIri);
                 Value valueNode = sol.getValue("value");
                 String value = valueNode.isLiteral() ? valueNode.stringValue() : valueNode.toString();
                 annotations.put(propIri, value);
+                if (label == null && propIri.endsWith("#label")) {
+                    label = value;
+                }
             }
         }
+        details.put("label", label != null ? label : localName(classIri));
         details.put("annotations", annotations);
         
         // Get SubClassOf axioms - ASSERTED named superclasses only (like Protégé)
@@ -2104,82 +2176,58 @@ public class OntologyQueryService {
         }
         details.put("anonymousAncestorAxioms", anonymousAncestorAxioms);
         
+        long duration = System.currentTimeMillis() - startTime;
+        log.info("[PERF] classDetails for {} completed in {}ms project={}", localName(classIri), duration, projectId);
         return details;
     }
 
     /**
-     * Get all instances (individuals) of a given class
-     * Returns both asserted and inferred instances
+     * Get all instances (individuals) of a given class.
+     * Returns both asserted and inferred instances.
+     * OPTIMIZED: Cached + combined into single SPARQL query with BIND for isInferred flag.
      */
+    @Cacheable(value = "classInstances", key = "#projectId + '_' + #classIri")
     public List<Map<String, Object>> getClassInstances(String projectId, String classIri) {
+        long startTime = System.currentTimeMillis();
         List<Map<String, Object>> instances = new ArrayList<>();
-        
-        // Get asserted instances - check both explicit graph and default graph
-        String assertedQuery = PREFIXES + """
-            SELECT DISTINCT ?individual ?label WHERE {
-              {
-                GRAPH <http://www.ontotext.com/explicit> {
-                  ?individual a <%s> .
-                }
-              } UNION {
-                ?individual a <%s> .
-              }
-              OPTIONAL { ?individual rdfs:label ?label }
-            }
-            ORDER BY ?label
-            """.formatted(classIri, classIri);
-        
-        TupleQueryResult assertedRs = datasetService.execSelect(projectId, assertedQuery);
         Set<String> seenIndividuals = new LinkedHashSet<>();
         
-        while (assertedRs.hasNext()) {
-            BindingSet sol = assertedRs.next();
-            String individualIri = resource(sol, "individual");
-            if (individualIri != null && !seenIndividuals.contains(individualIri)) {
-                seenIndividuals.add(individualIri);
-                Map<String, Object> individual = new LinkedHashMap<>();
-                individual.put("id", individualIri);
-                individual.put("label", sol.hasBinding("label") ? literal(sol, "label") : localName(individualIri));
-                individual.put("isInferred", false);
-                
-                // Get all types for this individual
-                List<String> types = new ArrayList<>();
-                types.add(classIri);
-                individual.put("types", types);
-                
-                instances.add(individual);
-            }
-        }
-        
-        // Get inferred instances
-        String inferredQuery = PREFIXES + """
-            SELECT DISTINCT ?individual ?label WHERE {
-              GRAPH <http://www.ontotext.com/inferred> {
+        // OPTIMIZED: Single query that returns both asserted and inferred instances
+        // Uses BIND to flag inferred instances instead of two separate queries
+        String combinedQuery = PREFIXES + """
+            SELECT DISTINCT ?individual ?label ?isInferred WHERE {
+              {
                 ?individual a <%s> .
-              }
-              FILTER NOT EXISTS {
-                GRAPH <http://www.ontotext.com/explicit> {
+                BIND(false AS ?isInferred)
+              } UNION {
+                GRAPH <http://www.ontotext.com/inferred> {
                   ?individual a <%s> .
                 }
+                FILTER NOT EXISTS {
+                  GRAPH <http://www.ontotext.com/explicit> {
+                    ?individual a <%s> .
+                  }
+                }
+                BIND(true AS ?isInferred)
               }
               OPTIONAL { ?individual rdfs:label ?label }
             }
             ORDER BY ?label
-            """.formatted(classIri, classIri);
+            """.formatted(classIri, classIri, classIri);
         
-        TupleQueryResult inferredRs = datasetService.execSelect(projectId, inferredQuery);
+        TupleQueryResult rs = datasetService.execSelect(projectId, combinedQuery);
         
-        while (inferredRs.hasNext()) {
-            BindingSet sol = inferredRs.next();
+        while (rs.hasNext()) {
+            BindingSet sol = rs.next();
             String individualIri = resource(sol, "individual");
             if (individualIri != null && !seenIndividuals.contains(individualIri)) {
                 seenIndividuals.add(individualIri);
                 Map<String, Object> individual = new LinkedHashMap<>();
                 individual.put("id", individualIri);
                 individual.put("label", sol.hasBinding("label") ? literal(sol, "label") : localName(individualIri));
-                individual.put("isInferred", true);
+                boolean inferred = sol.hasBinding("isInferred") && "true".equals(sol.getValue("isInferred").stringValue());
+                individual.put("isInferred", inferred);
                 
-                // Get all types for this individual
                 List<String> types = new ArrayList<>();
                 types.add(classIri);
                 individual.put("types", types);
@@ -2188,6 +2236,8 @@ public class OntologyQueryService {
             }
         }
         
+        long duration = System.currentTimeMillis() - startTime;
+        log.info("[PERF] getClassInstances for {} loaded {} instances in {}ms project={}", localName(classIri), instances.size(), duration, projectId);
         return instances;
     }
 
