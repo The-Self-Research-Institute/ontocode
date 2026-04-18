@@ -16,8 +16,13 @@ services:
       MONGO_INITDB_DATABASE: ${MONGODB_DATABASE:-ontocode}
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-admin}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-changeme123}
+    command: ["mongod", "--wiredTigerCacheSizeGB", "0.3", "--auth"]
     networks:
       - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 768m
     healthcheck:
       test: echo 'db.runCommand("ping").ok' | mongosh "mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@localhost:27017/admin" --quiet
       interval: 10s
@@ -33,9 +38,9 @@ services:
     ports:
       - "7200:7200"
     environment:
-      GDB_HEAP_SIZE: 6g
+      GDB_HEAP_SIZE: 2560m
       GDB_LICENSE_PATH: /opt/graphdb
-      GDB_JAVA_OPTS: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+ParallelRefProcEnabled -XX:InitiatingHeapOccupancyPercent=45 -XX:G1HeapRegionSize=16m"
+      GDB_JAVA_OPTS: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+ParallelRefProcEnabled -XX:InitiatingHeapOccupancyPercent=45 -XX:G1HeapRegionSize=8m -DentityExpansionLimit=100000000 -Djdk.xml.entityExpansionLimit=100000000"
     volumes:
       - graphdb-data:/opt/graphdb/home/data
       - graphdb-import:/opt/graphdb/home/graphdb-import
@@ -44,7 +49,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 8g
+          memory: 3g
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:7200/rest/repositories"]
       interval: 15s
@@ -128,11 +133,16 @@ services:
       JWT_SECRET: ${JWT_SECRET:-b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==}
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      JAVA_OPTS: -Xms128m -Xmx256m -XX:+UseG1GC
     depends_on:
       mongo:
         condition: service_healthy
     networks:
       - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 320m
 
   # API Gateway
   gateway:
@@ -146,13 +156,17 @@ services:
       JWT_SECRET: ${JWT_SECRET:-b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==}
       AUTH_SERVICE_URL: http://auth:8086
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
-      # Gateway needs enough heap to buffer large file uploads (224MB+) in memory
-      JAVA_OPTS: -Xms512m -Xmx2g
+      # Gateway buffers large file uploads (224MB+) in memory - needs generous heap
+      JAVA_OPTS: -Xms256m -Xmx1536m -XX:+UseG1GC
     depends_on:
       auth:
         condition: service_started
     networks:
       - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 2g
 
   # Ontology Editor Service
   owl-editor:
@@ -168,15 +182,14 @@ services:
       GRAPHDB_IMPORT_DIR: /opt/graphdb-import
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
-      # PERFORMANCE OPTIMIZATION: JVM settings for handling large file uploads (100MB+)
-      # G1GC is optimized for large heaps and reduces pause times during garbage collection
+      LOG_DIR: /app/logs
       JAVA_OPTS: >-
-        -Xms2g
-        -Xmx4g
-        -XX:+UseG1GC
-        -XX:MaxGCPauseMillis=200
-        -XX:+ParallelRefProcEnabled
-        -XX:InitiatingHeapOccupancyPercent=45
+        -Xms1g -Xmx3g
+        -XX:+UseG1GC -XX:MaxGCPauseMillis=200
+        -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof
+        -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=3,filesize=20m
+        -DentityExpansionLimit=100000000
+        -Djdk.xml.entityExpansionLimit=100000000
       EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
       JIRA_ENABLED: ${JIRA_ENABLED:-true}
       JIRA_CLOUD_URL: ${JIRA_CLOUD_URL:-https://coretopia.atlassian.net}
@@ -192,12 +205,13 @@ services:
         condition: service_healthy
     volumes:
       - graphdb-import:/opt/graphdb-import
+      - editor-logs:/app/logs
     networks:
       - ontology-net
     deploy:
       resources:
         limits:
-          memory: 5g
+          memory: 4g
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8083/actuator/health"]
       interval: 15s
@@ -219,6 +233,14 @@ services:
       ONTOLOGY_EDITOR_URL: http://owl-editor:8083
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      LOG_DIR: /app/logs
+      JAVA_OPTS: >-
+        -Xms128m -Xmx384m
+        -XX:+UseG1GC -XX:MaxGCPauseMillis=200
+        -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof
+        -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=2,filesize=10m
+    volumes:
+      - swrl-logs:/app/logs
     depends_on:
       mongo:
         condition: service_healthy
@@ -226,6 +248,10 @@ services:
         condition: service_healthy
     networks:
       - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 512m
 
   # Plugin Service
   plugin-service:
@@ -241,6 +267,7 @@ services:
       ONTOLOGY_EDITOR_URL: http://owl-editor:8083
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      JAVA_OPTS: -Xms128m -Xmx256m -XX:+UseG1GC
     depends_on:
       mongo:
         condition: service_healthy
@@ -248,6 +275,10 @@ services:
         condition: service_healthy
     networks:
       - ontology-net
+    deploy:
+      resources:
+        limits:
+          memory: 320m
 
   # Plugin Initialization Service
   plugin-init:
@@ -307,16 +338,22 @@ services:
     networks:
       - ontology-net
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://0.0.0.0:3000/"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
 
 volumes:
   mongo-data:
   graphdb-data:
   graphdb-import:
+  editor-logs:
+  swrl-logs:
 
 networks:
   ontology-net:
