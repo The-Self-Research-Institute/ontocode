@@ -158,9 +158,22 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
             
             console.log('[InviteAcceptPage] Invitation accepted successfully:', response);
             
-            // Trigger callback to refresh app state with workspace data
+            // Get workspace-scoped JWT by calling select workspace endpoint
+            const workspaceId = response.workspaceId || invitation?.workspaceId;
+            console.log('[InviteAcceptPage] Selecting workspace to get JWT:', workspaceId);
+            
+            const selectResponse = await apiClient.post(`/api/workspaces/${workspaceId}/select`);
+            console.log('[InviteAcceptPage] Workspace selected, got JWT:', !!selectResponse.jwt);
+            
+            // Trigger callback with workspace data including JWT
             if (onAccepted) {
-                onAccepted(response);
+                onAccepted({
+                    ...response,
+                    ...selectResponse,
+                    workspaceId: selectResponse.workspaceId,
+                    workspaceName: selectResponse.workspaceName,
+                    jwt: selectResponse.jwt
+                });
             }
         } catch (err: any) {
             console.error('[InviteAcceptPage] Error accepting invitation:', err);
@@ -170,16 +183,28 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
             // Check if user is already a member - treat this as success
             if (errorMessage.toLowerCase().includes('already a member')) {
                 console.log('[InviteAcceptPage] User is already a member, treating as success');
-                // Create a mock successful response with workspace info
-                const successResponse = {
-                    workspaceId: invitation?.workspaceId,
-                    workspaceName: invitation?.workspaceName,
-                    message: 'You are already a member of this workspace'
-                };
-                if (onAccepted) {
-                    onAccepted(successResponse);
+                // Get workspace-scoped JWT
+                const workspaceId = invitation?.workspaceId;
+                try {
+                    console.log('[InviteAcceptPage] Getting workspace JWT for existing member:', workspaceId);
+                    const selectResponse = await apiClient.post(`/api/workspaces/${workspaceId}/select`);
+                    
+                    const successResponse = {
+                        workspaceId: workspaceId,
+                        workspaceName: invitation?.workspaceName,
+                        message: 'You are already a member of this workspace',
+                        jwt: selectResponse.jwt,
+                        ...selectResponse
+                    };
+                    if (onAccepted) {
+                        onAccepted(successResponse);
+                    }
+                    return;
+                } catch (selectErr: any) {
+                    console.error('[InviteAcceptPage] Error getting workspace JWT:', selectErr);
+                    setError('Already a member but failed to load workspace');
+                    return;
                 }
-                return;
             }
             
             setError(errorMessage);

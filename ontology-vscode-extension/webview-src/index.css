@@ -1,56 +1,56 @@
 /* Semantic Theme Tokens - Professional Design System */
 :root {
   /* Surfaces (elevation levels) */
-  --bg: #FFFFFF;
-  --surface-1: #FFFFFF;
-  --surface-2: #F6F7F9;
-  --surface-3: #EEF1F5;
+  --bg: #ffffff;
+  --surface-1: #ffffff;
+  --surface-2: #f6f7f9;
+  --surface-3: #eef1f5;
   --overlay: rgba(0, 0, 0, 0.4);
-  
+
   /* Content (text + icons) */
   --text-primary: #111111;
   --text-secondary: #444444;
   --text-tertiary: #666666;
-  --text-disabled: #9AA0A6;
+  --text-disabled: #9aa0a6;
   --icon-primary: #111111;
   --icon-secondary: #444444;
-  --icon-disabled: #9AA0A6;
-  
+  --icon-disabled: #9aa0a6;
+
   /* Lines / boundaries */
-  --border: #E4E7EC;
-  --divider: #EEF1F5;
-  
+  --border: #e4e7ec;
+  --divider: #eef1f5;
+
   /* Brand + semantics */
   --accent: #3b82f6;
-  --on-accent: #FFFFFF;
+  --on-accent: #ffffff;
   --accent-tint: rgba(59, 130, 246, 0.08);
   --accent-hover: rgba(59, 130, 246, 0.08);
   --accent-pressed: rgba(59, 130, 246, 0.16);
-  
+
   --success: #10b981;
-  --on-success: #FFFFFF;
+  --on-success: #ffffff;
   --success-tint: rgba(16, 185, 129, 0.12);
   --warning: #f59e0b;
   --on-warning: #111111;
   --warning-tint: rgba(245, 158, 11, 0.14);
   --error: #ef4444;
-  --on-error: #FFFFFF;
+  --on-error: #ffffff;
   --error-tint: rgba(239, 68, 68, 0.12);
   --info: #3b82f6;
-  --on-info: #FFFFFF;
-  --info-tint: rgba(59, 130, 246, 0.10);
-  
+  --on-info: #ffffff;
+  --info-tint: rgba(59, 130, 246, 0.1);
+
   /* Interaction states - Following IBM Design & Industry Best Practices */
   --hover-overlay: rgba(0, 0, 0, 0.04);
   --pressed-overlay: rgba(0, 0, 0, 0.08);
   --focus-ring: var(--accent);
   --selected-bg: var(--accent-tint);
-  
+
   /* Transition durations */
   --transition-fast: 150ms;
   --transition-base: 250ms;
   --transition-slow: 350ms;
-  
+
   /* Legacy support (map old variables to new semantic ones) */
   --color-primary: var(--accent);
   --color-secondary: #6366f1;
@@ -69,51 +69,51 @@
 /* Dark mode semantic tokens */
 .dark {
   /* Surfaces (get lighter with elevation) */
-  --bg: #0B0F14;
+  --bg: #0b0f14;
   --surface-1: #111826;
   --surface-2: #162133;
-  --surface-3: #1B2A40;
+  --surface-3: #1b2a40;
   --overlay: rgba(0, 0, 0, 0.6);
-  
+
   /* Content */
-  --text-primary: #F2F4F7;
-  --text-secondary: #C7CDD6;
-  --text-tertiary: #9AA4B2;
+  --text-primary: #f2f4f7;
+  --text-secondary: #c7cdd6;
+  --text-tertiary: #9aa4b2;
   --text-disabled: #667085;
-  --icon-primary: #F2F4F7;
-  --icon-secondary: #C7CDD6;
+  --icon-primary: #f2f4f7;
+  --icon-secondary: #c7cdd6;
   --icon-disabled: #667085;
-  
+
   /* Lines / boundaries (subtle in dark mode) */
   --border: rgba(255, 255, 255, 0.14);
   --divider: rgba(255, 255, 255, 0.08);
-  
+
   /* Brand + semantics (brighter in dark mode for visibility) */
   --accent: #60a5fa;
-  --on-accent: #0B0F14;
+  --on-accent: #0b0f14;
   --accent-tint: rgba(96, 165, 250, 0.12);
   --accent-hover: rgba(96, 165, 250, 0.12);
-  --accent-pressed: rgba(96, 165, 250, 0.20);
-  
+  --accent-pressed: rgba(96, 165, 250, 0.2);
+
   --success: #34d399;
-  --on-success: #0B0F14;
+  --on-success: #0b0f14;
   --success-tint: rgba(52, 211, 153, 0.16);
   --warning: #fbbf24;
-  --on-warning: #0B0F14;
+  --on-warning: #0b0f14;
   --warning-tint: rgba(251, 191, 36, 0.18);
   --error: #f87171;
-  --on-error: #0B0F14;
+  --on-error: #0b0f14;
   --error-tint: rgba(248, 113, 113, 0.16);
   --info: #60a5fa;
-  --on-info: #0B0F14;
+  --on-info: #0b0f14;
   --info-tint: rgba(96, 165, 250, 0.14);
-  
+
   /* Interaction states - Following IBM Design & Industry Best Practices */
   --hover-overlay: rgba(255, 255, 255, 0.08);
   --pressed-overlay: rgba(255, 255, 255, 0.12);
   --focus-ring: var(--accent);
   --selected-bg: var(--accent-tint);
-  
+
   /* Legacy support */
   --color-primary: var(--accent);
   --color-secondary: #818cf8;
@@ -171,6 +171,29 @@
   scrollbar-color: #6b7280 #374151;
 }
 
+/* Workspace selection scrollbar — matches purple glassmorphism UI */
+.workspace-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(168, 85, 247, 0.4) transparent;
+}
+
+.workspace-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.workspace-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.workspace-scroll::-webkit-scrollbar-thumb {
+  background: rgba(168, 85, 247, 0.3);
+  border-radius: 3px;
+}
+
+.workspace-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(168, 85, 247, 0.5);
+}
+
 /* Dark mode body background */
 .dark body {
   background-color: var(--bg);
@@ -181,7 +204,9 @@
 body {
   background-color: var(--bg);
   color: var(--text-primary);
-  transition: background-color 0.2s ease, color 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
 }
 
 /* Selective dark mode text overrides - be specific, not aggressive */
@@ -240,7 +265,8 @@ body {
 }
 
 /* Force white backgrounds in light mode where dark backgrounds appear */
-:root:not(.dark) :where(div, section, header, footer, main, aside, nav, article)[style*="background-color: rgb(55, 65, 81)"],
+:root:not(.dark)
+  :where(div, section, header, footer, main, aside, nav, article)[style*="background-color: rgb(55, 65, 81)"],
 :root:not(.dark) :where(div, section, header, footer, main, aside, nav, article)[style*="background-color:#374151"],
 :root:not(.dark) :where(div, section, header, footer, main, aside, nav, article)[style*="background: #374151"],
 :root:not(.dark) :where(div, section, header, footer, main, aside, nav, article)[style*="backgroundColor: '#374151'"] {
@@ -345,12 +371,12 @@ body {
 /* Button variants */
 .btn-primary {
   background-color: var(--accent);
-  color: #FFFFFF;
+  color: #ffffff;
   border: none;
 }
 
 .btn-primary:hover {
-  background-color: #FFFFFF;
+  background-color: #ffffff;
   color: var(--accent);
   border: 1px solid var(--accent);
 }
@@ -474,7 +500,7 @@ body {
 }
 
 .theme-input {
-  background-color: #FFFFFF;
+  background-color: #ffffff;
   border: 1px solid var(--border);
   color: #000000;
 }
@@ -554,11 +580,14 @@ body {
 }
 
 /* Ensure body and html take full height */
-html, body, #root {
+html,
+body,
+#root {
   margin: 0;
   padding: 0;
   height: 100%;
-  overflow: hidden;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Dark mode background */
@@ -597,29 +626,50 @@ html, body, #root {
 }
 
 /* Ensure typed input text is always visible (avoid inheriting text-white on light backgrounds) */
-:where(input[type="text"], input[type="search"], input[type="email"], input[type="password"], input[type="url"], textarea, select) {
+:where(
+  input[type="text"],
+  input[type="search"],
+  input[type="email"],
+  input[type="password"],
+  input[type="url"],
+  textarea,
+  select
+) {
   color: var(--text-primary);
   caret-color: var(--text-primary);
 }
 
-:where(input[type="text"], input[type="search"], input[type="email"], input[type="password"], input[type="url"], textarea)::placeholder {
+:where(
+  input[type="text"],
+  input[type="search"],
+  input[type="email"],
+  input[type="password"],
+  input[type="url"],
+  textarea
+)::placeholder {
   color: var(--text-tertiary);
   opacity: 0.9;
 }
 
 /* Theme-safe form controls (works across core UI + plugins) */
-:where(input, textarea, select):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]) {
+:where(input, textarea, select):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not(
+    [type="file"]
+  ) {
   background-color: var(--surface-2) !important;
   color: var(--text-primary) !important;
   border-color: var(--border) !important;
 }
 
-:where(input, textarea, select):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):focus {
+:where(input, textarea, select):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not(
+    [type="file"]
+  ):focus {
   outline: none;
   box-shadow: 0 0 0 2px var(--focus-ring);
 }
 
-:where(input, textarea, select):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"])::placeholder {
+:where(input, textarea, select):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not(
+    [type="file"]
+  )::placeholder {
   color: var(--text-tertiary) !important;
   opacity: 0.9;
 }
@@ -627,6 +677,14 @@ html, body, #root {
 :where(textarea) {
   background-color: var(--surface-2) !important;
   color: var(--text-primary) !important;
+}
+
+/* Code editor textarea must keep its own dark theme colors */
+textarea.code-editor-textarea {
+  background-color: #1e1e1e !important;
+  color: #ffffff !important;
+  caret-color: #000000 !important;
+  border-color: transparent !important;
 }
 
 /* Top menu bar (File/Edit/View/Reasoner/...) hover styles */
@@ -693,7 +751,7 @@ html, body, #root {
 
 /* Ensure buttons/links that explicitly use `text-white` remain white in light mode. */
 :root:not(.dark) :where(button, a).text-white {
-  color: #FFFFFF !important;
+  color: #ffffff !important;
 }
 
 /* Resizable panel handles */

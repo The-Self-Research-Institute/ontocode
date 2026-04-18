@@ -22,6 +22,7 @@ docker exec ontocode-graphdb sh -c "cat > /tmp/repo-config.ttl << 'EOFCONFIG'
             graphdb:in-memory-literal-properties \"true\" ;
             graphdb:enable-literal-index \"true\" ;
             graphdb:entity-index-size \"10000000\" ;
+            graphdb:enable-context-index \"true\" ;
             graphdb:enablePredicateList \"true\" ;
             graphdb:read-only \"false\" ;
         ]

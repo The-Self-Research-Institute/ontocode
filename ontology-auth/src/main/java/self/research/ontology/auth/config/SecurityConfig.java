@@ -99,10 +99,12 @@ public class SecurityConfig {
             "http://localhost:*",              // Local development (any port)
             "http://127.0.0.1:*",             // Local development (loopback)
             "https://localhost:*",            // Local development over HTTPS
-            "http://ec2-13-218-153-101.compute-1.amazonaws.com:*",
-            "https://ec2-13-218-153-101.compute-1.amazonaws.com:*",
-            "https://ontocodeapi.selfresearch.org:*", // Production API URL
-            "https://ontocode.selfresearch.org:*",
+            "http://ec2-54-226-221-174.compute-1.amazonaws.com:*",
+            "https://ec2-54-226-221-174.compute-1.amazonaws.com:*",
+            "https://ontocodeapi.selfresearch.org",   // Production API (default port)
+            "https://ontocodeapi.selfresearch.org:*", // Production API (explicit port)
+            "https://ontocode.selfresearch.org",      // Production frontend (default port)
+            "https://ontocode.selfresearch.org:*",    // Production frontend (explicit port)
             "vscode-webview://*",             // VS Code webview
             "vscode-webview-resource://*",
             "https://*.vscode-cdn.net",       // VS Code CDN

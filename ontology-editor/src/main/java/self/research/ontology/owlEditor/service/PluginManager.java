@@ -213,9 +213,9 @@ public class PluginManager {
      */
     private void loadBuiltInPlugins() {
         try {
-            // Load ELK reasoner plugin (built-in)
-            registerPlugin(new ELKReasonerPlugin());
-            log.info("Loaded built-in ELK reasoner plugin");
+            // ELK reasoner plugin removed due to OWL API 5.x compatibility issues
+            // registerPlugin(new ELKReasonerPlugin());
+            // log.info("Loaded built-in ELK reasoner plugin");
 
             // Load JSON-LD import/export plugin (built-in)
             registerPlugin(new JsonLdPlugin());

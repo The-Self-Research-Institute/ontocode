@@ -10,6 +10,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -166,6 +167,34 @@ public class GlobalExceptionHandler {
         log.warn("Authentication error: {}", ex.getMessage());
         
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(error);
+    }
+
+    /**
+     * Handle HTTP message not readable (e.g., request body too large for Jackson)
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public ResponseEntity<Map<String, Object>> handleHttpMessageNotReadable(
+            HttpMessageNotReadableException ex, WebRequest request) {
+
+        Map<String, Object> error = new HashMap<>();
+        error.put("timestamp", LocalDateTime.now());
+        error.put("status", HttpStatus.BAD_REQUEST.value());
+        error.put("path", request.getDescription(false).replace("uri=", ""));
+
+        String message = "Invalid request body";
+        if (ex.getCause() != null && ex.getCause().getMessage() != null
+                && ex.getCause().getMessage().contains("String value length")) {
+            message = "File too large to upload. Please try a smaller file or use chunked upload.";
+            error.put("error", "Payload Too Large");
+        } else {
+            error.put("error", "Bad Request");
+        }
+        error.put("message", message);
+
+        log.warn("HTTP message not readable: {}", ex.getMessage());
+
+        return ResponseEntity.badRequest().body(error);
     }
 
     /**

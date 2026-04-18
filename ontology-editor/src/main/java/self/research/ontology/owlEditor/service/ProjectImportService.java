@@ -12,15 +12,24 @@ import self.research.ontology.owlEditor.model.ProjectStatus;
 import self.research.ontology.owlEditor.model.collaboration.ImportStatusMessage;
 import self.research.ontology.owlEditor.util.OWLFormatConverter;
 
+import org.eclipse.rdf4j.query.BindingSet;
+import org.eclipse.rdf4j.query.TupleQueryResult;
+
 import java.io.BufferedInputStream;
 import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -77,6 +86,21 @@ public class ProjectImportService {
         String filename = owlFile.getFileName().toString();
 
         log.info("[Import] Submitting import for project {}: {}", projectId, filename);
+
+        // Write PROCESSING status synchronously BEFORE enqueueing so that any
+        // status poll from the frontend sees PROCESSING instead of the stale
+        // COMPLETED from the previous import.  This closes the race window
+        // where the frontend polls, sees old COMPLETED, and fetches stale data
+        // — especially noticeable with large ontologies (90k+ classes).
+        //
+        // Preserve the user-facing filename (e.g. "ontology-1235.owl") from the
+        // existing status record rather than using the physical file name
+        // (e.g. "ontology.current.owl") which is an internal storage detail.
+        String displayFilename = metadataService.readStatus(projectId)
+                .map(ProjectStatus::filename)
+                .filter(f -> f != null && !f.isBlank())
+                .orElse(filename);
+        metadataService.writeStatus(projectId, ProjectStatus.processing(displayFilename));
 
         // Add to queue
         queueManager.enqueue(projectId, filename, ownerEmail, owlFile, options);
@@ -176,6 +200,9 @@ public class ProjectImportService {
                 .map(ProjectStatus::filename)
                 .orElse(owlFile.getFileName().toString());
 
+        // Track whether import was marked as COMPLETED (prevents overwriting to ERROR in catch block)
+        AtomicBoolean importMarkedCompleted = new AtomicBoolean(false);
+
         log.info("[Import {}] Starting import for file {}", projectId, filename);
 
         // Notify: Import started
@@ -185,15 +212,24 @@ public class ProjectImportService {
         metadataService.writeStatus(projectId, ProjectStatus.processing(filename));
         try {
             stage = "detect-format";
+            long stageStart = System.nanoTime();
             RDFFormat format = detectFormat(owlFile);
-            log.info("[Import {}] Detected RDF format: {} (name: {}, defaultFileExtension: {})", 
-                    projectId, format, format.getName(), format.getDefaultFileExtension());
+            log.info("[Import {}] [TIMING] Format detection: {} ms (detected: {})", 
+                    projectId, elapsedMillis(stageStart), format.getName());
             
             // Sanitize the file to fix malformed XML before import
+            // NOTE: For large files (>50MB), sanitizeFileOnDisk uses an optimized path
+            // that skips OWL API re-serialization to avoid loading the entire file into memory.
             stage = "sanitize";
+            stageStart = System.nanoTime();
+            long fileSizeForSanitize = Files.size(owlFile);
+            if (fileSizeForSanitize > 50 * 1024 * 1024) {
+                log.info("[Import {}] [PERFORMANCE] Large file ({} MB) - sanitization will use optimized path",
+                        projectId, fileSizeForSanitize / (1024 * 1024));
+            }
             try {
                 OWLFormatConverter.sanitizeFileOnDisk(owlFile);
-                log.info("[Import {}] File sanitization completed", projectId);
+                log.info("[Import {}] [TIMING] Sanitization: {} ms", projectId, elapsedMillis(stageStart));
             } catch (Exception sanitizeEx) {
                 log.warn("[Import {}] File sanitization failed: {}", projectId, sanitizeEx.getMessage());
                 // Continue anyway - sanitization is best-effort
@@ -262,10 +298,59 @@ public class ProjectImportService {
                 log.info("[Import {}] File format is compatible, no conversion needed", projectId);
             }
 
-            log.info("[Import {}] Starting bulkLoadChunked: file={}, format={}, size={} bytes, converted={}",
+            log.info("[Import {}] Starting import: file={}, format={}, size={} bytes, converted={}",
                     projectId, fileToLoad.getFileName(), format, actualFileSize, converted);
 
+            // ⚡ FAST PATH: Try GraphDB server-side import first (reads file from shared volume — no HTTP overhead)
+            boolean serverImportDone = false;
+            try {
+                stageStart = System.nanoTime();
+                serverImportDone = datasetService.serverSideImport(projectId, fileToLoad, format, actualFileSize, options, progress -> {
+                    long totalBytes = progress.getTotalBytes();
+                    long bytesRead = progress.getBytesRead();
+                    long elapsedMs = progress.getElapsedMs();
+                    if (totalBytes <= 0) return;
+                    int percent = (int) Math.min(99, Math.floor((bytesRead * 100.0) / totalBytes));
+                    lastProgressPercent.set(percent);
+                    String message = String.format("Importing... (%d%%) | Server-side import", percent);
+                    sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
+                            "PROCESSING", message, filename, Map.of("progress", percent, "stage", "graphdb-loading", "message", message));
+                    metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
+                });
+            } catch (Exception serverEx) {
+                log.info("[Import {}] [TIMING] Server-side import failed after {} ms: {}", projectId, elapsedMillis(stageStart), serverEx.getMessage());
+            }
+
+            // ⚡ MEDIUM PATH: Try direct HTTP upload (single POST, no batch commits)
+            if (!serverImportDone) {
+                try {
+                    stageStart = System.nanoTime();
+                    serverImportDone = datasetService.directHttpUpload(projectId, fileToLoad, format, actualFileSize, options, progress -> {
+                        long totalBytes = progress.getTotalBytes();
+                        long bytesRead = progress.getBytesRead();
+                        if (totalBytes <= 0) return;
+                        int percent = (int) Math.min(99, Math.floor((bytesRead * 100.0) / totalBytes));
+                        lastProgressPercent.set(percent);
+                        String message = String.format("Importing... (%d%%) | Direct upload", percent);
+                        sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
+                                "PROCESSING", message, filename, Map.of("progress", percent, "stage", "graphdb-loading", "message", message));
+                        metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
+                    });
+                } catch (Exception directEx) {
+                    log.info("[Import {}] [TIMING] Direct HTTP upload failed after {} ms: {}", projectId, elapsedMillis(stageStart), directEx.getMessage());
+                }
+            }
+
+            if (!serverImportDone) {
+            // FALLBACK: Client-side chunked bulk load via RDF4J HTTP
+            stageStart = System.nanoTime();
+            log.info("[Import {}] Using chunked bulk load (client-side)", projectId);
+
+            // Track re-serialized fallback file for cleanup
+            Path[] owlApiFallbackFile = { null };
+
             try (InputStream in = Files.newInputStream(fileToLoad)) {
+                try {
                 datasetService.bulkLoadChunked(projectId, in, format, actualFileSize, options, progress -> {
                     long totalBytes = progress.getTotalBytes();
                     long bytesRead = progress.getBytesRead();
@@ -275,7 +360,7 @@ public class ProjectImportService {
                         return;
                     }
 
-                    int percent = (int) Math.min(90, Math.floor((bytesRead * 100.0) / totalBytes));
+                    int percent = (int) Math.min(99, Math.floor((bytesRead * 100.0) / totalBytes));
                     long now = System.nanoTime();
                     long lastSent = lastProgressSentAt.get();
 
@@ -283,14 +368,23 @@ public class ProjectImportService {
                     if (percent > lastProgressPercent.get() || (now - lastSent) >= 5_000_000_000L) {
                         if (lastProgressSentAt.compareAndSet(lastSent, now)) {
                             lastProgressPercent.set(percent);
-                            double elapsedSeconds = Math.max(1.0, elapsedMs / 1000.0);
-                            double rateBytesPerSec = bytesRead / elapsedSeconds;
-                            long remainingBytes = Math.max(0, totalBytes - bytesRead);
-                            long etaSeconds = rateBytesPerSec > 0 ? (long) (remainingBytes / rateBytesPerSec) : -1;
+                            double elapsedSeconds = elapsedMs / 1000.0;
+                            // Use smoothed rate: ignore first 3 seconds (rate is unreliable early on)
+                            long etaSeconds = -1;
+                            if (elapsedSeconds >= 3.0 && bytesRead > 0) {
+                                double rateBytesPerSec = bytesRead / elapsedSeconds;
+                                long remainingBytes = Math.max(0, totalBytes - bytesRead);
+                                etaSeconds = rateBytesPerSec > 0 ? (long) (remainingBytes / rateBytesPerSec) : -1;
+                            }
 
-                            String etaMessage = etaSeconds > 0
-                                    ? String.format("ETA %d:%02d", etaSeconds / 60, etaSeconds % 60)
-                                    : "ETA calculating...";
+                            String etaMessage;
+                            if (etaSeconds < 0) {
+                                etaMessage = "ETA calculating...";
+                            } else if (etaSeconds == 0) {
+                                etaMessage = "Almost done...";
+                            } else {
+                                etaMessage = String.format("ETA %d:%02d", etaSeconds / 60, etaSeconds % 60);
+                            }
 
                             String message = String.format("Importing... (%d%%) | %s", percent, etaMessage);
 
@@ -311,8 +405,42 @@ public class ProjectImportService {
                         }
                     }
                 });
+                } catch (RuntimeException bulkEx) {
+                    // If this is an XML structural error (unclosed elements, unescaped characters,
+                    // etc.) and we haven't already run OWL API conversion, try it as a fallback.
+                    // This covers large files like DOID where sanitizeFileOnDisk's
+                    // reserializeWithOwlApi may have silently failed.
+                    if (isXmlStructuralError(bulkEx) && format == RDFFormat.RDFXML) {
+                        log.warn("[Import {}] Bulk load failed with XML structural error — retrying after OWL API re-serialization. Error: {}",
+                                projectId, bulkEx.getMessage());
+                        Path sourceForConversion = fileToLoad;
+                        try {
+                            Path reserialised = OWLFormatConverter.convertToRDFXML(sourceForConversion);
+                            owlApiFallbackFile[0] = reserialised;
+                            long reserialisedSize = Files.size(reserialised);
+                            log.info("[Import {}] OWL API re-serialization successful ({} bytes), retrying bulk load",
+                                    projectId, reserialisedSize);
+                            try (InputStream retryIn = Files.newInputStream(reserialised)) {
+                                datasetService.bulkLoadChunked(projectId, retryIn, RDFFormat.RDFXML,
+                                        reserialisedSize, options, null);
+                            }
+                        } catch (Exception retryEx) {
+                            log.error("[Import {}] Bulk load retry after OWL API re-serialization also failed",
+                                    projectId, retryEx);
+                            throw new RuntimeException(
+                                    "Chunked bulk load failed even after OWL API re-serialization: " + retryEx.getMessage(),
+                                    retryEx);
+                        }
+                    } else {
+                        throw bulkEx;
+                    }
+                }
             } finally {
-                // Clean up converted file if it was created
+                // Clean up any OWL API fallback file
+                if (owlApiFallbackFile[0] != null) {
+                    try { Files.deleteIfExists(owlApiFallbackFile[0]); } catch (Exception ignored) {}
+                }
+                // Clean up format-converted file if it was created
                 if (converted && fileToLoad != null && !fileToLoad.equals(owlFile)) {
                     try {
                         Files.deleteIfExists(fileToLoad);
@@ -322,74 +450,115 @@ public class ProjectImportService {
                     }
                 }
             }
-            log.info("[Import {}] GraphDB bulk load completed in {} ms", projectId, elapsedMillis(bulkLoadStart));
+            } // end if (!serverImportDone)
+            log.info("[Import {}] [TIMING] GraphDB bulk load completed in {} ms (total import so far: {} ms)", 
+                    projectId, elapsedMillis(bulkLoadStart), elapsedMillis(importStart));
 
-            Map<String, Object> postLoadMeta = new HashMap<>();
-            postLoadMeta.put("progress", 95);
-            postLoadMeta.put("stage", "graphdb-load-complete");
-            sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
-                    "PROCESSING", "GraphDB load finished, computing metadata", filename, postLoadMeta);
-
-            // Copy file
+            // Copy file to current location
             stage = "persist-copy";
+            stageStart = System.nanoTime();
             Path current = storageManager.resolveProjectFile(projectId, "ontology.current." + extensionFor(format));
             Files.createDirectories(current.getParent());
             Files.copy(owlFile, current, StandardCopyOption.REPLACE_EXISTING);
+            log.info("[Import {}] [TIMING] File copy to current: {} ms", projectId, elapsedMillis(stageStart));
 
-            // Compute metadata
+            // ⚡ PERFORMANCE OPTIMIZATION: Mark import as COMPLETED immediately after GraphDB load
+            // This allows frontend to start using the ontology without waiting for metadata indexing
+            long durationMs = elapsedMillis(importStart);
+            metadataService.writeStatus(projectId, ProjectStatus.completed(filename));
+            importMarkedCompleted.set(true);  // Prevent catch block from overwriting to ERROR
+            
+            // Send IMPORT_COMPLETED notification NOW so frontend can start working
+            Map<String, Object> completionMeta = new HashMap<>();
+            completionMeta.put("stage", "graphdb-load-complete");
+            completionMeta.put("durationMs", durationMs);
+            completionMeta.put("message", "Ontology loaded and ready to use. Metadata indexing continues in background.");
+            sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_COMPLETED,
+                    "COMPLETED", "Ontology loaded successfully", filename, completionMeta);
+            
+            log.info("✅ [Import {}] Marked as COMPLETED after {} ms. Metadata indexing continues in background.", 
+                    projectId, durationMs);
+
+            // Compute metadata asynchronously in background (non-blocking)
             stage = "indexing";
-            metadataService.writeStatus(projectId, ProjectStatus.indexing(filename));
             sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
-                    "PROCESSING", "Indexing and metadata computation started", filename, Map.of("stage", "indexing"));
+                    "PROCESSING", "Background: Computing metadata and statistics", filename, 
+                    Map.of("stage", "background-indexing", "progress", 100));
 
             owlParsingExecutor.execute(() -> {
                 try {
-                    log.info("[Import {}] Computing metadata", projectId);
+                    log.info("[Import {}] 🔄 Background task: Starting metadata indexing", projectId);
+                    
+                    // Resolve owl:imports BEFORE computing metadata so counts include imported triples.
+                    // Wrapped in its own try-catch so a network failure doesn't abort metadata indexing.
+                    try {
+                        resolveOwlImports(projectId, filename);
+                    } catch (Exception importResolutionEx) {
+                        log.warn("[Import {}] owl:imports resolution failed (continuing): {}",
+                                projectId, importResolutionEx.getMessage());
+                    }
+
+                    log.info("[Import {}] Computing metadata statistics...", projectId);
                     long metadataStart = System.nanoTime();
                     Map<String, Object> meta = indexService.computeMetadata(projectId);
                     Integer classCount = toInteger(meta.get("classCount"));
                     Integer annotationCount = toInteger(meta.get("annotationPropertyCount"));
-                    long durationMs = elapsedMillis(importStart);
+                    long totalDurationMs = elapsedMillis(importStart);
 
                     Map<String, Object> importMetrics = new HashMap<>();
                     importMetrics.put("fileSizeBytes", fileSizeBytes);
                     importMetrics.put("classCount", classCount);
                     importMetrics.put("annotationCount", annotationCount);
-                    importMetrics.put("durationMs", durationMs);
+                    importMetrics.put("durationMs", totalDurationMs);
                     importMetrics.put("importedAt", java.time.Instant.now().toString());
                     meta.put("importMetrics", importMetrics);
-                    log.info("[Import {}] Metadata computed in {} ms", projectId, elapsedMillis(metadataStart));
+                    
+                    long metadataComputeMs = elapsedMillis(metadataStart);
+                    log.info("[Import {}] ✅ Metadata computed in {} ms", projectId, metadataComputeMs);
                     metadataService.writeMeta(projectId, meta);
 
-                    timeEstimator.recordSample(fileSizeBytes, classCount, annotationCount, durationMs);
+                    timeEstimator.recordSample(fileSizeBytes, classCount, annotationCount, totalDurationMs);
 
-                    // Update status
-                    metadataService.writeStatus(projectId, ProjectStatus.completed(filename));
-                    log.info("Completed import for project {} in {} ms", projectId, durationMs);
+                    log.info("✅ [Import {}] Background indexing complete. Total time: {} ms (GraphDB: {} ms, Metadata: {} ms)", 
+                            projectId, totalDurationMs, totalDurationMs - metadataComputeMs, metadataComputeMs);
 
-                    // Notify: Import completed
-                    Map<String, Object> metadata = new HashMap<>();
-                    metadata.put("tripleCount", meta.get("tripleCount"));
-                    metadata.put("classCount", meta.get("classCount"));
-                    sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_COMPLETED,
-                            "COMPLETED", "Import completed successfully", filename, metadata);
+                    // Optional: Send notification that metadata is ready (frontend can refresh statistics)
+                    Map<String, Object> metaReadyNotif = new HashMap<>();
+                    metaReadyNotif.put("tripleCount", meta.get("tripleCount"));
+                    metaReadyNotif.put("classCount", meta.get("classCount"));
+                    metaReadyNotif.put("stage", "metadata-ready");
+                    sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
+                            "METADATA_READY", "Metadata indexing complete", filename, metaReadyNotif);
+                            
                 } catch (Exception e) {
-                    log.error("Metadata indexing failed for {}", projectId, e);
-                    metadataService.writeStatus(projectId, ProjectStatus.error(filename, e.getMessage()));
-                    sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_FAILED,
-                            "ERROR", "Indexing failed: " + e.getMessage(), filename, Map.of("error", e.getMessage()));
+                    log.error("❌ [Import {}] Background metadata indexing failed (ontology still usable): {}", 
+                            projectId, e.getMessage(), e);
+                    // Note: We don't change status to ERROR here since the ontology is already loaded and usable
+                    // Just log the error and notify about metadata issue
+                    sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
+                            "METADATA_ERROR", "Metadata indexing failed: " + e.getMessage(), 
+                            filename, Map.of("error", e.getMessage(), "stage", "metadata-error"));
                 }
             });
 
         } catch (Exception e) {
             log.error("Import failed for {} while {}", projectId, stage, e);
-            metadataService.writeStatus(projectId, ProjectStatus.error(filename, e.getMessage()));
+            
+            // Only set ERROR status if import wasn't already marked as COMPLETED
+            // This prevents overwriting COMPLETED -> ERROR after IMPORT_COMPLETED was sent
+            if (!importMarkedCompleted.get()) {
+                metadataService.writeStatus(projectId, ProjectStatus.error(filename, e.getMessage()));
 
-            // Notify: Import failed
-            Map<String, Object> errorMeta = new HashMap<>();
-            errorMeta.put("error", e.getMessage());
-            sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_FAILED,
-                    "ERROR", "Import failed: " + e.getMessage(), filename, errorMeta);
+                // Notify: Import failed
+                Map<String, Object> errorMeta = new HashMap<>();
+                errorMeta.put("error", e.getMessage());
+                sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_FAILED,
+                        "ERROR", "Import failed: " + e.getMessage(), filename, errorMeta);
+            } else {
+                // Import was already marked COMPLETED - log but don't change status
+                log.warn("[Import {}] Exception occurred after import was marked COMPLETED (status not changed): {}", 
+                        projectId, e.getMessage());
+            }
         } finally {
             guard.set(false);
         }
@@ -462,9 +631,12 @@ public class ProjectImportService {
      */
     private RDFFormat detectFormatByContent(Path file) {
         try {
-            // Read first 2KB to detect format
-            byte[] header = java.nio.file.Files.readAllBytes(file);
-            int readLength = Math.min(2048, header.length);
+            // Read only the first 2KB to detect format (not the entire file)
+            byte[] header;
+            try (InputStream fis = Files.newInputStream(file)) {
+                header = fis.readNBytes(2048);
+            }
+            int readLength = header.length;
             
             // Skip UTF-8 BOM if present
             int offset = 0;
@@ -565,6 +737,192 @@ public class ProjectImportService {
         return false;
     }
 
+    /**
+     * Returns true when {@code ex} (or any cause in its chain) is a SAX parse
+     * exception indicating the XML is structurally broken — e.g. unclosed
+     * elements, unescaped angle-brackets in text nodes, duplicate root elements.
+     *
+     * This is intentionally narrower than "any parse error": namespace-not-bound
+     * errors are also SAX errors but are handled by a separate namespace-injection
+     * step, so we exclude them here.
+     */
+    private boolean isXmlStructuralError(Throwable ex) {
+        Throwable t = ex;
+        while (t != null) {
+            String msg = t.getMessage();
+            if (msg != null) {
+                String lower = msg.toLowerCase(Locale.ROOT);
+                // SAX well-formedness errors
+                if (lower.contains("must be terminated") ||
+                    lower.contains("end-tag") ||
+                    lower.contains("end tag") ||
+                    lower.contains("unexpected end of file") ||
+                    lower.contains("premature end of file") ||
+                    lower.contains("content is not allowed in prolog") ||
+                    lower.contains("invalid xml") ||
+                    lower.contains("illegalstateexception") ||
+                    lower.contains("illegal state")) {
+                    return true;
+                }
+                // RDF4J wraps the SAX error — check class names too
+                if (t.getClass().getName().contains("SAXParseException")) {
+                    boolean isNamespaceError = lower.contains("prefix") && (lower.contains("bound") || lower.contains("not bound"));
+                    if (!isNamespaceError) {
+                        return true;
+                    }
+                }
+            }
+            t = t.getCause();
+        }
+        return false;
+    }
+
+
+    /**
+     * Detect and load any {@code owl:imports} that are declared in the project's named graph
+     * but whose content has not yet been loaded.  Iterates transitively up to
+     * {@code MAX_IMPORT_DEPTH} levels.  Uses INCREMENTAL mode so the existing graph triples
+     * are preserved.  Import failures are logged as warnings and do not abort the import.
+     */
+    private void resolveOwlImports(String projectId, String filename) {
+        final int MAX_IMPORT_DEPTH = 3;
+        final int MAX_IMPORTS_TOTAL = 20;
+        Set<String> loaded = new LinkedHashSet<>();
+        Set<String> toProcess = new LinkedHashSet<>();
+
+        ImportOptions appendOptions = ImportOptions.builder()
+                .mode(ImportOptions.ImportMode.INCREMENTAL)
+                .partitionStrategy(ImportOptions.PartitionStrategy.NONE)
+                .build();
+
+        // Seed with direct imports from the main ontology
+        toProcess.addAll(queryOwlImports(projectId));
+
+        if (toProcess.isEmpty()) {
+            log.info("[Import {}] No owl:imports statements found.", projectId);
+            return;
+        }
+
+        log.info("[Import {}] Resolving {} owl:imports: {}", projectId, toProcess.size(), toProcess);
+
+        for (int depth = 0; depth < MAX_IMPORT_DEPTH && !toProcess.isEmpty(); depth++) {
+            Set<String> nextRound = new LinkedHashSet<>();
+            for (String importUri : toProcess) {
+                if (loaded.size() >= MAX_IMPORTS_TOTAL) {
+                    log.warn("[Import {}] Reached max import limit ({}), stopping", projectId, MAX_IMPORTS_TOTAL);
+                    break;
+                }
+                if (loaded.contains(importUri)) {
+                    continue;
+                }
+                loaded.add(importUri);
+
+                if (!importUri.startsWith("http://") && !importUri.startsWith("https://")) {
+                    log.info("[Import {}] Skipping non-HTTP import: {}", projectId, importUri);
+                    continue;
+                }
+
+                try {
+                    sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
+                            "PROCESSING", "Resolving import: " + importUri, filename,
+                            Map.of("progress", 96, "stage", "resolving-imports"));
+
+                    log.info("[Import {}] Downloading import (depth {}): {}", projectId, depth, importUri);
+                    Path importTempFile = downloadToTemp(importUri);
+                    if (importTempFile == null) {
+                        continue; // failed – warning already logged
+                    }
+                    try {
+                        try {
+                            log.warn("[Import {}] Sanitizing import file on disk: {}", projectId, importTempFile);
+                            OWLFormatConverter.sanitizeFileOnDisk(importTempFile);
+                        } catch (Exception sanitizeEx) {
+                            log.warn("[Import {}] Sanitization of import {} failed: {}",
+                                    projectId, importUri, sanitizeEx.getMessage());
+                        }
+                        RDFFormat importFormat = detectFormat(importTempFile);
+                        long importSize = Files.size(importTempFile);
+                        try (InputStream importIn = Files.newInputStream(importTempFile)) {
+                            datasetService.bulkLoadChunked(projectId, importIn, importFormat,
+                                    importSize, appendOptions, null);
+                        }
+                        log.info("[Import {}] Loaded import: {}", projectId, importUri);
+                        // Collect transitive imports from the newly loaded content
+                        nextRound.addAll(queryOwlImports(projectId));
+                    } finally {
+                        Files.deleteIfExists(importTempFile);
+                    }
+                } catch (Exception importEx) {
+                    log.warn("[Import {}] Could not load import {}: {}",
+                            projectId, importUri, importEx.getMessage());
+                }
+            }
+            // Only process imports that weren't already loaded
+            nextRound.removeAll(loaded);
+            toProcess = nextRound;
+        }
+
+        if (!loaded.isEmpty()) {
+            log.info("[Import {}] Resolved {} owl:imports", projectId, loaded.size());
+        }
+    }
+
+    /** Query the project graph for all {@code owl:imports} object values. */
+    private List<String> queryOwlImports(String projectId) {
+        List<String> uris = new ArrayList<>();
+        try {
+            TupleQueryResult result = datasetService.execSelect(projectId,
+                    "SELECT DISTINCT ?importUri WHERE { " +
+                    "?onto <http://www.w3.org/2002/07/owl#imports> ?importUri . }");
+            while (result.hasNext()) {
+                BindingSet bs = result.next();
+                if (bs.hasBinding("importUri")) {
+                    uris.add(bs.getValue("importUri").stringValue());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[Import] Failed to query owl:imports: {}", e.getMessage());
+        }
+        return uris;
+    }
+
+    /**
+     * Download the resource at {@code uri} to a temp file and return its path.
+     * Returns {@code null} and logs a warning if the download fails.
+     */
+    private Path downloadToTemp(String uri) {
+        try {
+            java.net.URL url = URI.create(uri).toURL();
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(15_000);   // 15 s
+            conn.setReadTimeout(600_000);     // 10 min for large imports
+            conn.setRequestProperty("Accept",
+                    "application/rdf+xml, text/turtle, application/n-triples, */*");
+            conn.connect();
+            int code = conn.getResponseCode();
+            if (code < 200 || code >= 300) {
+                log.warn("[Import] HTTP {} fetching import: {}", code, uri);
+                conn.disconnect();
+                return null;
+            }
+            // Derive a sensible filename from the URI
+            String uriPath = URI.create(uri).getPath();
+            String leaf = uriPath.substring(uriPath.lastIndexOf('/') + 1);
+            if (leaf.isBlank()) leaf = "import";
+            String suffix = leaf.contains(".") ? leaf.substring(leaf.lastIndexOf('.')) : ".owl";
+            Path tmp = Files.createTempFile("owl-import-", suffix);
+            try (InputStream is = conn.getInputStream()) {
+                Files.copy(is, tmp, StandardCopyOption.REPLACE_EXISTING);
+            } finally {
+                conn.disconnect();
+            }
+            log.info("[Import] Downloaded {} -> {} ({} bytes)", uri, tmp.getFileName(), Files.size(tmp));
+            return tmp;
+        } catch (Exception e) {
+            log.warn("[Import] Download failed for {}: {}", uri, e.getMessage());
+            return null;
+        }
+    }
 
     private String extensionFor(RDFFormat format) {
         if (format == null) {

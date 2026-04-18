@@ -2,6 +2,11 @@
  * Graph Data Fetch Service
  * Optimized data fetching from GraphDB with proper error handling and transformation
  * Based on webVOWL plugin's proven approach
+ * 
+ * PERFORMANCE NOTE:
+ * - Recursive child fetching is DISABLED for large ontologies
+ * - This prevents N+1 query problem that causes "continuous polling" behavior
+ * - Only top-level classes are fetched; users can expand nodes on-demand
  */
 
 import { OntologyNode, OntologyEdge } from '../types';
@@ -145,16 +150,37 @@ export class GraphDataFetchService {
   }
 
   /**
-   * Fetch ALL classes recursively (same as webVOWL)
-   * This fetches top-level classes and then recursively fetches all children
+   * Fetch ALL classes efficiently using bulk endpoint
+   * This fetches all classes in ONE request, avoiding N+1 queries
+   * 
+   * NOTE: Uses the new `/classes/all/` endpoint that fetches everything in a single SPARQL query
    */
   private async fetchAllClassesRecursively(): Promise<any[]> {
-    const url = `${this.apiBaseUrl}/api/ontology/classes/top-level/${this.ontologyId}?limit=10000`;
-    console.log('[GraphDataFetchService] 🔵🔵🔵 FETCHING TOP-LEVEL CLASSES from:', url);
+    // Try the new bulk endpoint first (faster, one request)
+    const bulkUrl = `${this.apiBaseUrl}/api/ontology/classes/all/${this.ontologyId}?limit=10000`;
+    console.log('[GraphDataFetchService] 🚀 TRYING BULK FETCH from:', bulkUrl);
     
     try {
-      const response = await fetch(url, { headers: this.headers });
-      console.log('[GraphDataFetchService] 📡 Top-level response status:', response.status, response.statusText);
+      const response = await fetch(bulkUrl, { headers: this.headers });
+      
+      if (response.ok) {
+        const data = await response.json();
+        const allClasses = data.success && data.classes ? data.classes : [];
+        console.log('[GraphDataFetchService] ✅ BULK FETCH SUCCESS:', allClasses.length, 'classes');
+        return allClasses;
+      }
+      
+      console.warn('[GraphDataFetchService] ⚠️ Bulk endpoint failed, falling back to top-level only');
+    } catch (error) {
+      console.warn('[GraphDataFetchService] ⚠️ Bulk fetch error, falling back:', error);
+    }
+    
+    // Fallback: fetch only top-level classes
+    const topLevelUrl = `${this.apiBaseUrl}/api/ontology/classes/top-level/${this.ontologyId}?limit=10000`;
+    console.log('[GraphDataFetchService] 📦 Falling back to top-level fetch from:', topLevelUrl);
+    
+    try {
+      const response = await fetch(topLevelUrl, { headers: this.headers });
       
       if (!response.ok) {
         console.warn('[GraphDataFetchService] ❌ Top-level classes endpoint failed:', response.status);
@@ -162,34 +188,11 @@ export class GraphDataFetchService {
       }
       
       const data = await response.json();
-      console.log('[GraphDataFetchService] 📦 Raw response data:', data);
-      
       const topLevelClasses = data.success && data.classes ? data.classes : [];
       console.log('[GraphDataFetchService] ✅ Top-level classes extracted:', topLevelClasses.length);
-      console.log('[GraphDataFetchService] 📋 Top-level class details:', topLevelClasses);
+      console.log('[GraphDataFetchService] ⚠️ NOTE: Showing top-level classes only (bulk endpoint unavailable)');
       
-      // Collect ALL classes (top-level + all descendants)
-      const allClasses: any[] = [...topLevelClasses];
-      
-      // Recursively fetch children for each top-level class
-      for (const cls of topLevelClasses) {
-        console.log('[GraphDataFetchService] 🔍 Processing class:', cls);
-        console.log('[GraphDataFetchService] 🔍 Class keys:', Object.keys(cls));
-        const classIri = cls.classIri || cls.classIRI || cls.iri || cls.id || cls.uri;
-        console.log('[GraphDataFetchService] 🔍 Extracted IRI:', classIri);
-        
-        if (!classIri) {
-          console.warn('[GraphDataFetchService] ⚠️ Could not extract IRI from class:', cls);
-          continue;
-        }
-        
-        const children = await this.fetchChildrenRecursively(classIri);
-        console.log(`[GraphDataFetchService] 📊 Found ${children.length} descendants for ${cls.label || classIri}`);
-        allClasses.push(...children);
-      }
-      
-      console.log('[GraphDataFetchService] Total classes after recursive fetch:', allClasses.length);
-      return allClasses;
+      return topLevelClasses;
     } catch (error) {
       console.error('[GraphDataFetchService] Error fetching classes:', error);
       return [];

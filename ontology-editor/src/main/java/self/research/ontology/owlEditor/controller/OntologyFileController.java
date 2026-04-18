@@ -61,13 +61,29 @@ public class OntologyFileController {
                     .body(resource);
             }
             
+            // Last resort: try to export from GraphDB
+            log.info("No ontology file on disk, attempting to export from GraphDB for project: {}", projectId);
+            try {
+                Path exportedFile = storageManager.exportOntology(projectId, "rdfxml");
+                if (Files.exists(exportedFile) && Files.isReadable(exportedFile)) {
+                    log.info("Successfully exported ontology from GraphDB: {}", exportedFile);
+                    Resource resource = new FileSystemResource(exportedFile);
+                    return ResponseEntity.ok()
+                        .contentType(MediaType.APPLICATION_XML)
+                        .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + projectId + ".owl\"")
+                        .body(resource);
+                }
+            } catch (Exception exportException) {
+                log.warn("Failed to export ontology from GraphDB for project {}: {}", projectId, exportException.getMessage());
+            }
+            
             log.warn("No ontology file found for project: {}", projectId);
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(Map.of(
                     "success", false,
                     "error", "Ontology file not found for project: " + projectId,
                     "projectId", projectId,
-                    "message", "Neither ontology.current.owl nor ontology.original.owl exists for this project"
+                    "message", "Neither ontology.current.owl nor ontology.original.owl exists for this project, and GraphDB export failed"
                 ));
             
         } catch (Exception e) {
@@ -93,6 +109,16 @@ public class OntologyFileController {
             
             if (Files.exists(currentFile) || Files.exists(originalFile)) {
                 return ResponseEntity.ok().build();
+            }
+            
+            // Check if we can export from GraphDB as fallback
+            try {
+                Path exportedFile = storageManager.exportOntology(projectId, "rdfxml");
+                if (Files.exists(exportedFile)) {
+                    return ResponseEntity.ok().build();
+                }
+            } catch (Exception e) {
+                log.debug("GraphDB export check failed for project {}: {}", projectId, e.getMessage());
             }
             
             return ResponseEntity.notFound().build();

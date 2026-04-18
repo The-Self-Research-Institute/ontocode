@@ -34,8 +34,21 @@ public class GraphDBStorage implements OntologyStorage {
         this.repositoryId = repositoryId;
         this.maxTripleCount = 100_000_000; // 100M triples max
         
-        // Initialize HTTP repository connection to GraphDB
-        this.repository = new HTTPRepository(graphdbUrl, repositoryId);
+        // Initialize HTTP repository connection to GraphDB with proper timeouts
+        HTTPRepository httpRepo = new HTTPRepository(graphdbUrl, repositoryId);
+        org.apache.http.impl.client.CloseableHttpClient httpClient = org.apache.http.impl.client.HttpClients.custom()
+            .setDefaultRequestConfig(org.apache.http.client.config.RequestConfig.custom()
+                .setConnectTimeout(30_000)        // 30s to establish connection
+                .setSocketTimeout(600_000)         // 10 min to wait for data
+                .setConnectionRequestTimeout(30_000)
+                .build())
+            .setMaxConnTotal(50)
+            .setMaxConnPerRoute(20)
+            .evictExpiredConnections()
+            .evictIdleConnections(5, java.util.concurrent.TimeUnit.MINUTES)
+            .build();
+        httpRepo.setHttpClient(httpClient);
+        this.repository = httpRepo;
         this.repository.init();
     }
 
@@ -222,7 +235,7 @@ public class GraphDBStorage implements OntologyStorage {
         List<String> ontologyIds = new ArrayList<>();
 
         try (RepositoryConnection conn = repository.getConnection()) {
-            String query = "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } FILTER(STRSTARTS(STR(?g), 'http://ontocode.org/ontology/')) }";
+            String query = "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } FILTER(STRSTARTS(STR(?g), 'http://ontocode.org/')) }";
             
             TupleQuery tupleQuery = conn.prepareTupleQuery(query);
             try (TupleQueryResult result = tupleQuery.evaluate()) {
@@ -354,7 +367,7 @@ public class GraphDBStorage implements OntologyStorage {
         List<String> versions = new ArrayList<>();
 
         try (RepositoryConnection conn = repository.getConnection()) {
-            String pattern = "http://ontocode.org/ontology/" + ontologyId + "_v";
+            String pattern = "http://ontocode.org/" + ontologyId + "_v";
             String query = "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } FILTER(STRSTARTS(STR(?g), '" + pattern + "')) }";
             
             TupleQuery tupleQuery = conn.prepareTupleQuery(query);
@@ -414,11 +427,11 @@ public class GraphDBStorage implements OntologyStorage {
     // ==================== Helper Methods ====================
 
     private String getGraphUri(String ontologyId) {
-        return "http://ontocode.org/ontology/" + ontologyId;
+        return "http://ontocode.org/" + ontologyId;
     }
 
     private String extractOntologyIdFromUri(String graphUri) {
-        return graphUri.replace("http://ontocode.org/ontology/", "");
+        return graphUri.replace("http://ontocode.org/", "");
     }
 
     private void storeMetadata(RepositoryConnection conn, String ontologyId, Map<String, Object> metadata, int axiomCount) {

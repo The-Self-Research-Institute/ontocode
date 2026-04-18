@@ -239,7 +239,7 @@ public class EmailService {
      * Send email verification link to user
      */
     public void sendVerificationEmail(String to, String token) {
-        String verificationUrl = baseUrl + "/api/auth/verify?token=" + token;
+        String verificationUrl = baseUrl + "/verify-email?token=" + token;
         
         String htmlContent = String.format("""
             <!DOCTYPE html>

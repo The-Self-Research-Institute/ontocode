@@ -28,7 +28,6 @@ import {
   Plus,
   GitBranch,
   Trash2,
-  Users,
   Maximize,
   MinusSquare
 } from 'lucide-react';
@@ -462,9 +461,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       setClassActionFeedback({ type: 'error', message: 'Unable to open delete dialog in main editor.' });
     }
   }, [projectId]);
-  const requestHostCollaborationPanel = useCallback(() => {
-    dispatchHostEvent('graph-view:show-collaboration', { projectId });
-  }, [projectId]);
+
 
   // UI State
   const [selectedNodes, setSelectedNodes] = useState<Set<string>>(new Set());
@@ -987,7 +984,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       const authToken = localStorage.getItem('authToken');
       
       // ALWAYS use GraphDB direct fetch for WebVOWL compatibility
-      // (collaborative endpoint doesn't have property relation edges)
+      // (provides complete property relation edges)
       console.log('[AdvancedGraphView D3] 🔵 Using GraphDB direct fetch for complete data...');
         
         // Fetch data from GraphDB using optimized service (same approach as webVOWL)
@@ -4106,17 +4103,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         </button>
         <button onClick={() => setShowLegend(!showLegend)} style={showLegend ? styles.btnActive : styles.btn} title="Toggle Legend">
           <FileText size={16} />
-        </button>
-
-        <div style={styles.divider} />
-
-        <button
-          onClick={requestHostCollaborationPanel}
-          style={styles.btn}
-          title="Open collaboration panel in main editor"
-        >
-          <Users size={16} />
-          <span style={{ marginLeft: 6 }}>Collaboration</span>
         </button>
 
         <div style={{ flex: 1 }} />

@@ -46,13 +46,11 @@
     "watch": "webpack --mode development --watch"
   },
   "dependencies": {
-    "@stomp/stompjs": "^7.0.0",
     "@types/d3": "^7.4.3",
     "d3": "^7.9.0",
     "lucide-react": "^0.263.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "sockjs-client": "^1.6.1",
     "vis-network": "^9.1.9"
   },
   "devDependencies": {

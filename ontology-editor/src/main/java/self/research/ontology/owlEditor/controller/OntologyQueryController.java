@@ -31,14 +31,19 @@ public class OntologyQueryController {
         this.ontologyMetadataService = ontologyMetadataService;
     }
 
-    @GetMapping("/classes/top-level/{projectId}")
+    @GetMapping("/classes/top-level/{projectId:.+}")
     public ResponseEntity<?> topLevel(@PathVariable String projectId,
                                       @RequestParam(defaultValue = "1000") int limit) {
-        return ResponseEntity.ok(Map.of("success", true, "classes",
-                queryService.topLevelClasses(projectId, limit)));
+        try {
+            return ResponseEntity.ok(Map.of("success", true, "classes",
+                    queryService.topLevelClasses(projectId, limit)));
+        } catch (Exception e) {
+            return ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("success", false, "error", "Query timed out or failed: " + e.getMessage()));
+        }
     }
 
-    @GetMapping("/classes/children/{projectId}")
+    @GetMapping("/classes/children/{projectId:.+}")
     public ResponseEntity<?> children(@PathVariable String projectId,
                                       @RequestParam String parentIri,
                                       @RequestParam(defaultValue = "1000") int limit,
@@ -46,32 +51,59 @@ public class OntologyQueryController {
         return ResponseEntity.ok(queryService.children(projectId, parentIri, limit, offset));
     }
 
-    @GetMapping("/properties/{projectId}")
+    @GetMapping("/properties/{projectId:.+}")
     public ResponseEntity<?> properties(@PathVariable String projectId,
                                         @RequestParam(required = false) String type,
                                         @RequestParam(defaultValue = "100") int limit,
                                         @RequestParam(defaultValue = "0") int offset) {
-        return ResponseEntity.ok(Map.of("success", true, "data",
-                queryService.properties(projectId, type, limit, offset)));
+        try {
+            return ResponseEntity.ok(Map.of("success", true, "data",
+                    queryService.properties(projectId, type, limit, offset)));
+        } catch (Exception e) {
+            return ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("success", false, "error", "Query timed out or failed: " + e.getMessage()));
+        }
     }
 
-    @GetMapping("/individuals/{projectId}")
+    @GetMapping("/properties/detail/{projectId:.+}")
+    public ResponseEntity<?> propertyDetail(@PathVariable String projectId,
+                                            @RequestParam String iri) {
+        try {
+            return ResponseEntity.ok(Map.of("success", true, "data",
+                    queryService.propertyDetail(projectId, iri)));
+        } catch (Exception e) {
+            return ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("success", false, "error", "Query failed: " + e.getMessage()));
+        }
+    }
+
+    @GetMapping("/individuals/{projectId:.+}")
     public ResponseEntity<?> individuals(@PathVariable String projectId,
                                          @RequestParam(defaultValue = "50") int limit,
                                          @RequestParam(defaultValue = "0") int offset) {
-        return ResponseEntity.ok(Map.of(
-                "success", true,
-                "data", queryService.individuals(projectId, limit, offset),
-                "total", queryService.individualCount(projectId)
-        ));
+        try {
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "data", queryService.individuals(projectId, limit, offset),
+                    "total", queryService.individualCount(projectId)
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("success", false, "error", "Query timed out or failed: " + e.getMessage()));
+        }
     }
 
-    @GetMapping("/annotation-properties/{projectId}")
+    @GetMapping("/annotation-properties/{projectId:.+}")
     public ResponseEntity<?> annotationProperties(@PathVariable String projectId,
                                                   @RequestParam(defaultValue = "100") int limit,
                                                   @RequestParam(defaultValue = "0") int offset) {
-        return ResponseEntity.ok(Map.of("success", true, "data",
-                queryService.annotationProperties(projectId, limit, offset)));
+        try {
+            return ResponseEntity.ok(Map.of("success", true, "data",
+                    queryService.annotationProperties(projectId, limit, offset)));
+        } catch (Exception e) {
+            return ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("success", false, "error", "Query timed out or failed: " + e.getMessage()));
+        }
     }
 
     @GetMapping("/annotation-properties/{projectId}/usage")
@@ -81,12 +113,17 @@ public class OntologyQueryController {
                 queryService.annotationPropertyUsage(projectId, propertyIri)));
     }
 
-    @GetMapping("/datatypes/{projectId}")
+    @GetMapping("/datatypes/{projectId:.+}")
     public ResponseEntity<?> datatypes(@PathVariable String projectId,
                                        @RequestParam(defaultValue = "100") int limit,
                                        @RequestParam(defaultValue = "0") int offset) {
-        return ResponseEntity.ok(Map.of("success", true, "data",
-                queryService.datatypes(projectId, limit, offset)));
+        try {
+            return ResponseEntity.ok(Map.of("success", true, "data",
+                    queryService.datatypes(projectId, limit, offset)));
+        } catch (Exception e) {
+            return ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("success", false, "error", "Query timed out or failed: " + e.getMessage()));
+        }
     }
 
     @GetMapping("/classes/usage/{projectId}")
@@ -130,12 +167,17 @@ public class OntologyQueryController {
         return ResponseEntity.ok(queryService.getClassInstances(projectId, classIri));
     }
 
-    @GetMapping("/classes/instance-counts/{projectId}")
+    @GetMapping("/classes/instance-counts/{projectId:.+}")
     public ResponseEntity<?> classInstanceCounts(@PathVariable String projectId) {
-        return ResponseEntity.ok(Map.of(
-                "success", true,
-                "data", queryService.getClassInstanceCounts(projectId)
-        ));
+        try {
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "data", queryService.getClassInstanceCounts(projectId)
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("success", false, "error", "Query timed out or failed: " + e.getMessage()));
+        }
     }
 
     @GetMapping("/ontology/gci/{projectId}")

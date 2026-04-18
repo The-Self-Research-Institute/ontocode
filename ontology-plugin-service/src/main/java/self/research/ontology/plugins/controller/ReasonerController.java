@@ -24,6 +24,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 /**
@@ -44,13 +47,31 @@ public class ReasonerController {
     @Autowired
     private ReasonerService reasonerService;
 
-    @Value("${ontology.editor.url:http://owl-editor:8082}")
+    @Value("${ontology.editor.url:http://owl-editor:8083}")
     private String editorServiceUrl;
 
     private final RestTemplate restTemplate = new RestTemplate();
 
     // Cache for loaded ontologies
     private final Map<String, OWLOntology> ontologyCache = new HashMap<>();
+
+    // Async classification task tracking
+    private final ConcurrentHashMap<String, Map<String, Object>> classifyTasks = new ConcurrentHashMap<>();
+    private final ExecutorService classifyExecutor = Executors.newFixedThreadPool(2);
+
+    /**
+     * Extract base project ID from partition format.
+     * Partition IDs use format: proj-xxx--partition-uuid
+     * Example: proj-33c06f4a--5c615441-ee3f-4d6d-b77d-6555cc7833e8 → proj-33c06f4a
+     */
+    private String extractBaseProjectId(String projectId) {
+        if (projectId == null || !projectId.contains("--")) {
+            return projectId;
+        }
+        String baseId = projectId.substring(0, projectId.indexOf("--"));
+        log.debug("Extracted base projectId '{}' from partition format '{}'", baseId, projectId);
+        return baseId;
+    }
 
     /**
      * Load ontology from multiple sources in priority order:
@@ -61,53 +82,57 @@ public class ReasonerController {
     private OWLOntology loadOntology(String projectId) throws Exception {
         log.info("Loading ontology for project: {}", projectId);
 
-        if (ontologyCache.containsKey(projectId)) {
-            log.info("Returning cached ontology for project: {}", projectId);
-            return ontologyCache.get(projectId);
+        // Extract base projectId if this is a partition ID (format: proj-xxx--partition-uuid)
+        String baseProjectId = extractBaseProjectId(projectId);
+        if (ontologyCache.containsKey(baseProjectId)) {
+            log.info("Returning cached ontology for project: {}", baseProjectId);
+            return ontologyCache.get(baseProjectId);
         }
 
         // 1. Try editor service first (for ontologies being edited in the IDE)
-        OWLOntology editorOntology = loadOntologyFromEditorService(projectId);
+        OWLOntology editorOntology = loadOntologyFromEditorService(baseProjectId);
         if (editorOntology != null) {
-            ontologyCache.put(projectId, editorOntology);
+            ontologyCache.put(baseProjectId, editorOntology);
             return editorOntology;
         }
 
         // 2. Try GridFS (for uploaded ontologies)
-        GridFSFile file = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(projectId)));
+        GridFSFile file = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(baseProjectId)));
         if (file == null) {
-            log.warn("File not found with metadata.projectId={}, trying filename", projectId);
-            file = gridfs.findOne(new Query(Criteria.where("filename").is(projectId + ".owl")));
+            log.warn("File not found with metadata.projectId={}, trying filename", baseProjectId);
+            file = gridfs.findOne(new Query(Criteria.where("filename").is(baseProjectId + ".owl")));
         }
 
         if (file != null) {
             log.info("Found ontology file in GridFS: {}", file.getFilename());
             GridFsResource resource = gridfs.getResource(file);
             try (InputStream inputStream = resource.getInputStream()) {
-                OWLOntology ontology = loadOntologyFromStream(projectId, inputStream, "GridFS file " + file.getFilename());
+                OWLOntology ontology = loadOntologyFromStream(baseProjectId, inputStream, "GridFS file " + file.getFilename());
                 if (ontology != null) {
-                    ontologyCache.put(projectId, ontology);
+                    ontologyCache.put(baseProjectId, ontology);
                     return ontology;
                 }
             }
         }
 
         // 3. Fallback: try loading from local filesystem (dev convenience)
-        OWLOntology filesystemOntology = loadOntologyFromFilesystem(projectId);
+        OWLOntology filesystemOntology = loadOntologyFromFilesystem(baseProjectId);
         if (filesystemOntology != null) {
-            ontologyCache.put(projectId, filesystemOntology);
+            ontologyCache.put(baseProjectId, filesystemOntology);
             return filesystemOntology;
         }
 
-        log.error("Ontology file not found for project: {} (tried: editor service, GridFS, filesystem)", projectId);
-        throw new RuntimeException("Ontology file not found for project: " + projectId + 
+        log.error("Ontology file not found for project: {} (tried: editor service, GridFS, filesystem)", baseProjectId);
+        throw new RuntimeException("Ontology file not found for project: " + baseProjectId + 
             ". Make sure the ontology is either being edited in the IDE or has been uploaded to the system.");
     }
 
     /**
      * Fetch ontology from the editor service API
+     * Uses configured editor URL: ${ontology.editor.url}
      */
     private OWLOntology loadOntologyFromEditorService(String projectId) {
+        log.debug("Attempting to fetch from editor service at: {}", editorServiceUrl);
         try {
             String url = editorServiceUrl + "/api/ontology-file/" + projectId;
             log.info("Fetching ontology from editor service: {}", url);
@@ -225,7 +250,8 @@ public class ReasonerController {
     }
 
     /**
-     * Classify the ontology (compute class hierarchy)
+     * Classify the ontology (compute class hierarchy) — async version.
+     * Returns immediately with a taskId; poll GET /api/reasoner/{projectId}/classify/status/{taskId} for results.
      * POST /api/reasoner/{projectId}/classify
      */
     @PostMapping("/{projectId}/classify")
@@ -236,40 +262,92 @@ public class ReasonerController {
         try {
             String reasonerType = request.getOrDefault("reasonerType", "HERMIT");
             log.info("Classifying ontology for project: {} with {}", projectId, reasonerType);
-            
-            OWLOntology ontology = loadOntology(projectId);
+
+            // Pre-validate reasoner type
             ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
-            
-            long startTime = System.currentTimeMillis();
-            reasonerService.classify(ontology, type);
-            long duration = System.currentTimeMillis() - startTime;
-            
-            // Get classification results
-            Map<String, Object> classificationData = reasonerService.getClassificationResults(ontology, type);
-            
-            Map<String, Object> result = new HashMap<>();
-            result.put("success", true);
-            result.put("reasonerType", type.getDisplayName());
-            result.put("durationMs", duration);
-            result.put("message", "Classification completed successfully");
-            
-            // Add classification details
-            result.put("classHierarchy", classificationData.get("classHierarchy"));
-            result.put("objectPropertyHierarchy", classificationData.get("objectPropertyHierarchy"));
-            result.put("dataPropertyHierarchy", classificationData.get("dataPropertyHierarchy"));
-            result.put("equivalentClasses", classificationData.get("equivalentClasses"));
-            result.put("unsatisfiableClasses", classificationData.get("unsatisfiableClasses"));
-            result.put("totalClasses", classificationData.get("totalClasses"));
-            
-            return ResponseEntity.ok(result);
-            
+
+            // Pre-load ontology on the request thread so errors surface immediately
+            OWLOntology ontology = loadOntology(projectId);
+
+            String taskId = UUID.randomUUID().toString();
+
+            Map<String, Object> taskInfo = new ConcurrentHashMap<>();
+            taskInfo.put("status", "RUNNING");
+            taskInfo.put("startedAt", System.currentTimeMillis());
+            taskInfo.put("reasonerType", type.getDisplayName());
+            classifyTasks.put(taskId, taskInfo);
+
+            classifyExecutor.submit(() -> {
+                try {
+                    long startTime = System.currentTimeMillis();
+                    reasonerService.classify(ontology, type);
+                    long duration = System.currentTimeMillis() - startTime;
+
+                    Map<String, Object> classificationData = reasonerService.getClassificationResults(ontology, type);
+
+                    taskInfo.put("status", "COMPLETED");
+                    taskInfo.put("success", true);
+                    taskInfo.put("durationMs", duration);
+                    taskInfo.put("message", "Classification completed successfully");
+                    taskInfo.put("classHierarchy", classificationData.get("classHierarchy"));
+                    taskInfo.put("objectPropertyHierarchy", classificationData.get("objectPropertyHierarchy"));
+                    taskInfo.put("dataPropertyHierarchy", classificationData.get("dataPropertyHierarchy"));
+                    taskInfo.put("equivalentClasses", classificationData.get("equivalentClasses"));
+                    taskInfo.put("unsatisfiableClasses", classificationData.get("unsatisfiableClasses"));
+                    taskInfo.put("totalClasses", classificationData.get("totalClasses"));
+                } catch (Exception e) {
+                    log.error("Async classification failed for project: {}", projectId, e);
+                    taskInfo.put("status", "FAILED");
+                    taskInfo.put("success", false);
+                    taskInfo.put("error", e.getMessage());
+                }
+            });
+
+            Map<String, Object> accepted = new HashMap<>();
+            accepted.put("taskId", taskId);
+            accepted.put("status", "RUNNING");
+            accepted.put("pollUrl", "/api/reasoner/" + projectId + "/classify/status/" + taskId);
+            return ResponseEntity.accepted().body(accepted);
+
         } catch (Exception e) {
-            log.error("Error during classification", e);
+            log.error("Error starting classification", e);
             return ResponseEntity.status(500).body(Map.of(
                 "success", false,
                 "error", e.getMessage()
             ));
         }
+    }
+
+    /**
+     * Poll for async classification results.
+     * GET /api/reasoner/{projectId}/classify/status/{taskId}
+     */
+    @GetMapping("/{projectId}/classify/status/{taskId}")
+    public ResponseEntity<Map<String, Object>> classifyStatus(
+            @PathVariable String projectId,
+            @PathVariable String taskId
+    ) {
+        Map<String, Object> taskInfo = classifyTasks.get(taskId);
+        if (taskInfo == null) {
+            return ResponseEntity.status(404).body(Map.of(
+                "success", false,
+                "error", "Task not found: " + taskId
+            ));
+        }
+
+        String status = (String) taskInfo.get("status");
+        Map<String, Object> response = new HashMap<>(taskInfo);
+        response.put("taskId", taskId);
+
+        if ("COMPLETED".equals(status) || "FAILED".equals(status)) {
+            // Cleanup after retrieval — keep for 60s in case of retry
+            classifyExecutor.submit(() -> {
+                try { Thread.sleep(60_000); } catch (InterruptedException ignored) {}
+                classifyTasks.remove(taskId);
+            });
+        }
+
+        return ResponseEntity.ok(response);
     }
 
     /**

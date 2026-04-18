@@ -396,8 +396,30 @@ export const ProtegeReasonerPlugin: React.FC<ReasonerPluginProps> = ({
         throw new Error(`Reasoning failed: ${response.statusText}. ${errorText}`);
       }
 
-      const result = await response.json();
+      let result = await response.json();
       console.log('[ProtegeReasonerPlugin] Reasoning result:', result);
+
+      // Handle async classify response (taskId-based polling)
+      if (result.taskId && task === 'classification') {
+        const taskId = result.taskId;
+        const POLL_INTERVAL = 3000;
+        const MAX_POLL_TIME = 600_000;
+        const deadline = Date.now() + MAX_POLL_TIME;
+        while (Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+          const statusRes = await fetch(
+            `${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/classify/status/${taskId}`,
+          );
+          if (!statusRes.ok) throw new Error(`Poll failed: ${statusRes.statusText}`);
+          const statusData = await statusRes.json();
+          if (statusData.status === 'COMPLETED') { result = statusData; break; }
+          if (statusData.status === 'FAILED') throw new Error(statusData.error || 'Classification failed');
+          setReasonerStatus('Classifying... (still running)');
+        }
+        if (result.taskId && result.status === 'RUNNING') {
+          throw new Error('Classification timed out after 10 minutes');
+        }
+      }
 
       if (task === 'consistency') {
         setIsConsistent(result.consistent);

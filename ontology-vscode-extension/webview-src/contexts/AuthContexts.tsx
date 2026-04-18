@@ -1,5 +1,5 @@
 ﻿
-import React, { createContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import React, { createContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import apiClient from '../services/apiClient';
 
 interface User {
@@ -20,7 +20,11 @@ interface AuthContextType {
     loading: boolean;
     needsWorkspaceSelection: boolean;
     login: (username: string, password: string) => Promise<void>;
-    signup: (username: string, email: string, password: string) => Promise<void>;
+    signup: (username: string, email: string, password: string) => Promise<{ requiresVerification: boolean; email?: string; message?: string }>;
+    forgotPassword: (email: string) => Promise<string>;
+    resetPassword: (token: string, password: string) => Promise<string>;
+    resendVerification: (email: string) => Promise<string>;
+    verifyEmailAndLogin: (token: string) => Promise<void>;
     selectWorkspace: (workspaceData: any) => void;
     switchWorkspace: () => void;
     updateSubscriptionPlan: (planId: string) => Promise<void>;
@@ -30,6 +34,15 @@ interface AuthContextType {
 }
 
 type DeploymentType = 'self-hosted' | 'cloud';
+const SKIP_WORKSPACE_MODE_KEY = 'skipWorkspaceMode';
+
+const isSkipWorkspaceMode = (): boolean => {
+    try {
+        return localStorage.getItem(SKIP_WORKSPACE_MODE_KEY) === 'true';
+    } catch {
+        return false;
+    }
+};
 
 // Decode JWT token to check expiration
 const isTokenExpired = (token: string): boolean => {
@@ -106,10 +119,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
     const [needsWorkspaceSelection, setNeedsWorkspaceSelection] = useState(false);
-    const [sessionExpiredMessage, setSessionExpiredMessage] = useState<string | null>(null);
-
+    const [sessionExpiredMessage, setSessionExpiredMessage] = useState<string | null>(null);    
+    // Flag to ignore workspace restoration when switching workspaces
+    const ignoringWorkspaceRef = useRef(false);
     const logout = useCallback((showExpiredMessage = false) => {
         console.log('[AuthContext] Logging out...');
+
+        // Always start fresh after logout: do not carry workspace context into next login.
+        localStorage.removeItem('lastWorkspaceId');
+        localStorage.removeItem(SKIP_WORKSPACE_MODE_KEY);
+        ignoringWorkspaceRef.current = false;
+        
         setUser(null);
         setNeedsWorkspaceSelection(false);
         if (showExpiredMessage) {
@@ -118,7 +138,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (window.vscode) {
             window.vscode.postMessage({ type: 'logout' });
         } else {
-            // Clear localStorage in browser/web mode
+            // Clear local token in browser/web mode.
             localStorage.removeItem('authToken');
         }
         console.log('[AuthContext]  Logout successful');
@@ -151,6 +171,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 
                 // Decode JWT to get user info
                 const userInfo = decodeToken(token);
+                const skipWorkspaceMode = isSkipWorkspaceMode();
                 const deploymentType = getStoredDeploymentType();
                 
                 // Cloud users are always admins
@@ -159,7 +180,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 const requiresWorkspace = shouldRequireWorkspaceSelection(
                     deploymentType,
                     isAdmin,
-                    userInfo.workspaceId
+                    skipWorkspaceMode ? undefined : userInfo.workspaceId
                 );
 
                 // Persist user state from token
@@ -170,14 +191,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     email: userInfo.email,
                     roles: userInfo.roles,
                     isAdmin: isAdmin,
-                    workspaceId: userInfo.workspaceId,
-                    workspaceName: userInfo.workspaceName,
-                    workspaceRole: userInfo.workspaceRole,
+                    workspaceId: skipWorkspaceMode ? undefined : userInfo.workspaceId,
+                    workspaceName: skipWorkspaceMode ? undefined : userInfo.workspaceName,
+                    workspaceRole: skipWorkspaceMode ? undefined : userInfo.workspaceRole,
                     subscriptionPlan: userInfo.subscriptionPlan
                 });
 
                 // Workspace selection based on deployment choice and role
-                setNeedsWorkspaceSelection(requiresWorkspace);
+                setNeedsWorkspaceSelection(skipWorkspaceMode ? false : requiresWorkspace);
                 setSessionExpiredMessage(null);
             }
             
@@ -200,8 +221,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             setLoading(false);
                             return;
                         }
+                        
+                        // If we're switching workspaces, ignore workspace info from token
+                        if (ignoringWorkspaceRef.current) {
+                            console.log('[AuthContext] 🚫 Ignoring workspace from storedAuthToken (switching workspaces)');
+                            // Keep token but don't restore workspace
+                            localStorage.setItem('authToken', message.token);
+                            ignoringWorkspaceRef.current = false; // Reset flag
+                            setLoading(false);
+                            return;
+                        }
+                        
                         // Decode JWT to get user info
                         const userInfo = decodeToken(message.token);
+                        const skipWorkspaceMode = isSkipWorkspaceMode();
                         const deploymentType = getStoredDeploymentType();
                         
                         // Cloud users are always admins
@@ -210,7 +243,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         const requiresWorkspace = shouldRequireWorkspaceSelection(
                             deploymentType,
                             isAdmin,
-                            userInfo.workspaceId
+                            skipWorkspaceMode ? undefined : userInfo.workspaceId
                         );
 
                         // Persist user state from token
@@ -221,14 +254,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             email: userInfo.email,
                             roles: userInfo.roles,
                             isAdmin: isAdmin,
-                            workspaceId: userInfo.workspaceId,
-                            workspaceName: userInfo.workspaceName,
-                            workspaceRole: userInfo.workspaceRole,
+                            workspaceId: skipWorkspaceMode ? undefined : userInfo.workspaceId,
+                            workspaceName: skipWorkspaceMode ? undefined : userInfo.workspaceName,
+                            workspaceRole: skipWorkspaceMode ? undefined : userInfo.workspaceRole,
                             subscriptionPlan: userInfo.subscriptionPlan
                         });
 
                         // Workspace selection based on deployment choice and role
-                        setNeedsWorkspaceSelection(requiresWorkspace);
+                        setNeedsWorkspaceSelection(skipWorkspaceMode ? false : requiresWorkspace);
                         // Clear expired message on successful login
                         setSessionExpiredMessage(null);
                     }
@@ -304,7 +337,58 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             // Decode JWT to get user info (for workspace data if present)
             const userInfo = decodeToken(token);
             
-            // Set user data
+            // Auto-select last workspace if available and user doesn't have workspace in JWT
+            const lastWorkspaceId = localStorage.getItem('lastWorkspaceId');
+            const skipWorkspaceMode = isSkipWorkspaceMode();
+            console.log('[AuthContext] Checking auto-select: lastWorkspaceId=', lastWorkspaceId, 'userInfo.workspaceId=', userInfo.workspaceId, 'deploymentType=', deploymentType, 'isAdmin=', isAdmin, 'skipWorkspaceMode=', skipWorkspaceMode);
+            
+            if (!skipWorkspaceMode && !userInfo.workspaceId && lastWorkspaceId && (deploymentType === 'cloud' || isAdmin)) {
+                console.log('[AuthContext] 🔄 Auto-selecting last workspace after login:', lastWorkspaceId);
+                try {
+                    const selectResponse = await apiClient.post(`/api/workspaces/${lastWorkspaceId}/select`);
+                    console.log('[AuthContext] 📥 Workspace select response:', selectResponse);
+                    
+                    if (selectResponse.jwt) {
+                        console.log('[AuthContext] ✅ Auto-selected workspace successfully');
+                        // Update with workspace-scoped token
+                        localStorage.setItem('authToken', selectResponse.jwt);
+                        if (window.vscode) {
+                            window.vscode.postMessage({ type: 'saveAuthToken', token: selectResponse.jwt });
+                        }
+                        
+                        const wsUserInfo = decodeToken(selectResponse.jwt);
+                        const userData = { 
+                            token: selectResponse.jwt,
+                            userId: wsUserInfo.userId || userInfo.userId,
+                            username: wsUserInfo.username || username, 
+                            email: wsUserInfo.email || email,
+                            roles: wsUserInfo.roles || roles,
+                            isAdmin: wsUserInfo.isAdmin || isAdmin,
+                            workspaceId: selectResponse.workspaceId,
+                            workspaceName: selectResponse.workspaceName,
+                            workspaceRole: selectResponse.role,
+                            subscriptionPlan: selectResponse.subscriptionPlan || wsUserInfo.subscriptionPlan
+                        };
+                        console.log('[AuthContext] 👤 Setting user with workspace:', userData);
+                        setUser(userData);
+                        setNeedsWorkspaceSelection(false);
+                        setSessionExpiredMessage(null);
+                        console.log('[AuthContext] ✅ Login complete with auto-selected workspace');
+                        // Skip the role update flow since we have workspace-scoped token
+                        return;
+                    } else {
+                        console.warn('[AuthContext] ⚠️ No JWT in workspace select response');
+                    }
+                } catch (wsError: any) {
+                    console.error('[AuthContext] ❌ Failed to auto-select workspace:', wsError);
+                    console.error('[AuthContext] Error details:', wsError?.message, wsError?.status, wsError?.data);
+                    // Fall through to normal login flow without workspace
+                }
+            } else {
+                console.log('[AuthContext] ℹ️ Skipping auto-select (already has workspace or no last workspace)');
+            }
+            
+            // Set user data (either workspace wasn't auto-selected, or user already has workspace in JWT)
             setUser({ 
                 token,
                 userId: userInfo.userId,
@@ -434,6 +518,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 const deploymentType = getStoredDeploymentType();
                 const isAdmin = deploymentType === 'cloud' ? true : (responseData?.isAdmin || userInfo.isAdmin || false);
                 
+                console.log('[AuthContext] Initial signup - deploymentType:', deploymentType, 'isAdmin:', isAdmin);
+                
                 setUser({ 
                     token,
                     userId: userInfo.userId,
@@ -464,7 +550,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             }
                             
                             const roleData = roleResponse?.data || roleResponse;
-                            const newIsAdmin = roleData?.isAdmin || false;
+                            // Cloud users are always admins, don't let role update override this
+                            const newIsAdmin = deploymentType === 'cloud' ? true : (roleData?.isAdmin || false);
                             const newRoles = roleData?.roles || [];
                             
                             setUser({ 
@@ -483,6 +570,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                                 userInfo.workspaceId
                             );
                             setNeedsWorkspaceSelection(requiresWorkspace);
+                            console.log('[AuthContext] After role update - isAdmin:', newIsAdmin, 'needsWorkspaceSelection:', requiresWorkspace);
                         }
                     } catch (roleError) {
                         console.error('[AuthContext] Failed to update role after signup:', roleError);
@@ -506,28 +594,120 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 
                 // Clear expired message on successful signup
                 setSessionExpiredMessage(null);
-                return;
+                return { requiresVerification: false };
             }
 
             // No token means email verification required
-            const message = response?.message || response?.data?.message || 'Registration successful! Please check your email to verify your account.';
-            console.log('[AuthContext]  Signup successful - awaiting email verification:', message);
-            // Show success message to user through a custom result
-            throw { success: true, message };
+            const responseData = response?.data || response;
+            const message = responseData?.message || 'Registration successful! Please check your email to verify your account.';
+            const verificationEmail = responseData?.email || email;
+            console.log('[AuthContext] Signup successful - awaiting email verification:', message);
+            return { requiresVerification: true, email: verificationEmail, message };
         } catch (error: any) {
-            console.error('[AuthContext]  Signup failed:', error);
+            console.error('[AuthContext] Signup failed:', error);
+            // Re-throw verification results as-is
+            if (error?.requiresVerification) throw error;
             const message = error?.message || error?.data?.message || error?.data?.error || 'Could not create account';
             throw new Error(message);
         }
     };
 
+    const forgotPassword = async (email: string): Promise<string> => {
+        try {
+            const response = await apiClient.post('/api/auth/forgot-password', { email });
+            const data = response?.data || response;
+            return data?.message || 'If the email exists in our system, a password reset link has been sent.';
+        } catch (error: any) {
+            const message = error?.message || error?.data?.message || error?.data?.error || 'Failed to process request';
+            throw new Error(message);
+        }
+    };
+
+    const resetPassword = async (token: string, password: string): Promise<string> => {
+        try {
+            const response = await apiClient.post('/api/auth/reset-password', { token, password });
+            const data = response?.data || response;
+            return data?.message || 'Password reset successfully!';
+        } catch (error: any) {
+            const message = error?.message || error?.data?.message || error?.data?.error || 'Failed to reset password';
+            throw new Error(message);
+        }
+    };
+
+    const resendVerification = async (email: string): Promise<string> => {
+        try {
+            const response = await apiClient.post('/api/auth/resend-verification', { email });
+            const data = response?.data || response;
+            return data?.message || 'Verification email sent.';
+        } catch (error: any) {
+            const message = error?.message || error?.data?.message || error?.data?.error || 'Failed to resend verification email';
+            throw new Error(message);
+        }
+    };
+
+    const verifyEmailAndLogin = async (token: string): Promise<void> => {
+        console.log('[AuthContext] Verifying email and auto-logging in...');
+        const response = await apiClient.get('/api/auth/verify', { token });
+        const data = response?.data || response;
+
+        const jwt = data?.jwt;
+        if (!jwt) {
+            if (data?.error) throw new Error(data.error);
+            throw new Error('Verification failed - no token received');
+        }
+
+        // Save token
+        localStorage.setItem('authToken', jwt);
+        if (window.vscode) {
+            window.vscode.postMessage({ type: 'saveAuthToken', token: jwt });
+        }
+
+        const userInfo = decodeToken(jwt);
+        const deploymentType = getStoredDeploymentType();
+        const isAdmin = deploymentType === 'cloud' ? true : (data?.isAdmin || false);
+
+        setUser({
+            token: jwt,
+            userId: userInfo.userId,
+            username: data?.username || userInfo.username,
+            email: data?.email || userInfo.email,
+            roles: data?.roles || userInfo.roles || [],
+            isAdmin,
+            workspaceId: userInfo.workspaceId,
+            workspaceName: userInfo.workspaceName,
+            workspaceRole: userInfo.workspaceRole,
+            subscriptionPlan: userInfo.subscriptionPlan,
+        });
+        setNeedsWorkspaceSelection(!userInfo.workspaceId);
+        setSessionExpiredMessage(null);
+        console.log('[AuthContext] ✅ Email verified and auto-logged in as', data?.username);
+    };
+
     const selectWorkspace = (workspaceData: any) => {
-        console.log('[AuthContext] Workspace selected:', workspaceData);
+        console.log('[AuthContext] 📥 selectWorkspace called with:', workspaceData);
+        console.log('[AuthContext] Current user before selection:', user);
         
         // Handle skip workspace case - user continues without workspace
         if (workspaceData.skipWorkspace) {
-            console.log('[AuthContext] User skipped workspace selection, continuing to editor');
+            console.log('[AuthContext] ✅ User skipped workspace selection, continuing to editor');
             console.log('[AuthContext] Setting needsWorkspaceSelection to false');
+            console.log('[AuthContext] User will proceed to editor without workspace context');
+
+            localStorage.setItem(SKIP_WORKSPACE_MODE_KEY, 'true');
+            localStorage.removeItem('lastWorkspaceId');
+            
+            // Set flag to ignore workspace restoration from next storedAuthToken message
+            ignoringWorkspaceRef.current = true;
+            console.log('[AuthContext] 🚫 Set ignoringWorkspaceRef to prevent workspace restoration');
+            
+            if (user) {
+                setUser({
+                    ...user,
+                    workspaceId: undefined,
+                    workspaceName: undefined,
+                    workspaceRole: undefined
+                });
+            }
             setNeedsWorkspaceSelection(false);
             // User stays logged in but without workspace context
             // The editor will work in non-workspace mode
@@ -535,8 +715,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         
         if (!workspaceData.jwt) {
+            console.error('[AuthContext] ❌ No JWT in workspaceData:', workspaceData);
             throw new Error('No token received from workspace selection');
         }
+
+        // Save workspace ID for auto-selection on next login
+        if (workspaceData.workspaceId) {
+            localStorage.setItem('lastWorkspaceId', workspaceData.workspaceId);
+            console.log('[AuthContext] 💾 Saved workspace for future auto-login:', workspaceData.workspaceId);
+        }
+        localStorage.removeItem(SKIP_WORKSPACE_MODE_KEY);
 
         // Save new workspace-scoped token
         // Always save to localStorage for webview API client
@@ -571,17 +759,33 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     const switchWorkspace = () => {
-        console.log('[AuthContext] Switching workspace - going back to workspace selection');
-        // Clear workspace-specific data but keep the user logged in
-        if (user) {
-            setUser({
-                ...user,
-                workspaceId: undefined,
-                workspaceName: undefined,
-                workspaceRole: undefined
-            });
+        console.log('[AuthContext] 🔄 switchWorkspace called');
+        console.log('[AuthContext] Current user:', user);
+        console.log('[AuthContext] Current needsWorkspaceSelection:', needsWorkspaceSelection);
+        
+        if (!user) {
+            console.warn('[AuthContext] No user to switch workspace for');
+            return;
         }
+
+        // Set flag to ignore workspace restoration from next storedAuthToken message
+        ignoringWorkspaceRef.current = true;
+        console.log('[AuthContext] 🚫 Set ignoringWorkspaceRef to prevent workspace restoration');
+        localStorage.removeItem(SKIP_WORKSPACE_MODE_KEY);
+        
+        // Clear workspace-specific data but keep the user logged in with token
+        const updatedUser = {
+            ...user,
+            workspaceId: undefined,
+            workspaceName: undefined,
+            workspaceRole: undefined
+        };
+        console.log('[AuthContext] Setting user to (no workspace):', updatedUser);
+        setUser(updatedUser);
+        
+        console.log('[AuthContext] Setting needsWorkspaceSelection to true');
         setNeedsWorkspaceSelection(true);
+        console.log('[AuthContext] ✅ Workspace switch initiated - should show workspace selection');
     };
 
     const updateSubscriptionPlan = async (planId: string) => {
@@ -665,6 +869,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         needsWorkspaceSelection,
         login,
         signup,
+        forgotPassword,
+        resetPassword,
+        resendVerification,
+        verifyEmailAndLogin,
         selectWorkspace,
         switchWorkspace,
         updateSubscriptionPlan,

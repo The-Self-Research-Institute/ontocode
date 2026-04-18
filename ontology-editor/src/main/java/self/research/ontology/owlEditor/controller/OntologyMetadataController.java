@@ -23,7 +23,7 @@ public class OntologyMetadataController {
         this.metadataService = metadataService;
     }
 
-    @GetMapping("/{projectId}")
+    @GetMapping("/{projectId:.+}")
     public ResponseEntity<?> getMetadata(@PathVariable String projectId) {
         try {
             Map<String, Object> metadata = metadataService.getMetadata(projectId);
@@ -36,7 +36,7 @@ public class OntologyMetadataController {
 
     // ========== Ontology Annotations ==========
 
-    @GetMapping("/{projectId}/annotations")
+    @GetMapping("/{projectId:.+}/annotations")
     public ResponseEntity<?> getAnnotations(@PathVariable String projectId) {
         try {
             List<Map<String, String>> annotations = metadataService.getOntologyAnnotations(projectId);
@@ -97,7 +97,7 @@ public class OntologyMetadataController {
 
     // ========== Ontology Imports ==========
 
-    @GetMapping("/{projectId}/imports")
+    @GetMapping("/{projectId:.+}/imports")
     public ResponseEntity<?> getImports(@PathVariable String projectId) {
         try {
             List<String> imports = metadataService.getOntologyImports(projectId);
@@ -211,7 +211,7 @@ public class OntologyMetadataController {
 
     // ========== Prefixes ==========
 
-    @GetMapping("/{projectId}/prefixes")
+    @GetMapping("/{projectId:.+}/prefixes")
     public ResponseEntity<?> getPrefixes(@PathVariable String projectId) {
         try {
             List<Map<String, String>> prefixes = metadataService.getPrefixes(projectId);

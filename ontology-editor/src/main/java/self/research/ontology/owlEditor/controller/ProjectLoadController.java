@@ -43,12 +43,15 @@ import self.research.ontology.owlEditor.util.OWLFormatConverter;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.ByteArrayInputStream;
 import java.io.OutputStream;
 import java.io.PushbackInputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.nio.charset.StandardCharsets;
 import java.util.zip.GZIPInputStream;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -105,18 +108,22 @@ public class ProjectLoadController {
         this.importWorkerDispatcher = importWorkerDispatcher;
     }
 
-    @PostMapping("/upload/{projectId}")
+    @PostMapping("/upload/{projectId:.+}")  // Allow slashes in path variable
     public ResponseEntity<Map<String, Object>> upload(@PathVariable String projectId,
                                                       @RequestParam("file") MultipartFile file,
                                                       @RequestParam(required = false) String ownerEmail,
                                                       @RequestParam(required = false) String action,
                                                       @RequestParam(required = false) String importMode,
                                                       @RequestParam(required = false) String partition,
+                                                      @RequestParam(required = false) String workspaceId,
+                                                      @RequestParam(required = false) String parentProjectId,
                                                       @RequestParam(required = false, defaultValue = "false") boolean compressed) {
-        log.info("[ProjectLoadController] Upload request - projectId: {}, filename: {}, ownerEmail: {}, action: {}, compressed: {}",
-            projectId, file.getOriginalFilename(), ownerEmail, action, compressed);
+        long uploadStartTime = System.nanoTime();
+        log.info("[ProjectLoadController] ═══ Upload STARTED - projectId: {}, filename: {}, size: {} bytes, ownerEmail: {}, workspaceId: {}, parentProjectId: {}, action: {}, compressed: {}",
+            projectId, file.getOriginalFilename(), file.getSize(), ownerEmail, workspaceId, parentProjectId, action, compressed);
         try {
             // VALIDATION: Check file size (max 300MB)
+            long stepStart = System.nanoTime();
             long maxSize = 300 * 1024 * 1024; // 300MB
             if (file.getSize() > maxSize) {
                 log.warn("File too large: {} bytes (max: {} bytes)", file.getSize(), maxSize);
@@ -127,12 +134,20 @@ public class ProjectLoadController {
                         ));
             }
 
+            log.info("[ProjectLoadController] [TIMING] Validation: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
+
+            stepStart = System.nanoTime();
             String actualProjectId = projectId;
             boolean isReplacement = false;
             String filename = file.getOriginalFilename();
             
+            // Skip duplicate check for hierarchical project IDs (files from project library)
+            // Hierarchical IDs like "proj-123--file-456" are already unique
+            // Note: Using -- separator to avoid URL encoding issues with / (%2F)
+            boolean isHierarchicalId = projectId.contains("--");
+            
             // Check for duplicate filename and handle based on action parameter
-            if (ownerEmail != null && !ownerEmail.isEmpty()) {
+            if (!isHierarchicalId && ownerEmail != null && !ownerEmail.isEmpty()) {
                 // First, check if filename conflicts with shared files
                 if (shareService.isFilenameInSharedFiles(filename, ownerEmail)) {
                     log.warn("Upload blocked - filename conflicts with shared file: {} for user: {}", filename, ownerEmail);
@@ -173,7 +188,10 @@ public class ProjectLoadController {
                 }
             }
             
+            log.info("[ProjectLoadController] [TIMING] Duplicate check: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
+
             // Optimize by writing to filesystem and GridFS in one pass
+            stepStart = System.nanoTime();
             Path projectDir = storageManager.prepareProjectDir(actualProjectId);
             Path original = projectDir.resolve("ontology.original.owl");
             Files.createDirectories(original.getParent());
@@ -223,6 +241,8 @@ public class ProjectLoadController {
                 );
             }
 
+            log.info("[ProjectLoadController] [TIMING] File save (disk + GridFS): {} ms", (System.nanoTime() - stepStart) / 1_000_000);
+
             // FIX: Add error handling - verify GridFS storage succeeded
             if (gridfsFileId == null || gridfsFileId.isEmpty()) {
                 throw new RuntimeException("Failed to store file in GridFS - no file ID returned");
@@ -230,27 +250,38 @@ public class ProjectLoadController {
 
             log.info("Stored file in GridFS for project {}: fileId={}", actualProjectId, gridfsFileId);
 
-            // Strip binary garbage bytes that the upload pipeline may prepend before XML content.
-            // This fixes the file on disk so ALL downstream consumers (preparse, import, conversion)
-            // get a clean file without needing their own stripping logic.
-            OWLFormatConverter.sanitizeFileOnDisk(original);
+            // SKIP sanitization here — ProjectImportService.runImport() does it during async import.
+            // Doing it twice wastes 10-15 seconds on 224 MB files (streams entire file for IRI scanning).
 
             // Extract citation-entity mappings from uploaded file for smart repositioning
             // This must be done BEFORE GraphDB import, as GraphDB will reorganize the content
+            stepStart = System.nanoTime();
             log.info("Extracting citation-entity mappings from uploaded file: {}", filename);
             storageManager.extractCitationMappingsFromFile(original, actualProjectId);
+            log.info("[ProjectLoadController] [TIMING] Citation extraction: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
 
             // FIX: Batch metadata updates into single operation for better performance
             // Use the potentially modified filename
+            stepStart = System.nanoTime();
             ProjectStatus status = ProjectStatus.uploaded(filename);
-            metadataService.updateProjectMetadata(actualProjectId, status, gridfsFileId, ownerEmail);
+            metadataService.updateProjectMetadata(actualProjectId, status, gridfsFileId, ownerEmail, workspaceId, parentProjectId);
+            log.info("[ProjectLoadController] [TIMING] Metadata update: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
 
+            stepStart = System.nanoTime();
             ImportOptions options = resolveImportOptions(importMode, partition);
             importWorkerDispatcher.dispatch(actualProjectId, original, ownerEmail, filename, gridfsFileId, options);
+            log.info("[ProjectLoadController] [TIMING] Import dispatch: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
 
+            stepStart = System.nanoTime();
             RDFFormat format = detectFormat(original);
+            log.info("[ProjectLoadController] [TIMING] Format detection: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
+
             preparseService.preparse(original, actualProjectId, format);
             
+            long totalUploadMs = (System.nanoTime() - uploadStartTime) / 1_000_000;
+            log.info("[ProjectLoadController] ═══ Upload endpoint COMPLETED in {} ms ({} sec) for project: {}",
+                    totalUploadMs, totalUploadMs / 1000, actualProjectId);
+
             String message = isReplacement ? "File replaced successfully, processing scheduled" : 
                             ("create_copy".equals(action) ? "Copy created successfully with name '" + filename + "', processing scheduled" :
                             "Upload complete, processing scheduled");
@@ -263,9 +294,14 @@ public class ProjectLoadController {
                     "filename", filename,
                     "message", message));
         } catch (IOException e) {
-            log.error("Upload failed", e);
+            log.error("Upload failed (IO)", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("success", false, "error", e.getMessage()));
+        } catch (Exception e) {
+            log.error("Upload failed", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("success", false, "error",
+                            e.getMessage() != null ? e.getMessage() : "Unexpected upload error"));
         }
     }
     
@@ -375,6 +411,13 @@ public class ProjectLoadController {
                                        java.nio.charset.StandardCharsets.UTF_8);
             String contentLower = content.toLowerCase(Locale.ROOT);
             
+            // Check for XML markers
+            if (contentLower.startsWith("<?xml") || contentLower.contains("<rdf:rdf") || 
+                contentLower.contains("<owl:ontology") || contentLower.contains("<ontology")) {
+                log.info("Detected RDF/XML format (found XML markers)");
+                return RDFFormat.RDFXML;
+            }
+
             // Check for Turtle/N3 markers
             if (contentLower.startsWith("@prefix") || contentLower.startsWith("@base") ||
                 contentLower.contains("@prefix ") || contentLower.contains("@base ")) {
@@ -386,13 +429,6 @@ public class ProjectLoadController {
             if (content.matches("(?s)^\\s*<[^>]+>\\s+<[^>]+>\\s+.*")) {
                 log.info("Detected N-Triples format");
                 return RDFFormat.NTRIPLES;
-            }
-            
-            // Check for XML markers
-            if (contentLower.startsWith("<?xml") || contentLower.contains("<rdf:rdf") || 
-                contentLower.contains("<owl:ontology") || contentLower.contains("<ontology")) {
-                log.info("Detected RDF/XML format (found XML markers)");
-                return RDFFormat.RDFXML;
             }
             
             // Check for JSON-LD
@@ -411,7 +447,7 @@ public class ProjectLoadController {
         }
     }
 
-    @GetMapping("/status/{projectId}")
+    @GetMapping("/status/{projectId:.+}")  // Allow slashes in path variable
     public ResponseEntity<Map<String, Object>> status(@PathVariable String projectId) {
         return metadataService.readStatus(projectId)
                 .map(status -> ResponseEntity.ok(Map.of("success", true, "data", status)))
@@ -419,7 +455,7 @@ public class ProjectLoadController {
                         .body(Map.of("success", false, "error", "Project not found")));
     }
 
-    @GetMapping("/export/{projectId}")
+    @GetMapping("/export/{projectId:.+}")
     public ResponseEntity<Resource> export(@PathVariable String projectId,
                                            @RequestParam(defaultValue = "rdfxml") String format) {
         try {
@@ -453,7 +489,7 @@ public class ProjectLoadController {
         }
     }
 
-    @PostMapping("/reload/{projectId}")
+    @PostMapping("/reload/{projectId:.+}")
     public ResponseEntity<Map<String, Object>> reload(@PathVariable String projectId) {
         try {
             log.info("[RELOAD] Reloading project {} from saved file", projectId);
@@ -479,7 +515,7 @@ public class ProjectLoadController {
         }
     }
 
-    @PostMapping("/save/{projectId}")
+    @PostMapping("/save/{projectId:.+}")
     public ResponseEntity<Map<String, Object>> save(
             @PathVariable String projectId,
             @RequestParam(required = false) String userId,
@@ -693,12 +729,76 @@ public class ProjectLoadController {
     }
 
     /**
+     * Check if a file/ontology is already loaded into GraphDB for a specific project
+     * This endpoint helps prevent duplicate data being loaded into the same project graph
+     * @param projectId The project ID
+     * @param fileName The file name to check
+     * @param fileId Optional file ID
+     * @return Map with exists boolean and details about existing data
+     */
+    @GetMapping("/{projectId:.+}/graphdb/check")
+    public ResponseEntity<Map<String, Object>> checkGraphDBDuplicate(
+            @PathVariable String projectId,
+            @RequestParam String fileName,
+            @RequestParam(required = false) String fileId) {
+        try {
+            log.info("[CHECK-GRAPHDB-DUPLICATE] Checking GraphDB for project: {}, fileName: {}, fileId: {}", 
+                projectId, fileName, fileId);
+            
+            // Call the GraphDB service to check if file is already loaded
+            Map<String, Object> checkResult = datasetService.checkFileExistsInGraphDB(projectId, fileName, fileId);
+            
+            boolean exists = (Boolean) checkResult.getOrDefault("exists", false);
+            boolean checkFailed = (Boolean) checkResult.getOrDefault("checkFailed", false);
+            
+            if (checkFailed) {
+                log.warn("[CHECK-GRAPHDB-DUPLICATE] Check failed: {}", checkResult.get("error"));
+                return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "exists", false,
+                    "checkSkipped", true,
+                    "message", "GraphDB check could not be performed, proceeding with caution"
+                ));
+            }
+            
+            if (exists) {
+                log.info("[CHECK-GRAPHDB-DUPLICATE] Found existing data in GraphDB - graphSize: {}", 
+                    checkResult.get("graphSize"));
+                return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "exists", true,
+                    "projectId", projectId,
+                    "fileName", fileName,
+                    "graphSize", checkResult.getOrDefault("graphSize", 0),
+                    "ontologyIRIs", checkResult.getOrDefault("ontologyIRIs", List.of()),
+                    "message", checkResult.getOrDefault("message", "Data already exists in GraphDB")
+                ));
+            }
+            
+            log.info("[CHECK-GRAPHDB-DUPLICATE] No existing data found in GraphDB");
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "exists", false,
+                "message", "No existing data in GraphDB, file can be loaded"
+            ));
+            
+        } catch (Exception e) {
+            log.error("[CHECK-GRAPHDB-DUPLICATE] Error checking GraphDB duplicate", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of(
+                        "success", false,
+                        "error", "Failed to check GraphDB: " + e.getMessage()
+                    ));
+        }
+    }
+
+    /**
      * Get ontology content in specified format for code view
      * @param projectId The project ID
      * @param format The format (turtle, rdfxml, ntriples, jsonld, owlxml, manchester, functional) - defaults to rdfxml
      * @return Ontology content as plain text
      */
-    @GetMapping("/{projectId}/content")
+    @GetMapping("/{projectId:.+}/content")
     public ResponseEntity<Map<String, Object>> getOntologyContent(
             @PathVariable String projectId,
             @RequestParam(defaultValue = "rdfxml") String format,
@@ -748,7 +848,7 @@ public class ProjectLoadController {
      * This is used when the user inserts citations at specific lines.
      * Optionally accepts citation-entity mappings for smart repositioning.
      */
-    @PostMapping("/{projectId}/code-view-cache")
+    @PostMapping("/{projectId:.+}/code-view-cache")
     public ResponseEntity<Map<String, Object>> storeCodeViewCache(
             @PathVariable String projectId,
             @RequestBody Map<String, Object> request) {
@@ -801,7 +901,7 @@ public class ProjectLoadController {
      * DELETE /api/ontology/{projectId}/code-view-cache
      * Optionally specify format to clear only specific format cache.
      */
-    @DeleteMapping("/{projectId}/code-view-cache")
+    @DeleteMapping("/{projectId:.+}/code-view-cache")
     public ResponseEntity<Map<String, Object>> clearCodeViewCache(
             @PathVariable String projectId,
             @RequestParam(required = false) String format) {
@@ -830,9 +930,111 @@ public class ProjectLoadController {
     }
 
     /**
+     * Save code view content and sync across all formats.
+     * Reimports the edited content into GraphDB and clears all format caches
+     * so other formats re-export fresh from the updated GraphDB.
+     * POST /api/ontology/{projectId}/code-view-save
+     */
+    @PostMapping("/{projectId:.+}/code-view-save")
+    public ResponseEntity<Map<String, Object>> saveCodeViewAndSync(
+            @PathVariable String projectId,
+            @RequestBody Map<String, Object> request) {
+        try {
+            String content = (String) request.get("content");
+            String format = (String) request.getOrDefault("format", "turtle");
+
+            if (content == null || content.isEmpty()) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("success", false, "error", "Content is required"));
+            }
+
+            log.info("[CODE-VIEW-SAVE] Saving and syncing code view for project: {} in format: {}, size: {} bytes",
+                     projectId, format, content.length());
+
+            // Step 1: Determine the RDF format for GraphDB import
+            boolean isOwlApiFormat = format.equalsIgnoreCase("owlxml")
+                    || format.equalsIgnoreCase("manchester")
+                    || format.equalsIgnoreCase("manchestersyntax")
+                    || format.equalsIgnoreCase("functional")
+                    || format.equalsIgnoreCase("functionalsyntax");
+
+            RDFFormat rdfFormat;
+            byte[] importBytes;
+
+            if (isOwlApiFormat) {
+                // OWL API formats need conversion to RDF/XML before GraphDB import
+                String ext = storageManager.extensionFor(format);
+                Path tempFile = Files.createTempFile("codeview-", "." + ext);
+                try {
+                    Files.writeString(tempFile, content, StandardCharsets.UTF_8);
+                    Path convertedFile = OWLFormatConverter.convertToRDFXML(tempFile);
+                    importBytes = Files.readAllBytes(convertedFile);
+                    Files.deleteIfExists(convertedFile);
+                } finally {
+                    Files.deleteIfExists(tempFile);
+                }
+                rdfFormat = RDFFormat.RDFXML;
+                log.info("[CODE-VIEW-SAVE] Converted {} to RDF/XML ({} bytes)", format, importBytes.length);
+            } else {
+                // Standard RDF formats — write to temp file and sanitize (like import pipeline)
+                String ext = storageManager.extensionFor(format);
+                Path tempFile = Files.createTempFile("codeview-", "." + ext);
+                try {
+                    Files.writeString(tempFile, content, StandardCharsets.UTF_8);
+                    // Sanitize: fixes malformed RDF/XML, missing namespaces, re-serializes via OWL API
+                    // Safe for all formats — skips non-RDF/XML files automatically
+                    try {
+                        OWLFormatConverter.sanitizeFileOnDisk(tempFile);
+                        log.info("[CODE-VIEW-SAVE] Sanitization completed for format: {}", format);
+                    } catch (Exception sanitizeEx) {
+                        log.warn("[CODE-VIEW-SAVE] Sanitization failed (continuing with original): {}", sanitizeEx.getMessage());
+                    }
+                    importBytes = Files.readAllBytes(tempFile);
+                } finally {
+                    Files.deleteIfExists(tempFile);
+                }
+                rdfFormat = switch (format.toLowerCase()) {
+                    case "turtle", "ttl" -> RDFFormat.TURTLE;
+                    case "ntriples", "nt" -> RDFFormat.NTRIPLES;
+                    default -> RDFFormat.RDFXML;
+                };
+            }
+
+            // Step 2: Reimport into GraphDB
+            log.info("[CODE-VIEW-SAVE] Reimporting {} bytes into GraphDB as {}", importBytes.length, rdfFormat);
+            try (InputStream is = new ByteArrayInputStream(importBytes)) {
+                datasetService.bulkLoadChunked(projectId, is, rdfFormat);
+            }
+            log.info("[CODE-VIEW-SAVE] GraphDB reimport complete");
+
+            // Step 3: Clear ALL code-view caches (stale after reimport)
+            storageManager.clearCodeViewCache(projectId);
+            log.info("[CODE-VIEW-SAVE] All format caches cleared");
+
+            // Step 4: Store the saved format's cache (preserves the user's edited content)
+            storageManager.storeCodeViewCache(projectId, content, format);
+            log.info("[CODE-VIEW-SAVE] Current format cache restored");
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "projectId", projectId,
+                    "format", format,
+                    "message", "Code view saved and synced across all formats"
+            ));
+        } catch (Exception e) {
+            log.error("[CODE-VIEW-SAVE] Failed for project: {}", projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of(
+                            "success", false,
+                            "error", "Failed to save and sync code view: " + e.getMessage()
+                    ));
+        }
+    }
+
+    /**
      * Get the last modified timestamp for a project (for sync checking)
      */
-    @GetMapping("/metadata/{projectId}/timestamp")
+    @GetMapping("/metadata/{projectId:.+}/timestamp")
     public ResponseEntity<Map<String, Object>> getProjectTimestamp(@PathVariable String projectId) {
         try {
             log.debug("Fetching timestamp for project: {}", projectId);
