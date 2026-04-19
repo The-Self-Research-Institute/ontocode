@@ -5865,6 +5865,33 @@ const Dashboard: React.FC<DashboardProps> = ({
       try {
         console.log(`[loadChildren] Loading children for node: ${nodeId}`);
 
+        // Check if children are already loaded to avoid redundant API calls
+        const findNode = (nodes: TreeNode[]): TreeNode | undefined => {
+          for (const n of nodes) {
+            if (n.id === nodeId) return n;
+            if (n.children) {
+              const found = findNode(n.children);
+              if (found) return found;
+            }
+          }
+          return undefined;
+        };
+
+        // Use functional state access to check current hierarchy without adding it as dependency
+        let alreadyLoaded = false;
+        setClassHierarchy((prev) => {
+          const node = findNode(prev);
+          if (node?.children && node.children.length > 0) {
+            alreadyLoaded = true;
+          }
+          return prev; // Don't modify state
+        });
+
+        if (alreadyLoaded) {
+          console.log(`[loadChildren] ⚡ Children already loaded for node: ${nodeId}, skipping API call`);
+          return;
+        }
+
         // Special case: when loading children of owl:Thing, use the top-level endpoint
         // which finds ALL top-level classes (not just those with explicit rdfs:subClassOf owl:Thing)
         // OPTIMIZED: Use limit parameter for faster initial load (backend has caching)
@@ -6974,7 +7001,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         // Refresh the current file to show saved changes
         console.log("[Dashboard] 🔄 Refreshing current file after save...");
-        await fetchData(projectId, false);
+        await fetchData(projectId, false, undefined, true);
 
         // Monitoring is automatically restarted by fetchData
 
@@ -7340,7 +7367,11 @@ const Dashboard: React.FC<DashboardProps> = ({
 
           // Update local state
           const updatedAnnotations = { ...selectedItem.annotations, [propertyIri]: value };
-          const updatedItem = { ...selectedItem, annotations: updatedAnnotations };
+          const updatedItem: SelectableItem = { ...selectedItem, annotations: updatedAnnotations };
+          // If rdfs:label was added, also update the display label
+          if (propertyIri === "http://www.w3.org/2000/01/rdf-schema#label" || propertyIri === "rdfs:label") {
+            updatedItem.label = value;
+          }
           updateItemInState(updatedItem);
           markAsUnsaved();
         } else {
@@ -7433,7 +7464,11 @@ const Dashboard: React.FC<DashboardProps> = ({
 
           // Update local state
           const updatedAnnotations = { ...selectedItem.annotations, [propertyIri]: newValue };
-          const updatedItem = { ...selectedItem, annotations: updatedAnnotations };
+          const updatedItem: SelectableItem = { ...selectedItem, annotations: updatedAnnotations };
+          // If rdfs:label was edited, also update the display label
+          if (propertyIri === "http://www.w3.org/2000/01/rdf-schema#label" || propertyIri === "rdfs:label") {
+            updatedItem.label = newValue;
+          }
           updateItemInState(updatedItem);
           markAsUnsaved();
         } else {

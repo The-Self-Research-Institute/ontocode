@@ -41,17 +41,16 @@ public class OntologyQueryService {
     /**
      * Get top-level classes (direct children of owl:Thing or classes with no explicit superclass).
      * OPTIMIZED: Results are cached to enable instant loading on subsequent requests.
-     * hasChildren is set to true by default to enable lazy loading - actual children count is checked on demand.
+     * hasChildren is checked via EXISTS in the SPARQL query for accurate expand icons.
      */
     @Cacheable(value = "topLevelClasses", key = "#projectId + '_' + #limit")
     public List<OntologyDto.TreeNode> topLevelClasses(String projectId, int limit) {
         long startTime = System.currentTimeMillis();
         
-        // OPTIMIZED QUERY: Removed expensive EXISTS clause for hasChildren check
-        // Instead, we assume all top-level classes have children (will be verified on expand)
-        // This reduces query time from 5-10 seconds to <1 second for large ontologies
+        // Include EXISTS check for hasChildren so expand icons are accurate
+        // Results are cached so the initial query cost is paid only once
         String query = PREFIXES + """
-            SELECT DISTINCT ?c ?label ?description
+            SELECT DISTINCT ?c ?label ?description ?hasChildren
             WHERE {
               {
                 # Classes explicitly declared
@@ -85,6 +84,7 @@ public class OntologyQueryService {
               
               OPTIONAL { ?c rdfs:label ?label }
               OPTIONAL { ?c rdfs:comment ?description }
+              BIND(EXISTS { ?child rdfs:subClassOf ?c . FILTER(?child != ?c) } AS ?hasChildren)
             }
             ORDER BY COALESCE(LCASE(?label), STR(?c))
             LIMIT %d
@@ -92,12 +92,6 @@ public class OntologyQueryService {
         
         log.info("🔍 [PERF] Loading top-level classes for project: {}", projectId);
         List<OntologyDto.TreeNode> result = mapTreeNodes(projectId, query, null);
-        
-        // Set hasChildren to true by default for lazy loading
-        // The actual check will happen when the user expands the node
-        for (OntologyDto.TreeNode node : result) {
-            node.setHasChildren(true); // Optimistic assumption - verified on expand
-        }
         
         long duration = System.currentTimeMillis() - startTime;
         log.info("✅ [PERF] Loaded {} top-level classes in {}ms (cached for future requests)", result.size(), duration);
@@ -172,31 +166,28 @@ public class OntologyQueryService {
     /**
      * Get children of a specific class.
      * OPTIMIZED: Results are cached for faster subsequent access.
-     * hasChildren is assumed true for lazy loading - verified on expand.
+     * hasChildren is checked via EXISTS in the SPARQL query for accurate expand icons.
      */
     @Cacheable(value = "classChildren", key = "#projectId + '_' + #parentIri + '_' + #limit + '_' + #offset")
     public List<OntologyDto.TreeNode> children(String projectId, String parentIri, int limit, int offset) {
         long startTime = System.currentTimeMillis();
         
-        // OPTIMIZED: Simplified query without EXISTS clause for hasChildren
+        // Include EXISTS check for hasChildren so expand icons are accurate
+        // Results are cached so the query cost is paid only once per parent
         String query = PREFIXES + """
-            SELECT ?child ?label ?description
+            SELECT ?child ?label ?description ?hasChildren
             WHERE {
               ?child rdfs:subClassOf <%s> .
               FILTER(?child != <%s>)
               OPTIONAL { ?child rdfs:label ?label }
               OPTIONAL { ?child rdfs:comment ?description }
+              BIND(EXISTS { ?grandchild rdfs:subClassOf ?child . FILTER(?grandchild != ?child) } AS ?hasChildren)
             }
             ORDER BY COALESCE(LCASE(?label), STR(?child))
             LIMIT %d OFFSET %d
             """.formatted(parentIri, parentIri, Math.max(1, limit), Math.max(0, offset));
         
         List<OntologyDto.TreeNode> result = mapTreeNodes(projectId, query, parentIri);
-        
-        // Set hasChildren to true by default for lazy loading
-        for (OntologyDto.TreeNode node : result) {
-            node.setHasChildren(true); // Optimistic assumption
-        }
         
         long duration = System.currentTimeMillis() - startTime;
         log.debug("✅ [PERF] Loaded {} children for {} in {}ms", result.size(), parentIri, duration);
