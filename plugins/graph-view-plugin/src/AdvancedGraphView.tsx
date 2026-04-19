@@ -3119,6 +3119,16 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       setClassActionFeedback({ type: 'success', message: `✓ Created class "${newLabel}"` });
       setPendingClassAction(null);
       
+      // Notify the host (Dashboard) that a class was created so it can update its hierarchy
+      window.dispatchEvent(new CustomEvent('graph-view:class-created', {
+        detail: {
+          id: newIri,
+          label: newLabel,
+          parentId: parentId,
+          projectId
+        }
+      }));
+      
       console.log('[Graph Dialog] Class creation completed successfully');
     } catch (actionError) {
       const message = actionError instanceof Error ? actionError.message : 'Failed to create class';

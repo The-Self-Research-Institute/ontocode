@@ -3794,11 +3794,19 @@ const Dashboard: React.FC<DashboardProps> = ({
 
               // Start monitoring for changes from other users
               const handleDataChanged = async (changedProjectId: string) => {
+                // Handle project deletion signal
+                if (changedProjectId.startsWith('__deleted__:')) {
+                  const deletedId = changedProjectId.replace('__deleted__:', '');
+                  console.log("[Dashboard] ⚠️ Project deleted by another user:", deletedId);
+                  notificationService.error("Project Deleted", "This project has been deleted by another user.");
+                  return;
+                }
+
                 console.log("[Dashboard] 🔄 Change detected from another user! Refreshing data...");
                 notificationService.info("New Changes Available", "Another user saved changes. Refreshing data...");
 
-                // Refresh data and restart monitoring for another 30 seconds
-                await fetchData(changedProjectId, false);
+                // Refresh data with forceRefresh to bypass the cache guard
+                await fetchData(changedProjectId, false, undefined, true);
                 console.log("[Dashboard] ✅ Refresh complete, monitoring restarted");
               };
 
@@ -3809,7 +3817,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 if (timestampData && timestampData.updatedAt) {
                   const currentTimestamp = new Date(timestampData.updatedAt).getTime();
                   syncService.startMonitoring(currentProjectId, handleDataChanged, currentTimestamp);
-                  console.log("[Dashboard] 🔍 Started monitoring for changes (30 seconds)");
+                  console.log("[Dashboard] 🔍 Started monitoring for changes (5 minutes)");
                 }
               } catch (error) {
                 console.warn("[Dashboard] Could not start change monitoring:", error);
@@ -4384,6 +4392,29 @@ const Dashboard: React.FC<DashboardProps> = ({
     const axiomSuperClass = superClassIri !== undefined ? superClassIri : axiomDraft.superClassIri;
 
     if (!axiomDefinition) return;
+
+    // Validate axiom definition - basic checks before sending to backend
+    const trimmed = axiomDefinition.trim();
+    if (trimmed.length === 0) {
+      notificationService.error("Invalid Axiom", "Axiom definition cannot be empty.");
+      return;
+    }
+    // Reject definitions with unbalanced parentheses
+    let parenDepth = 0;
+    for (const ch of trimmed) {
+      if (ch === '(') parenDepth++;
+      else if (ch === ')') parenDepth--;
+      if (parenDepth < 0) break;
+    }
+    if (parenDepth !== 0) {
+      notificationService.error("Invalid Axiom", "Axiom definition has unbalanced parentheses.");
+      return;
+    }
+    // Reject if superClass is provided but looks invalid (empty after trim or has spaces only)
+    if (axiomSuperClass && axiomSuperClass.trim().length === 0) {
+      notificationService.error("Invalid Axiom", "Super class IRI cannot be blank.");
+      return;
+    }
 
     try {
       console.log("[Dashboard] Adding general class axiom:", {
@@ -8228,6 +8259,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             }
           });
           markAsUnsaved();
+          setMetadata(prev => prev ? { ...prev, classCount: (prev.classCount || 0) + 1 } : prev);
         } else if (entitiesTab === "ObjectProperties") {
           // Handle Object Property Creation
           parentIri = "http://www.w3.org/2002/07/owl#topObjectProperty";
@@ -8288,6 +8320,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           if (parentIri && !expandedNodes.includes(parentIri)) {
             setExpandedNodes((prev) => [...prev, parentIri]);
           }
+          setMetadata(prev => prev ? { ...prev, objectPropertyCount: (prev.objectPropertyCount || 0) + 1 } : prev);
         }
 
         showNotification(`${entitiesTab === "Classes" ? "Class" : "Property"} created successfully!`, "info");
@@ -8351,6 +8384,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
 
         markAsUnsaved();
+        setMetadata(prev => prev ? { ...prev, objectPropertyCount: (prev.objectPropertyCount || 0) + 1 } : prev);
         showNotification("Property created successfully!", "info");
         setAddPropertyDialogOpen(false);
         setPropertyParentLabel("owl:topObjectProperty");
@@ -8413,6 +8447,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
 
         markAsUnsaved();
+        setMetadata(prev => prev ? { ...prev, dataPropertyCount: (prev.dataPropertyCount || 0) + 1 } : prev);
         showNotification("Data property created successfully!", "info");
         setAddPropertyDialogOpen(false);
         setPropertyParentLabel("owl:topDataProperty");
@@ -8478,6 +8513,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         setAnnotationProperties((prev) => [...prev, newProp]);
 
         markAsUnsaved();
+        setMetadata(prev => prev ? { ...prev, annotationPropertyCount: (prev.annotationPropertyCount || 0) + 1 } : prev);
         showNotification("Annotation property created successfully!", "info");
         setAddPropertyDialogOpen(false);
       } catch (error) {
@@ -8517,6 +8553,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         setIndividuals((prev) => [...prev, newIndividual]);
 
         markAsUnsaved();
+        setMetadata(prev => prev ? { ...prev, individualCount: (prev.individualCount || 0) + 1 } : prev);
         showNotification(`Individual "${name}" created successfully!`, "info");
       } catch (error) {
         console.error("Failed to create individual:", error);
@@ -8705,6 +8742,17 @@ const Dashboard: React.FC<DashboardProps> = ({
                 break;
             }
             setSelectedItem((prev) => (prev?.id === item.id ? null : prev));
+            // Decrement metadata count based on entity type
+            const countField = {
+              Classes: 'classCount',
+              Individuals: 'individualCount',
+              ObjectProperties: 'objectPropertyCount',
+              DataProperties: 'dataPropertyCount',
+              AnnotationProperties: 'annotationPropertyCount',
+            }[activeTab];
+            if (countField) {
+              setMetadata(prev => prev ? { ...prev, [countField]: Math.max(0, ((prev as any)[countField] || 0) - 1) } : prev);
+            }
             showNotification(`"${item.label}" deleted successfully!`, "info");
           } catch (error) {
             console.error("Failed to delete item:", error);
@@ -8858,6 +8906,49 @@ const Dashboard: React.FC<DashboardProps> = ({
     window.addEventListener("graph-view:add-class", handleGraphAddClass as EventListener);
     return () => window.removeEventListener("graph-view:add-class", handleGraphAddClass as EventListener);
   }, [classHierarchy, findClassNodeById, projectId, showNotification]);
+
+  // Listen for classes created directly by the graph plugin (S6 fix)
+  useEffect(() => {
+    const handleGraphClassCreated = (event: Event) => {
+      const custom = event as CustomEvent<{
+        id: string;
+        label: string;
+        parentId: string;
+        projectId?: string;
+      }>;
+      const detail = custom.detail;
+      if (!detail) return;
+      if (detail.projectId && projectId && detail.projectId !== projectId) return;
+
+      const newNode: TreeNode = {
+        id: detail.id,
+        label: detail.label,
+        children: [],
+        hasChildren: false,
+        annotations: { "rdfs:label": detail.label },
+      };
+
+      setClassHierarchy((prev) => {
+        const addChild = (nodes: TreeNode[]): TreeNode[] =>
+          nodes.map((node) => {
+            if (node.id === detail.parentId) {
+              return { ...node, children: [...(node.children || []), newNode], hasChildren: true };
+            }
+            if (node.children) {
+              return { ...node, children: addChild(node.children) };
+            }
+            return node;
+          });
+        return addChild(prev);
+      });
+
+      setMetadata(prev => prev ? { ...prev, classCount: (prev.classCount || 0) + 1 } : prev);
+      markAsUnsaved();
+    };
+
+    window.addEventListener("graph-view:class-created", handleGraphClassCreated as EventListener);
+    return () => window.removeEventListener("graph-view:class-created", handleGraphClassCreated as EventListener);
+  }, [projectId, markAsUnsaved]);
 
   useEffect(() => {
     const handleGraphDelete = (event: Event) => {
