@@ -14,6 +14,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import self.research.ontology.auth.model.FileMetadata;
 import self.research.ontology.auth.model.Project;
 import self.research.ontology.auth.model.User;
@@ -24,7 +25,11 @@ import self.research.ontology.auth.service.ProjectService;
 import self.research.ontology.auth.util.JwtUtil;
 import jakarta.servlet.http.HttpServletRequest;
 
+import java.io.FilterOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -951,7 +956,8 @@ public class ProjectController {
     }
 
     /**
-     * Get file content by file ID
+     * Get file content by file ID.
+     * Uses streaming for GridFS files to avoid loading entire file into memory (OOM for large files).
      */
     @GetMapping("/{projectId}/files/{fileId}/content")
     public ResponseEntity<?> getFileContent(
@@ -985,38 +991,86 @@ public class ProjectController {
                 return ResponseEntity.status(403).body(Map.of("error", "File does not belong to this project"));
             }
 
-            // Retrieve content from GridFS (new storage) or fall back to legacy inline base64
-            String base64Content;
+            // Retrieve content from GridFS using streaming to avoid OOM on large files
             if (fileMeta.getGridfsId() != null && !fileMeta.getGridfsId().isEmpty()) {
                 try {
                     GridFsResource resource = gridFsTemplate.getResource(
                             gridFsTemplate.findOne(Query.query(Criteria.where("_id").is(new ObjectId(fileMeta.getGridfsId())))));
-                    byte[] bytes = resource.getInputStream().readAllBytes();
-                    base64Content = "data:" + fileMeta.getFileType() + ";base64,"
-                            + java.util.Base64.getEncoder().encodeToString(bytes);
+
+                    String fileType = fileMeta.getFileType() != null ? fileMeta.getFileType() : "application/rdf+xml";
+                    long fileSize = fileMeta.getFileSize() != null ? fileMeta.getFileSize() : 0;
+
+                    // Stream the response: write JSON with base64 content in chunks (constant memory)
+                    StreamingResponseBody stream = outputStream -> {
+                        try (InputStream inputStream = resource.getInputStream()) {
+                            // Write JSON opening with metadata
+                            String prefix = "{\"id\":\"" + escapeJson(fileMeta.getFileId())
+                                    + "\",\"name\":\"" + escapeJson(fileMeta.getFileName())
+                                    + "\",\"content\":\"data:" + escapeJson(fileType) + ";base64,";
+                            outputStream.write(prefix.getBytes(StandardCharsets.UTF_8));
+
+                            // Stream base64-encoded file content using a non-closing wrapper
+                            // so closing base64Out writes final padding without closing the response stream
+                            OutputStream nonClosing = new FilterOutputStream(outputStream) {
+                                @Override
+                                public void close() throws IOException {
+                                    flush();
+                                }
+                            };
+                            try (OutputStream base64Out = Base64.getEncoder().wrap(nonClosing)) {
+                                byte[] buffer = new byte[8192];
+                                int bytesRead;
+                                while ((bytesRead = inputStream.read(buffer)) != -1) {
+                                    base64Out.write(buffer, 0, bytesRead);
+                                }
+                            }
+
+                            // Write JSON closing with remaining metadata
+                            String suffix = "\",\"type\":\"" + escapeJson(fileType)
+                                    + "\",\"size\":" + fileSize + "}";
+                            outputStream.write(suffix.getBytes(StandardCharsets.UTF_8));
+                            outputStream.flush();
+                        } catch (Exception e) {
+                            log.error("Error streaming file content from GridFS (id={}): {}", fileMeta.getGridfsId(), e.getMessage());
+                            throw new IOException("Failed to stream file content", e);
+                        }
+                    };
+
+                    return ResponseEntity.ok()
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body(stream);
                 } catch (Exception gridfsEx) {
                     log.error("Error reading file from GridFS (id={}): {}", fileMeta.getGridfsId(), gridfsEx.getMessage());
                     return ResponseEntity.internalServerError().body(Map.of("error", "Could not read file content from storage"));
                 }
             } else {
                 // Legacy: file content stored inline (will be null for purged documents)
-                base64Content = fileMeta.getBase64Data();
+                String base64Content = fileMeta.getBase64Data();
                 if (base64Content == null) {
                     return ResponseEntity.status(404).body(Map.of("error", "File content not available"));
                 }
-            }
 
-            return ResponseEntity.ok(Map.of(
-                "id", fileMeta.getFileId(),
-                "name", fileMeta.getFileName(),
-                "content", base64Content,
-                "type", fileMeta.getFileType() != null ? fileMeta.getFileType() : "application/rdf+xml",
-                "size", fileMeta.getFileSize() != null ? fileMeta.getFileSize() : 0
-            ));
+                return ResponseEntity.ok(Map.of(
+                    "id", fileMeta.getFileId(),
+                    "name", fileMeta.getFileName(),
+                    "content", base64Content,
+                    "type", fileMeta.getFileType() != null ? fileMeta.getFileType() : "application/rdf+xml",
+                    "size", fileMeta.getFileSize() != null ? fileMeta.getFileSize() : 0
+                ));
+            }
         } catch (Exception e) {
             log.error("Error getting file content", e);
             return ResponseEntity.internalServerError().body(Map.of("error", "Failed to get file content"));
         }
+    }
+
+    private static String escapeJson(String value) {
+        if (value == null) return "";
+        return value.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
     }
 
     /**

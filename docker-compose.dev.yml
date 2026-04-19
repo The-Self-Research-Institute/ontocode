@@ -138,7 +138,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-b250b2NvZGUtc3VwZXItc2VjcmV0LWp3dC1rZXktMjAyNC1taW5pbXVtLTI1Ni1iaXRzLXJlcXVpcmVkIQ==}
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
-      JAVA_OPTS: -Xms128m -Xmx256m -XX:+UseG1GC
+      JAVA_TOOL_OPTIONS: -Xms256m -Xmx512m -XX:+UseG1GC
     depends_on:
       mongo:
         condition: service_healthy
@@ -147,7 +147,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 320m
+          memory: 640m
     healthcheck:
       test: ["CMD-SHELL", "pgrep java || exit 1"]
       interval: 15s
