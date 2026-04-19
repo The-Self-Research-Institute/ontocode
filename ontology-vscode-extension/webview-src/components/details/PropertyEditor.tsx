@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Plus, Trash2, CheckSquare, Square, Edit3, Search } from 'lucide-react';
 import { Panel, AnnotationsDisplay, MultiSelectSection } from './common';
-import { ManchesterSyntaxEditor, PropertyChainDialog } from '../dialogs';
+import { ManchesterSyntaxEditor, PropertyChainDialog, IRIEditorDialog } from '../dialogs';
 import apiClient from '../../services/apiClient';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import type { Property } from '../../types';
@@ -169,6 +169,7 @@ const PropertyEditor: React.FC<{
     const [editorAction, setEditorAction] = useState<((val: string) => void) | null>(null);
     const [isChainDialogOpen, setIsChainDialogOpen] = useState(false);
     const [inferredDetails, setInferredDetails] = useState<any>(null);
+    const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
 
     useEffect(() => {
         if (viewMode === 'inferred' && item.id && projectId) {
@@ -339,6 +340,22 @@ const PropertyEditor: React.FC<{
 
     const annotationCount = Object.keys(item.annotations || {}).length;
 
+    const handleSaveIRI = async (newIRI: string, newLabel: string) => {
+        try {
+            if (newLabel !== item.label) {
+                await ontologyMutationService.updateClassLabel(projectId, item.id, newLabel);
+                onUpdate({ ...item, label: newLabel });
+            }
+            if (newIRI !== item.id) {
+                console.warn("IRI renaming requires backend support - not yet implemented");
+                alert("IRI renaming is not yet supported. Only label changes are saved.");
+            }
+        } catch (error) {
+            console.error("Failed to update property:", error);
+            alert("Failed to update property. See console for details.");
+        }
+    };
+
     return (
         <div className="flex flex-col h-full bg-white">
             {/* Header with IRI */}
@@ -353,6 +370,7 @@ const PropertyEditor: React.FC<{
                     </div>
                 </div>
                 <button
+                    onClick={() => setIsIRIEditorOpen(true)}
                     className="p-1.5 hover:bg-gray-200 rounded text-gray-600 hover:text-purple-600 flex-shrink-0"
                     title="Edit IRI and Label"
                 >
@@ -555,6 +573,15 @@ const PropertyEditor: React.FC<{
                 onConfirm={handlePropertyChainConfirm}
                 properties={objectProperties}
                 title="Create Property Chain"
+            />
+
+            <IRIEditorDialog
+                isOpen={isIRIEditorOpen}
+                onClose={() => setIsIRIEditorOpen(false)}
+                currentIRI={item.id}
+                currentLabel={item.label}
+                entityType={isObjectProperty ? 'ObjectProperty' : isDataProperty ? 'DataProperty' : 'Property'}
+                onSave={handleSaveIRI}
             />
         </div>
     );

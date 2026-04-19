@@ -17,7 +17,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
-import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.time.Duration;
 import java.util.List;
@@ -69,39 +68,41 @@ public class OntologyClientService {
         long startTime = System.currentTimeMillis();
 
         try {
-            // Fetch ontology bytes from editor service
-            ResponseEntity<byte[]> response = restTemplate.getForEntity(
+            // Stream ontology directly into OWL parser to avoid holding entire byte[] in heap
+            OWLOntology ontology = restTemplate.execute(
                 "/api/ontology/export/{projectId}",
-                byte[].class,
+                org.springframework.http.HttpMethod.GET,
+                null,
+                response -> {
+                    if (response.getStatusCode() != HttpStatus.OK) {
+                        throw new RuntimeException(
+                            "Failed to fetch ontology: HTTP " + response.getStatusCode()
+                        );
+                    }
+                    OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+                    try (InputStream is = response.getBody()) {
+                        return manager.loadOntologyFromOntologyDocument(is);
+                    } catch (OWLOntologyCreationException e) {
+                        throw new RuntimeException("OWL parsing error", e);
+                    }
+                },
                 projectId
             );
 
-            if (response.getStatusCode() != HttpStatus.OK || response.getBody() == null) {
-                throw new RuntimeException(
-                    "Failed to fetch ontology: HTTP " + response.getStatusCode()
-                );
+            if (ontology == null) {
+                throw new RuntimeException("Failed to fetch ontology: null response");
             }
 
-            byte[] ontologyBytes = response.getBody();
-            logger.debug("Received {} bytes for project {}", ontologyBytes.length, projectId);
-
-            // Load ontology from bytes
-            OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+            long loadTime = System.currentTimeMillis() - startTime;
+            logger.info("Successfully loaded ontology for project {} in {}ms. " +
+                       "Classes: {}, Properties: {}, Individuals: {}", 
+                       projectId, 
+                       loadTime,
+                       ontology.getClassesInSignature().size(),
+                       ontology.getObjectPropertiesInSignature().size(),
+                       ontology.getIndividualsInSignature().size());
             
-            try (InputStream is = new ByteArrayInputStream(ontologyBytes)) {
-                OWLOntology ontology = manager.loadOntologyFromOntologyDocument(is);
-                
-                long loadTime = System.currentTimeMillis() - startTime;
-                logger.info("Successfully loaded ontology for project {} in {}ms. " +
-                           "Classes: {}, Properties: {}, Individuals: {}", 
-                           projectId, 
-                           loadTime,
-                           ontology.getClassesInSignature().size(),
-                           ontology.getObjectPropertiesInSignature().size(),
-                           ontology.getIndividualsInSignature().size());
-                
-                return ontology;
-            }
+            return ontology;
 
         } catch (RestClientException e) {
             logger.error("REST client error fetching ontology for project: {}", projectId, e);
@@ -109,12 +110,11 @@ public class OntologyClientService {
                 "Failed to fetch ontology from editor service: " + e.getMessage(), e
             );
             
-        } catch (OWLOntologyCreationException e) {
-            logger.error("OWL parsing error for project: {}", projectId, e);
-            throw e;
-            
         } catch (Exception e) {
             logger.error("Unexpected error fetching ontology for project: {}", projectId, e);
+            if (e.getCause() instanceof OWLOntologyCreationException) {
+                throw (OWLOntologyCreationException) e.getCause();
+            }
             throw new OWLOntologyCreationException(
                 "Unexpected error loading ontology: " + e.getMessage(), e
             );
