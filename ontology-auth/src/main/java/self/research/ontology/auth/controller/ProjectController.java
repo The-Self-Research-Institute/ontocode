@@ -14,7 +14,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
+import jakarta.servlet.http.HttpServletResponse;
 import self.research.ontology.auth.model.FileMetadata;
 import self.research.ontology.auth.model.Project;
 import self.research.ontology.auth.model.User;
@@ -962,7 +962,8 @@ public class ProjectController {
     @GetMapping("/{projectId}/files/{fileId}/content")
     public ResponseEntity<?> getFileContent(
             @PathVariable String projectId,
-            @PathVariable String fileId) {
+            @PathVariable String fileId,
+            HttpServletResponse httpResponse) {
         try {
             String username = getCurrentUsername();
             Optional<User> userOpt = userRepository.findByUsername(username);
@@ -1000,48 +1001,52 @@ public class ProjectController {
                     String fileType = fileMeta.getFileType() != null ? fileMeta.getFileType() : "application/rdf+xml";
                     long fileSize = fileMeta.getFileSize() != null ? fileMeta.getFileSize() : 0;
 
-                    // Stream the response: write JSON with base64 content in chunks (constant memory)
-                    StreamingResponseBody stream = outputStream -> {
-                        try (InputStream inputStream = resource.getInputStream()) {
-                            // Write JSON opening with metadata
-                            String prefix = "{\"id\":\"" + escapeJson(fileMeta.getFileId())
-                                    + "\",\"name\":\"" + escapeJson(fileMeta.getFileName())
-                                    + "\",\"content\":\"data:" + escapeJson(fileType) + ";base64,";
-                            outputStream.write(prefix.getBytes(StandardCharsets.UTF_8));
+                    // Write directly to HttpServletResponse to stream base64 in constant memory.
+                    // NOTE: ResponseEntity<StreamingResponseBody> doesn't work when the method
+                    // return type is ResponseEntity<?> — Spring MVC serialises the lambda as {}
+                    // instead of executing the stream.
+                    httpResponse.setContentType("application/json");
+                    httpResponse.setCharacterEncoding("UTF-8");
+                    httpResponse.setStatus(HttpServletResponse.SC_OK);
 
-                            // Stream base64-encoded file content using a non-closing wrapper
-                            // so closing base64Out writes final padding without closing the response stream
-                            OutputStream nonClosing = new FilterOutputStream(outputStream) {
-                                @Override
-                                public void close() throws IOException {
-                                    flush();
-                                }
-                            };
-                            try (OutputStream base64Out = Base64.getEncoder().wrap(nonClosing)) {
-                                byte[] buffer = new byte[8192];
-                                int bytesRead;
-                                while ((bytesRead = inputStream.read(buffer)) != -1) {
-                                    base64Out.write(buffer, 0, bytesRead);
-                                }
+                    try (InputStream inputStream = resource.getInputStream();
+                         OutputStream outputStream = httpResponse.getOutputStream()) {
+                        // Write JSON opening with metadata
+                        String prefix = "{\"id\":\"" + escapeJson(fileMeta.getFileId())
+                                + "\",\"name\":\"" + escapeJson(fileMeta.getFileName())
+                                + "\",\"content\":\"data:" + escapeJson(fileType) + ";base64,";
+                        outputStream.write(prefix.getBytes(StandardCharsets.UTF_8));
+
+                        // Stream base64-encoded file content using a non-closing wrapper
+                        // so closing base64Out writes final padding without closing the response stream
+                        OutputStream nonClosing = new FilterOutputStream(outputStream) {
+                            @Override
+                            public void close() throws IOException {
+                                flush();
                             }
-
-                            // Write JSON closing with remaining metadata
-                            String suffix = "\",\"type\":\"" + escapeJson(fileType)
-                                    + "\",\"size\":" + fileSize + "}";
-                            outputStream.write(suffix.getBytes(StandardCharsets.UTF_8));
-                            outputStream.flush();
-                        } catch (Exception e) {
-                            log.error("Error streaming file content from GridFS (id={}): {}", fileMeta.getGridfsId(), e.getMessage());
-                            throw new IOException("Failed to stream file content", e);
+                        };
+                        try (OutputStream base64Out = Base64.getEncoder().wrap(nonClosing)) {
+                            byte[] buffer = new byte[8192];
+                            int bytesRead;
+                            while ((bytesRead = inputStream.read(buffer)) != -1) {
+                                base64Out.write(buffer, 0, bytesRead);
+                            }
                         }
-                    };
 
-                    return ResponseEntity.ok()
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .body(stream);
+                        // Write JSON closing with remaining metadata
+                        String suffix = "\",\"type\":\"" + escapeJson(fileType)
+                                + "\",\"size\":" + fileSize + "}";
+                        outputStream.write(suffix.getBytes(StandardCharsets.UTF_8));
+                        outputStream.flush();
+                    }
+
+                    return null; // Response already written directly
                 } catch (Exception gridfsEx) {
                     log.error("Error reading file from GridFS (id={}): {}", fileMeta.getGridfsId(), gridfsEx.getMessage());
-                    return ResponseEntity.internalServerError().body(Map.of("error", "Could not read file content from storage"));
+                    if (!httpResponse.isCommitted()) {
+                        return ResponseEntity.internalServerError().body(Map.of("error", "Could not read file content from storage"));
+                    }
+                    return null;
                 }
             } else {
                 // Legacy: file content stored inline (will be null for purged documents)
