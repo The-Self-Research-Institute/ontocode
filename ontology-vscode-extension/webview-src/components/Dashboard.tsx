@@ -7249,6 +7249,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       } catch (error: any) {
         console.error("[Dashboard] ❌ Failed to load project file:", error);
         notificationService.error("Load Failed", error?.message || "Failed to load file");
+        setShowLoadingChoice(false);
+        setIsExpectingFileReady(false);
       } finally {
         // Allow new loads after a brief delay to prevent rapid re-triggers
         setTimeout(() => {
