@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Tag, Edit3, Search } from 'lucide-react';
 import { AnnotationsDisplay, MultiSelectSection } from './common';
+import { IRIEditorDialog } from '../dialogs';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import apiClient from '../../services/apiClient';
 import type { AnnotationProperty } from '../../types';
@@ -169,6 +170,7 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
   onAddRangeClick
 }) => {
   const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('annotations');
+  const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
   
   // Extended annotation property type with optional fields
   const extendedItem = item as AnnotationProperty & {
@@ -182,6 +184,22 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
   const rangeCount = extendedItem.ranges?.length || 0;
   const superPropertyCount = extendedItem.superProperties?.length || 0;
   const descriptionCount = domainCount + rangeCount + superPropertyCount;
+
+  const handleSaveIRI = async (newIRI: string, newLabel: string) => {
+    try {
+      if (newLabel !== item.label) {
+        await ontologyMutationService.updateClassLabel(projectId, item.id, newLabel);
+        onUpdate({ ...item, label: newLabel } as AnnotationProperty);
+      }
+      if (newIRI !== item.id) {
+        console.warn("IRI renaming requires backend support - not yet implemented");
+        alert("IRI renaming is not yet supported. Only label changes are saved.");
+      }
+    } catch (error) {
+      console.error("Failed to update annotation property:", error);
+      alert("Failed to update annotation property. See console for details.");
+    }
+  };
 
   const handleDeleteRelation = async (relation: 'subProperty' | 'domain' | 'range', target: string) => {
     try {
@@ -227,6 +245,7 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
           </div>
         </div>
         <button
+          onClick={() => setIsIRIEditorOpen(true)}
           className="p-1.5 hover:bg-gray-200 rounded text-gray-600 hover:text-purple-600 flex-shrink-0"
           title="Edit IRI and Label"
         >
@@ -337,6 +356,15 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
           />
         )}
       </div>
+
+      <IRIEditorDialog
+        isOpen={isIRIEditorOpen}
+        onClose={() => setIsIRIEditorOpen(false)}
+        currentIRI={item.id}
+        currentLabel={item.label}
+        entityType="AnnotationProperty"
+        onSave={handleSaveIRI}
+      />
     </div>
   );
 };

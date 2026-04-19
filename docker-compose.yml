@@ -235,7 +235,7 @@ services:
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
       LOG_DIR: /app/logs
       JAVA_OPTS: >-
-        -Xms128m -Xmx384m
+        -Xms256m -Xmx768m
         -XX:+UseG1GC -XX:MaxGCPauseMillis=200
         -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof
         -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=2,filesize=10m
@@ -251,7 +251,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512m
+          memory: 1024m
 
   # Plugin Service
   plugin-service:
