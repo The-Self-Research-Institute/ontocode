@@ -244,6 +244,41 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
       edges: visEdges
     };
 
+    // Pre-compute custom layout positions for circular and radial layouts
+    let customPositions: Map<string, { x: number; y: number }> | null = null;
+    if (layoutType === 'circular' || layoutType === 'radial') {
+      const container = containerRef.current;
+      const width = container.clientWidth || 800;
+      const height = container.clientHeight || 600;
+      
+      const layoutNodes = nodes.map(n => ({
+        id: n.id,
+        label: n.label || n.id,
+        type: n.type || 'class',
+        uri: n.uri || n.id,
+      }));
+      const layoutEdges = edges.map(e => ({
+        id: e.id || `${e.from}-${e.to}`,
+        from: e.from || e.source,
+        to: e.to || e.target,
+        label: e.label || '',
+        type: e.type || 'subClassOf',
+      }));
+      
+      customPositions = layoutType === 'radial'
+        ? applyRadialLayout(layoutNodes as any, layoutEdges as any, { width, height })
+        : applyCircularLayout(layoutNodes as any, layoutEdges as any, { width, height });
+      
+      // Apply positions directly to nodes
+      visNodes.forEach((node: any) => {
+        const pos = customPositions!.get(node.id);
+        if (pos) {
+          node.x = pos.x;
+          node.y = pos.y;
+        }
+      });
+    }
+
     const layoutOptions: Record<string, any> = {
       hierarchical: {
         hierarchical: {
@@ -299,17 +334,18 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
     };
 
     const isHierarchicalLayout = layoutType === 'hierarchical' || layoutType === 'tree-vertical' || layoutType === 'tree-horizontal';
+    const isCustomPositionLayout = layoutType === 'circular' || layoutType === 'radial';
 
     const options: Options = {
       layout: layoutOptions[layoutType] || {},
       physics: {
-        enabled: !isHierarchicalLayout,
+        enabled: !isHierarchicalLayout && !isCustomPositionLayout,
         barnesHut: {
           gravitationalConstant: layoutType === 'spring' ? -3000 : -2000,
           springConstant: layoutType === 'spring' ? 0.08 : 0.04,
           springLength: layoutType === 'spring' ? 200 : 150,
           damping: 0.09,
-          centralGravity: layoutType === 'radial' ? 0.8 : 0.3
+          centralGravity: 0.3
         },
         stabilization: {
           iterations: 200,
@@ -348,39 +384,6 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
 
     const network = new Network(containerRef.current, data, options);
     networkRef.current = network;
-
-    // Apply custom layout positions for circular and radial layouts
-    if (layoutType === 'circular' || layoutType === 'radial') {
-      const container = containerRef.current;
-      const width = container.clientWidth || 800;
-      const height = container.clientHeight || 600;
-      
-      const layoutNodes = nodes.map(n => ({
-        id: n.id,
-        label: n.label || n.id,
-        type: n.type || 'class',
-        uri: n.uri || n.id,
-      }));
-      const layoutEdges = edges.map(e => ({
-        id: e.id || `${e.from}-${e.to}`,
-        from: e.from || e.source,
-        to: e.to || e.target,
-        label: e.label || '',
-        type: e.type || 'subClassOf',
-      }));
-      
-      const positionMap = layoutType === 'radial'
-        ? applyRadialLayout(layoutNodes as any, layoutEdges as any, { width, height })
-        : applyCircularLayout(layoutNodes as any, layoutEdges as any, { width, height });
-      
-      network.once('stabilizationIterationsDone', () => {
-        positionMap.forEach((pos, nodeId) => {
-          try { network.moveNode(nodeId, pos.x, pos.y); } catch { /* node may not exist */ }
-        });
-        network.setOptions({ physics: { enabled: false } });
-        network.fit({ animation: { duration: 500, easingFunction: 'easeInOutQuad' } });
-      });
-    }
 
     // Event listeners
     network.on('selectNode', (params: any) => {
