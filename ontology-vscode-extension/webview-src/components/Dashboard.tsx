@@ -7197,6 +7197,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       try {
+        const loadFilePerfStart = Date.now();
+        console.log(`[Dashboard] [PERF] ⏱️ handleLoadProjectFile started at ${new Date().toISOString()} for file: ${fileName} (${fileId})`);
         console.log("[Dashboard] 📂 Loading file from project:", fileId, fileName);
 
         // Mark refs so the auto-load useEffect won't double-fire when
@@ -7221,6 +7223,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           );
 
           if (graphCheck?.exists && (graphCheck.graphSize ?? 0) > 0) {
+            console.log(`[Dashboard] [PERF] GraphDB cache check: ${Date.now() - loadFilePerfStart}ms (HIT: ${graphCheck.graphSize} triples)`);
             console.log(`[Dashboard] ⚡ File already in GraphDB (${graphCheck.graphSize} triples), loading directly`);
             setProjectId(ontologyProjectId);
             setLoadingProjectName(fileName);
@@ -7237,6 +7240,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
         } catch (checkErr) {
           console.warn("[Dashboard] GraphDB check failed, falling back to full upload:", checkErr);
+          console.log(`[Dashboard] [PERF] GraphDB cache check: ${Date.now() - loadFilePerfStart}ms (MISS/ERROR)`);
         }
 
         notificationService.info("Loading File", `Loading ${fileName}...`);
@@ -7268,6 +7272,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           throw new Error("File content not found");
         }
 
+        console.log(`[Dashboard] [PERF] Fetch file content from MongoDB: ${Date.now() - loadFilePerfStart}ms (${((fileContent.content.length * 3 / 4) / (1024 * 1024)).toFixed(2)}MB raw)`);
         console.log("[Dashboard] 📥 File content retrieved, uploading to ontology editor...");
 
         // Use hierarchical naming: project--fileId

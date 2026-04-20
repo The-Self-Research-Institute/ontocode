@@ -293,6 +293,8 @@ public class ProjectImportService {
             bulkLoadStartMeta.put("message", "Loading data into GraphDB (this may take several minutes for large files)...");
             sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
                     "PROCESSING", "Loading into GraphDB...", filename, bulkLoadStartMeta);
+            // Also update status.json so polling clients get the progress message
+            metadataService.writeStatus(projectId, ProjectStatus.processing(filename, "Loading into GraphDB..."));
             
             ImportOptions options = ImportOptions.builder()
                     .mode(item.getImportMode() != null ? item.getImportMode() : ImportOptions.ImportMode.FULL)

@@ -11,6 +11,7 @@ import org.eclipse.rdf4j.repository.http.HTTPRepository;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.eclipse.rdf4j.rio.RDFHandler;
 import org.eclipse.rdf4j.rio.RDFParser;
+import org.eclipse.rdf4j.rio.RDFWriter;
 import org.eclipse.rdf4j.rio.Rio;
 import org.eclipse.rdf4j.rio.helpers.AbstractRDFHandler;
 import org.eclipse.rdf4j.rio.helpers.BasicParserSettings;
@@ -42,6 +43,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -1185,17 +1187,8 @@ public class GraphDBDatasetService {
                 progressListener.onProgress(new ImportProgress(fileSizeBytes / 4, fileSizeBytes, 0, elapsedMillis(copyStart)));
             }
 
-            // Step 2: Clear existing graph if FULL mode
-            if (shouldClear) {
-                try (RepositoryConnection conn = getRepository().getConnection()) {
-                    var valueFactory = conn.getValueFactory();
-                    IRI graphIri = valueFactory.createIRI(graphUri);
-                    long existing = safeGraphSize(conn, graphIri, "before-server-import", projectId);
-                    if (existing > 0) {
-                        clearGraph(conn, graphIri, graphUri, projectId);
-                    }
-                }
-            }
+            // Step 2: (Graph clearing is handled atomically by replaceGraphs in the REST API call below)
+            // This avoids a race where the graph is cleared but import fails mid-way, leaving empty graph
 
             if (progressListener != null) {
                 progressListener.onProgress(new ImportProgress(fileSizeBytes / 2, fileSizeBytes, 0, elapsedMillis(copyStart)));
@@ -1210,9 +1203,11 @@ public class GraphDBDatasetService {
             String importUrl = graphdbUrl + "/rest/data/import/server/" + URLEncoder.encode(repositoryId, StandardCharsets.UTF_8);
 
             // GraphDB server-side import request body
+            // Use replaceGraphs to atomically clear+import (avoids race where we clear graph then fail mid-import)
+            String replaceGraphsJson = shouldClear ? "[\"" + graphUri + "\"]" : "[]";
             String jsonBody = String.format(
-                    "{\"fileNames\":[\"%s\"],\"importSettings\":{\"context\":\"%s\",\"replaceGraphs\":[]}}",
-                    importFileName, graphUri);
+                    "{\"fileNames\":[\"%s\"],\"importSettings\":{\"context\":\"%s\",\"replaceGraphs\":%s}}",
+                    importFileName, graphUri, replaceGraphsJson);
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(importUrl))
@@ -1228,8 +1223,17 @@ public class GraphDBDatasetService {
             log.info("[ServerImport {}] Import triggered, polling for completion...", projectId);
 
             // Step 4: Poll for completion
+            // Scale timeout with file size: small files should fail fast, large files get more time
             String statusUrl = graphdbUrl + "/rest/data/import/server/" + URLEncoder.encode(repositoryId, StandardCharsets.UTF_8);
-            int maxPolls = 600; // 10 minutes max (1s intervals)
+            int maxPolls;
+            if (fileSizeBytes < 1024 * 1024) {           // < 1MB: 30 seconds
+                maxPolls = 30;
+            } else if (fileSizeBytes < 50 * 1024 * 1024) { // < 50MB: 3 minutes
+                maxPolls = 180;
+            } else {
+                maxPolls = 600;                             // >= 50MB: 10 minutes
+            }
+            log.info("[ServerImport {}] File size: {} bytes, maxPolls: {}", projectId, fileSizeBytes, maxPolls);
             for (int poll = 0; poll < maxPolls; poll++) {
                 Thread.sleep(1000);
 
@@ -1258,12 +1262,17 @@ public class GraphDBDatasetService {
                 }
 
                 // Update progress
-                if (progressListener != null && poll % 5 == 0) {
+                if (progressListener != null && poll % 2 == 0) {
                     long elapsed = elapsedMillis(copyStart);
                     // Estimate progress: 50% is copy done, 50-99% is GraphDB processing
                     int estimatedPercent = (int) Math.min(99, 50 + (poll * 50.0 / maxPolls));
                     progressListener.onProgress(new ImportProgress(
                             (long) (fileSizeBytes * estimatedPercent / 100.0), fileSizeBytes, 0, elapsed));
+                }
+
+                // Early exit for small files: if still not done after maxPolls, don't wait more
+                if (poll == maxPolls - 1) {
+                    log.warn("[ServerImport {}] Polling timed out after {} seconds — falling back to other methods", projectId, maxPolls);
                 }
             }
 
@@ -1712,6 +1721,13 @@ public class GraphDBDatasetService {
     /**
      * Export dataset as RDF string
      */
+    // GraphDB internal/system namespace prefixes that should not appear in ontology exports
+    private static final Set<String> GRAPHDB_SYSTEM_NAMESPACE_PREFIXES = Set.of(
+        "sail", "geof", "graphdb", "rdf4j", "sesame", "rep", "sr", "apf", "afn",
+        "list", "agg", "omgeo", "geoext", "ofn", "path", "spif", "fn",
+        "map", "array", "math", "wgs", "gn", "skos"
+    );
+
     public String exportDataset(String projectId, RDFFormat format) {
         Repository repo = getRepository();
         String graphUri = getGraphUri(projectId);
@@ -1725,10 +1741,14 @@ public class GraphDBDatasetService {
             for (String g : graphs) {
                 contexts.add(conn.getValueFactory().createIRI(g));
             }
-            conn.export(Rio.createWriter(format, writer),
-                       contexts.toArray(new IRI[0]));
+
+            conn.export(Rio.createWriter(format, writer), contexts.toArray(new IRI[0]));
             
             String result = writer.toString();
+            // Post-process: strip GraphDB system xmlns declarations from RDF/XML output
+            if (format == org.eclipse.rdf4j.rio.RDFFormat.RDFXML) {
+                result = stripSystemNamespaces(result);
+            }
             log.info("[TIMING] exportDataset for project {}: {} ms ({} chars, format: {})", 
                      projectId, elapsedMillis(exportStart), result.length(), format);
             return result;
@@ -1740,9 +1760,18 @@ public class GraphDBDatasetService {
     }
     
     /**
-     * Create a connection to the repository
-     * Note: Caller is responsible for closing the connection
+     * Strip GraphDB internal system namespace declarations from RDF/XML export output.
+     * GraphDB registers many internal namespaces in its repository config that pollute exports.
      */
+    private String stripSystemNamespaces(String rdfXml) {
+        // Remove xmlns:PREFIX="..." declarations for known system namespaces
+        for (String prefix : GRAPHDB_SYSTEM_NAMESPACE_PREFIXES) {
+            rdfXml = rdfXml.replaceAll(
+                "\\s+xmlns:" + java.util.regex.Pattern.quote(prefix) + "=\"[^\"]*\"", "");
+        }
+        return rdfXml;
+    }
+
     public RepositoryConnection getConnection() {
         return getRepository().getConnection();
     }

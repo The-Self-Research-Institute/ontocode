@@ -1,0 +1,992 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Graph View Plugin - Testing Document</title>
+  <style>
+    :root {
+      --primary: #2563eb;
+      --primary-light: #dbeafe;
+      --success: #16a34a;
+      --danger: #dc2626;
+      --warning: #f59e0b;
+      --gray-50: #f9fafb;
+      --gray-100: #f3f4f6;
+      --gray-200: #e5e7eb;
+      --gray-300: #d1d5db;
+      --gray-500: #6b7280;
+      --gray-700: #374151;
+      --gray-900: #111827;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      color: var(--gray-900);
+      background: var(--gray-50);
+      line-height: 1.6;
+    }
+
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem;
+    }
+
+    header {
+      background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
+      color: #fff;
+      padding: 2.5rem 0;
+      margin-bottom: 2rem;
+    }
+
+    header h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      margin-bottom: 0.75rem;
+    }
+
+    header .meta {
+      display: flex;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+      font-size: 0.9rem;
+      opacity: 0.9;
+    }
+
+    header .meta span {
+      background: rgba(255,255,255,0.15);
+      padding: 0.2rem 0.65rem;
+      border-radius: 4px;
+    }
+
+    nav.toc {
+      background: #fff;
+      border: 1px solid var(--gray-200);
+      border-radius: 8px;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 2rem;
+    }
+
+    nav.toc h2 {
+      font-size: 1.1rem;
+      margin-bottom: 0.75rem;
+      color: var(--gray-700);
+    }
+
+    nav.toc ol {
+      columns: 2;
+      column-gap: 2rem;
+      padding-left: 1.25rem;
+    }
+
+    nav.toc li {
+      margin-bottom: 0.35rem;
+    }
+
+    nav.toc a {
+      color: var(--primary);
+      text-decoration: none;
+    }
+
+    nav.toc a:hover {
+      text-decoration: underline;
+    }
+
+    section {
+      background: #fff;
+      border: 1px solid var(--gray-200);
+      border-radius: 8px;
+      padding: 1.75rem;
+      margin-bottom: 1.5rem;
+    }
+
+    h2 {
+      font-size: 1.4rem;
+      color: var(--primary);
+      border-bottom: 2px solid var(--primary-light);
+      padding-bottom: 0.5rem;
+      margin-bottom: 1.25rem;
+    }
+
+    h3 {
+      font-size: 1.1rem;
+      color: var(--gray-700);
+      margin: 1.5rem 0 0.5rem;
+    }
+
+    h3:first-of-type {
+      margin-top: 0;
+    }
+
+    .test-case {
+      border: 1px solid var(--gray-200);
+      border-radius: 6px;
+      padding: 1.25rem;
+      margin-bottom: 1rem;
+      background: var(--gray-50);
+    }
+
+    .test-case h3 {
+      margin: 0 0 0.25rem;
+      font-size: 1.05rem;
+      color: var(--gray-900);
+    }
+
+    .test-case .objective {
+      font-style: italic;
+      color: var(--gray-500);
+      margin-bottom: 0.75rem;
+      font-size: 0.92rem;
+    }
+
+    .test-case h4 {
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--gray-500);
+      margin: 0.75rem 0 0.35rem;
+    }
+
+    .test-case ol, .test-case ul {
+      padding-left: 1.25rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .test-case li {
+      margin-bottom: 0.25rem;
+      font-size: 0.95rem;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0.75rem 0;
+      font-size: 0.92rem;
+    }
+
+    th {
+      background: var(--primary-light);
+      color: var(--gray-700);
+      font-weight: 600;
+      text-align: left;
+      padding: 0.6rem 0.75rem;
+      border: 1px solid var(--gray-200);
+    }
+
+    td {
+      padding: 0.5rem 0.75rem;
+      border: 1px solid var(--gray-200);
+    }
+
+    tr:nth-child(even) td {
+      background: var(--gray-50);
+    }
+
+    code {
+      background: #eef2ff;
+      color: #4338ca;
+      padding: 0.15rem 0.4rem;
+      border-radius: 3px;
+      font-size: 0.88em;
+      font-family: 'Fira Code', 'Cascadia Code', Consolas, monospace;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 3px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .badge-p0 { background: #fee2e2; color: #991b1b; }
+    .badge-p1 { background: #fef3c7; color: #92400e; }
+    .badge-p2 { background: #e0e7ff; color: #3730a3; }
+
+    .badge-category {
+      background: var(--gray-100);
+      color: var(--gray-700);
+      font-weight: 500;
+      font-size: 0.78rem;
+      padding: 0.15rem 0.5rem;
+      border-radius: 3px;
+    }
+
+    .summary-table td:nth-child(3),
+    .summary-table td:nth-child(4),
+    .summary-table td:nth-child(5) {
+      text-align: center;
+    }
+
+    .checkbox {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+    }
+
+    .metrics-list {
+      list-style: none;
+      padding-left: 0;
+    }
+
+    .metrics-list li {
+      padding: 0.3rem 0;
+      font-size: 0.95rem;
+    }
+
+    .metrics-list li::before {
+      content: "⏱ ";
+    }
+
+    @media (max-width: 640px) {
+      nav.toc ol {
+        columns: 1;
+      }
+      header .meta {
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+    }
+
+    @media print {
+      body { background: #fff; }
+      .container { padding: 0; }
+      section { border: 1px solid #ccc; break-inside: avoid; }
+      header { background: #1e3a5f; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="container">
+    <h1>Graph View Plugin &mdash; Testing Document</h1>
+    <div class="meta">
+      <span><strong>Plugin:</strong> @ontocode/graph-view-plugin v3.1.0</span>
+      <span><strong>Category:</strong> Visualization</span>
+      <span><strong>Last Updated:</strong> April 2026</span>
+    </div>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- Table of Contents -->
+  <nav class="toc">
+    <h2>Table of Contents</h2>
+    <ol>
+      <li><a href="#overview">Overview</a></li>
+      <li><a href="#test-environment-setup">Test Environment Setup</a></li>
+      <li><a href="#component-tests">Component Tests</a></li>
+      <li><a href="#service-tests">Service Tests</a></li>
+      <li><a href="#integration-tests">Integration Tests</a></li>
+      <li><a href="#performance-tests">Performance Tests</a></li>
+      <li><a href="#accessibility-tests">Accessibility Tests</a></li>
+    </ol>
+  </nav>
+
+  <!-- Overview -->
+  <section id="overview">
+    <h2>1. Overview</h2>
+    <p>The Graph View Plugin provides D3.js-powered graph visualization with hierarchical lazy loading, WebVOWL notation, smart search, path visualization, and 60 FPS performance targeting 100,000+ nodes.</p>
+
+    <h3>Key Components Under Test</h3>
+    <ul>
+      <li><code>GraphViewSidebar.tsx</code> &mdash; Entity selector, filters, statistics panel</li>
+      <li><code>MatrixView.tsx</code> &mdash; Adjacency matrix visualization</li>
+      <li><code>StatsDashboard.tsx</code> &mdash; Real-time ontology metrics</li>
+      <li><code>UnifiedSidebar.tsx</code> &mdash; Consolidated sidebar UI</li>
+    </ul>
+
+    <h3>Key Services Under Test</h3>
+    <ul>
+      <li><code>GraphDataFetchService.ts</code> &mdash; Data fetching from GraphDB with lazy loading</li>
+      <li><code>GraphDataService.ts</code> &mdash; Caching and synchronization (5-min TTL)</li>
+      <li><code>GraphMutationService.ts</code> &mdash; Graph modification with optimistic updates</li>
+      <li><code>VOWLNotationService.ts</code> &mdash; VOWL-compliant visual representation</li>
+    </ul>
+
+    <h3>API Endpoints</h3>
+    <table>
+      <thead>
+        <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>GET</td><td><code>/api/ontology/{projectId}/graph</code></td><td>Fetch graph data</td></tr>
+        <tr><td>POST</td><td><code>/api/ontology/{projectId}/graph/nodes</code></td><td>Create node</td></tr>
+        <tr><td>PUT</td><td><code>/api/ontology/{projectId}/graph/nodes/{nodeId}</code></td><td>Update node</td></tr>
+        <tr><td>POST</td><td><code>/api/collab-graph/{projectId}/clear-cache</code></td><td>Clear backend cache</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Test Environment Setup -->
+  <section id="test-environment-setup">
+    <h2>2. Test Environment Setup</h2>
+
+    <h3>Prerequisites</h3>
+    <ul>
+      <li>OntoCode platform running (Docker Compose or local)</li>
+      <li>GraphDB with at least one loaded ontology</li>
+      <li>Browser: Chrome 90+ / Firefox 88+ / Edge 90+</li>
+    </ul>
+
+    <h3>Test Ontologies</h3>
+    <table>
+      <thead>
+        <tr><th>File</th><th>Description</th><th>Size</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>test-ontology.owl</code></td><td>Comprehensive test ontology with all entity types</td><td>Medium</td></tr>
+        <tr><td><code>sample-ontology.owl</code></td><td>Simple 5-class ontology for basic testing</td><td>Small</td></tr>
+        <tr><td>Large OWL file (1000+ classes)</td><td>Performance testing</td><td>Large</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Component Tests -->
+  <section id="component-tests">
+    <h2>3. Component Tests</h2>
+
+    <h3>Graph Rendering</h3>
+
+    <div class="test-case">
+      <h3>TC-GV-001: Initial Graph Load</h3>
+      <p class="objective">Verify graph loads and renders correctly on plugin activation</p>
+      <h4>Preconditions</h4>
+      <ul>
+        <li>Ontology loaded in editor</li>
+      </ul>
+      <h4>Steps</h4>
+      <ol>
+        <li>Open an ontology file in the editor</li>
+        <li>Activate the Graph View plugin from the sidebar</li>
+        <li>Wait for graph to render</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Loading spinner appears during data fetch</li>
+        <li>Nodes render as circles with labels</li>
+        <li>Edges render as lines connecting nodes</li>
+        <li>No JavaScript console errors</li>
+        <li>Graph is interactive (draggable, zoomable)</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-002: Force-Directed Layout</h3>
+      <p class="objective">Verify D3.js force-directed layout arranges nodes properly</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Load a medium ontology (50+ classes)</li>
+        <li>Select &ldquo;Force&rdquo; layout mode</li>
+        <li>Wait for simulation to stabilize</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Nodes spread evenly across viewport</li>
+        <li>Connected nodes cluster together</li>
+        <li>No node overlapping after stabilization</li>
+        <li>Smooth animation during simulation</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-003: WebVOWL Layout</h3>
+      <p class="objective">Verify WebVOWL concentric ring layout</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Load test-ontology.owl</li>
+        <li>Switch to &ldquo;WebVOWL&rdquo; visualization mode</li>
+        <li>Verify classes arranged in concentric circles</li>
+        <li>Verify datatypes positioned separately</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li><code>owl:Thing</code> at center (if present)</li>
+        <li>Classes in inner rings based on hierarchy depth</li>
+        <li>Datatypes in separate ring</li>
+        <li>Clear spacing between nodes</li>
+        <li>Readable labels</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-004: Class Distance Parameter</h3>
+      <p class="objective">Verify Class Distance slider affects layout</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Load ontology in WebVOWL mode</li>
+        <li>Open VOWL Controls (settings icon)</li>
+        <li>Set Class Distance to 50 (minimum)</li>
+        <li>Set Class Distance to 150 (maximum)</li>
+        <li>Reset to 100 (default)</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Distance 50: Compact layout, smaller radii</li>
+        <li>Distance 100: Standard spacing</li>
+        <li>Distance 150: Expanded layout, larger radii</li>
+        <li>Layout updates immediately on slider change</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-005: Datatype Distance Parameter</h3>
+      <p class="objective">Verify Datatype Distance slider affects datatype positioning</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Load ontology with datatypes in WebVOWL mode</li>
+        <li>Adjust Datatype Distance from 20 to 200</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Datatypes move closer/farther from center</li>
+        <li>Does not affect class positioning</li>
+        <li>Immediate visual update</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-006: Zoom and Pan</h3>
+      <p class="objective">Verify zoom and pan controls</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Load a graph</li>
+        <li>Scroll wheel to zoom in/out</li>
+        <li>Click and drag background to pan</li>
+        <li>Double-click to reset zoom</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Zoom range: 0.1x to 10x</li>
+        <li>Pan moves entire graph</li>
+        <li>Smooth transitions</li>
+        <li>Labels remain readable at reasonable zoom levels</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-007: Node Selection</h3>
+      <p class="objective">Verify node selection and detail display</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Click on a class node</li>
+        <li>Click on a property edge</li>
+        <li>Click on an individual node</li>
+        <li>Click on empty space (deselect)</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Selected node highlighted with distinct border</li>
+        <li>Sidebar shows entity details (IRI, type, annotations)</li>
+        <li>Connected edges highlighted</li>
+        <li>Clicking empty space clears selection</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-008: Layout Pause/Resume</h3>
+      <p class="objective">Verify layout simulation can be paused and resumed</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Load a graph with active force simulation</li>
+        <li>Click Pause button</li>
+        <li>Drag a node</li>
+        <li>Click Resume button</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Pause: Nodes freeze in place, no simulation forces</li>
+        <li>Dragging while paused: Node moves but stays where placed</li>
+        <li>Resume: Simulation resumes, forces re-applied</li>
+      </ul>
+    </div>
+
+    <h3>Sidebar Components</h3>
+
+    <div class="test-case">
+      <h3>TC-GV-009: GraphViewSidebar Filters</h3>
+      <p class="objective">Verify entity type filtering</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Open GraphViewSidebar</li>
+        <li>Toggle &ldquo;Show Classes&rdquo; off</li>
+        <li>Toggle &ldquo;Show Properties&rdquo; off</li>
+        <li>Toggle &ldquo;Show Individuals&rdquo; off</li>
+        <li>Re-enable all filters</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Toggling off removes corresponding nodes from graph</li>
+        <li>Toggling on restores them</li>
+        <li>Edge count updates accordingly</li>
+        <li>Statistics panel reflects filtered counts</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-010: Search Functionality</h3>
+      <p class="objective">Verify smart search locates entities</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Open search in sidebar</li>
+        <li>Type a partial class name</li>
+        <li>Select a search result</li>
+        <li>Clear search</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Autocomplete suggestions appear after 2+ characters</li>
+        <li>Matching entities listed with type icons</li>
+        <li>Selecting result centers graph on that node</li>
+        <li>Node highlighted after selection</li>
+        <li>Clear search restores normal view</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-011: Path Visualization</h3>
+      <p class="objective">Verify path finding between two nodes</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Select a source node</li>
+        <li>Use &ldquo;Find Path&rdquo; to select a target node</li>
+        <li>Observe highlighted path</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Shortest path highlighted between nodes</li>
+        <li>Intermediate nodes and edges distinctly colored</li>
+        <li>Non-path elements dimmed</li>
+        <li>Path length displayed</li>
+      </ul>
+    </div>
+
+    <h3>Matrix View</h3>
+
+    <div class="test-case">
+      <h3>TC-GV-012: Adjacency Matrix Rendering</h3>
+      <p class="objective">Verify MatrixView displays relationships correctly</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Switch to Matrix View tab</li>
+        <li>Load a small ontology (10&ndash;20 classes)</li>
+        <li>Hover over cells</li>
+        <li>Click a filled cell</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Row and column headers show class names</li>
+        <li>Filled cells indicate relationships</li>
+        <li>Hover tooltip shows relationship details</li>
+        <li>Click navigates to relationship details</li>
+      </ul>
+    </div>
+
+    <h3>Statistics Dashboard</h3>
+
+    <div class="test-case">
+      <h3>TC-GV-013: Stats Dashboard Metrics</h3>
+      <p class="objective">Verify StatsDashboard shows correct counts</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Load an ontology</li>
+        <li>Open Statistics Dashboard</li>
+        <li>Compare displayed metrics with known ontology counts</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Class count matches ontology</li>
+        <li>Property count (object + data) matches</li>
+        <li>Individual count matches</li>
+        <li>Axiom count matches</li>
+        <li>Metrics update after ontology modifications</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- Service Tests -->
+  <section id="service-tests">
+    <h2>4. Service Tests</h2>
+
+    <h3>GraphDataFetchService</h3>
+
+    <div class="test-case">
+      <h3>TC-GV-014: Fetch Graph Data</h3>
+      <p class="objective">Verify parallel data fetching from GraphDB</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Load an ontology project</li>
+        <li>Monitor network requests during graph load</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Nodes and edges fetched in parallel</li>
+        <li>All OWL classes returned recursively</li>
+        <li>Individuals, object/data/annotation properties included</li>
+        <li>Datatypes included</li>
+        <li>No N+1 query problem (batch fetching)</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-015: Lazy Loading &mdash; Expand on Demand</h3>
+      <p class="objective">Verify hierarchical lazy loading works</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Load a large ontology</li>
+        <li>Verify only root nodes load initially</li>
+        <li>Click expand on a root node</li>
+        <li>Verify child nodes load</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Initial load shows only root-level classes</li>
+        <li>Expand fetches children on demand</li>
+        <li>Loading indicator during child fetch</li>
+        <li>Already-loaded branches don&rsquo;t re-fetch</li>
+        <li>Smooth animation when new nodes appear</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-016: Fetch Error Handling</h3>
+      <p class="objective">Verify graceful handling of API failures</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Disconnect GraphDB or use invalid project ID</li>
+        <li>Attempt to load graph</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>User-friendly error message displayed</li>
+        <li>No unhandled exceptions in console</li>
+        <li>Retry option available</li>
+        <li>UI remains functional</li>
+      </ul>
+    </div>
+
+    <h3>GraphDataService (Caching)</h3>
+
+    <div class="test-case">
+      <h3>TC-GV-017: Cache Hit</h3>
+      <p class="objective">Verify cached data is reused within TTL</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Load graph data for a project</li>
+        <li>Navigate away and back within 5 minutes</li>
+        <li>Monitor network requests</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Second load uses cached data (no network request)</li>
+        <li>Data rendered instantly</li>
+        <li>Cache TTL: 5 minutes</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-018: Cache Invalidation</h3>
+      <p class="objective">Verify cache clears after TTL or on demand</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Load graph data</li>
+        <li>Wait 5+ minutes OR call <code>clearProjectCache(projectId)</code></li>
+        <li>Reload graph</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Fresh data fetched from backend</li>
+        <li>Local cache cleared</li>
+        <li>Backend cache clear endpoint called</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-019: Request Cancellation</h3>
+      <p class="objective">Verify abort controller cancels pending requests</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Start loading a large graph</li>
+        <li>Navigate away before loading completes</li>
+        <li>Return and load again</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Previous request aborted (no stale data)</li>
+        <li>New request starts cleanly</li>
+        <li>No duplicate renders</li>
+      </ul>
+    </div>
+
+    <h3>GraphMutationService</h3>
+
+    <div class="test-case">
+      <h3>TC-GV-020: Create Node (Optimistic Update)</h3>
+      <p class="objective">Verify node creation with optimistic UI update</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Right-click on graph &rarr; &ldquo;Add Class&rdquo;</li>
+        <li>Enter class name and IRI</li>
+        <li>Submit</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Node appears immediately in graph (optimistic)</li>
+        <li>API call sent to backend</li>
+        <li>On success: node persists</li>
+        <li>On failure: node removed, error displayed</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-021: Update Node</h3>
+      <p class="objective">Verify node update via mutation service</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Select a node</li>
+        <li>Edit label or annotations in sidebar</li>
+        <li>Save changes</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Changes reflected immediately in graph</li>
+        <li>Backend updated via PUT endpoint</li>
+        <li>Cache invalidated for modified node</li>
+      </ul>
+    </div>
+
+    <h3>VOWLNotationService</h3>
+
+    <div class="test-case">
+      <h3>TC-GV-022: VOWL Node Styling</h3>
+      <p class="objective">Verify VOWL-compliant visual representation</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Switch to VOWL mode</li>
+        <li>Verify visual encoding of different entity types</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <table>
+        <thead>
+          <tr><th>Entity Type</th><th>Shape</th><th>Color</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Class</td><td>Circle</td><td>Light blue</td></tr>
+          <tr><td>Datatype</td><td>Rectangle</td><td>Yellow/Green</td></tr>
+          <tr><td>Object Property</td><td>Arrow/Line</td><td>Blue</td></tr>
+          <tr><td>Data Property</td><td>Arrow/Line</td><td>Green</td></tr>
+          <tr><td>Individual</td><td>Diamond</td><td>Purple</td></tr>
+        </tbody>
+      </table>
+      <ul>
+        <li>Node radius proportional to importance</li>
+        <li>Stroke color/width matches VOWL spec</li>
+        <li>Dashed lines for inferred relationships</li>
+        <li>Statistics computed: classCount, propertyCount, individualCount</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- Integration Tests -->
+  <section id="integration-tests">
+    <h2>5. Integration Tests</h2>
+
+    <div class="test-case">
+      <h3>TC-GV-023: Graph &harr; Editor Synchronization</h3>
+      <p class="objective">Verify changes in editor reflect in graph</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Open ontology in editor and graph view side-by-side</li>
+        <li>Add a new class in the editor</li>
+        <li>Check graph view updates</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>New class node appears in graph</li>
+        <li>Relationships updated</li>
+        <li>Statistics dashboard updated</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-024: Graph &harr; Reasoner Integration</h3>
+      <p class="objective">Verify inferred relationships appear in graph</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Run reasoner on loaded ontology</li>
+        <li>Switch to graph view</li>
+        <li>Toggle &ldquo;Show Inferred&rdquo; option</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Inferred subclass relationships shown (dashed lines)</li>
+        <li>Inferred individual types displayed</li>
+        <li>Clear visual distinction between asserted and inferred</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-025: Multi-User Collaboration</h3>
+      <p class="objective">Verify graph updates when another user makes changes</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>User A opens graph for a project</li>
+        <li>User B adds a class to the same project</li>
+        <li>Observe User A&rsquo;s graph</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>User A receives real-time update notification</li>
+        <li>New node appears after refresh/notification</li>
+        <li>No data conflicts</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- Performance Tests -->
+  <section id="performance-tests">
+    <h2>6. Performance Tests</h2>
+
+    <div class="test-case">
+      <h3>TC-GV-026: Small Ontology (&lt; 100 nodes)</h3>
+      <p class="objective">Verify smooth rendering for small ontologies</p>
+      <h4>Metrics</h4>
+      <ul class="metrics-list">
+        <li>Initial load: &lt; 2 seconds</li>
+        <li>Frame rate: 60 FPS</li>
+        <li>Memory: &lt; 50 MB</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-027: Medium Ontology (1,000 nodes)</h3>
+      <p class="objective">Verify acceptable performance for medium ontologies</p>
+      <h4>Metrics</h4>
+      <ul class="metrics-list">
+        <li>Initial load: &lt; 5 seconds</li>
+        <li>Frame rate: &ge; 30 FPS</li>
+        <li>Memory: &lt; 200 MB</li>
+        <li>Lazy loading active</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-028: Large Ontology (10,000+ nodes)</h3>
+      <p class="objective">Verify lazy loading prevents UI freeze</p>
+      <h4>Metrics</h4>
+      <ul class="metrics-list">
+        <li>Initial load (root nodes only): &lt; 3 seconds</li>
+        <li>Expand node: &lt; 1 second per level</li>
+        <li>Frame rate: &ge; 30 FPS with visible nodes</li>
+        <li>Memory: &lt; 500 MB</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-029: Extreme Scale (100,000+ nodes)</h3>
+      <p class="objective">Verify plugin handles maximum scale</p>
+      <h4>Metrics</h4>
+      <ul class="metrics-list">
+        <li>Only visible nodes rendered (virtual scrolling)</li>
+        <li>No browser crash or tab freeze</li>
+        <li>Search still responsive (&lt; 500ms)</li>
+        <li>Memory stays under 1 GB</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- Accessibility Tests -->
+  <section id="accessibility-tests">
+    <h2>7. Accessibility Tests</h2>
+
+    <div class="test-case">
+      <h3>TC-GV-030: Keyboard Navigation</h3>
+      <p class="objective">Verify graph is navigable via keyboard</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Tab to graph view</li>
+        <li>Use arrow keys to navigate nodes</li>
+        <li>Press Enter to select</li>
+        <li>Press Escape to deselect</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Focus indicator visible on current node</li>
+        <li>Arrow keys move between connected nodes</li>
+        <li>Enter triggers selection</li>
+        <li>Screen reader announces node details</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-031: Color Contrast</h3>
+      <p class="objective">Verify sufficient contrast for all visual elements</p>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>All text meets WCAG AA (4.5:1 contrast ratio)</li>
+        <li>Node colors distinguishable for color-blind users</li>
+        <li>Legend available for color coding</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- Test Summary Matrix -->
+  <section id="test-summary">
+    <h2>Test Summary Matrix</h2>
+    <table class="summary-table">
+      <thead>
+        <tr>
+          <th>Test ID</th>
+          <th>Category</th>
+          <th>Priority</th>
+          <th>Automated</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>TC-GV-001</td><td><span class="badge-category">Rendering</span></td><td><span class="badge badge-p0">P0</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-002</td><td><span class="badge-category">Layout</span></td><td><span class="badge badge-p0">P0</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-003</td><td><span class="badge-category">Layout</span></td><td><span class="badge badge-p1">P1</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-004</td><td><span class="badge-category">Controls</span></td><td><span class="badge badge-p1">P1</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-005</td><td><span class="badge-category">Controls</span></td><td><span class="badge badge-p2">P2</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-006</td><td><span class="badge-category">Interaction</span></td><td><span class="badge badge-p0">P0</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-007</td><td><span class="badge-category">Interaction</span></td><td><span class="badge badge-p0">P0</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-008</td><td><span class="badge-category">Controls</span></td><td><span class="badge badge-p1">P1</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-009</td><td><span class="badge-category">Sidebar</span></td><td><span class="badge badge-p1">P1</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-010</td><td><span class="badge-category">Search</span></td><td><span class="badge badge-p0">P0</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-011</td><td><span class="badge-category">Navigation</span></td><td><span class="badge badge-p1">P1</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-012</td><td><span class="badge-category">Matrix</span></td><td><span class="badge badge-p1">P1</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-013</td><td><span class="badge-category">Statistics</span></td><td><span class="badge badge-p1">P1</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-014</td><td><span class="badge-category">Service</span></td><td><span class="badge badge-p0">P0</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-015</td><td><span class="badge-category">Lazy Loading</span></td><td><span class="badge badge-p0">P0</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-016</td><td><span class="badge-category">Error Handling</span></td><td><span class="badge badge-p0">P0</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-017</td><td><span class="badge-category">Caching</span></td><td><span class="badge badge-p1">P1</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-018</td><td><span class="badge-category">Caching</span></td><td><span class="badge badge-p1">P1</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-019</td><td><span class="badge-category">Cancellation</span></td><td><span class="badge badge-p1">P1</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-020</td><td><span class="badge-category">Mutation</span></td><td><span class="badge badge-p0">P0</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-021</td><td><span class="badge-category">Mutation</span></td><td><span class="badge badge-p1">P1</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-022</td><td><span class="badge-category">VOWL</span></td><td><span class="badge badge-p1">P1</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-023</td><td><span class="badge-category">Integration</span></td><td><span class="badge badge-p0">P0</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-024</td><td><span class="badge-category">Integration</span></td><td><span class="badge badge-p1">P1</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-025</td><td><span class="badge-category">Collaboration</span></td><td><span class="badge badge-p1">P1</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-026</td><td><span class="badge-category">Performance</span></td><td><span class="badge badge-p0">P0</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-027</td><td><span class="badge-category">Performance</span></td><td><span class="badge badge-p1">P1</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-028</td><td><span class="badge-category">Performance</span></td><td><span class="badge badge-p1">P1</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-029</td><td><span class="badge-category">Performance</span></td><td><span class="badge badge-p2">P2</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-030</td><td><span class="badge-category">Accessibility</span></td><td><span class="badge badge-p2">P2</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-031</td><td><span class="badge-category">Accessibility</span></td><td><span class="badge badge-p2">P2</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+</div>
+
+</body>
+</html>

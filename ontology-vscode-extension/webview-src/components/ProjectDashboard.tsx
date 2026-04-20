@@ -42,6 +42,8 @@ import CreateProjectModal from "./CreateProjectModal";
 import ConfirmationModal from "./ConfirmationModal";
 import PlanDetailsModal from "./PlanDetailsModal";
 import { UserGuideModal } from "./UserGuideModal";
+import { ReportIssueModal } from "./ReportIssueModal";
+import { Bug } from "lucide-react";
 
 interface ProjectMember {
   userId: string;
@@ -111,6 +113,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   const [showSettings, setShowSettings] = useState(false);
   const [showPlanDetails, setShowPlanDetails] = useState(false);
   const [showUserGuide, setShowUserGuide] = useState(false);
+  const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
   const [renaming, setRenaming] = useState<{ projectId: string; currentName: string } | null>(null);
   const [newName, setNewName] = useState("");
   const [newProjectName, setNewProjectName] = useState("");
@@ -864,6 +867,13 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                 <HelpCircle size={20} />
               </button>
               <button
+                onClick={() => setIsReportIssueModalOpen(true)}
+                className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg"
+                title="Report Issue"
+              >
+                <Bug size={20} />
+              </button>
+              <button
                 onClick={() => setShowSettings(true)}
                 className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg"
                 title="Settings"
@@ -1592,6 +1602,11 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
       {/* User Guide Modal */}
       <UserGuideModal isOpen={showUserGuide} onClose={() => setShowUserGuide(false)} />
+
+      {/* Report Issue Modal */}
+      {isReportIssueModalOpen && (
+        <ReportIssueModal onClose={() => setIsReportIssueModalOpen(false)} />
+      )}
     </div>
   );
 };;

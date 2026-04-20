@@ -196,7 +196,80 @@ const AppContent = () => {
     }
   }, [user]);
 
-  // Determine current route based on state
+  // Auto-restore last project + file when workspace becomes available (e.g. after login with auto-select)
+  const autoRestoredRef = useRef(false);
+  useEffect(() => {
+    if (!user?.workspaceId || autoRestoredRef.current || selectedProjectId || selectedFileId) return;
+    autoRestoredRef.current = true;
+
+    const goToDashboard = () => navigateTo({ view: "projectDashboard", projectId: null, projectName: "", fileId: null, fileName: "" });
+
+    const clearStoredIds = () => {
+      try {
+        localStorage.removeItem("ontocode_lastWorkspaceProjectId");
+        localStorage.removeItem("ontocode_lastWorkspaceProjectName");
+        localStorage.removeItem("ontocode_lastWorkspaceFileId");
+        localStorage.removeItem("ontocode_lastWorkspaceFileName");
+      } catch { /* ignore */ }
+      apiClient.put('/api/auth/last-opened', { projectId: null, projectName: null, fileId: null, fileName: null }).catch(() => {});
+    };
+
+    const restoreWithIds = async (projectId: string, projectName: string, fileId: string | null, fileName: string | null) => {
+      // Validate project still exists
+      try {
+        await apiClient.get(`/api/projects/${encodeURIComponent(projectId)}`);
+      } catch {
+        console.warn("[App] Stored project no longer exists, going to project dashboard");
+        clearStoredIds();
+        goToDashboard();
+        return;
+      }
+      if (fileId && fileName) {
+        // Validate file still exists
+        try {
+          const fileCheck = await apiClient.get<{ exists: boolean }>(`/api/projects/${encodeURIComponent(projectId)}/files/check?fileName=${encodeURIComponent(fileName)}`);
+          if (fileCheck?.exists === false) {
+            throw new Error("File not found");
+          }
+          console.log("[App] Auto-restoring last project+file:", projectId, fileId);
+          navigateTo({ view: "dashboard", projectId, projectName, fileId, fileName });
+        } catch {
+          console.warn("[App] Stored file no longer exists, restoring to project library");
+          clearStoredIds();
+          navigateTo({ view: "projectLibrary", projectId, projectName, fileId: null, fileName: "" });
+        }
+      } else {
+        console.log("[App] Auto-restoring last project:", projectId);
+        navigateTo({ view: "projectLibrary", projectId, projectName, fileId: null, fileName: "" });
+      }
+    };
+
+    // Try backend first (cross-device), fall back to localStorage
+    apiClient.get<{ projectId?: string; projectName?: string; fileId?: string; fileName?: string }>('/api/auth/last-opened')
+      .then((data) => {
+        const projectId = data?.projectId || localStorage.getItem("ontocode_lastWorkspaceProjectId");
+        const projectName = data?.projectName || localStorage.getItem("ontocode_lastWorkspaceProjectName");
+        const fileId = data?.fileId || localStorage.getItem("ontocode_lastWorkspaceFileId");
+        const fileName = data?.fileName || localStorage.getItem("ontocode_lastWorkspaceFileName");
+        if (projectId && projectName) {
+          restoreWithIds(projectId, projectName, fileId || null, fileName || null);
+        }
+      })
+      .catch(() => {
+        // Fall back to localStorage only
+        try {
+          const projectId = localStorage.getItem("ontocode_lastWorkspaceProjectId");
+          const projectName = localStorage.getItem("ontocode_lastWorkspaceProjectName");
+          const fileId = localStorage.getItem("ontocode_lastWorkspaceFileId");
+          const fileName = localStorage.getItem("ontocode_lastWorkspaceFileName");
+          if (projectId && projectName) {
+            restoreWithIds(projectId, projectName, fileId, fileName);
+          }
+        } catch { /* ignore */ }
+      });
+  }, [user?.workspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+
   const currentRoute: RouteState = useMemo(() => {
     // While the verify-email flow is active, keep the router in a neutral state
     // so useRouter doesn't overwrite window.location to /deployment (which would
@@ -667,6 +740,17 @@ const AppContent = () => {
   const handleProjectSelected = (projectId: string, projectName: string) => {
     console.log("[App] Project selected:", projectId, projectName);
 
+    // Persist last selected project for auto-restore on next login
+    try {
+      localStorage.setItem("ontocode_lastWorkspaceProjectId", projectId);
+      localStorage.setItem("ontocode_lastWorkspaceProjectName", projectName);
+      localStorage.removeItem("ontocode_lastWorkspaceFileId");
+      localStorage.removeItem("ontocode_lastWorkspaceFileName");
+    } catch { /* ignore */ }
+    // Also persist to backend for cross-device restore
+    apiClient.put('/api/auth/last-opened', { projectId, projectName, fileId: null, fileName: null })
+      .catch(() => { /* non-critical */ });
+
     // If there's a pending file, upload it to this project
     if (pendingFile) {
       console.log("[App] Uploading pending file to project:", pendingFile.fileName);
@@ -709,6 +793,20 @@ const AppContent = () => {
 
   const handleFileSelected = (fileId: string, fileName: string) => {
     console.log("[App] File selected:", fileId, fileName);
+
+    // Persist last selected file for auto-restore on next login
+    try {
+      localStorage.setItem("ontocode_lastWorkspaceFileId", fileId);
+      localStorage.setItem("ontocode_lastWorkspaceFileName", fileName);
+    } catch { /* ignore */ }
+    // Also persist to backend for cross-device restore
+    apiClient.put('/api/auth/last-opened', {
+      projectId: selectedProjectId,
+      projectName: selectedProjectName,
+      fileId,
+      fileName,
+    }).catch(() => { /* non-critical */ });
+
     // Navigate using router to update browser history
     navigateTo({
       view: "dashboard",
@@ -781,6 +879,7 @@ const AppContent = () => {
     setInviteEmail(null);
     setForceShowWorkspace(false); // Reset workspace view state
     setSkipWorkspaceRequested(false);
+    autoRestoredRef.current = false; // Allow auto-restore on next login
     // Clear route history
     clearHistory();
     // Keep deployment type so user doesn't need to select again

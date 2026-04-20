@@ -306,6 +306,8 @@ export function useDashboardInit(state: DashboardState) {
       const isAdminFlow = !!parentProjectId;
 
       // Notify user that loading has started
+      const fetchDataPerfStart = Date.now();
+      console.log(`[Dashboard] [PERF] ⏱️ fetchData started at ${new Date().toISOString()} for project: ${currentProjectId}`);
       console.log(`Loading ontology "${currentProjectId}"...`);
       console.log("[Dashboard] ðŸ”„ Fetching data for project:", currentProjectId);
       console.log("[Dashboard]  Admin flow:", isAdminFlow, "Parent project:", parentProjectId);
@@ -327,7 +329,9 @@ export function useDashboardInit(state: DashboardState) {
         if (!forceRefresh) {
           // Wait for processing to complete before fetching data
           console.log("[Dashboard] Waiting for file processing to complete...");
+          const procCheckStart = Date.now();
           const result = await waitForProcessingComplete(currentProjectId);
+          console.log(`[Dashboard] [PERF] Processing status check: ${Date.now() - procCheckStart}ms (status: ${result.status})`);
 
           if (!result.ready) {
             const errorTitle = result.status === "ERROR" ? "Import Failed" : "Loading Failed";
@@ -355,6 +359,7 @@ export function useDashboardInit(state: DashboardState) {
         // Fetch data in background
         // Metadata endpoint now returns comprehensive cached data (annotations, imports, axioms, prefixes)
         // so we don't need to make separate calls for those
+        const apiFetchStart = Date.now();
         const dataFetchPromise = Promise.all([
           apiClient.get<any>(`/api/ontology/metadata/${encodedProjectId}${cacheBuster}`),
           apiClient.get<any>(`/api/ontology/classes/top-level/${encodedProjectId}${cacheBuster}`),
@@ -385,7 +390,14 @@ export function useDashboardInit(state: DashboardState) {
           datatypesRes,
         ] = await dataFetchPromise;
 
-        console.log("[Dashboard] âœ… Data loaded from GraphDB database successfully!");
+        const apiFetchDuration = Date.now() - apiFetchStart;
+        console.log(`[Dashboard] [PERF] 7 parallel API fetches completed: ${apiFetchDuration}ms`);
+        console.log(`[Dashboard] [PERF]   - metadata: ${JSON.stringify(metadataRes?.data || metadataRes || {}).length} bytes response`);
+        console.log(`[Dashboard] [PERF]   - top-level classes: ${JSON.stringify(topLevelRes?.classes || topLevelRes?.data?.classes || []).length} bytes`);
+        console.log(`[Dashboard] [PERF]   - properties: ${JSON.stringify(propertiesRes?.data || propertiesRes || {}).length} bytes`);
+        console.log(`[Dashboard] [PERF]   - individuals: ${JSON.stringify(individualsRes?.data || individualsRes || []).length} bytes`);
+
+        console.log("[Dashboard] ✅ Data loaded from GraphDB database successfully!");
         console.log("[Dashboard] ðŸ“Š This data includes all saved changes from the database");
 
         // Handle metadata response - backend returns {success: true, data: {counts: {...}, prefixes: [...], ontologyIRI: "...", ...}}
@@ -541,8 +553,9 @@ export function useDashboardInit(state: DashboardState) {
 
         const resolvedCounts = instanceCountsData && typeof instanceCountsData === "object" ? instanceCountsData : {};
         const hierarchyWithCounts = applyInstanceCountsToTree([owlThingNode], resolvedCounts);
-        console.log("ðŸ“Š Final classHierarchy being set:", JSON.stringify(hierarchyWithCounts, null, 2));
-        console.log("ðŸ“Š classHierarchy root node children count:", hierarchyWithCounts[0]?.children?.length);
+        console.log("📊 Final classHierarchy being set:", JSON.stringify(hierarchyWithCounts, null, 2));
+        console.log("📊 classHierarchy root node children count:", hierarchyWithCounts[0]?.children?.length);
+        const stateHydrationStart = Date.now();
         setClassHierarchy(hierarchyWithCounts);
 
         // Handle properties response
@@ -691,6 +704,8 @@ export function useDashboardInit(state: DashboardState) {
               : [],
         );
 
+        console.log(`[Dashboard] [PERF] State hydration (class/property/individual trees): ${Date.now() - stateHydrationStart}ms`);
+
         // Fetch files list separately (not in parallel to avoid blocking main data load)
         // Admin flow will fetch project-specific files later, regular users fetch all their files here
         console.log("[Dashboard] ðŸ” File loading decision - isAdminFlow:", isAdminFlow);
@@ -801,6 +816,7 @@ export function useDashboardInit(state: DashboardState) {
         }
 
         // Notify user that ontology is fully loaded
+        console.log(`[Dashboard] [PERF] ⏱️ Total fetchData completed: ${Date.now() - fetchDataPerfStart}ms for project: ${currentProjectId}`);
         notificationService.success(
           "Ontology Loaded",
           `"${currentProjectId}" is ready! Found ${classes.length} classes, ${allProps.length} properties.`,

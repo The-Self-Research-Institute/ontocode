@@ -620,6 +620,9 @@ function handleBrowserMessage(message: any) {
 
         case 'uploadOntology': {
             (async () => {
+                const uploadPipelineStart = Date.now();
+                console.log(`[BrowserBridge] [PERF] ⏱️ Upload pipeline started at ${new Date().toISOString()}`);
+
                 // Hoist so the catch block can reference it for error reporting
                 const uploadProjectId = message.projectId
                     || (message.fileName || '').replace(/\.(owl|rdf|ttl|n3|nt|jsonld)$/i, '');
@@ -718,6 +721,7 @@ function handleBrowserMessage(message: any) {
                     const LARGE_FILE_THRESHOLD = 50 * 1024 * 1024; // 50 MB base64 (~37 MB raw)
 
                     let blob: Blob;
+                    const decodeStart = Date.now();
                     if (base64Length > LARGE_FILE_THRESHOLD) {
                         // FAST PATH: chunked base64→binary without text decode or namespace injection
                         console.log(`[BrowserBridge] Large file (${(base64Length / (1024 * 1024)).toFixed(0)} MB base64), using fast binary upload`);
@@ -731,6 +735,7 @@ function handleBrowserMessage(message: any) {
                             chunks.push(buf);
                         }
                         blob = new Blob(chunks as BlobPart[], { type: 'application/octet-stream' });
+                        console.log(`[BrowserBridge] [PERF] Large file base64→binary decode: ${Date.now() - decodeStart}ms`);
                     } else {
                         // SMALL FILE PATH: full text decode + namespace injection
                         const byteString = atob(message.fileContent);
@@ -744,6 +749,7 @@ function handleBrowserMessage(message: any) {
                         }
 
                         blob = new Blob([fileText], { type: 'application/rdf+xml' });
+                        console.log(`[BrowserBridge] [PERF] Small file decode + namespace injection: ${Date.now() - decodeStart}ms`);
                     }
                     const formData = new FormData();
                     formData.append('file', blob, message.fileName);
@@ -754,6 +760,7 @@ function handleBrowserMessage(message: any) {
                     if (message.partition) query.set('partition', message.partition);
                     if (message.skipDuplicateCheck) query.set('action', 'replace');
 
+                    const httpPostStart = Date.now();
                     const resp = await fetch(
                         `${baseUrl}/api/ontology/upload/${encodeURIComponent(uploadProjectId)}?${query.toString()}`,
                         {
@@ -764,6 +771,8 @@ function handleBrowserMessage(message: any) {
                     );
 
                     const responseText = await resp.text();
+                    console.log(`[BrowserBridge] [PERF] HTTP POST upload: ${Date.now() - httpPostStart}ms`);
+
                     let responseData: any = {};
                     try { responseData = JSON.parse(responseText); } catch { responseData = { error: responseText }; }
 
@@ -780,11 +789,10 @@ function handleBrowserMessage(message: any) {
                         }
 
                         // Poll /api/ontology/status until COMPLETED (GraphDB processes async)
-                        // Adaptive timeout: actual processing is ~50MB/min not 10MB/min
+                        // Time-based timeout: 15 min baseline + 1 min per 50MB
                         const fileSizeMB = base64Length > 0 ? (base64Length * 3 / 4) / (1024 * 1024) : 50; // actual file size (base64 is 4/3x)
-                        const estimatedMinutes = Math.max(3, Math.ceil(fileSizeMB / 50)); // ~50MB/min with optimized pipeline
-                        const maxAttempts = Math.max(60, Math.ceil(estimatedMinutes * 60 / 10)); // At least 60 attempts, scale with file size
-                        console.log(`[BrowserBridge] File ~${fileSizeMB.toFixed(0)}MB, estimated ${estimatedMinutes} min, maxAttempts: ${maxAttempts}`);
+                        const timeoutMs = Math.max(15 * 60 * 1000, Math.ceil(fileSizeMB / 50) * 60 * 1000 + 15 * 60 * 1000); // 15 min + 1 min per 50MB
+                        console.log(`[BrowserBridge] File ~${fileSizeMB.toFixed(0)}MB, poll timeout: ${(timeoutMs / 60000).toFixed(1)} min`);
                         const getDelay = (att: number) => {
                             if (att <= 3) return 2000;
                             if (att <= 6) return 3000;
@@ -793,7 +801,10 @@ function handleBrowserMessage(message: any) {
                         };
 
                         const pollStatus = async () => {
-                            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                            const pollStartTime = Date.now();
+                            let attempt = 0;
+                            while (Date.now() - pollStartTime < timeoutMs) {
+                                attempt++;
                                 await new Promise(r => setTimeout(r, getDelay(attempt)));
                                 try {
                                     const statusResp = await fetch(
@@ -806,6 +817,9 @@ function handleBrowserMessage(message: any) {
                                     console.log(`[BrowserBridge] Status poll #${attempt}: ${status}`, payload);
 
                                     if (status === 'COMPLETED') {
+                                        console.log(`[BrowserBridge] [PERF] Status polling completed: ${Date.now() - pollStartTime}ms (${attempt} polls)`);
+                                        console.log(`[BrowserBridge] [PERF] ⏱️ Total upload pipeline: ${Date.now() - uploadPipelineStart}ms`);
+
                                         // Try to get fileId from status response or upload response
                                         let fileId = actualFileId || payload?.fileId || payload?.id;
 
@@ -880,7 +894,8 @@ function handleBrowserMessage(message: any) {
                                     if (payload?.statusMessage) {
                                         // Extract real progress from backend statusMessage (e.g., "Importing... (90%) | ETA...")
                                         const progressMatch = payload.statusMessage.match(/\((\d+)%\)/);
-                                        const realProgress = progressMatch ? parseInt(progressMatch[1], 10) : Math.min(95, Math.floor((attempt / maxAttempts) * 100));
+                                        const elapsedPct = Math.min(95, Math.floor(((Date.now() - pollStartTime) / timeoutMs) * 100));
+                                        const realProgress = progressMatch ? parseInt(progressMatch[1], 10) : elapsedPct;
                                         postToSelf({
                                             type: 'importStatusUpdate',
                                             status: {

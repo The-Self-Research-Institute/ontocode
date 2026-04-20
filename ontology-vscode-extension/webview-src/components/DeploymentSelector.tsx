@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Cloud, Server, Check } from 'lucide-react';
+import { Cloud, Server, Check, Bug } from 'lucide-react';
+import ReportIssueModal from './ReportIssueModal';
 
 interface DeploymentSelectorProps {
     onSelect: (deploymentType: 'self-hosted' | 'cloud') => void;
@@ -8,6 +9,7 @@ interface DeploymentSelectorProps {
 const DeploymentSelector: React.FC<DeploymentSelectorProps> = ({ onSelect }) => {
     const [selected, setSelected] = useState<'self-hosted' | 'cloud' | null>(null);
     const [isConfirming, setIsConfirming] = useState(false);
+    const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
 
     const handleSelect = (type: 'self-hosted' | 'cloud') => {
         setSelected(type);
@@ -149,6 +151,20 @@ const DeploymentSelector: React.FC<DeploymentSelectorProps> = ({ onSelect }) => 
 
           <p className="text-xs text-gray-400 text-center mt-4">You can change this later in settings</p>
         </div>
+
+        {/* Report Issue floating button */}
+        <button
+          onClick={() => setIsReportIssueModalOpen(true)}
+          className="fixed bottom-4 right-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm z-50"
+          title="Report an issue"
+        >
+          <Bug size={14} />
+          Report Issue
+        </button>
+
+        {isReportIssueModalOpen && (
+          <ReportIssueModal onClose={() => setIsReportIssueModalOpen(false)} />
+        )}
       </div>
     );
 };
