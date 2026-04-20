@@ -713,3 +713,5 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
     </div>
   );
 };
+
+export default ReportIssueModal;
