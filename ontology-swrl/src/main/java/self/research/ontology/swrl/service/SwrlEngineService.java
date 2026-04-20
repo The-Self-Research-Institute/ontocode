@@ -642,7 +642,7 @@ public class SwrlEngineService {
         } catch (Exception e) { /* ignore */ }
 
         OWLDocumentFormat format = ontology.getOWLOntologyManager().getOntologyFormat(ontology);
-        if (format == null || !format.isPrefixOWLDocumentFormat()) return false;
+        if (!(format instanceof org.semanticweb.owlapi.formats.PrefixDocumentFormat)) return false;
 
         // Get or create stable prefix map for this project
         Map<String, String> prefixMap = projectNamespacePrefixes
@@ -676,7 +676,7 @@ public class SwrlEngineService {
         }
 
         // Register ALL project prefixes on the (freshly fetched) ontology format
-        org.semanticweb.owlapi.formats.PrefixDocumentFormat pf = format.asPrefixOWLDocumentFormat();
+        org.semanticweb.owlapi.formats.PrefixDocumentFormat pf = (org.semanticweb.owlapi.formats.PrefixDocumentFormat) format;
         for (Map.Entry<String, String> entry : prefixMap.entrySet()) {
             pf.setPrefix(entry.getValue(), entry.getKey());
         }
@@ -725,8 +725,8 @@ public class SwrlEngineService {
         // Read prefix mappings registered by ensureNamespacePrefixes()
         Map<String, String> nsToPrefix = new HashMap<>();
         OWLDocumentFormat format = ontology.getOWLOntologyManager().getOntologyFormat(ontology);
-        if (format != null && format.isPrefixOWLDocumentFormat()) {
-            format.asPrefixOWLDocumentFormat().getPrefixName2PrefixMap().forEach((prefixName, ns) -> {
+        if (format instanceof org.semanticweb.owlapi.formats.PrefixDocumentFormat) {
+            ((org.semanticweb.owlapi.formats.PrefixDocumentFormat) format).getPrefixName2PrefixMap().forEach((prefixName, ns) -> {
                 nsToPrefix.put(ns, prefixName);
             });
         }
