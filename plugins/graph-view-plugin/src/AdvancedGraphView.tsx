@@ -535,8 +535,89 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   // Advanced features
   const [zoomLevel, setZoomLevel] = useState(1);
 
+  // ---------------------------------------------------------------------------
+  // FOCUS MODE — isolate a single class plus its N-hop parents/children
+  // (Protégé OntoGraf "show neighborhood" parity)
+  // ---------------------------------------------------------------------------
+  const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
+  const [focusParentDepth, setFocusParentDepth] = useState<number>(2);
+  const [focusChildDepth, setFocusChildDepth] = useState<number>(2);
+  const [focusIncludeProperties, setFocusIncludeProperties] = useState<boolean>(true);
+  const [focusIncludeIndividuals, setFocusIncludeIndividuals] = useState<boolean>(false);
+
+  // Compute neighborhood of focused node via BFS over subClassOf, instanceOf,
+  // domain/range and propertyRelation edges.
+  const focusedNodeIds = useMemo<Set<string> | null>(() => {
+    if (!focusedNodeId) return null;
+    const result = new Set<string>([focusedNodeId]);
+
+    // BFS upwards via subClassOf (child --from--> parent --to-->)
+    let frontier = new Set<string>([focusedNodeId]);
+    for (let d = 0; d < focusParentDepth && frontier.size > 0; d++) {
+      const next = new Set<string>();
+      for (const e of allEdges) {
+        if (e.type === 'subClassOf' && frontier.has(e.from) && !result.has(e.to)) {
+          result.add(e.to);
+          next.add(e.to);
+        }
+      }
+      frontier = next;
+    }
+
+    // BFS downwards via subClassOf
+    frontier = new Set<string>([focusedNodeId]);
+    for (let d = 0; d < focusChildDepth && frontier.size > 0; d++) {
+      const next = new Set<string>();
+      for (const e of allEdges) {
+        if (e.type === 'subClassOf' && frontier.has(e.to) && !result.has(e.from)) {
+          result.add(e.from);
+          next.add(e.from);
+        }
+      }
+      frontier = next;
+    }
+
+    // Include directly connected individuals (instanceOf into the focused node)
+    if (focusIncludeIndividuals) {
+      for (const e of allEdges) {
+        if (e.type === 'instanceOf' && result.has(e.to)) {
+          result.add(e.from);
+        }
+      }
+    }
+
+    // Include directly connected properties / domain / range neighbors
+    if (focusIncludeProperties) {
+      for (const e of allEdges) {
+        if (
+          (e.type === 'propertyRelation' || e.type === 'domain' || e.type === 'range') &&
+          (result.has(e.from) || result.has(e.to))
+        ) {
+          result.add(e.from);
+          result.add(e.to);
+        }
+      }
+    }
+
+    return result;
+  }, [focusedNodeId, focusParentDepth, focusChildDepth, focusIncludeProperties, focusIncludeIndividuals, allEdges]);
+
+  const enterFocusMode = useCallback((nodeId: string) => {
+    setFocusedNodeId(nodeId);
+  }, []);
+  const exitFocusMode = useCallback(() => {
+    setFocusedNodeId(null);
+  }, []);
+
   // Compute visible nodes and edges based on hierarchy
   const visibleNodes = useMemo(() => {
+    // Focus mode short-circuits hierarchical visibility — show only the
+    // computed neighborhood for laser-focus class inspection.
+    if (focusedNodeIds) {
+      const filtered = allNodes.filter(n => focusedNodeIds.has(n.id));
+      console.log('[AdvancedGraphView] 🎯 FOCUS MODE active — showing', filtered.length, 'nodes around', focusedNodeId);
+      return filtered;
+    }
     const filtered = allNodes.filter(n => visibleNodeIds.has(n.id));
     console.log('[AdvancedGraphView] 🔍 visibleNodes memo - allNodes:', allNodes.length, 'visibleNodeIds:', visibleNodeIds.size, 'filtered:', filtered.length);
     console.log('[AdvancedGraphView] 🔍 Visible node types:', filtered.reduce((acc, n) => {
@@ -544,9 +625,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       return acc;
     }, {} as Record<string, number>));
     return filtered;
-  }, [allNodes, visibleNodeIds]);
+  }, [allNodes, visibleNodeIds, focusedNodeIds, focusedNodeId]);
 
   const visibleEdges = useMemo(() => {
+    // Focus mode: only edges between visible (neighborhood) nodes
+    if (focusedNodeIds) {
+      const edges = allEdges.filter(e => focusedNodeIds.has(e.from) && focusedNodeIds.has(e.to));
+      console.log('[AdvancedGraphView] 🎯 FOCUS MODE edges:', edges.length);
+      return edges;
+    }
     if (visibleNodeIds.size === 0) return [];
     if (visibleNodeIds.size === allNodes.length) return allEdges; // All visible
     
@@ -606,7 +693,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
     
     return edges;
-  }, [allEdges, visibleNodeIds, allNodes.length, allNodes]);
+  }, [allEdges, visibleNodeIds, allNodes.length, allNodes, focusedNodeIds]);
 
   /**
    * ========================================================================
@@ -1972,6 +2059,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .on('dblclick', (event: any, d: D3Node) => {
         event.stopPropagation();
         event.preventDefault();
+        // Shift+double-click → enter focus mode (Protégé OntoGraf "show neighborhood" parity)
+        if (event.shiftKey) {
+          enterFocusMode(d.id);
+          return;
+        }
         // Double-click to expand/collapse children (like Protégé OntoGraf)
         if (hasChildren(d.id, allEdges, allNodes)) {
           handleToggleExpansion(d.id);
@@ -2852,7 +2944,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     return () => {
       simulation.stop();
     };
-  }, [filteredNodes, filteredEdges, settings, editMode, onNodeClick, onEdgeClick, allEdges, allNodes, expandedNodeIds, classDistance, datatypeDistance, isLayoutPaused, visualizationType]);
+  }, [filteredNodes, filteredEdges, settings, editMode, onNodeClick, onEdgeClick, allEdges, allNodes, expandedNodeIds, classDistance, datatypeDistance, isLayoutPaused, visualizationType, ontographLayoutType]);
 
   // Visual update effect to prevent graph movement on selection/hover
   useEffect(() => {
@@ -4016,6 +4108,91 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         checkInterval={60 * 60 * 1000}
       />
 
+      {/* FOCUS MODE BANNER — appears when a class is isolated to its neighborhood */}
+      {focusedNodeId && (() => {
+        const focusNode = allNodes.find(n => n.id === focusedNodeId);
+        return (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              padding: '8px 14px',
+              background: 'linear-gradient(90deg, #ede9fe 0%, #ddd6fe 100%)',
+              borderBottom: '1px solid #a78bfa',
+              fontSize: 13,
+              color: '#4c1d95',
+              flexShrink: 0
+            }}
+          >
+            <span style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
+              🎯 Focus:
+            </span>
+            <span style={{ fontWeight: 600, color: '#1e1b4b' }}>
+              {focusNode?.label || focusedNodeId.split(/[#/]/).pop()}
+            </span>
+            <span style={{ color: '#6b7280', fontSize: 12 }}>
+              showing {focusedNodeIds?.size ?? 0} nodes (↑{focusParentDepth} parents · ↓{focusChildDepth} children)
+            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 12 }}>
+              <label style={{ fontSize: 11, color: '#6b21a8' }}>↑</label>
+              <input
+                type="number"
+                min={0}
+                max={10}
+                value={focusParentDepth}
+                onChange={(e) => setFocusParentDepth(Math.max(0, Math.min(10, parseInt(e.target.value) || 0)))}
+                style={{ width: 44, padding: '2px 4px', border: '1px solid #a78bfa', borderRadius: 4, fontSize: 12 }}
+                title="Parent depth"
+              />
+              <label style={{ fontSize: 11, color: '#6b21a8' }}>↓</label>
+              <input
+                type="number"
+                min={0}
+                max={10}
+                value={focusChildDepth}
+                onChange={(e) => setFocusChildDepth(Math.max(0, Math.min(10, parseInt(e.target.value) || 0)))}
+                style={{ width: 44, padding: '2px 4px', border: '1px solid #a78bfa', borderRadius: 4, fontSize: 12 }}
+                title="Child depth"
+              />
+              <label style={{ fontSize: 11, color: '#6b21a8', display: 'flex', alignItems: 'center', gap: 3, marginLeft: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={focusIncludeProperties}
+                  onChange={(e) => setFocusIncludeProperties(e.target.checked)}
+                />
+                props
+              </label>
+              <label style={{ fontSize: 11, color: '#6b21a8', display: 'flex', alignItems: 'center', gap: 3 }}>
+                <input
+                  type="checkbox"
+                  checked={focusIncludeIndividuals}
+                  onChange={(e) => setFocusIncludeIndividuals(e.target.checked)}
+                />
+                individuals
+              </label>
+            </div>
+            <button
+              onClick={exitFocusMode}
+              style={{
+                marginLeft: 'auto',
+                padding: '4px 10px',
+                background: '#7c3aed',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 4,
+                cursor: 'pointer',
+                fontSize: 12,
+                fontWeight: 600
+              }}
+              title="Exit focus mode (show full graph)"
+            >
+              ✕ Exit Focus
+            </button>
+          </div>
+        );
+      })()}
+
       {/* Main Row with Two Columns */}
       <div style={styles.mainRow}>
         {/* First Column: Toolbar + Graph Area */}
@@ -4446,6 +4623,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             }}
             graphExpandedNodeIds={expandedNodeIds}
             graphVisibleNodeIds={visibleNodeIds}
+            focusedNodeId={focusedNodeId}
+            onFocusNode={enterFocusMode}
+            onClearFocus={exitFocusMode}
           />
         )}
       </div>
@@ -4814,6 +4994,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               }}
             >
               ℹ️ View Properties
+            </button>
+            <button
+              style={{ ...styles.contextMenuItem, background: focusedNodeId === contextMenu.nodeId ? '#ede9fe' : undefined, fontWeight: focusedNodeId === contextMenu.nodeId ? 600 : 400 }}
+              onClick={() => {
+                if (contextMenu.nodeId) enterFocusMode(contextMenu.nodeId);
+                setContextMenu({ ...contextMenu, visible: false });
+              }}
+            >
+              🎯 Focus on this Class (parents + children)
             </button>
             <button
               style={styles.contextMenuItem}

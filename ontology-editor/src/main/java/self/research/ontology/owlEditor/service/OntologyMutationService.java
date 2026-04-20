@@ -55,19 +55,20 @@ public class OntologyMutationService {
 
     /**
      * Apply ontology mutations and clear relevant caches for instant UI updates.
-     * Uses key-scoped eviction so other projects' caches are not affected.
+     * Use allEntries=true because @Cacheable keys are composite ("#projectId + '_' + #limit/#offset/#parentIri"),
+     * which a key="#projectId" eviction would never match -> stale data on save.
      */
     @Caching(evict = {
-        @CacheEvict(value = "topLevelClasses", key = "#projectId"),
-        @CacheEvict(value = "classChildren", key = "#projectId"),
-        @CacheEvict(value = "allClasses", key = "#projectId"),
-        @CacheEvict(value = "ontologyProperties", key = "#projectId"),
-        @CacheEvict(value = "ontologyIndividuals", key = "#projectId"),
-        @CacheEvict(value = "classInstanceCounts", key = "#projectId"),
+        @CacheEvict(value = "topLevelClasses", allEntries = true),
+        @CacheEvict(value = "classChildren", allEntries = true),
+        @CacheEvict(value = "allClasses", allEntries = true),
+        @CacheEvict(value = "ontologyProperties", allEntries = true),
+        @CacheEvict(value = "ontologyIndividuals", allEntries = true),
+        @CacheEvict(value = "classInstanceCounts", allEntries = true),
         @CacheEvict(value = "classDetails", allEntries = true),
         @CacheEvict(value = "classInstances", allEntries = true),
-        @CacheEvict(value = "individualCount", key = "#projectId"),
-        @CacheEvict(value = "debugInfo", key = "#projectId"),
+        @CacheEvict(value = "individualCount", allEntries = true),
+        @CacheEvict(value = "debugInfo", allEntries = true),
         @CacheEvict(value = "graphCache", allEntries = true)
     })
     public void apply(String projectId, List<MutationOp> ops) {
@@ -146,19 +147,19 @@ public class OntologyMutationService {
 
     /**
      * Make sibling classes disjoint and clear relevant caches.
-     * Uses key-scoped eviction so other projects' caches are not affected.
+     * Uses allEntries=true because @Cacheable keys are composite and cannot be matched by key="#projectId".
      */
     @Caching(evict = {
-        @CacheEvict(value = "topLevelClasses", key = "#projectId"),
-        @CacheEvict(value = "classChildren", key = "#projectId"),
-        @CacheEvict(value = "allClasses", key = "#projectId"),
-        @CacheEvict(value = "ontologyProperties", key = "#projectId"),
-        @CacheEvict(value = "ontologyIndividuals", key = "#projectId"),
-        @CacheEvict(value = "classInstanceCounts", key = "#projectId"),
+        @CacheEvict(value = "topLevelClasses", allEntries = true),
+        @CacheEvict(value = "classChildren", allEntries = true),
+        @CacheEvict(value = "allClasses", allEntries = true),
+        @CacheEvict(value = "ontologyProperties", allEntries = true),
+        @CacheEvict(value = "ontologyIndividuals", allEntries = true),
+        @CacheEvict(value = "classInstanceCounts", allEntries = true),
         @CacheEvict(value = "classDetails", allEntries = true),
         @CacheEvict(value = "classInstances", allEntries = true),
-        @CacheEvict(value = "individualCount", key = "#projectId"),
-        @CacheEvict(value = "debugInfo", key = "#projectId"),
+        @CacheEvict(value = "individualCount", allEntries = true),
+        @CacheEvict(value = "debugInfo", allEntries = true),
         @CacheEvict(value = "graphCache", allEntries = true)
     })
     public void makeSiblingsDisjoint(String projectId, List<String> classIds) {

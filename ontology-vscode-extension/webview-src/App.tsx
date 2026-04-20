@@ -240,6 +240,11 @@ const AppContent = () => {
       };
     }
     if (user && !user.workspaceId) {
+      // Cloud users without a workspace must select one first
+      const storedDeployment = localStorage.getItem("deploymentType");
+      if (storedDeployment === "cloud") {
+        return { view: "workspace" };
+      }
       return { view: "dashboard" };
     }
     // Login/Signup view

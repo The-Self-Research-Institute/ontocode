@@ -2554,10 +2554,12 @@ class OntoCodePanel {
                 });
 
                 const scheduleStatusCheck = (attempt: number) => {
-                    // Optimized delays: More frequent checks early, then increase intervals for large files
+                    // Optimized delays: very small files (e.g. 20KB) often finish before the
+                    // first poll, so check almost immediately on attempt 1, then back off.
                     const getDelay = (att: number) => {
-                        if (att <= 3) return 2000;        // 2s x 3 attempts = 6s
-                        if (att <= 6) return 5000;        // 5s x 3 attempts = 15s
+                        if (att === 1) return 250;        // 250ms — catches small/fast imports
+                        if (att <= 3) return 1000;        // 1s x 2 attempts = 2s
+                        if (att <= 6) return 3000;        // 3s x 3 attempts = 9s
                         if (att <= 10) return 10000;      // 10s x 4 attempts = 40s
                         if (att <= 15) return 20000;      // 20s x 5 attempts = 100s
                         return 30000;                     // 30s x remaining attempts

@@ -184,6 +184,14 @@ public class ProjectLoadController {
                         } catch (Exception cleanupEx) {
                             log.warn("Failed to clean up stale files for project {}: {}", actualProjectId, cleanupEx.getMessage());
                         }
+
+                        // Clear the GraphDB dataset so stale triples do not bleed into the new import
+                        try {
+                            datasetService.clearDataset(actualProjectId);
+                            log.info("Cleared GraphDB dataset before re-import for project {}", actualProjectId);
+                        } catch (Exception clearEx) {
+                            log.warn("Failed to clear GraphDB dataset for project {}: {}", actualProjectId, clearEx.getMessage());
+                        }
                     } else if ("create_copy".equals(action)) {
                         // Create a copy with modified filename
                         String copyFilename = generateCopyFilename(filename, ownerEmail);
