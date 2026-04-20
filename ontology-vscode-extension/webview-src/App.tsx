@@ -303,7 +303,7 @@ const AppContent = () => {
     if (user && user.workspaceId && selectedProjectId && !selectedFileId) {
       return { view: "projectLibrary", projectId: selectedProjectId, projectName: selectedProjectName };
     }
-    if (user && selectedFileId) {
+    if (user && selectedFileId && selectedFileId !== "__editor__") {
       return {
         view: "dashboard",
         projectId: selectedProjectId,
@@ -318,7 +318,8 @@ const AppContent = () => {
       if (storedDeployment === "cloud") {
         return { view: "workspace" };
       }
-      return { view: "dashboard" };
+      // Self-hosted users still need to select a project
+      return { view: "projectDashboard", projectId: null, projectName: "" };
     }
     // Login/Signup view
     return {
