@@ -322,13 +322,111 @@ const ClassEditor: React.FC<{
     }
   };
 
-  // Load class details including annotations when component mounts
+  // Load class details including annotations when component mounts.
+  // Uses an "alive" flag so stale responses from a previously selected entity
+  // are discarded (prevents showing the previous class's data).
+  // Also resets local UI state immediately so users never see stale content.
   useEffect(() => {
-    if (item.id && projectId) {
-      loadClassDetails();
-      loadProperties();
-      loadInstances();
-    }
+    if (!item.id || !projectId) return;
+
+    let alive = true;
+
+    // Reset visible state immediately so we never paint with the previous
+    // entity's data while the new request is in flight.
+    setClassDetails(null);
+    setClassInstances([]);
+    setLoadingDetails(true);
+    setLoadingInstances(true);
+
+    // Watchdog: if backend hangs, clear the spinner after 30s so the UI
+    // does not appear permanently "Loading class details...".
+    const watchdog = setTimeout(() => {
+      if (alive) {
+        setLoadingDetails(false);
+        setLoadingInstances(false);
+      }
+    }, 30000);
+
+    const currentId = item.id;
+    const currentViewMode = viewMode;
+
+    (async () => {
+      try {
+        const detailsResponse = await apiClient.get<any>(
+          `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(currentId)}`,
+        );
+        if (!alive || currentId !== item.id) return;
+        let details = detailsResponse?.data?.data || detailsResponse?.data || detailsResponse;
+
+        if (currentViewMode === "inferred") {
+          try {
+            const inferredResponse = await apiClient.get<any>(
+              `/api/ontology/${projectId}/reasoner/inferred-class-details?classIri=${encodeURIComponent(currentId)}`,
+            );
+            if (!alive || currentId !== item.id) return;
+            const inferredData = inferredResponse?.data?.data || inferredResponse?.data || {};
+            details = {
+              ...details,
+              inferredSubClassOfAxioms: inferredData.inferredSubClassOfAxioms || [],
+              inferredEquivalentClassesAxioms: inferredData.inferredEquivalentClassesAxioms || [],
+              isUnsatisfiable: inferredData.isUnsatisfiable || false,
+            };
+          } catch (err) {
+            console.warn("[ClassEditor] Failed to load inferred details:", err);
+          }
+        }
+
+        if (!alive || currentId !== item.id) return;
+        setClassDetails(details);
+
+        const updatedItem: TreeNode = {
+          ...item,
+          annotations: details.annotations || item.annotations,
+          subClassOfAxioms: details.subClassOfAxioms || item.subClassOfAxioms,
+          equivalentClassesAxioms: details.equivalentClassesAxioms || item.equivalentClassesAxioms,
+          disjointClassesAxioms: details.disjointClassesAxioms || item.disjointClassesAxioms,
+          disjointUnionAxioms: details.disjointUnionAxioms || item.disjointUnionAxioms,
+          hasKeyAxioms: details.hasKeyAxioms || item.hasKeyAxioms,
+          inferredSubClassOfAxioms: details.inferredSubClassOfAxioms,
+          inferredEquivalentClassesAxioms: details.inferredEquivalentClassesAxioms,
+          isUnsatisfiable: details.isUnsatisfiable,
+        };
+        onUpdate(updatedItem);
+      } catch (error) {
+        if (alive && currentId === item.id) {
+          console.error("Failed to load class details:", error);
+        }
+      } finally {
+        if (alive && currentId === item.id) setLoadingDetails(false);
+      }
+    })();
+
+    (async () => {
+      try {
+        const response = await apiClient.get<any>(
+          `/api/ontology/classes/instances/${projectId}?classIri=${encodeURIComponent(currentId)}`,
+        );
+        if (!alive || currentId !== item.id) return;
+        const instances = response?.data?.data || response?.data || response || [];
+        setClassInstances(Array.isArray(instances) ? instances : []);
+      } catch (error) {
+        if (alive && currentId === item.id) {
+          console.error("Failed to load class instances:", error);
+          setClassInstances([]);
+        }
+      } finally {
+        if (alive && currentId === item.id) setLoadingInstances(false);
+      }
+    })();
+
+    // Properties (object/data) are not entity-scoped; load lazily on first mount.
+    loadProperties();
+
+    return () => {
+      alive = false;
+      clearTimeout(watchdog);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id, projectId, viewMode]);
 
   // Load instances only when the Instances panel is opened (lazy loading for better performance)
@@ -1638,9 +1736,9 @@ const ClassEditor: React.FC<{
   return (
     <div className="flex flex-col h-full bg-white">
       {loadingDetails && (
-        <div className="absolute top-0 left-0 right-0 bg-yellow-100 text-xs text-gray-700 px-3 py-1 z-10 flex items-center justify-center">
-          <div className="animate-spin mr-2 h-3 w-3 border-2 border-yellow-600 border-t-transparent rounded-full"></div>
-          Loading class details...
+        <div className="sticky top-0 left-0 right-0 bg-blue-50 border-b border-blue-200 text-xs text-blue-800 px-3 py-1.5 z-20 flex items-center justify-center shadow-sm">
+          <div className="animate-spin mr-2 h-3 w-3 border-2 border-blue-600 border-t-transparent rounded-full"></div>
+          Loading <span className="font-semibold mx-1">{item.label || "class"}</span> details…
         </div>
       )}
 

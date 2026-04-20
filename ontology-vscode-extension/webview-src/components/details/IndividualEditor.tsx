@@ -148,23 +148,29 @@ const IndividualEditor: React.FC<{
   const [typeDialogOpen, setTypeDialogOpen] = useState(false);
   const [typeClassHierarchy, setTypeClassHierarchy] = useState<TreeNode[]>([]);
 
-  // Fetch individual details when component mounts or item changes
+  // Fetch individual details when component mounts or item changes.
+  // Uses an "alive" flag so stale responses from a previously selected
+  // individual are discarded (prevents showing the previous individual's data).
   useEffect(() => {
-    const fetchIndividualDetails = async () => {
-      // Only fetch if we haven't fetched for this item yet
-      if (detailsFetched === item.id || !projectId || !item.id) return;
-      
-      setIsLoading(true);
+    if (!projectId || !item.id) return;
+
+    let alive = true;
+    const currentId = item.id;
+    setIsLoading(true);
+
+    // Watchdog: avoid the spinner getting stuck if backend hangs.
+    const watchdog = setTimeout(() => {
+      if (alive) setIsLoading(false);
+    }, 30000);
+
+    (async () => {
       try {
         // Use query parameter endpoint to avoid URL encoding issues with IRI containing #
-        const response = await apiClient.get<any>(`/api/ontology/individual-details/${projectId}?individualIri=${encodeURIComponent(item.id)}`);
-        
-        console.log('[IndividualEditor] Fetched individual details:', response);
-        
-        // Extract data from response
+        const response = await apiClient.get<any>(`/api/ontology/individual-details/${projectId}?individualIri=${encodeURIComponent(currentId)}`);
+        if (!alive || currentId !== item.id) return;
+
         const details = response?.data || response;
-        
-        // Update the item with property assertions from backend
+
         if (details) {
           const updatedItem: Individual = {
             ...item,
@@ -174,18 +180,20 @@ const IndividualEditor: React.FC<{
             sameIndividualAs: details.sameIndividualAs || item.sameIndividualAs,
             differentIndividualFrom: details.differentIndividualFrom || item.differentIndividualFrom,
           };
-          
           onUpdate(updatedItem);
-          setDetailsFetched(item.id);
+          setDetailsFetched(currentId);
         }
       } catch (error) {
-        console.error('[IndividualEditor] Failed to fetch individual details:', error);
+        if (alive && currentId === item.id) {
+          console.error('[IndividualEditor] Failed to fetch individual details:', error);
+        }
       } finally {
-        setIsLoading(false);
+        if (alive && currentId === item.id) setIsLoading(false);
       }
-    };
+    })();
 
-    fetchIndividualDetails();
+    return () => { alive = false; clearTimeout(watchdog); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id, projectId]);
 
   // Separate positive/negative property assertions
