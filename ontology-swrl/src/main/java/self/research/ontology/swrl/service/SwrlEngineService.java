@@ -62,6 +62,9 @@ public class SwrlEngineService {
     // ✅ FIXED: Track last access for cleanup
     private final Map<String, Long> engineLastAccess = new ConcurrentHashMap<>();
 
+    // Stable namespace-to-prefix mapping per project (ensures consistent prefix names across calls)
+    private final Map<String, Map<String, String>> projectNamespacePrefixes = new ConcurrentHashMap<>();
+
     // ✅ FIXED: Executor for timeouts
     private final ExecutorService executorService = Executors.newCachedThreadPool();
 
@@ -101,6 +104,11 @@ public class SwrlEngineService {
             OWLOntology ontology = ontologyClient.fetchOntology(projectId);
             long fetchDuration = System.currentTimeMillis() - fetchStart;
             engineLog.info("[VALIDATE] Ontology fetched in {}ms project={}", fetchDuration, projectId);
+
+            // Register namespace prefixes before engine creation and rule resolution
+            if (ensureNamespacePrefixes(projectId, ontology)) {
+                engineCache.remove(projectId);
+            }
             
             long engineStart = System.currentTimeMillis();
             SWRLRuleEngine engine = getOrCreateEngine(projectId, ontology);
@@ -230,6 +238,9 @@ public class SwrlEngineService {
 
             // Add to engine
             OWLOntology ontology = ontologyClient.fetchOntology(projectId);
+            if (ensureNamespacePrefixes(projectId, ontology)) {
+                engineCache.remove(projectId);
+            }
             SWRLRuleEngine engine = getOrCreateEngine(projectId, ontology);
             String resolvedText = resolveEntityNames(ruleText, ontology);
             engine.createSWRLRule(ruleName, resolvedText);
@@ -265,6 +276,9 @@ public class SwrlEngineService {
             long fetchDuration = System.currentTimeMillis() - fetchStart;
             engineLog.info("[EXECUTE] Ontology fetched in {}ms project={}", fetchDuration, projectId);
 
+            if (ensureNamespacePrefixes(projectId, ontology)) {
+                engineCache.remove(projectId);
+            }
             long engineStart = System.currentTimeMillis();
             SWRLRuleEngine engine = getOrCreateEngine(projectId, ontology);
             long engineDuration = System.currentTimeMillis() - engineStart;
@@ -392,6 +406,9 @@ public class SwrlEngineService {
 
         try {
             OWLOntology ontology = ontologyClient.fetchOntology(projectId);
+            if (ensureNamespacePrefixes(projectId, ontology)) {
+                engineCache.remove(projectId);
+            }
             SWRLRuleEngine engine = getOrCreateEngine(projectId, ontology);
 
             // Get the selected rules
@@ -607,10 +624,72 @@ public class SwrlEngineService {
     }
 
     /**
-     * Resolve entity short names in SWRL rule text to full IRIs.
+     * Register all non-default entity namespaces as prefixes on the ontology document format.
+     * SWRLAPI reads prefix mappings from the format when creating its internal resolver,
+     * enabling it to resolve prefixed names like ns1:BFO_0000015.
+     * Returns true if new prefixes were registered (engine cache should be evicted).
+     */
+    private boolean ensureNamespacePrefixes(String projectId, OWLOntology ontology) {
+        String defaultNs = null;
+        try {
+            com.google.common.base.Optional<IRI> ontIRI = ontology.getOntologyID().getOntologyIRI();
+            if (ontIRI.isPresent()) {
+                defaultNs = ontIRI.get().toString();
+                if (!defaultNs.endsWith("#") && !defaultNs.endsWith("/")) {
+                    defaultNs = defaultNs + "#";
+                }
+            }
+        } catch (Exception e) { /* ignore */ }
+
+        OWLDocumentFormat format = ontology.getOWLOntologyManager().getOntologyFormat(ontology);
+        if (format == null || !format.isPrefixOWLDocumentFormat()) return false;
+
+        // Get or create stable prefix map for this project
+        Map<String, String> prefixMap = projectNamespacePrefixes
+                .computeIfAbsent(projectId, k -> new ConcurrentHashMap<>());
+
+        // Collect all non-default, non-builtin namespaces from ontology entities
+        Set<String> namespaces = new HashSet<>();
+        for (OWLEntity entity : ontology.getSignature()) {
+            String ns = entity.getIRI().getNamespace();
+            if (ns == null || ns.isEmpty()) continue;
+            if (ns.contains("www.w3.org")) continue;
+            if (defaultNs != null && ns.equals(defaultNs)) continue;
+            namespaces.add(ns);
+        }
+
+        // Assign stable prefix names for new namespaces (never renumber existing ones)
+        boolean newPrefixesAdded = false;
+        int maxIdx = prefixMap.values().stream()
+                .filter(p -> p.startsWith("ns") && p.endsWith(":"))
+                .mapToInt(p -> { try { return Integer.parseInt(p.substring(2, p.length() - 1)); } catch (Exception e) { return 0; } })
+                .max().orElse(0);
+
+        for (String ns : namespaces) {
+            if (!prefixMap.containsKey(ns)) {
+                maxIdx++;
+                String prefix = "ns" + maxIdx + ":";
+                prefixMap.put(ns, prefix);
+                newPrefixesAdded = true;
+                logger.info("Assigned prefix '{}' for namespace '{}' in project {}", prefix, ns, projectId);
+            }
+        }
+
+        // Register ALL project prefixes on the (freshly fetched) ontology format
+        org.semanticweb.owlapi.formats.PrefixDocumentFormat pf = format.asPrefixOWLDocumentFormat();
+        for (Map.Entry<String, String> entry : prefixMap.entrySet()) {
+            pf.setPrefix(entry.getValue(), entry.getKey());
+        }
+
+        return newPrefixesAdded;
+    }
+
+    /**
+     * Resolve entity short names in SWRL rule text to prefixed form.
      * Handles entities from non-default namespaces (e.g., OBO ontology classes like CHEBI_16670).
      * SWRLAPI only resolves unprefixed names against the default namespace, so entities from
-     * other namespaces need to be expanded to full IRI syntax: <http://...>
+     * other namespaces are converted to prefixed form: ns1:BFO_0000015
+     * NOTE: ensureNamespacePrefixes() must be called before this method to register prefixes.
      */
     private String resolveEntityNames(String ruleText, OWLOntology ontology) {
         if (ruleText == null || ruleText.isEmpty()) return ruleText;
@@ -622,16 +701,13 @@ public class SwrlEngineService {
             String shortForm = iri.getShortForm();
             if (shortForm != null && !shortForm.isEmpty() && shortForm.length() > 1) {
                 if (shortNameToIRI.containsKey(shortForm)) {
-                    // Mark as ambiguous (multiple entities share the same short form)
-                    shortNameToIRI.put(shortForm, null);
+                    shortNameToIRI.put(shortForm, null); // ambiguous
                 } else {
                     shortNameToIRI.put(shortForm, iri);
                 }
             }
         }
-        // Remove ambiguous entries
         shortNameToIRI.values().removeIf(Objects::isNull);
-
         if (shortNameToIRI.isEmpty()) return ruleText;
 
         // Determine the default namespace from ontology IRI
@@ -644,8 +720,15 @@ public class SwrlEngineService {
                     defaultNs = defaultNs + "#";
                 }
             }
-        } catch (Exception e) {
-            // ignore
+        } catch (Exception e) { /* ignore */ }
+
+        // Read prefix mappings registered by ensureNamespacePrefixes()
+        Map<String, String> nsToPrefix = new HashMap<>();
+        OWLDocumentFormat format = ontology.getOWLOntologyManager().getOntologyFormat(ontology);
+        if (format != null && format.isPrefixOWLDocumentFormat()) {
+            format.asPrefixOWLDocumentFormat().getPrefixName2PrefixMap().forEach((prefixName, ns) -> {
+                nsToPrefix.put(ns, prefixName);
+            });
         }
 
         // Sort by name length descending to prevent partial replacements
@@ -664,16 +747,20 @@ public class SwrlEngineService {
             // Skip OWL/RDF/XSD built-in entities
             if (ns.contains("www.w3.org")) continue;
 
-            // Replace standalone entity references: word boundary + name + (
-            // Uses \b to avoid replacing substrings of longer names
-            String pattern = "\\b" + java.util.regex.Pattern.quote(name) + "\\(";
-            String replacement = "<" + java.util.regex.Matcher.quoteReplacement(iri.toString()) + ">(";
+            // Match standalone name followed by '(' but not already prefixed (negative lookbehind for : or word char)
+            String pattern = "(?<![:\\w])" + java.util.regex.Pattern.quote(name) + "(?=\\()";
+            java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(pattern).matcher(result);
+            if (!matcher.find()) continue;
 
-            String updated = result.replaceAll(pattern, replacement);
-            if (!updated.equals(result)) {
-                logger.debug("Resolved SWRL entity '{}' -> <{}>", name, iri);
+            String prefix = nsToPrefix.get(ns);
+            if (prefix == null) {
+                logger.warn("No prefix registered for namespace '{}'. Entity '{}' may not resolve.", ns, name);
+                continue;
             }
-            result = updated;
+
+            String replacement = java.util.regex.Matcher.quoteReplacement(prefix + name);
+            result = java.util.regex.Pattern.compile(pattern).matcher(result).replaceAll(replacement);
+            logger.debug("Resolved SWRL entity '{}' -> {}{}", name, prefix, name);
         }
 
         if (!result.equals(ruleText)) {
@@ -863,6 +950,7 @@ public class SwrlEngineService {
             }
 
             OWLOntology ontology = ontologyClient.fetchOntology(projectId);
+            ensureNamespacePrefixes(projectId, ontology);
             SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
 
             // Add and execute the test rule
@@ -1047,6 +1135,7 @@ public class SwrlEngineService {
         
         try {
             OWLOntology ontology = ontologyClient.fetchOntology(projectId);
+            ensureNamespacePrefixes(projectId, ontology);
             
             // Create SQWRL query engine
             org.swrlapi.sqwrl.SQWRLQueryEngine queryEngine = SWRLAPIFactory.createSQWRLQueryEngine(ontology);
