@@ -172,11 +172,29 @@ const PropertyEditor: React.FC<{
     const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
 
     useEffect(() => {
-        if (viewMode === 'inferred' && item.id && projectId) {
-            loadInferredDetails();
-        } else {
-            setInferredDetails(null);
-        }
+        // Always reset previous entity's inferred details immediately so we
+        // never display a previously-selected property's data while loading.
+        setInferredDetails(null);
+        if (viewMode !== 'inferred' || !item.id || !projectId) return;
+
+        let alive = true;
+        const currentId = item.id;
+        const watchdog = setTimeout(() => { /* allow re-render even if hung */ }, 30000);
+
+        (async () => {
+            try {
+                const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-property-details?propertyIri=${encodeURIComponent(currentId)}`);
+                if (!alive || currentId !== item.id) return;
+                const data = res?.data?.data || res?.data || {};
+                setInferredDetails(data);
+            } catch (error) {
+                if (alive && currentId === item.id) {
+                    console.error('[PropertyEditor] Failed to load inferred details:', error);
+                }
+            }
+        })();
+
+        return () => { alive = false; clearTimeout(watchdog); };
     }, [viewMode, item.id, projectId]);
 
     const loadInferredDetails = async () => {

@@ -30,8 +30,10 @@ RUN --mount=type=cache,target=/root/.m2 \
         -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 \
         clean package -pl ontology-swrl -DskipTests -B -ntp
 
-# Runtime stage - MUST use Java 17 for SWRLAPI compatibility
-FROM eclipse-temurin:17-jre
+# Runtime stage - MUST use Java 17 JDK (NOT JRE) so Drools can compile
+# generated Java rule classes at runtime via the JavaDialect compiler.
+# Using a JRE causes: "Unable to wire compiled classes ... Unable to wire up JavaDialect".
+FROM eclipse-temurin:17-jdk
 
 WORKDIR /app
 
