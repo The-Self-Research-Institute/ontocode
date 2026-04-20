@@ -147,6 +147,8 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   // Check if current user is workspace owner
   // Check both userId match and if user has OWNER role in the workspace
   const isWorkspaceOwner = user?.userId === workspaceOwnerId || user?.workspaceRole === "OWNER";
+    const isWorkspaceAdmin = user?.workspaceRole === "ADMIN";
+    const canInviteMembers = isWorkspaceOwner || isWorkspaceAdmin;
   const isViewer = user?.workspaceRole === "VIEWER";
 
   // Handle workspace subscription plan upgrade
@@ -1046,7 +1048,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                 Team Members
                 <span className="text-sm font-normal text-gray-500">({teamMembers.length})</span>
               </h2>
-              {isWorkspaceOwner ? (
+              {(isWorkspaceOwner || isWorkspaceAdmin) ? (
                 <button
                   onClick={() => {
                     setShowInviteMember(true);
@@ -1071,7 +1073,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               ) : (
                 <div
                   className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-200 rounded-lg bg-gray-50 text-gray-400 cursor-not-allowed"
-                  title="Only workspace owner can invite members"
+                  title="Only workspace owners and admins can invite members"
                 >
                   <UserPlus size={16} />
                   Invite Member

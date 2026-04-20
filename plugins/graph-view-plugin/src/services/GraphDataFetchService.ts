@@ -80,6 +80,31 @@ export class GraphDataFetchService {
         this.processClassNode(cls, nodes, edges, processedClasses);
       }
 
+      // CRITICAL FIX: Re-parent orphan classes under owl:Thing so the sidebar
+      // hierarchy tree renders properly even when the backend bulk endpoint
+      // omits subClassOf for top-level classes. Without this, every class
+      // appears as a root and the sidebar shows a flat list.
+      const classNodeIds = nodes.filter(n => n.type === 'class' && n.id !== owlThingIri).map(n => n.id);
+      const childIds = new Set(
+        edges.filter(e => e.type === 'subClassOf').map(e => e.from)
+      );
+      let orphansAdopted = 0;
+      for (const classId of classNodeIds) {
+        if (!childIds.has(classId)) {
+          edges.push({
+            id: `${classId}-subClassOf-${owlThingIri}`,
+            from: classId,
+            to: owlThingIri,
+            type: 'subClassOf',
+            label: 'subClassOf'
+          });
+          orphansAdopted++;
+        }
+      }
+      if (orphansAdopted > 0) {
+        console.log(`[GraphDataFetchService] 🌳 Adopted ${orphansAdopted} orphan classes under owl:Thing`);
+      }
+
       // Process individuals
       this.processIndividuals(individualsData, nodes, edges);
 
@@ -436,7 +461,13 @@ export class GraphDataFetchService {
 
     // Add subClassOf edges
     const superClasses = classData.subClassOf || classData.superClasses || classData.parents || [];
-    for (const parent of superClasses) {
+    // Also accept singular parent / parentIri (used by recursive fallback fetcher)
+    const singleParent = classData.parent || classData.parentIri || classData.parentIRI;
+    const allParents: string[] = Array.isArray(superClasses) ? [...superClasses] : [];
+    if (singleParent && !allParents.includes(singleParent)) {
+      allParents.push(singleParent);
+    }
+    for (const parent of allParents) {
       edges.push({
         id: `${classIri}-subClassOf-${parent}`,
         from: classIri,

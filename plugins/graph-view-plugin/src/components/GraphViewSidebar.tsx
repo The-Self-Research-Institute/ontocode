@@ -65,6 +65,10 @@ interface GraphViewSidebarProps {
   onGraphNodeCollapse?: (nodeId: string) => void;
   graphExpandedNodeIds?: Set<string>;
   graphVisibleNodeIds?: Set<string>;
+  // Focus mode (Protégé OntoGraf-style neighborhood isolation)
+  focusedNodeId?: string | null;
+  onFocusNode?: (nodeId: string) => void;
+  onClearFocus?: () => void;
 }
 
 export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
@@ -96,7 +100,10 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
   onGraphNodeExpand,
   onGraphNodeCollapse,
   graphExpandedNodeIds,
-  graphVisibleNodeIds
+  graphVisibleNodeIds,
+  focusedNodeId,
+  onFocusNode,
+  onClearFocus
 }) => {
   const [sidebarMode, setSidebarMode] = useState<'entities' | 'hierarchy'>('hierarchy');
   const [entityTab, setEntityTab] = useState<'classes' | 'objectProperties' | 'datatypeProperties' | 'individuals' | 'annotations' | 'datatypes'>('classes');
@@ -685,6 +692,33 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
           >
             {isExpandedInGraph ? <Eye size={12} /> : <EyeOff size={12} />}
           </span>
+
+          {/* Focus mode trigger — isolates this class + its parents/children */}
+          {onFocusNode && (
+            <span
+              onClick={(e) => {
+                e.stopPropagation();
+                if (focusedNodeId === node.id && onClearFocus) {
+                  onClearFocus();
+                } else {
+                  onFocusNode(node.id);
+                }
+              }}
+              title={focusedNodeId === node.id ? 'Exit focus mode' : 'Focus on this class (parents + children only)'}
+              style={{
+                marginLeft: '4px',
+                color: focusedNodeId === node.id ? '#7c3aed' : '#9ca3af',
+                cursor: 'pointer',
+                flexShrink: 0,
+                display: 'inline-flex',
+                alignItems: 'center',
+                fontSize: '11px',
+                fontWeight: focusedNodeId === node.id ? 700 : 400
+              }}
+            >
+              🎯
+            </span>
+          )}
         </div>
 
         {/* Render children */}
@@ -756,6 +790,43 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
       {/* === HIERARCHY MODE === */}
       {sidebarMode === 'hierarchy' && (
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          {/* Focus mode banner */}
+          {focusedNodeId && (() => {
+            const focusNode = nodes.find(n => n.id === focusedNodeId);
+            return (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '6px 10px',
+                background: '#ede9fe',
+                borderBottom: '1px solid #c4b5fd',
+                fontSize: 11,
+                color: '#4c1d95'
+              }}>
+                <span title="Focus mode">🎯</span>
+                <span style={{ fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {focusNode?.label || focusedNodeId.split(/[#/]/).pop()}
+                </span>
+                <button
+                  onClick={() => onClearFocus?.()}
+                  style={{
+                    padding: '2px 8px',
+                    background: '#7c3aed',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 4,
+                    cursor: 'pointer',
+                    fontSize: 10,
+                    fontWeight: 600
+                  }}
+                  title="Exit focus mode"
+                >
+                  Clear
+                </button>
+              </div>
+            );
+          })()}
           {/* Search */}
           <div style={{ padding: '8px 10px', borderBottom: '1px solid #f0f0f0' }}>
             <div style={{ position: 'relative' }}>

@@ -234,7 +234,8 @@ public class ProjectController {
             }
             
             if ("all".equals(request.shareWith)) {
-                // Add all active workspace members as editors (except owner and workspace owner, skip pending)
+                // Add all active workspace members as viewers (matching UI: "All members will have view access")
+                // Workspace owner is already added as ADMIN above; skip project creator and ws owner
                 if (workspaceOpt.isPresent()) {
                     self.research.ontology.auth.model.Workspace workspace = workspaceOpt.get();
                     for (self.research.ontology.auth.model.Workspace.WorkspaceMember member : workspace.getMembers()) {
@@ -242,18 +243,21 @@ public class ProjectController {
                                 && !member.getUserId().equals(user.getId())
                                 && !member.getUserId().equals(workspace.getOwnerId())
                                 && member.getStatus() == self.research.ontology.auth.model.Workspace.MemberStatus.ACTIVE) {
-                            project.addMember(member.getUserId(), member.getUsername(), member.getEmail(), "EDITOR");
+                            // Use the role from request if provided, otherwise default to VIEWER
+                            String memberRole = request.memberRole != null ? request.memberRole : "VIEWER";
+                            project.addMember(member.getUserId(), member.getUsername(), member.getEmail(), memberRole);
                             membersAdded = true;
                         }
                     }
                 }
             } else if ("specific".equals(request.shareWith) && request.memberUsernames != null) {
-                // Add specific members as editors
+                // Add specific members with the role specified in the request (default: VIEWER)
+                String memberRole = request.memberRole != null ? request.memberRole : "VIEWER";
                 for (String memberUsername : request.memberUsernames) {
                     Optional<User> memberOpt = userRepository.findByUsername(memberUsername);
                     if (memberOpt.isPresent() && !memberOpt.get().getId().equals(user.getId())) {
                         User member = memberOpt.get();
-                        project.addMember(member.getId(), member.getUsername(), member.getEmail(), "EDITOR");
+                        project.addMember(member.getId(), member.getUsername(), member.getEmail(), memberRole);
                         membersAdded = true;
                     }
                 }
@@ -292,8 +296,9 @@ public class ProjectController {
             User user = userOpt.get();
             List<Project> projects = projectService.getWorkspaceProjects(workspaceId);
             
-            // Filter projects based on workspace role:
-            // Workspace owners and admins see all projects; others only see projects they're members of
+            // Filter projects based on workspace role and project privacy:
+            // Workspace owners and admins see all projects EXCEPT private projects they don't own.
+            // A private project is one where the only member is the project owner.
             Optional<Workspace> wsOpt = workspaceService.getWorkspace(workspaceId);
             boolean isOwnerOrAdmin = false;
             if (wsOpt.isPresent()) {
@@ -303,7 +308,12 @@ public class ProjectController {
                     isOwnerOrAdmin = wsRole == Workspace.WorkspaceRole.OWNER || wsRole == Workspace.WorkspaceRole.ADMIN;
                 }
             }
-            if (!isOwnerOrAdmin) {
+            if (isOwnerOrAdmin) {
+                // Admins/Owners see all projects except other users' private projects
+                projects = projects.stream()
+                        .filter(p -> p.hasMember(user.getId()) || p.getMembers().size() > 1)
+                        .collect(Collectors.toList());
+            } else {
                 projects = projects.stream()
                         .filter(p -> p.hasMember(user.getId()))
                         .collect(Collectors.toList());
@@ -435,8 +445,8 @@ public class ProjectController {
                         p.getProjectId(), p.getName(), p.getOwnerId(), p.getMembers().size(), p.getActiveFiles().size());
                 }
                 
-                // Filter projects based on workspace role:
-                // Workspace owners and admins see all projects; others only see projects they're members of
+                // Filter projects based on workspace role and project privacy:
+                // Workspace owners and admins see all projects EXCEPT other users' private projects.
                 Optional<Workspace> wsOpt = workspaceService.getWorkspace(effectiveWorkspaceId);
                 boolean isOwnerOrAdmin = false;
                 if (wsOpt.isPresent()) {
@@ -446,7 +456,13 @@ public class ProjectController {
                         isOwnerOrAdmin = wsRole == Workspace.WorkspaceRole.OWNER || wsRole == Workspace.WorkspaceRole.ADMIN;
                     }
                 }
-                if (!isOwnerOrAdmin) {
+                if (isOwnerOrAdmin) {
+                    // Admins/Owners see all projects except other users' private projects
+                    projects = projects.stream()
+                            .filter(p -> p.hasMember(user.getId()) || p.getMembers().size() > 1)
+                            .collect(Collectors.toList());
+                    log.info("[getMyProjects] Filtered to {} projects for owner/admin user {} (excluding others' private projects)", projects.size(), username);
+                } else {
                     projects = projects.stream()
                             .filter(p -> p.hasMember(user.getId()))
                             .collect(Collectors.toList());
@@ -1614,6 +1630,7 @@ public class ProjectController {
         public String description;
         public String shareWith; // "all" or "specific"
         public List<String> memberUsernames; // List of usernames when shareWith="specific"
+        public String memberRole; // Role for shared members: VIEWER (default), EDITOR, ADMIN
     }
 
     public static class UpdateProjectRequest {

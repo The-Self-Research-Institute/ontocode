@@ -10,11 +10,14 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import self.research.ontology.owlEditor.model.ProjectStatus;
+import self.research.ontology.owlEditor.service.ProjectMetadataService;
 import self.research.ontology.owlEditor.service.StorageManager;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Controller to serve ontology files to other services (e.g., reasoner plugin).
@@ -30,6 +33,9 @@ public class OntologyFileController {
     @Autowired
     private StorageManager storageManager;
 
+    @Autowired
+    private ProjectMetadataService metadataService;
+
     /**
      * Get the current ontology file for a project
      * GET /api/ontology-file/{projectId}
@@ -39,7 +45,25 @@ public class OntologyFileController {
                                              @RequestParam(required = false, defaultValue = "false") boolean forceExport) {
         try {
             log.info("Serving ontology file for project: {} (forceExport={})", projectId, forceExport);
-            
+
+            // Refuse to serve while an import is still in progress: returning a stale or
+            // half-written file causes the editor to hang on parse. Frontend should poll status.
+            Optional<ProjectStatus> statusOpt = metadataService.readStatus(projectId);
+            if (statusOpt.isPresent()) {
+                String state = statusOpt.get().status();
+                if ("UPLOADED".equals(state) || "PROCESSING".equals(state) || "INDEXING".equals(state)) {
+                    log.info("Ontology for project {} is still {}; deferring file response", projectId, state);
+                    return ResponseEntity.status(HttpStatus.ACCEPTED)
+                        .header(HttpHeaders.RETRY_AFTER, "2")
+                        .body(Map.of(
+                            "success", false,
+                            "status", state,
+                            "projectId", projectId,
+                            "message", "Ontology import is still in progress; retry after status is COMPLETED"
+                        ));
+                }
+            }
+
             // If forceExport requested, skip disk files and export fresh from GraphDB
             if (!forceExport) {
                 // Try current file first
