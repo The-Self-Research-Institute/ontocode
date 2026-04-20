@@ -295,6 +295,36 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
   // Track expanded nodes in the class hierarchy tree
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
 
+  // Auto-expand tree nodes when search term changes (at component level, not inside render function)
+  React.useEffect(() => {
+    if (!searchTerm) return;
+    const { childrenMap } = classHierarchyTree;
+    const matchesSearch = (node: OntologyNode): boolean => {
+      const term = searchTerm.toLowerCase();
+      if ((node.label || node.id).toLowerCase().includes(term)) return true;
+      const ch = childrenMap.get(node.id) || [];
+      return ch.some(c => matchesSearch(c));
+    };
+    // Find all nodes with matching descendants and auto-expand them
+    const toExpand = new Set<string>();
+    const checkNode = (nodeId: string) => {
+      const children = childrenMap.get(nodeId) || [];
+      const matchingChildren = children.filter(c => matchesSearch(c));
+      if (matchingChildren.length > 0) {
+        toExpand.add(nodeId);
+      }
+      children.forEach(c => checkNode(c.id));
+    };
+    classHierarchyTree.rootClasses.forEach(r => checkNode(r.id));
+    if (toExpand.size > 0) {
+      setExpandedNodes(prev => {
+        const next = new Set(prev);
+        toExpand.forEach(id => next.add(id));
+        return next;
+      });
+    }
+  }, [searchTerm, classHierarchyTree]);
+
   // Render hierarchy tree with navigator style
   const renderHierarchyNode = (node: OntologyNode, level: number = 0): JSX.Element => {
     const children = classHierarchyTree.childrenMap.get(node.id) || [];
@@ -539,17 +569,6 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
     };
     const visibleChildren = children.filter(c => matchesSearch(c));
     const selfMatches = !search || (node.label || node.id).toLowerCase().includes(search.toLowerCase());
-
-    // Auto-expand tree nodes when they match search
-    React.useEffect(() => {
-      if (search && visibleChildren.length > 0 && !expandedNodes.has(node.id)) {
-        setExpandedNodes(prev => {
-          const next = new Set(prev);
-          next.add(node.id);
-          return next;
-        });
-      }
-    }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
 
     return (
       <div key={node.id}>
