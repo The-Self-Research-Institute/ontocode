@@ -55,7 +55,7 @@ const AddClassDialog: React.FC<AddClassDialogProps> = ({
             </p>
             <p className="text-sm font-mono text-amber-900">{parentLabel}</p>
             <p className="text-[11px] text-amber-700 mt-1">
-              New classes inherit placement from their parent, matching the Protege workflow.
+              New classes inherit placement from their parent in the hierarchy.
             </p>
           </div>
           <div>
@@ -80,7 +80,7 @@ const AddClassDialog: React.FC<AddClassDialogProps> = ({
             />
           </div>
           <p className="text-[11px] text-gray-500">
-            Tip: Keep names short and descriptive. You can edit descriptions and relationships after creation just like in Protege.
+            Tip: Keep names short and descriptive. You can edit descriptions and relationships after creation.
           </p>
         </div>
         <div className="mt-6 flex justify-end gap-3">

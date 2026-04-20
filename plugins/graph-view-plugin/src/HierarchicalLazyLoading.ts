@@ -346,14 +346,13 @@ export const collapseAll = (
   newExpandedIds: Set<string>;
   newVisibleIds: Set<string>;
 } => {
-  console.log('[collapseAll] Collapsing to show roots with first-level children for all entity types');
+  console.log('[collapseAll] Collapsing to show only root entities (no children, no edges)');
   
   // Separate nodes by type
   const classNodes = nodes.filter(n => n.type === 'class');
   const objectPropertyNodes = nodes.filter(n => n.type === 'objectProperty');
   const dataPropertyNodes = nodes.filter(n => n.type === 'dataProperty');
   const individualNodes = nodes.filter(n => n.type === 'individual');
-  const otherNodes = nodes.filter(n => !['class', 'objectProperty', 'dataProperty', 'datatypeProperty', 'individual'].includes(n.type));
   
   // Get root entities for each type
   const classRootIds = getRootNodes(classNodes, edges);
@@ -361,43 +360,18 @@ export const collapseAll = (
   const dataPropertyRootIds = getRootNodes(dataPropertyNodes, edges);
   const individualRootIds = getRootNodes(individualNodes, edges);
   
-  // Combine all root IDs
-  const allRootIds = [...classRootIds, ...objectPropertyRootIds, ...dataPropertyRootIds, ...individualRootIds];
+  // Combine all root IDs — only roots, no children, no other types
+  const visibleIds = [...classRootIds, ...objectPropertyRootIds, ...dataPropertyRootIds, ...individualRootIds];
   
-  // Get immediate children of all roots to show first level
-  const firstLevelChildrenIds: string[] = [];
-  allRootIds.forEach(rootId => {
-    const children = edges
-      .filter(e => (e.type === 'subClassOf' || e.type === 'subPropertyOf' || e.type === 'instanceOf') && e.to === rootId)
-      .map(e => e.from);
-    firstLevelChildrenIds.push(...children);
-  });
-  
-  // Get all other entity types (datatypes, annotations, etc.)
-  const otherEntityIds = otherNodes.map(n => n.id);
-  
-  // Combine: root entities + their first-level children + other entities
-  const visibleIds = [...allRootIds, ...firstLevelChildrenIds, ...otherEntityIds];
-  
-  console.log('[collapseAll] ✅ Showing', visibleIds.length, 'entities:', {
+  console.log('[collapseAll] ✅ Showing', visibleIds.length, 'root entities only:', {
     classRoots: classRootIds.length,
     objectPropertyRoots: objectPropertyRootIds.length,
     dataPropertyRoots: dataPropertyRootIds.length,
-    individualRoots: individualRootIds.length,
-    firstLevelChildren: firstLevelChildrenIds.length,
-    otherEntities: otherEntityIds.length,
-    total: {
-      classes: classNodes.length,
-      objectProperties: objectPropertyNodes.length,
-      dataProperties: dataPropertyNodes.length,
-      individuals: individualNodes.length,
-      datatypes: nodes.filter(n => n.type === 'datatype').length,
-      annotations: nodes.filter(n => n.type === 'annotation').length
-    }
+    individualRoots: individualRootIds.length
   });
 
   return {
-    newExpandedIds: new Set(allRootIds), // Mark all root entities as expanded
+    newExpandedIds: new Set<string>(), // Nothing expanded
     newVisibleIds: new Set(visibleIds)
   };
 };

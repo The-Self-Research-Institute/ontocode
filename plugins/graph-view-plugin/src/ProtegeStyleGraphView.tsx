@@ -977,7 +977,7 @@ export const ProtegeStyleGraphView: React.FC<ProtegeStyleGraphViewProps> = ({ pr
               <div style={{ textAlign: 'center' }}>
                 <RefreshCw size={32} style={{ animation: 'spin 1s linear infinite' }} />
                 <div style={{ marginTop: '10px', fontSize: '14px', color: '#666' }}>
-                  Loading OntoGraf...
+                  Loading Graph...
                 </div>
               </div>
             </div>
