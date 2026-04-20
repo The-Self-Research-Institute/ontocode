@@ -1219,6 +1219,8 @@ const AppContent = () => {
     return (
       <Dashboard
         onBackToProjects={user.workspaceId ? handleBackToProjectLibrary : undefined}
+        onGoToProjectDashboard={user.workspaceId ? handleBackToProjectDashboard : undefined}
+        onGoToWorkspace={() => { setForceShowWorkspace(true); setRestoredRoute(null); }}
         onFileSelected={handleFileSelected}
         selectedFileId={selectedFileId || undefined}
         selectedFileName={selectedFileName || undefined}

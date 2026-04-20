@@ -51,6 +51,8 @@ import {
   Crown,
   Rocket,
   Bug,
+  FolderOpen,
+  LayoutDashboard,
 } from "lucide-react";
 import apiClient, { getBaseUrl } from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
@@ -843,6 +845,8 @@ const TopMenuBar = ({
   onExplainInconsistency,
   onOpenReasonerSettings,
   isConsistencyLoading,
+  onGoToProjectDashboard,
+  onGoToWorkspace,
 }: {
   fileList: FileInfo[];
   myFiles: FileInfo[];
@@ -874,6 +878,8 @@ const TopMenuBar = ({
   onExplainInconsistency?: () => void;
   onOpenReasonerSettings?: () => void;
   isConsistencyLoading?: boolean;
+  onGoToProjectDashboard?: () => void;
+  onGoToWorkspace?: () => void;
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -971,6 +977,27 @@ const TopMenuBar = ({
                   </div>
                 ) : item === "Window" ? (
                   <div className="py-1">
+                    {onGoToProjectDashboard && (
+                      <button
+                        onClick={() => { onGoToProjectDashboard(); setOpenMenu(null); }}
+                        className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
+                      >
+                        <FolderOpen size={14} />
+                        Project Dashboard
+                      </button>
+                    )}
+                    {onGoToWorkspace && (
+                      <button
+                        onClick={() => { onGoToWorkspace(); setOpenMenu(null); }}
+                        className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
+                      >
+                        <LayoutDashboard size={14} />
+                        Workspace Selection
+                      </button>
+                    )}
+                    {(onGoToProjectDashboard || onGoToWorkspace) && (
+                      <div className="border-t my-1" style={{ borderColor: "var(--color-border)" }} />
+                    )}
                     <div className="px-3 py-1 text-gray-400 text-xs">Appearance</div>
                   </div>
                 ) : // : item === "Reasoner" ? (
@@ -1904,6 +1931,8 @@ const showNotification = (message: string, type: "info" | "error" | "warning" = 
 
 interface DashboardProps {
   onBackToProjects?: () => void;
+  onGoToProjectDashboard?: () => void;
+  onGoToWorkspace?: () => void;
   onFileSelected?: (fileId: string, fileName: string) => void;
   selectedFileId?: string;
   selectedFileName?: string;
@@ -1912,6 +1941,8 @@ interface DashboardProps {
 
 const Dashboard: React.FC<DashboardProps> = ({
   onBackToProjects,
+  onGoToProjectDashboard,
+  onGoToWorkspace,
   onFileSelected,
   selectedFileId,
   selectedFileName,
@@ -13982,6 +14013,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           onExplainInconsistency={explainInconsistency}
           onOpenReasonerSettings={() => setIsReasonerSettingsOpen(true)}
           isConsistencyLoading={isConsistencyLoading}
+          onGoToProjectDashboard={onGoToProjectDashboard}
+          onGoToWorkspace={onGoToWorkspace}
         />
 
         <div className="bg-white border-b border-gray-200 flex-shrink-0">
