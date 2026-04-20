@@ -53,6 +53,12 @@ public class User {
     private LocalDateTime updatedAt;
     private LocalDateTime lastLoginAt;
 
+    // Last opened context (for auto-restore across devices)
+    private String lastOpenedProjectId;
+    private String lastOpenedProjectName;
+    private String lastOpenedFileId;
+    private String lastOpenedFileName;
+
     // Constructors
     public User() {
         this.createdAt = LocalDateTime.now();
@@ -227,4 +233,16 @@ public class User {
     public void setLastLoginAt(LocalDateTime lastLoginAt) {
         this.lastLoginAt = lastLoginAt;
     }
+
+    public String getLastOpenedProjectId() { return lastOpenedProjectId; }
+    public void setLastOpenedProjectId(String lastOpenedProjectId) { this.lastOpenedProjectId = lastOpenedProjectId; }
+
+    public String getLastOpenedProjectName() { return lastOpenedProjectName; }
+    public void setLastOpenedProjectName(String lastOpenedProjectName) { this.lastOpenedProjectName = lastOpenedProjectName; }
+
+    public String getLastOpenedFileId() { return lastOpenedFileId; }
+    public void setLastOpenedFileId(String lastOpenedFileId) { this.lastOpenedFileId = lastOpenedFileId; }
+
+    public String getLastOpenedFileName() { return lastOpenedFileName; }
+    public void setLastOpenedFileName(String lastOpenedFileName) { this.lastOpenedFileName = lastOpenedFileName; }
 }

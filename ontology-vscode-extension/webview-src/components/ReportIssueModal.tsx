@@ -405,7 +405,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
                     }`}
                   >
                     {React.createElement(getIssueTypeStyle(issueType).icon, { size: 14 })}
-                    {issueType}
+                    {issueType === "Task" ? "Feature Request" : issueType}
                   </span>
                   <span
                     className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold border ${getPriorityColor(
@@ -446,7 +446,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
                   disabled={submitting}
                 >
                   <option value="Bug">Bug</option>
-                  <option value="Task">Task</option>
+                  <option value="Task">Feature Request</option>
                 </select>
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
                   <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">

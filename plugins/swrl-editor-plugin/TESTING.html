@@ -1,0 +1,1057 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SWRL Editor Plugin - Testing Document</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif; background: #f0f2f5; color: #1a1a2e; line-height: 1.6; }
+  .header { background: linear-gradient(135deg, #1e3a5f, #2563eb); color: #fff; padding: 48px 0 40px; text-align: center; }
+  .header h1 { font-size: 2.4rem; font-weight: 700; margin-bottom: 8px; }
+  .header .meta { font-size: 0.95rem; opacity: 0.88; }
+  .header .meta span { margin: 0 12px; }
+  .container { max-width: 1100px; margin: -32px auto 48px; padding: 0 20px; position: relative; z-index: 1; }
+  .card { background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); padding: 32px 36px; margin-bottom: 28px; }
+  .card h2 { font-size: 1.55rem; color: #1e3a5f; margin-bottom: 18px; padding-bottom: 10px; border-bottom: 2px solid #e5e7eb; }
+  .card h3 { font-size: 1.15rem; color: #2563eb; margin: 22px 0 10px; }
+  .card h4 { font-size: 1rem; color: #374151; margin: 14px 0 6px; }
+  p, li { font-size: 0.95rem; color: #374151; }
+  p { margin-bottom: 10px; }
+  ul, ol { margin: 8px 0 12px 24px; }
+  li { margin-bottom: 4px; }
+
+  /* TOC */
+  .toc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 32px; }
+  .toc-grid a { color: #2563eb; text-decoration: none; font-size: 0.95rem; padding: 4px 0; display: block; }
+  .toc-grid a:hover { text-decoration: underline; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 18px; font-size: 0.9rem; }
+  th { background: #f1f5f9; color: #1e3a5f; font-weight: 600; text-align: left; padding: 10px 14px; border-bottom: 2px solid #cbd5e1; }
+  td { padding: 9px 14px; border-bottom: 1px solid #e5e7eb; color: #374151; }
+  tr:hover td { background: #f9fafb; }
+
+  /* Test case cards */
+  .test-case { background: #f9fafb; border-radius: 8px; padding: 20px 24px; margin: 16px 0; border-left: 4px solid #2563eb; }
+  .test-case .tc-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+  .test-case .tc-id { font-weight: 700; font-size: 1rem; color: #1e3a5f; }
+  .test-case .tc-title { font-weight: 600; font-size: 1rem; color: #111827; }
+  .test-case .tc-objective { color: #4b5563; margin-bottom: 8px; font-size: 0.93rem; }
+  .test-case strong { color: #1e3a5f; }
+  .test-case ul { margin-left: 20px; }
+
+  /* Priority badges */
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 9999px; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.3px; vertical-align: middle; }
+  .badge-p0 { background: #fee2e2; color: #991b1b; }
+  .badge-p1 { background: #fef3c7; color: #92400e; }
+  .badge-p2 { background: #e0e7ff; color: #3730a3; }
+
+  /* Code */
+  code { font-family: 'Fira Code', 'Consolas', 'Monaco', monospace; font-size: 0.88em; background: #1e293b; color: #e2e8f0; padding: 2px 7px; border-radius: 4px; }
+  pre { background: #1e293b; color: #e2e8f0; padding: 16px 20px; border-radius: 6px; overflow-x: auto; margin: 10px 0 14px; font-size: 0.88rem; line-height: 1.55; }
+  pre code { background: none; padding: 0; }
+
+  /* Summary matrix */
+  .matrix-table th { position: sticky; top: 0; }
+  .matrix-table td:last-child { text-align: center; }
+  .matrix-table input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; accent-color: #2563eb; }
+
+  /* Responsive */
+  @media (max-width: 700px) {
+    .toc-grid { grid-template-columns: 1fr; }
+    .card { padding: 20px 18px; }
+    .header h1 { font-size: 1.7rem; }
+    .test-case { padding: 14px 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>SWRL Editor Plugin &mdash; Testing Document</h1>
+  <div class="meta">
+    <span><strong>Plugin:</strong> swrl-editor-plugin v1.1.2</span>
+    <span><strong>Category:</strong> Editor</span>
+    <span><strong>Last Updated:</strong> April 2026</span>
+  </div>
+</div>
+
+<div class="container">
+
+<!-- Table of Contents -->
+<div class="card" id="toc">
+  <h2>Table of Contents</h2>
+  <div class="toc-grid">
+    <a href="#overview">1. Overview</a>
+    <a href="#setup">2. Test Environment Setup</a>
+    <a href="#editor-tests">3. Rule Editor Tests</a>
+    <a href="#validation-tests">4. Validation Tests</a>
+    <a href="#execution-tests">5. Rule Execution Tests</a>
+    <a href="#management-tests">6. Rule Management Tests</a>
+    <a href="#template-tests">7. Template Tests</a>
+    <a href="#builtin-tests">8. Built-in Function Tests</a>
+    <a href="#vscode-tests">9. VS Code Integration Tests</a>
+    <a href="#error-tests">10. Error Handling Tests</a>
+    <a href="#performance-tests">11. Performance Tests</a>
+  </div>
+</div>
+
+<!-- Overview -->
+<div class="card" id="overview">
+  <h2>1. Overview</h2>
+  <p>The SWRL Editor Plugin provides a visual SWRL (Semantic Web Rule Language) editor and validator for ontologies. Supports rule creation, editing, real-time syntax validation, 40+ built-in templates, and rule execution against loaded ontologies.</p>
+
+  <h3>Components Under Test</h3>
+  <ul>
+    <li><code>SWRLEditor.tsx</code> &mdash; Main editor with syntax highlighting, validation, templates, help, management, execution, and statistics</li>
+  </ul>
+
+  <h3>API Endpoints</h3>
+  <table>
+    <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td>POST</td><td><code>/api/swrl/{projectId}/validate</code></td><td>Validate rule syntax</td></tr>
+      <tr><td>POST</td><td><code>/api/swrl/{projectId}/execute</code></td><td>Execute rule</td></tr>
+      <tr><td>GET</td><td><code>/api/swrl/{projectId}/rules</code></td><td>List all rules</td></tr>
+      <tr><td>POST</td><td><code>/api/swrl/{projectId}/rules</code></td><td>Create rule</td></tr>
+      <tr><td>PUT</td><td><code>/api/swrl/{projectId}/rules/{id}</code></td><td>Update rule</td></tr>
+      <tr><td>DELETE</td><td><code>/api/swrl/{projectId}/rules/{id}</code></td><td>Delete rule</td></tr>
+    </tbody>
+  </table>
+
+  <h3>SWRL Atom Types</h3>
+  <table>
+    <thead><tr><th>Atom Type</th><th>Syntax</th><th>Example</th></tr></thead>
+    <tbody>
+      <tr><td>Class</td><td><code>ClassName(?var)</code></td><td><code>Student(?s)</code></td></tr>
+      <tr><td>Data Property</td><td><code>propName(?subj, ?val)</code></td><td><code>gpa(?s, ?g)</code></td></tr>
+      <tr><td>Object Property</td><td><code>propName(?subj, ?obj)</code></td><td><code>advisedBy(?s, ?p)</code></td></tr>
+      <tr><td>Built-In</td><td><code>swrlb:func(?args)</code></td><td><code>swrlb:greaterThan(?g, 3.75)</code></td></tr>
+      <tr><td>Same Individual</td><td><code>sameAs(?x, ?y)</code></td><td><code>sameAs(?a, ?b)</code></td></tr>
+      <tr><td>Different Individuals</td><td><code>differentFrom(?x, ?y)</code></td><td><code>differentFrom(?a, ?b)</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Test Environment Setup -->
+<div class="card" id="setup">
+  <h2>2. Test Environment Setup</h2>
+
+  <h3>Prerequisites</h3>
+  <ul>
+    <li>OntoCode platform running with SWRL service (<code>ontology-swrl</code>)</li>
+    <li>GraphDB with loaded test ontology (<code>test-swrl-ontology.owl</code>)</li>
+  </ul>
+
+  <h3>Test Ontology Structure</h3>
+  <p><strong>Classes:</strong> Person &#8594; (Student &#8594; UndergraduateStudent, GraduateStudent, HonorsStudent), Professor; Course &#8594; AdvancedCourse; Department</p>
+  <p><strong>Object Properties:</strong> enrolledIn, teaches, advisedBy, worksIn, hasMentor</p>
+  <p><strong>Data Properties:</strong> age (integer), gpa (float), credits (integer), name (string), courseLevel (integer)</p>
+
+  <h3>Individuals</h3>
+  <table>
+    <thead><tr><th>Individual</th><th>Type</th><th>Properties</th></tr></thead>
+    <tbody>
+      <tr><td>JohnDoe</td><td>UndergraduateStudent</td><td>age=20, gpa=3.8</td></tr>
+      <tr><td>JaneSmith</td><td>GraduateStudent</td><td>age=24, gpa=3.9</td></tr>
+      <tr><td>DrJohnson</td><td>Professor</td><td>age=45</td></tr>
+      <tr><td>CS101</td><td>Course</td><td>credits=3, courseLevel=100</td></tr>
+      <tr><td>CS501</td><td>Course</td><td>credits=4, courseLevel=500</td></tr>
+      <tr><td>ComputerScience</td><td>Department</td><td>&mdash;</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Rule Editor Tests -->
+<div class="card" id="editor-tests">
+  <h2>3. Rule Editor Tests</h2>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-001</span>
+      <span class="badge badge-p0">P0</span>
+      <span class="tc-title">Editor Initialization</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify SWRL editor loads correctly</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Open SWRL Editor plugin</li>
+      <li>Verify editor area is visible</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>Rule text area visible and editable</li>
+      <li>Rule name input field available</li>
+      <li>&ldquo;Validate&rdquo;, &ldquo;Execute&rdquo;, &ldquo;Save&rdquo; buttons visible</li>
+      <li>Templates dropdown accessible</li>
+      <li>Help section available</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-002</span>
+      <span class="badge badge-p1">P1</span>
+      <span class="tc-title">Rule Input with Syntax Highlighting</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify syntax highlighting for SWRL rules</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Enter rule: <code>Student(?s) &#8743; gpa(?s, ?g) &#8743; swrlb:greaterThan(?g, 3.75) &#8594; HonorsStudent(?s)</code></li>
+      <li>Observe syntax coloring</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>Class atoms (Student, HonorsStudent) in distinct color</li>
+      <li>Variables (?s, ?g) in different color</li>
+      <li>Built-in atoms (swrlb:greaterThan) highlighted</li>
+      <li>Operators (&#8743;, &#8594;) highlighted</li>
+      <li>Literals (3.75) in number color</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-003</span>
+      <span class="badge badge-p1">P1</span>
+      <span class="tc-title">Rule Name Input</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify rule naming</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Enter rule name: &ldquo;Honors Student Classification&rdquo;</li>
+      <li>Enter rule text</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>Name field accepts text</li>
+      <li>Name displayed in rule list</li>
+      <li>Name persisted on save</li>
+    </ul>
+  </div>
+</div>
+
+<!-- Validation Tests -->
+<div class="card" id="validation-tests">
+  <h2>4. Validation Tests</h2>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-004</span>
+      <span class="badge badge-p0">P0</span>
+      <span class="tc-title">Valid Rule Validation</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify valid SWRL rule passes validation</p>
+    <p><strong>Rule:</strong> <code>Student(?s) &#8743; gpa(?s, ?g) &#8743; swrlb:greaterThan(?g, 3.75) &#8594; HonorsStudent(?s)</code></p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Enter rule</li>
+      <li>Click &ldquo;Validate&rdquo;</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li><code>valid: true</code>, <code>errorMessage: null</code></li>
+      <li>Parsed atoms displayed:
+        <ul>
+          <li>ClassAtom: Student(?s)</li>
+          <li>DataPropertyAtom: gpa(?s, ?g)</li>
+          <li>BuiltInAtom: swrlb:greaterThan(?g, 3.75)</li>
+          <li>ClassAtom: HonorsStudent(?s)</li>
+        </ul>
+      </li>
+      <li>usedClasses: [Student, HonorsStudent]</li>
+      <li>usedProperties: [gpa]</li>
+      <li>usedBuiltIns: [swrlb:greaterThan]</li>
+      <li>Green success indicator</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-005</span>
+      <span class="badge badge-p0">P0</span>
+      <span class="tc-title">Invalid Rule &mdash; Missing Consequent</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify error for rule without head (&#8594; part)</p>
+    <p><strong>Rule:</strong> <code>Student(?s) &#8743; gpa(?s, ?g)</code></p>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li><code>valid: false</code></li>
+      <li><code>errorMessage</code>: indicates missing consequent/implication</li>
+      <li>Suggestions provided</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-006</span>
+      <span class="badge badge-p1">P1</span>
+      <span class="tc-title">Invalid Rule &mdash; Unknown Class</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify warning for undeclared class reference</p>
+    <p><strong>Rule:</strong> <code>NonExistentClass(?x) &#8594; Student(?x)</code></p>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>Warning: &ldquo;Class 'NonExistentClass' not found in ontology&rdquo;</li>
+      <li>Rule may still be syntactically valid</li>
+      <li>Suggestion to check class name</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-007</span>
+      <span class="badge badge-p1">P1</span>
+      <span class="tc-title">Invalid Rule &mdash; Unbound Variable</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify error for variable used only in head</p>
+    <p><strong>Rule:</strong> <code>Student(?s) &#8594; HonorsStudent(?x)</code></p>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>Warning or error: variable ?x appears only in consequent</li>
+      <li>Suggestion: ensure all head variables appear in body</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-008</span>
+      <span class="badge badge-p1">P1</span>
+      <span class="tc-title">Invalid Rule &mdash; Wrong Built-in Arguments</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify error for incorrect built-in function usage</p>
+    <p><strong>Rule:</strong> <code>Student(?s) &#8743; swrlb:greaterThan(?s) &#8594; HonorsStudent(?s)</code></p>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li><code>valid: false</code></li>
+      <li>Error: &ldquo;swrlb:greaterThan requires 2 arguments, got 1&rdquo;</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-009</span>
+      <span class="badge badge-p1">P1</span>
+      <span class="tc-title">Real-Time Validation</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify validation triggers as user types</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Start typing a rule</li>
+      <li>Observe validation indicators updating in real-time</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>Validation updates after brief debounce</li>
+      <li>Red indicator for invalid state</li>
+      <li>Green indicator when valid</li>
+      <li>No blocking of input while validating</li>
+    </ul>
+  </div>
+</div>
+
+<!-- Rule Execution Tests -->
+<div class="card" id="execution-tests">
+  <h2>5. Rule Execution Tests</h2>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-010</span>
+      <span class="badge badge-p0">P0</span>
+      <span class="tc-title">Basic Class Inference</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Test class membership inference</p>
+    <p><strong>Rule:</strong> <code>Student(?s) &#8743; gpa(?s, ?g) &#8743; swrlb:greaterThan(?g, 3.75) &#8594; HonorsStudent(?s)</code></p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Create and save the rule</li>
+      <li>Click &ldquo;Execute&rdquo;</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>JohnDoe inferred as HonorsStudent (gpa=3.8 &gt; 3.75)</li>
+      <li>JaneSmith inferred as HonorsStudent (gpa=3.9 &gt; 3.75)</li>
+      <li>Inferred axioms displayed in results section</li>
+      <li>Execution time shown</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-011</span>
+      <span class="badge badge-p0">P0</span>
+      <span class="tc-title">Advanced Course Classification</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Test property-based classification</p>
+    <p><strong>Rule:</strong> <code>Course(?c) &#8743; courseLevel(?c, ?l) &#8743; swrlb:greaterThanOrEqual(?l, 500) &#8594; AdvancedCourse(?c)</code></p>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>CS501 classified as AdvancedCourse (courseLevel=500 &#8805; 500)</li>
+      <li>CS101 NOT classified as AdvancedCourse (courseLevel=100 &lt; 500)</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-012</span>
+      <span class="badge badge-p0">P0</span>
+      <span class="tc-title">Object Property Inference</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Test relationship inference</p>
+    <p><strong>Rule:</strong> <code>Student(?s) &#8743; advisedBy(?s, ?p) &#8743; Professor(?p) &#8594; hasMentor(?s, ?p)</code></p>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>hasMentor relationships inferred for advised students</li>
+      <li>New object property assertions created</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-013</span>
+      <span class="badge badge-p1">P1</span>
+      <span class="tc-title">Math Built-in Execution</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Test mathematical built-in functions</p>
+    <p><strong>Rule:</strong> <code>Student(?s) &#8743; gpa(?s, ?g) &#8743; swrlb:multiply(?bonus, ?g, 1000) &#8594; scholarshipAmount(?s, ?bonus)</code></p>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>JohnDoe: scholarshipAmount = 3800</li>
+      <li>JaneSmith: scholarshipAmount = 3900</li>
+      <li>Computed values correct</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-014</span>
+      <span class="badge badge-p1">P1</span>
+      <span class="tc-title">String Built-in Execution</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Test string built-in functions</p>
+    <p><strong>Rule:</strong> <code>Person(?p) &#8743; name(?p, ?n) &#8743; swrlb:startsWith(?n, "Dr") &#8594; Professor(?p)</code></p>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>Individuals whose name starts with &ldquo;Dr&rdquo; classified as Professor</li>
+      <li>String comparison case-sensitive</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-015</span>
+      <span class="badge badge-p1">P1</span>
+      <span class="tc-title">Multiple Rules Execution</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Test executing multiple rules in sequence</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Create 3 rules</li>
+      <li>Enable all 3</li>
+      <li>Execute all</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>All rules execute in order</li>
+      <li>Results from rule 1 available to rule 2 (chaining)</li>
+      <li>Combined inferred axioms displayed</li>
+      <li>No rule interference</li>
+    </ul>
+  </div>
+</div>
+
+<!-- Rule Management Tests -->
+<div class="card" id="management-tests">
+  <h2>6. Rule Management Tests</h2>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-016</span>
+      <span class="badge badge-p0">P0</span>
+      <span class="tc-title">Create Rule</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify creating and saving a new rule</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Enter rule name and text</li>
+      <li>Click Save</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>Rule saved with unique ID</li>
+      <li>Appears in rules list</li>
+      <li><code>enabled: true</code> by default</li>
+      <li>Timestamps set (createdAt, updatedAt)</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-017</span>
+      <span class="badge badge-p0">P0</span>
+      <span class="tc-title">Update Rule</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify editing an existing rule</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Select saved rule from list</li>
+      <li>Modify rule text</li>
+      <li>Save changes</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>Rule text updated</li>
+      <li>updatedAt timestamp refreshed</li>
+      <li>Rule ID unchanged</li>
+      <li>Previous version not retained</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-018</span>
+      <span class="badge badge-p0">P0</span>
+      <span class="tc-title">Delete Rule</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify deleting a rule</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Select a rule</li>
+      <li>Click Delete</li>
+      <li>Confirm deletion</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>Rule removed from list</li>
+      <li>Confirmation prompt before deletion</li>
+      <li>Associated inferred axioms optionally removed</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-019</span>
+      <span class="badge badge-p1">P1</span>
+      <span class="tc-title">Enable/Disable Rule</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify toggling rule enabled state</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Select an enabled rule</li>
+      <li>Toggle to disabled</li>
+      <li>Execute all rules</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>Disabled rule skipped during execution</li>
+      <li>Visual indicator (grey/strike-through) for disabled</li>
+      <li>Re-enabling restores functionality</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-020</span>
+      <span class="badge badge-p2">P2</span>
+      <span class="tc-title">Duplicate Rule</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify duplicating an existing rule</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Select a rule</li>
+      <li>Click &ldquo;Duplicate&rdquo;</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>New rule created with same text</li>
+      <li>Name appended with &ldquo;(Copy)&rdquo; or similar</li>
+      <li>New unique ID assigned</li>
+      <li>Editable independently</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-021</span>
+      <span class="badge badge-p1">P1</span>
+      <span class="tc-title">List All Rules</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify rule listing for a project</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Create 5+ rules</li>
+      <li>View rules list</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>All rules listed</li>
+      <li>Shows: name, enabled status, last updated</li>
+      <li>Sortable by name or date</li>
+      <li>Clickable to edit</li>
+    </ul>
+  </div>
+</div>
+
+<!-- Template Tests -->
+<div class="card" id="template-tests">
+  <h2>7. Template Tests</h2>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-022</span>
+      <span class="badge badge-p1">P1</span>
+      <span class="tc-title">Load Classification Template</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify loading a built-in template</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Open Templates dropdown</li>
+      <li>Select &ldquo;Classification&rdquo; category</li>
+      <li>Choose a template</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>Template text loaded in editor</li>
+      <li>Placeholder variables present</li>
+      <li>Template is valid SWRL syntax</li>
+      <li>Ready to customize and save</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-023</span>
+      <span class="badge badge-p1">P1</span>
+      <span class="tc-title">Load Math Template</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify math template (e.g., BMI calculation)</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Select Math category &#8594; BMI template</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>Rule uses swrlb:multiply, swrlb:divide</li>
+      <li>Correct BMI formula structure</li>
+      <li>Variables for height, weight, result</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-024</span>
+      <span class="badge badge-p1">P1</span>
+      <span class="tc-title">Load Property Chain Template</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify property chain template</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Select &ldquo;Property Chains&rdquo; &#8594; Uncle relation</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>Chain: <code>parent(?x, ?y) &#8743; brother(?y, ?z) &#8594; uncle(?x, ?z)</code></li>
+      <li>Correct object property chain</li>
+      <li>Valid and executable</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-025</span>
+      <span class="badge badge-p2">P2</span>
+      <span class="tc-title">Load SQWRL Template</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify SQWRL query template</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Select &ldquo;SQWRL&rdquo; &#8594; Count template</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>SQWRL aggregation syntax loaded</li>
+      <li>Uses sqwrl:count or similar</li>
+      <li>Template is syntactically valid</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-026</span>
+      <span class="badge badge-p1">P1</span>
+      <span class="tc-title">All 40+ Templates Valid</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify all built-in templates pass validation</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Iterate through all template categories</li>
+      <li>Load each template</li>
+      <li>Run validation</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>All templates return <code>valid: true</code></li>
+      <li>No syntax errors in any template</li>
+      <li>Each has descriptive name</li>
+    </ul>
+  </div>
+</div>
+
+<!-- Built-in Function Tests -->
+<div class="card" id="builtin-tests">
+  <h2>8. Built-in Function Tests</h2>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-027</span>
+      <span class="badge badge-p0">P0</span>
+      <span class="tc-title">Comparison Functions</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Test comparison built-in functions</p>
+    <p><strong>Functions:</strong> equal, notEqual, lessThan, greaterThan, lessThanOrEqual, greaterThanOrEqual</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Create rules using each comparison function</li>
+      <li>Execute against test data</li>
+    </ol>
+    <p><strong>Expected Results:</strong></p>
+    <table>
+      <thead><tr><th>Function</th><th>Input</th><th>Expected</th></tr></thead>
+      <tbody>
+        <tr><td><code>swrlb:equal(?x, 20)</code></td><td>age=20</td><td>match</td></tr>
+        <tr><td><code>swrlb:notEqual(?x, 20)</code></td><td>age=24</td><td>match</td></tr>
+        <tr><td><code>swrlb:lessThan(?x, 25)</code></td><td>age=20</td><td>match</td></tr>
+        <tr><td><code>swrlb:greaterThan(?x, 3.5)</code></td><td>gpa=3.8</td><td>match</td></tr>
+        <tr><td><code>swrlb:lessThanOrEqual(?x, 3)</code></td><td>credits=3</td><td>match</td></tr>
+        <tr><td><code>swrlb:greaterThanOrEqual(?x, 500)</code></td><td>level=500</td><td>match</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-028</span>
+      <span class="badge badge-p1">P1</span>
+      <span class="tc-title">Math Functions</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Test mathematical built-in functions</p>
+    <p><strong>Functions:</strong> add, subtract, multiply, divide, abs, round</p>
+    <p><strong>Results:</strong></p>
+    <table>
+      <thead><tr><th>Function</th><th>Inputs</th><th>Expected</th></tr></thead>
+      <tbody>
+        <tr><td><code>swrlb:add(?r, 3, 4)</code></td><td>&mdash;</td><td>?r = 7</td></tr>
+        <tr><td><code>swrlb:subtract(?r, 10, 3)</code></td><td>&mdash;</td><td>?r = 7</td></tr>
+        <tr><td><code>swrlb:multiply(?r, 3.8, 1000)</code></td><td>&mdash;</td><td>?r = 3800</td></tr>
+        <tr><td><code>swrlb:divide(?r, 10, 3)</code></td><td>&mdash;</td><td>?r &#8776; 3.33</td></tr>
+        <tr><td><code>swrlb:abs(?r, -5)</code></td><td>&mdash;</td><td>?r = 5</td></tr>
+        <tr><td><code>swrlb:round(?r, 3.7)</code></td><td>&mdash;</td><td>?r = 4</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-029</span>
+      <span class="badge badge-p1">P1</span>
+      <span class="tc-title">String Functions</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Test string built-in functions</p>
+    <p><strong>Functions:</strong> stringConcat, contains, startsWith, endsWith, matches</p>
+    <p><strong>Results:</strong></p>
+    <table>
+      <thead><tr><th>Function</th><th>Input</th><th>Expected</th></tr></thead>
+      <tbody>
+        <tr><td><code>swrlb:contains(?n, "John")</code></td><td>&ldquo;JohnDoe&rdquo;</td><td>match</td></tr>
+        <tr><td><code>swrlb:startsWith(?n, "Dr")</code></td><td>&ldquo;DrJohnson&rdquo;</td><td>match</td></tr>
+        <tr><td><code>swrlb:endsWith(?n, "Smith")</code></td><td>&ldquo;JaneSmith&rdquo;</td><td>match</td></tr>
+        <tr><td><code>swrlb:matches(?n, "^J.*")</code></td><td>&ldquo;JohnDoe&rdquo;</td><td>match</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-030</span>
+      <span class="badge badge-p2">P2</span>
+      <span class="tc-title">Date/Time Functions</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify date comparison built-ins</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Create rules with date comparisons</li>
+      <li>Execute against individuals with date properties</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>Date comparison works correctly</li>
+      <li>Temporal ordering respected</li>
+    </ul>
+  </div>
+</div>
+
+<!-- VS Code Integration Tests -->
+<div class="card" id="vscode-tests">
+  <h2>9. VS Code Integration Tests</h2>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-031</span>
+      <span class="badge badge-p1">P1</span>
+      <span class="tc-title">SWRL Rules Explorer View</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify SWRL rules appear in VS Code sidebar</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Open VS Code</li>
+      <li>Look for &ldquo;SWRL Rules&rdquo; in sidebar</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>Tree view with all saved rules</li>
+      <li>Each rule shows name and enabled status</li>
+      <li>Click opens rule in editor</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-032</span>
+      <span class="badge badge-p1">P1</span>
+      <span class="tc-title">Command &mdash; New Rule</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify <code>swrl.newRule</code> command</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Open Command Palette (Ctrl+Shift+P)</li>
+      <li>Run &ldquo;SWRL: New Rule&rdquo;</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>SWRL editor opens with empty rule</li>
+      <li>Cursor in rule name field</li>
+      <li>Ready to create new rule</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-033</span>
+      <span class="badge badge-p1">P1</span>
+      <span class="tc-title">Command &mdash; Validate Rule</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify <code>swrl.validateRule</code> command</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Open existing rule</li>
+      <li>Run &ldquo;SWRL: Validate Rule&rdquo;</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>Validation runs on current rule</li>
+      <li>Result shown in notification or output panel</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-034</span>
+      <span class="badge badge-p1">P1</span>
+      <span class="tc-title">Command &mdash; Execute Rule</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify <code>swrl.executeRule</code> command</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Open existing rule</li>
+      <li>Run &ldquo;SWRL: Execute Rule&rdquo;</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>Rule executed against loaded ontology</li>
+      <li>Results displayed in SWRL editor panel</li>
+    </ul>
+  </div>
+</div>
+
+<!-- Error Handling Tests -->
+<div class="card" id="error-tests">
+  <h2>10. Error Handling Tests</h2>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-035</span>
+      <span class="badge badge-p0">P0</span>
+      <span class="tc-title">Backend Unreachable</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify handling when SWRL service is down</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Stop <code>ontology-swrl</code> service</li>
+      <li>Attempt to validate/execute a rule</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>Connection error message</li>
+      <li>Rule text preserved</li>
+      <li>Retry option available</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-036</span>
+      <span class="badge badge-p0">P0</span>
+      <span class="tc-title">Execution Error &mdash; No Ontology Loaded</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify error when executing without loaded ontology</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Open SWRL editor without loading ontology</li>
+      <li>Attempt to execute a rule</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>Error: &ldquo;No ontology loaded for this project&rdquo;</li>
+      <li>Instruction to load ontology first</li>
+    </ul>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-037</span>
+      <span class="badge badge-p1">P1</span>
+      <span class="tc-title">Execution Error &mdash; Rule Causes Inconsistency</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify handling when rule creates contradictions</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Create a rule that would make ontology inconsistent</li>
+      <li>Execute</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>Warning or error about inconsistency</li>
+      <li>Option to rollback inferred axioms</li>
+      <li>Ontology state preserved</li>
+    </ul>
+  </div>
+</div>
+
+<!-- Performance Tests -->
+<div class="card" id="performance-tests">
+  <h2>11. Performance Tests</h2>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-038</span>
+      <span class="badge badge-p1">P1</span>
+      <span class="tc-title">Simple Rule Execution Speed</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Simple rule completes quickly</p>
+    <p><strong>Metrics:</strong></p>
+    <table>
+      <thead><tr><th>Scale</th><th>Target</th></tr></thead>
+      <tbody>
+        <tr><td>10 individuals</td><td>&lt; 1 second</td></tr>
+        <tr><td>100 individuals</td><td>&lt; 3 seconds</td></tr>
+        <tr><td>1000 individuals</td><td>&lt; 10 seconds</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-039</span>
+      <span class="badge badge-p2">P2</span>
+      <span class="tc-title">Complex Rule with Multiple Joins</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Multi-join rule performance</p>
+    <p><strong>Rule:</strong> 5+ body atoms with 3+ variables</p>
+    <p><strong>Metrics:</strong></p>
+    <table>
+      <thead><tr><th>Scale</th><th>Target</th></tr></thead>
+      <tbody>
+        <tr><td>Small ontology</td><td>&lt; 5 seconds</td></tr>
+        <tr><td>Medium ontology</td><td>&lt; 15 seconds</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SW-040</span>
+      <span class="badge badge-p2">P2</span>
+      <span class="tc-title">Rule Statistics Dashboard</span>
+    </div>
+    <p class="tc-objective"><strong>Objective:</strong> Verify statistics display</p>
+    <p><strong>Steps:</strong></p>
+    <ol>
+      <li>Create and execute several rules</li>
+      <li>View statistics section</li>
+    </ol>
+    <p><strong>Expected:</strong></p>
+    <ul>
+      <li>Total rules count</li>
+      <li>Enabled/disabled count</li>
+      <li>Last execution time</li>
+      <li>Total inferred axioms count</li>
+    </ul>
+  </div>
+</div>
+
+<!-- Test Summary Matrix -->
+<div class="card" id="summary-matrix">
+  <h2>Test Summary Matrix</h2>
+  <table class="matrix-table">
+    <thead>
+      <tr><th>Test ID</th><th>Category</th><th>Priority</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>TC-SW-001</td><td>Editor</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-002</td><td>Editor</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-003</td><td>Editor</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-004</td><td>Validation</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-005</td><td>Validation</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-006</td><td>Validation</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-007</td><td>Validation</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-008</td><td>Validation</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-009</td><td>Validation</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-010</td><td>Execution</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-011</td><td>Execution</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-012</td><td>Execution</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-013</td><td>Execution</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-014</td><td>Execution</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-015</td><td>Execution</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-016</td><td>Management</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-017</td><td>Management</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-018</td><td>Management</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-019</td><td>Management</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-020</td><td>Management</td><td><span class="badge badge-p2">P2</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-021</td><td>Management</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-022</td><td>Templates</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-023</td><td>Templates</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-024</td><td>Templates</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-025</td><td>Templates</td><td><span class="badge badge-p2">P2</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-026</td><td>Templates</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-027</td><td>Built-ins</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-028</td><td>Built-ins</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-029</td><td>Built-ins</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-030</td><td>Built-ins</td><td><span class="badge badge-p2">P2</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-031</td><td>VS Code</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-032</td><td>VS Code</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-033</td><td>VS Code</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-034</td><td>VS Code</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-035</td><td>Error Handling</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-036</td><td>Error Handling</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-037</td><td>Error Handling</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-038</td><td>Performance</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-039</td><td>Performance</td><td><span class="badge badge-p2">P2</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SW-040</td><td>Statistics</td><td><span class="badge badge-p2">P2</span></td><td><input type="checkbox"></td></tr>
+    </tbody>
+  </table>
+</div>
+
+</div><!-- /container -->
+</body>
+</html>

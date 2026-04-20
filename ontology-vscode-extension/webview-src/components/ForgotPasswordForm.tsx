@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useAuth } from "../custom-hook/useAuth";
-import { Loader2, ArrowLeft, Mail } from "lucide-react";
+import { Loader2, ArrowLeft, Mail, Bug } from "lucide-react";
+import ReportIssueModal from "./ReportIssueModal";
 
 interface ForgotPasswordFormProps {
   onBackToLogin: () => void;
@@ -12,6 +13,7 @@ const ForgotPasswordForm = ({ onBackToLogin, onResetTokenReceived }: ForgotPassw
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
   const { forgotPassword } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -99,6 +101,20 @@ const ForgotPasswordForm = ({ onBackToLogin, onResetTokenReceived }: ForgotPassw
           </button>
         </div>
       </div>
+
+      {/* Report Issue floating button */}
+      <button
+        onClick={() => setIsReportIssueModalOpen(true)}
+        className="fixed bottom-4 right-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm z-50"
+        title="Report an issue"
+      >
+        <Bug size={14} />
+        Report Issue
+      </button>
+
+      {isReportIssueModalOpen && (
+        <ReportIssueModal onClose={() => setIsReportIssueModalOpen(false)} />
+      )}
     </div>
   );
 };

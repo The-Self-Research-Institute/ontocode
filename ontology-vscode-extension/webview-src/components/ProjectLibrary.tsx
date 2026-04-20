@@ -14,9 +14,11 @@ import {
   Folder,
   Code2,
   Plus,
+  Bug,
 } from "lucide-react";
 import apiClient from "../services/apiClient";
 import { useAuth } from "../custom-hook/useAuth";
+import ReportIssueModal from "./ReportIssueModal";
 
 interface ProjectLibraryProps {
   projectId: string;
@@ -49,6 +51,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [uploading, setUploading] = useState(false);
+  const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [processingFile, setProcessingFile] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -483,6 +486,14 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                   Editor
                 </button>
               )}
+              <button
+                onClick={() => setIsReportIssueModalOpen(true)}
+                className="px-2.5 py-1.5 text-xs text-gray-600 border border-gray-300 bg-gray-50 rounded-md hover:bg-gray-100 transition-colors flex items-center gap-1.5 font-medium"
+                title="Report Issue"
+              >
+                <Bug size={14} />
+                Report Issue
+              </button>
               <label
                 className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${
                   userProjectRole === "VIEWER"
@@ -800,6 +811,15 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             <span>{toast.message}</span>
           </div>
         </div>
+      )}
+
+      {/* Report Issue Modal */}
+      {isReportIssueModalOpen && (
+        <ReportIssueModal
+          projectName={projectName}
+          projectId={projectId}
+          onClose={() => setIsReportIssueModalOpen(false)}
+        />
       )}
     </div>
   );

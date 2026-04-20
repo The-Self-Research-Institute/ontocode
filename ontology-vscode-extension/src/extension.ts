@@ -1110,10 +1110,19 @@ class OntoCodePanel {
                 return;
             }
 
+            const perfStart = Date.now();
+            console.log(`[OntoCode] [PERF] ⏱️ Starting file open pipeline at ${new Date().toISOString()}`);
+
+            const readStart = Date.now();
             const fileData = await (vscode.workspace as any).fs.readFile(selectedUri);
+            console.log(`[OntoCode] [PERF] File read from disk: ${Date.now() - readStart}ms (${(fileData.length / (1024 * 1024)).toFixed(2)}MB)`);
+
             const fileName = selectedUri.path.substring(selectedUri.path.lastIndexOf('/') + 1);
             const fileSize = fileData.length;
+
+            const base64Start = Date.now();
             const base64Content = uint8ArrayToBase64(fileData);
+            console.log(`[OntoCode] [PERF] Base64 encoding: ${Date.now() - base64Start}ms (base64 size: ${(base64Content.length / (1024 * 1024)).toFixed(2)}MB)`);
 
             // Check deployment type
             const deploymentType = await this.getStoredDeploymentType();
@@ -1278,6 +1287,8 @@ class OntoCodePanel {
                 replaceFileId: existingFileId,
                 openAfterUpload: true
             });
+
+            console.log(`[OntoCode] [PERF] ⏱️ Total file open pipeline: ${Date.now() - perfStart}ms`);
 
             if (!uploadResult) {
                 return;
@@ -2541,8 +2552,8 @@ class OntoCodePanel {
                 // Fallback: check status and trigger fileReady if COMPLETED (covers cases where WebSocket misses IMPORT_COMPLETED)
                 // Calculate adaptive timeout based on file size
                 const fileSizeMB = fileData.length / (1024 * 1024);
-                const estimatedMinutes = Math.ceil(fileSizeMB / 10); // ~10MB per minute with optimizations
-                const maxAttempts = Math.max(20, Math.ceil(estimatedMinutes * 60 / 5)); // At least 20 attempts, or enough for estimated time
+                const estimatedMinutes = Math.max(15, Math.ceil(fileSizeMB / 10)); // At least 15 min, ~10MB per minute
+                const maxAttempts = Math.max(60, Math.ceil(estimatedMinutes * 60 / 5)); // At least 60 attempts
                 console.log(`[OntoCode] File size: ${fileSizeMB.toFixed(1)}MB, estimated time: ${estimatedMinutes} minutes, max attempts: ${maxAttempts}`);
 
                 // Send initial estimated time
@@ -2822,6 +2833,7 @@ class OntoCodePanel {
         options?: { skipDuplicateCheck?: boolean; replaceFileId?: string | null; openAfterUpload?: boolean }
     ): Promise<{ fileId: string; fileName: string } | null> {
         console.log(`[OntoCode] 📤 Uploading file to project: ${projectId}, file: ${fileName}, size: ${(fileSize / (1024 * 1024)).toFixed(2)}MB`);
+        const uploadPerfStart = Date.now();
 
         try {
             // Get auth token
@@ -2957,6 +2969,9 @@ class OntoCodePanel {
             const uploadUrl = `${GATEWAY_URL}/api/projects/${projectId}/files`;
             console.log(`[OntoCode] Upload URL: ${uploadUrl}`);
 
+            console.log(`[OntoCode] [PERF] Pre-upload checks (duplicate, deployment): ${Date.now() - uploadPerfStart}ms`);
+
+            const httpUploadStart = Date.now();
             const response = await vscode.window.withProgress({
                 location: vscode.ProgressLocation.Notification,
                 title: `Uploading ${finalFileName}`,
@@ -2995,6 +3010,8 @@ class OntoCodePanel {
 
                 return uploadResponse;
             });
+
+            console.log(`[OntoCode] [PERF] HTTP upload (POST to gateway): ${Date.now() - httpUploadStart}ms`);
 
             if (response.status === 200 || response.status === 201) {
                 console.log('[OntoCode] ✅ File uploaded to project successfully');
