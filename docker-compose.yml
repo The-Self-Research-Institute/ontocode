@@ -213,7 +213,7 @@ services:
         limits:
           memory: 4g
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8083/actuator/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8083/actuator/health/liveness"]
       interval: 20s
       timeout: 10s
       retries: 8
