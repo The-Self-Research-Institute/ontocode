@@ -382,6 +382,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const gRef = useRef<SVGGElement>(null);
   const simulationRef = useRef<d3.Simulation<D3Node, D3Edge> | null>(null);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  // Persist node positions across expand/collapse re-renders (Protégé-style stability)
+  const nodePositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
 
   // State - Hierarchical Lazy Loading
   const [allNodes, setAllNodes] = useState<OntologyNode[]>([]);  // All data from API
@@ -1207,8 +1209,27 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     
     console.log('[AdvancedGraphView] ✅ Arrow markers created with specific property colors');
 
-    // Prepare D3 data with better initial positioning
+    // Prepare D3 data — reuse saved positions for stable expand/collapse
+    const savedPositions = nodePositionsRef.current;
+    const hasSavedPositions = savedPositions.size > 0;
     const d3Nodes: D3Node[] = filteredNodes.map((node, index) => {
+      // Reuse previous position if the node was already rendered (Protégé-style stability)
+      const saved = savedPositions.get(node.id);
+      if (saved) {
+        return { ...node, x: saved.x, y: saved.y };
+      }
+
+      // New node — place near its parent if we have a parent position
+      if (hasSavedPositions) {
+        const parentEdge = allEdges.find(e => e.from === node.id && (e.type === 'subClassOf' || e.type === 'subPropertyOf' || e.type === 'instanceOf'));
+        const parentPos = parentEdge ? savedPositions.get(parentEdge.to) : undefined;
+        if (parentPos) {
+          const angle = Math.random() * Math.PI * 2;
+          const dist = 80 + Math.random() * 60;
+          return { ...node, x: parentPos.x + Math.cos(angle) * dist, y: parentPos.y + Math.sin(angle) * dist };
+        }
+      }
+
       let x: number, y: number;
       
       if (visualizationType === 'vowl') {
@@ -1216,18 +1237,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         const cols = Math.ceil(Math.sqrt(filteredNodes.length));
         const col = index % cols;
         const row = Math.floor(index / cols);
-        const cellWidth = Math.max(150, (width - 300) / cols); // Increased minimum cell width
-        const cellHeight = Math.max(150, (height - 300) / cols); // Increased minimum cell height
+        const cellWidth = Math.max(150, (width - 300) / cols);
+        const cellHeight = Math.max(150, (height - 300) / cols);
         
-        // More randomization within each cell to prevent grid-like clustering
-        x = 150 + col * cellWidth + (Math.random() - 0.5) * 120; // Increased from 50
-        y = 150 + row * cellHeight + (Math.random() - 0.5) * 120; // Increased from 50
+        x = 150 + col * cellWidth + (Math.random() - 0.5) * 120;
+        y = 150 + row * cellHeight + (Math.random() - 0.5) * 120;
       } else if (visualizationType === 'ontograph' && ontographLayoutType === 'spring') {
-        // Random spread for spring layout
         x = width / 2 + (Math.random() - 0.5) * width * 0.6;
         y = height / 2 + (Math.random() - 0.5) * height * 0.6;
       } else {
-        // Standard random positioning
         x = width / 2 + (Math.random() - 0.5) * 100;
         y = height / 2 + (Math.random() - 0.5) * 100;
       }
@@ -1279,8 +1297,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           positionMap = layouts.applyOntoGraphLayout(filteredNodes, filteredEdges, {
             width,
             height,
-            horizontalSpacing: isLarge ? 150 : 200,
-            verticalSpacing: isLarge ? 60 : 80,
+            horizontalSpacing: isLarge ? 200 : 280,
+            verticalSpacing: isLarge ? 70 : 90,
             centerX: width / 2,
             centerY: height / 2
           });
@@ -1489,14 +1507,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             }
             return size * 3.5 * scaleFactor;
           }
-          // OntoGraph mode - larger collision to prevent overlap
+          // OntoGraph mode - larger collision to prevent overlap with card nodes
           if (visualizationType === 'ontograph') {
             if (node.type === 'class') {
-              return size * 7.0; // Much larger for OntoGraph classes
+              return size * 8.5;
             } else if (node.type === 'datatype') {
-              return size * 6.5;
+              return size * 7.5;
             }
-            return size * 6.0;
+            return size * 7.0;
           }
           return size * 3.5; // Standard mode
         })
@@ -1538,7 +1556,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       }).strength(visualizationType === 'force' ? 0.14 : visualizationType === 'vowl' ? 0.05 : 0.02) : null)
       .alphaDecay(usePhysics ? (visualizationType === 'vowl' ? 0.02 : 0.03) : 1) // Increased for faster settling
       .velocityDecay(usePhysics ? (visualizationType === 'vowl' ? 0.6 : 0.5) : 0.8) // Increased for more damping
-      .alpha(isLayoutPaused || !usePhysics ? 0 : 1.0)
+      .alpha(isLayoutPaused || !usePhysics ? 0 : (hasSavedPositions ? 0.15 : 1.0))
       .alphaMin(0.001)
       .alphaTarget(0);
 
@@ -1557,15 +1575,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     simulationRef.current = simulation;
 
     // Pre-calculate stable positions before rendering (run simulation silently)
+    // Skip heavy pre-ticks when resuming from saved positions (expand/collapse)
     if (usePhysics && !isLayoutPaused) {
-      // Run simulation for several ticks to get stable positions
-      const preTicks = visualizationType === 'vowl' ? 60 : 50;
+      const preTicks = hasSavedPositions ? 10 : (visualizationType === 'vowl' ? 60 : 50);
       for (let i = 0; i < preTicks; i++) {
         simulation.tick();
       }
-      // Reduce alpha so nodes are nearly stable when rendered
-      simulation.alpha(0.3);
-      console.log(`[AdvancedGraphView] Pre-calculated ${preTicks} ticks for stable initial positions`);
+      simulation.alpha(hasSavedPositions ? 0.05 : 0.3);
+      console.log(`[AdvancedGraphView] Pre-calculated ${preTicks} ticks ${hasSavedPositions ? '(incremental, positions preserved)' : 'for stable initial positions'}`);
     }
 
     // Add bounding box force to keep nodes within viewport (especially important for VOWL)
@@ -1640,17 +1657,17 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           return isDark ? '#94a3b8' : (vowlEdge.stroke || '#000000');
         }
         if (visualizationType === 'ontograph') {
-          // Protégé-style colors with dark mode support
-          if (d.type === 'subClassOf') return isDark ? '#64B5F6' : '#1976D2'; // Blue for hierarchy
-          if (d.type === 'instanceOf') return isDark ? '#fbbf24' : '#FFA726'; // Orange
+          // Modern edge colors matching node accent palette
+          if (d.type === 'subClassOf') return isDark ? '#60a5fa' : '#3b82f6'; // Blue for hierarchy
+          if (d.type === 'instanceOf') return isDark ? '#a78bfa' : '#7c3aed'; // Purple
           if (d.type === 'propertyRelation') {
             const sourceNode = allNodes.find(n => n.id === d.from);
             const targetNode = allNodes.find(n => n.id === d.to);
-            if (sourceNode?.type === 'annotation') return isDark ? '#a78bfa' : '#8b5cf6'; // Purple
-            if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return isDark ? '#f472b6' : '#ec4899'; // Pink
-            return isDark ? '#81C784' : '#388E3C'; // Green for object properties
+            if (sourceNode?.type === 'annotation') return isDark ? '#818cf8' : '#4f46e5'; // Indigo
+            if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return isDark ? '#f472b6' : '#db2777'; // Pink
+            return isDark ? '#34d399' : '#059669'; // Emerald for object properties
           }
-          return isDark ? '#64B5F6' : '#1976D2';
+          return isDark ? '#60a5fa' : '#3b82f6';
         }
         // Force mode - with dark mode support
         if (d.type === 'subClassOf') return isDark ? '#fbbf24' : '#FFA500';
@@ -1663,7 +1680,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return isDark ? '#cbd5e1' : '#000000';
       })
       .attr('stroke-width', d => {
-        const baseWidth = visualizationType === 'vowl' ? 1 : (visualizationType === 'ontograph' ? 2 : 2);
+        const baseWidth = visualizationType === 'vowl' ? 1 : (visualizationType === 'ontograph' ? 1.5 : 2);
         return selectedEdgeId === d.id ? baseWidth + 2 : baseWidth;
       })
       .attr('stroke-opacity', d => {
@@ -1680,9 +1697,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           return vowlEdge.strokeDasharray || null;
         }
         if (visualizationType === 'ontograph') {
-          // Dashed lines for non-hierarchy edges in Protégé style
-          if (d.type === 'instanceOf') return '5 3'; // Dashed for instances
-          if (d.type === 'propertyRelation') return '8 4'; // Longer dash for properties
+          // Clean dashing: solid for hierarchy, subtle dash for properties
+          if (d.type === 'instanceOf') return '6 3';
+          if (d.type === 'propertyRelation') return '4 3';
           return null; // Solid for subClassOf
         }
         // Force mode - match reference image
@@ -1951,7 +1968,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .call(d3.drag<SVGGElement, D3Node>()
         .on('start', dragStarted)
         .on('drag', dragged)
-        .on('end', dragEnded) as any);
+        .on('end', dragEnded) as any)
+      .on('dblclick', (event: any, d: D3Node) => {
+        event.stopPropagation();
+        event.preventDefault();
+        // Double-click to expand/collapse children (like Protégé OntoGraf)
+        if (hasChildren(d.id, allEdges, allNodes)) {
+          handleToggleExpansion(d.id);
+        }
+      });
 
     // Node shapes (WebVOWL-style: circles for classes/properties, rectangles for datatypes/individuals)
     node.each(function(d) {
@@ -2081,15 +2106,17 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           // VOWL/OntoGraph: Rectangle for individuals (purple/pink) - dynamic width based on label length
           const label = d.label || '';
           const baseWidth = visualizationType === 'vowl' ? size * 2.8 : (visualizationType === 'ontograph' ? size * 2.8 : size * 2.4);
-          // Calculate width based on label length (approximately 7 pixels per character)
-          const labelWidth = label.length * 7;
+          // Calculate width based on label length (approximately 7 pixels per character), capped
+          const labelWidth = Math.min(label.length * 7, 180);
           const rectWidth = Math.max(baseWidth, labelWidth + 16); // Add padding
+          const maxWidth = visualizationType === 'vowl' ? size * 5.0 : size * 4.5;
+          const finalWidth = Math.min(rectWidth, maxWidth);
           const rectHeight = visualizationType === 'vowl' ? size * 1.8 : (visualizationType === 'ontograph' ? size * 1.8 : size * 1.6);
           nodeGroup.append('rect')
             .attr('class', 'node-shape')
-            .attr('x', -rectWidth / 2)
+            .attr('x', -finalWidth / 2)
             .attr('y', -rectHeight / 2)
-            .attr('width', rectWidth)
+            .attr('width', finalWidth)
             .attr('height', rectHeight)
             .attr('rx', 4)
             .attr('ry', 4)
@@ -2127,77 +2154,106 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
           .on('mouseout', handleNodeMouseOut);
       } else if (visualizationType === 'ontograph') {
-        // Protégé-style: Rounded rectangle for all nodes
+        // Modern hierarchical graph: clean card-style nodes with accent stripe
         const simplifiedLOD = isLargeGraph && viewportBounds.scale < 0.5;
-        const rectWidth = simplifiedLOD ? size * 4 : size * 7.5; // Slightly wider for better label fit
-        const rectHeight = simplifiedLOD ? size * 1.5 : size * 2.0; // Slightly taller
+        const rectWidth = simplifiedLOD ? size * 5 : size * 9;
+        const rectHeight = simplifiedLOD ? size * 1.8 : size * 2.6;
+        const cornerRadius = 8;
         
+        // Modern color palette per type
+        const nodeColors: Record<string, { bg: string; border: string; accent: string; icon: string; text: string }> = {
+          class:      { bg: isDark ? '#1e293b' : '#f8fafc', border: isDark ? '#3b82f6' : '#3b82f6', accent: isDark ? '#3b82f6' : '#3b82f6', icon: '#3b82f6', text: isDark ? '#e2e8f0' : '#1e293b' },
+          individual: { bg: isDark ? '#1e293b' : '#f8fafc', border: isDark ? '#8b5cf6' : '#7c3aed', accent: isDark ? '#8b5cf6' : '#7c3aed', icon: '#7c3aed', text: isDark ? '#e2e8f0' : '#1e293b' },
+          datatype:   { bg: isDark ? '#1e293b' : '#f8fafc', border: isDark ? '#f59e0b' : '#d97706', accent: isDark ? '#f59e0b' : '#d97706', icon: '#d97706', text: isDark ? '#e2e8f0' : '#1e293b' },
+          property:   { bg: isDark ? '#1e293b' : '#f8fafc', border: isDark ? '#10b981' : '#059669', accent: isDark ? '#10b981' : '#059669', icon: '#059669', text: isDark ? '#e2e8f0' : '#1e293b' },
+          dataProperty: { bg: isDark ? '#1e293b' : '#f8fafc', border: isDark ? '#ec4899' : '#db2777', accent: isDark ? '#ec4899' : '#db2777', icon: '#db2777', text: isDark ? '#e2e8f0' : '#1e293b' },
+          annotation: { bg: isDark ? '#1e293b' : '#f8fafc', border: isDark ? '#6366f1' : '#4f46e5', accent: isDark ? '#6366f1' : '#4f46e5', icon: '#4f46e5', text: isDark ? '#e2e8f0' : '#1e293b' },
+        };
+        const colors = nodeColors[d.type] || nodeColors['class'];
+        
+        // Main card background with subtle shadow
         nodeGroup.append('rect')
           .attr('class', 'node-shape')
           .attr('x', -rectWidth / 2)
           .attr('y', -rectHeight / 2)
           .attr('width', rectWidth)
           .attr('height', rectHeight)
-          .attr('rx', 6) // More rounded
-          .attr('fill', d.type === 'class' ? '#FFF9C4' : (d.type === 'individual' ? '#E1F5FE' : '#F5F5F5')) // Light yellow for classes, light blue for individuals
-          .attr('stroke', d.type === 'class' ? '#FBC02D' : (d.type === 'individual' ? '#0288D1' : '#9E9E9E')) // Darker borders
-          .attr('stroke-width', simplifiedLOD ? 1 : 2)
-          .style('filter', simplifiedLOD ? 'none' : 'drop-shadow(0 2px 4px rgba(0,0,0,0.15))')
+          .attr('rx', cornerRadius)
+          .attr('fill', colors.bg)
+          .attr('stroke', colors.border)
+          .attr('stroke-width', simplifiedLOD ? 1 : 1.5)
+          .style('filter', simplifiedLOD ? 'none' : 'drop-shadow(0 1px 3px rgba(0,0,0,0.12)) drop-shadow(0 1px 2px rgba(0,0,0,0.06))')
           .on('click', (event: any, d: any) => handleNodeClick(event, d as D3Node))
           .on('contextmenu', (event: any, d: any) => handleNodeRightClick(event, d as D3Node))
           .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
           .on('mouseout', handleNodeMouseOut);
         
-        // Add icon circle for OntoGraph nodes (skip in simplified LOD)
         if (!simplifiedLOD) {
-          nodeGroup.append('circle')
-            .attr('cx', -rectWidth / 2 + 15)
-            .attr('cy', 0)
-            .attr('r', 7)
-            .attr('fill', d.type === 'class' ? '#FFA000' : (d.type === 'individual' ? '#1976D2' : '#757575')) // Stronger icon colors
-            .attr('stroke', '#fff')
-            .attr('stroke-width', 1);
-            
-          // Add letter icon
-          nodeGroup.append('text')
-            .attr('x', -rectWidth / 2 + 15)
-            .attr('y', 4)
-            .attr('text-anchor', 'middle')
-            .attr('font-size', '10px')
-            .attr('font-weight', 'bold')
-            .attr('fill', '#fff')
-            .text(d.type === 'class' ? 'C' : (d.type === 'individual' ? 'I' : 'P'))
-            .style('pointer-events', 'none');
-
-          // Add expander icon [+] on the right (skip in simplified LOD)
-          const isExpanded = expandedNodeIds.has(d.id);
-          const expanderGroup = nodeGroup.append('g')
-            .attr('class', 'expander-icon')
-            .attr('cursor', 'pointer')
-            .on('click', (event: any) => {
-              event.stopPropagation();
-              handleToggleExpansion(d.id);
-            });
-
-          expanderGroup.append('rect')
-            .attr('x', rectWidth / 2 - 18)
-            .attr('y', -8)
-            .attr('width', 16)
+          // Left accent stripe
+          nodeGroup.append('rect')
+            .attr('x', -rectWidth / 2)
+            .attr('y', -rectHeight / 2)
+            .attr('width', 4)
+            .attr('height', rectHeight)
+            .attr('rx', 0)
+            .attr('fill', colors.accent)
+            .style('pointer-events', 'none')
+            // Clip to card's left rounded corners
+            .attr('clip-path', `inset(0 0 0 0 round ${cornerRadius}px 0 0 ${cornerRadius}px)`);
+          
+          // Type badge (small pill)
+          const badgeText = d.type === 'class' ? 'C' : (d.type === 'individual' ? 'I' : (d.type === 'datatype' ? 'D' : (d.type === 'dataProperty' ? 'DP' : 'P')));
+          const badgeWidth = badgeText.length > 1 ? 22 : 16;
+          
+          nodeGroup.append('rect')
+            .attr('x', -rectWidth / 2 + 10)
+            .attr('y', -rectHeight / 2 + 5)
+            .attr('width', badgeWidth)
             .attr('height', 16)
-            .attr('rx', 3)
-            .attr('fill', '#fff')
-            .attr('stroke', '#9E9E9E')
-            .attr('stroke-width', 1);
-
-          expanderGroup.append('text')
-            .attr('x', rectWidth / 2 - 10)
-            .attr('y', 4)
-            .attr('text-anchor', 'middle')
-            .attr('font-size', '14px')
-            .attr('font-weight', 'bold')
-            .attr('fill', '#616161')
-            .text(isExpanded ? '−' : '+')
+            .attr('rx', 4)
+            .attr('fill', colors.accent)
             .style('pointer-events', 'none');
+          
+          nodeGroup.append('text')
+            .attr('x', -rectWidth / 2 + 10 + badgeWidth / 2)
+            .attr('y', -rectHeight / 2 + 14)
+            .attr('text-anchor', 'middle')
+            .attr('font-size', '9px')
+            .attr('font-weight', '700')
+            .attr('fill', '#ffffff')
+            .attr('letter-spacing', '0.5px')
+            .text(badgeText)
+            .style('pointer-events', 'none');
+
+          // Expander icon on the right
+          if (hasChildren(d.id, allEdges, allNodes)) {
+            const isExpanded = expandedNodeIds.has(d.id);
+            const expanderGroup = nodeGroup.append('g')
+              .attr('class', 'expander-icon')
+              .attr('cursor', 'pointer')
+              .on('click', (event: any) => {
+                event.stopPropagation();
+                handleToggleExpansion(d.id);
+              });
+
+            expanderGroup.append('circle')
+              .attr('cx', rectWidth / 2 - 14)
+              .attr('cy', 0)
+              .attr('r', 9)
+              .attr('fill', isDark ? '#334155' : '#f1f5f9')
+              .attr('stroke', colors.border)
+              .attr('stroke-width', 1);
+
+            expanderGroup.append('text')
+              .attr('x', rectWidth / 2 - 14)
+              .attr('y', 4)
+              .attr('text-anchor', 'middle')
+              .attr('font-size', '13px')
+              .attr('font-weight', '600')
+              .attr('fill', colors.accent)
+              .text(isExpanded ? '−' : '+')
+              .style('pointer-events', 'none');
+          }
         }
       } else {
         // Force mode classes OR default circle rendering
@@ -2239,6 +2295,79 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .on('mouseout', handleNodeMouseOut);
         }
       }
+
+      // Add expander +/- icon for non-ontograph modes (ontograph handles its own)
+      if (visualizationType !== 'ontograph' && hasChildren(d.id, allEdges, allNodes)) {
+        const isExpanded = expandedNodeIds.has(d.id);
+        const isDark = document.documentElement.classList.contains('dark');
+        
+        // Position the expander at the bottom-right of the node shape
+        let expanderX = 0;
+        let expanderY = 0;
+        
+        if (visualizationType === 'vowl') {
+          if (nodeType === 'class') {
+            const r = size * 1.8;
+            expanderX = r * 0.7;
+            expanderY = r * 0.7;
+          } else if (nodeType === 'datatype') {
+            expanderX = (size * 4.2) / 2 - 2;
+            expanderY = (size * 2.0) / 2 - 2;
+          } else if (nodeType === 'individual') {
+            const label = d.label || '';
+            const baseWidth = size * 2.8;
+            const labelWidth = Math.min(label.length * 7, 180);
+            const rectWidth = Math.max(baseWidth, labelWidth + 16);
+            const maxWidth = size * 5.0;
+            const finalW = Math.min(rectWidth, maxWidth);
+            expanderX = finalW / 2 - 2;
+            expanderY = (size * 1.8) / 2 - 2;
+          } else {
+            expanderX = size * 1.2;
+            expanderY = size * 0.5;
+          }
+        } else if (visualizationType === 'force') {
+          if (nodeType === 'class') {
+            expanderX = size * 3.0;
+            expanderY = size * 1.5;
+          } else if (nodeType === 'datatype') {
+            expanderX = size * 0.8;
+            expanderY = size * 0.3;
+          } else if (nodeType === 'individual') {
+            expanderX = size * 1.3;
+            expanderY = size * 0.5;
+          } else {
+            expanderX = size * 1.0;
+            expanderY = size * 0.5;
+          }
+        }
+
+        const expanderGroup = nodeGroup.append('g')
+          .attr('class', 'expander-icon')
+          .attr('cursor', 'pointer')
+          .on('click', (event: any) => {
+            event.stopPropagation();
+            handleToggleExpansion(d.id);
+          });
+
+        expanderGroup.append('circle')
+          .attr('cx', expanderX)
+          .attr('cy', expanderY)
+          .attr('r', 8)
+          .attr('fill', isDark ? '#374151' : '#ffffff')
+          .attr('stroke', isDark ? '#9ca3af' : '#6b7280')
+          .attr('stroke-width', 1.5);
+
+        expanderGroup.append('text')
+          .attr('x', expanderX)
+          .attr('y', expanderY + 4)
+          .attr('text-anchor', 'middle')
+          .attr('font-size', '12px')
+          .attr('font-weight', 'bold')
+          .attr('fill', isDark ? '#d1d5db' : '#374151')
+          .text(isExpanded ? '−' : '+')
+          .style('pointer-events', 'none');
+      }
     });
 
     // Node labels - INSIDE for WebVOWL and OntoGraph, outside for force mode
@@ -2251,15 +2380,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         if (visualizationType === 'ontograph') {
           const size = d.size || settings.nodeSize;
           const simplifiedLOD = isLargeGraph && viewportBounds.scale < 0.5;
-          const rectWidth = simplifiedLOD ? size * 4 : size * 7.5;
-          return -rectWidth / 2 + 30; // Offset from icon
+          const rectWidth = simplifiedLOD ? size * 5 : size * 9;
+          return -rectWidth / 2 + 16; // Aligned after accent stripe
         }
         if (visualizationType === 'force') return 0; // Centered labels for force mode
         return (d.size || settings.nodeSize) + 8;
       })
       .attr('dy', d => {
         if (visualizationType === 'vowl') return 5;
-        if (visualizationType === 'ontograph') return 5;
+        if (visualizationType === 'ontograph') return 6; // Vertically centered in taller card
         if (visualizationType === 'force') return 4; // Vertically centered for force mode
         return 4;
       })
@@ -2271,17 +2400,18 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       })
       .attr('font-size', d => {
         if (visualizationType === 'vowl') return 11;
-        if (visualizationType === 'ontograph') return 13; // Increased for better readability
+        if (visualizationType === 'ontograph') return 12;
         if (visualizationType === 'force') return 11; // Smaller font for better fit in ovals
         return 13;
       })
       .attr('font-weight', d => {
-        if (visualizationType === 'vowl' || visualizationType === 'ontograph') return '600';
+        if (visualizationType === 'vowl' || visualizationType === 'ontograph') return '500';
         if (visualizationType === 'force') return '600'; // Bold for better contrast
         return '500';
       })
       .attr('font-family', d => {
-        if (visualizationType === 'vowl' || visualizationType === 'ontograph' || visualizationType === 'force') return 'Arial, sans-serif';
+        if (visualizationType === 'ontograph') return '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        if (visualizationType === 'vowl' || visualizationType === 'force') return 'Arial, sans-serif';
         return 'inherit';
       })
       .attr('fill', d => {
@@ -2291,7 +2421,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           return isExternal ? '#ffffff' : '#000000';
         }
         if (visualizationType === 'ontograph') {
-          return '#1A237E'; // Dark blue text for OntoGraph
+          const isDark = document.documentElement.classList.contains('dark');
+          return isDark ? '#e2e8f0' : '#1e293b'; // Slate tones for modern look
         }
         if (visualizationType === 'force') {
           // Black text for good contrast on orange/blue backgrounds
@@ -2319,6 +2450,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         if (visualizationType === 'ontograph' && !showLabels) {
           return ''; // Hide labels when zoomed out on large graphs
         }
+        if (visualizationType === 'ontograph') {
+          // Truncate to fit within card (wider cards = more chars)
+          const label = d.label || '';
+          return label.length > 22 ? label.substring(0, 20) + '..' : label;
+        }
         if (visualizationType === 'force') {
           // Truncate long labels to fit within ovals (max 20 characters)
           const label = d.label || '';
@@ -2330,7 +2466,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .style('user-select', 'none');
 
     // Node type badge - positioned below node to avoid covering labels
-    node.append('text')
+    // Skip for ontograph mode since badges are built into the card design
+    node.filter(d => visualizationType !== 'ontograph')
+      .append('text')
       .attr('dx', 0)
       .attr('dy', d => {
         const size = d.size || settings.nodeSize;
@@ -2358,7 +2496,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     const updateInterval = nodeCount > 100 ? 3 : 2; // Skip more frames for large graphs
     
     // Force initial render to show nodes immediately
-    if (visualizationType === 'ontograph') {
+    if (visualizationType === 'ontograph' && ontographLayoutType !== 'spring') {
+      simulation.alpha(0.01).restart(); // Minimal alpha since positions are fixed
+    } else if (visualizationType === 'ontograph') {
       simulation.alpha(1).restart();
     }
     
@@ -2524,6 +2664,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
           node.attr('transform', d => `translate(${d.x},${d.y})`);
           
+          // Persist node positions so expand/collapse doesn't scramble the graph
+          d3Nodes.forEach(n => {
+            if (n.x != null && n.y != null) {
+              nodePositionsRef.current.set(n.id, { x: n.x, y: n.y });
+            }
+          });
+
           ticking = false;
         });
       }
@@ -2684,6 +2831,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     zoomRef.current = zoom;
     svg.call(zoom as any);
+    // Disable default double-click zoom so dblclick on nodes triggers expand/collapse
+    svg.on('dblclick.zoom', null);
 
     // Apply initial transform for small graphs (zoom in closer)
     if (nodeCount < 30) {
@@ -3898,10 +4047,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         >
           <option value="force">Force-Directed Graph</option>
           <option value="vowl">WebVOWL Notation</option>
-          <option value="ontograph">OntoGraph (Protégé-style)</option>
+          <option value="ontograph">Hierarchical Graph</option>
         </select>
 
-        {/* OntoGraph Specific Toolbar (Protégé Style) */}
+        {/* Hierarchical Graph Toolbar */}
         {visualizationType === 'ontograph' && (
           <>
             <div style={styles.divider} />
@@ -4289,6 +4438,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             }}
             showClassHierarchy={showClassHierarchy}
             vowlLegend={dynamicLegend}
+            onGraphNodeExpand={(nodeId) => {
+              handleToggleExpansion(nodeId);
+            }}
+            onGraphNodeCollapse={(nodeId) => {
+              handleToggleExpansion(nodeId);
+            }}
+            graphExpandedNodeIds={expandedNodeIds}
+            graphVisibleNodeIds={visibleNodeIds}
           />
         )}
       </div>

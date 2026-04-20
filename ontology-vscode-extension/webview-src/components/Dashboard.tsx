@@ -628,7 +628,7 @@ const ReasonerSettingsDialog = ({
             <input type="checkbox" checked={isSynced} onChange={onToggleSync} className="rounded border-gray-300" />
             Synchronize reasoner after edits
           </label>
-          <p className="text-xs text-gray-500">Matches Protégé: keep the reasoner in sync or run manually.</p>
+          <p className="text-xs text-gray-500">Keep the reasoner in sync with edits, or run manually when needed.</p>
         </div>
       </div>
     </div>
