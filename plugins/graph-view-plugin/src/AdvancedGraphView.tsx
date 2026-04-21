@@ -159,7 +159,7 @@ const DEFAULT_SETTINGS: GraphSettings = {
   lazyLoad: true,
   multiSelect: true,
   contextMenu: true,
-  tooltips: false  // Disabled by default to avoid tooltip issues
+  tooltips: true
 };
 
 const DEFAULT_FILTERS: GraphFilters = {
@@ -779,15 +779,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     console.log(`[Filtering] visibleNodes: ${visibleNodes.length}, after type filter: ${filtered.length}`);
 
-    // Search filter (Note: Search now handled by handleSearch with path expansion)
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(node =>
-        node.label.toLowerCase().includes(query) ||
-        node.id.toLowerCase().includes(query) ||
-        node.description?.toLowerCase().includes(query)
-      );
-    }
+    // Search filter: instead of hiding non-matching nodes, keep all visible nodes.
+    // Matching nodes are highlighted via the visual update effect (glow/stroke).
+    // The searchQuery is tracked in state and applied as a visual highlight only.
 
     // Sidebar search filter - filters the visible graph
     if (sidebarSearchTerm) {
@@ -1114,9 +1108,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         
         console.log('[AdvancedGraphView] ✅ Set allNodes:', graphData.nodes.length, 'allEdges:', graphData.edges.length);
         
-        // Use collapseAllNodes function for consistent initial state
-        // This shows root entities + first-level children for ALL entity types
-        const { newExpandedIds, newVisibleIds } = collapseAllNodes(graphData.nodes, graphData.edges);
+        // Use expandAll for initial state - show full hierarchy like Protégé OntoGraf
+        // This ensures all nodes and subClassOf edges are visible on load
+        const { newExpandedIds, newVisibleIds } = expandAllNodes(graphData.nodes);
         
         updateHierarchyState(() => ({
           visible: newVisibleIds,
@@ -1981,44 +1975,41 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .attr('text-anchor', 'middle')
       .attr('dominant-baseline', 'middle')
       .text(d => {
-        // Show full label in WebVOWL mode with functional indicator
+        // Build characteristic suffix from all OWL property characteristics on the edge
+        // Format: "(F,IF,S,T,A,R,Ir)" — only includes characteristics actually present
+        const buildCharSuffix = (edge: any): string => {
+          const m = edge.metadata || {};
+          const flags: string[] = [];
+          if (isFunctionalEdge(edge)) flags.push('F');
+          if (m.inverseFunctional) flags.push('IF');
+          if (m.symmetric) flags.push('S');
+          if (m.transitive) flags.push('T');
+          if (m.asymmetric) flags.push('A');
+          if (m.reflexive) flags.push('R');
+          if (m.irreflexive) flags.push('Ir');
+          return flags.length > 0 ? ` (${flags.join(',')})` : '';
+        };
+
+        // Show full label in WebVOWL mode with characteristic indicators
         if (visualizationType === 'vowl') {
           const baseLabel = d.label || d.type || '';
-          const isFunctional = isFunctionalEdge(d);
-          const isInverseFunctional = d.metadata?.inverseFunctional;
-          
-          // Format like reference image: "tag of (functional)"
-          if (isFunctional && isInverseFunctional) {
-            return `${baseLabel} (F, IF)`;
-          } else if (isFunctional) {
-            return `${baseLabel} (F)`;
-          } else if (isInverseFunctional) {
-            return `${baseLabel} (IF)`;
-          }
-          return baseLabel;
+          return `${baseLabel}${buildCharSuffix(d)}`;
         }
-        
-        // Add property type prefix and functional indicator for clarity
+
+        // Add property type prefix and characteristic indicators for clarity
         if (settings.showLabels && d.type === 'propertyRelation') {
           const sourceNode = allNodes.find(n => n.id === d.from);
           const targetNode = allNodes.find(n => n.id === d.to);
           const label = d.label || '';
-          const isFunctional = isFunctionalEdge(d);
-          const isInverseFunctional = d.metadata?.inverseFunctional;
-          
+
           let prefix = '';
           if (sourceNode?.type === 'annotation') prefix = '📝'; // Annotation property
           else if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') prefix = '📊'; // Data property
           else prefix = '🔗'; // Object property
-          
-          let suffix = '';
-          if (isFunctional && isInverseFunctional) suffix = ' (F, IF)';
-          else if (isFunctional) suffix = ' (F)';
-          else if (isInverseFunctional) suffix = ' (IF)';
-          
-          return `${prefix} ${label}${suffix}`;
+
+          return `${prefix} ${label}${buildCharSuffix(d)}`;
         }
-        
+
         return settings.showLabels ? (d.label || '') : '';
       })
       .style('pointer-events', 'none')
@@ -2926,13 +2917,22 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     // Disable default double-click zoom so dblclick on nodes triggers expand/collapse
     svg.on('dblclick.zoom', null);
 
-    // Apply initial transform for small graphs (zoom in closer)
-    if (nodeCount < 30) {
-      const initialTransform = d3.zoomIdentity
-        .translate(-5.47574, -56.0665)
-        .scale(1.16629);
-      svg.call(zoom.transform as any, initialTransform);
-    }
+    // Auto-fit graph to viewport after DOM renders using getBBox for accuracy
+    setTimeout(() => {
+      if (!svgRef.current || !gRef.current || !zoomRef.current) return;
+      const svgEl = d3.select(svgRef.current);
+      const bounds = (gRef.current as any).getBBox();
+      const w = svgRef.current.clientWidth || width;
+      const h = svgRef.current.clientHeight || height;
+      if (bounds.width < 1 || bounds.height < 1) return;
+      const scale = Math.min(0.9 / Math.max(bounds.width / w, bounds.height / h), 2);
+      const tx = w / 2 - scale * (bounds.x + bounds.width / 2);
+      const ty = h / 2 - scale * (bounds.y + bounds.height / 2);
+      svgEl.call(
+        zoomRef.current.transform as any,
+        d3.zoomIdentity.translate(tx, ty).scale(scale)
+      );
+    }, 50);
 
     // Log performance metrics
     const endTime = performance.now();
@@ -3003,11 +3003,36 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return 0.85;
       });
       
-    // Update nodes
+    // Update nodes — search highlight: glow + bright stroke on matches, dim others
+    const searchLower = searchQuery ? searchQuery.toLowerCase() : '';
     g.selectAll('.node-shape')
-      .attr('stroke', (d: any) => selectedNodes.has(d.id) ? '#667eea' : (visualizationType === 'vowl' ? '#1f2937' : '#fff'))
-      .attr('stroke-width', (d: any) => selectedNodes.has(d.id) ? 4 : 2)
+      .attr('stroke', (d: any) => {
+        if (visualizationType === 'ontograph') return 'none'; // handled by card styles
+        if (searchLower && (
+          d.label?.toLowerCase().includes(searchLower) ||
+          d.id?.toLowerCase().includes(searchLower)
+        )) return '#f59e0b'; // amber highlight for search match
+        return selectedNodes.has(d.id) ? '#667eea' : (visualizationType === 'vowl' ? '#1f2937' : '#fff');
+      })
+      .attr('stroke-width', (d: any) => {
+        if (searchLower && (
+          d.label?.toLowerCase().includes(searchLower) ||
+          d.id?.toLowerCase().includes(searchLower)
+        )) return 4;
+        return selectedNodes.has(d.id) ? 4 : 2;
+      })
+      .attr('filter', (d: any) => {
+        if (searchLower && (
+          d.label?.toLowerCase().includes(searchLower) ||
+          d.id?.toLowerCase().includes(searchLower)
+        )) return 'url(#search-glow)';
+        return null;
+      })
       .style('opacity', (n: any) => {
+        if (searchLower) {
+          const isMatch = n.label?.toLowerCase().includes(searchLower) || n.id?.toLowerCase().includes(searchLower);
+          return isMatch ? 1 : 0.2;
+        }
         if (hoveredNode) {
           const isConnected = allEdges.some(e =>
             (e.from === hoveredNode && e.to === n.id) ||
@@ -3018,7 +3043,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return 1;
       });
       
-  }, [selectedNodes, selectedEdgeId, hoveredEdgeId, hoveredNode, visualizationType, settings.showLabels, allEdges]);
+  }, [selectedNodes, selectedEdgeId, hoveredEdgeId, hoveredNode, visualizationType, settings.showLabels, allEdges, searchQuery]);
 
   /**
    * ========================================================================
@@ -3101,8 +3126,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
   const handleSearch = useCallback((query: string) => {
     if (!query) {
-      // Clear search - use collapseAll for consistent behavior (shows roots + first level)
-      const { newExpandedIds, newVisibleIds } = collapseAllNodes(allNodes, allEdges);
+      // Clear search — restore full expanded view
+      const { newExpandedIds, newVisibleIds } = expandAllNodes(allNodes);
       updateHierarchyState(() => ({
         visible: newVisibleIds,
         expanded: newExpandedIds
@@ -4471,10 +4496,47 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                       <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#e5e5e5" strokeWidth="0.5" />
                     </pattern>
                   )}
+                  {/* Search highlight glow filter */}
+                  <filter id="search-glow" x="-30%" y="-30%" width="160%" height="160%">
+                    <feGaussianBlur stdDeviation="3" result="coloredBlur" />
+                    <feFlood floodColor="#f59e0b" floodOpacity="0.6" result="glowColor" />
+                    <feComposite in="glowColor" in2="coloredBlur" operator="in" result="softGlow" />
+                    <feMerge>
+                      <feMergeNode in="softGlow" />
+                      <feMergeNode in="SourceGraphic" />
+                    </feMerge>
+                  </filter>
                 </defs>
                 {showGrid && <rect width="100%" height="100%" fill="url(#grid)" />}
                 <g ref={gRef} />
             </svg>
+
+            {/* Empty state overlay */}
+            {!loading && filteredNodes.length === 0 && (
+              <div style={{
+                position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                background: 'rgba(249,250,251,0.95)', zIndex: 10, gap: 12
+              }}>
+                <div style={{ fontSize: 48 }}>🌐</div>
+                <div style={{ fontSize: 18, fontWeight: 600, color: '#374151' }}>No graph data to display</div>
+                <div style={{ fontSize: 14, color: '#6b7280', textAlign: 'center', maxWidth: 360 }}>
+                  {allNodes.length === 0
+                    ? 'Click Refresh to load the ontology graph, or check that this project has ontology data.'
+                    : 'No nodes match the current filters or search query.'}
+                </div>
+                {allNodes.length === 0 && (
+                  <button onClick={() => fetchGraphData()} style={{ padding: '8px 20px', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 14 }}>
+                    Load Graph
+                  </button>
+                )}
+                {allNodes.length > 0 && searchQuery && (
+                  <button onClick={() => handleSearch('')} style={{ padding: '8px 20px', background: '#6b7280', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 14 }}>
+                    Clear Search
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Search Panel */}
             {showSearch && (
@@ -4626,6 +4688,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             focusedNodeId={focusedNodeId}
             onFocusNode={enterFocusMode}
             onClearFocus={exitFocusMode}
+            ontologyMetadata={ontologyMetadata}
           />
         )}
       </div>

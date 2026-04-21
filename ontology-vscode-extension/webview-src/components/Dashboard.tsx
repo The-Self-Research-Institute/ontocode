@@ -120,6 +120,7 @@ import { useEntityPreferences } from "../contexts/EntityPreferencesContext";
 import { CodeHighlighter } from "./CodeHighlighter";
 import { PluginMarketplace } from "./PluginMarketplace";
 import { pluginLoader } from "../services/pluginLoader";
+import { checkForPluginUpdates, clearPluginUpdateCache } from "../services/pluginUpdateChecker";
 import DLQueryPanel from "./DLQueryPanel";
 import CitationPickerDialog from "./CitationPickerDialog";
 import ManualCitationDialog from "./ManualCitationDialog";
@@ -827,6 +828,7 @@ const TopMenuBar = ({
   draftCount,
   onOpenDialog,
   onOpenPluginMarketplace,
+  hasPluginUpdates,
   onOpenHistory,
   onReportIssue,
   onOpenUserGuide,
@@ -860,6 +862,7 @@ const TopMenuBar = ({
   draftCount?: number;
   onOpenDialog: () => void;
   onOpenPluginMarketplace: () => void;
+  hasPluginUpdates?: boolean;
   onOpenHistory: () => void;
   onReportIssue: () => void;
   onOpenUserGuide: () => void;
@@ -947,9 +950,15 @@ const TopMenuBar = ({
               onClick={() => {
                 setOpenMenu(openMenu === item ? null : item);
               }}
-              className={`ontocode-top-menu-button cursor-pointer disabled:cursor-not-allowed px-3 py-1 rounded-sm transition-colors ${openMenu === item ? "is-open" : ""}`}
+              className={`ontocode-top-menu-button cursor-pointer disabled:cursor-not-allowed px-3 py-1 rounded-sm transition-colors relative ${openMenu === item ? "is-open" : ""}`}
             >
               {item}
+              {item === "View" && hasPluginUpdates && (
+                <span
+                  className="absolute top-0.5 right-0.5 w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"
+                  title="Plugin updates available"
+                />
+              )}
               {/* {item === 'Reasoner' && isReasonerRunning && (
                 <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
               )}
@@ -973,6 +982,12 @@ const TopMenuBar = ({
                     >
                       <Package size={14} />
                       Plugin Marketplace
+                      {hasPluginUpdates && (
+                        <span
+                          className="ml-auto w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"
+                          title="Updates available"
+                        />
+                      )}
                     </button>
                   </div>
                 ) : item === "Window" ? (
@@ -2446,6 +2461,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     "CodeView",
   ]);
   const [showPluginMarketplace, setShowPluginMarketplace] = useState(false);
+  const [hasPluginUpdates, setHasPluginUpdates] = useState(false);
   const [installedPlugins, setInstalledPlugins] = useState<Set<string>>(new Set());
   const [pluginLoadingStates, setPluginLoadingStates] = useState<
     Record<string, { loading: boolean; error: string | null }>
@@ -3187,12 +3203,29 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // #region Data Fetching and Initialization
   // Plugin marketplace handlers
-  const handleInstallPlugin = useCallback(async (pluginId: string) => {
+
+  // Lightweight, cached (24h) plugin update check. Fires on mount and on
+  // file-open (see handleLoadProjectFile). Results drive the pulsing dot on
+  // View → Plugin Marketplace.
+  const runPluginUpdateCheck = useCallback(async (force = false) => {
+    try {
+      const updates = await checkForPluginUpdates(force);
+      setHasPluginUpdates(updates.length > 0);
+    } catch {
+      /* silent */
+    }
+  }, []);
+
+  useEffect(() => {
+    runPluginUpdateCheck();
+  }, [runPluginUpdateCheck]);
+
+  const handleInstallPlugin = useCallback(async (pluginId: string, version?: string) => {
     try {
       setPluginLoadingStates((prev) => ({ ...prev, [pluginId]: { loading: true, error: null } }));
 
-      // Use pluginLoader to install and load the plugin
-      await pluginLoader.installPlugin(pluginId);
+      // Use pluginLoader to install and load the plugin (version optional for rollback/pinned install)
+      await pluginLoader.installPlugin(pluginId, version);
       await pluginLoader.loadPlugin(pluginId);
 
       // Only update state if installation and loading succeeded
@@ -3221,6 +3254,8 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       console.log(`[Dashboard] Plugin ${pluginId} installed and loaded`);
       notificationService.success("Plugin Installed", `${pluginId} has been installed successfully`);
+      clearPluginUpdateCache();
+      setHasPluginUpdates(false);
     } catch (error) {
       console.error(`[Dashboard] Failed to install plugin ${pluginId}:`, error);
       setPluginLoadingStates((prev) => ({
@@ -3300,6 +3335,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       console.log(`[Dashboard] Plugin ${pluginId} uninstalled`);
+      clearPluginUpdateCache();
+      setHasPluginUpdates(false);
     } catch (error) {
       console.error(`[Dashboard] Failed to uninstall plugin ${pluginId}:`, error);
       throw error;
@@ -7217,6 +7254,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
+      // Lightweight, cached (24h) plugin update check piggy-backed on file-open.
+      runPluginUpdateCheck();
+
       // If this file is already loaded, skip re-fetching all data
       const ontologyProjectIdCheck = `${initialProjectId}--${fileId}`;
       if (projectId === ontologyProjectIdCheck && classHierarchy.length > 0) {
@@ -7331,6 +7371,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           fileContent: base64Data,
           ownerEmail: resolvedEmail || undefined,
           skipDuplicateCheck: isWorkspaceFile,
+          forceUpload: true, // Dashboard already confirmed GraphDB is empty; skip status cache check
           importMode,
           partition: partitionStrategy,
         });
@@ -13974,6 +14015,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           draftCount={draftCount}
           onOpenDialog={() => setShowOpenDialog(true)}
           onOpenPluginMarketplace={() => setShowPluginMarketplace(true)}
+          hasPluginUpdates={hasPluginUpdates}
           onOpenHistory={() => setIsHistoryPanelOpen(true)}
           onReportIssue={() => setIsReportIssueModalOpen(true)}
           onOpenUserGuide={() => setIsUserGuideOpen(true)}

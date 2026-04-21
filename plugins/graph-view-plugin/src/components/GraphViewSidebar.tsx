@@ -69,6 +69,8 @@ interface GraphViewSidebarProps {
   focusedNodeId?: string | null;
   onFocusNode?: (nodeId: string) => void;
   onClearFocus?: () => void;
+  // Ontology header metadata (IRI, version, annotations) — optional, read-only display
+  ontologyMetadata?: any;
 }
 
 export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
@@ -103,7 +105,8 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
   graphVisibleNodeIds,
   focusedNodeId,
   onFocusNode,
-  onClearFocus
+  onClearFocus,
+  ontologyMetadata
 }) => {
   const [sidebarMode, setSidebarMode] = useState<'entities' | 'hierarchy'>('hierarchy');
   const [entityTab, setEntityTab] = useState<'classes' | 'objectProperties' | 'datatypeProperties' | 'individuals' | 'annotations' | 'datatypes'>('classes');
@@ -1282,6 +1285,79 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
         )}
       </div>
 
+      {/* Ontology Info Section — read-only header metadata */}
+      {ontologyMetadata && (() => {
+        const m = ontologyMetadata as any;
+        const ontoIRI = m.ontologyIRI || m.ontologyIri || m.iri || m.baseIRI || m.baseIri || m.defaultNamespace;
+        const versionIRI = m.versionIRI || m.versionIri || m.version;
+        const importsRaw = m.imports || m.importedOntologies || [];
+        const imports: string[] = Array.isArray(importsRaw) ? importsRaw : [];
+        const annotations = m.annotations || m.ontologyAnnotations || {};
+        const annotationKeys = annotations && typeof annotations === 'object' ? Object.keys(annotations) : [];
+        const hasAny = ontoIRI || versionIRI || imports.length > 0 || annotationKeys.length > 0;
+        if (!hasAny) return null;
+        return (
+          <div style={styles.accordionSection}>
+            <div style={styles.entityTitleHeader}>
+              <h3 style={styles.entityTitle}>Ontology Info</h3>
+            </div>
+            <div style={styles.entityDetailsTable}>
+              {ontoIRI && (
+                <div style={styles.entityDetailRow}>
+                  <div style={styles.entityDetailLabel}>Ontology IRI</div>
+                  <div style={styles.entityDetailValue}>
+                    <a href={ontoIRI} target="_blank" rel="noopener noreferrer" style={styles.iriLink}>
+                      {String(ontoIRI).length > 50 ? `...${String(ontoIRI).slice(-47)}` : String(ontoIRI)}
+                    </a>
+                  </div>
+                </div>
+              )}
+              {versionIRI && (
+                <div style={styles.entityDetailRow}>
+                  <div style={styles.entityDetailLabel}>Version IRI</div>
+                  <div style={styles.entityDetailValue}>{String(versionIRI)}</div>
+                </div>
+              )}
+              {imports.length > 0 && (
+                <div style={styles.entityDetailRow}>
+                  <div style={styles.entityDetailLabel}>Imports ({imports.length})</div>
+                  <div style={styles.entityDetailValue}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {imports.slice(0, 10).map((imp, idx) => (
+                        <a key={idx} href={imp} target="_blank" rel="noopener noreferrer" style={{ ...styles.iriLink, fontSize: 11 }}>
+                          {String(imp).length > 60 ? `...${String(imp).slice(-57)}` : String(imp)}
+                        </a>
+                      ))}
+                      {imports.length > 10 && (
+                        <span style={{ fontSize: 11, color: '#6b7280', fontStyle: 'italic' }}>… and {imports.length - 10} more</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+              {annotationKeys.length > 0 && (
+                <div style={styles.entityDetailRow}>
+                  <div style={styles.entityDetailLabel}>Annotations</div>
+                  <div style={styles.entityDetailValue}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {annotationKeys.slice(0, 8).map((k) => (
+                        <div key={k} style={{ fontSize: 12 }}>
+                          <span style={{ fontWeight: 600, color: '#374151' }}>{k}:</span>{' '}
+                          <span style={{ color: '#6b7280' }}>{String((annotations as any)[k]).slice(0, 120)}</span>
+                        </div>
+                      ))}
+                      {annotationKeys.length > 8 && (
+                        <span style={{ fontSize: 11, color: '#6b7280', fontStyle: 'italic' }}>… and {annotationKeys.length - 8} more</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Entity Details Section (like webVOWL) */}
       {selectedNode && (
         <div style={styles.accordionSection}>
@@ -1338,6 +1414,40 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                 </div>
               </div>
             )}
+
+            {/* Property Characteristics (OWL: Functional, Symmetric, Transitive, etc.) */}
+            {(selectedNode.type === 'objectProperty' || selectedNode.type === 'dataProperty') && (() => {
+              const m: any = (selectedNode as any).metadata || {};
+              const chars: string[] = [];
+              if (m.functional) chars.push('Functional');
+              if (m.inverseFunctional) chars.push('Inverse Functional');
+              if (m.symmetric) chars.push('Symmetric');
+              if (m.asymmetric) chars.push('Asymmetric');
+              if (m.transitive) chars.push('Transitive');
+              if (m.reflexive) chars.push('Reflexive');
+              if (m.irreflexive) chars.push('Irreflexive');
+              if (chars.length === 0) return null;
+              return (
+                <div style={styles.entityDetailRow}>
+                  <div style={styles.entityDetailLabel}>Characteristics</div>
+                  <div style={styles.entityDetailValue}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {chars.map(c => (
+                        <span key={c} style={{
+                          background: '#eef2ff',
+                          color: '#3730a3',
+                          padding: '2px 8px',
+                          borderRadius: 12,
+                          fontSize: 11,
+                          fontWeight: 600,
+                          border: '1px solid #c7d2fe'
+                        }}>{c}</span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Connections */}
             <div style={styles.entityDetailRow}>

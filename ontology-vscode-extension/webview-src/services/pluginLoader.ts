@@ -54,8 +54,10 @@ class PluginLoaderService {
 
   /**
    * Install plugin from backend service
+   * @param pluginId plugin identifier
+   * @param version optional specific version to install (for rollback / pinned install)
    */
-  async installPlugin(pluginId: string): Promise<void> {
+  async installPlugin(pluginId: string, version?: string): Promise<void> {
     try {
       // Check if this is a built-in plugin (already registered in pluginManager)
       // Built-in plugins don't have .vsix files - they're compiled into the extension
@@ -119,7 +121,10 @@ class PluginLoaderService {
           headers['Authorization'] = `Bearer ${token}`;
         }
 
-        const response = await fetch(`${getPluginApiBaseUrl()}/api/plugins/${pluginId}/download`, {
+        const downloadUrl = version
+          ? `${getPluginApiBaseUrl()}/api/plugins/${pluginId}/download?version=${encodeURIComponent(version)}`
+          : `${getPluginApiBaseUrl()}/api/plugins/${pluginId}/download`;
+        const response = await fetch(downloadUrl, {
           method: 'GET',
           headers
         });
@@ -148,6 +153,12 @@ class PluginLoaderService {
         manifest = data.manifest || data;
       }
 
+      // If a specific version was requested (rollback / pinned install), override manifest.version
+      // so the installed state reflects the chosen version rather than the latest metadata returned.
+      if (version && manifest) {
+        manifest = { ...manifest, version };
+      }
+
       // Store plugin metadata
       const plugin: InstalledPlugin = {
         id: pluginId,
@@ -169,7 +180,7 @@ class PluginLoaderService {
           trackHeaders['Authorization'] = `Bearer ${trackToken}`;
         }
 
-        await fetch(`${getPluginApiBaseUrl()}/api/plugins/${pluginId}/install?version=${manifest.version}`, {
+        await fetch(`${getPluginApiBaseUrl()}/api/plugins/${pluginId}/install?version=${encodeURIComponent(version || manifest.version)}`, {
           method: 'POST',
           headers: trackHeaders
         });

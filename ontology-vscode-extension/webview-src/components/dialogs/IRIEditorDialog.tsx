@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, AlertCircle, Check } from 'lucide-react';
 
 interface IRIEditorDialogProps {
@@ -21,6 +21,14 @@ const IRIEditorDialog: React.FC<IRIEditorDialogProps> = ({
   const [iri, setIRI] = useState(currentIRI);
   const [label, setLabel] = useState(currentLabel);
   const [error, setError] = useState<string>('');
+
+  useEffect(() => {
+    if (isOpen) {
+      setIRI(currentIRI);
+      setLabel(currentLabel);
+      setError('');
+    }
+  }, [isOpen, currentIRI, currentLabel]);
 
   if (!isOpen) return null;
 

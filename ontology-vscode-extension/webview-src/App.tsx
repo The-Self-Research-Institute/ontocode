@@ -108,6 +108,7 @@ const AppContent = () => {
     if (typeof window !== "undefined") {
       const hostname = window.location.hostname;
       if (hostname === "ontocode.selfresearch.org" || hostname === "ontocodeapi.selfresearch.org") {
+        try { localStorage.setItem("deploymentType", "cloud"); } catch { /* ignore */ }
         return "cloud";
       }
     }
@@ -172,17 +173,18 @@ const AppContent = () => {
       return false;
     }
 
+    const storedDeploymentType = localStorage.getItem("deploymentType") as "self-hosted" | "cloud" | null;
+
+    // Cloud users without a workspace always need workspace selection
+    // Use both the state variable and localStorage to handle auto-detected cloud mode
+    if ((deploymentType === "cloud" || storedDeploymentType === "cloud") && !user.workspaceId) {
+      return true;
+    }
+
     // If user explicitly skipped workspace selection, don't show it
     if (!needsWorkspaceSelection) {
       console.log("[App] Returning false - needsWorkspaceSelection is false");
       return false;
-    }
-
-    const storedDeploymentType = localStorage.getItem("deploymentType") as "self-hosted" | "cloud" | null;
-
-    // Cloud users always need workspace selection if they don't have one (unless they skipped)
-    if (storedDeploymentType === "cloud") {
-      return true;
     }
 
     // Fall back to needsWorkspaceSelection from auth context
@@ -271,6 +273,12 @@ const AppContent = () => {
 
 
   const currentRoute: RouteState = useMemo(() => {
+    // Deployment type must always be set first — no other screen is accessible without it
+    // (except email verification which needs its own URL-based flow)
+    if (!deploymentType && !(emailVerifyToken && emailVerifyStatus !== "idle")) {
+      return { view: "deployment", deploymentType };
+    }
+
     // While the verify-email flow is active, keep the router in a neutral state
     // so useRouter doesn't overwrite window.location to /deployment (which would
     // break the verify useEffect's ability to detect the original URL).
@@ -288,7 +296,7 @@ const AppContent = () => {
     if (inviteToken && !showAuthForInvitation) {
       return { view: "invitation", inviteToken, showAuthForInvitation };
     }
-    if (!user && !deploymentType) {
+    if (!deploymentType) {
       return { view: "deployment", deploymentType };
     }
     if (user && shouldShowWorkspaceSelection()) {
@@ -1088,8 +1096,8 @@ const AppContent = () => {
     );
   }
 
-  // Show deployment selector BEFORE login if user hasn't selected deployment type yet
-  if (!user && !deploymentType) {
+  // Show deployment selector if user hasn't selected deployment type yet (regardless of login state)
+  if (!deploymentType) {
     return <DeploymentSelector onSelect={handleDeploymentSelected} />;
   }
 

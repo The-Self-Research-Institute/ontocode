@@ -20,9 +20,10 @@
  */
 
 import React, { useState, useEffect } from "react";
-import { Download, Trash2, Search, Package, X, Star } from "lucide-react";
+import { Download, Trash2, Search, Package, X, Star, Clock } from "lucide-react";
 import { pluginLoader } from "../services/pluginLoader";
 import { RatingModal } from "./RatingModal";
+import { PluginVersionHistory } from "./PluginVersionHistory";
 import { getApiBaseUrl } from "../config/deploymentConfig";
 
 // Resolve API base URL with browser-mode fallback
@@ -65,7 +66,8 @@ interface Plugin {
 interface PluginMarketplaceProps {
   isOpen: boolean;
   onClose: () => void;
-  onInstall: (pluginId: string) => Promise<void>;
+  /** Install a plugin. Optional version enables rollback/pinned install. */
+  onInstall: (pluginId: string, version?: string) => Promise<void>;
   onUninstall: (pluginId: string) => Promise<void>;
   installedPlugins: Set<string>;
 }
@@ -97,6 +99,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [updatingPlugin, setUpdatingPlugin] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<"name" | "downloads" | "rating">("downloads");
+  const [versionHistoryPlugin, setVersionHistoryPlugin] = useState<Plugin | null>(null);
 
   const categories = ["All", "Visualization", "Editor", "Reasoning", "Query", "Import/Export", "Utility"];
 
@@ -152,7 +155,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
   const fetchPluginsWithStats = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem("token");
+      const token = localStorage.getItem("authToken");
       const headers: HeadersInit = { "Content-Type": "application/json" };
 
       if (token) {
@@ -231,7 +234,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
    */
   const refreshPluginStats = async (pluginId: string) => {
     try {
-      const token = localStorage.getItem("token");
+      const token = localStorage.getItem("authToken");
       const headers: HeadersInit = { "Content-Type": "application/json" };
 
       if (token) {
@@ -653,6 +656,13 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
                           <Star size={16} />
                           Rate Plugin
                         </button>
+                        <button
+                          onClick={() => setVersionHistoryPlugin(plugin)}
+                          className="w-full px-4 py-2 bg-gray-50 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors flex items-center justify-center gap-2 text-sm font-medium"
+                        >
+                          <Clock size={16} />
+                          Version History
+                        </button>
                       </>
                     ) : (
                       <button
@@ -686,6 +696,41 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
             setCurrentUserRating(null);
           }}
           onSubmit={handleSubmitRating}
+        />
+      )}
+
+      {/* ===================================================================
+          VERSION HISTORY MODAL
+          =================================================================== */}
+      {versionHistoryPlugin && (
+        <PluginVersionHistory
+          pluginId={versionHistoryPlugin.pluginId}
+          pluginName={versionHistoryPlugin.name}
+          installedVersion={versionHistoryPlugin.installedVersion}
+          onClose={() => setVersionHistoryPlugin(null)}
+          onInstallVersion={async (pluginId, version) => {
+            try {
+              // If a different version is already installed, uninstall first so the install
+              // flow registers the new version cleanly.
+              if (versionHistoryPlugin.installed) {
+                await pluginLoader.uninstallPlugin(pluginId);
+              }
+              await onInstall(pluginId, version);
+              setPlugins((prev) =>
+                prev.map((p) =>
+                  p.pluginId === pluginId
+                    ? { ...p, installed: true, installedVersion: version, hasUpdate: false }
+                    : p,
+                ),
+              );
+              await refreshPluginStats(pluginId);
+              showToast(`Installed v${version} of ${versionHistoryPlugin.name}`);
+            } catch (error) {
+              const msg = error instanceof Error ? error.message : "Unknown error";
+              showToast(`Failed to install version: ${msg}`, "error");
+              throw error;
+            }
+          }}
         />
       )}
 

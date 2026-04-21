@@ -645,12 +645,32 @@ export class GraphDataFetchService {
       const propIri = prop.iri || prop.propertyIRI || prop.id || prop.uri;
       if (!propIri) continue;
       const propLabel = prop.label || propIri?.split('#').pop()?.split('/').pop() || 'ObjectProperty';
-      
+
+      // Capture all OWL property characteristics on the node for the details panel
+      const propCharacteristics = prop.characteristics || [];
+      const hasNodeChar = (...names: string[]) => names.some((n: string) => propCharacteristics.includes(n));
+      const nodeMetadata = {
+        propertyType: 'objectProperty',
+        characteristics: propCharacteristics,
+        functional: hasNodeChar('Functional', 'FUNCTIONAL'),
+        inverseFunctional: hasNodeChar('InverseFunctional', 'INVERSE_FUNCTIONAL', 'InverseFunctionalProperty'),
+        symmetric: hasNodeChar('Symmetric', 'SYMMETRIC', 'SymmetricProperty'),
+        asymmetric: hasNodeChar('Asymmetric', 'ASYMMETRIC', 'AsymmetricProperty'),
+        transitive: hasNodeChar('Transitive', 'TRANSITIVE', 'TransitiveProperty'),
+        reflexive: hasNodeChar('Reflexive', 'REFLEXIVE', 'ReflexiveProperty'),
+        irreflexive: hasNodeChar('Irreflexive', 'IRREFLEXIVE', 'IrreflexiveProperty'),
+        domains: prop.domains || [],
+        ranges: prop.ranges || [],
+        inverseOf: prop.inverseOf || null,
+        subPropertyOf: prop.subPropertyOf || []
+      };
+
       nodes.push({
         id: propIri,
         label: propLabel,
         type: 'objectProperty',
-        uri: propIri
+        uri: propIri,
+        metadata: nodeMetadata
       });
 
       const domains = prop.domains && Array.isArray(prop.domains) ? prop.domains : [];
@@ -691,20 +711,32 @@ export class GraphDataFetchService {
             
             // Extract characteristics for WebVOWL notation
             const characteristics = prop.characteristics || [];
-            const isFunctional = characteristics.includes('Functional') || characteristics.includes('FUNCTIONAL');
-            const isInverseFunctional = characteristics.includes('InverseFunctional') || characteristics.includes('INVERSE_FUNCTIONAL');
-            
+            const hasChar = (...names: string[]) => names.some(n => characteristics.includes(n));
+            const isFunctional = hasChar('Functional', 'FUNCTIONAL');
+            const isInverseFunctional = hasChar('InverseFunctional', 'INVERSE_FUNCTIONAL', 'InverseFunctionalProperty');
+            const isSymmetric = hasChar('Symmetric', 'SYMMETRIC', 'SymmetricProperty');
+            const isAsymmetric = hasChar('Asymmetric', 'ASYMMETRIC', 'AsymmetricProperty');
+            const isTransitive = hasChar('Transitive', 'TRANSITIVE', 'TransitiveProperty');
+            const isReflexive = hasChar('Reflexive', 'REFLEXIVE', 'ReflexiveProperty');
+            const isIrreflexive = hasChar('Irreflexive', 'IRREFLEXIVE', 'IrreflexiveProperty');
+
             edges.push({
               id: edgeId,
               from: domain,
               to: range,
               type: 'propertyRelation',
               label: propLabel, // Use the property label directly
+              bidirectional: isSymmetric, // symmetric properties are visually bidirectional
               metadata: {
                 propertyIri: propIri,
                 propertyType: 'objectProperty',
                 functional: isFunctional,
                 inverseFunctional: isInverseFunctional,
+                symmetric: isSymmetric,
+                asymmetric: isAsymmetric,
+                transitive: isTransitive,
+                reflexive: isReflexive,
+                irreflexive: isIrreflexive,
                 characteristics: characteristics
               }
             });
@@ -754,12 +786,24 @@ export class GraphDataFetchService {
       const propIri = prop.iri || prop.propertyIRI || prop.id || prop.uri;
       if (!propIri) continue;
       const propLabel = prop.label || propIri?.split('#').pop()?.split('/').pop() || 'DataProperty';
-      
+
+      // Capture data-property characteristics on the node for the details panel
+      const dpCharacteristics = prop.characteristics || [];
+      const dpHasChar = (...names: string[]) => names.some((n: string) => dpCharacteristics.includes(n));
+
       nodes.push({
         id: propIri,
         label: propLabel,
         type: 'dataProperty',
-        uri: propIri
+        uri: propIri,
+        metadata: {
+          propertyType: 'dataProperty',
+          characteristics: dpCharacteristics,
+          functional: dpHasChar('Functional', 'FUNCTIONAL'),
+          domains: prop.domains || [],
+          ranges: prop.ranges || [],
+          subPropertyOf: prop.subPropertyOf || []
+        }
       });
 
       const domains = prop.domains && Array.isArray(prop.domains) ? prop.domains : [];
