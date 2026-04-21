@@ -636,6 +636,8 @@ function handleBrowserMessage(message: any) {
                     const baseUrl = getGatewayUrl();
 
                     // ── FAST PATH: Check if file already exists in GraphDB (skip upload entirely) ──
+                    // Skip this when forceUpload is set — caller already confirmed GraphDB is empty
+                    if (!message.forceUpload) {
                     try {
                         const statusUrl = `${baseUrl}/api/ontology/status/${encodeURIComponent(uploadProjectId)}`;
                         const statusResp = await fetch(statusUrl, {
@@ -656,6 +658,7 @@ function handleBrowserMessage(message: any) {
                         }
                     } catch (statusErr) {
                         console.log('[BrowserBridge] Status check failed, proceeding with upload:', statusErr);
+                    }
                     }
 
                     // ── Check for duplicate BEFORE uploading (if not explicitly skipping) ──
