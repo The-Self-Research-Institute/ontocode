@@ -15,7 +15,7 @@ public class SparqlProperties {
     private String projectGraphTemplate = "urn:ontocode:project:%s";
     private int connectionTimeoutMs = 30000;
     private int readTimeoutMs = 60000;
-    private int maxConnections = 50;
+    private int maxConnections = 200;
     private String username;
     private String password;
 

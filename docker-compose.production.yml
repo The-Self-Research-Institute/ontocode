@@ -185,6 +185,12 @@ services:
       GRAPHDB_REPOSITORY: ${GRAPHDB_REPOSITORY:-ontocode}
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      # Phase C: heap sized for per-project in-memory SPARQL cache
+      # (3 cached projects × ~400 MB + editor baseline ~1 GB = ~2.5 GB working set).
+      JAVA_OPTS: ${OWL_EDITOR_JAVA_OPTS:--Xms1g -Xmx3g -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+ParallelRefProcEnabled}
+      ONTOCODE_MEMCACHE_ENABLED: ${ONTOCODE_MEMCACHE_ENABLED:-true}
+      ONTOCODE_MEMCACHE_MAX_PROJECTS: ${ONTOCODE_MEMCACHE_MAX_PROJECTS:-3}
+      ONTOCODE_MEMCACHE_MAX_TRIPLES: ${ONTOCODE_MEMCACHE_MAX_TRIPLES:-5000000}
       EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
       JIRA_ENABLED: ${JIRA_ENABLED:-true}
       JIRA_CLOUD_URL: ${JIRA_CLOUD_URL:-https://coretopia.atlassian.net}

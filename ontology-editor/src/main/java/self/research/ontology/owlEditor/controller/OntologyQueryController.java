@@ -173,6 +173,18 @@ public class OntologyQueryController {
                 queryService.classDetails(projectId, classIri)));
     }
 
+    /**
+     * Fast-path: annotations-only class details. Runs a single SPARQL query
+     * (typically <100ms). UI calls this first to render the Annotations panel
+     * immediately, then fires the full /classes/details call in the background.
+     */
+    @GetMapping("/classes/annotations/{projectId}")
+    public ResponseEntity<?> classAnnotations(@PathVariable String projectId,
+                                              @RequestParam String classIri) {
+        return ResponseEntity.ok(Map.of("success", true, "data",
+                queryService.classAnnotations(projectId, classIri)));
+    }
+
     @GetMapping("/classes/instances/{projectId}")
     public ResponseEntity<?> classInstances(@PathVariable String projectId,
                                            @RequestParam String classIri) {

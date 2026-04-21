@@ -46,8 +46,10 @@ public class WebClientConfig {
     @Bean
     public PoolingHttpClientConnectionManager httpConnectionManager() {
         PoolingHttpClientConnectionManager connectionManager = new PoolingHttpClientConnectionManager();
-        connectionManager.setMaxTotal(30);
-        connectionManager.setDefaultMaxPerRoute(10);
+        // classDetails alone fires ~20 parallel SPARQL queries; keep a generous pool so concurrent
+        // user actions (children, datatypes, properties) don't starve and queue on connection acquire.
+        connectionManager.setMaxTotal(200);
+        connectionManager.setDefaultMaxPerRoute(100);
         return connectionManager;
     }
     

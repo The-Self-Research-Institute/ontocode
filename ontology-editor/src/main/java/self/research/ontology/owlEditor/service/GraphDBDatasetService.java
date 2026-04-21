@@ -73,7 +73,11 @@ public class GraphDBDatasetService {
     
     @Autowired(required = false)
     private CacheManager cacheManager;
-    
+
+    // Phase C: in-memory mirror of project graphs to bypass GraphDB on hot reads.
+    @Autowired(required = false)
+    private ProjectRepoCache projectRepoCache;
+
     // Shared repository connection
     private Repository repository;
     
@@ -341,10 +345,102 @@ public class GraphDBDatasetService {
      * @param includeInferred false to skip transitive/OWL inference (much faster on large repos)
      */
     public TupleQueryResult execSelect(String projectId, String sparqlQuery, boolean includeInferred) {
+        // Phase C: try the in-memory per-project cache first. Only when inference
+        // is not requested, since the cache only stores explicit triples.
+        if (!includeInferred && projectRepoCache != null && projectRepoCache.isEnabled()) {
+            TupleQueryResult cached = trySelectFromMemCache(projectId, sparqlQuery);
+            if (cached != null) {
+                return cached;
+            }
+        }
+        return execSelectGraphDB(projectId, sparqlQuery, includeInferred);
+    }
+
+    /**
+     * Run a SELECT against the in-memory project repo. Returns {@code null} on
+     * cache miss / load failure so the caller can fall back to GraphDB.
+     */
+    private TupleQueryResult trySelectFromMemCache(String projectId, String sparqlQuery) {
+        long start = System.nanoTime();
+        Repository memRepo = projectRepoCache.getOrLoad(projectId, new ProjectRepoCache.Loader() {
+            @Override public GraphQueryResult streamTriples(String pid) {
+                return execConstructAll(pid);
+            }
+            @Override public String graphUri(String pid) {
+                return getGraphUri(pid);
+            }
+        });
+        if (memRepo == null) {
+            return null;
+        }
+        try (RepositoryConnection conn = memRepo.getConnection()) {
+            String finalQuery = sparqlQuery;
+            if (!finalQuery.toUpperCase().contains("FROM")) {
+                finalQuery = finalQuery.replaceFirst("(?i)WHERE",
+                        buildFromClause(conn, projectId) + " WHERE");
+            }
+            String queryType = extractQueryType(finalQuery);
+            TupleQuery query = conn.prepareTupleQuery(finalQuery);
+            query.setIncludeInferred(false);
+            List<BindingSet> results = new ArrayList<>();
+            List<String> bindingNames = new ArrayList<>();
+            try (TupleQueryResult rs = query.evaluate()) {
+                bindingNames.addAll(rs.getBindingNames());
+                while (rs.hasNext()) {
+                    results.add(rs.next());
+                }
+            }
+            long ms = (System.nanoTime() - start) / 1_000_000;
+            sparqlLog.info("[SPARQL_MEM] {} project={} results={} time={}ms",
+                    queryType, projectId, results.size(), ms);
+            return new SimpleTupleQueryResult(bindingNames, results);
+        } catch (Exception e) {
+            log.warn("[MEMCACHE] SELECT failed for project={}, falling back to GraphDB: {}",
+                    projectId, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Stream every explicit triple in the project's graph(s) from GraphDB.
+     * Used by {@link ProjectRepoCache} to populate the in-memory mirror.
+     * The caller MUST close the returned {@link GraphQueryResult} which in
+     * turn closes its RepositoryConnection.
+     */
+    private GraphQueryResult execConstructAll(String projectId) {
+        Repository repo = getRepository();
+        final RepositoryConnection conn = repo.getConnection();
+        try {
+            String fromClause = buildFromClause(conn, projectId);
+            String q = "CONSTRUCT { ?s ?p ?o } " + fromClause + " WHERE { ?s ?p ?o }";
+            GraphQuery gq = conn.prepareGraphQuery(q);
+            gq.setIncludeInferred(false);
+            final GraphQueryResult inner = gq.evaluate();
+            // Wrap so closing the result also closes the connection.
+            return new GraphQueryResult() {
+                @Override public java.util.Map<String, String> getNamespaces() { return inner.getNamespaces(); }
+                @Override public boolean hasNext() { return inner.hasNext(); }
+                @Override public org.eclipse.rdf4j.model.Statement next() { return inner.next(); }
+                @Override public void remove() { inner.remove(); }
+                @Override public void close() {
+                    try { inner.close(); } finally { conn.close(); }
+                }
+            };
+        } catch (RuntimeException e) {
+            conn.close();
+            throw e;
+        }
+    }
+
+    /**
+     * Original GraphDB SELECT path — retained as the fallback behind the
+     * in-memory cache.
+     */
+    private TupleQueryResult execSelectGraphDB(String projectId, String sparqlQuery, boolean includeInferred) {
         Repository repo = getRepository();
         String graphUri = getGraphUri(projectId);
         long totalStart = System.nanoTime();
-        
+
         try (RepositoryConnection conn = repo.getConnection()) {
             long connMs = (System.nanoTime() - totalStart) / 1_000_000;
             
@@ -560,7 +656,13 @@ public class GraphDBDatasetService {
                         projectId, updateExecMs, commitMs, totalMs, connMs);
                 log.info("[GRAPHDB] UPDATE completed: execTime={}ms commitTime={}ms totalTime={}ms",
                         updateExecMs, commitMs, totalMs);
-                
+
+                // Phase C: evict the in-memory mirror so the next read repopulates it
+                // with the just-written triples. Cheap (microseconds) + safe.
+                if (projectRepoCache != null) {
+                    projectRepoCache.evict(projectId);
+                }
+
                 if (totalMs > 1000) {
                     sparqlLog.warn("[SPARQL_SLOW] UPDATE project={} took {}ms query={}",
                             projectId, totalMs,
@@ -2230,11 +2332,15 @@ public class GraphDBDatasetService {
      */
     private void invalidateContextCaches(String projectId) {
         partitionGraphCache.remove(projectId);
+        // Phase C: drop the in-memory project mirror so imports are visible.
+        if (projectRepoCache != null) {
+            projectRepoCache.evict(projectId);
+        }
         // Evict Spring-managed Caffeine caches that depend on ontology data
         if (cacheManager != null) {
             for (String cacheName : List.of("topLevelClasses", "classChildren", "allClasses",
                     "ontologyProperties", "ontologyIndividuals", "classInstanceCounts",
-                    "classDetails", "classInstances", "individualCount", "debugInfo", "graphCache")) {
+                    "classDetails", "classAnnotations", "classInstances", "individualCount", "debugInfo", "graphCache")) {
                 var cache = cacheManager.getCache(cacheName);
                 if (cache != null) cache.clear();
             }

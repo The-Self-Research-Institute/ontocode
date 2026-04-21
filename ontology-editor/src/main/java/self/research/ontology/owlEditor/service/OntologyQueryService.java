@@ -29,8 +29,18 @@ public class OntologyQueryService {
 
     private static final Logger log = LoggerFactory.getLogger(OntologyQueryService.class);
     
-    /** Thread pool for parallel SPARQL queries in classDetails */
-    private static final ExecutorService QUERY_POOL = Executors.newFixedThreadPool(8);
+    /**
+     * Thread pool for parallel SPARQL queries in classDetails.
+     *
+     * Sized for multi-user concurrency: each classDetails call dispatches
+     * ~20 parallel futures. With 64 threads we can handle ~3 simultaneous
+     * classDetails flights before queueing, which combined with @Cacheable
+     * sync=true (see classDetails / classAnnotations) gives us headroom for
+     * 100+ concurrent users clicking classes.
+     *
+     * Note: real ceiling is GraphDB, not threads — threads just feed it.
+     */
+    private static final ExecutorService QUERY_POOL = Executors.newFixedThreadPool(64);
 
     private static final String PREFIXES = """
         PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
@@ -1325,7 +1335,62 @@ public class OntologyQueryService {
         return usages;
     }
 
-    @Cacheable(value = "classDetails", key = "#projectId + '_' + #classIri")
+    /**
+     * Fast-path: returns ONLY the annotations + label for a class. Runs a
+     * single SPARQL query (typically <100ms). Used by the UI to render the
+     * Annotations panel immediately on class click, while the full
+     * {@link #classDetails} call completes in the background to hydrate the
+     * rest of the panels (SubClassOf, EquivalentTo, DisjointWith, restrictions,
+     * inferred axioms, GCI, etc.).
+     *
+     * Response shape is a strict subset of {@link #classDetails} so the
+     * frontend can merge results without schema translation.
+     */
+    @Cacheable(value = "classAnnotations", key = "#projectId + '_' + #classIri", sync = true)
+    public Map<String, Object> classAnnotations(String projectId, String classIri) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("id", classIri);
+
+        String annQuery = PREFIXES + """
+            SELECT ?prop ?value WHERE {
+              <%s> ?prop ?value .
+              FILTER(isLiteral(?value) || isIRI(?value))
+              {
+                ?prop a owl:AnnotationProperty .
+              } UNION {
+                VALUES ?prop { rdfs:label rdfs:comment rdfs:seeAlso rdfs:isDefinedBy }
+              }
+            }
+            """.formatted(classIri);
+
+        Map<String, Object> annotations = new LinkedHashMap<>();
+        String label = null;
+        try {
+            TupleQueryResult annRs = datasetService.execSelect(projectId, annQuery);
+            while (annRs.hasNext()) {
+                BindingSet sol = annRs.next();
+                String propIri = resource(sol, "prop");
+                if (propIri != null && sol.hasBinding("value")) {
+                    Value valueNode = sol.getValue("value");
+                    String value = valueNode.isLiteral() ? valueNode.stringValue() : valueNode.toString();
+                    annotations.put(propIri, value);
+                    if (label == null && propIri.endsWith("#label")) {
+                        label = value;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // Fail soft — UI will fall back to the full classDetails call.
+            result.put("label", localName(classIri));
+            result.put("annotations", annotations);
+            return result;
+        }
+        result.put("label", label != null ? label : localName(classIri));
+        result.put("annotations", annotations);
+        return result;
+    }
+
+    @Cacheable(value = "classDetails", key = "#projectId + '_' + #classIri", sync = true)
     public Map<String, Object> classDetails(String projectId, String classIri) {
         long startTime = System.currentTimeMillis();
         Map<String, Object> details = new LinkedHashMap<>();
@@ -1721,20 +1786,33 @@ public class OntologyQueryService {
         }, QUERY_POOL);
         
         // --- GCI axioms ---
+        // OPTIMIZED: The previous query did a `?subExpr ?p ?o` cross-product with
+        // `rdfs:subClassOf` + FILTER(isBlank), which forced a full scan over every
+        // triple whose subject is a blank node. On ontologies with many anonymous
+        // class expressions this was the dominant cost of classDetails (observed
+        // 60s+). Rewritten to index-driven form: directly look up blank-node
+        // subClassOf axioms and only then test whether this class appears
+        // somewhere inside the sub-expression.
         CompletableFuture<TupleQueryResult> gciFuture = CompletableFuture.supplyAsync(() -> {
             String q = PREFIXES + """
                 SELECT DISTINCT ?subExpr ?superClass WHERE {
                   ?subExpr rdfs:subClassOf ?superClass .
-                  ?subExpr ?p ?o .
                   FILTER(isBlank(?subExpr))
-                  FILTER(?o = <%s> || ?superClass = <%s>)
+                  {
+                    FILTER(?superClass = <%s>)
+                  } UNION {
+                    ?subExpr (rdf:first|rdf:rest|owl:intersectionOf|owl:unionOf|owl:complementOf|owl:someValuesFrom|owl:allValuesFrom|owl:onClass)+ <%s> .
+                  }
                 }
-                LIMIT 20
+                LIMIT 200
                 """.formatted(classIri, classIri);
             return datasetService.execSelect(projectId, q);
         }, QUERY_POOL);
         
         // --- Anonymous ancestor superclasses ---
+        // OPTIMIZED: Added explicit LIMIT to prevent runaway transitive path
+        // expansion in deeply nested hierarchies. 500 is well above any realistic
+        // ancestor count for a single class.
         CompletableFuture<TupleQueryResult> ancestorFuture = CompletableFuture.supplyAsync(() -> {
             String q = PREFIXES + """
                 SELECT DISTINCT ?super ?label WHERE {
@@ -1743,6 +1821,7 @@ public class OntologyQueryService {
                   FILTER(isBlank(?super) || (?super != owl:Thing && ?super != <%s>))
                   OPTIONAL { ?super rdfs:label ?label }
                 }
+                LIMIT 500
                 """.formatted(classIri, classIri);
             return datasetService.execSelect(projectId, q);
         }, QUERY_POOL);

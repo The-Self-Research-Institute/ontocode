@@ -1058,32 +1058,57 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     console.log('[AdvancedGraphView D3] 📡 Fetching graph data for project:', projectId);
 
     try {
-      const cacheKey = `graph-${projectId}`;
-      
-      // ALWAYS fetch fresh data from GraphDB, skip cache for now to ensure real data loads
-      console.log('[AdvancedGraphView D3] 🔄 Fetching fresh data (cache disabled for real-time GraphDB data)');
+      const cacheKey = `ontocode:graphView:${projectId}`;
+      const CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+      const CACHE_MAX_BYTES = 4 * 1024 * 1024; // 4MB safety cap
+
+      // Try sessionStorage cache first. Session-scoped (cleared on tab close).
+      // Short TTL means users editing the ontology pick up changes quickly.
+      let graphData: any = null;
+      try {
+        const cachedRaw = sessionStorage.getItem(cacheKey);
+        if (cachedRaw) {
+          const cached = JSON.parse(cachedRaw);
+          if (cached && typeof cached.timestamp === 'number' && Date.now() - cached.timestamp < CACHE_TTL_MS && cached.data) {
+            console.log('[AdvancedGraphView D3] ⚡ Using cached graph data (age:', Math.round((Date.now() - cached.timestamp) / 1000), 's)');
+            graphData = cached.data;
+          }
+        }
+      } catch (cacheErr) {
+        console.warn('[AdvancedGraphView D3] Cache read failed, fetching fresh:', cacheErr);
+      }
 
       const apiBaseUrl = (window as any).API_BASE_URL;
       const authToken = localStorage.getItem('authToken');
-      
-      // ALWAYS use GraphDB direct fetch for WebVOWL compatibility
-      // (provides complete property relation edges)
-      console.log('[AdvancedGraphView D3] 🔵 Using GraphDB direct fetch for complete data...');
-        
-        // Fetch data from GraphDB using optimized service (same approach as webVOWL)
+
+      if (!graphData) {
+        console.log('[AdvancedGraphView D3] 🔵 Cache miss — fetching from GraphDB...');
         const fetchService = createGraphDataFetchService(apiBaseUrl, projectId, authToken);
-        const graphData = await fetchService.fetchGraphData();
+        graphData = await fetchService.fetchGraphData();
+
+        // Save to sessionStorage (best-effort, skip if payload too large).
+        try {
+          const serialized = JSON.stringify({ timestamp: Date.now(), data: graphData });
+          if (serialized.length <= CACHE_MAX_BYTES) {
+            sessionStorage.setItem(cacheKey, serialized);
+          } else {
+            console.log('[AdvancedGraphView D3] Skipping cache — payload exceeds', CACHE_MAX_BYTES, 'bytes');
+          }
+        } catch (cacheErr) {
+          console.warn('[AdvancedGraphView D3] Cache write failed (non-fatal):', cacheErr);
+        }
+      }
         
         console.log('[GraphDB Fetch] ✅ Fetched from GraphDB:', {
           nodes: graphData.nodes.length,
           edges: graphData.edges.length,
           byType: {
-            classes: graphData.nodes.filter(n => n.type === 'class').length,
-            individuals: graphData.nodes.filter(n => n.type === 'individual').length,
-            objectProperties: graphData.nodes.filter(n => n.type === 'objectProperty').length,
-            dataProperties: graphData.nodes.filter(n => n.type === 'dataProperty').length,
-            datatypes: graphData.nodes.filter(n => n.type === 'datatype').length,
-            annotations: graphData.nodes.filter(n => n.type === 'annotation').length
+            classes: graphData.nodes.filter((n: any) => n.type === 'class').length,
+            individuals: graphData.nodes.filter((n: any) => n.type === 'individual').length,
+            objectProperties: graphData.nodes.filter((n: any) => n.type === 'objectProperty').length,
+            dataProperties: graphData.nodes.filter((n: any) => n.type === 'dataProperty').length,
+            datatypes: graphData.nodes.filter((n: any) => n.type === 'datatype').length,
+            annotations: graphData.nodes.filter((n: any) => n.type === 'annotation').length
           }
         });
         
