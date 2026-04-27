@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Loader2, Plus, Users, Crown, Building2, ChevronRight, Settings, Trash, AlertTriangle } from "lucide-react";
+import { Loader2, Plus, Users, Crown, Building2, ChevronRight, Settings, Trash, AlertTriangle, Bug } from "lucide-react";
 import apiClient from "../services/apiClient";
 import SubscriptionPlanSelection from "./SubscriptionPlanSelection";
+import { ReportIssueModal } from "./ReportIssueModal";
 import { validateWorkspaceName, validateDescription, getMaxWorkspacesForPlan } from "../utils/validation";
 
 interface WorkspaceMember {
@@ -61,6 +62,9 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
     null,
   );
   const confirmResolveRef = useRef<((value: boolean) => void) | null>(null);
+
+  // Report Issue modal state — available in workspace selection screen
+  const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
 
   const showConfirmDialog = useCallback((title: string, message: string, confirmLabel = "OK"): Promise<boolean> => {
     return new Promise<boolean>((resolve) => {
@@ -379,6 +383,16 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
       </div>
 
       <div className="relative bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl p-8 w-full max-w-4xl max-h-[90vh] flex flex-col">
+        <button
+          type="button"
+          onClick={() => setIsReportIssueModalOpen(true)}
+          className="absolute top-4 right-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm"
+          title="Report an issue or request a feature"
+        >
+          <Bug size={14} />
+          Report Issue
+        </button>
+
         <div className="text-center mb-8">
           <h2 className="text-3xl font-bold text-white mb-2">Select a Workspace</h2>
           <p className="text-gray-300 mb-1">
@@ -728,6 +742,11 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Report Issue Modal — available from workspace selection */}
+      {isReportIssueModalOpen && (
+        <ReportIssueModal onClose={() => setIsReportIssueModalOpen(false)} />
       )}
     </div>
   );

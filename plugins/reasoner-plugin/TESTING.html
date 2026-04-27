@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OWL Reasoner Plugin - Testing Document</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif; background: #f3f4f6; color: #1f2937; line-height: 1.6; }
+  .header { background: linear-gradient(135deg, #1e3a5f, #2563eb); color: #fff; padding: 3rem 2rem 2rem; }
+  .header h1 { font-size: 2.2rem; font-weight: 700; margin-bottom: 0.5rem; }
+  .header .meta { display: flex; flex-wrap: wrap; gap: 1.5rem; font-size: 0.95rem; opacity: 0.9; margin-top: 0.75rem; }
+  .header .meta span { background: rgba(255,255,255,0.15); padding: 0.25rem 0.75rem; border-radius: 9999px; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 2rem; margin-bottom: 2rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+  .card h2 { font-size: 1.5rem; color: #1e3a5f; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid #e5e7eb; }
+  .card h3 { font-size: 1.15rem; color: #2563eb; margin: 1.25rem 0 0.5rem; }
+
+  /* TOC */
+  .toc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem 2rem; }
+  .toc-grid a { color: #2563eb; text-decoration: none; padding: 0.3rem 0; display: block; font-size: 0.97rem; }
+  .toc-grid a:hover { text-decoration: underline; }
+  .toc-num { font-weight: 600; margin-right: 0.25rem; color: #1e3a5f; }
+
+  /* Test case cards */
+  .test-case { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 10px; padding: 1.25rem 1.5rem; margin-bottom: 1.25rem; }
+  .test-case h4 { font-size: 1.05rem; color: #1e3a5f; margin-bottom: 0.5rem; }
+  .test-case .objective { font-style: italic; color: #4b5563; margin-bottom: 0.75rem; }
+  .test-case .precondition { background: #fffbeb; border-left: 3px solid #f59e0b; padding: 0.5rem 0.75rem; border-radius: 0 6px 6px 0; margin-bottom: 0.75rem; font-size: 0.93rem; }
+  .test-case .label { font-weight: 600; color: #374151; }
+  .test-case ol, .test-case ul { margin-left: 1.25rem; margin-bottom: 0.75rem; }
+  .test-case li { margin-bottom: 0.25rem; }
+  .expected { background: #f0fdf4; border-left: 3px solid #22c55e; padding: 0.5rem 0.75rem; border-radius: 0 6px 6px 0; margin-top: 0.5rem; }
+  .expected ul { margin-left: 1.25rem; }
+  .expected .label { color: #166534; }
+
+  /* Priority badges */
+  .badge { display: inline-block; padding: 0.15rem 0.6rem; border-radius: 9999px; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.02em; vertical-align: middle; margin-left: 0.5rem; }
+  .badge-p0 { background: #fee2e2; color: #991b1b; }
+  .badge-p1 { background: #fef3c7; color: #92400e; }
+  .badge-p2 { background: #e0e7ff; color: #3730a3; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin: 0.75rem 0 1rem; font-size: 0.95rem; }
+  th { background: #f1f5f9; text-align: left; padding: 0.6rem 0.75rem; border-bottom: 2px solid #cbd5e1; color: #1e3a5f; font-weight: 600; }
+  td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #e5e7eb; }
+  tr:hover td { background: #f9fafb; }
+
+  /* Code */
+  code { background: #1e293b; color: #e2e8f0; padding: 0.15rem 0.45rem; border-radius: 4px; font-family: 'Fira Code', 'Consolas', monospace; font-size: 0.88rem; }
+  pre { background: #1e293b; color: #e2e8f0; padding: 1rem 1.25rem; border-radius: 8px; overflow-x: auto; margin: 0.75rem 0; font-family: 'Fira Code', 'Consolas', monospace; font-size: 0.88rem; line-height: 1.5; }
+
+  /* Summary matrix */
+  .matrix-table th, .matrix-table td { text-align: center; }
+  .matrix-table td:first-child, .matrix-table th:first-child { text-align: left; }
+  .matrix-table td:nth-child(2), .matrix-table th:nth-child(2) { text-align: left; }
+  .matrix-table input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; accent-color: #2563eb; }
+
+  /* Metrics card */
+  .metric-row { display: flex; justify-content: space-between; padding: 0.4rem 0; border-bottom: 1px dashed #e5e7eb; }
+  .metric-row:last-child { border-bottom: none; }
+  .metric-label { color: #4b5563; }
+  .metric-value { font-weight: 600; color: #1e3a5f; }
+
+  /* Description list */
+  .desc { color: #4b5563; margin-bottom: 1rem; }
+  .owl-symbol { font-weight: 600; color: #7c3aed; }
+
+  hr.section-sep { border: none; border-top: 2px solid #e5e7eb; margin: 2.5rem 0; }
+
+  @media (max-width: 700px) {
+    .toc-grid { grid-template-columns: 1fr; }
+    .header h1 { font-size: 1.5rem; }
+    .header .meta { flex-direction: column; gap: 0.5rem; }
+    .card { padding: 1.25rem; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <h1>OWL Reasoner Plugin &mdash; Testing Document</h1>
+  <div class="meta">
+    <span><strong>Plugin:</strong> @ontocode/reasoner-plugin v1.0.0</span>
+    <span><strong>Categories:</strong> Reasoner, Ontology, Inference, Classification</span>
+    <span><strong>Last Updated:</strong> April 2026</span>
+  </div>
+</div>
+
+<div class="container">
+
+<!-- Table of Contents -->
+<div class="card" id="toc">
+  <h2>Table of Contents</h2>
+  <div class="toc-grid">
+    <a href="#overview"><span class="toc-num">1.</span> Overview</a>
+    <a href="#setup"><span class="toc-num">2.</span> Test Environment Setup</a>
+    <a href="#consistency"><span class="toc-num">3.</span> Consistency Checking Tests</a>
+    <a href="#classification"><span class="toc-num">4.</span> Classification Tests</a>
+    <a href="#realization"><span class="toc-num">5.</span> Realization Tests</a>
+    <a href="#satisfiability"><span class="toc-num">6.</span> Satisfiability &amp; Entailment Tests</a>
+    <a href="#explanation"><span class="toc-num">7.</span> Explanation Tests</a>
+    <a href="#engine"><span class="toc-num">8.</span> Reasoner Engine Tests</a>
+    <a href="#configuration"><span class="toc-num">9.</span> Configuration Tests</a>
+    <a href="#performance"><span class="toc-num">10.</span> Performance Tests</a>
+    <a href="#error-handling"><span class="toc-num">11.</span> Error Handling Tests</a>
+  </div>
+</div>
+
+<!-- 1. Overview -->
+<div class="card" id="overview">
+  <h2>1. Overview</h2>
+  <p class="desc">The OWL Reasoner Plugin provides HermiT-inspired OWL reasoning for consistency checking, classification, realization, satisfiability, entailment, and explanation generation. Supports HermiT, Pellet, FaCT++, and ELK engines.</p>
+
+  <h3>Components Under Test</h3>
+  <ul style="margin-left:1.25rem; margin-bottom:1rem;">
+    <li><code>ReasonerPlugin.tsx</code> &mdash; Full reasoning interface with configuration, status, tasks, results, inferred axioms, stats, and explanation panels</li>
+  </ul>
+
+  <h3>API Endpoints</h3>
+  <table>
+    <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST</code></td><td><code>/api/reasoner/{projectId}/consistency</code></td><td>Check consistency</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/reasoner/{projectId}/classify</code></td><td>Run classification</td></tr>
+      <tr><td><code>POST</code></td><td><code>/api/reasoner/{projectId}/realize</code></td><td>Realize individuals</td></tr>
+      <tr><td><code>GET</code></td><td><code>/api/reasoner/{projectId}/stats</code></td><td>Get statistics</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Supported Reasoners</h3>
+  <table>
+    <thead><tr><th>Engine</th><th>Type</th><th>Best For</th></tr></thead>
+    <tbody>
+      <tr><td>HermiT</td><td>Hypertableau-based</td><td>General OWL DL (default)</td></tr>
+      <tr><td>Pellet</td><td>Complete + Incremental</td><td>Incremental updates</td></tr>
+      <tr><td>FaCT++</td><td>Fast classifier</td><td>Large classification tasks</td></tr>
+      <tr><td>ELK</td><td>EL++ efficient</td><td>EL++ profile ontologies</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- 2. Test Environment Setup -->
+<div class="card" id="setup">
+  <h2>2. Test Environment Setup</h2>
+
+  <h3>Prerequisites</h3>
+  <ul style="margin-left:1.25rem; margin-bottom:1rem;">
+    <li>OntoCode platform running with reasoner service (<code>ontology-swrl</code>)</li>
+    <li>GraphDB with loaded test ontologies</li>
+    <li>Test ontologies with known consistency/inconsistency properties</li>
+  </ul>
+
+  <h3>Test Ontologies</h3>
+  <table>
+    <thead><tr><th>File</th><th>Description</th><th>Properties</th></tr></thead>
+    <tbody>
+      <tr><td><code>consistent-ontology.owl</code></td><td>Simple consistent ontology</td><td>All classes satisfiable</td></tr>
+      <tr><td><code>inconsistent-ontology.owl</code></td><td>Ontology with contradictions</td><td>Contains unsatisfiable classes</td></tr>
+      <tr><td><code>large-ontology.owl</code></td><td>1000+ class ontology</td><td>Performance testing</td></tr>
+      <tr><td><code>test-swrl-ontology.owl</code></td><td>Ontology with individuals</td><td>Realization testing</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- 3. Consistency Checking Tests -->
+<div class="card" id="consistency">
+  <h2>3. Consistency Checking Tests</h2>
+
+  <!-- TC-RS-001 -->
+  <div class="test-case">
+    <h4>TC-RS-001: Consistent Ontology Check <span class="badge badge-p0">P0</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify consistent ontology returns positive result</p>
+    <div class="precondition"><span class="label">Preconditions:</span> Load a known-consistent ontology</div>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Open ReasonerPlugin</li>
+      <li>Select &ldquo;Consistency Checking&rdquo; task</li>
+      <li>Click &ldquo;Run&rdquo;</li>
+      <li>Wait for completion</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li><code>isConsistent: true</code></li>
+        <li><code>unsatisfiableClasses: []</code> (empty)</li>
+        <li>Duration displayed in milliseconds</li>
+        <li>Timestamp recorded</li>
+        <li>Green status indicator</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- TC-RS-002 -->
+  <div class="test-case">
+    <h4>TC-RS-002: Inconsistent Ontology Detection <span class="badge badge-p0">P0</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify inconsistent ontology is properly detected</p>
+    <div class="precondition"><span class="label">Preconditions:</span> Load ontology with contradictory axioms (e.g., A <span class="owl-symbol">&sqsube;</span> B, A <span class="owl-symbol">&sqsube;</span> <span class="owl-symbol">&not;</span>B, A has instance)</div>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Run Consistency Checking</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li><code>isConsistent: false</code></li>
+        <li><code>unsatisfiableClasses</code> lists conflicting classes</li>
+        <li>Red status indicator</li>
+        <li>Explanation available for each unsatisfiable class</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- TC-RS-003 -->
+  <div class="test-case">
+    <h4>TC-RS-003: Consistency After Modification <span class="badge badge-p1">P1</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify re-checking after adding contradictory axiom</p>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Load consistent ontology</li>
+      <li>Run consistency check &rarr; passes</li>
+      <li>Add contradictory axiom (e.g., DisjointWith + SubClassOf)</li>
+      <li>Re-run consistency check</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>First check: consistent</li>
+        <li>Second check after modification: inconsistent</li>
+        <li>Changed classes identified</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- 4. Classification Tests -->
+<div class="card" id="classification">
+  <h2>4. Classification Tests</h2>
+
+  <!-- TC-RS-004 -->
+  <div class="test-case">
+    <h4>TC-RS-004: Class Hierarchy Classification <span class="badge badge-p0">P0</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify classification computes complete class hierarchy</p>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Load ontology with class hierarchy</li>
+      <li>Select &ldquo;Classification&rdquo; task</li>
+      <li>Run classification</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li><code>classHierarchy[]</code> returned with parent &rarr; children structure</li>
+        <li>Equivalent classes grouped in <code>equivalentClasses[][]</code></li>
+        <li>Unsatisfiable classes identified</li>
+        <li>All subsumption relationships discovered</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- TC-RS-005 -->
+  <div class="test-case">
+    <h4>TC-RS-005: Equivalent Class Detection <span class="badge badge-p1">P1</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify detection of equivalent classes</p>
+    <div class="precondition"><span class="label">Preconditions:</span> Ontology with A <span class="owl-symbol">&equiv;</span> B defined</div>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Run classification</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>A and B listed as equivalent</li>
+        <li>Both appear in same equivalence group</li>
+        <li>Hierarchy shows them as interchangeable</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- TC-RS-006 -->
+  <div class="test-case">
+    <h4>TC-RS-006: Unsatisfiable Class Detection During Classification <span class="badge badge-p0">P0</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify unsatisfiable classes found during classification</p>
+    <div class="precondition"><span class="label">Preconditions:</span> Ontology with class that cannot have instances</div>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Run classification</li>
+      <li>Check unsatisfiable classes section</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>Unsatisfiable classes listed with <code>owl:Nothing</code></li>
+        <li>Explanation available for each</li>
+        <li>Visual indicator (red) in classification results</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- TC-RS-007 -->
+  <div class="test-case">
+    <h4>TC-RS-007: Inferred SubClass Relationships <span class="badge badge-p1">P1</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify reasoner discovers implicit subclass relations</p>
+    <div class="precondition"><span class="label">Preconditions:</span> A <span class="owl-symbol">&sqsube;</span> B, B <span class="owl-symbol">&sqsube;</span> C &rarr; should infer A <span class="owl-symbol">&sqsube;</span> C</div>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Run classification</li>
+      <li>Check inferred axioms section</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>Inferred axiom: <code>SubClassOf(A, C)</code> listed</li>
+        <li>Confidence: 1.0</li>
+        <li>Type: <code>subClassOf</code></li>
+        <li>Distinguishable from asserted axioms</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- 5. Realization Tests -->
+<div class="card" id="realization">
+  <h2>5. Realization Tests</h2>
+
+  <!-- TC-RS-008 -->
+  <div class="test-case">
+    <h4>TC-RS-008: Individual Type Realization <span class="badge badge-p0">P0</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify realization identifies most specific types</p>
+    <div class="precondition"><span class="label">Preconditions:</span> Individuals with multiple possible types</div>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Run &ldquo;Realization&rdquo; task</li>
+      <li>Examine individual &rarr; type mapping</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>Each individual mapped to direct types</li>
+        <li>Most specific classes listed (not all superclasses)</li>
+        <li>Example: JohnDoe &rarr; {UndergraduateStudent} (not just {Student, Person})</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- TC-RS-009 -->
+  <div class="test-case">
+    <h4>TC-RS-009: Realization After Adding Individual <span class="badge badge-p1">P1</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify realization updates for new individuals</p>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Run realization</li>
+      <li>Add new individual with class membership</li>
+      <li>Re-run realization</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>New individual appears in results</li>
+        <li>Correct most-specific type assigned</li>
+        <li>Existing results unchanged</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- 6. Satisfiability & Entailment Tests -->
+<div class="card" id="satisfiability">
+  <h2>6. Satisfiability &amp; Entailment Tests</h2>
+
+  <!-- TC-RS-010 -->
+  <div class="test-case">
+    <h4>TC-RS-010: Satisfiable Class Check <span class="badge badge-p1">P1</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify class satisfiability checking</p>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Select a class that can have instances</li>
+      <li>Run satisfiability check</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>Class reported as satisfiable</li>
+        <li>Explanation shows why (no contradictory constraints)</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- TC-RS-011 -->
+  <div class="test-case">
+    <h4>TC-RS-011: Unsatisfiable Class Check <span class="badge badge-p1">P1</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify unsatisfiable class detection</p>
+    <div class="precondition"><span class="label">Preconditions:</span> Class with contradictory constraints</div>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Select class with A <span class="owl-symbol">&sqsube;</span> B <span class="owl-symbol">&sqcap;</span> <span class="owl-symbol">&not;</span>B</li>
+      <li>Run satisfiability check</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>Class reported as unsatisfiable</li>
+        <li>Explanation shows conflicting axioms</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- TC-RS-012 -->
+  <div class="test-case">
+    <h4>TC-RS-012: Axiom Entailment Verification <span class="badge badge-p1">P1</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify entailment checking for axioms</p>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Input axiom to check: <code>SubClassOf(A, C)</code></li>
+      <li>Run entailment check</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>Returns <code>true</code> if axiom logically follows from ontology</li>
+        <li>Returns <code>false</code> if not entailed</li>
+        <li>Explanation available for positive entailment</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- 7. Explanation Tests -->
+<div class="card" id="explanation">
+  <h2>7. Explanation Tests</h2>
+
+  <!-- TC-RS-013 -->
+  <div class="test-case">
+    <h4>TC-RS-013: Justification Generation <span class="badge badge-p1">P1</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify explanation/justification for inferred axioms</p>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Run classification</li>
+      <li>Select an inferred axiom</li>
+      <li>Request explanation</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>List of axioms that justify the inference</li>
+        <li>Minimal set (justification)</li>
+        <li>Each axiom linked to source in ontology</li>
+        <li>Human-readable format</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- TC-RS-014 -->
+  <div class="test-case">
+    <h4>TC-RS-014: Multiple Justifications <span class="badge badge-p2">P2</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify multiple explanations for redundant inferences</p>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Use ontology where an inference has multiple independent justifications</li>
+      <li>Request all explanations</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>Multiple justification sets returned</li>
+        <li>Each set is independently sufficient</li>
+        <li>All sets shown to user</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- 8. Reasoner Engine Tests -->
+<div class="card" id="engine">
+  <h2>8. Reasoner Engine Tests</h2>
+
+  <!-- TC-RS-015 -->
+  <div class="test-case">
+    <h4>TC-RS-015: HermiT Engine <span class="badge badge-p0">P0</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify HermiT reasoner performs all operations</p>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Set reasoner to &ldquo;hermit&rdquo;</li>
+      <li>Run consistency, classification, realization in sequence</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>All three operations complete successfully</li>
+        <li>Correct results for test ontology</li>
+        <li>Performance within acceptable range</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- TC-RS-016 -->
+  <div class="test-case">
+    <h4>TC-RS-016: Pellet Engine <span class="badge badge-p1">P1</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify Pellet reasoner with incremental mode</p>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Set reasoner to &ldquo;pellet&rdquo;</li>
+      <li>Enable incremental reasoning</li>
+      <li>Run classification</li>
+      <li>Add one axiom</li>
+      <li>Re-run classification</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>Initial classification completes</li>
+        <li>Incremental re-classification faster than full</li>
+        <li>Results consistent with full classification</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- TC-RS-017 -->
+  <div class="test-case">
+    <h4>TC-RS-017: FaCT++ Engine <span class="badge badge-p1">P1</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify FaCT++ fast classification</p>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Set reasoner to &ldquo;fact++&rdquo;</li>
+      <li>Run classification on medium ontology</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>Classification completes</li>
+        <li>Results match HermiT classification</li>
+        <li>Potentially faster for large ontologies</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- TC-RS-018 -->
+  <div class="test-case">
+    <h4>TC-RS-018: ELK Engine <span class="badge badge-p1">P1</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify ELK for EL++ profile ontologies</p>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Set reasoner to &ldquo;elk&rdquo;</li>
+      <li>Load EL++ profile ontology</li>
+      <li>Run classification</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>Classification completes efficiently</li>
+        <li>Correct hierarchy for EL++ ontology</li>
+        <li>Warning if ontology exceeds EL++ profile</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- TC-RS-019 -->
+  <div class="test-case">
+    <h4>TC-RS-019: Engine Comparison <span class="badge badge-p2">P2</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify all engines produce consistent results</p>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Load the same ontology</li>
+      <li>Run classification with each engine: HermiT, Pellet, FaCT++, ELK</li>
+      <li>Compare results</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>All engines produce same class hierarchy</li>
+        <li>Same equivalent classes detected</li>
+        <li>Same unsatisfiable classes found</li>
+        <li>Performance may differ</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- 9. Configuration Tests -->
+<div class="card" id="configuration">
+  <h2>9. Configuration Tests</h2>
+
+  <!-- TC-RS-020 -->
+  <div class="test-case">
+    <h4>TC-RS-020: Timeout Configuration <span class="badge badge-p0">P0</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify timeout stops long-running reasoning</p>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Set timeout to 5000ms</li>
+      <li>Load complex ontology requiring &gt; 5s</li>
+      <li>Run classification</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>Reasoning stops at timeout</li>
+        <li>Partial results displayed (if available)</li>
+        <li>Error message: &ldquo;Reasoning timed out&rdquo;</li>
+        <li>UI remains responsive</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- TC-RS-021 -->
+  <div class="test-case">
+    <h4>TC-RS-021: Incremental Reasoning Toggle <span class="badge badge-p1">P1</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify incremental reasoning configuration</p>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Enable <code>useIncrementalReasoning: true</code></li>
+      <li>Run classification</li>
+      <li>Modify ontology slightly</li>
+      <li>Re-run classification</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>Second run uses cached partial results</li>
+        <li>Faster than full re-classification</li>
+        <li>Correct results</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- TC-RS-022 -->
+  <div class="test-case">
+    <h4>TC-RS-022: Result Caching <span class="badge badge-p1">P1</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify caching configuration</p>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Enable <code>cacheResults: true</code></li>
+      <li>Run consistency check</li>
+      <li>Immediately re-run without changes</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>Second run returns cached result instantly</li>
+        <li>Cached results invalidated on ontology change</li>
+        <li>Cache can be manually cleared</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- TC-RS-023 -->
+  <div class="test-case">
+    <h4>TC-RS-023: Max Concurrent Tasks <span class="badge badge-p2">P2</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify concurrent task limiting</p>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Set <code>maxConcurrentTasks: 2</code></li>
+      <li>Launch 3 reasoning tasks simultaneously</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>First 2 tasks start immediately</li>
+        <li>Third task queued</li>
+        <li>Third starts when one of first 2 completes</li>
+        <li>All tasks complete correctly</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- 10. Performance Tests -->
+<div class="card" id="performance">
+  <h2>10. Performance Tests</h2>
+
+  <!-- TC-RS-024 -->
+  <div class="test-case">
+    <h4>TC-RS-024: Small Ontology (&lt; 100 classes) <span class="badge badge-p0">P0</span></h4>
+    <p class="label">Metrics:</p>
+    <div style="margin:0.5rem 0 0 0.5rem;">
+      <div class="metric-row"><span class="metric-label">Consistency check</span><span class="metric-value">&lt; 1 second</span></div>
+      <div class="metric-row"><span class="metric-label">Classification</span><span class="metric-value">&lt; 2 seconds</span></div>
+      <div class="metric-row"><span class="metric-label">Realization</span><span class="metric-value">&lt; 2 seconds</span></div>
+    </div>
+  </div>
+
+  <!-- TC-RS-025 -->
+  <div class="test-case">
+    <h4>TC-RS-025: Medium Ontology (500 classes) <span class="badge badge-p1">P1</span></h4>
+    <p class="label">Metrics:</p>
+    <div style="margin:0.5rem 0 0 0.5rem;">
+      <div class="metric-row"><span class="metric-label">Consistency check</span><span class="metric-value">&lt; 5 seconds</span></div>
+      <div class="metric-row"><span class="metric-label">Classification</span><span class="metric-value">&lt; 10 seconds</span></div>
+      <div class="metric-row"><span class="metric-label">Realization</span><span class="metric-value">&lt; 10 seconds</span></div>
+    </div>
+  </div>
+
+  <!-- TC-RS-026 -->
+  <div class="test-case">
+    <h4>TC-RS-026: Large Ontology (5000+ classes) <span class="badge badge-p1">P1</span></h4>
+    <p class="label">Metrics:</p>
+    <div style="margin:0.5rem 0 0 0.5rem;">
+      <div class="metric-row"><span class="metric-label">Consistency check</span><span class="metric-value">&lt; 30 seconds</span></div>
+      <div class="metric-row"><span class="metric-label">Classification</span><span class="metric-value">&lt; 60 seconds</span></div>
+      <div class="metric-row"><span class="metric-label">Realization</span><span class="metric-value">&lt; 60 seconds</span></div>
+      <div class="metric-row"><span class="metric-label">UI responsiveness</span><span class="metric-value">Remains responsive</span></div>
+    </div>
+  </div>
+
+  <!-- TC-RS-027 -->
+  <div class="test-case">
+    <h4>TC-RS-027: Inferred Axioms Export <span class="badge badge-p1">P1</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify export of all inferred axioms</p>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Run classification</li>
+      <li>Click &ldquo;Export Results as JSON&rdquo;</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>JSON file downloaded with all inferred axioms</li>
+        <li>Each axiom has: type, subject, object, confidence</li>
+        <li>Valid JSON format</li>
+        <li>File named with project ID and timestamp</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- 11. Error Handling Tests -->
+<div class="card" id="error-handling">
+  <h2>11. Error Handling Tests</h2>
+
+  <!-- TC-RS-028 -->
+  <div class="test-case">
+    <h4>TC-RS-028: Invalid Ontology <span class="badge badge-p0">P0</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify handling of malformed OWL</p>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Load ontology with syntax errors</li>
+      <li>Attempt reasoning</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>Error message with specific parsing issue</li>
+        <li>No crash</li>
+        <li>Suggestion to fix syntax</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- TC-RS-029 -->
+  <div class="test-case">
+    <h4>TC-RS-029: Backend Unreachable <span class="badge badge-p0">P0</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify handling when reasoner service is down</p>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Stop the <code>ontology-swrl</code> service</li>
+      <li>Attempt reasoning</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>Connection error displayed</li>
+        <li>Retry option available</li>
+        <li>Previous cached results still accessible</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- TC-RS-030 -->
+  <div class="test-case">
+    <h4>TC-RS-030: Progress Tracking <span class="badge badge-p1">P1</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify progress display during long operations</p>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Run classification on large ontology</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li>Progress bar/spinner visible</li>
+        <li>Status updates (e.g., &ldquo;Classifying&hellip;&rdquo;, &ldquo;Computing hierarchy&hellip;&rdquo;)</li>
+        <li>Cancel button available</li>
+        <li>Final status: &ldquo;Complete&rdquo; or error</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- Statistics Tests -->
+<div class="card" id="statistics">
+  <h2>Statistics Tests</h2>
+
+  <!-- TC-RS-031 -->
+  <div class="test-case">
+    <h4>TC-RS-031: Reasoner Statistics <span class="badge badge-p1">P1</span></h4>
+    <p class="objective"><strong>Objective:</strong> Verify statistics endpoint returns correct data</p>
+    <p class="label">Steps:</p>
+    <ol>
+      <li>Load ontology</li>
+      <li>Call stats endpoint or view stats section</li>
+    </ol>
+    <div class="expected">
+      <p class="label">Expected Results:</p>
+      <ul>
+        <li><code>classCount</code>: matches actual class count</li>
+        <li><code>propertyCount</code>: object + data properties</li>
+        <li><code>individualCount</code>: matches named individuals</li>
+        <li><code>axiomCount</code>: total axiom count</li>
+        <li>Additional metrics accurate</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<hr class="section-sep">
+
+<!-- Test Summary Matrix -->
+<div class="card" id="summary-matrix">
+  <h2>Test Summary Matrix</h2>
+  <table class="matrix-table">
+    <thead>
+      <tr><th>Test ID</th><th>Category</th><th>Priority</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>TC-RS-001</td><td>Consistency</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox" aria-label="TC-RS-001 status"></td></tr>
+      <tr><td>TC-RS-002</td><td>Consistency</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox" aria-label="TC-RS-002 status"></td></tr>
+      <tr><td>TC-RS-003</td><td>Consistency</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" aria-label="TC-RS-003 status"></td></tr>
+      <tr><td>TC-RS-004</td><td>Classification</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox" aria-label="TC-RS-004 status"></td></tr>
+      <tr><td>TC-RS-005</td><td>Classification</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" aria-label="TC-RS-005 status"></td></tr>
+      <tr><td>TC-RS-006</td><td>Classification</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox" aria-label="TC-RS-006 status"></td></tr>
+      <tr><td>TC-RS-007</td><td>Classification</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" aria-label="TC-RS-007 status"></td></tr>
+      <tr><td>TC-RS-008</td><td>Realization</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox" aria-label="TC-RS-008 status"></td></tr>
+      <tr><td>TC-RS-009</td><td>Realization</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" aria-label="TC-RS-009 status"></td></tr>
+      <tr><td>TC-RS-010</td><td>Satisfiability</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" aria-label="TC-RS-010 status"></td></tr>
+      <tr><td>TC-RS-011</td><td>Satisfiability</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" aria-label="TC-RS-011 status"></td></tr>
+      <tr><td>TC-RS-012</td><td>Entailment</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" aria-label="TC-RS-012 status"></td></tr>
+      <tr><td>TC-RS-013</td><td>Explanation</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" aria-label="TC-RS-013 status"></td></tr>
+      <tr><td>TC-RS-014</td><td>Explanation</td><td><span class="badge badge-p2">P2</span></td><td><input type="checkbox" aria-label="TC-RS-014 status"></td></tr>
+      <tr><td>TC-RS-015</td><td>Engine</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox" aria-label="TC-RS-015 status"></td></tr>
+      <tr><td>TC-RS-016</td><td>Engine</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" aria-label="TC-RS-016 status"></td></tr>
+      <tr><td>TC-RS-017</td><td>Engine</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" aria-label="TC-RS-017 status"></td></tr>
+      <tr><td>TC-RS-018</td><td>Engine</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" aria-label="TC-RS-018 status"></td></tr>
+      <tr><td>TC-RS-019</td><td>Engine</td><td><span class="badge badge-p2">P2</span></td><td><input type="checkbox" aria-label="TC-RS-019 status"></td></tr>
+      <tr><td>TC-RS-020</td><td>Configuration</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox" aria-label="TC-RS-020 status"></td></tr>
+      <tr><td>TC-RS-021</td><td>Configuration</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" aria-label="TC-RS-021 status"></td></tr>
+      <tr><td>TC-RS-022</td><td>Configuration</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" aria-label="TC-RS-022 status"></td></tr>
+      <tr><td>TC-RS-023</td><td>Configuration</td><td><span class="badge badge-p2">P2</span></td><td><input type="checkbox" aria-label="TC-RS-023 status"></td></tr>
+      <tr><td>TC-RS-024</td><td>Performance</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox" aria-label="TC-RS-024 status"></td></tr>
+      <tr><td>TC-RS-025</td><td>Performance</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" aria-label="TC-RS-025 status"></td></tr>
+      <tr><td>TC-RS-026</td><td>Performance</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" aria-label="TC-RS-026 status"></td></tr>
+      <tr><td>TC-RS-027</td><td>Export</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" aria-label="TC-RS-027 status"></td></tr>
+      <tr><td>TC-RS-028</td><td>Error Handling</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox" aria-label="TC-RS-028 status"></td></tr>
+      <tr><td>TC-RS-029</td><td>Error Handling</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox" aria-label="TC-RS-029 status"></td></tr>
+      <tr><td>TC-RS-030</td><td>Progress</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" aria-label="TC-RS-030 status"></td></tr>
+      <tr><td>TC-RS-031</td><td>Statistics</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" aria-label="TC-RS-031 status"></td></tr>
+    </tbody>
+  </table>
+</div>
+
+</div><!-- /container -->
+</body>
+</html>

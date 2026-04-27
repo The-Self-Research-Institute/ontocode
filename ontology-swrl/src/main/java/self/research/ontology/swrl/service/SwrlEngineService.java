@@ -35,6 +35,8 @@ import self.research.ontology.swrl.dto.RuleStatistics;
 public class SwrlEngineService {
 
     private static final Logger logger = LoggerFactory.getLogger(SwrlEngineService.class);
+    private static final Logger perfLog = LoggerFactory.getLogger("PERFORMANCE");
+    private static final Logger engineLog = LoggerFactory.getLogger("SWRL_ENGINE");
 
     @Autowired
     private OntologyClientService ontologyClient;
@@ -59,6 +61,9 @@ public class SwrlEngineService {
     
     // ✅ FIXED: Track last access for cleanup
     private final Map<String, Long> engineLastAccess = new ConcurrentHashMap<>();
+
+    // Stable namespace-to-prefix mapping per project (ensures consistent prefix names across calls)
+    private final Map<String, Map<String, String>> projectNamespacePrefixes = new ConcurrentHashMap<>();
 
     // ✅ FIXED: Executor for timeouts
     private final ExecutorService executorService = Executors.newCachedThreadPool();
@@ -90,17 +95,81 @@ public class SwrlEngineService {
     }
 
     public ValidationResult validateRule(String projectId, String ruleText) {
+        long startTime = System.currentTimeMillis();
+        engineLog.info("[VALIDATE] Starting validation project={} ruleLength={}", projectId, ruleText.length());
         Timer.Sample sample = meterRegistry != null ? Timer.start(meterRegistry) : null;
         
         try {
+            long fetchStart = System.currentTimeMillis();
             OWLOntology ontology = ontologyClient.fetchOntology(projectId);
+            long fetchDuration = System.currentTimeMillis() - fetchStart;
+            engineLog.info("[VALIDATE] Ontology fetched in {}ms project={}", fetchDuration, projectId);
+
+            // Register namespace prefixes before engine creation and rule resolution
+            if (ensureNamespacePrefixes(projectId, ontology)) {
+                engineCache.remove(projectId);
+            }
+            
+            long engineStart = System.currentTimeMillis();
             SWRLRuleEngine engine = getOrCreateEngine(projectId, ontology);
+            long engineDuration = System.currentTimeMillis() - engineStart;
+            engineLog.info("[VALIDATE] Engine obtained in {}ms project={} (cached={})", 
+                    engineDuration, projectId, engineDuration < 10 ? "yes" : "no");
             
             String tempName = "temp_validation_" + System.currentTimeMillis();
-            engine.createSWRLRule(tempName, ruleText);
-            engine.deleteSWRLRule(tempName);
+            String resolvedText = resolveEntityNames(ruleText, ontology);
+            engine.createSWRLRule(tempName, resolvedText);
+            
+            // Semantic validation: attempt inference to catch built-in binding errors
+            // (e.g., swrlb:lessThanOrEqual with unbound arguments)
+            try {
+                engine.infer();
+            } catch (Exception inferEx) {
+                engine.deleteSWRLRule(tempName);
+                
+                String errorMsg = inferEx.getMessage() != null ? inferEx.getMessage() : inferEx.getClass().getSimpleName();
+                
+                // Check if this is a built-in binding error
+                if (inferEx instanceof SWRLBuiltInException
+                    || errorMsg.contains("built-in")
+                    || errorMsg.contains("do not support argument binding")) {
+                    
+                    logger.warn("SWRL built-in validation error for project {}: {}", projectId, errorMsg);
+                    
+                    if (meterRegistry != null) {
+                        meterRegistry.counter("swrl.validation.errors",
+                            "projectId", projectId,
+                            "type", "builtin").increment();
+                    }
+                    
+                    List<String> suggestions = new ArrayList<>();
+                    if (errorMsg.contains("comparison built-ins do not support argument binding") 
+                        || errorMsg.contains("do not support argument binding")) {
+                        suggestions.add("Comparison built-ins (swrlb:lessThan, swrlb:greaterThan, swrlb:lessThanOrEqual, etc.) require all arguments to be already bound.");
+                        suggestions.add("Ensure variables are bound by class or property atoms before using them in comparison built-ins.");
+                        suggestions.add("Example: Person(?p) ^ hasAge(?p, ?age) ^ swrlb:lessThanOrEqual(?age, 25) -> Young(?p)");
+                    }
+                    
+                    return new ValidationResult(false,
+                        "Built-in function error: " + errorMsg,
+                        suggestions);
+                }
+                
+                // Re-throw non-built-in errors
+                throw inferEx;
+            } finally {
+                // Cleanup: delete temp rule to restore engine state
+                try {
+                    engine.deleteSWRLRule(tempName);
+                } catch (Exception cleanupEx) {
+                    logger.debug("Cleanup after validation: {}", cleanupEx.getMessage());
+                }
+            }
             
             logger.info("Rule validation successful for project: {}", projectId);
+            long totalDuration = System.currentTimeMillis() - startTime;
+            perfLog.info("[PERF] SWRL_VALIDATE project={} status=success duration={}ms", projectId, totalDuration);
+            engineLog.info("[VALIDATE] Completed successfully in {}ms project={}", totalDuration, projectId);
             
             if (sample != null) {
                 sample.stop(Timer.builder("swrl.validation")
@@ -112,7 +181,10 @@ public class SwrlEngineService {
             return new ValidationResult(true, null, Collections.emptyList());
             
         } catch (SWRLParseException e) {
+            long totalDuration = System.currentTimeMillis() - startTime;
             logger.warn("SWRL parse error for project {}: {}", projectId, e.getMessage());
+            perfLog.info("[PERF] SWRL_VALIDATE project={} status=parse_error duration={}ms", projectId, totalDuration);
+            engineLog.warn("[VALIDATE] Parse error in {}ms project={}: {}", totalDuration, projectId, e.getMessage());
             
             if (meterRegistry != null) {
                 meterRegistry.counter("swrl.validation.errors",
@@ -125,7 +197,10 @@ public class SwrlEngineService {
                 generateEnhancedSuggestions(ruleText, e));
                 
         } catch (Exception e) {
+            long totalDuration = System.currentTimeMillis() - startTime;
             logger.error("Validation error for project {}", projectId, e);
+            perfLog.info("[PERF] SWRL_VALIDATE project={} status=error duration={}ms error={}", projectId, totalDuration, e.getMessage());
+            engineLog.error("[VALIDATE] Error in {}ms project={}: {}", totalDuration, projectId, e.getMessage());
             
             if (meterRegistry != null) {
                 meterRegistry.counter("swrl.validation.errors",
@@ -141,6 +216,8 @@ public class SwrlEngineService {
 
     public SwrlRule createRule(String projectId, String ruleName, String ruleText, 
                               String comment, String category) {
+        long startTime = System.currentTimeMillis();
+        engineLog.info("[CREATE_RULE] Starting project={} ruleName={}", projectId, ruleName);
         try {
             // Check for duplicate rule name
             if (ruleRepository.existsByProjectIdAndRuleName(projectId, ruleName)) {
@@ -161,8 +238,12 @@ public class SwrlEngineService {
 
             // Add to engine
             OWLOntology ontology = ontologyClient.fetchOntology(projectId);
+            if (ensureNamespacePrefixes(projectId, ontology)) {
+                engineCache.remove(projectId);
+            }
             SWRLRuleEngine engine = getOrCreateEngine(projectId, ontology);
-            engine.createSWRLRule(ruleName, ruleText);
+            String resolvedText = resolveEntityNames(ruleText, ontology);
+            engine.createSWRLRule(ruleName, resolvedText);
 
             logger.info("Created SWRL rule: {} for project: {}", ruleName, projectId);
             
@@ -171,10 +252,15 @@ public class SwrlEngineService {
                     "projectId", projectId).increment();
             }
             
+            long totalDuration = System.currentTimeMillis() - startTime;
+            perfLog.info("[PERF] SWRL_CREATE_RULE project={} rule={} duration={}ms", projectId, ruleName, totalDuration);
+            engineLog.info("[CREATE_RULE] Completed in {}ms project={} rule={}", totalDuration, projectId, ruleName);
             return rule;
 
         } catch (Exception e) {
-            logger.error("Failed to create rule {} for project {}", ruleName, projectId, e);
+            long totalDuration = System.currentTimeMillis() - startTime;
+            logger.error("Failed to create rule {} for project {} after {}ms", ruleName, projectId, totalDuration, e);
+            perfLog.info("[PERF] SWRL_CREATE_RULE project={} rule={} status=error duration={}ms", projectId, ruleName, totalDuration);
             throw new RuntimeException("Failed to create rule: " + e.getMessage(), e);
         }
     }
@@ -185,11 +271,22 @@ public class SwrlEngineService {
         long startTime = System.currentTimeMillis();
 
         try {
+            long fetchStart = System.currentTimeMillis();
             OWLOntology ontology = ontologyClient.fetchOntology(projectId);
+            long fetchDuration = System.currentTimeMillis() - fetchStart;
+            engineLog.info("[EXECUTE] Ontology fetched in {}ms project={}", fetchDuration, projectId);
+
+            if (ensureNamespacePrefixes(projectId, ontology)) {
+                engineCache.remove(projectId);
+            }
+            long engineStart = System.currentTimeMillis();
             SWRLRuleEngine engine = getOrCreateEngine(projectId, ontology);
+            long engineDuration = System.currentTimeMillis() - engineStart;
+            engineLog.info("[EXECUTE] Engine obtained in {}ms project={}", engineDuration, projectId);
 
             List<SwrlRule> enabledRules = ruleRepository.findByProjectIdAndEnabled(projectId, true);
             logger.info("Executing {} enabled rules for project: {}", enabledRules.size(), projectId);
+            engineLog.info("[EXECUTE] {} rules to execute project={}", enabledRules.size(), projectId);
 
             // Clear existing rules from engine
             engine.getSWRLRules().forEach(rule -> engine.deleteSWRLRule(rule.getRuleName()));
@@ -197,7 +294,8 @@ public class SwrlEngineService {
             // Add enabled rules
             for (SwrlRule rule : enabledRules) {
                 try {
-                    engine.createSWRLRule(rule.getRuleName(), rule.getRuleText());
+                    String resolved = resolveEntityNames(rule.getRuleText(), ontology);
+                    engine.createSWRLRule(rule.getRuleName(), resolved);
                 } catch (SWRLParseException e) {
                     logger.error("Failed to add rule {}: {}", rule.getRuleName(), e.getMessage());
                 }
@@ -245,10 +343,17 @@ public class SwrlEngineService {
             );
             result.setExecutedRuleNames(executedRuleNames);
             result.setExecutionMode("all");
+            perfLog.info("[PERF] SWRL_EXECUTE project={} rules={} inferred={} duration={}ms status=success",
+                    projectId, enabledRules.size(), inferredAxioms.size(), executionTime);
+            engineLog.info("[EXECUTE] Completed: {} rules, {} inferred axioms in {}ms project={}",
+                    enabledRules.size(), inferredAxioms.size(), executionTime, projectId);
             return result;
 
         } catch (TimeoutException e) {
-            logger.error("Rule execution timed out for project: {}", projectId);
+            long totalDuration = System.currentTimeMillis() - startTime;
+            logger.error("Rule execution timed out for project: {} after {}ms", projectId, totalDuration);
+            perfLog.info("[PERF] SWRL_EXECUTE project={} status=timeout duration={}ms", projectId, totalDuration);
+            engineLog.error("[EXECUTE] Timeout after {}ms project={}", totalDuration, projectId);
             
             if (meterRegistry != null) {
                 meterRegistry.counter("swrl.execution.errors",
@@ -260,7 +365,10 @@ public class SwrlEngineService {
                 "Execution timed out after " + executionTimeoutSeconds + " seconds");
                 
         } catch (SWRLBuiltInException e) {
-            logger.error("SWRL built-in error for project {}", projectId, e);
+            long totalDuration = System.currentTimeMillis() - startTime;
+            logger.error("SWRL built-in error for project {} after {}ms", projectId, totalDuration, e);
+            perfLog.info("[PERF] SWRL_EXECUTE project={} status=builtin_error duration={}ms", projectId, totalDuration);
+            engineLog.error("[EXECUTE] Built-in error in {}ms project={}: {}", totalDuration, projectId, e.getMessage());
             
             if (meterRegistry != null) {
                 meterRegistry.counter("swrl.execution.errors",
@@ -272,7 +380,10 @@ public class SwrlEngineService {
                 "Built-in function error: " + e.getMessage());
                 
         } catch (Exception e) {
-            logger.error("Execution error for project {}", projectId, e);
+            long totalDuration = System.currentTimeMillis() - startTime;
+            logger.error("Execution error for project {} after {}ms", projectId, totalDuration, e);
+            perfLog.info("[PERF] SWRL_EXECUTE project={} status=error duration={}ms error={}", projectId, totalDuration, e.getMessage());
+            engineLog.error("[EXECUTE] Error in {}ms project={}: {}", totalDuration, projectId, e.getMessage());
             
             if (meterRegistry != null) {
                 meterRegistry.counter("swrl.execution.errors",
@@ -295,6 +406,9 @@ public class SwrlEngineService {
 
         try {
             OWLOntology ontology = ontologyClient.fetchOntology(projectId);
+            if (ensureNamespacePrefixes(projectId, ontology)) {
+                engineCache.remove(projectId);
+            }
             SWRLRuleEngine engine = getOrCreateEngine(projectId, ontology);
 
             // Get the selected rules
@@ -312,7 +426,8 @@ public class SwrlEngineService {
             // Add only selected rules
             for (SwrlRule rule : selectedRules) {
                 try {
-                    engine.createSWRLRule(rule.getRuleName(), rule.getRuleText());
+                    String resolved = resolveEntityNames(rule.getRuleText(), ontology);
+                    engine.createSWRLRule(rule.getRuleName(), resolved);
                 } catch (SWRLParseException e) {
                     logger.error("Failed to add rule {}: {}", rule.getRuleName(), e.getMessage());
                 }
@@ -509,6 +624,152 @@ public class SwrlEngineService {
     }
 
     /**
+     * Register all non-default entity namespaces as prefixes on the ontology document format.
+     * SWRLAPI reads prefix mappings from the format when creating its internal resolver,
+     * enabling it to resolve prefixed names like ns1:BFO_0000015.
+     * Returns true if new prefixes were registered (engine cache should be evicted).
+     */
+    private boolean ensureNamespacePrefixes(String projectId, OWLOntology ontology) {
+        String defaultNs = null;
+        try {
+            com.google.common.base.Optional<IRI> ontIRI = ontology.getOntologyID().getOntologyIRI();
+            if (ontIRI.isPresent()) {
+                defaultNs = ontIRI.get().toString();
+                if (!defaultNs.endsWith("#") && !defaultNs.endsWith("/")) {
+                    defaultNs = defaultNs + "#";
+                }
+            }
+        } catch (Exception e) { /* ignore */ }
+
+        OWLDocumentFormat format = ontology.getOWLOntologyManager().getOntologyFormat(ontology);
+        if (!(format instanceof org.semanticweb.owlapi.formats.PrefixDocumentFormat)) return false;
+
+        // Get or create stable prefix map for this project
+        Map<String, String> prefixMap = projectNamespacePrefixes
+                .computeIfAbsent(projectId, k -> new ConcurrentHashMap<>());
+
+        // Collect all non-default, non-builtin namespaces from ontology entities
+        Set<String> namespaces = new HashSet<>();
+        for (OWLEntity entity : ontology.getSignature()) {
+            String ns = entity.getIRI().getNamespace();
+            if (ns == null || ns.isEmpty()) continue;
+            if (ns.contains("www.w3.org")) continue;
+            if (defaultNs != null && ns.equals(defaultNs)) continue;
+            namespaces.add(ns);
+        }
+
+        // Assign stable prefix names for new namespaces (never renumber existing ones)
+        boolean newPrefixesAdded = false;
+        int maxIdx = prefixMap.values().stream()
+                .filter(p -> p.startsWith("ns") && p.endsWith(":"))
+                .mapToInt(p -> { try { return Integer.parseInt(p.substring(2, p.length() - 1)); } catch (Exception e) { return 0; } })
+                .max().orElse(0);
+
+        for (String ns : namespaces) {
+            if (!prefixMap.containsKey(ns)) {
+                maxIdx++;
+                String prefix = "ns" + maxIdx + ":";
+                prefixMap.put(ns, prefix);
+                newPrefixesAdded = true;
+                logger.info("Assigned prefix '{}' for namespace '{}' in project {}", prefix, ns, projectId);
+            }
+        }
+
+        // Register ALL project prefixes on the (freshly fetched) ontology format
+        org.semanticweb.owlapi.formats.PrefixDocumentFormat pf = (org.semanticweb.owlapi.formats.PrefixDocumentFormat) format;
+        for (Map.Entry<String, String> entry : prefixMap.entrySet()) {
+            pf.setPrefix(entry.getValue(), entry.getKey());
+        }
+
+        return newPrefixesAdded;
+    }
+
+    /**
+     * Resolve entity short names in SWRL rule text to prefixed form.
+     * Handles entities from non-default namespaces (e.g., OBO ontology classes like CHEBI_16670).
+     * SWRLAPI only resolves unprefixed names against the default namespace, so entities from
+     * other namespaces are converted to prefixed form: ns1:BFO_0000015
+     * NOTE: ensureNamespacePrefixes() must be called before this method to register prefixes.
+     */
+    private String resolveEntityNames(String ruleText, OWLOntology ontology) {
+        if (ruleText == null || ruleText.isEmpty()) return ruleText;
+
+        // Build map of shortName -> IRI for all entities in the ontology
+        Map<String, IRI> shortNameToIRI = new HashMap<>();
+        for (OWLEntity entity : ontology.getSignature()) {
+            IRI iri = entity.getIRI();
+            String shortForm = iri.getShortForm();
+            if (shortForm != null && !shortForm.isEmpty() && shortForm.length() > 1) {
+                if (shortNameToIRI.containsKey(shortForm)) {
+                    shortNameToIRI.put(shortForm, null); // ambiguous
+                } else {
+                    shortNameToIRI.put(shortForm, iri);
+                }
+            }
+        }
+        shortNameToIRI.values().removeIf(Objects::isNull);
+        if (shortNameToIRI.isEmpty()) return ruleText;
+
+        // Determine the default namespace from ontology IRI
+        String defaultNs = null;
+        try {
+            com.google.common.base.Optional<IRI> ontIRI = ontology.getOntologyID().getOntologyIRI();
+            if (ontIRI.isPresent()) {
+                defaultNs = ontIRI.get().toString();
+                if (!defaultNs.endsWith("#") && !defaultNs.endsWith("/")) {
+                    defaultNs = defaultNs + "#";
+                }
+            }
+        } catch (Exception e) { /* ignore */ }
+
+        // Read prefix mappings registered by ensureNamespacePrefixes()
+        Map<String, String> nsToPrefix = new HashMap<>();
+        OWLDocumentFormat format = ontology.getOWLOntologyManager().getOntologyFormat(ontology);
+        if (format instanceof org.semanticweb.owlapi.formats.PrefixDocumentFormat) {
+            ((org.semanticweb.owlapi.formats.PrefixDocumentFormat) format).getPrefixName2PrefixMap().forEach((prefixName, ns) -> {
+                nsToPrefix.put(ns, prefixName);
+            });
+        }
+
+        // Sort by name length descending to prevent partial replacements
+        List<Map.Entry<String, IRI>> sorted = new ArrayList<>(shortNameToIRI.entrySet());
+        sorted.sort((a, b) -> b.getKey().length() - a.getKey().length());
+
+        String result = ruleText;
+        for (Map.Entry<String, IRI> entry : sorted) {
+            String name = entry.getKey();
+            IRI iri = entry.getValue();
+            String ns = iri.getNamespace();
+
+            // Skip entities already in the default namespace (SWRLAPI resolves these)
+            if (defaultNs != null && ns.equals(defaultNs)) continue;
+
+            // Skip OWL/RDF/XSD built-in entities
+            if (ns.contains("www.w3.org")) continue;
+
+            // Match standalone name followed by '(' but not already prefixed (negative lookbehind for : or word char)
+            String pattern = "(?<![:\\w])" + java.util.regex.Pattern.quote(name) + "(?=\\()";
+            java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(pattern).matcher(result);
+            if (!matcher.find()) continue;
+
+            String prefix = nsToPrefix.get(ns);
+            if (prefix == null) {
+                logger.warn("No prefix registered for namespace '{}'. Entity '{}' may not resolve.", ns, name);
+                continue;
+            }
+
+            String replacement = java.util.regex.Matcher.quoteReplacement(prefix + name);
+            result = java.util.regex.Pattern.compile(pattern).matcher(result).replaceAll(replacement);
+            logger.debug("Resolved SWRL entity '{}' -> {}{}", name, prefix, name);
+        }
+
+        if (!result.equals(ruleText)) {
+            logger.info("Resolved SWRL rule text: {} -> {}", ruleText, result);
+        }
+        return result;
+    }
+
+    /**
      * ✅ FIXED: Track access time for cleanup
      * ✅ ENHANCED: Set up prefix mappings for better SWRL parsing
      */
@@ -517,29 +778,19 @@ public class SwrlEngineService {
         
         return engineCache.computeIfAbsent(projectId, id -> {
             logger.info("Creating new SWRL engine for project: {}", projectId);
+
             SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
             
-            // Set up default prefix mappings
             try {
-                // Get ontology IRI and log it for debugging
                 com.google.common.base.Optional<IRI> ontologyIRIOptional = ontology.getOntologyID().getOntologyIRI();
                 if (ontologyIRIOptional.isPresent()) {
-                    IRI ontologyIRI = ontologyIRIOptional.get();
-                    String baseIRI = ontologyIRI.toString();
-                    if (!baseIRI.endsWith("#") && !baseIRI.endsWith("/")) {
-                        baseIRI = baseIRI + "#";
-                    }
-                    
-                    logger.info("Ontology base IRI for project {}: {}", projectId, baseIRI);
+                    logger.info("Ontology base IRI for project {}: {}", projectId, ontologyIRIOptional.get());
                     logger.info("Classes in ontology: {}", 
                         ontology.getClassesInSignature().stream()
                             .map(c -> c.getIRI().getShortForm())
                             .limit(10)
                             .collect(Collectors.joining(", ")));
-                } else {
-                    logger.warn("No ontology IRI found for project: {}", projectId);
                 }
-                
             } catch (Exception e) {
                 logger.warn("Failed to log ontology info for project {}: {}", projectId, e.getMessage());
             }
@@ -699,11 +950,13 @@ public class SwrlEngineService {
             }
 
             OWLOntology ontology = ontologyClient.fetchOntology(projectId);
+            ensureNamespacePrefixes(projectId, ontology);
             SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
 
             // Add and execute the test rule
             String testRuleName = "test_" + System.currentTimeMillis();
-            engine.createSWRLRule(testRuleName, ruleText);
+            String resolvedText = resolveEntityNames(ruleText, ontology);
+            engine.createSWRLRule(testRuleName, resolvedText);
 
             Set<OWLAxiom> inferredAxioms = executeWithTimeout(engine, projectId);
             long executionTime = System.currentTimeMillis() - startTime;
@@ -882,14 +1135,16 @@ public class SwrlEngineService {
         
         try {
             OWLOntology ontology = ontologyClient.fetchOntology(projectId);
+            ensureNamespacePrefixes(projectId, ontology);
             
             // Create SQWRL query engine
             org.swrlapi.sqwrl.SQWRLQueryEngine queryEngine = SWRLAPIFactory.createSQWRLQueryEngine(ontology);
             
             logger.info("Executing SQWRL query for project {}: {}", projectId, queryText);
             
-            // Execute the query
-            org.swrlapi.sqwrl.SQWRLResult sqwrlResult = queryEngine.runSQWRLQuery(queryName, queryText);
+            // Execute the query - resolve entity names for non-default namespaces
+            String resolvedQuery = resolveEntityNames(queryText, ontology);
+            org.swrlapi.sqwrl.SQWRLResult sqwrlResult = queryEngine.runSQWRLQuery(queryName, resolvedQuery);
             
             long executionTime = System.currentTimeMillis() - startTime;
             

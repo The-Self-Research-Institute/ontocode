@@ -9,7 +9,7 @@ type SyncCallback = (projectId: string) => void;
 
 class SyncService {
     private pollingInterval: number = 5000; // Poll every 5 seconds
-    private monitoringDuration: number = 30000; // Monitor for 30 seconds total
+    private monitoringDuration: number = 300000; // Monitor for 5 minutes for shared files
     private lastKnownTimestamps: Map<string, number> = new Map();
     private activePolling: Map<string, NodeJS.Timeout> = new Map();
     private monitoringTimeouts: Map<string, NodeJS.Timeout> = new Map();
@@ -126,9 +126,8 @@ class SyncService {
                     // Update timestamp
                     this.lastKnownTimestamps.set(projectId, serverTimestamp);
 
-                    // Stop polling after detecting first change
-                    this.stopPolling(projectId);
-                    console.log('[SyncService] ✅ Stopped polling after detecting change');
+                    // Continue polling to detect subsequent changes
+                    console.log('[SyncService] ✅ Change detected, continuing to monitor...');
 
                     // Notify all callbacks
                     const callbacks = this.callbacks.get(projectId);
@@ -143,9 +142,22 @@ class SyncService {
                     }
                 }
             }
-        } catch (error) {
-            // Silently fail on network errors to avoid console spam
-            // console.error('[SyncService] ❌ Error checking for updates:', error);
+        } catch (error: any) {
+            // Handle 404 (project deleted) specifically
+            const status = error?.status || error?.response?.status;
+            if (status === 404) {
+                console.warn('[SyncService] ⚠️ Project no longer exists:', projectId);
+                this.stopPolling(projectId);
+                // Notify callbacks with a special deleted signal
+                const callbacks = this.callbacks.get(projectId);
+                if (callbacks) {
+                    callbacks.forEach(callback => {
+                        try { callback(`__deleted__:${projectId}`); } catch { /* ignore */ }
+                    });
+                }
+                return;
+            }
+            // Silently fail on other network errors to avoid console spam
         }
     }
 

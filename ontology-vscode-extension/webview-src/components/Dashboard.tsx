@@ -51,6 +51,8 @@ import {
   Crown,
   Rocket,
   Bug,
+  FolderOpen,
+  LayoutDashboard,
 } from "lucide-react";
 import apiClient, { getBaseUrl } from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
@@ -118,6 +120,7 @@ import { useEntityPreferences } from "../contexts/EntityPreferencesContext";
 import { CodeHighlighter } from "./CodeHighlighter";
 import { PluginMarketplace } from "./PluginMarketplace";
 import { pluginLoader } from "../services/pluginLoader";
+import { checkForPluginUpdates, clearPluginUpdateCache } from "../services/pluginUpdateChecker";
 import DLQueryPanel from "./DLQueryPanel";
 import CitationPickerDialog from "./CitationPickerDialog";
 import ManualCitationDialog from "./ManualCitationDialog";
@@ -628,7 +631,7 @@ const ReasonerSettingsDialog = ({
             <input type="checkbox" checked={isSynced} onChange={onToggleSync} className="rounded border-gray-300" />
             Synchronize reasoner after edits
           </label>
-          <p className="text-xs text-gray-500">Matches Protégé: keep the reasoner in sync or run manually.</p>
+          <p className="text-xs text-gray-500">Keep the reasoner in sync with edits, or run manually when needed.</p>
         </div>
       </div>
     </div>
@@ -825,6 +828,7 @@ const TopMenuBar = ({
   draftCount,
   onOpenDialog,
   onOpenPluginMarketplace,
+  hasPluginUpdates,
   onOpenHistory,
   onReportIssue,
   onOpenUserGuide,
@@ -843,6 +847,8 @@ const TopMenuBar = ({
   onExplainInconsistency,
   onOpenReasonerSettings,
   isConsistencyLoading,
+  onGoToProjectDashboard,
+  onGoToWorkspace,
 }: {
   fileList: FileInfo[];
   myFiles: FileInfo[];
@@ -856,6 +862,7 @@ const TopMenuBar = ({
   draftCount?: number;
   onOpenDialog: () => void;
   onOpenPluginMarketplace: () => void;
+  hasPluginUpdates?: boolean;
   onOpenHistory: () => void;
   onReportIssue: () => void;
   onOpenUserGuide: () => void;
@@ -874,6 +881,8 @@ const TopMenuBar = ({
   onExplainInconsistency?: () => void;
   onOpenReasonerSettings?: () => void;
   isConsistencyLoading?: boolean;
+  onGoToProjectDashboard?: () => void;
+  onGoToWorkspace?: () => void;
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -941,9 +950,15 @@ const TopMenuBar = ({
               onClick={() => {
                 setOpenMenu(openMenu === item ? null : item);
               }}
-              className={`ontocode-top-menu-button cursor-pointer disabled:cursor-not-allowed px-3 py-1 rounded-sm transition-colors ${openMenu === item ? "is-open" : ""}`}
+              className={`ontocode-top-menu-button cursor-pointer disabled:cursor-not-allowed px-3 py-1 rounded-sm transition-colors relative ${openMenu === item ? "is-open" : ""}`}
             >
               {item}
+              {item === "View" && hasPluginUpdates && (
+                <span
+                  className="absolute top-0.5 right-0.5 w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"
+                  title="Plugin updates available"
+                />
+              )}
               {/* {item === 'Reasoner' && isReasonerRunning && (
                 <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
               )}
@@ -967,10 +982,37 @@ const TopMenuBar = ({
                     >
                       <Package size={14} />
                       Plugin Marketplace
+                      {hasPluginUpdates && (
+                        <span
+                          className="ml-auto w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"
+                          title="Updates available"
+                        />
+                      )}
                     </button>
                   </div>
                 ) : item === "Window" ? (
                   <div className="py-1">
+                    {onGoToProjectDashboard && (
+                      <button
+                        onClick={() => { onGoToProjectDashboard(); setOpenMenu(null); }}
+                        className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
+                      >
+                        <FolderOpen size={14} />
+                        Project Dashboard
+                      </button>
+                    )}
+                    {onGoToWorkspace && (
+                      <button
+                        onClick={() => { onGoToWorkspace(); setOpenMenu(null); }}
+                        className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
+                      >
+                        <LayoutDashboard size={14} />
+                        Workspace Selection
+                      </button>
+                    )}
+                    {(onGoToProjectDashboard || onGoToWorkspace) && (
+                      <div className="border-t my-1" style={{ borderColor: "var(--color-border)" }} />
+                    )}
                     <div className="px-3 py-1 text-gray-400 text-xs">Appearance</div>
                   </div>
                 ) : // : item === "Reasoner" ? (
@@ -1904,6 +1946,8 @@ const showNotification = (message: string, type: "info" | "error" | "warning" = 
 
 interface DashboardProps {
   onBackToProjects?: () => void;
+  onGoToProjectDashboard?: () => void;
+  onGoToWorkspace?: () => void;
   onFileSelected?: (fileId: string, fileName: string) => void;
   selectedFileId?: string;
   selectedFileName?: string;
@@ -1912,6 +1956,8 @@ interface DashboardProps {
 
 const Dashboard: React.FC<DashboardProps> = ({
   onBackToProjects,
+  onGoToProjectDashboard,
+  onGoToWorkspace,
   onFileSelected,
   selectedFileId,
   selectedFileName,
@@ -2415,6 +2461,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     "CodeView",
   ]);
   const [showPluginMarketplace, setShowPluginMarketplace] = useState(false);
+  const [hasPluginUpdates, setHasPluginUpdates] = useState(false);
   const [installedPlugins, setInstalledPlugins] = useState<Set<string>>(new Set());
   const [pluginLoadingStates, setPluginLoadingStates] = useState<
     Record<string, { loading: boolean; error: string | null }>
@@ -3156,12 +3203,29 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // #region Data Fetching and Initialization
   // Plugin marketplace handlers
-  const handleInstallPlugin = useCallback(async (pluginId: string) => {
+
+  // Lightweight, cached (24h) plugin update check. Fires on mount and on
+  // file-open (see handleLoadProjectFile). Results drive the pulsing dot on
+  // View → Plugin Marketplace.
+  const runPluginUpdateCheck = useCallback(async (force = false) => {
+    try {
+      const updates = await checkForPluginUpdates(force);
+      setHasPluginUpdates(updates.length > 0);
+    } catch {
+      /* silent */
+    }
+  }, []);
+
+  useEffect(() => {
+    runPluginUpdateCheck();
+  }, [runPluginUpdateCheck]);
+
+  const handleInstallPlugin = useCallback(async (pluginId: string, version?: string) => {
     try {
       setPluginLoadingStates((prev) => ({ ...prev, [pluginId]: { loading: true, error: null } }));
 
-      // Use pluginLoader to install and load the plugin
-      await pluginLoader.installPlugin(pluginId);
+      // Use pluginLoader to install and load the plugin (version optional for rollback/pinned install)
+      await pluginLoader.installPlugin(pluginId, version);
       await pluginLoader.loadPlugin(pluginId);
 
       // Only update state if installation and loading succeeded
@@ -3190,6 +3254,8 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       console.log(`[Dashboard] Plugin ${pluginId} installed and loaded`);
       notificationService.success("Plugin Installed", `${pluginId} has been installed successfully`);
+      clearPluginUpdateCache();
+      setHasPluginUpdates(false);
     } catch (error) {
       console.error(`[Dashboard] Failed to install plugin ${pluginId}:`, error);
       setPluginLoadingStates((prev) => ({
@@ -3269,6 +3335,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       console.log(`[Dashboard] Plugin ${pluginId} uninstalled`);
+      clearPluginUpdateCache();
+      setHasPluginUpdates(false);
     } catch (error) {
       console.error(`[Dashboard] Failed to uninstall plugin ${pluginId}:`, error);
       throw error;
@@ -3794,11 +3862,19 @@ const Dashboard: React.FC<DashboardProps> = ({
 
               // Start monitoring for changes from other users
               const handleDataChanged = async (changedProjectId: string) => {
+                // Handle project deletion signal
+                if (changedProjectId.startsWith('__deleted__:')) {
+                  const deletedId = changedProjectId.replace('__deleted__:', '');
+                  console.log("[Dashboard] ⚠️ Project deleted by another user:", deletedId);
+                  notificationService.error("Project Deleted", "This project has been deleted by another user.");
+                  return;
+                }
+
                 console.log("[Dashboard] 🔄 Change detected from another user! Refreshing data...");
                 notificationService.info("New Changes Available", "Another user saved changes. Refreshing data...");
 
-                // Refresh data and restart monitoring for another 30 seconds
-                await fetchData(changedProjectId, false);
+                // Refresh data with forceRefresh to bypass the cache guard
+                await fetchData(changedProjectId, false, undefined, true);
                 console.log("[Dashboard] ✅ Refresh complete, monitoring restarted");
               };
 
@@ -3809,7 +3885,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 if (timestampData && timestampData.updatedAt) {
                   const currentTimestamp = new Date(timestampData.updatedAt).getTime();
                   syncService.startMonitoring(currentProjectId, handleDataChanged, currentTimestamp);
-                  console.log("[Dashboard] 🔍 Started monitoring for changes (30 seconds)");
+                  console.log("[Dashboard] 🔍 Started monitoring for changes (5 minutes)");
                 }
               } catch (error) {
                 console.warn("[Dashboard] Could not start change monitoring:", error);
@@ -4384,6 +4460,29 @@ const Dashboard: React.FC<DashboardProps> = ({
     const axiomSuperClass = superClassIri !== undefined ? superClassIri : axiomDraft.superClassIri;
 
     if (!axiomDefinition) return;
+
+    // Validate axiom definition - basic checks before sending to backend
+    const trimmed = axiomDefinition.trim();
+    if (trimmed.length === 0) {
+      notificationService.error("Invalid Axiom", "Axiom definition cannot be empty.");
+      return;
+    }
+    // Reject definitions with unbalanced parentheses
+    let parenDepth = 0;
+    for (const ch of trimmed) {
+      if (ch === '(') parenDepth++;
+      else if (ch === ')') parenDepth--;
+      if (parenDepth < 0) break;
+    }
+    if (parenDepth !== 0) {
+      notificationService.error("Invalid Axiom", "Axiom definition has unbalanced parentheses.");
+      return;
+    }
+    // Reject if superClass is provided but looks invalid (empty after trim or has spaces only)
+    if (axiomSuperClass && axiomSuperClass.trim().length === 0) {
+      notificationService.error("Invalid Axiom", "Super class IRI cannot be blank.");
+      return;
+    }
 
     try {
       console.log("[Dashboard] Adding general class axiom:", {
@@ -5865,6 +5964,33 @@ const Dashboard: React.FC<DashboardProps> = ({
       try {
         console.log(`[loadChildren] Loading children for node: ${nodeId}`);
 
+        // Check if children are already loaded to avoid redundant API calls
+        const findNode = (nodes: TreeNode[]): TreeNode | undefined => {
+          for (const n of nodes) {
+            if (n.id === nodeId) return n;
+            if (n.children) {
+              const found = findNode(n.children);
+              if (found) return found;
+            }
+          }
+          return undefined;
+        };
+
+        // Use functional state access to check current hierarchy without adding it as dependency
+        let alreadyLoaded = false;
+        setClassHierarchy((prev) => {
+          const node = findNode(prev);
+          if (node?.children && node.children.length > 0) {
+            alreadyLoaded = true;
+          }
+          return prev; // Don't modify state
+        });
+
+        if (alreadyLoaded) {
+          console.log(`[loadChildren] ⚡ Children already loaded for node: ${nodeId}, skipping API call`);
+          return;
+        }
+
         // Special case: when loading children of owl:Thing, use the top-level endpoint
         // which finds ALL top-level classes (not just those with explicit rdfs:subClassOf owl:Thing)
         // OPTIMIZED: Use limit parameter for faster initial load (backend has caching)
@@ -6974,7 +7100,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         // Refresh the current file to show saved changes
         console.log("[Dashboard] 🔄 Refreshing current file after save...");
-        await fetchData(projectId, false);
+        await fetchData(projectId, false, undefined, true);
 
         // Monitoring is automatically restarted by fetchData
 
@@ -7128,6 +7254,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
+      // Lightweight, cached (24h) plugin update check piggy-backed on file-open.
+      runPluginUpdateCheck();
+
       // If this file is already loaded, skip re-fetching all data
       const ontologyProjectIdCheck = `${initialProjectId}--${fileId}`;
       if (projectId === ontologyProjectIdCheck && classHierarchy.length > 0) {
@@ -7139,6 +7268,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       try {
+        const loadFilePerfStart = Date.now();
+        console.log(`[Dashboard] [PERF] ⏱️ handleLoadProjectFile started at ${new Date().toISOString()} for file: ${fileName} (${fileId})`);
         console.log("[Dashboard] 📂 Loading file from project:", fileId, fileName);
 
         // Mark refs so the auto-load useEffect won't double-fire when
@@ -7163,6 +7294,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           );
 
           if (graphCheck?.exists && (graphCheck.graphSize ?? 0) > 0) {
+            console.log(`[Dashboard] [PERF] GraphDB cache check: ${Date.now() - loadFilePerfStart}ms (HIT: ${graphCheck.graphSize} triples)`);
             console.log(`[Dashboard] ⚡ File already in GraphDB (${graphCheck.graphSize} triples), loading directly`);
             setProjectId(ontologyProjectId);
             setLoadingProjectName(fileName);
@@ -7179,6 +7311,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
         } catch (checkErr) {
           console.warn("[Dashboard] GraphDB check failed, falling back to full upload:", checkErr);
+          console.log(`[Dashboard] [PERF] GraphDB cache check: ${Date.now() - loadFilePerfStart}ms (MISS/ERROR)`);
         }
 
         notificationService.info("Loading File", `Loading ${fileName}...`);
@@ -7210,6 +7343,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           throw new Error("File content not found");
         }
 
+        console.log(`[Dashboard] [PERF] Fetch file content from MongoDB: ${Date.now() - loadFilePerfStart}ms (${((fileContent.content.length * 3 / 4) / (1024 * 1024)).toFixed(2)}MB raw)`);
         console.log("[Dashboard] 📥 File content retrieved, uploading to ontology editor...");
 
         // Use hierarchical naming: project--fileId
@@ -7237,6 +7371,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           fileContent: base64Data,
           ownerEmail: resolvedEmail || undefined,
           skipDuplicateCheck: isWorkspaceFile,
+          forceUpload: true, // Dashboard already confirmed GraphDB is empty; skip status cache check
           importMode,
           partition: partitionStrategy,
         });
@@ -7249,6 +7384,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       } catch (error: any) {
         console.error("[Dashboard] ❌ Failed to load project file:", error);
         notificationService.error("Load Failed", error?.message || "Failed to load file");
+        setShowLoadingChoice(false);
+        setIsExpectingFileReady(false);
       } finally {
         // Allow new loads after a brief delay to prevent rapid re-triggers
         setTimeout(() => {
@@ -7338,7 +7475,11 @@ const Dashboard: React.FC<DashboardProps> = ({
 
           // Update local state
           const updatedAnnotations = { ...selectedItem.annotations, [propertyIri]: value };
-          const updatedItem = { ...selectedItem, annotations: updatedAnnotations };
+          const updatedItem: SelectableItem = { ...selectedItem, annotations: updatedAnnotations };
+          // If rdfs:label was added, also update the display label
+          if (propertyIri === "http://www.w3.org/2000/01/rdf-schema#label" || propertyIri === "rdfs:label") {
+            updatedItem.label = value;
+          }
           updateItemInState(updatedItem);
           markAsUnsaved();
         } else {
@@ -7431,7 +7572,11 @@ const Dashboard: React.FC<DashboardProps> = ({
 
           // Update local state
           const updatedAnnotations = { ...selectedItem.annotations, [propertyIri]: newValue };
-          const updatedItem = { ...selectedItem, annotations: updatedAnnotations };
+          const updatedItem: SelectableItem = { ...selectedItem, annotations: updatedAnnotations };
+          // If rdfs:label was edited, also update the display label
+          if (propertyIri === "http://www.w3.org/2000/01/rdf-schema#label" || propertyIri === "rdfs:label") {
+            updatedItem.label = newValue;
+          }
           updateItemInState(updatedItem);
           markAsUnsaved();
         } else {
@@ -8191,6 +8336,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             }
           });
           markAsUnsaved();
+          setMetadata(prev => prev ? { ...prev, classCount: (prev.classCount || 0) + 1 } : prev);
         } else if (entitiesTab === "ObjectProperties") {
           // Handle Object Property Creation
           parentIri = "http://www.w3.org/2002/07/owl#topObjectProperty";
@@ -8251,6 +8397,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           if (parentIri && !expandedNodes.includes(parentIri)) {
             setExpandedNodes((prev) => [...prev, parentIri]);
           }
+          setMetadata(prev => prev ? { ...prev, objectPropertyCount: (prev.objectPropertyCount || 0) + 1 } : prev);
         }
 
         showNotification(`${entitiesTab === "Classes" ? "Class" : "Property"} created successfully!`, "info");
@@ -8314,6 +8461,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
 
         markAsUnsaved();
+        setMetadata(prev => prev ? { ...prev, objectPropertyCount: (prev.objectPropertyCount || 0) + 1 } : prev);
         showNotification("Property created successfully!", "info");
         setAddPropertyDialogOpen(false);
         setPropertyParentLabel("owl:topObjectProperty");
@@ -8376,6 +8524,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
 
         markAsUnsaved();
+        setMetadata(prev => prev ? { ...prev, dataPropertyCount: (prev.dataPropertyCount || 0) + 1 } : prev);
         showNotification("Data property created successfully!", "info");
         setAddPropertyDialogOpen(false);
         setPropertyParentLabel("owl:topDataProperty");
@@ -8441,6 +8590,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         setAnnotationProperties((prev) => [...prev, newProp]);
 
         markAsUnsaved();
+        setMetadata(prev => prev ? { ...prev, annotationPropertyCount: (prev.annotationPropertyCount || 0) + 1 } : prev);
         showNotification("Annotation property created successfully!", "info");
         setAddPropertyDialogOpen(false);
       } catch (error) {
@@ -8480,6 +8630,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         setIndividuals((prev) => [...prev, newIndividual]);
 
         markAsUnsaved();
+        setMetadata(prev => prev ? { ...prev, individualCount: (prev.individualCount || 0) + 1 } : prev);
         showNotification(`Individual "${name}" created successfully!`, "info");
       } catch (error) {
         console.error("Failed to create individual:", error);
@@ -8668,6 +8819,17 @@ const Dashboard: React.FC<DashboardProps> = ({
                 break;
             }
             setSelectedItem((prev) => (prev?.id === item.id ? null : prev));
+            // Decrement metadata count based on entity type
+            const countField = {
+              Classes: 'classCount',
+              Individuals: 'individualCount',
+              ObjectProperties: 'objectPropertyCount',
+              DataProperties: 'dataPropertyCount',
+              AnnotationProperties: 'annotationPropertyCount',
+            }[activeTab];
+            if (countField) {
+              setMetadata(prev => prev ? { ...prev, [countField]: Math.max(0, ((prev as any)[countField] || 0) - 1) } : prev);
+            }
             showNotification(`"${item.label}" deleted successfully!`, "info");
           } catch (error) {
             console.error("Failed to delete item:", error);
@@ -8821,6 +8983,49 @@ const Dashboard: React.FC<DashboardProps> = ({
     window.addEventListener("graph-view:add-class", handleGraphAddClass as EventListener);
     return () => window.removeEventListener("graph-view:add-class", handleGraphAddClass as EventListener);
   }, [classHierarchy, findClassNodeById, projectId, showNotification]);
+
+  // Listen for classes created directly by the graph plugin (S6 fix)
+  useEffect(() => {
+    const handleGraphClassCreated = (event: Event) => {
+      const custom = event as CustomEvent<{
+        id: string;
+        label: string;
+        parentId: string;
+        projectId?: string;
+      }>;
+      const detail = custom.detail;
+      if (!detail) return;
+      if (detail.projectId && projectId && detail.projectId !== projectId) return;
+
+      const newNode: TreeNode = {
+        id: detail.id,
+        label: detail.label,
+        children: [],
+        hasChildren: false,
+        annotations: { "rdfs:label": detail.label },
+      };
+
+      setClassHierarchy((prev) => {
+        const addChild = (nodes: TreeNode[]): TreeNode[] =>
+          nodes.map((node) => {
+            if (node.id === detail.parentId) {
+              return { ...node, children: [...(node.children || []), newNode], hasChildren: true };
+            }
+            if (node.children) {
+              return { ...node, children: addChild(node.children) };
+            }
+            return node;
+          });
+        return addChild(prev);
+      });
+
+      setMetadata(prev => prev ? { ...prev, classCount: (prev.classCount || 0) + 1 } : prev);
+      markAsUnsaved();
+    };
+
+    window.addEventListener("graph-view:class-created", handleGraphClassCreated as EventListener);
+    return () => window.removeEventListener("graph-view:class-created", handleGraphClassCreated as EventListener);
+  }, [projectId, markAsUnsaved]);
 
   useEffect(() => {
     const handleGraphDelete = (event: Event) => {
@@ -13810,6 +14015,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           draftCount={draftCount}
           onOpenDialog={() => setShowOpenDialog(true)}
           onOpenPluginMarketplace={() => setShowPluginMarketplace(true)}
+          hasPluginUpdates={hasPluginUpdates}
           onOpenHistory={() => setIsHistoryPanelOpen(true)}
           onReportIssue={() => setIsReportIssueModalOpen(true)}
           onOpenUserGuide={() => setIsUserGuideOpen(true)}
@@ -13849,6 +14055,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           onExplainInconsistency={explainInconsistency}
           onOpenReasonerSettings={() => setIsReasonerSettingsOpen(true)}
           isConsistencyLoading={isConsistencyLoading}
+          onGoToProjectDashboard={onGoToProjectDashboard}
+          onGoToWorkspace={onGoToWorkspace}
         />
 
         <div className="bg-white border-b border-gray-200 flex-shrink-0">

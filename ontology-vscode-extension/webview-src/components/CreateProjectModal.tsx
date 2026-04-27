@@ -43,8 +43,10 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
       const workspaceData = response?.data || response;
       const members = workspaceData?.members || [];
 
-      console.log("Loaded workspace members:", members);
-      setWorkspaceMembers(members);
+      // Filter out the current user (project creator/owner) - they always have OWNER access
+      const filteredMembers = members.filter((m: WorkspaceMember) => m.userId !== user?.id && m.email !== user?.email);
+      console.log("Loaded workspace members (excluding owner):", filteredMembers);
+      setWorkspaceMembers(filteredMembers);
     } catch (error) {
       console.error("Error loading workspace members:", error);
       setWorkspaceMembers([]);
@@ -245,11 +247,10 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
                     <div className="mt-3 space-y-2 max-h-48 overflow-y-auto border border-gray-200 rounded p-2">
                       {loadingMembers ? (
                         <div className="text-center text-sm text-gray-500 py-4">Loading members...</div>
-                      ) : workspaceMembers.filter((m) => m.userId !== user?.id).length === 0 ? (
+                      ) : workspaceMembers.length === 0 ? (
                         <div className="text-center text-sm text-gray-500 py-4">No other members in workspace</div>
                       ) : (
                         workspaceMembers
-                          .filter((m) => m.userId !== user?.id)
                           .map((member) => (
                             <label
                               key={member.userId}

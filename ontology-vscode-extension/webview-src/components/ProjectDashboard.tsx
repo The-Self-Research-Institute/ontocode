@@ -42,6 +42,8 @@ import CreateProjectModal from "./CreateProjectModal";
 import ConfirmationModal from "./ConfirmationModal";
 import PlanDetailsModal from "./PlanDetailsModal";
 import { UserGuideModal } from "./UserGuideModal";
+import { ReportIssueModal } from "./ReportIssueModal";
+import { Bug } from "lucide-react";
 
 interface ProjectMember {
   userId: string;
@@ -111,6 +113,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   const [showSettings, setShowSettings] = useState(false);
   const [showPlanDetails, setShowPlanDetails] = useState(false);
   const [showUserGuide, setShowUserGuide] = useState(false);
+  const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
   const [renaming, setRenaming] = useState<{ projectId: string; currentName: string } | null>(null);
   const [newName, setNewName] = useState("");
   const [newProjectName, setNewProjectName] = useState("");
@@ -147,6 +150,8 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   // Check if current user is workspace owner
   // Check both userId match and if user has OWNER role in the workspace
   const isWorkspaceOwner = user?.userId === workspaceOwnerId || user?.workspaceRole === "OWNER";
+    const isWorkspaceAdmin = user?.workspaceRole === "ADMIN";
+    const canInviteMembers = isWorkspaceOwner || isWorkspaceAdmin;
   const isViewer = user?.workspaceRole === "VIEWER";
 
   // Handle workspace subscription plan upgrade
@@ -862,6 +867,13 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                 <HelpCircle size={20} />
               </button>
               <button
+                onClick={() => setIsReportIssueModalOpen(true)}
+                className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg"
+                title="Report Issue"
+              >
+                <Bug size={20} />
+              </button>
+              <button
                 onClick={() => setShowSettings(true)}
                 className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg"
                 title="Settings"
@@ -1046,7 +1058,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                 Team Members
                 <span className="text-sm font-normal text-gray-500">({teamMembers.length})</span>
               </h2>
-              {isWorkspaceOwner ? (
+              {(isWorkspaceOwner || isWorkspaceAdmin) ? (
                 <button
                   onClick={() => {
                     setShowInviteMember(true);
@@ -1071,7 +1083,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               ) : (
                 <div
                   className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-200 rounded-lg bg-gray-50 text-gray-400 cursor-not-allowed"
-                  title="Only workspace owner can invite members"
+                  title="Only workspace owners and admins can invite members"
                 >
                   <UserPlus size={16} />
                   Invite Member
@@ -1590,6 +1602,11 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
       {/* User Guide Modal */}
       <UserGuideModal isOpen={showUserGuide} onClose={() => setShowUserGuide(false)} />
+
+      {/* Report Issue Modal */}
+      {isReportIssueModalOpen && (
+        <ReportIssueModal onClose={() => setIsReportIssueModalOpen(false)} />
+      )}
     </div>
   );
 };;

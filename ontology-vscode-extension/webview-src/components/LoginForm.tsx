@@ -1,7 +1,8 @@
 
 import React, { useState } from 'react';
 import { useAuth } from '../custom-hook/useAuth';
-import { Loader2, Eye, EyeOff, ArrowLeft } from 'lucide-react';
+import { Loader2, Eye, EyeOff, ArrowLeft, Bug } from 'lucide-react';
+import ReportIssueModal from './ReportIssueModal';
 
 interface LoginFormProps {
   onToggleForm: () => void;
@@ -23,6 +24,7 @@ const LoginForm = ({
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
   const { login, sessionExpiredMessage } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -158,6 +160,20 @@ const LoginForm = ({
           )}
         </div>
       </div>
+
+      {/* Report Issue floating button */}
+      <button
+        onClick={() => setIsReportIssueModalOpen(true)}
+        className="fixed bottom-4 right-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm z-50"
+        title="Report an issue"
+      >
+        <Bug size={14} />
+        Report Issue
+      </button>
+
+      {isReportIssueModalOpen && (
+        <ReportIssueModal onClose={() => setIsReportIssueModalOpen(false)} />
+      )}
     </div>
   );
 };

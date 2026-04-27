@@ -167,6 +167,31 @@ public class ProjectLoadController {
                         actualProjectId = existingProjectId.get();
                         isReplacement = true;
                         log.info("Replacing existing file: {} for user: {} with projectId: {}", filename, ownerEmail, actualProjectId);
+                        
+                        // Clean up stale files before re-import so OntologyFileController
+                        // does not serve the old version while the new import is processing
+                        try {
+                            Path oldProjectDir = storageManager.projectDir(actualProjectId);
+                            for (String staleFile : new String[]{
+                                "ontology.current.owl", "ontology.current.rdf",
+                                "ontology.current.ttl", "ontology.current.nt"
+                            }) {
+                                Path stalePath = oldProjectDir.resolve(staleFile);
+                                if (Files.deleteIfExists(stalePath)) {
+                                    log.info("Cleaned up stale file before re-import: {}", stalePath);
+                                }
+                            }
+                        } catch (Exception cleanupEx) {
+                            log.warn("Failed to clean up stale files for project {}: {}", actualProjectId, cleanupEx.getMessage());
+                        }
+
+                        // Clear the GraphDB dataset so stale triples do not bleed into the new import
+                        try {
+                            datasetService.clearDataset(actualProjectId);
+                            log.info("Cleared GraphDB dataset before re-import for project {}", actualProjectId);
+                        } catch (Exception clearEx) {
+                            log.warn("Failed to clear GraphDB dataset for project {}: {}", actualProjectId, clearEx.getMessage());
+                        }
                     } else if ("create_copy".equals(action)) {
                         // Create a copy with modified filename
                         String copyFilename = generateCopyFilename(filename, ownerEmail);

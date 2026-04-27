@@ -18,7 +18,6 @@ import { optimizedUpload, shouldCompressFile, ChunkMetadata } from './utils/uplo
 // Configure axios for browser compatibility - disable automatic decompression
 // to avoid zlib issues in web workers
 axios.defaults.decompress = false;
-axios.defaults.headers.common['Accept-Encoding'] = 'identity';
 
 /**
  * Utility: Convert Uint8Array to base64 string (web-compatible)
@@ -90,9 +89,9 @@ function getUrlsForDeployment(deploymentType: 'self-hosted' | 'cloud'): { gatewa
         };
     } else {
         return {
-            gateway: process.env.CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org',
-            editor: process.env.CLOUD_EDITOR_URL || 'https://ontocodeapi.selfresearch.org',
-            plugin: process.env.CLOUD_PLUGIN_URL || 'https://ontocodeapi.selfresearch.org:8087'
+            gateway: process.env.CLOUD_GATEWAY_URL || 'http://localhost:80',
+            editor: process.env.CLOUD_EDITOR_URL || 'http://localhost:80',
+            plugin: process.env.CLOUD_PLUGIN_URL || 'http://localhost:8087'
         };
     }
 }
@@ -1111,10 +1110,19 @@ class OntoCodePanel {
                 return;
             }
 
+            const perfStart = Date.now();
+            console.log(`[OntoCode] [PERF] ⏱️ Starting file open pipeline at ${new Date().toISOString()}`);
+
+            const readStart = Date.now();
             const fileData = await (vscode.workspace as any).fs.readFile(selectedUri);
+            console.log(`[OntoCode] [PERF] File read from disk: ${Date.now() - readStart}ms (${(fileData.length / (1024 * 1024)).toFixed(2)}MB)`);
+
             const fileName = selectedUri.path.substring(selectedUri.path.lastIndexOf('/') + 1);
             const fileSize = fileData.length;
+
+            const base64Start = Date.now();
             const base64Content = uint8ArrayToBase64(fileData);
+            console.log(`[OntoCode] [PERF] Base64 encoding: ${Date.now() - base64Start}ms (base64 size: ${(base64Content.length / (1024 * 1024)).toFixed(2)}MB)`);
 
             // Check deployment type
             const deploymentType = await this.getStoredDeploymentType();
@@ -1279,6 +1287,8 @@ class OntoCodePanel {
                 replaceFileId: existingFileId,
                 openAfterUpload: true
             });
+
+            console.log(`[OntoCode] [PERF] ⏱️ Total file open pipeline: ${Date.now() - perfStart}ms`);
 
             if (!uploadResult) {
                 return;
@@ -1601,9 +1611,11 @@ class OntoCodePanel {
                 const FormData = require('form-data');
                 const form = new FormData();
                 // Reconstruct the file from the transferred byte array
-                if (body._fileBuffer && body._fileFieldName) {
-                    const buf = Buffer.from(body._fileBuffer);
-                    console.log(`[Proxy] Reconstructing FormData: file=${body._originalFileName}, size=${buf.length}, type=${body.fileType}`);
+                if ((body._fileBase64 || body._fileBuffer) && body._fileFieldName) {
+                    const buf = body._fileBase64
+                        ? Buffer.from(body._fileBase64, 'base64')
+                        : Buffer.from(body._fileBuffer);
+                    console.log(`[Proxy] Reconstructing FormData: file=${body._originalFileName}, size=${buf.length}, type=${body.fileType}, encoding=${body._fileBase64 ? 'base64' : 'array'}`);
                     form.append(body._fileFieldName, buf, {
                         filename: body._originalFileName || 'upload',
                         contentType: body.fileType || 'application/octet-stream',
@@ -2313,8 +2325,10 @@ class OntoCodePanel {
             }
 
             // Optional: Compress file if it's a compressible format and > 1MB
+            // Skip compression for localhost uploads where there's no network benefit
             let dataToUpload = buffer;
-            const enableCompression = shouldCompressFile(fileName) && buffer.length > 1024 * 1024;
+            const isLocalUpload = GATEWAY_URL.includes('localhost') || GATEWAY_URL.includes('127.0.0.1');
+            const enableCompression = !isLocalUpload && shouldCompressFile(fileName) && buffer.length > 1024 * 1024;
 
             if (enableCompression) {
                 console.log(`[OntoCode] File is ${(buffer.length / (1024 * 1024)).toFixed(2)}MB, attempting compression...`);
@@ -2526,15 +2540,20 @@ class OntoCodePanel {
 
                 vscode.window.showInformationMessage(message);
 
+                // For replacements, show loading state but do NOT send fileReady yet.
+                // The import is async — sending fileReady before COMPLETED causes the
+                // Dashboard to fetch data while status is still PROCESSING, which fails.
+                // The fallback status polling below (or WebSocket IMPORT_COMPLETED) will
+                // send fileReady once the import actually completes.
                 if (isReplacement && this._isWebviewReady) {
-                    this.postMessage({ type: 'fileReady', projectId: uploadProjectId });
+                    this.postMessage({ type: 'showLoading', projectId: uploadProjectId, fileName: finalFileName });
                 }
 
                 // Fallback: check status and trigger fileReady if COMPLETED (covers cases where WebSocket misses IMPORT_COMPLETED)
                 // Calculate adaptive timeout based on file size
                 const fileSizeMB = fileData.length / (1024 * 1024);
-                const estimatedMinutes = Math.ceil(fileSizeMB / 10); // ~10MB per minute with optimizations
-                const maxAttempts = Math.max(20, Math.ceil(estimatedMinutes * 60 / 5)); // At least 20 attempts, or enough for estimated time
+                const estimatedMinutes = Math.max(15, Math.ceil(fileSizeMB / 10)); // At least 15 min, ~10MB per minute
+                const maxAttempts = Math.max(60, Math.ceil(estimatedMinutes * 60 / 5)); // At least 60 attempts
                 console.log(`[OntoCode] File size: ${fileSizeMB.toFixed(1)}MB, estimated time: ${estimatedMinutes} minutes, max attempts: ${maxAttempts}`);
 
                 // Send initial estimated time
@@ -2546,10 +2565,12 @@ class OntoCodePanel {
                 });
 
                 const scheduleStatusCheck = (attempt: number) => {
-                    // Optimized delays: More frequent checks early, then increase intervals for large files
+                    // Optimized delays: very small files (e.g. 20KB) often finish before the
+                    // first poll, so check almost immediately on attempt 1, then back off.
                     const getDelay = (att: number) => {
-                        if (att <= 3) return 2000;        // 2s x 3 attempts = 6s
-                        if (att <= 6) return 5000;        // 5s x 3 attempts = 15s
+                        if (att === 1) return 250;        // 250ms — catches small/fast imports
+                        if (att <= 3) return 1000;        // 1s x 2 attempts = 2s
+                        if (att <= 6) return 3000;        // 3s x 3 attempts = 9s
                         if (att <= 10) return 10000;      // 10s x 4 attempts = 40s
                         if (att <= 15) return 20000;      // 20s x 5 attempts = 100s
                         return 30000;                     // 30s x remaining attempts
@@ -2812,6 +2833,7 @@ class OntoCodePanel {
         options?: { skipDuplicateCheck?: boolean; replaceFileId?: string | null; openAfterUpload?: boolean }
     ): Promise<{ fileId: string; fileName: string } | null> {
         console.log(`[OntoCode] 📤 Uploading file to project: ${projectId}, file: ${fileName}, size: ${(fileSize / (1024 * 1024)).toFixed(2)}MB`);
+        const uploadPerfStart = Date.now();
 
         try {
             // Get auth token
@@ -2947,6 +2969,9 @@ class OntoCodePanel {
             const uploadUrl = `${GATEWAY_URL}/api/projects/${projectId}/files`;
             console.log(`[OntoCode] Upload URL: ${uploadUrl}`);
 
+            console.log(`[OntoCode] [PERF] Pre-upload checks (duplicate, deployment): ${Date.now() - uploadPerfStart}ms`);
+
+            const httpUploadStart = Date.now();
             const response = await vscode.window.withProgress({
                 location: vscode.ProgressLocation.Notification,
                 title: `Uploading ${finalFileName}`,
@@ -2985,6 +3010,8 @@ class OntoCodePanel {
 
                 return uploadResponse;
             });
+
+            console.log(`[OntoCode] [PERF] HTTP upload (POST to gateway): ${Date.now() - httpUploadStart}ms`);
 
             if (response.status === 200 || response.status === 201) {
                 console.log('[OntoCode] ✅ File uploaded to project successfully');
@@ -3483,9 +3510,9 @@ class OntoCodePanel {
                     SELF_HOSTED_GATEWAY_URL: '${process.env.SELF_HOSTED_GATEWAY_URL || 'http://localhost:80'}',
                     SELF_HOSTED_EDITOR_URL: '${process.env.SELF_HOSTED_EDITOR_URL || 'http://localhost:80'}',
                     SELF_HOSTED_PLUGIN_URL: '${process.env.SELF_HOSTED_PLUGIN_URL || 'http://localhost:8087'}',
-                    CLOUD_GATEWAY_URL: '${process.env.CLOUD_GATEWAY_URL || 'https://ontocodeapi.selfresearch.org'}',
-                    CLOUD_EDITOR_URL: '${process.env.CLOUD_EDITOR_URL || 'https://ontocodeapi.selfresearch.org'}',
-                    CLOUD_PLUGIN_URL: '${process.env.CLOUD_PLUGIN_URL || 'https://ontocodeapi.selfresearch.org:8087'}',
+                    CLOUD_GATEWAY_URL: '${process.env.CLOUD_GATEWAY_URL || 'http://localhost:80'}',
+                    CLOUD_EDITOR_URL: '${process.env.CLOUD_EDITOR_URL || 'http://localhost:80'}',
+                    CLOUD_PLUGIN_URL: '${process.env.CLOUD_PLUGIN_URL || 'http://localhost:8087'}',
                     DEFAULT_DEPLOYMENT_TYPE: '${process.env.DEFAULT_DEPLOYMENT_TYPE || 'cloud'}',
                     IS_WEB_EXTENSION: ${isWebExtension}
                 };
@@ -3525,7 +3552,7 @@ class OntoCodePanel {
                 script-src 'nonce-${nonce}' https://cdn.tailwindcss.com https://unpkg.com https://aistudiocdn.com ${webview.cspSource} 'unsafe-eval' ${GATEWAY_URL} ${PLUGIN_SERVICE_URL} http://localhost:* http://127.0.0.1:*;
                 style-src ${webview.cspSource} 'unsafe-inline' https://unpkg.com https://cdn.tailwindcss.com;
                 font-src ${webview.cspSource} https://unpkg.com data:; 
-                connect-src 'self' https://ontocodeapi.selfresearch.org https: wss: https://ontocodeapi.selfresearch.org:* ws://13.218.153.101:* http://localhost:* http://127.0.0.1:* ${GATEWAY_URL} ${PLUGIN_SERVICE_URL};
+                connect-src 'self' https://ontocodeapi.selfresearch.org https: wss: ws: https://ontocodeapi.selfresearch.org:* ws://13.218.153.101:* http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* ${GATEWAY_URL} ${PLUGIN_SERVICE_URL};
             ">
             ${vscodeApiInjectionScript}`
         );

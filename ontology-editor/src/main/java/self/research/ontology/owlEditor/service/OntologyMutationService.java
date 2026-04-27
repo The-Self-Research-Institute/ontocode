@@ -2,11 +2,15 @@ package self.research.ontology.owlEditor.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Caching;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.eclipse.rdf4j.query.TupleQueryResult;
 import org.eclipse.rdf4j.query.BindingSet;
+import self.research.ontology.owlEditor.controller.VisualizationController;
 
 import java.util.List;
 import java.util.Map;
@@ -34,6 +38,9 @@ public class OntologyMutationService {
     private final GraphGeneratingService graphGeneratingService;
     private final Executor metadataExecutor;
 
+    @Autowired @Lazy
+    private VisualizationController visualizationController;
+
     public OntologyMutationService(GraphDBDatasetService datasetService,
                                    OntologyIndexService indexService,
                                    ProjectMetadataService metadataService,
@@ -48,17 +55,31 @@ public class OntologyMutationService {
 
     /**
      * Apply ontology mutations and clear relevant caches for instant UI updates.
+     * Use allEntries=true because @Cacheable keys are composite ("#projectId + '_' + #limit/#offset/#parentIri"),
+     * which a key="#projectId" eviction would never match -> stale data on save.
      */
-    @CacheEvict(value = {"topLevelClasses", "classChildren", "ontologyProperties", "ontologyIndividuals", "classInstanceCounts"}, allEntries = true)
+    @Caching(evict = {
+        @CacheEvict(value = "topLevelClasses", allEntries = true),
+        @CacheEvict(value = "classChildren", allEntries = true),
+        @CacheEvict(value = "allClasses", allEntries = true),
+        @CacheEvict(value = "ontologyProperties", allEntries = true),
+        @CacheEvict(value = "ontologyIndividuals", allEntries = true),
+        @CacheEvict(value = "classInstanceCounts", allEntries = true),
+        @CacheEvict(value = "classDetails", allEntries = true),
+        @CacheEvict(value = "classAnnotations", allEntries = true),
+        @CacheEvict(value = "classInstances", allEntries = true),
+        @CacheEvict(value = "individualCount", allEntries = true),
+        @CacheEvict(value = "debugInfo", allEntries = true),
+        @CacheEvict(value = "graphCache", allEntries = true)
+    })
     public void apply(String projectId, List<MutationOp> ops) {
         if (ops == null || ops.isEmpty()) {
             log.warn("[MUTATION] No operations to apply for project: {}", projectId);
             return;
         }
 
-        log.info("[MUTATION] ========== APPLYING {} MUTATIONS ==========", ops.size());
-        log.info("[MUTATION] Project: {}", projectId);
-        log.info("[MUTATION] Cache cleared: topLevelClasses, classChildren");
+        log.info("[MUTATION] Applying {} mutations for project={}", ops.size(), projectId);
+        long mutationStart = System.currentTimeMillis();
         
         String sparql = PREFIXES + "\n" + ops.stream()
                 .map(op -> toUpdate(projectId, op))
@@ -75,11 +96,16 @@ public class OntologyMutationService {
         log.info("[MUTATION] {}", sparql);
         
         try {
+            long sparqlStart = System.currentTimeMillis();
             datasetService.execUpdate(projectId, sparql);
-            log.info("[MUTATION] ✅ Mutations applied successfully!");
+            long sparqlDuration = System.currentTimeMillis() - sparqlStart;
+            log.info("[MUTATION] SPARQL update completed in {}ms for project={}", sparqlDuration, projectId);
             
             // Clear graph cache after mutations
             graphGeneratingService.clearGraphCache();
+            if (visualizationController != null) {
+                visualizationController.clearCache(projectId);
+            }
             log.info("[MUTATION] Graph cache cleared after mutations");
             
             // For disjoint union mutations, verify the data was inserted
@@ -122,8 +148,22 @@ public class OntologyMutationService {
 
     /**
      * Make sibling classes disjoint and clear relevant caches.
+     * Uses allEntries=true because @Cacheable keys are composite and cannot be matched by key="#projectId".
      */
-    @CacheEvict(value = {"topLevelClasses", "classChildren", "ontologyProperties", "ontologyIndividuals", "classInstanceCounts"}, allEntries = true)
+    @Caching(evict = {
+        @CacheEvict(value = "topLevelClasses", allEntries = true),
+        @CacheEvict(value = "classChildren", allEntries = true),
+        @CacheEvict(value = "allClasses", allEntries = true),
+        @CacheEvict(value = "ontologyProperties", allEntries = true),
+        @CacheEvict(value = "ontologyIndividuals", allEntries = true),
+        @CacheEvict(value = "classInstanceCounts", allEntries = true),
+        @CacheEvict(value = "classDetails", allEntries = true),
+        @CacheEvict(value = "classAnnotations", allEntries = true),
+        @CacheEvict(value = "classInstances", allEntries = true),
+        @CacheEvict(value = "individualCount", allEntries = true),
+        @CacheEvict(value = "debugInfo", allEntries = true),
+        @CacheEvict(value = "graphCache", allEntries = true)
+    })
     public void makeSiblingsDisjoint(String projectId, List<String> classIds) {
         if (classIds == null || classIds.size() < 2) {
             return;
@@ -150,6 +190,9 @@ public class OntologyMutationService {
 
         // Clear graph cache
         graphGeneratingService.clearGraphCache();
+        if (visualizationController != null) {
+            visualizationController.clearCache(projectId);
+        }
 
         CompletableFuture.runAsync(() -> {
             Map<String, Object> meta = indexService.computeMetadata(projectId);

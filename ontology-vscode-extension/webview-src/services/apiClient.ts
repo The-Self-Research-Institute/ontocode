@@ -254,7 +254,15 @@ class ApiClient {
         });
         if (fileEntry) {
           const buf = await fileEntry.arrayBuffer();
-          msgBody._fileBuffer = Array.from(new Uint8Array(buf));
+          // Use base64 encoding instead of Array.from() - avoids creating
+          // a multi-million-element JS array which freezes the UI for large files
+          const bytes = new Uint8Array(buf);
+          const chunks: string[] = [];
+          const chunkSize = 32768;
+          for (let i = 0; i < bytes.length; i += chunkSize) {
+            chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + chunkSize, bytes.length)) as any));
+          }
+          msgBody._fileBase64 = btoa(chunks.join(''));
           msgBody._fileFieldName = 'file';
           msgBody._originalFileName = fileEntry.name;
           // Detect OWL file types
