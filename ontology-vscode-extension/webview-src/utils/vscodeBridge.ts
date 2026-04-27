@@ -1040,7 +1040,7 @@ function handleBrowserMessage(message: any) {
                         });
                         return;
                     }
-                    const items = await sci2CodeBrowserService.fetchLibrary();
+                    const items = await sci2CodeBrowserService.fetchLibrary(10000);
                     postToSelf({ type: 'zoteroLibraryData', items: items || [] });
                 } catch (err: any) {
                     postToSelf({ type: 'zoteroLibraryError', error: err?.message || 'Zotero unavailable' });

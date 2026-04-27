@@ -65,7 +65,7 @@ class ZoteroApiService {
     /**
      * Fetch items from Zotero library
      */
-    async fetchLibrary(limit: number = 100): Promise<ZoteroItem[]> {
+    async fetchLibrary(limit: number = 10000): Promise<ZoteroItem[]> {
         const config = this.getConfig();
         
         if (!config) {
@@ -92,7 +92,7 @@ class ZoteroApiService {
                     'Zotero-API-Key': config.apiKey,
                     'Zotero-API-Version': '3'
                 },
-                timeout: 10000
+                timeout: 20000
             });
 
             console.log(`[ZoteroAPI] Fetched ${response.data.length} items`);

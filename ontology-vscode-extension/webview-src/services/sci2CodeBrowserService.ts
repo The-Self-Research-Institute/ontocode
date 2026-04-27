@@ -128,33 +128,60 @@ class Sci2CodeBrowserService {
     }
   }
 
-  async fetchLibrary(limit = 100): Promise<ZoteroItem[]> {
+  async fetchLibrary(limit: number = 10000): Promise<ZoteroItem[]> {
     const cfg = this.getConfig();
     if (!cfg) throw new Error('Zotero not configured');
 
-    const libraryPath = cfg.libraryType === 'group' && cfg.groupId
-      ? `groups/${cfg.groupId}`
-      : `users/${cfg.userId}`;
+    const allItems: ZoteroItem[] = [];
+    let start = 0;
+    const batchSize = 100; // Zotero API max per request
 
-    const resp = await fetch(
-      `${this.baseUrl}/${libraryPath}/items?limit=${limit}&format=json&include=data&itemType=-attachment`,
-      {
-        headers: {
-          'Zotero-API-Key': cfg.apiKey,
-          'Zotero-API-Version': '3',
-        },
+    console.log(`[Sci2Code] Fetching up to ${limit} citations from Zotero...`);
+
+    while (allItems.length < limit) {
+      const libraryPath = cfg.libraryType === 'group' && cfg.groupId
+        ? `groups/${cfg.groupId}`
+        : `users/${cfg.userId}`;
+
+      const remaining = limit - allItems.length;
+      const currentBatchSize = Math.min(batchSize, remaining);
+
+      const resp = await fetch(
+        `${this.baseUrl}/${libraryPath}/items?limit=${currentBatchSize}&start=${start}&format=json&include=data&itemType=-attachment`,
+        {
+          headers: {
+            'Zotero-API-Key': cfg.apiKey,
+            'Zotero-API-Version': '3',
+          },
+        }
+      );
+
+      if (!resp.ok) {
+        if (resp.status === 403) throw new Error('Invalid Zotero API key');
+        if (resp.status === 404) throw new Error('Zotero user/group not found');
+        throw new Error(`Zotero API error: ${resp.status}`);
       }
-    );
 
-    if (!resp.ok) {
-      if (resp.status === 403) throw new Error('Invalid Zotero API key');
-      if (resp.status === 404) throw new Error('Zotero user/group not found');
-      throw new Error(`Zotero API error: ${resp.status}`);
+      const items: ZoteroItem[] = await resp.json();
+      console.log(`[Sci2Code] Fetched batch: ${items.length} items (total: ${allItems.length + items.length})`);
+
+      if (items.length === 0) {
+        // No more items available
+        break;
+      }
+
+      allItems.push(...items);
+      start += items.length;
+
+      // Safety check to prevent infinite loops
+      if (items.length < currentBatchSize) {
+        break;
+      }
     }
 
-    const items: ZoteroItem[] = await resp.json();
-    this.cachedItems = items;
-    return items;
+    console.log(`[Sci2Code] Total citations fetched: ${allItems.length}`);
+    this.cachedItems = allItems;
+    return allItems;
   }
 
   async fetchItem(itemKey: string): Promise<ZoteroItem | null> {

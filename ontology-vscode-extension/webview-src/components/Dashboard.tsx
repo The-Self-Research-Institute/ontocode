@@ -26,7 +26,6 @@ import {
   Square,
   DatabaseZap,
   Upload,
-  FolderOpen,
   Sparkles,
   Clock,
   Users,
@@ -994,7 +993,10 @@ const TopMenuBar = ({
                   <div className="py-1">
                     {onGoToProjectDashboard && (
                       <button
-                        onClick={() => { onGoToProjectDashboard(); setOpenMenu(null); }}
+                        onClick={() => {
+                          onGoToProjectDashboard();
+                          setOpenMenu(null);
+                        }}
                         className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
                       >
                         <FolderOpen size={14} />
@@ -1003,7 +1005,10 @@ const TopMenuBar = ({
                     )}
                     {onGoToWorkspace && (
                       <button
-                        onClick={() => { onGoToWorkspace(); setOpenMenu(null); }}
+                        onClick={() => {
+                          onGoToWorkspace();
+                          setOpenMenu(null);
+                        }}
                         className="ontocode-top-menu-item cursor-pointer w-full text-left px-4 py-2 text-xs flex items-center gap-2"
                       >
                         <LayoutDashboard size={14} />
@@ -3863,8 +3868,8 @@ const Dashboard: React.FC<DashboardProps> = ({
               // Start monitoring for changes from other users
               const handleDataChanged = async (changedProjectId: string) => {
                 // Handle project deletion signal
-                if (changedProjectId.startsWith('__deleted__:')) {
-                  const deletedId = changedProjectId.replace('__deleted__:', '');
+                if (changedProjectId.startsWith("__deleted__:")) {
+                  const deletedId = changedProjectId.replace("__deleted__:", "");
                   console.log("[Dashboard] ⚠️ Project deleted by another user:", deletedId);
                   notificationService.error("Project Deleted", "This project has been deleted by another user.");
                   return;
@@ -4470,8 +4475,8 @@ const Dashboard: React.FC<DashboardProps> = ({
     // Reject definitions with unbalanced parentheses
     let parenDepth = 0;
     for (const ch of trimmed) {
-      if (ch === '(') parenDepth++;
-      else if (ch === ')') parenDepth--;
+      if (ch === "(") parenDepth++;
+      else if (ch === ")") parenDepth--;
       if (parenDepth < 0) break;
     }
     if (parenDepth !== 0) {
@@ -5613,7 +5618,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
           setActiveFileId(null); // In free mode, fileId is same as projectId
           setSelectedItem(null);
-          console.log(message,"message=====>",projId)
+          console.log(message, "message=====>", projId);
           setLoadingProjectName(message.uploadedFileName);
           userLoadingChoice.current = null; // Reset choice for new loading
           setShowLoadingChoice(true);
@@ -7269,7 +7274,9 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       try {
         const loadFilePerfStart = Date.now();
-        console.log(`[Dashboard] [PERF] ⏱️ handleLoadProjectFile started at ${new Date().toISOString()} for file: ${fileName} (${fileId})`);
+        console.log(
+          `[Dashboard] [PERF] ⏱️ handleLoadProjectFile started at ${new Date().toISOString()} for file: ${fileName} (${fileId})`,
+        );
         console.log("[Dashboard] 📂 Loading file from project:", fileId, fileName);
 
         // Mark refs so the auto-load useEffect won't double-fire when
@@ -7294,7 +7301,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           );
 
           if (graphCheck?.exists && (graphCheck.graphSize ?? 0) > 0) {
-            console.log(`[Dashboard] [PERF] GraphDB cache check: ${Date.now() - loadFilePerfStart}ms (HIT: ${graphCheck.graphSize} triples)`);
+            console.log(
+              `[Dashboard] [PERF] GraphDB cache check: ${Date.now() - loadFilePerfStart}ms (HIT: ${graphCheck.graphSize} triples)`,
+            );
             console.log(`[Dashboard] ⚡ File already in GraphDB (${graphCheck.graphSize} triples), loading directly`);
             setProjectId(ontologyProjectId);
             setLoadingProjectName(fileName);
@@ -7343,7 +7352,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           throw new Error("File content not found");
         }
 
-        console.log(`[Dashboard] [PERF] Fetch file content from MongoDB: ${Date.now() - loadFilePerfStart}ms (${((fileContent.content.length * 3 / 4) / (1024 * 1024)).toFixed(2)}MB raw)`);
+        console.log(
+          `[Dashboard] [PERF] Fetch file content from MongoDB: ${Date.now() - loadFilePerfStart}ms (${((fileContent.content.length * 3) / 4 / (1024 * 1024)).toFixed(2)}MB raw)`,
+        );
         console.log("[Dashboard] 📥 File content retrieved, uploading to ontology editor...");
 
         // Use hierarchical naming: project--fileId
@@ -8336,7 +8347,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             }
           });
           markAsUnsaved();
-          setMetadata(prev => prev ? { ...prev, classCount: (prev.classCount || 0) + 1 } : prev);
+          setMetadata((prev) => (prev ? { ...prev, classCount: (prev.classCount || 0) + 1 } : prev));
         } else if (entitiesTab === "ObjectProperties") {
           // Handle Object Property Creation
           parentIri = "http://www.w3.org/2002/07/owl#topObjectProperty";
@@ -8397,7 +8408,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           if (parentIri && !expandedNodes.includes(parentIri)) {
             setExpandedNodes((prev) => [...prev, parentIri]);
           }
-          setMetadata(prev => prev ? { ...prev, objectPropertyCount: (prev.objectPropertyCount || 0) + 1 } : prev);
+          setMetadata((prev) => (prev ? { ...prev, objectPropertyCount: (prev.objectPropertyCount || 0) + 1 } : prev));
         }
 
         showNotification(`${entitiesTab === "Classes" ? "Class" : "Property"} created successfully!`, "info");
@@ -8461,7 +8472,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
 
         markAsUnsaved();
-        setMetadata(prev => prev ? { ...prev, objectPropertyCount: (prev.objectPropertyCount || 0) + 1 } : prev);
+        setMetadata((prev) => (prev ? { ...prev, objectPropertyCount: (prev.objectPropertyCount || 0) + 1 } : prev));
         showNotification("Property created successfully!", "info");
         setAddPropertyDialogOpen(false);
         setPropertyParentLabel("owl:topObjectProperty");
@@ -8524,7 +8535,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
 
         markAsUnsaved();
-        setMetadata(prev => prev ? { ...prev, dataPropertyCount: (prev.dataPropertyCount || 0) + 1 } : prev);
+        setMetadata((prev) => (prev ? { ...prev, dataPropertyCount: (prev.dataPropertyCount || 0) + 1 } : prev));
         showNotification("Data property created successfully!", "info");
         setAddPropertyDialogOpen(false);
         setPropertyParentLabel("owl:topDataProperty");
@@ -8590,7 +8601,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         setAnnotationProperties((prev) => [...prev, newProp]);
 
         markAsUnsaved();
-        setMetadata(prev => prev ? { ...prev, annotationPropertyCount: (prev.annotationPropertyCount || 0) + 1 } : prev);
+        setMetadata((prev) =>
+          prev ? { ...prev, annotationPropertyCount: (prev.annotationPropertyCount || 0) + 1 } : prev,
+        );
         showNotification("Annotation property created successfully!", "info");
         setAddPropertyDialogOpen(false);
       } catch (error) {
@@ -8630,7 +8643,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         setIndividuals((prev) => [...prev, newIndividual]);
 
         markAsUnsaved();
-        setMetadata(prev => prev ? { ...prev, individualCount: (prev.individualCount || 0) + 1 } : prev);
+        setMetadata((prev) => (prev ? { ...prev, individualCount: (prev.individualCount || 0) + 1 } : prev));
         showNotification(`Individual "${name}" created successfully!`, "info");
       } catch (error) {
         console.error("Failed to create individual:", error);
@@ -8821,14 +8834,16 @@ const Dashboard: React.FC<DashboardProps> = ({
             setSelectedItem((prev) => (prev?.id === item.id ? null : prev));
             // Decrement metadata count based on entity type
             const countField = {
-              Classes: 'classCount',
-              Individuals: 'individualCount',
-              ObjectProperties: 'objectPropertyCount',
-              DataProperties: 'dataPropertyCount',
-              AnnotationProperties: 'annotationPropertyCount',
+              Classes: "classCount",
+              Individuals: "individualCount",
+              ObjectProperties: "objectPropertyCount",
+              DataProperties: "dataPropertyCount",
+              AnnotationProperties: "annotationPropertyCount",
             }[activeTab];
             if (countField) {
-              setMetadata(prev => prev ? { ...prev, [countField]: Math.max(0, ((prev as any)[countField] || 0) - 1) } : prev);
+              setMetadata((prev) =>
+                prev ? { ...prev, [countField]: Math.max(0, ((prev as any)[countField] || 0) - 1) } : prev,
+              );
             }
             showNotification(`"${item.label}" deleted successfully!`, "info");
           } catch (error) {
@@ -9019,7 +9034,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         return addChild(prev);
       });
 
-      setMetadata(prev => prev ? { ...prev, classCount: (prev.classCount || 0) + 1 } : prev);
+      setMetadata((prev) => (prev ? { ...prev, classCount: (prev.classCount || 0) + 1 } : prev));
       markAsUnsaved();
     };
 
@@ -14747,8 +14762,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 // Non-critical — the flat tree from fetchData is still visible
               }
             } else {
-              // Merge was to a different existing file — poll for import and notify.
-              // The user's currently loaded file is not affected.
+              // Merge was to a different existing file
               console.log("[Dashboard] ⚠️ Merge targeted a different existing file:", targetProjectId);
 
               // Poll for the target file's import completion
@@ -14760,23 +14774,67 @@ const Dashboard: React.FC<DashboardProps> = ({
                 return 10000;
               };
 
+              let importCompleted = false;
               for (let attempt = 1; attempt <= maxPollAttempts2; attempt++) {
                 try {
                   const statusRes = await apiClient.get<any>(
                     `/api/ontology/status/${encodeURIComponent(targetProjectId)}?_t=${Date.now()}`,
                   );
                   const status = statusRes?.data?.status || statusRes?.status;
-                  if (status === "COMPLETED" || status === "ERROR") break;
+                  if (status === "COMPLETED") {
+                    importCompleted = true;
+                    break;
+                  }
+                  if (status === "ERROR") break;
                   await new Promise((resolve) => setTimeout(resolve, getPollDelay2(attempt)));
                 } catch {
                   await new Promise((resolve) => setTimeout(resolve, getPollDelay2(attempt)));
                 }
               }
 
-              notificationService.success(
-                "Merge Complete",
-                "Ontology merged into the selected file. Open that file to view the changes.",
-              );
+              // FIX: If merge target is actually the currently opened file (projectId), refresh the data
+              // This handles the case where merge into existing file merged into the same file that's open
+              if (importCompleted && targetProjectId === projectId) {
+                console.log("[Dashboard] ✅ Merge target is current file — refreshing loaded data");
+                try {
+                  // Clear state and reload all data
+                  setIsInitialLoading(true);
+                  setClassHierarchy([]);
+                  setObjectProperties([]);
+                  setDataProperties([]);
+                  setObjectPropertyHierarchy([]);
+                  setDataPropertyHierarchy([]);
+                  setAnnotationProperties([]);
+                  setIndividuals([]);
+                  setDatatypes([]);
+                  setMetadata(null);
+                  setSelectedItem(null);
+                  setClassInstanceCounts({});
+
+                  await fetchData(targetProjectId, true, undefined, true);
+                  console.log("[Dashboard] ✅ Data fetch completed successfully after merge");
+
+                  try {
+                    await refreshClassHierarchy();
+                  } catch (_) {
+                    // Non-critical
+                  }
+
+                  notificationService.success("Merge Complete", "Your ontology has been updated with the merged data!");
+                } catch (fetchError) {
+                  console.error("[Dashboard] ❌ Failed to fetch data after merge:", fetchError);
+                  notificationService.error("Refresh Failed", "Could not load merged data. Please refresh manually.");
+                  setIsInitialLoading(false);
+                }
+              } else {
+                // Different file — just notify user to open it
+                notificationService.success(
+                  "Merge Complete",
+                  importCompleted
+                    ? "Ontology merged into the selected file. Open that file to view the changes."
+                    : "Merge completed but import is taking longer than expected. Refresh the file list to see the changes.",
+                );
+              }
             }
 
             // Also refresh the projects list
