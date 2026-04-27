@@ -7,7 +7,13 @@ import org.semanticweb.owlapi.util.OWLEntityRenamer;
 import org.semanticweb.owlapi.vocab.OWLRDFVocabulary;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.*;
 import org.springframework.stereotype.Service;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.RestTemplate;
 import self.research.ontology.owlEditor.model.merge.*;
 
 import java.io.File;
@@ -35,6 +41,11 @@ public class OntologyMergeService {
     private final ProjectImportService importService;
     private final StorageManager storageManager;
     private final ProjectMetadataService metadataService;
+
+    @Value("${auth.service.url:http://localhost:8086}")
+    private String authServiceUrl;
+
+    private final RestTemplate restTemplate = new RestTemplate();
 
     public OntologyMergeService(GraphDBDatasetService datasetService,
                                ProjectImportService importService,
@@ -215,6 +226,52 @@ public class OntologyMergeService {
         result.setSourceOnlyAxiomCount(sourceOnlyAxiomCount);
         result.setTargetOnlyAxiomCount(targetOnlyAxiomCount);
 
+        // DETECT DUPLICATE/IDENTICAL FILE UPLOADS
+        // If source and target are identical or nearly identical (0 source-only axioms and 0 target-only axioms),
+        // this means the same file was uploaded again. Flag this as a special conflict so the user is aware.
+        if (sourceOnlyAxiomCount == 0 && targetOnlyAxiomCount == 0) {
+            log.info("[MERGE] Duplicate file detected: source ontology is identical to target ontology");
+            MergeConflict duplicateConflict = new MergeConflict();
+            duplicateConflict.setEntityIRI("ontology://duplicate-file");
+            duplicateConflict.setEntityType("Ontology");
+            duplicateConflict.setConflictType(ConflictType.IDENTICAL_FILE_UPLOAD);
+            duplicateConflict.setSeverity(ConflictSeverity.HIGH);
+            duplicateConflict.setDescription(
+                "The uploaded ontology is identical to the existing one. " +
+                "This appears to be a duplicate upload of the same file. " +
+                "No new content will be added if you proceed with the merge."
+            );
+            duplicateConflict.setSourceDefinition("Identical ontology (0 new axioms)");
+            duplicateConflict.setTargetDefinition("Existing ontology");
+            result.addConflict(duplicateConflict);
+        }
+        
+        // DETECT NEAR-DUPLICATE FILES (mostly identical, only minor differences)
+        // If the source axioms are less than 1% different from target, flag as potential duplicate
+        int totalSourceAxioms = sourceOntology.getAxiomCount();
+        if (totalSourceAxioms > 0) {
+            double differencePercentage = ((double) sourceOnlyAxiomCount / totalSourceAxioms) * 100.0;
+            if (differencePercentage < 1.0 && sourceOnlyAxiomCount > 0) {
+                log.info("[MERGE] Near-duplicate file detected: {}% of axioms are different", String.format("%.2f", differencePercentage));
+                MergeConflict nearDuplicateConflict = new MergeConflict();
+                nearDuplicateConflict.setEntityIRI("ontology://near-duplicate-file");
+                nearDuplicateConflict.setEntityType("Ontology");
+                nearDuplicateConflict.setConflictType(ConflictType.DUPLICATE_FILE_CONTENT);
+                nearDuplicateConflict.setSeverity(ConflictSeverity.MEDIUM);
+                nearDuplicateConflict.setDescription(
+                    String.format(
+                        "The uploaded ontology is nearly identical to the existing one (%.2f%% difference). " +
+                        "This may be a duplicate upload with only minor changes. " +
+                        "Review the differences before proceeding.",
+                        differencePercentage
+                    )
+                );
+                nearDuplicateConflict.setSourceDefinition(sourceOnlyAxiomCount + " new axioms detected");
+                nearDuplicateConflict.setTargetDefinition(totalSourceAxioms + " total axioms in source");
+                result.addConflict(nearDuplicateConflict);
+            }
+        }
+
         // Build class hierarchy (parent → direct children) from both ontologies
         // so the frontend can cascade conflict resolutions to subclasses
         result.setClassHierarchy(buildClassHierarchy(sourceOntology, targetOntology));
@@ -321,6 +378,7 @@ public class OntologyMergeService {
                 // Only refresh metadata and reimport for "merge into existing" modes.
                 // For "save as new file", the auth upload + file-open flow handles this.
                 refreshMergedMetadata(importProjectId, targetOntology);
+                updateGridFsFile(importProjectId, targetFileName, outputPath);
                 importService.submitImport(importProjectId, outputPath);
             }
 
@@ -361,6 +419,82 @@ public class OntologyMergeService {
             metadataService.writeMeta(projectId, meta);
         } catch (Exception e) {
             log.warn("[MERGE] Failed to refresh metadata after merge for {}: {}", projectId, e.getMessage());
+        }
+    }
+
+    private void updateGridFsFile(String projectId, String fileName, Path mergedFilePath) {
+        try {
+            log.info("[MERGE] Updating GridFS file for project {} file {}", projectId, fileName);
+
+            // Step 1: Get the file ID for the target file
+            String getFilesUrl = authServiceUrl + "/api/projects/" + projectId + "/files";
+            ResponseEntity<Map<String, Object>> filesResponse = restTemplate.getForEntity(getFilesUrl, Map.class);
+
+            if (!filesResponse.getStatusCode().is2xxSuccessful() || filesResponse.getBody() == null) {
+                log.warn("[MERGE] Failed to get files for project {}: {}", projectId, filesResponse.getStatusCode());
+                return;
+            }
+
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> files = (List<Map<String, Object>>) filesResponse.getBody().get("files");
+            if (files == null) {
+                log.warn("[MERGE] No files found for project {}", projectId);
+                return;
+            }
+
+            // Find the file ID for the target filename
+            String targetFileId = null;
+            for (Map<String, Object> file : files) {
+                String fileNameInList = (String) file.get("name");
+                if (fileName.equals(fileNameInList)) {
+                    targetFileId = (String) file.get("id");
+                    break;
+                }
+            }
+
+            if (targetFileId == null) {
+                log.warn("[MERGE] Target file {} not found in project {} files", fileName, projectId);
+                return;
+            }
+
+            log.info("[MERGE] Found target file ID: {} for file {}", targetFileId, fileName);
+
+            // Step 2: Read the merged file content
+            byte[] fileContent = java.nio.file.Files.readAllBytes(mergedFilePath);
+
+            // Step 3: Create multipart request to update the file
+            String updateFileUrl = authServiceUrl + "/api/projects/" + projectId + "/files";
+
+            // Create multipart form data
+            MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+            body.add("file", new ByteArrayResource(fileContent) {
+                @Override
+                public String getFilename() {
+                    return fileName;
+                }
+            });
+            body.add("fileName", fileName);
+            body.add("replaceFileId", targetFileId);
+            body.add("fileType", "application/rdf+xml");
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+
+            HttpEntity<MultiValueMap<String, Object>> requestEntity = new HttpEntity<>(body, headers);
+
+            // Send the update request
+            ResponseEntity<Map<String, Object>> updateResponse = restTemplate.postForEntity(updateFileUrl, requestEntity, Map.class);
+
+            if (updateResponse.getStatusCode().is2xxSuccessful()) {
+                log.info("[MERGE] Successfully updated GridFS file {} for project {}", targetFileId, projectId);
+            } else {
+                log.warn("[MERGE] Failed to update GridFS file {} for project {}: {}",
+                    targetFileId, projectId, updateResponse.getStatusCode());
+            }
+
+        } catch (Exception e) {
+            log.warn("[MERGE] Failed to update GridFS file for project {} file {}: {}",
+                projectId, fileName, e.getMessage());
         }
     }
 

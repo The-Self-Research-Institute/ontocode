@@ -564,7 +564,7 @@ export async function activate(context: vscode.ExtensionContext) {
             // Try to fetch from Zotero API first
             if (zoteroApiService.isConfigured()) {
                 console.log('[OntoCode] Fetching from Zotero API...');
-                const items = await zoteroApiService.fetchLibrary(100);
+                const items = await zoteroApiService.fetchLibrary(10000);
                 if (items && items.length > 0) {
                     console.log(`[OntoCode] Returning ${items.length} items from Zotero API`);
                     return items;
