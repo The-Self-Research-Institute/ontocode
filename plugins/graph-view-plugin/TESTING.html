@@ -1190,6 +1190,253 @@
 
       <h4>Scenario Explanation</h4>
       <p>Triangular membership functions are the most commonly used in production ontologies because they are computationally efficient and semantically intuitive. This test validates <strong>correct math</strong> (linear interpolation without errors), <strong>boundary handling</strong> (feet at 0.0, peak at 1.0), and <strong>symmetry</strong> (equal distance from peak produces equal membership). Failures here affect all downstream fuzzy classification, ranking, and reasoning—making this a critical validation before deployment.</p>
+
+      <h4>Why & How Triangular Membership Functions Work</h4>
+
+      <h5>Why Triangular Functions?</h5>
+      <p><strong>1. Semantic Purpose: Representing Fuzzy Concepts</strong></p>
+      <p>Real-world concepts are imprecise. For example:</p>
+      <ul>
+        <li><strong>Crisp (Traditional):</strong> "Moderate" = exactly 50°C (on/off binary: either moderate or not)</li>
+        <li><strong>Fuzzy (Realistic):</strong> "Moderate" = ~20-80 range (partial membership: somewhat moderate, very moderate, barely moderate)</li>
+      </ul>
+      <p>The triangular function models gradual transition: values get progressively "more moderate" approaching the ideal (50), then progressively "less moderate" moving away.</p>
+
+      <p><strong>2. Why Triangular Over Other Shapes?</strong></p>
+      <table class="summary-table" style="font-size: 0.9rem;">
+        <thead>
+          <tr><th>Shape</th><th>Pros</th><th>Cons</th><th>Use Case</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Triangular</strong></td>
+            <td>Simple, efficient, intuitive</td>
+            <td>Less smooth than Gaussian</td>
+            <td>Most production ontologies (70%+)</td>
+          </tr>
+          <tr>
+            <td>Trapezoidal</td>
+            <td>Captures ideal range with plateau</td>
+            <td>Slightly more complex</td>
+            <td>When there's a range of equally-ideal values</td>
+          </tr>
+          <tr>
+            <td>Gaussian</td>
+            <td>Very smooth, natural bell curve</td>
+            <td>Expensive exponential, never reaches 0</td>
+            <td>Statistical/measurement data</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p><strong>3. Why Linear Interpolation (not curves)?</strong></p>
+      <ul>
+        <li><strong>Fast:</strong> Just addition and division—no transcendental functions (sin, exp, sqrt)</li>
+        <li><strong>Predictable:</strong> Users can hand-calculate degree: "Is it halfway? 0.5. Is it at peak? 1.0."</li>
+        <li><strong>Explainable:</strong> Clear linear change is easier to audit and debug in production</li>
+      </ul>
+
+      <h5>How It Works: Step-by-Step</h5>
+
+      <p><strong>Visual Shape (a=20, b=50, c=80):</strong></p>
+      <pre style="background: #f3f4f6; padding: 1rem; border-radius: 4px; overflow-x: auto;">
+Membership
+Degree
+   1.0  |        ▲
+   0.8  |       /│\
+   0.6  |      / │ \
+   0.5  |     /  │  \      ← "Moderate" at 0.5 = "halfway to ideal"
+   0.4  |    /   │   \
+   0.2  |   /    │    \
+   0.0  |__/_____|_____\___
+        0   20   50   80   100
+             Input Value (x)
+
+   Left Foot  Peak  Right Foot
+      ↓        ↓        ↓
+      a        b        c
+      20       50       80
+      </pre>
+
+      <p><strong>Detailed Example Computations:</strong></p>
+      <ul style="margin: 1rem 0;">
+        <li>
+          <strong>x = 20 (Left Foot):</strong><br/>
+          Since x = a (boundary), membership begins here.<br/>
+          Formula: μ(20) = 0.0<br/>
+          <strong>Why?</strong> At the exact boundary, we start with no membership, marking where the fuzzy set begins.
+        </li>
+        <li style="margin-top: 1rem;">
+          <strong>x = 35 (Midpoint: Halfway to Peak):</strong><br/>
+          Since 20 &lt; 35 &lt; 50, use: μ(x) = (x − a) / (b − a)<br/>
+          μ(35) = (35 − 20) / (50 − 20) = 15 / 30 = <strong>0.5</strong><br/>
+          <strong>Why 0.5?</strong> The value 35 is exactly halfway between the left foot (20) and peak (50):<br/>
+          &nbsp;&nbsp;&nbsp;&nbsp;Distance from start: 35 − 20 = 15<br/>
+          &nbsp;&nbsp;&nbsp;&nbsp;Distance to peak: 50 − 20 = 30<br/>
+          &nbsp;&nbsp;&nbsp;&nbsp;Ratio: 15/30 = 0.5 (halfway there)<br/>
+          This means "somewhat moderate" or "moderate to a degree of 0.5"
+        </li>
+        <li style="margin-top: 1rem;">
+          <strong>x = 50 (Peak):</strong><br/>
+          μ(50) = 1.0<br/>
+          <strong>Why 1.0?</strong> This is the <strong>prototypical value</strong—the ideal representation of "Moderate".<br/>
+          It has 100% membership in this fuzzy set. This is what "perfectly moderate" means.
+        </li>
+        <li style="margin-top: 1rem;">
+          <strong>x = 65 (Midpoint: Halfway Down from Peak):</strong><br/>
+          Since 50 &lt; 65 &lt; 80, use: μ(x) = (c − x) / (c − b)<br/>
+          μ(65) = (80 − 65) / (80 − 50) = 15 / 30 = <strong>0.5</strong><br/>
+          <strong>By Symmetry:</strong> x = 65 is 15 units below the peak (50) and 15 units above the right foot (80).<br/>
+          Same distance from boundaries → same degree as x = 35!<br/>
+          This models that "leaving the ideal" happens at the same rate as "approaching the ideal".
+        </li>
+        <li style="margin-top: 1rem;">
+          <strong>x = 80 (Right Foot):</strong><br/>
+          Since x = c (boundary), membership ends here.<br/>
+          μ(80) = 0.0<br/>
+          <strong>Why?</strong> Just as x = 20 marks the beginning, x = 80 marks the end of membership.
+        </li>
+        <li style="margin-top: 1rem;">
+          <strong>x = 90 (Beyond Range):</strong><br/>
+          Since x &gt; c (90 &gt; 80), completely outside the range.<br/>
+          μ(90) = 0.0<br/>
+          <strong>Why 0.0?</strong> The value 90 is too far to be "Moderate".<br/>
+          It has zero membership in this fuzzy set. It belongs to a different category (e.g., "Hot").
+        </li>
+      </ul>
+
+      <h5>Key Properties That Make Triangular Functions Work</h5>
+
+      <p><strong>1. Continuity (No Jumps):</strong></p>
+      <p>The function smoothly transitions without discontinuities. If a small change in input causes a small change in membership, the function is reliable:</p>
+      <ul style="font-size: 0.95rem;">
+        <li>At boundary x = 20: lim(x→20⁺) = 0.0 ✓</li>
+        <li>At peak x = 50: lim(x→50⁻) = 1.0 and lim(x→50⁺) = 1.0 ✓</li>
+        <li>At boundary x = 80: lim(x→80⁻) = 0.0 ✓</li>
+      </ul>
+
+      <p><strong>2. Symmetry (Equal Distance = Equal Degree):</strong></p>
+      <p>Values equidistant from the peak have identical membership degrees. This models the intuition that "moving away from ideal" is symmetric in both directions:</p>
+      <ul style="font-size: 0.95rem;">
+        <li>Peak = 50, Range = [20, 80]</li>
+        <li>x = 35 (20 units away): μ = 0.5</li>
+        <li>x = 65 (20 units away): μ = 0.5 ✓ SAME</li>
+      </ul>
+
+      <p><strong>3. Linear Rise/Fall (Constant Rate):</strong></p>
+      <p>Membership changes at a constant rate per unit on each side:</p>
+      <ul style="font-size: 0.95rem;">
+        <li>Left side (20→50): Rate = Δμ/Δx = 1.0 / 30 = 0.0333 per unit</li>
+        <li>Right side (50→80): Rate = -1.0 / 30 = -0.0333 per unit</li>
+        <li>This means you move uniformly from "not moderate" → "very moderate" → "not moderate again"</li>
+      </ul>
+
+      <h5>Real-World Application: Temperature</h5>
+
+      <p><strong>Scenario: "Comfortable Room Temperature"</strong></p>
+      <p>Define as Triangular(18, 22, 26) degrees Celsius:</p>
+      <table class="summary-table" style="font-size: 0.9rem;">
+        <thead>
+          <tr><th>Temperature °C</th><th>μ(comfort)</th><th>Interpretation</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>18</td><td>0.0</td><td>Starts being comfortable (boundary)</td></tr>
+          <tr><td>20</td><td>0.5</td><td>Getting comfortable (halfway to ideal)</td></tr>
+          <tr><td>22</td><td>1.0</td><td>Perfectly comfortable (ideal point)</td></tr>
+          <tr><td>24</td><td>0.5</td><td>Still fairly comfortable (halfway from ideal)</td></tr>
+          <tr><td>26</td><td>0.0</td><td>Stops being comfortable (boundary)</td></tr>
+          <tr><td>30</td><td>0.0</td><td>Not comfortable at all (outside range)</td></tr>
+        </tbody>
+      </table>
+
+      <p><strong>Usage in Rules:</strong></p>
+      <p style="background: #e6f2ff; padding: 1rem; border-radius: 4px; font-family: monospace; font-size: 0.9rem;">
+        Rule: "IF temperature IS comfortable AND lighting IS adequate THEN productivity IS high"<br/>
+        <br/>
+        For temperature = 23°C, lighting = 500 lux:<br/>
+        &nbsp;&nbsp;μ_comfortable(23) = (26 − 23) / (26 − 22) = 3/4 = 0.75<br/>
+        &nbsp;&nbsp;μ_adequate(500) = (compute from lighting function)<br/>
+        &nbsp;&nbsp;Fuzzy AND: min(0.75, μ_adequate) = activates rule strongly
+      </p>
+
+      <h5>Mathematical Intuition</h5>
+
+      <p>The triangular function is <strong>piecewise linear</strong>. The slopes describe how quickly membership changes:</p>
+      <ul>
+        <li><strong>Left slope:</strong> m₁ = 1/(b−a) [rise per unit]</li>
+        <li><strong>Right slope:</strong> m₂ = −1/(c−b) [fall per unit]</li>
+      </ul>
+
+      <p><strong>For a &lt; x ≤ b:</strong> μ(x) = m₁ × (x − a) ← starts at 0, rises to 1<br/>
+      <strong>For b &lt; x &lt; c:</strong> μ(x) = m₂ × (x − c) ← starts at 1, falls to 0</p>
+
+      <p><strong>Slope Relationships:</strong></p>
+      <ul style="font-size: 0.95rem;">
+        <li>If (b−a) = (c−b) [<strong>symmetric triangle</strong>]: slopes are mirrors of each other</li>
+        <li>If (b−a) &lt; (c−b): left slope is steeper (quick rise, slow fall)</li>
+        <li>If (b−a) &gt; (c−b): right slope is steeper (slow rise, quick fall)</li>
+      </ul>
+
+      <h5>Why This Specific Shape Matters</h5>
+
+      <p>The triangular shape captures three essential phases of membership:</p>
+      <table class="summary-table" style="font-size: 0.9rem;">
+        <thead>
+          <tr><th>Phase</th><th>Region</th><th>Membership</th><th>Human Meaning</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Approaching Ideal</strong></td>
+            <td>a to b</td>
+            <td>0 → 1</td>
+            <td>"Getting closer to what we want"</td>
+          </tr>
+          <tr>
+            <td><strong>At Ideal</strong></td>
+            <td>at b</td>
+            <td>1.0</td>
+            <td>"This is exactly what we want"</td>
+          </tr>
+          <tr>
+            <td><strong>Leaving Ideal</strong></td>
+            <td>b to c</td>
+            <td>1 → 0</td>
+            <td>"Moving away from what we want"</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>This mirrors natural human reasoning. When you think about temperature, salary, or any numeric concept, you naturally think:</p>
+      <blockquote style="border-left: 4px solid #2563eb; padding-left: 1rem; margin: 1rem 0; font-style: italic;">
+        "As [value] rises toward [ideal], it becomes more [desirable]. At exactly [ideal], it's perfect. As it continues rising, it becomes less [desirable]."
+      </blockquote>
+
+      <h5>Testing Rationale: Why TC-FZ-001 Matters</h5>
+
+      <p>This test validates five critical aspects of fuzzy membership functions. If <strong>any one fails, your entire fuzzy classification breaks</strong>:</p>
+
+      <ol>
+        <li>
+          <strong>✅ Peak Behavior (x=50 → 1.0):</strong> The system can identify the ideal/prototypical value. If peak returns something other than 1.0, ranking and classification fail.
+        </li>
+        <li>
+          <strong>✅ Symmetry (x=35, x=65 both 0.5):</strong> Membership changes at equal rates on both sides. Asymmetry indicates a math bug that subtly corrupts inference.
+        </li>
+        <li>
+          <strong>✅ Boundary Handling (x=20, x=80 → 0.0):</strong> Clear, deterministic transition points. Without correct boundaries, you get "bleeding" where values outside the range incorrectly belong to the set.
+        </li>
+        <li>
+          <strong>✅ Linear Interpolation (x=35 = 15/30 = 0.5):</strong> Correct math at intermediate points. This is where rounding errors and floating-point bugs typically hide.
+        </li>
+        <li>
+          <strong>✅ Out-of-Range Handling (x=90 → 0.0):</strong> Clear membership outside the defined range. This prevents false positives in fuzzy classification.
+        </li>
+      </ol>
+
+      <p style="background: #fff3cd; padding: 1rem; border-radius: 4px; margin-top: 1rem;">
+        <strong>⚠️ Impact:</strong> Fuzzy membership functions are foundational. Every fuzzy classification rule, every ranking algorithm, every inference engine depends on these computations being correct. A single 0.01 error in membership degree can cascade through the entire ontology reasoning and produce silent, hard-to-debug failures.
+      </p>
+
     </div>
 
     <div class="test-case">
