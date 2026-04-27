@@ -1500,6 +1500,65 @@ Degree
 
       <h4>Scenario Explanation</h4>
       <p>Trapezoidal functions model concepts with a <strong>range of ideal values</strong>, not just a single peak (e.g., "warm temperature" = 25°C to 75°C ideal). This test validates the plateau logic and confirms that the function correctly distinguishes <strong>transition zones (rise/fall)</strong> from <strong>ideal zones (plateau)</strong>.</p>
+
+      <h4>Why & How Trapezoidal Membership Functions Work</h4>
+
+      <h5>Why Trapezoidal Instead of Triangular?</h5>
+      <p><strong>Real-World Problem with Triangular:</strong> Many concepts have a <strong>range of equally-ideal values</strong>, not just a single point:</p>
+      <ul>
+        <li><strong>Triangular Issue:</strong> "Warm" at peak=50 means 49°C and 51°C are less ideal (μ &lt; 1.0)</li>
+        <li><strong>Trapezoidal Solution:</strong> "Warm" from 25-75°C are <strong>all equally ideal</strong> (μ = 1.0 across plateau)</li>
+      </ul>
+      <p>Real-world examples:</p>
+      <ul style="font-size: 0.95rem;">
+        <li><strong>Salary Range:</strong> "Competitive salary" might be $80k-$120k (all equally competitive)</li>
+        <li><strong>Working Age:</strong> 25-65 all equally valid (no "most ideal" age within range)</li>
+        <li><strong>API Response Time:</strong> 100-500ms all equally acceptable</li>
+      </ul>
+
+      <h5>Visual: Four Regions</h5>
+      <pre style="background: #f3f4f6; padding: 1rem; border-radius: 4px; overflow-x: auto;">
+Membership (a=15, b=25, c=75, d=85)
+   1.0  |      ___________  ← Plateau = "ideal range"
+   0.8  |     /           \
+   0.5  |    /             \  ← Rise & Fall = "transition zones"
+   0.0  |___/___________\___
+       0   15  25  50  75  85  100
+         Left Rise  Plateau  Right Fall
+         Transition
+      </pre>
+
+      <h5>Example Values Explained</h5>
+      <ul style="margin: 1rem 0;">
+        <li><strong>x=20 (left rise):</strong> μ = (20-15)/(25-15) = 0.5 → "Getting warm"</li>
+        <li><strong>x=25-75 (plateau):</strong> μ = 1.0 → "All equally warm" (no single best)</li>
+        <li><strong>x=80 (right fall):</strong> μ = (85-80)/(85-75) = 0.5 → "Cooling down"</li>
+      </ul>
+
+      <h5>Key Insight: The Plateau</h5>
+      <p>This is what makes trapezoidal fundamentally different:</p>
+      <blockquote style="border-left: 4px solid #2563eb; padding-left: 1rem; margin: 1rem 0; font-style: italic;">
+        "All values from 25 to 75 are equally ideal. There is NO 'most ideal' within that range."
+      </blockquote>
+      <p>This mirrors real decisions: HR won't pick $100k over $95k if both are in the "competitive" range. Both are equally acceptable.</p>
+
+      <h5>Real-World: Salary Example</h5>
+      <table class="summary-table" style="font-size: 0.9rem;">
+        <thead><tr><th>Salary</th><th>μ</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>$80k (b)</td><td>1.0</td><td>Start of competitive range</td></tr>
+          <tr><td>$100k</td><td>1.0</td><td>In competitive range (no ranking)</td></tr>
+          <tr><td>$120k (c)</td><td>1.0</td><td>End of competitive range</td></tr>
+          <tr><td>$130k</td><td>0.5</td><td>Above range (declining)</td></tr>
+        </tbody>
+      </table>
+
+      <h5>Why TC-FZ-002 Matters</h5>
+      <ol>
+        <li><strong>✅ Plateau Consistency:</strong> All [b,c] values must be exactly 1.0, no ranking within</li>
+        <li><strong>✅ Transition Symmetry:</strong> Rise mirrors fall (equal slopes on both sides)</li>
+        <li><strong>✅ Boundary Clarity:</strong> Sharp transitions at a, b, c, d</li>
+      </ol>
     </div>
 
     <div class="test-case">
@@ -1560,6 +1619,87 @@ Degree
 
       <h4>Scenario Explanation</h4>
       <p>Gaussian functions model <strong>probabilistic confidence</strong> and <strong>smooth uncertainty</strong> better than triangular functions. They represent natural phenomena (e.g., measurement noise, normal distributions in sensor data). This test validates numerical stability of the exponential calculation and confirms correct parameter interpretation.</p>
+
+      <h4>Why & How Gaussian Membership Functions Work</h4>
+
+      <h5>Why Gaussian (Bell Curve)?</h5>
+      <p><strong>Problem with Linear:</strong> Sharp transitions are unrealistic for natural phenomena—things follow smooth, probabilistic patterns:</p>
+      <ul>
+        <li><strong>Triangular/Trapezoidal:</strong> Sharp corners at boundaries (unrealistic)</li>
+        <li><strong>Gaussian:</strong> Smooth bell curve that tails off gradually (like real measurements)</li>
+      </ul>
+      <p>When to use Gaussian:</p>
+      <ul style="font-size: 0.95rem;">
+        <li><strong>Sensor Data:</strong> Measurements cluster around true value (normal distribution)</li>
+        <li><strong>Confidence Levels:</strong> Certainty decreases smoothly away from peak</li>
+        <li><strong>Natural Variation:</strong> Heights, test scores, processing times follow bell curves</li>
+      </ul>
+
+      <h5>Formula & Parameters</h5>
+      <p><strong>μ(x) = exp(−((x − μ₀)² / (2σ²)))</strong></p>
+      <ul>
+        <li><strong>μ₀:</strong> Mean/peak (where membership = 1.0)</li>
+        <li><strong>σ:</strong> Standard deviation (controls width—how fast it falls)</li>
+      </ul>
+
+      <h5>Visual Shape</h5>
+      <pre style="background: #f3f4f6; padding: 1rem; border-radius: 4px; overflow-x: auto;">
+Smooth Bell Curve (μ₀=50, σ=10)
+   1.0  |          ▲
+   0.8  |         ╱│╲
+  0.606 |--------╱ │ ╲--------  ← At ±σ
+  0.135 |      ╱   │   ╲        ← At ±2σ
+   0.0  |____╱     │     ╲____
+       0  20  30  40  50  60  70  80
+              ↑       ↑        ↑
+          μ₀-2σ     μ₀      μ₀+2σ
+      </pre>
+
+      <h5>Key Computations</h5>
+      <ul style="margin: 1rem 0;">
+        <li>
+          <strong>At Peak (x=50):</strong><br/>
+          μ(50) = exp(−0) = 1.0 → Perfect membership
+        </li>
+        <li style="margin-top: 1rem;">
+          <strong>At ±1 Std Dev (x=40, x=60):</strong><br/>
+          μ(40) = exp(−0.5) ≈ 0.606 → "Plausible" (inflection point where curve changes shape)
+        </li>
+        <li style="margin-top: 1rem;">
+          <strong>At ±2 Std Dev (x=30, x=70):</strong><br/>
+          μ(30) = exp(−2) ≈ 0.135 → "Unlikely" but not impossible
+        </li>
+        <li style="margin-top: 1rem;">
+          <strong>At ±3 Std Dev (x=20, x=80):</strong><br/>
+          μ(20) = exp(−4.5) ≈ 0.011 → "Very unlikely" but STILL NOT ZERO
+        </li>
+      </ul>
+
+      <h5>Critical: Never Reaches Exactly Zero</h5>
+      <p><strong>Key Difference from Triangular/Trapezoidal:</strong> Gaussian NEVER reaches 0.0:</p>
+      <ul style="font-size: 0.95rem;">
+        <li>At x=1000 (950 units away): still ≈ 10^−78 (not zero)</li>
+        <li>Mathematically, tails extend to infinity with non-zero probability</li>
+      </ul>
+      <p><strong>Why This Matters:</strong> In measurement/probability, "theoretically possible but unlikely" is more realistic than "impossible".</p>
+
+      <h5>Real-World: Thermometer Accuracy</h5>
+      <table class="summary-table" style="font-size: 0.9rem;">
+        <thead><tr><th>Temp</th><th>μ</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>50°C (μ₀)</td><td>1.000</td><td>Reported reading</td></tr>
+          <tr><td>40, 60 (±1σ)</td><td>0.606</td><td>Within accuracy range</td></tr>
+          <tr><td>30, 70 (±2σ)</td><td>0.135</td><td>Unlikely but possible</td></tr>
+          <tr><td>20, 80 (±3σ)</td><td>0.011</td><td>Very unlikely</td></tr>
+        </tbody>
+      </table>
+
+      <h5>Why TC-FZ-003 Matters</h5>
+      <ol>
+        <li><strong>✅ Exponential Stability:</strong> exp() calculations must handle ±4.5 without overflow/underflow</li>
+        <li><strong>✅ Perfect Symmetry:</strong> μ(μ₀+x) = μ(μ₀−x) for any x</li>
+        <li><strong>✅ Never Zero:</strong> Tails are small but not zero (unlike triangular)</li>
+      </ol>
     </div>
 
     <div class="test-case">
@@ -1612,6 +1752,95 @@ Degree
 
       <h4>Scenario Explanation</h4>
       <p>Real-world fuzzy classification often assigns objects to multiple overlapping sets (e.g., temperature 35°C is both "Cold" and "Cool"). This test ensures the system handles <strong>multi-set membership</strong> gracefully and that <strong>aggregation operators</strong> (union, intersection) behave correctly.</p>
+
+      <h4>Why & How Overlapping Membership Functions Work</h4>
+
+      <h5>Why Overlaps Matter</h5>
+      <p><strong>Real-World Complexity:</strong> Most objects fit into MULTIPLE categories simultaneously, not just one:</p>
+      <ul>
+        <li><strong>Single Set Issue:</strong> "Is 35°C cold or cool?" → Forces binary choice</li>
+        <li><strong>Multiple Sets Solution:</strong> "35°C is 25% cold AND 50% cool" → Captures reality</li>
+      </ul>
+      <p>This is fundamental to fuzzy logic: <strong>objects have partial membership in multiple sets</strong>.</p>
+
+      <h5>Three Overlapping Ranges</h5>
+      <pre style="background: #f3f4f6; padding: 1rem; border-radius: 4px; overflow-x: auto;">
+Three Fuzzy Sets (Temperature):
+
+Cold:  0    20    40
+        |__/__\    
+       /      \
+      0--------40
+
+Cool:        25    45    65
+                |__/__\    
+               /      \
+              25-------65
+
+Warm:                 50    70    90
+                       |__/__\
+                      /      \
+                     50-------90
+
+Overlap zones:
+       [25-40]: Cold AND Cool overlap
+       [50-65]: Cool AND Warm overlap
+      </pre>
+
+      <h5>Key Insight: Overlap Regions</h5>
+      <p><strong>In overlap zones, objects belong to MULTIPLE sets:</strong></p>
+      <ul style="margin: 1rem 0;">
+        <li>
+          <strong>x = 20 (Cold peak):</strong><br/>
+          μ_Cold=1.0, μ_Cool=0.0, μ_Warm=0.0<br/>
+          → Clearly cold (no ambiguity)
+        </li>
+        <li style="margin-top: 1rem;">
+          <strong>x = 35 (Cold-Cool overlap):</strong><br/>
+          μ_Cold = (40-35)/(40-20) = 0.25<br/>
+          μ_Cool = (35-25)/(45-25) = 0.5<br/>
+          μ_Warm = 0.0<br/>
+          → "Somewhat cold, fairly cool, not warm"
+        </li>
+        <li style="margin-top: 1rem;">
+          <strong>x = 55 (Cool-Warm overlap):</strong><br/>
+          μ_Cold = 0.0<br/>
+          μ_Cool = (65-55)/(65-25) = 0.25 (wait, recalculate...)<br/>
+          μ_Cool = (65-55)/(65-45) = 0.5 (halfway down from peak 45)<br/>
+          μ_Warm = (55-50)/(70-50) = 0.25 (halfway up to peak 70)<br/>
+          → "Not cold, somewhat cool, somewhat warm"
+        </li>
+      </ul>
+
+      <h5>Aggregation: How to Combine Multiple Memberships</h5>
+      <p>When object belongs to multiple sets, you need an <strong>aggregation operator</strong>:</p>
+      <ul style="font-size: 0.95rem;">
+        <li><strong>Union (OR/MAX):</strong> μ_result = max(μ_Cold, μ_Cool, μ_Warm) → "Most dominant set"</li>
+        <li><strong>Intersection (AND/MIN):</strong> μ_result = min(μ_Cold, μ_Cool, μ_Warm) → "All must apply"</li>
+        <li><strong>Average:</strong> μ_result = (μ_Cold + μ_Cool + μ_Warm) / 3 → "Overall fuzziness"</li>
+      </ul>
+
+      <p><strong>For this test, use UNION (MAX):</strong></p>
+      <ul style="font-size: 0.95rem;">
+        <li>x=20: max(1.0, 0.0, 0.0) = 1.0 (one set clearly dominates)</li>
+        <li>x=35: max(0.25, 0.5, 0.0) = 0.5 (Cool dominates)</li>
+        <li>x=55: max(0.0, 0.5, 0.25) = 0.5 (Cool still dominates, even in Cool-Warm overlap)</li>
+      </ul>
+
+      <h5>Practical Rule Example</h5>
+      <p><strong>Comfort Rule:</strong> "IF temperature IS cold OR cool THEN activate heating"</p>
+      <ul style="font-size: 0.95rem;">
+        <li>x=35: μ_cold_or_cool = max(0.25, 0.5) = 0.5 → 50% activate heating</li>
+        <li>x=20: μ_cold_or_cool = max(1.0, 0.0) = 1.0 → 100% activate heating</li>
+        <li>x=70: μ_cold_or_cool = max(0.0, 0.0) = 0.0 → 0% activate heating</li>
+      </ul>
+
+      <h5>Why TC-FZ-004 Matters</h5>
+      <ol>
+        <li><strong>✅ Multi-Set Membership:</strong> Object can belong to multiple sets with different degrees</li>
+        <li><strong>✅ Aggregation Correctness:</strong> Union/intersection must combine degrees mathematically</li>
+        <li><strong>✅ No Range Violations:</strong> No degree > 1.0 or < 0.0 after aggregation</li>
+      </ol>
     </div>
 
     <div class="test-case">
@@ -1689,6 +1918,77 @@ Degree
 
       <h4>Scenario Explanation</h4>
       <p>Production ontologies often contain messy data: negative domains, extreme scales, user input errors. This test ensures the fuzzy system is <strong>defensive and resilient</strong>, catching bad inputs before they corrupt reasoning or cause runtime failures.</p>
+
+      <h4>Why & How Edge Cases Matter</h4>
+
+      <h5>Real-World Data is Messy</h5>
+      <p><strong>Problem:</strong> Production ontologies contain:</p>
+      <ul>
+        <li>Negative values (e.g., temperature in Celsius below 0°C)</li>
+        <li>Extreme ranges (1 million to 2 million scale)</li>
+        <li>User input errors (parameters in wrong order)</li>
+        <li>Floating-point edge cases (division by zero, NaN, Infinity)</li>
+      </ul>
+      <p>If your fuzzy system crashes on edge cases, it's not production-ready.</p>
+
+      <h5>Edge Case Breakdown</h5>
+      <ul style="margin: 1rem 0;">
+        <li>
+          <strong>Negative Values: Triangular(-30, 0, 30), test x=-15</strong><br/>
+          Expected: μ(-15) = (-15 - (-30)) / (0 - (-30)) = 15/30 = 0.5<br/>
+          <strong>Why test?</strong> Some naive implementations assume x > 0 always. Must support negative domains (e.g., temperature, time offsets).
+        </li>
+        <li style="margin-top: 1rem;">
+          <strong>Tiny Intervals: Triangular(49.999, 50, 50.001), test x=50</strong><br/>
+          Expected: μ(50) = 1.0 (exactly at peak)<br/>
+          <strong>Why test?</strong> Floating-point arithmetic can introduce rounding errors. Denominators like (50-49.999) are very small, prone to numerical instability.
+        </li>
+        <li style="margin-top: 1rem;">
+          <strong>Very Large Values: Triangular(1e6, 1.5e6, 2e6), test x=1.25e6</strong><br/>
+          Expected: μ(1.25e6) = (1.25e6 - 1e6) / (1.5e6 - 1e6) = 0.5<br/>
+          <strong>Why test?</strong> Large numbers can cause overflow in intermediate calculations or precision loss in floating-point representation.
+        </li>
+        <li style="margin-top: 1rem;">
+          <strong>Invalid: a ≥ b (e.g., Triangular(50, 40, 80))</strong><br/>
+          Expected: System rejects with clear error message (not silent failure)<br/>
+          <strong>Why test?</strong> Parameter validation prevents cascading failures. Bad parameters should fail fast and loudly.
+        </li>
+        <li style="margin-top: 1rem;">
+          <strong>Invalid: b ≥ c (e.g., Triangular(20, 80, 80))</strong><br/>
+          Expected: System rejects or auto-corrects<br/>
+          <strong>Why test?</strong> Similar to above—catch configuration errors early.
+        </li>
+        <li style="margin-top: 1rem;">
+          <strong>NaN Input: test x=NaN in valid Triangular(20, 50, 80)</strong><br/>
+          Expected: Return 0.0 or NaN (NOT crash/hang)<br/>
+          <strong>Why test?</strong> NaN propagation can silently corrupt calculations. Must handle gracefully.
+        </li>
+        <li style="margin-top: 1rem;">
+          <strong>Infinity Input: test x=∞</strong><br/>
+          Expected: Return 0.0 (outside range)<br/>
+          <strong>Why test?</strong> Infinity comparisons must not hang or throw exceptions.
+        </li>
+        <li style="margin-top: 1rem;">
+          <strong>Empty/Null Parameters: Create Triangular() with no a, b, c</strong><br/>
+          Expected: Clear validation error<br/>
+          <strong>Why test?</strong> Missing parameters should never silently default—that hides bugs.
+        </li>
+        <li style="margin-top: 1rem;">
+          <strong>Degenerate Trapezoid: Trapezoidal(20, 50, 50, 80) where b=c</strong><br/>
+          Expected: Fall back to triangular or explicit error<br/>
+          <strong>Why test?</strong> Trapezoid where plateau width = 0 becomes triangular. Must handle this special case.
+        </li>
+      </ul>
+
+      <h5>Why TC-FZ-005 Matters (P0 Critical)</h5>
+      <ol>
+        <li><strong>✅ Robustness:</strong> System must not crash on any reasonable input</li>
+        <li><strong>✅ Validation:</strong> Bad parameters caught early, not allowed to propagate</li>
+        <li><strong>✅ Graceful Degradation:</strong> Edge cases either compute correctly or fail with clear errors</li>
+      </ol>
+      <p style="background: #fff3cd; padding: 1rem; border-radius: 4px; margin-top: 1rem;">
+        <strong>⚠️ Production Impact:</strong> A crash on edge case input can take down entire reasoning engine. This test is P0 because it validates system stability under real-world messiness.
+      </p>
     </div>
 
     <div class="test-case">
@@ -1787,6 +2087,112 @@ Degree
 
       <h4>Scenario Explanation</h4>
       <p>T-norm and t-conorm operations are the foundation of fuzzy rule inference (e.g., "IF (Hot AND Dry) THEN..." requires AND operation). Failures here silently corrupt downstream reasoning. This test ensures <strong>logical consistency</strong> and prevents subtle inference bugs that are hard to debug.</p>
+
+      <h4>Why & How T-norms and T-conorms Work</h4>
+
+      <h5>What Are T-norms & T-conorms?</h5>
+      <p><strong>Problem:</strong> In fuzzy logic, we need operations to combine membership degrees from multiple sets.</p>
+      <ul>
+        <li><strong>T-norm (AND):</strong> How confident can we be that BOTH conditions are true?</li>
+        <li><strong>T-conorm (OR):</strong> How confident can we be that AT LEAST ONE condition is true?</li>
+        <li><strong>Complement (NOT):</strong> If something is 70% hot, how "not hot" is it?</li>
+      </ul>
+
+      <h5>Three Levels of Fuzzy Logic</h5>
+      <pre style="background: #f3f4f6; padding: 1rem; border-radius: 4px; overflow-x: auto;">
+Level 1: Membership Functions (single sets)
+  "How hot is this?"  → μ_hot = 0.7
+  "How dry is this?"  → μ_dry = 0.4
+
+Level 2: Logical Operations (combine sets)
+  "How (hot AND dry)?"    → min(0.7, 0.4) = 0.4
+  "How (hot OR dry)?"     → max(0.7, 0.4) = 0.7
+  "How (NOT hot)?"        → 1 − 0.7 = 0.3
+
+Level 3: Rules (reason with combinations)
+  "IF (hot AND dry) THEN enable_cooling"  → Activate at 0.4 strength
+      </pre>
+
+      <h5>The Three Standard Operations</h5>
+      <p><strong>Given μ_A = 0.7 (Hot) and μ_B = 0.4 (Dry):</strong></p>
+
+      <ul style="margin: 1rem 0;">
+        <li>
+          <strong>1. Fuzzy AND (T-norm): min(μ_A, μ_B) = min(0.7, 0.4) = 0.4</strong><br/>
+          <strong>Why min?</strong> The conjunction is at most as strong as the weaker component.<br/>
+          Interpretation: "This is 40% (hot AND dry)" — limited by the weaker condition (dry)
+        </li>
+        <li style="margin-top: 1rem;">
+          <strong>2. Fuzzy OR (T-conorm): max(μ_A, μ_B) = max(0.7, 0.4) = 0.7</strong><br/>
+          <strong>Why max?</strong> The disjunction is at least as strong as the stronger component.<br/>
+          Interpretation: "This is 70% (hot OR dry)" — dominated by the stronger condition (hot)
+        </li>
+        <li style="margin-top: 1rem;">
+          <strong>3. Fuzzy NOT (Complement): 1 − μ_A = 1 − 0.7 = 0.3</strong><br/>
+          <strong>Why 1 − x?</strong> Membership and non-membership are inverses.<br/>
+          Interpretation: "This is 30% (NOT hot)" — if it's 70% hot, it's 30% not-hot
+        </li>
+      </ul>
+
+      <h5>Why Min/Max Operations?</h5>
+      <p><strong>Mathematical Justification:</strong></p>
+      <ul style="font-size: 0.95rem;">
+        <li><strong>AND = min:</strong> Both conditions must apply. Confidence bounded by the weaker one.</li>
+        <li><strong>OR = max:</strong> At least one condition applies. Confidence bounded by the stronger one.</li>
+        <li><strong>NOT = 1−x:</strong> Complements are inverses. If A is true at 0.7, ¬A is true at 0.3.</li>
+      </ul>
+
+      <h5>De Morgan's Laws (Logical Consistency Check)</h5>
+      <p><strong>Classic Boolean Laws That Must Hold in Fuzzy Logic:</strong></p>
+
+      <p><strong>Law 1: ¬(A ∩ B) = ¬A ∪ ¬B</strong><br/>
+      "NOT (A AND B) equals (NOT A OR NOT B)"</p>
+      <ul style="font-size: 0.95rem;">
+        <li>Left side: ¬(A ∩ B) = 1 − min(0.7, 0.4) = 1 − 0.4 = 0.6</li>
+        <li>Right side: ¬A ∪ ¬B = max(1−0.7, 1−0.4) = max(0.3, 0.6) = 0.6</li>
+        <li>✓ Both sides equal 0.6 (law holds)</li>
+      </ul>
+
+      <p><strong>Law 2: ¬(A ∪ B) = ¬A ∩ ¬B</strong><br/>
+      "NOT (A OR B) equals (NOT A AND NOT B)"</p>
+      <ul style="font-size: 0.95rem;">
+        <li>Left side: ¬(A ∪ B) = 1 − max(0.7, 0.4) = 1 − 0.7 = 0.3</li>
+        <li>Right side: ¬A ∩ ¬B = min(1−0.7, 1−0.4) = min(0.3, 0.6) = 0.3</li>
+        <li>✓ Both sides equal 0.3 (law holds)</li>
+      </ul>
+
+      <p><strong>Complement Consistency: μ_A + μ_¬A = 1.0 (always)</strong></p>
+      <ul style="font-size: 0.95rem;">
+        <li>μ_A = 0.7, μ_¬A = 1 − 0.7 = 0.3</li>
+        <li>0.7 + 0.3 = 1.0 ✓ (always true)</li>
+      </ul>
+
+      <h5>Real-World: Climate Control Rule</h5>
+      <p><strong>Rule:</strong> "IF (temperature IS hot AND humidity IS high) THEN activate_cooling"</strong></p>
+      <ul style="font-size: 0.95rem;">
+        <li>Current state: temperature=35°C (μ_hot=0.8), humidity=75% (μ_high=0.6)</li>
+        <li>Fuzzy AND: min(0.8, 0.6) = 0.6 → Cooling activation strength = 60%</li>
+        <li>If just hot but dry: min(0.8, 0.1) = 0.1 → Only 10% cooling (weak response)</li>
+        <li>If moderate on both: min(0.5, 0.5) = 0.5 → 50% cooling (balanced response)</li>
+      </ul>
+
+      <h5>Alternative Operations (Less Common)</h5>
+      <p>Some systems use algebraic operations instead of min/max:</p>
+      <ul style="font-size: 0.95rem;">
+        <li><strong>Algebraic Product (AND alt):</strong> μ_A × μ_B = 0.7 × 0.4 = 0.28 (more drastic)</li>
+        <li><strong>Algebraic Sum (OR alt):</strong> μ_A + μ_B − (μ_A × μ_B) = 0.7 + 0.4 − 0.28 = 0.82 (less drastic)</li>
+      </ul>
+      <p>These are mathematically valid but less intuitive. Min/max are standard.</p>
+
+      <h5>Why TC-FZ-006 Matters (P0 Critical)</h5>
+      <ol>
+        <li><strong>✅ Logical Consistency:</strong> De Morgan's laws must hold—if they don't, reasoning is broken</li>
+        <li><strong>✅ Inference Correctness:</strong> Rules combine membership degrees correctly (AND/OR)</li>
+        <li><strong>✅ Range Preservation:</strong> Operations never produce degrees > 1.0 or < 0.0</li>
+      </ol>
+      <p style="background: #fff3cd; padding: 1rem; border-radius: 4px; margin-top: 1rem;">
+        <strong>⚠️ Silent Failure Risk:</strong> If De Morgan's laws don't hold, your fuzzy rules will produce inconsistent, contradictory conclusions. These bugs are <strong>extremely hard to debug</strong> because they manifest as subtle reasoning errors, not crashes.
+      </p>
     </div>
   </section>
 
