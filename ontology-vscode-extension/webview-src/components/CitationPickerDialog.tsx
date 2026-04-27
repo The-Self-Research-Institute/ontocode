@@ -45,6 +45,8 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
   const [selectedCitation, setSelectedCitation] = useState<CitationItem | null>(null);
   const [manualDoi, setManualDoi] = useState('');
   const [showZoteroSettings, setShowZoteroSettings] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadedCount, setLoadedCount] = useState(0);
   const [showDoiWarning, setShowDoiWarning] = useState(false);
 
   useEffect(() => {
@@ -73,7 +75,36 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
 
   const loadCitations = () => {
     setLoading(true);
+    setLoadingMore(false);
+    setLoadedCount(0);
     setError(null);
+
+    // Listen for response
+    const messageHandler = (event: MessageEvent) => {
+      const message = event.data;
+
+      if (message.type === 'zoteroLibraryData') {
+        const items = message.items || [];
+        setCitations(items);
+        setFilteredCitations(items);
+        setLoadedCount(items.length);
+        setLoading(false);
+        setLoadingMore(!!message.hasMore);
+      } else if (message.type === 'zoteroLibraryDataAppend') {
+        const items = message.items || [];
+        setCitations(prev => [...prev, ...items]);
+        setLoadedCount(prev => prev + items.length);
+        setLoadingMore(!!message.hasMore);
+      } else if (message.type === 'zoteroLibraryDataComplete') {
+        setLoadingMore(false);
+      } else if (message.type === 'zoteroLibraryError') {
+        setError(message.error || 'Failed to load Zotero library');
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    };
+
+    window.addEventListener('message', messageHandler);
 
     // Request citations from extension via postMessage
     if (window.vscode) {
@@ -81,22 +112,6 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
         type: 'requestZoteroLibrary'
       });
     }
-
-    // Listen for response
-    const messageHandler = (event: MessageEvent) => {
-      const message = event.data;
-      
-      if (message.type === 'zoteroLibraryData') {
-        setCitations(message.items || []);
-        setFilteredCitations(message.items || []);
-        setLoading(false);
-      } else if (message.type === 'zoteroLibraryError') {
-        setError(message.error || 'Failed to load Zotero library');
-        setLoading(false);
-      }
-    };
-
-    window.addEventListener('message', messageHandler);
     
     // Cleanup listener after 10 seconds or when component unmounts
     const timeout = setTimeout(() => {
@@ -273,6 +288,14 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
             </div>
           )}
 
+          {loadingMore && !loading && !error && (
+            <div className="flex items-center justify-center py-4">
+              <div className="text-sm text-gray-600">
+                Loading more citations in the background...
+              </div>
+            </div>
+          )}
+
           {!loading && !error && filteredCitations.length === 0 && (
             <div className="flex items-center justify-center py-12">
               <div className="text-center">
@@ -323,15 +346,15 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
                               <span>{year}</span>
                             </div>
                           )}
-                          {citation.itemType && (
+                          {citation.data.itemType && (
                             <div className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs flex-shrink-0">
-                              {citation.itemType}
+                              {citation.data.itemType}
                             </div>
                           )}
                         </div>
-                        {citation.publicationTitle && (
+                        {citation.data.publicationTitle && (
                           <p className="text-xs text-gray-500 italic line-clamp-1">
-                            {citation.publicationTitle}
+                            {citation.data.publicationTitle}
                           </p>
                         )}
                         {citation.data.doi ? (
@@ -366,6 +389,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
             <span className="font-medium">
               {filteredCitations.length} {filteredCitations.length === 1 ? 'citation' : 'citations'}
               {!searchQuery && citations.length > 0 && ` of ${citations.length}`}
+              {loadingMore && ` · ${loadedCount} loaded so far`}
             </span>
             <span className="text-gray-500 font-medium">Format: {format.toUpperCase()}</span>
           </div>
