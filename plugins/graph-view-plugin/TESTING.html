@@ -270,6 +270,7 @@
       <span><strong>Plugin:</strong> @ontocode/graph-view-plugin v3.1.0</span>
       <span><strong>Category:</strong> Visualization</span>
       <span><strong>Last Updated:</strong> April 2026</span>
+      <span><strong>See Also:</strong> <a href="ROBUSTNESS_IMPROVEMENTS.md" style="color: #dbeafe; text-decoration: underline;">Robustness & Performance Improvements Guide</a></span>
     </div>
   </div>
 </header>
@@ -287,6 +288,7 @@
       <li><a href="#integration-tests">Integration Tests</a></li>
       <li><a href="#performance-tests">Performance Tests</a></li>
       <li><a href="#accessibility-tests">Accessibility Tests</a></li>
+      <li><a href="#fuzzy-ontology-tests">Fuzzy Ontology Tests</a></li>
     </ol>
   </nav>
 
@@ -937,6 +939,610 @@
     </div>
   </section>
 
+  <!-- Fuzzy Ontology Tests -->
+  <section id="fuzzy-ontology-tests">
+    <h2>8. Fuzzy Ontology Tests</h2>
+
+    <p>This section validates fuzzy semantics, threshold filtering, ranking behavior, and runtime stability for ontologies that use membership values and uncertain relationships.</p>
+
+    <h3>Fuzzy Testing Strategy</h3>
+    <ul>
+      <li>Validate numeric correctness for membership values in the range <code>[0,1]</code>.</li>
+      <li>Validate threshold behavior around boundary values (for example, <code>0.6999</code>, <code>0.7000</code>, <code>0.7001</code>).</li>
+      <li>Validate deterministic ranking and tie handling.</li>
+      <li>Validate reasoner integration under inferred fuzzy relationships.</li>
+      <li>Validate performance when fuzzy annotations increase graph density.</li>
+    </ul>
+
+    <div class="test-case">
+      <h3>TC-GV-032: Membership Boundary Validation</h3>
+      <p class="objective">Verify fuzzy membership values are parsed, persisted, and displayed correctly at boundary conditions</p>
+      <h4>Preconditions</h4>
+      <ul>
+        <li>Ontology contains entities annotated with fuzzy membership values</li>
+        <li>Dataset includes values: <code>0.0</code>, <code>0.0001</code>, <code>0.5</code>, <code>0.9999</code>, <code>1.0</code></li>
+      </ul>
+      <h4>Steps</h4>
+      <ol>
+        <li>Load fuzzy ontology in graph view</li>
+        <li>Inspect membership values in sidebar/details panel</li>
+        <li>Refresh the graph and re-check values</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>No value is clipped outside <code>[0,1]</code></li>
+        <li>Displayed values are stable across refresh</li>
+        <li>No precision loss that changes user-visible semantics</li>
+      </ul>
+      <h4>Scenario Explanation</h4>
+      <p>Boundary values are the most common source of fuzzy logic defects. This test ensures the UI and backend do not introduce rounding bugs or invalid normalization.</p>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-033: Threshold Filter Correctness</h3>
+      <p class="objective">Verify filtering behavior at exact threshold boundaries</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Set membership threshold to <code>0.70</code></li>
+        <li>Verify entities with <code>0.6999</code> are excluded</li>
+        <li>Verify entities with <code>0.7000</code> and above are included</li>
+        <li>Repeat for thresholds <code>0.50</code> and <code>0.90</code></li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Inclusion/exclusion is consistent and deterministic</li>
+        <li>No off-by-one style behavior around equality boundary</li>
+        <li>Counts in statistics panel match visible graph entities</li>
+      </ul>
+      <h4>Scenario Explanation</h4>
+      <p>Users typically report "missing nodes" when threshold math is inconsistent. This scenario confirms exact match behavior and prevents partial/incorrect graph rendering.</p>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-034: Fuzzy Search Completeness</h3>
+      <p class="objective">Verify search returns all relevant entities in fuzzy ontology, not only partially loaded subsets</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Load a fuzzy ontology with at least 200 entities</li>
+        <li>Search using partial term that matches entities at various membership ranges</li>
+        <li>Compare result count against backend/API reference count</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Search results cover the full indexed fuzzy dataset</li>
+        <li>No silent truncation due to paging/limit assumptions</li>
+        <li>Results remain stable across repeated searches</li>
+      </ul>
+      <h4>Scenario Explanation</h4>
+      <p>This scenario targets the most visible usability problem in fuzzy data exploration: partial search results caused by incomplete loading or capped query behavior.</p>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-035: Ranking and Tie Stability</h3>
+      <p class="objective">Verify sorting by fuzzy score is deterministic and stable</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Run the same fuzzy query three times</li>
+        <li>Capture top-20 ranking order each time</li>
+        <li>Check cases with equal scores (ties)</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Ranking order is identical for repeated runs</li>
+        <li>Tie-break logic is consistent (for example, lexical IRI/name)</li>
+        <li>No random reordering without ontology changes</li>
+      </ul>
+      <h4>Scenario Explanation</h4>
+      <p>Even when scores are correct, unstable ordering reduces trust. Deterministic ranking is essential for explainability and reliable analyst workflows.</p>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-036: Reasoner-Inferred Fuzzy Edges</h3>
+      <p class="objective">Verify inferred fuzzy relationships are displayed and differentiated from asserted edges</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Run reasoner on fuzzy ontology</li>
+        <li>Enable inferred edges in graph controls</li>
+        <li>Inspect visual style and metadata for inferred edges</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Inferred edges are visible and clearly styled</li>
+        <li>Each inferred edge includes inference source context</li>
+        <li>No duplication between asserted and inferred visual elements</li>
+      </ul>
+      <h4>Scenario Explanation</h4>
+      <p>Fuzzy reasoning introduces derived relationships that users must interpret safely. Clear asserted/inferred distinction prevents incorrect decision making.</p>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-037: Invalid Fuzzy Input Robustness</h3>
+      <p class="objective">Verify system behavior for malformed or out-of-range fuzzy values</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Inject test values: <code>-0.1</code>, <code>1.2</code>, <code>NaN</code>, empty string</li>
+        <li>Load/refresh graph</li>
+        <li>Observe validation errors and fallback behavior</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Invalid values are rejected or safely normalized per policy</li>
+        <li>User receives actionable validation message</li>
+        <li>No UI crash or broken render cycle</li>
+      </ul>
+      <h4>Scenario Explanation</h4>
+      <p>Production ontologies often contain noisy data. Robust validation prevents difficult-to-debug runtime failures and keeps graph rendering resilient.</p>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-GV-038: Fuzzy Performance at Scale</h3>
+      <p class="objective">Verify acceptable performance with high-density fuzzy annotations</p>
+      <h4>Metrics</h4>
+      <ul class="metrics-list">
+        <li>Initial load (1,000+ fuzzy annotations): &lt; 6 seconds</li>
+        <li>Threshold update re-render: &lt; 800 ms</li>
+        <li>Search response for 3-char query: &lt; 700 ms</li>
+        <li>No sustained frame drop below 25 FPS</li>
+      </ul>
+      <h4>Scenario Explanation</h4>
+      <p>Fuzzy metadata increases relationship density and ranking overhead. This scenario verifies the plugin remains responsive under realistic enterprise-scale uncertainty graphs.</p>
+    </div>
+
+    <h3>Fuzzy Membership Functions</h3>
+    <p>This subsection validates correct computation of membership functions that determine how strongly an input value belongs to a fuzzy set. Membership functions map real-world values to degrees of membership in the range [0,1].</p>
+
+    <div class="test-case">
+      <h3>TC-FZ-001: Triangular Membership Function</h3>
+      <p class="objective">Verify triangular membership function computes correct membership degrees for input values</p>
+      
+      <h4>Function Definition</h4>
+      <p>A triangular membership function is defined by three parameters: <strong>a</strong> (left foot), <strong>b</strong> (peak), and <strong>c</strong> (right foot). The membership degree μ(x) varies as follows:</p>
+      <ul>
+        <li>For <strong>x ≤ a</strong> or <strong>x ≥ c</strong>: μ(x) = 0 (outside range, no membership)</li>
+        <li>For <strong>a &lt; x ≤ b</strong>: μ(x) = (x − a) / (b − a) (linear rise to peak)</li>
+        <li>For <strong>b &lt; x &lt; c</strong>: μ(x) = (c − x) / (c − b) (linear fall from peak)</li>
+        <li>For <strong>x = b</strong>: μ(x) = 1.0 (maximum membership at peak)</li>
+      </ul>
+
+      <h4>Test Configuration</h4>
+      <ul>
+        <li><strong>Fuzzy Set Name:</strong> "Moderate"</li>
+        <li><strong>Function Type:</strong> Triangular</li>
+        <li><strong>Parameters:</strong> a=20 (left), b=50 (peak), c=80 (right)</li>
+      </ul>
+
+      <h4>Test Inputs and Expected Results</h4>
+      <table class="summary-table" style="margin: 1.5rem 0;">
+        <thead>
+          <tr>
+            <th>Input (x)</th>
+            <th>Expected μ(x)</th>
+            <th>Computation Explanation</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>20</td>
+            <td>0.0</td>
+            <td>At left foot <strong>a=20</strong>: boundary point, no membership (x = a, not &lt; a)</td>
+          </tr>
+          <tr>
+            <td>35</td>
+            <td>0.5</td>
+            <td>Midpoint between a and b: (35 − 20) / (50 − 20) = 15 / 30 = <strong>0.5</strong> (halfway to peak)</td>
+          </tr>
+          <tr>
+            <td>50</td>
+            <td>1.0</td>
+            <td>At peak <strong>b=50</strong>: maximum membership degree = <strong>1.0</strong></td>
+          </tr>
+          <tr>
+            <td>65</td>
+            <td>0.5</td>
+            <td>Midpoint between b and c: (80 − 65) / (80 − 50) = 15 / 30 = <strong>0.5</strong> (halfway down from peak)</td>
+          </tr>
+          <tr>
+            <td>80</td>
+            <td>0.0</td>
+            <td>At right foot <strong>c=80</strong>: boundary point, no membership (x = c, not &lt; c)</td>
+          </tr>
+          <tr>
+            <td>90</td>
+            <td>0.0</td>
+            <td>Beyond right foot: x &gt; c, so μ(x) = <strong>0.0</strong> (completely outside fuzzy set)</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h4>Membership Degree Behavior Explanation</h4>
+      <p><strong>Why these degrees?</strong> The triangular membership function models a linear, symmetric change in membership around a peak value. Here's the intuition:</p>
+      <ul>
+        <li><strong>x = 20 (left foot):</strong> At the boundary, membership begins to transition from "no membership" (x &lt; 20) to "some membership" (x &gt; 20). At exactly x = 20, we treat it as 0.0 to reflect the semantic boundary.</li>
+        
+        <li><strong>x = 35 (halfway to peak):</strong> This value is 15 units above the left foot (20) and 15 units below the peak (50). The linear interpolation gives (35−20)/(50−20) = 0.5, meaning "moderate membership"—halfway between no membership and full membership.</li>
+        
+        <li><strong>x = 50 (peak):</strong> At the peak, the concept "Moderate" is <strong>most representative</strong. The value 50 has 100% membership (μ = 1.0) in this fuzzy set. This is the "ideal" or "prototypical" value for the fuzzy set.</li>
+        
+        <li><strong>x = 65 (halfway down):</strong> By symmetry with x = 35, the value 65 is 15 units below the peak (50) and 15 units above the right foot (80). The linear fall gives (80−65)/(80−50) = 0.5, the same membership degree as the upslope side.</li>
+        
+        <li><strong>x = 80 (right foot):</strong> At the right boundary, membership ends. Treatment is identical to x = 20: membership is 0.0 at the exact boundary point.</li>
+        
+        <li><strong>x = 90 (beyond range):</strong> Outside the interval [20, 80], the value has zero membership in "Moderate". A value of 90 is too high and would belong to a different fuzzy set (for example, "High" if defined as (70, 95, 120)).</li>
+      </ul>
+
+      <h4>Steps</h4>
+      <ol>
+        <li>Open Fuzzy Editor in ontology framework</li>
+        <li>Create a new fuzzy class named "Moderate"</li>
+        <li>Select membership function type "Triangular"</li>
+        <li>Set parameters: a=20, b=50, c=80</li>
+        <li>For each input value (20, 35, 50, 65, 80, 90), invoke the membership function and record the returned μ(x)</li>
+        <li>Compare computed values against Expected Results table</li>
+      </ol>
+
+      <h4>Expected Results</h4>
+      <ul>
+        <li>All six inputs produce membership degrees matching the table above (within tolerance 0.001)</li>
+        <li>Membership degree graph is smooth, continuous, and symmetric around peak</li>
+        <li>No rounding artifacts or numerical instability</li>
+        <li>Serialized membership function preserves parameter precision (a, b, c not truncated)</li>
+      </ul>
+
+      <h4>Scenario Explanation</h4>
+      <p>Triangular membership functions are the most commonly used in production ontologies because they are computationally efficient and semantically intuitive. This test validates <strong>correct math</strong> (linear interpolation without errors), <strong>boundary handling</strong> (feet at 0.0, peak at 1.0), and <strong>symmetry</strong> (equal distance from peak produces equal membership). Failures here affect all downstream fuzzy classification, ranking, and reasoning—making this a critical validation before deployment.</p>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-002: Trapezoidal Membership Function</h3>
+      <p class="objective">Verify trapezoidal membership function correctly models a plateau region (not just a peak)</p>
+      
+      <h4>Function Definition</h4>
+      <p>A trapezoidal membership function extends the triangle by adding a <strong>plateau</strong> where membership = 1.0. Defined by four parameters: <strong>a</strong> (left foot), <strong>b</strong> (left plateau), <strong>c</strong> (right plateau), <strong>d</strong> (right foot):</p>
+      <ul>
+        <li>For <strong>x ≤ a</strong> or <strong>x ≥ d</strong>: μ(x) = 0</li>
+        <li>For <strong>a &lt; x ≤ b</strong>: μ(x) = (x − a) / (b − a) (rise)</li>
+        <li>For <strong>b &lt; x &lt; c</strong>: μ(x) = 1.0 (plateau)</li>
+        <li>For <strong>c ≤ x &lt; d</strong>: μ(x) = (d − x) / (d − c) (fall)</li>
+      </ul>
+
+      <h4>Test Configuration</h4>
+      <ul>
+        <li><strong>Fuzzy Set Name:</strong> "Warm"</li>
+        <li><strong>Function Type:</strong> Trapezoidal</li>
+        <li><strong>Parameters:</strong> a=15, b=25, c=75, d=85</li>
+      </ul>
+
+      <h4>Test Inputs and Expected Results</h4>
+      <table class="summary-table" style="margin: 1.5rem 0;">
+        <thead>
+          <tr>
+            <th>Input (x)</th>
+            <th>Expected μ(x)</th>
+            <th>Region</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>10</td><td>0.0</td><td>Below left foot</td></tr>
+          <tr><td>15</td><td>0.0</td><td>Left foot boundary</td></tr>
+          <tr><td>20</td><td>0.5</td><td>Linear rise: (20−15)/(25−15) = 0.5</td></tr>
+          <tr><td>25</td><td>1.0</td><td>Left plateau start</td></tr>
+          <tr><td>50</td><td>1.0</td><td>Inside plateau (mid-range)</td></tr>
+          <tr><td>75</td><td>1.0</td><td>Right plateau end</td></tr>
+          <tr><td>80</td><td>0.5</td><td>Linear fall: (85−80)/(85−75) = 0.5</td></tr>
+          <tr><td>85</td><td>0.0</td><td>Right foot boundary</td></tr>
+          <tr><td>90</td><td>0.0</td><td>Above right foot</td></tr>
+        </tbody>
+      </table>
+
+      <h4>Steps</h4>
+      <ol>
+        <li>Create fuzzy class "Warm" with trapezoidal function</li>
+        <li>Set parameters: a=15, b=25, c=75, d=85</li>
+        <li>Test all nine inputs above and record membership degrees</li>
+        <li>Verify plateau region (x ∈ [25, 75]) consistently returns 1.0</li>
+        <li>Verify symmetry: (20, 0.5) on rise mirrors (80, 0.5) on fall</li>
+      </ol>
+
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Rise and fall slopes are correct: 1/10 = 0.1 per unit</li>
+        <li>Plateau region has zero slope; all values ∈ [25,75] return μ = 1.0</li>
+        <li>Symmetric slopes on rise and fall</li>
+        <li>No discontinuities at b and c transitions</li>
+      </ul>
+
+      <h4>Scenario Explanation</h4>
+      <p>Trapezoidal functions model concepts with a <strong>range of ideal values</strong>, not just a single peak (e.g., "warm temperature" = 25°C to 75°C ideal). This test validates the plateau logic and confirms that the function correctly distinguishes <strong>transition zones (rise/fall)</strong> from <strong>ideal zones (plateau)</strong>.</p>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-003: Gaussian Membership Function</h3>
+      <p class="objective">Verify Gaussian (bell-curve) membership function computes smooth, non-linear degree transitions</p>
+      
+      <h4>Function Definition</h4>
+      <p>A Gaussian membership function models smooth, bell-shaped transitions using the normal distribution formula: μ(x) = exp(−((x − μ₀)² / (2σ²))), where <strong>μ₀</strong> is the mean (peak) and <strong>σ</strong> is the standard deviation (width):</p>
+      <ul>
+        <li>At <strong>x = μ₀</strong>: μ(x) = 1.0 (peak)</li>
+        <li>At <strong>x = μ₀ ± σ</strong>: μ(x) ≈ 0.606 (inflection points)</li>
+        <li>At <strong>x = μ₀ ± 2σ</strong>: μ(x) ≈ 0.135 (tail)</li>
+        <li>At <strong>x = μ₀ ± 3σ</strong>: μ(x) ≈ 0.011 (far tail)</li>
+      </ul>
+
+      <h4>Test Configuration</h4>
+      <ul>
+        <li><strong>Fuzzy Set Name:</strong> "Normal"</li>
+        <li><strong>Function Type:</strong> Gaussian</li>
+        <li><strong>Parameters:</strong> μ₀=50 (mean), σ=10 (std dev)</li>
+      </ul>
+
+      <h4>Test Inputs and Expected Results</h4>
+      <table class="summary-table" style="margin: 1.5rem 0;">
+        <thead>
+          <tr>
+            <th>Input (x)</th>
+            <th>Expected μ(x)</th>
+            <th>Explanation</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>50</td><td>1.000</td><td>Peak: exp(0) = 1.0</td></tr>
+          <tr><td>40</td><td>0.606</td><td>At μ₀ − σ: exp(−0.5) ≈ 0.606</td></tr>
+          <tr><td>60</td><td>0.606</td><td>At μ₀ + σ: exp(−0.5) ≈ 0.606 (symmetry)</td></tr>
+          <tr><td>30</td><td>0.135</td><td>At μ₀ − 2σ: exp(−2) ≈ 0.135</td></tr>
+          <tr><td>70</td><td>0.135</td><td>At μ₀ + 2σ: exp(−2) ≈ 0.135 (symmetry)</td></tr>
+          <tr><td>20</td><td>0.011</td><td>At μ₀ − 3σ: exp(−4.5) ≈ 0.011 (far tail)</td></tr>
+        </tbody>
+      </table>
+
+      <h4>Steps</h4>
+      <ol>
+        <li>Create fuzzy class "Normal" with Gaussian function</li>
+        <li>Set parameters: μ₀=50, σ=10</li>
+        <li>Test all six inputs and record membership degrees</li>
+        <li>Verify symmetry: values equidistant from peak have identical degrees</li>
+        <li>Plot membership degree curve; verify smooth bell shape without discontinuities</li>
+      </ol>
+
+      <h4>Expected Results</h4>
+      <ul>
+        <li>All computed degrees match expected values (tolerance ±0.01)</li>
+        <li>Perfect symmetry around peak: μ(50±x) = μ(50∓x)</li>
+        <li>Smooth curve; no jumps or flat regions</li>
+        <li>Tail values approach 0.0 but never reach exactly 0.0</li>
+      </ul>
+
+      <h4>Scenario Explanation</h4>
+      <p>Gaussian functions model <strong>probabilistic confidence</strong> and <strong>smooth uncertainty</strong> better than triangular functions. They represent natural phenomena (e.g., measurement noise, normal distributions in sensor data). This test validates numerical stability of the exponential calculation and confirms correct parameter interpretation.</p>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-004: Overlapping Membership Functions</h3>
+      <p class="objective">Verify multiple fuzzy sets can overlap correctly and membership degrees combine appropriately</p>
+      
+      <h4>Test Configuration</h4>
+      <ul>
+        <li><strong>Fuzzy Set 1:</strong> "Cold" = Triangular(0, 20, 40)</li>
+        <li><strong>Fuzzy Set 2:</strong> "Cool" = Triangular(25, 45, 65)</li>
+        <li><strong>Fuzzy Set 3:</strong> "Warm" = Triangular(50, 70, 90)</li>
+      </ul>
+
+      <h4>Test Inputs and Expected Results</h4>
+      <table class="summary-table" style="margin: 1.5rem 0;">
+        <thead>
+          <tr>
+            <th>Input (x)</th>
+            <th>μ(Cold)</th>
+            <th>μ(Cool)</th>
+            <th>μ(Warm)</th>
+            <th>Max(Degrees)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>20</td><td>1.0</td><td>0.0</td><td>0.0</td><td>1.0 (Cold dominant)</td></tr>
+          <tr><td>35</td><td>0.25</td><td>0.5</td><td>0.0</td><td>0.5 (Cool dominant, overlap zone)</td></tr>
+          <tr><td>45</td><td>0.0</td><td>1.0</td><td>0.0</td><td>1.0 (Cool dominant)</td></tr>
+          <tr><td>55</td><td>0.0</td><td>0.5</td><td>0.5</td><td>0.5 (Cool/Warm overlap)</td></tr>
+          <tr><td>70</td><td>0.0</td><td>0.0</td><td>1.0</td><td>1.0 (Warm dominant)</td></tr>
+        </tbody>
+      </table>
+
+      <h4>Steps</h4>
+      <ol>
+        <li>Define three triangular fuzzy sets as above</li>
+        <li>For each input value, compute membership in all three sets</li>
+        <li>Verify that overlapping regions show non-zero degrees in multiple sets</li>
+        <li>Verify max aggregation (union) matches expectations</li>
+        <li>Verify no values exceed 1.0</li>
+      </ol>
+
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Overlap zones (35, 55) show membership in 2+ sets simultaneously</li>
+        <li>Each value has at least one set where it belongs (except at far extremes)</li>
+        <li>Max aggregation produces intuitive ranking: highest fuzzy set "wins"</li>
+        <li>No invalid degree values (> 1.0 or < 0.0)</li>
+      </ul>
+
+      <h4>Scenario Explanation</h4>
+      <p>Real-world fuzzy classification often assigns objects to multiple overlapping sets (e.g., temperature 35°C is both "Cold" and "Cool"). This test ensures the system handles <strong>multi-set membership</strong> gracefully and that <strong>aggregation operators</strong> (union, intersection) behave correctly.</p>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-005: Edge Cases and Boundary Conditions</h3>
+      <p class="objective">Verify robust handling of extreme inputs and malformed membership function parameters</p>
+      
+      <h4>Edge Case Scenarios</h4>
+      <table class="summary-table" style="margin: 1.5rem 0;">
+        <thead>
+          <tr>
+            <th>Scenario</th>
+            <th>Input / Config</th>
+            <th>Expected Behavior</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Negative Values</strong></td>
+            <td>Triangular(-30, 0, 30), test x=-15</td>
+            <td>Correctly compute μ(−15) = 0.5; support negative domains</td>
+          </tr>
+          <tr>
+            <td><strong>Very Small Intervals</strong></td>
+            <td>Triangular(49.999, 50, 50.001), test x=50</td>
+            <td>Peak at x=50 returns μ=1.0; no numerical instability</td>
+          </tr>
+          <tr>
+            <td><strong>Very Large Values</strong></td>
+            <td>Triangular(1e6, 1.5e6, 2e6), test x=1.25e6</td>
+            <td>Correctly compute μ without overflow or precision loss</td>
+          </tr>
+          <tr>
+            <td><strong>Invalid Parameters: a ≥ b</strong></td>
+            <td>Triangular(50, 40, 80)</td>
+            <td>System rejects or auto-corrects with validation message</td>
+          </tr>
+          <tr>
+            <td><strong>Invalid Parameters: b ≥ c</strong></td>
+            <td>Triangular(20, 80, 80)</td>
+            <td>System rejects or auto-corrects with validation message</td>
+          </tr>
+          <tr>
+            <td><strong>NaN / Infinity Input</strong></td>
+            <td>Triangular(20, 50, 80), test x=NaN or x=∞</td>
+            <td>System returns μ=0 or NaN; does not crash or hang</td>
+          </tr>
+          <tr>
+            <td><strong>Empty / Null Parameters</strong></td>
+            <td>Create fuzzy set with no parameters</td>
+            <td>System provides clear validation error; no silent defaults</td>
+          </tr>
+          <tr>
+            <td><strong>Degenerate Trapezoid</strong></td>
+            <td>Trapezoidal(20, 50, 50, 80)</td>
+            <td>Falls back to triangular or handled as special case without errors</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h4>Steps</h4>
+      <ol>
+        <li>For each edge case above, attempt to create the fuzzy function and test inputs</li>
+        <li>Observe error handling, validation messages, and fallback behavior</li>
+        <li>Verify no crashes, hangs, or silent failures</li>
+        <li>Confirm error messages are actionable for users</li>
+      </ol>
+
+      <h4>Expected Results</h4>
+      <ul>
+        <li>All edge cases handled gracefully: either correct computation or clear error</li>
+        <li>No undefined behavior (crashes, infinite loops)</li>
+        <li>Validation prevents propagation of bad parameters</li>
+        <li>Error messages guide user to correct parameters</li>
+      </ul>
+
+      <h4>Scenario Explanation</h4>
+      <p>Production ontologies often contain messy data: negative domains, extreme scales, user input errors. This test ensures the fuzzy system is <strong>defensive and resilient</strong>, catching bad inputs before they corrupt reasoning or cause runtime failures.</p>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-006: T-norm and T-conorm Operations</h3>
+      <p class="objective">Verify fuzzy conjunction (AND) and disjunction (OR) operations produce mathematically correct results</p>
+      
+      <h4>Function Definitions</h4>
+      <p>Fuzzy logic uses <strong>t-norms</strong> (AND) and <strong>t-conorms</strong> (OR) to combine membership degrees:</p>
+      <ul>
+        <li><strong>Intersection (AND):</strong> μ_A ∩ B(x) = min(μ_A(x), μ_B(x))</li>
+        <li><strong>Union (OR):</strong> μ_A ∪ B(x) = max(μ_A(x), μ_B(x))</li>
+        <li><strong>Complement (NOT):</strong> μ_¬A(x) = 1 − μ_A(x)</li>
+        <li><strong>Algebraic Product (AND alt):</strong> μ_A(x) × μ_B(x)</li>
+        <li><strong>Algebraic Sum (OR alt):</strong> μ_A(x) + μ_B(x) − μ_A(x) × μ_B(x)</li>
+      </ul>
+
+      <h4>Test Configuration</h4>
+      <ul>
+        <li><strong>Set A:</strong> "Hot" with μ_A = 0.7</li>
+        <li><strong>Set B:</strong> "Dry" with μ_B = 0.4</li>
+      </ul>
+
+      <h4>Test Cases and Expected Results</h4>
+      <table class="summary-table" style="margin: 1.5rem 0;">
+        <thead>
+          <tr>
+            <th>Operation</th>
+            <th>Formula</th>
+            <th>Computation</th>
+            <th>Expected Result</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Intersection (min)</strong></td>
+            <td>min(μ_A, μ_B)</td>
+            <td>min(0.7, 0.4)</td>
+            <td>0.4</td>
+          </tr>
+          <tr>
+            <td><strong>Union (max)</strong></td>
+            <td>max(μ_A, μ_B)</td>
+            <td>max(0.7, 0.4)</td>
+            <td>0.7</td>
+          </tr>
+          <tr>
+            <td><strong>Complement of A</strong></td>
+            <td>1 − μ_A</td>
+            <td>1 − 0.7</td>
+            <td>0.3</td>
+          </tr>
+          <tr>
+            <td><strong>Algebraic Product</strong></td>
+            <td>μ_A × μ_B</td>
+            <td>0.7 × 0.4</td>
+            <td>0.28</td>
+          </tr>
+          <tr>
+            <td><strong>Algebraic Sum</strong></td>
+            <td>μ_A + μ_B − (μ_A × μ_B)</td>
+            <td>0.7 + 0.4 − 0.28</td>
+            <td>0.82</td>
+          </tr>
+          <tr>
+            <td><strong>De Morgan's Law 1</strong></td>
+            <td>¬(A ∩ B) = ¬A ∪ ¬B</td>
+            <td>1 − min(0.7, 0.4) = max(0.3, 0.6)</td>
+            <td>0.6 (verified both sides)</td>
+          </tr>
+          <tr>
+            <td><strong>De Morgan's Law 2</strong></td>
+            <td>¬(A ∪ B) = ¬A ∩ ¬B</td>
+            <td>1 − max(0.7, 0.4) = min(0.3, 0.6)</td>
+            <td>0.3 (verified both sides)</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h4>Steps</h4>
+      <ol>
+        <li>Define two fuzzy sets with given membership degrees</li>
+        <li>Compute all operations above using the fuzzy system</li>
+        <li>Compare results against expected values</li>
+        <li>Verify De Morgan's laws hold (equality on both sides)</li>
+        <li>Test with various degree combinations: (0, 0), (1, 1), (0.5, 0.5), (0.1, 0.9)</li>
+      </ol>
+
+      <h4>Expected Results</h4>
+      <ul>
+        <li>All min/max operations match expected values exactly</li>
+        <li>Algebraic operations accurate to tolerance ±0.001</li>
+        <li>De Morgan's laws verified: ¬(A ∩ B) = ¬A ∪ ¬B and ¬(A ∪ B) = ¬A ∩ ¬B</li>
+        <li>Complement operation: μ_¬A + μ_A = 1.0 (always true)</li>
+        <li>All results in valid range [0.0, 1.0]</li>
+      </ul>
+
+      <h4>Scenario Explanation</h4>
+      <p>T-norm and t-conorm operations are the foundation of fuzzy rule inference (e.g., "IF (Hot AND Dry) THEN..." requires AND operation). Failures here silently corrupt downstream reasoning. This test ensures <strong>logical consistency</strong> and prevents subtle inference bugs that are hard to debug.</p>
+    </div>
+  </section>
+
   <!-- Test Summary Matrix -->
   <section id="test-summary">
     <h2>Test Summary Matrix</h2>
@@ -982,6 +1588,65 @@
         <tr><td>TC-GV-029</td><td><span class="badge-category">Performance</span></td><td><span class="badge badge-p2">P2</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
         <tr><td>TC-GV-030</td><td><span class="badge-category">Accessibility</span></td><td><span class="badge badge-p2">P2</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
         <tr><td>TC-GV-031</td><td><span class="badge-category">Accessibility</span></td><td><span class="badge badge-p2">P2</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-032</td><td><span class="badge-category">Fuzzy Semantics</span></td><td><span class="badge badge-p0">P0</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-033</td><td><span class="badge-category">Threshold</span></td><td><span class="badge badge-p0">P0</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-034</td><td><span class="badge-category">Fuzzy Search</span></td><td><span class="badge badge-p0">P0</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-035</td><td><span class="badge-category">Ranking</span></td><td><span class="badge badge-p1">P1</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-036</td><td><span class="badge-category">Reasoning</span></td><td><span class="badge badge-p1">P1</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-037</td><td><span class="badge-category">Validation</span></td><td><span class="badge badge-p1">P1</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-GV-038</td><td><span class="badge-category">Fuzzy Performance</span></td><td><span class="badge badge-p1">P1</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-001</td><td><span class="badge-category">Membership Functions</span></td><td><span class="badge badge-p0">P0</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-002</td><td><span class="badge-category">Membership Functions</span></td><td><span class="badge badge-p0">P0</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-003</td><td><span class="badge-category">Membership Functions</span></td><td><span class="badge badge-p0">P0</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-004</td><td><span class="badge-category">Fuzzy Operations</span></td><td><span class="badge badge-p1">P1</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-005</td><td><span class="badge-category">Robustness</span></td><td><span class="badge badge-p0">P0</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-006</td><td><span class="badge-category">Fuzzy Logic</span></td><td><span class="badge badge-p0">P0</span></td><td>Manual</td><td><input type="checkbox" class="checkbox"></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- References & Resources -->
+  <section id="references" style="background: #f3f4f6; padding: 2rem; margin-top: 3rem; border-radius: 8px;">
+    <h2>References & Resources</h2>
+    
+    <h3>Robustness & Performance</h3>
+    <ul>
+      <li><strong>ROBUSTNESS_IMPROVEMENTS.md</strong> — Comprehensive guide identifying 9 critical and high-priority robustness issues, with implementation recommendations and code examples. <strong>Start here</strong> for understanding plugin vulnerabilities and performance bottlenecks.</li>
+      <li><strong>Prioritized Fixes:</strong>
+        <ul>
+          <li><strong>P0 (Critical):</strong> Error boundaries in async ops, memory leaks, floating-point edge cases, auth propagation</li>
+          <li><strong>P1 (High):</strong> Cache race conditions, D3 layout crashes, query timeouts</li>
+          <li><strong>P2 (Medium):</strong> Search efficiency, performance monitoring</li>
+        </ul>
+      </li>
+    </ul>
+
+    <h3>Test Case Categories</h3>
+    <ul>
+      <li><strong>Component Tests (TC-GV-001 to TC-GV-031):</strong> Rendering, layout, controls, sidebar, search, matrix view, accessibility</li>
+      <li><strong>Fuzzy Ontology Tests (TC-GV-032 to TC-GV-038):</strong> Membership boundary validation, threshold filtering, search completeness, ranking, reasoner integration, robustness, performance</li>
+      <li><strong>Fuzzy Membership Functions (TC-FZ-001 to TC-FZ-006):</strong> Triangular, trapezoidal, Gaussian functions, overlapping sets, edge cases, t-norm/t-conorm operations</li>
+    </ul>
+
+    <h3>Documentation Links</h3>
+    <ul>
+      <li><a href="https://d3js.org/" target="_blank">D3.js Documentation</a> — Graph layout algorithms</li>
+      <li><a href="https://vowl.visualdataweb.org/" target="_blank">WebVOWL Visualization Notation</a> — Visual semantics reference</li>
+      <li><a href="https://www.w3.org/OWL/" target="_blank">W3C OWL Specification</a> — Ontology standard</li>
+      <li><a href="https://en.wikipedia.org/wiki/Fuzzy_logic" target="_blank">Fuzzy Logic Overview</a> — Membership function theory</li>
+    </ul>
+
+    <h3>Key Metrics to Monitor</h3>
+    <table style="font-size: 0.9rem;">
+      <thead>
+        <tr><th>Metric</th><th>Target</th><th>Warning</th><th>Critical</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Graph Load Time (&lt;5000 nodes)</td><td>&lt; 3s</td><td>&gt; 5s</td><td>&gt; 10s</td></tr>
+        <tr><td>Frame Rate (FPS)</td><td>≥ 50</td><td>40-50</td><td>&lt; 40</td></tr>
+        <tr><td>Cache Hit Rate</td><td>&gt; 70%</td><td>50-70%</td><td>&lt; 50%</td></tr>
+        <tr><td>Memory Usage (MB)</td><td>&lt; 100</td><td>100-200</td><td>&gt; 200</td></tr>
+        <tr><td>Query Timeout Rate</td><td>&lt; 1%</td><td>1-5%</td><td>&gt; 5%</td></tr>
       </tbody>
     </table>
   </section>
