@@ -8,6 +8,7 @@ import org.semanticweb.owlapi.vocab.OWLRDFVocabulary;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
@@ -428,7 +429,12 @@ public class OntologyMergeService {
 
             // Step 1: Get the file ID for the target file
             String getFilesUrl = authServiceUrl + "/api/projects/" + projectId + "/files";
-            ResponseEntity<Map<String, Object>> filesResponse = restTemplate.getForEntity(getFilesUrl, Map.class);
+            ResponseEntity<Map<String, Object>> filesResponse = restTemplate.exchange(
+                getFilesUrl,
+                HttpMethod.GET,
+                null,
+                new ParameterizedTypeReference<Map<String, Object>>() {}
+            );
 
             if (!filesResponse.getStatusCode().is2xxSuccessful() || filesResponse.getBody() == null) {
                 log.warn("[MERGE] Failed to get files for project {}: {}", projectId, filesResponse.getStatusCode());
@@ -483,7 +489,12 @@ public class OntologyMergeService {
             HttpEntity<MultiValueMap<String, Object>> requestEntity = new HttpEntity<>(body, headers);
 
             // Send the update request
-            ResponseEntity<Map<String, Object>> updateResponse = restTemplate.postForEntity(updateFileUrl, requestEntity, Map.class);
+            ResponseEntity<Map<String, Object>> updateResponse = restTemplate.exchange(
+                updateFileUrl,
+                HttpMethod.POST,
+                requestEntity,
+                new ParameterizedTypeReference<Map<String, Object>>() {}
+            );
 
             if (updateResponse.getStatusCode().is2xxSuccessful()) {
                 log.info("[MERGE] Successfully updated GridFS file {} for project {}", targetFileId, projectId);
