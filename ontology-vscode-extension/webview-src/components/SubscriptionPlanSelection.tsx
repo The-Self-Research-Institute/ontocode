@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Check, X, Sparkles, Zap, Crown, ArrowRight, LogOut, Users, HardDrive, Shield } from 'lucide-react';
+import { Check, X, Sparkles, Zap, Crown, ArrowRight, LogOut, Users, HardDrive, Shield, Bug } from 'lucide-react';
+import ReportIssueModal from './ReportIssueModal';
 
 interface SubscriptionPlanSelectionProps {
     username: string;
@@ -34,6 +35,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
     onLogout
 }) => {
     const [selectedPlan, setSelectedPlan] = useState<string>('PRO');
+    const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
 
     const plans: Plan[] = [
         {
@@ -241,6 +243,20 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
               All plans include a 14-day free trial • Cancel anytime • No credit card required
             </p>
           </div>
+
+          {/* Report Issue floating button */}
+          <button
+            onClick={() => setIsReportIssueModalOpen(true)}
+            className="fixed bottom-4 right-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm z-50"
+            title="Report an issue"
+          >
+            <Bug size={14} />
+            Report Issue
+          </button>
+
+          {isReportIssueModalOpen && (
+            <ReportIssueModal onClose={() => setIsReportIssueModalOpen(false)} />
+          )}
         </div>
       </div>
     );

@@ -18,8 +18,8 @@ interface LayoutNode {
 }
 
 /**
- * OntoGraph Layout - Protégé Style
- * Organized hierarchical layout similar to Protégé OntoGraf
+ * OntoGraph Layout - Hierarchical Graph
+ * Organized hierarchical layout for ontology visualization
  * Features:
  * - Root node on the left
  * - Children expand to the right in vertical columns

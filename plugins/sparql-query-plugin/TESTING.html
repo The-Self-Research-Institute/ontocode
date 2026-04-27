@@ -1,0 +1,1029 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPARQL Query Plugin — Testing Document</title>
+<style>
+  :root {
+    --blue-dark: #1e3a5f;
+    --blue-bright: #2563eb;
+    --bg: #f1f5f9;
+    --card: #ffffff;
+    --border: #e2e8f0;
+    --text: #1e293b;
+    --text-muted: #64748b;
+    --code-bg: #1e1e2e;
+    --code-text: #cdd6f4;
+    --code-keyword: #89b4fa;
+    --code-variable: #f9e2af;
+    --code-string: #a6e3a1;
+    --code-comment: #6c7086;
+    --code-number: #fab387;
+    --p0: #dc2626;
+    --p1: #d97706;
+    --p2: #2563eb;
+    --test-card-bg: #f9fafb;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+
+  /* Header */
+  .header { background: linear-gradient(135deg, var(--blue-dark), var(--blue-bright)); color: #fff; padding: 3rem 2rem 2rem; }
+  .header h1 { font-size: 2rem; font-weight: 700; margin-bottom: .25rem; }
+  .header .meta { display: flex; gap: 2rem; flex-wrap: wrap; font-size: .9rem; opacity: .9; margin-top: .75rem; }
+  .header .meta span { display: inline-flex; align-items: center; gap: .35rem; }
+
+  /* Layout */
+  .container { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+
+  /* Cards */
+  .card { background: var(--card); border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); padding: 2rem; margin-bottom: 1.5rem; }
+  .card h2 { font-size: 1.35rem; color: var(--blue-dark); margin-bottom: 1rem; padding-bottom: .5rem; border-bottom: 2px solid var(--blue-bright); }
+  .card h3 { font-size: 1.1rem; color: var(--blue-bright); margin: 1.25rem 0 .5rem; }
+
+  /* TOC */
+  .toc ol { padding-left: 1.5rem; }
+  .toc li { margin: .35rem 0; }
+  .toc a { color: var(--blue-bright); text-decoration: none; font-weight: 500; }
+  .toc a:hover { text-decoration: underline; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin: .75rem 0 1rem; font-size: .9rem; }
+  th { background: var(--blue-dark); color: #fff; text-align: left; padding: .6rem .75rem; }
+  td { padding: .55rem .75rem; border-bottom: 1px solid var(--border); }
+  tr:nth-child(even) td { background: #f8fafc; }
+
+  /* Test case cards */
+  .test-case { background: var(--test-card-bg); border-radius: 8px; border: 1px solid var(--border); padding: 1.25rem 1.5rem; margin: 1rem 0; }
+  .test-case .tc-header { display: flex; align-items: center; gap: .75rem; margin-bottom: .5rem; flex-wrap: wrap; }
+  .test-case .tc-id { font-family: 'Cascadia Code', 'Fira Code', monospace; font-weight: 700; font-size: .85rem; color: var(--blue-dark); background: #e0e7ff; padding: .15rem .5rem; border-radius: 4px; }
+  .test-case .tc-title { font-weight: 600; font-size: 1.05rem; color: var(--text); }
+  .test-case .objective { color: var(--text-muted); font-size: .92rem; margin-bottom: .5rem; }
+  .test-case p, .test-case li { font-size: .93rem; }
+  .test-case ul, .test-case ol { padding-left: 1.25rem; margin: .35rem 0; }
+  .test-case .label { font-weight: 600; color: var(--blue-dark); }
+
+  /* Priority badges */
+  .badge { display: inline-block; font-size: .75rem; font-weight: 700; padding: .1rem .5rem; border-radius: 9999px; color: #fff; vertical-align: middle; }
+  .badge-p0 { background: var(--p0); }
+  .badge-p1 { background: var(--p1); }
+  .badge-p2 { background: var(--p2); }
+
+  /* Code blocks */
+  pre { background: var(--code-bg); color: var(--code-text); border-radius: 6px; padding: 1rem 1.25rem; overflow-x: auto; font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace; font-size: .85rem; line-height: 1.55; margin: .65rem 0 .75rem; }
+  code { font-family: inherit; }
+  .kw { color: var(--code-keyword); font-weight: 600; }
+  .var { color: var(--code-variable); }
+  .str { color: var(--code-string); }
+  .num { color: var(--code-number); }
+  .cm { color: var(--code-comment); font-style: italic; }
+
+  /* Inline code */
+  p code, li code, td code { background: #e0e7ff; color: var(--blue-dark); padding: .1rem .35rem; border-radius: 3px; font-size: .88em; }
+
+  /* Summary matrix */
+  .matrix-table td, .matrix-table th { text-align: center; }
+  .matrix-table td:first-child, .matrix-table th:first-child { text-align: left; }
+  .matrix-table td:nth-child(2), .matrix-table th:nth-child(2) { text-align: left; }
+  .matrix-table input[type="checkbox"] { width: 1.1rem; height: 1.1rem; cursor: pointer; accent-color: var(--blue-bright); }
+
+  /* Keyword list */
+  .keyword-list { display: flex; flex-wrap: wrap; gap: .4rem; margin: .5rem 0; }
+  .keyword-list span { background: var(--code-bg); color: var(--code-keyword); font-family: monospace; font-size: .82rem; padding: .15rem .5rem; border-radius: 4px; }
+
+  /* Responsive */
+  @media (max-width: 700px) {
+    .header { padding: 2rem 1rem 1.5rem; }
+    .header h1 { font-size: 1.4rem; }
+    .card { padding: 1.25rem; }
+    .test-case { padding: 1rem; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ HEADER ============ -->
+<div class="header">
+  <h1>SPARQL Query Plugin — Testing Document</h1>
+  <div class="meta">
+    <span><strong>Plugin:</strong> @ontocode/sparql-query-plugin v1.0.0</span>
+    <span><strong>Category:</strong> Query</span>
+    <span><strong>Last Updated:</strong> April 2026</span>
+  </div>
+</div>
+
+<div class="container">
+
+<!-- ============ TOC ============ -->
+<div class="card toc" id="toc">
+  <h2>Table of Contents</h2>
+  <ol>
+    <li><a href="#overview">Overview</a></li>
+    <li><a href="#setup">Test Environment Setup</a></li>
+    <li><a href="#editor-tests">Query Editor Tests</a></li>
+    <li><a href="#execution-tests">Query Execution Tests</a></li>
+    <li><a href="#management-tests">Query Management Tests</a></li>
+    <li><a href="#results-tests">Results Display Tests</a></li>
+    <li><a href="#export-tests">Export Tests</a></li>
+    <li><a href="#sample-tests">Sample Query Tests (in execution)</a></li>
+    <li><a href="#error-tests">Error Handling Tests</a></li>
+    <li><a href="#perf-tests">Performance Tests</a></li>
+    <li><a href="#summary">Test Summary Matrix</a></li>
+  </ol>
+</div>
+
+<!-- ============ 1. OVERVIEW ============ -->
+<div class="card" id="overview">
+  <h2>1. Overview</h2>
+  <p>The SPARQL Query Plugin provides a full-featured SPARQL query editor with syntax highlighting, query management (save/load/delete), live execution, results display (table/JSON), CSV export, and prefix management.</p>
+
+  <h3>Components Under Test</h3>
+  <ul>
+    <li><code>SparqlQueryEditor.tsx</code> — Complete query interface</li>
+  </ul>
+
+  <h3>API Endpoints</h3>
+  <table>
+    <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td>GET</td><td><code>/api/sparql/{projectId}/queries</code></td><td>List saved queries</td></tr>
+      <tr><td>POST</td><td><code>/api/sparql/{projectId}/queries</code></td><td>Create / save query</td></tr>
+      <tr><td>PUT</td><td><code>/api/sparql/{projectId}/queries/{id}</code></td><td>Update query</td></tr>
+      <tr><td>DELETE</td><td><code>/api/sparql/{projectId}/queries/{id}</code></td><td>Delete query</td></tr>
+      <tr><td>POST</td><td><code>/api/sparql/{projectId}/execute</code></td><td>Execute query</td></tr>
+    </tbody>
+  </table>
+
+  <h3>SPARQL Keywords Supported</h3>
+  <div class="keyword-list">
+    <span>SELECT</span><span>CONSTRUCT</span><span>DESCRIBE</span><span>ASK</span><span>WHERE</span><span>FROM</span><span>PREFIX</span><span>BASE</span><span>OPTIONAL</span><span>UNION</span><span>FILTER</span><span>GRAPH</span><span>ORDER BY</span><span>LIMIT</span><span>OFFSET</span><span>DISTINCT</span><span>GROUP BY</span><span>BIND</span><span>AS</span><span>SERVICE</span><span>MINUS</span><span>EXISTS</span><span>INSERT</span><span>DELETE</span>
+  </div>
+</div>
+
+<!-- ============ 2. TEST ENVIRONMENT SETUP ============ -->
+<div class="card" id="setup">
+  <h2>2. Test Environment Setup</h2>
+
+  <h3>Prerequisites</h3>
+  <ul>
+    <li>OntoCode platform running</li>
+    <li>GraphDB with loaded test ontology</li>
+    <li>E-commerce domain ontology loaded</li>
+  </ul>
+
+  <h3>Test Ontology: E-Commerce Domain</h3>
+  <table>
+    <thead><tr><th>Element</th><th>Values</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Classes</strong></td><td>Product → (Electronics → Laptop, Smartphone), Clothing; Customer; Order; Supplier; Category</td></tr>
+      <tr><td><strong>Individuals</strong></td><td>MacBookPro, DellXPS15, iPhone14, GalaxyS23, TShirt, Customer001-003, Order001-003, AppleInc, DellTech, SamsungElec</td></tr>
+      <tr><td><strong>Object Properties</strong></td><td>orderedBy, contains, suppliedBy, belongsToCategory</td></tr>
+      <tr><td><strong>Data Properties</strong></td><td>productName, price, stockQuantity, rating, customerName, email, orderDate, totalAmount, supplierName</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Common PREFIX Block</h3>
+  <pre><code><span class="kw">PREFIX</span> <span class="var">prod:</span> <span class="str">&lt;http://www.example.org/products#&gt;</span>
+<span class="kw">PREFIX</span> <span class="var">rdf:</span>  <span class="str">&lt;http://www.w3.org/1999/02/22-rdf-syntax-ns#&gt;</span>
+<span class="kw">PREFIX</span> <span class="var">rdfs:</span> <span class="str">&lt;http://www.w3.org/2000/01/rdf-schema#&gt;</span>
+<span class="kw">PREFIX</span> <span class="var">xsd:</span>  <span class="str">&lt;http://www.w3.org/2001/XMLSchema#&gt;</span>
+<span class="kw">PREFIX</span> <span class="var">owl:</span>  <span class="str">&lt;http://www.w3.org/2002/07/owl#&gt;</span></code></pre>
+</div>
+
+<!-- ============ 3. QUERY EDITOR TESTS ============ -->
+<div class="card" id="editor-tests">
+  <h2>3. Query Editor Tests</h2>
+
+  <!-- TC-SQ-001 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-001</span>
+      <span class="tc-title">Editor Loads Correctly</span>
+      <span class="badge badge-p0">P0</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify SPARQL editor initializes with default state</p>
+    <p><span class="label">Steps:</span></p>
+    <ol>
+      <li>Open SPARQL Query Plugin</li>
+      <li>Verify editor area is visible</li>
+    </ol>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Text editor area empty or with default placeholder</li>
+      <li>"Run" button visible and enabled</li>
+      <li>Query management buttons visible</li>
+      <li>No errors in console</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-002 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-002</span>
+      <span class="tc-title">Syntax Highlighting</span>
+      <span class="badge badge-p1">P1</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify SPARQL keywords are highlighted</p>
+    <p><span class="label">Steps:</span></p>
+    <ol>
+      <li>Type <code>SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10</code></li>
+      <li>Observe syntax coloring</li>
+    </ol>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Keywords (SELECT, WHERE, LIMIT) highlighted in distinct color</li>
+      <li>Variables (?s, ?p, ?o) highlighted differently</li>
+      <li>Numbers (10) in different color</li>
+      <li>Comments greyed out</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-003 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-003</span>
+      <span class="tc-title">Prefix Management</span>
+      <span class="badge badge-p1">P1</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify automatic PREFIX detection and management</p>
+    <p><span class="label">Steps:</span></p>
+    <ol>
+      <li>Load an ontology</li>
+      <li>Open PREFIX helper / management</li>
+      <li>Verify common prefixes available</li>
+    </ol>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Standard prefixes available: rdf, rdfs, owl, xsd</li>
+      <li>Ontology-specific prefix detected</li>
+      <li>Click to insert prefix into query</li>
+      <li>No duplicate PREFIX declarations</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-004 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-004</span>
+      <span class="tc-title">Multi-Line Query Editing</span>
+      <span class="badge badge-p1">P1</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify multi-line query input works</p>
+    <p><span class="label">Steps:</span></p>
+    <ol>
+      <li>Enter a complex multi-line query with indentation</li>
+      <li>Edit middle lines</li>
+      <li>Add / remove lines</li>
+    </ol>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Line numbers displayed</li>
+      <li>Indentation preserved</li>
+      <li>Enter creates new line</li>
+      <li>Tab indents</li>
+      <li>Selection and cut / copy / paste work</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============ 4. QUERY EXECUTION TESTS ============ -->
+<div class="card" id="execution-tests">
+  <h2>4. Query Execution Tests</h2>
+
+  <!-- TC-SQ-005 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-005</span>
+      <span class="tc-title">Simple SELECT Query</span>
+      <span class="badge badge-p0">P0</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify basic triple pattern query</p>
+    <p><span class="label">Query:</span></p>
+    <pre><code><span class="kw">SELECT</span> <span class="var">?s</span> <span class="var">?p</span> <span class="var">?o</span> <span class="kw">WHERE</span> {
+  <span class="var">?s</span> <span class="var">?p</span> <span class="var">?o</span>
+} <span class="kw">LIMIT</span> <span class="num">10</span></code></pre>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>10 results returned</li>
+      <li>Three columns: s, p, o</li>
+      <li>Execution time displayed</li>
+      <li>No errors</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-006 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-006</span>
+      <span class="tc-title">SELECT with PREFIX</span>
+      <span class="badge badge-p0">P0</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify query execution with PREFIX declarations</p>
+    <p><span class="label">Query:</span></p>
+    <pre><code><span class="kw">PREFIX</span> <span class="var">prod:</span> <span class="str">&lt;http://www.example.org/products#&gt;</span>
+<span class="kw">SELECT</span> <span class="var">?product</span> <span class="var">?name</span> <span class="var">?price</span>
+<span class="kw">WHERE</span> {
+  <span class="var">?product</span> a <span class="var">prod:</span>Product .
+  <span class="var">?product</span> <span class="var">prod:</span>productName <span class="var">?name</span> .
+  <span class="var">?product</span> <span class="var">prod:</span>price <span class="var">?price</span> .
+}</code></pre>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Product instances listed with names and prices</li>
+      <li>MacBookPro, DellXPS15, iPhone14, GalaxyS23, TShirt expected</li>
+      <li>Correct price values displayed</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-007 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-007</span>
+      <span class="tc-title">OPTIONAL Pattern</span>
+      <span class="badge badge-p1">P1</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify OPTIONAL clause includes partial matches</p>
+    <p><span class="label">Query:</span></p>
+    <pre><code><span class="kw">PREFIX</span> <span class="var">prod:</span> <span class="str">&lt;http://www.example.org/products#&gt;</span>
+<span class="kw">SELECT</span> <span class="var">?product</span> <span class="var">?name</span> <span class="var">?rating</span>
+<span class="kw">WHERE</span> {
+  <span class="var">?product</span> a <span class="var">prod:</span>Product .
+  <span class="var">?product</span> <span class="var">prod:</span>productName <span class="var">?name</span> .
+  <span class="kw">OPTIONAL</span> { <span class="var">?product</span> <span class="var">prod:</span>rating <span class="var">?rating</span> }
+}</code></pre>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>All products returned even without ratings</li>
+      <li>Products with ratings show values</li>
+      <li>Products without ratings show empty/null for rating column</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-008 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-008</span>
+      <span class="tc-title">FILTER Query</span>
+      <span class="badge badge-p0">P0</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify FILTER conditions work</p>
+    <p><span class="label">Query:</span></p>
+    <pre><code><span class="kw">PREFIX</span> <span class="var">prod:</span> <span class="str">&lt;http://www.example.org/products#&gt;</span>
+<span class="kw">SELECT</span> <span class="var">?product</span> <span class="var">?name</span> <span class="var">?price</span>
+<span class="kw">WHERE</span> {
+  <span class="var">?product</span> a <span class="var">prod:</span>Product .
+  <span class="var">?product</span> <span class="var">prod:</span>productName <span class="var">?name</span> .
+  <span class="var">?product</span> <span class="var">prod:</span>price <span class="var">?price</span> .
+  <span class="kw">FILTER</span> (<span class="var">?price</span> &gt; <span class="num">500</span>)
+}</code></pre>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Only products with price &gt; 500 returned</li>
+      <li>Budget products excluded</li>
+      <li>Correct comparison semantics</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-009 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-009</span>
+      <span class="tc-title">ORDER BY and LIMIT</span>
+      <span class="badge badge-p1">P1</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify sorting and result limiting</p>
+    <p><span class="label">Query:</span></p>
+    <pre><code><span class="kw">PREFIX</span> <span class="var">prod:</span> <span class="str">&lt;http://www.example.org/products#&gt;</span>
+<span class="kw">SELECT</span> <span class="var">?name</span> <span class="var">?price</span>
+<span class="kw">WHERE</span> {
+  <span class="var">?product</span> a <span class="var">prod:</span>Product .
+  <span class="var">?product</span> <span class="var">prod:</span>productName <span class="var">?name</span> .
+  <span class="var">?product</span> <span class="var">prod:</span>price <span class="var">?price</span> .
+}
+<span class="kw">ORDER BY</span> <span class="kw">DESC</span>(<span class="var">?price</span>)
+<span class="kw">LIMIT</span> <span class="num">3</span></code></pre>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Maximum 3 results</li>
+      <li>Ordered by price descending</li>
+      <li>Correct sort order</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-010 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-010</span>
+      <span class="tc-title">ASK Query</span>
+      <span class="badge badge-p1">P1</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify boolean ASK query</p>
+    <p><span class="label">Query:</span></p>
+    <pre><code><span class="kw">PREFIX</span> <span class="var">prod:</span> <span class="str">&lt;http://www.example.org/products#&gt;</span>
+<span class="kw">ASK</span> <span class="kw">WHERE</span> {
+  <span class="var">?product</span> a <span class="var">prod:</span>Laptop .
+  <span class="var">?product</span> <span class="var">prod:</span>price <span class="var">?price</span> .
+  <span class="kw">FILTER</span> (<span class="var">?price</span> &gt; <span class="num">1000</span>)
+}</code></pre>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Returns true or false</li>
+      <li>Boolean result clearly displayed</li>
+      <li>No tabular format needed</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-011 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-011</span>
+      <span class="tc-title">CONSTRUCT Query</span>
+      <span class="badge badge-p2">P2</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify CONSTRUCT builds new triples</p>
+    <p><span class="label">Query:</span></p>
+    <pre><code><span class="kw">PREFIX</span> <span class="var">prod:</span> <span class="str">&lt;http://www.example.org/products#&gt;</span>
+<span class="kw">CONSTRUCT</span> {
+  <span class="var">?product</span> <span class="var">prod:</span>isExpensive true .
+}
+<span class="kw">WHERE</span> {
+  <span class="var">?product</span> a <span class="var">prod:</span>Product .
+  <span class="var">?product</span> <span class="var">prod:</span>price <span class="var">?price</span> .
+  <span class="kw">FILTER</span> (<span class="var">?price</span> &gt; <span class="num">1000</span>)
+}</code></pre>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>RDF triples returned (not tabular)</li>
+      <li>New triples constructed from pattern</li>
+      <li>Results in Turtle / RDF format</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-012 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-012</span>
+      <span class="tc-title">DESCRIBE Query</span>
+      <span class="badge badge-p2">P2</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify DESCRIBE returns entity information</p>
+    <p><span class="label">Query:</span></p>
+    <pre><code><span class="kw">PREFIX</span> <span class="var">prod:</span> <span class="str">&lt;http://www.example.org/products#&gt;</span>
+<span class="kw">DESCRIBE</span> <span class="var">prod:</span>MacBookPro</code></pre>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>All triples about MacBookPro returned</li>
+      <li>Both incoming and outgoing relationships</li>
+      <li>RDF format output</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-013 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-013</span>
+      <span class="tc-title">UNION Query</span>
+      <span class="badge badge-p1">P1</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify UNION combines result sets</p>
+    <p><span class="label">Query:</span></p>
+    <pre><code><span class="kw">PREFIX</span> <span class="var">prod:</span> <span class="str">&lt;http://www.example.org/products#&gt;</span>
+<span class="kw">SELECT</span> <span class="var">?name</span> <span class="var">?type</span>
+<span class="kw">WHERE</span> {
+  { <span class="var">?x</span> a <span class="var">prod:</span>Laptop . <span class="var">?x</span> <span class="var">prod:</span>productName <span class="var">?name</span> . <span class="kw">BIND</span>(<span class="str">"Laptop"</span> <span class="kw">AS</span> <span class="var">?type</span>) }
+  <span class="kw">UNION</span>
+  { <span class="var">?x</span> a <span class="var">prod:</span>Smartphone . <span class="var">?x</span> <span class="var">prod:</span>productName <span class="var">?name</span> . <span class="kw">BIND</span>(<span class="str">"Smartphone"</span> <span class="kw">AS</span> <span class="var">?type</span>) }
+}</code></pre>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Results from both patterns combined</li>
+      <li>Laptops and smartphones in same result set</li>
+      <li>Type column distinguishes them</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-014 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-014</span>
+      <span class="tc-title">GROUP BY with Aggregation</span>
+      <span class="badge badge-p1">P1</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify aggregation functions</p>
+    <p><span class="label">Query:</span></p>
+    <pre><code><span class="kw">PREFIX</span> <span class="var">prod:</span> <span class="str">&lt;http://www.example.org/products#&gt;</span>
+<span class="kw">SELECT</span> <span class="var">?type</span> (<span class="kw">COUNT</span>(<span class="var">?product</span>) <span class="kw">AS</span> <span class="var">?count</span>) (<span class="kw">AVG</span>(<span class="var">?price</span>) <span class="kw">AS</span> <span class="var">?avgPrice</span>)
+<span class="kw">WHERE</span> {
+  <span class="var">?product</span> a <span class="var">?type</span> .
+  <span class="var">?product</span> <span class="var">prod:</span>price <span class="var">?price</span> .
+  <span class="kw">FILTER</span> (<span class="var">?type</span> != <span class="var">owl:</span>NamedIndividual)
+}
+<span class="kw">GROUP BY</span> <span class="var">?type</span></code></pre>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Grouped by product type</li>
+      <li>COUNT shows number per type</li>
+      <li>AVG shows average price per type</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-015 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-015</span>
+      <span class="tc-title">SubClass Hierarchy Query</span>
+      <span class="badge badge-p1">P1</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify class hierarchy traversal</p>
+    <p><span class="label">Query:</span></p>
+    <pre><code><span class="kw">PREFIX</span> <span class="var">rdfs:</span> <span class="str">&lt;http://www.w3.org/2000/01/rdf-schema#&gt;</span>
+<span class="kw">SELECT</span> <span class="var">?class</span> <span class="var">?superClass</span>
+<span class="kw">WHERE</span> {
+  <span class="var">?class</span> <span class="var">rdfs:</span>subClassOf <span class="var">?superClass</span> .
+  <span class="kw">FILTER</span> (!isBlank(<span class="var">?class</span>) &amp;&amp; !isBlank(<span class="var">?superClass</span>))
+}</code></pre>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>SubClassOf relationships listed</li>
+      <li>Blank nodes filtered out</li>
+      <li>Hierarchy structure visible</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-016 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-016</span>
+      <span class="tc-title">Execution Time Display</span>
+      <span class="badge badge-p1">P1</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify query execution time is shown</p>
+    <p><span class="label">Steps:</span></p>
+    <ol>
+      <li>Run any query</li>
+      <li>Check execution time display</li>
+    </ol>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Time shown in milliseconds</li>
+      <li>Appears after query completes</li>
+      <li>Accurate measurement</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============ 5. QUERY MANAGEMENT TESTS ============ -->
+<div class="card" id="management-tests">
+  <h2>5. Query Management Tests</h2>
+
+  <!-- TC-SQ-017 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-017</span>
+      <span class="tc-title">Save Query</span>
+      <span class="badge badge-p0">P0</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify saving a query for later use</p>
+    <p><span class="label">Steps:</span></p>
+    <ol>
+      <li>Write a query in the editor</li>
+      <li>Enter query name: "All Products"</li>
+      <li>Click Save</li>
+    </ol>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Query saved successfully</li>
+      <li>Confirmation message shown</li>
+      <li>Query appears in saved queries list</li>
+      <li>Query ID assigned</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-018 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-018</span>
+      <span class="tc-title">Load Saved Query</span>
+      <span class="badge badge-p0">P0</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify loading a previously saved query</p>
+    <p><span class="label">Steps:</span></p>
+    <ol>
+      <li>Open saved queries list</li>
+      <li>Click on "All Products" query</li>
+      <li>Query loads in editor</li>
+    </ol>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Editor populated with saved query text</li>
+      <li>Query name displayed</li>
+      <li>Ready to execute without modification</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-019 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-019</span>
+      <span class="tc-title">Update Saved Query</span>
+      <span class="badge badge-p1">P1</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify updating an existing saved query</p>
+    <p><span class="label">Steps:</span></p>
+    <ol>
+      <li>Load saved query</li>
+      <li>Modify the query text</li>
+      <li>Click Save / Update</li>
+    </ol>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Updated query overwrites previous version</li>
+      <li>Same query ID retained</li>
+      <li>Updated timestamp</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-020 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-020</span>
+      <span class="tc-title">Delete Saved Query</span>
+      <span class="badge badge-p0">P0</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify deleting a saved query</p>
+    <p><span class="label">Steps:</span></p>
+    <ol>
+      <li>Select a saved query</li>
+      <li>Click Delete</li>
+      <li>Confirm deletion</li>
+    </ol>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Query removed from list</li>
+      <li>Confirmation prompt before deletion</li>
+      <li>Cannot be undone</li>
+      <li>Editor cleared or unchanged</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-021 -->
+  <div class="test-case" id="sample-tests">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-021</span>
+      <span class="tc-title">Load Sample Queries</span>
+      <span class="badge badge-p1">P1</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify pre-built sample queries load correctly</p>
+    <p><span class="label">Steps:</span></p>
+    <ol>
+      <li>Open sample queries dropdown</li>
+      <li>Select each: "List All Classes", "List All Properties", "List All Individuals", "Count Triples", "SubClass Hierarchy"</li>
+    </ol>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Each sample query loads in editor</li>
+      <li>Syntax is correct and executable</li>
+      <li>Appropriate prefixes included</li>
+      <li>Each produces results on test ontology</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============ 6. RESULTS DISPLAY TESTS ============ -->
+<div class="card" id="results-tests">
+  <h2>6. Results Display Tests</h2>
+
+  <!-- TC-SQ-022 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-022</span>
+      <span class="tc-title">Table View</span>
+      <span class="badge badge-p0">P0</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify results displayed in table format</p>
+    <p><span class="label">Steps:</span></p>
+    <ol>
+      <li>Execute a SELECT query with multiple columns</li>
+      <li>View results in Table mode</li>
+    </ol>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Column headers match query variables</li>
+      <li>Rows contain result bindings</li>
+      <li>URIs displayed</li>
+      <li>Literals show value and datatype</li>
+      <li>Table scrollable for many results</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-023 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-023</span>
+      <span class="tc-title">JSON View</span>
+      <span class="badge badge-p1">P1</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify results displayed in JSON format</p>
+    <p><span class="label">Steps:</span></p>
+    <ol>
+      <li>Execute a query</li>
+      <li>Switch to JSON view</li>
+    </ol>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Well-formatted JSON with <code>head.vars</code> and <code>results.bindings</code></li>
+      <li>Syntax highlighted</li>
+      <li>Collapsible sections</li>
+      <li>Copy-to-clipboard available</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-024 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-024</span>
+      <span class="tc-title">Empty Results</span>
+      <span class="badge badge-p1">P1</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify display when query returns no results</p>
+    <p><span class="label">Query:</span></p>
+    <pre><code><span class="kw">SELECT</span> <span class="var">?x</span> <span class="kw">WHERE</span> { <span class="var">?x</span> a <span class="str">&lt;http://nonexistent/Class&gt;</span> }</code></pre>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>"No results found" message</li>
+      <li>Table headers shown but no rows</li>
+      <li>No error thrown</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-025 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-025</span>
+      <span class="tc-title">Large Result Sets</span>
+      <span class="badge badge-p1">P1</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify handling of 1000+ results</p>
+    <p><span class="label">Steps:</span></p>
+    <ol>
+      <li>Execute <code>SELECT ?s ?p ?o WHERE { ?s ?p ?o }</code> without LIMIT</li>
+    </ol>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Results load progressively or paginated</li>
+      <li>Table remains scrollable and responsive</li>
+      <li>Row count displayed</li>
+      <li>No browser freeze</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============ 7. EXPORT TESTS ============ -->
+<div class="card" id="export-tests">
+  <h2>7. Export Tests</h2>
+
+  <!-- TC-SQ-026 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-026</span>
+      <span class="tc-title">CSV Export</span>
+      <span class="badge badge-p0">P0</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify exporting results as CSV</p>
+    <p><span class="label">Steps:</span></p>
+    <ol>
+      <li>Execute a query with results</li>
+      <li>Click "Export CSV"</li>
+    </ol>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>CSV file downloaded</li>
+      <li>Headers match query variables</li>
+      <li>Values properly escaped</li>
+      <li>UTF-8 encoding</li>
+      <li>File named with timestamp</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-027 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-027</span>
+      <span class="tc-title">CSV Export — Special Characters</span>
+      <span class="badge badge-p2">P2</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify CSV handles special characters</p>
+    <p><span class="label">Steps:</span></p>
+    <ol>
+      <li>Run query returning values with commas, quotes, newlines</li>
+      <li>Export as CSV</li>
+    </ol>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Values with commas enclosed in quotes</li>
+      <li>Embedded quotes escaped</li>
+      <li>Newlines within values handled</li>
+      <li>File opens correctly in Excel / Sheets</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============ 8. ERROR HANDLING TESTS ============ -->
+<div class="card" id="error-tests">
+  <h2>8. Error Handling Tests</h2>
+
+  <!-- TC-SQ-028 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-028</span>
+      <span class="tc-title">Syntax Error in Query</span>
+      <span class="badge badge-p0">P0</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify graceful handling of malformed SPARQL</p>
+    <p><span class="label">Query:</span></p>
+    <pre><code>SELEC <span class="var">?s</span> <span class="kw">WHERE</span> { <span class="var">?s</span> <span class="var">?p</span> <span class="var">?o</span> }</code></pre>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Error message: syntax error indication</li>
+      <li>Line / position of error if available</li>
+      <li>Editor remains functional</li>
+      <li>No crash</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-029 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-029</span>
+      <span class="tc-title">Unknown PREFIX</span>
+      <span class="badge badge-p1">P1</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify error for undeclared prefix</p>
+    <p><span class="label">Query:</span></p>
+    <pre><code><span class="kw">SELECT</span> <span class="var">?x</span> <span class="kw">WHERE</span> { <span class="var">?x</span> unknown:prop <span class="str">"value"</span> }</code></pre>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Error: "Undefined prefix: unknown"</li>
+      <li>Suggestion to add PREFIX declaration</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-030 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-030</span>
+      <span class="tc-title">Server Error (500)</span>
+      <span class="badge badge-p0">P0</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify handling of backend errors</p>
+    <p><span class="label">Steps:</span></p>
+    <ol>
+      <li>Execute a query that causes backend error</li>
+    </ol>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Error message displayed (not raw 500 HTML)</li>
+      <li>Troubleshooting hints provided</li>
+      <li>Retry option</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-031 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-031</span>
+      <span class="tc-title">Timeout on Complex Query</span>
+      <span class="badge badge-p1">P1</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify timeout handling for expensive queries</p>
+    <p><span class="label">Steps:</span></p>
+    <ol>
+      <li>Execute a very complex join / Cartesian product query</li>
+      <li>Wait for timeout</li>
+    </ol>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Timeout error after reasonable delay</li>
+      <li>Suggestion to simplify query or add LIMIT</li>
+      <li>Cancel button available during execution</li>
+    </ul>
+  </div>
+
+  <!-- TC-SQ-032 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-032</span>
+      <span class="tc-title">Connection Error</span>
+      <span class="badge badge-p1">P1</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify handling when SPARQL endpoint is unreachable</p>
+    <p><span class="label">Steps:</span></p>
+    <ol>
+      <li>Disconnect GraphDB</li>
+      <li>Attempt query execution</li>
+    </ol>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>"Connection failed" error message</li>
+      <li>Retry option</li>
+      <li>Editor state preserved</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============ 9. PERFORMANCE TESTS ============ -->
+<div class="card" id="perf-tests">
+  <h2>9. Performance Tests</h2>
+
+  <!-- TC-SQ-033 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-033</span>
+      <span class="tc-title">Query Execution Speed</span>
+      <span class="badge badge-p1">P1</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify query execution completes within expected time bounds</p>
+    <table>
+      <thead><tr><th>Ontology Size</th><th>Simple SELECT</th><th>Complex JOIN</th><th>Expected Time</th></tr></thead>
+      <tbody>
+        <tr><td>&lt; 100 triples</td><td>10 results</td><td>3-way join</td><td>&lt; 500ms</td></tr>
+        <tr><td>1,000 triples</td><td>All</td><td>2-way join</td><td>&lt; 2s</td></tr>
+        <tr><td>10,000+ triples</td><td>LIMIT 100</td><td>OPTIONAL</td><td>&lt; 5s</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- TC-SQ-034 -->
+  <div class="test-case">
+    <div class="tc-header">
+      <span class="tc-id">TC-SQ-034</span>
+      <span class="tc-title">Editor Responsiveness</span>
+      <span class="badge badge-p1">P1</span>
+    </div>
+    <p class="objective"><strong>Objective:</strong> Verify editor remains responsive during query execution</p>
+    <p><span class="label">Steps:</span></p>
+    <ol>
+      <li>Execute a long-running query</li>
+      <li>Try typing in the editor while query runs</li>
+      <li>Try switching tabs</li>
+    </ol>
+    <p><span class="label">Expected:</span></p>
+    <ul>
+      <li>Editor remains responsive</li>
+      <li>Typing not blocked</li>
+      <li>Loading indicator visible</li>
+      <li>Cancel available</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============ 10. TEST SUMMARY MATRIX ============ -->
+<div class="card" id="summary">
+  <h2>10. Test Summary Matrix</h2>
+  <table class="matrix-table">
+    <thead>
+      <tr><th>Test ID</th><th>Category</th><th>Priority</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>TC-SQ-001</td><td>Editor</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-002</td><td>Editor</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-003</td><td>Editor</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-004</td><td>Editor</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-005</td><td>Execution</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-006</td><td>Execution</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-007</td><td>Execution</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-008</td><td>Execution</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-009</td><td>Execution</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-010</td><td>Execution</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-011</td><td>Execution</td><td><span class="badge badge-p2">P2</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-012</td><td>Execution</td><td><span class="badge badge-p2">P2</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-013</td><td>Execution</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-014</td><td>Execution</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-015</td><td>Execution</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-016</td><td>Execution</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-017</td><td>Management</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-018</td><td>Management</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-019</td><td>Management</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-020</td><td>Management</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-021</td><td>Samples</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-022</td><td>Results</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-023</td><td>Results</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-024</td><td>Results</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-025</td><td>Results</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-026</td><td>Export</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-027</td><td>Export</td><td><span class="badge badge-p2">P2</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-028</td><td>Error Handling</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-029</td><td>Error Handling</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-030</td><td>Error Handling</td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-031</td><td>Error Handling</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-032</td><td>Error Handling</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-033</td><td>Performance</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+      <tr><td>TC-SQ-034</td><td>Performance</td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox"></td></tr>
+    </tbody>
+  </table>
+</div>
+
+</div><!-- /container -->
+</body>
+</html>

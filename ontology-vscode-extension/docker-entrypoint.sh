@@ -147,6 +147,22 @@ else
   echo "  ✗ WARNING: Workspace is not writable!"
 fi
 
+# ---------------------------------------------------------------
+# Patch Koa to trust reverse-proxy headers (X-Forwarded-Proto)
+# Without app.proxy = true, ctx.protocol always returns 'http'
+# even when Cloudflare/ALB forwards the original HTTPS scheme.
+# This causes mixed-content errors in the browser.
+# ---------------------------------------------------------------
+APP_JS=$(find /usr/local/lib/node_modules/@vscode/test-web -name "app.js" -path "*/server/*" 2>/dev/null | head -1)
+if [ -n "$APP_JS" ]; then
+  if ! grep -q "app.proxy" "$APP_JS"; then
+    sed -i 's/const app = new Koa();/const app = new Koa();\n    app.proxy = true;/' "$APP_JS"
+    echo "[OntoCode] Patched Koa app.proxy = true for X-Forwarded-Proto support"
+  else
+    echo "[OntoCode] Koa app.proxy already set"
+  fi
+fi
+
 echo "[OntoCode] Starting VS Code Web Server on port ${VSCODE_WEB_PORT:-3000}..."
 echo "[OntoCode] Workspace folder: /workspace/projects"
 echo "[OntoCode] Extension path: /extension"

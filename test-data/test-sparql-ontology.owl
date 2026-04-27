@@ -1,0 +1,301 @@
+<?xml version="1.0"?>
+<rdf:RDF xmlns="http://www.example.org/products#"
+     xml:base="http://www.example.org/products"
+     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:owl="http://www.w3.org/2002/07/owl#"
+     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+     xmlns:xsd="http://www.w3.org/2001/XMLSchema#">
+    
+    <owl:Ontology rdf:about="http://www.example.org/products">
+        <rdfs:label>E-Commerce Test Ontology</rdfs:label>
+        <rdfs:comment>Test ontology for SPARQL Query Plugin testing. Domain: E-commerce with products, customers, orders, and suppliers.</rdfs:comment>
+        <owl:versionInfo>1.0.0</owl:versionInfo>
+    </owl:Ontology>
+
+    <!-- ======================== -->
+    <!-- CLASSES                  -->
+    <!-- ======================== -->
+
+    <owl:Class rdf:about="http://www.example.org/products#Product">
+        <rdfs:label>Product</rdfs:label>
+        <rdfs:comment>A commercial product available for purchase</rdfs:comment>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/products#Electronics">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/products#Product"/>
+        <rdfs:label>Electronics</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/products#Laptop">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/products#Electronics"/>
+        <rdfs:label>Laptop</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/products#Smartphone">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/products#Electronics"/>
+        <rdfs:label>Smartphone</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/products#Clothing">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/products#Product"/>
+        <rdfs:label>Clothing</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/products#Customer">
+        <rdfs:label>Customer</rdfs:label>
+        <rdfs:comment>A person who places orders</rdfs:comment>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/products#Order">
+        <rdfs:label>Order</rdfs:label>
+        <rdfs:comment>A purchase order containing products</rdfs:comment>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/products#Supplier">
+        <rdfs:label>Supplier</rdfs:label>
+        <rdfs:comment>A company that supplies products</rdfs:comment>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/products#Category">
+        <rdfs:label>Category</rdfs:label>
+    </owl:Class>
+
+    <!-- ======================== -->
+    <!-- OBJECT PROPERTIES        -->
+    <!-- ======================== -->
+
+    <owl:ObjectProperty rdf:about="http://www.example.org/products#orderedBy">
+        <rdfs:domain rdf:resource="http://www.example.org/products#Order"/>
+        <rdfs:range rdf:resource="http://www.example.org/products#Customer"/>
+        <rdfs:label>ordered by</rdfs:label>
+    </owl:ObjectProperty>
+
+    <owl:ObjectProperty rdf:about="http://www.example.org/products#contains">
+        <rdfs:domain rdf:resource="http://www.example.org/products#Order"/>
+        <rdfs:range rdf:resource="http://www.example.org/products#Product"/>
+        <rdfs:label>contains</rdfs:label>
+    </owl:ObjectProperty>
+
+    <owl:ObjectProperty rdf:about="http://www.example.org/products#suppliedBy">
+        <rdfs:domain rdf:resource="http://www.example.org/products#Product"/>
+        <rdfs:range rdf:resource="http://www.example.org/products#Supplier"/>
+        <rdfs:label>supplied by</rdfs:label>
+    </owl:ObjectProperty>
+
+    <owl:ObjectProperty rdf:about="http://www.example.org/products#belongsToCategory">
+        <rdfs:domain rdf:resource="http://www.example.org/products#Product"/>
+        <rdfs:range rdf:resource="http://www.example.org/products#Category"/>
+        <rdfs:label>belongs to category</rdfs:label>
+    </owl:ObjectProperty>
+
+    <!-- ======================== -->
+    <!-- DATA PROPERTIES          -->
+    <!-- ======================== -->
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/products#productName">
+        <rdfs:domain rdf:resource="http://www.example.org/products#Product"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+        <rdfs:label>product name</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/products#price">
+        <rdfs:domain rdf:resource="http://www.example.org/products#Product"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+        <rdfs:label>price</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/products#stockQuantity">
+        <rdfs:domain rdf:resource="http://www.example.org/products#Product"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#integer"/>
+        <rdfs:label>stock quantity</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/products#rating">
+        <rdfs:domain rdf:resource="http://www.example.org/products#Product"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+        <rdfs:label>rating</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/products#customerName">
+        <rdfs:domain rdf:resource="http://www.example.org/products#Customer"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+        <rdfs:label>customer name</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/products#email">
+        <rdfs:domain rdf:resource="http://www.example.org/products#Customer"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+        <rdfs:label>email</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/products#orderDate">
+        <rdfs:domain rdf:resource="http://www.example.org/products#Order"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#date"/>
+        <rdfs:label>order date</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/products#totalAmount">
+        <rdfs:domain rdf:resource="http://www.example.org/products#Order"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+        <rdfs:label>total amount</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/products#supplierName">
+        <rdfs:domain rdf:resource="http://www.example.org/products#Supplier"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+        <rdfs:label>supplier name</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <!-- ======================== -->
+    <!-- CATEGORIES               -->
+    <!-- ======================== -->
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/products#ElectronicsCategory">
+        <rdf:type rdf:resource="http://www.example.org/products#Category"/>
+        <rdfs:label>Electronics Category</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/products#ClothingCategory">
+        <rdf:type rdf:resource="http://www.example.org/products#Category"/>
+        <rdfs:label>Clothing Category</rdfs:label>
+    </owl:NamedIndividual>
+
+    <!-- ======================== -->
+    <!-- PRODUCTS                 -->
+    <!-- ======================== -->
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/products#MacBookPro">
+        <rdf:type rdf:resource="http://www.example.org/products#Laptop"/>
+        <productName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">MacBook Pro 16</productName>
+        <price rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">2499.99</price>
+        <stockQuantity rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">50</stockQuantity>
+        <rating rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">4.8</rating>
+        <suppliedBy rdf:resource="http://www.example.org/products#AppleInc"/>
+        <belongsToCategory rdf:resource="http://www.example.org/products#ElectronicsCategory"/>
+        <rdfs:label>MacBook Pro</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/products#DellXPS15">
+        <rdf:type rdf:resource="http://www.example.org/products#Laptop"/>
+        <productName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Dell XPS 15</productName>
+        <price rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">1799.99</price>
+        <stockQuantity rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">75</stockQuantity>
+        <rating rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">4.6</rating>
+        <suppliedBy rdf:resource="http://www.example.org/products#DellTech"/>
+        <belongsToCategory rdf:resource="http://www.example.org/products#ElectronicsCategory"/>
+        <rdfs:label>Dell XPS 15</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/products#iPhone14">
+        <rdf:type rdf:resource="http://www.example.org/products#Smartphone"/>
+        <productName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">iPhone 14 Pro</productName>
+        <price rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">1099.99</price>
+        <stockQuantity rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">200</stockQuantity>
+        <rating rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">4.7</rating>
+        <suppliedBy rdf:resource="http://www.example.org/products#AppleInc"/>
+        <belongsToCategory rdf:resource="http://www.example.org/products#ElectronicsCategory"/>
+        <rdfs:label>iPhone 14</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/products#GalaxyS23">
+        <rdf:type rdf:resource="http://www.example.org/products#Smartphone"/>
+        <productName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Galaxy S23 Ultra</productName>
+        <price rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">1199.99</price>
+        <stockQuantity rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">150</stockQuantity>
+        <rating rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">4.5</rating>
+        <suppliedBy rdf:resource="http://www.example.org/products#SamsungElec"/>
+        <belongsToCategory rdf:resource="http://www.example.org/products#ElectronicsCategory"/>
+        <rdfs:label>Galaxy S23</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/products#TShirt">
+        <rdf:type rdf:resource="http://www.example.org/products#Clothing"/>
+        <productName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Classic Cotton T-Shirt</productName>
+        <price rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">29.99</price>
+        <stockQuantity rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">500</stockQuantity>
+        <rating rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">4.2</rating>
+        <belongsToCategory rdf:resource="http://www.example.org/products#ClothingCategory"/>
+        <rdfs:label>T-Shirt</rdfs:label>
+    </owl:NamedIndividual>
+
+    <!-- ======================== -->
+    <!-- SUPPLIERS                -->
+    <!-- ======================== -->
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/products#AppleInc">
+        <rdf:type rdf:resource="http://www.example.org/products#Supplier"/>
+        <supplierName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Apple Inc.</supplierName>
+        <rdfs:label>Apple Inc.</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/products#DellTech">
+        <rdf:type rdf:resource="http://www.example.org/products#Supplier"/>
+        <supplierName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Dell Technologies</supplierName>
+        <rdfs:label>Dell Technologies</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/products#SamsungElec">
+        <rdf:type rdf:resource="http://www.example.org/products#Supplier"/>
+        <supplierName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Samsung Electronics</supplierName>
+        <rdfs:label>Samsung Electronics</rdfs:label>
+    </owl:NamedIndividual>
+
+    <!-- ======================== -->
+    <!-- CUSTOMERS                -->
+    <!-- ======================== -->
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/products#Customer001">
+        <rdf:type rdf:resource="http://www.example.org/products#Customer"/>
+        <customerName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Alice Johnson</customerName>
+        <email rdf:datatype="http://www.w3.org/2001/XMLSchema#string">alice@example.com</email>
+        <rdfs:label>Customer 001</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/products#Customer002">
+        <rdf:type rdf:resource="http://www.example.org/products#Customer"/>
+        <customerName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Bob Smith</customerName>
+        <email rdf:datatype="http://www.w3.org/2001/XMLSchema#string">bob@example.com</email>
+        <rdfs:label>Customer 002</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/products#Customer003">
+        <rdf:type rdf:resource="http://www.example.org/products#Customer"/>
+        <customerName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Carol Williams</customerName>
+        <email rdf:datatype="http://www.w3.org/2001/XMLSchema#string">carol@example.com</email>
+        <rdfs:label>Customer 003</rdfs:label>
+    </owl:NamedIndividual>
+
+    <!-- ======================== -->
+    <!-- ORDERS                   -->
+    <!-- ======================== -->
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/products#Order001">
+        <rdf:type rdf:resource="http://www.example.org/products#Order"/>
+        <orderedBy rdf:resource="http://www.example.org/products#Customer001"/>
+        <contains rdf:resource="http://www.example.org/products#MacBookPro"/>
+        <orderDate rdf:datatype="http://www.w3.org/2001/XMLSchema#date">2024-01-15</orderDate>
+        <totalAmount rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">2499.99</totalAmount>
+        <rdfs:label>Order 001</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/products#Order002">
+        <rdf:type rdf:resource="http://www.example.org/products#Order"/>
+        <orderedBy rdf:resource="http://www.example.org/products#Customer002"/>
+        <contains rdf:resource="http://www.example.org/products#iPhone14"/>
+        <contains rdf:resource="http://www.example.org/products#TShirt"/>
+        <orderDate rdf:datatype="http://www.w3.org/2001/XMLSchema#date">2024-02-20</orderDate>
+        <totalAmount rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">1129.98</totalAmount>
+        <rdfs:label>Order 002</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/products#Order003">
+        <rdf:type rdf:resource="http://www.example.org/products#Order"/>
+        <orderedBy rdf:resource="http://www.example.org/products#Customer003"/>
+        <contains rdf:resource="http://www.example.org/products#GalaxyS23"/>
+        <contains rdf:resource="http://www.example.org/products#DellXPS15"/>
+        <orderDate rdf:datatype="http://www.w3.org/2001/XMLSchema#date">2024-03-10</orderDate>
+        <totalAmount rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">2999.98</totalAmount>
+        <rdfs:label>Order 003</rdfs:label>
+    </owl:NamedIndividual>
+
+</rdf:RDF>

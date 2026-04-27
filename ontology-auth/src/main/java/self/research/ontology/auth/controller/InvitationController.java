@@ -80,8 +80,13 @@ public class InvitationController {
             }
             
             Workspace workspace = workspaceOpt.get();
-            if (!workspace.isMember(user.getId())) {
+            Workspace.WorkspaceMember wsMember = workspace.getMember(user.getId());
+            if (wsMember == null) {
                 return ResponseEntity.status(403).body(Map.of("error", "You don't have access to this workspace"));
+            }
+            // Only workspace OWNER or ADMIN can send invitations
+            if (wsMember.getRole() != Workspace.WorkspaceRole.OWNER && wsMember.getRole() != Workspace.WorkspaceRole.ADMIN) {
+                return ResponseEntity.status(403).body(Map.of("error", "Only workspace owners and admins can invite members"));
             }
             
             // Check if user is already an active member

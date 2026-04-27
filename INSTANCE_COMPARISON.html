@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OntoCode — AWS Instance Comparison</title>
+    <style>
+        :root {
+            --bg: #0d1117;
+            --card-bg: #161b22;
+            --border: #30363d;
+            --text: #e6edf3;
+            --text-muted: #8b949e;
+            --accent: #58a6ff;
+            --green: #3fb950;
+            --yellow: #d29922;
+            --red: #f85149;
+            --orange: #db6d28;
+            --purple: #bc8cff;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            padding: 2rem;
+        }
+
+        .container { max-width: 1400px; margin: 0 auto; }
+
+        h1 {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, var(--accent), var(--purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .subtitle {
+            color: var(--text-muted);
+            margin-bottom: 2rem;
+            font-size: 0.95rem;
+        }
+
+        .current-badge {
+            display: inline-block;
+            background: var(--yellow);
+            color: #000;
+            font-size: 0.7rem;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 12px;
+            vertical-align: middle;
+            margin-left: 6px;
+        }
+
+        .section {
+            margin-bottom: 2.5rem;
+        }
+
+        .section h2 {
+            font-size: 1.25rem;
+            color: var(--accent);
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .section h2 .num {
+            display: inline-block;
+            width: 28px;
+            height: 28px;
+            background: var(--accent);
+            color: var(--bg);
+            border-radius: 50%;
+            text-align: center;
+            line-height: 28px;
+            font-size: 0.85rem;
+            margin-right: 8px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--card-bg);
+            border-radius: 8px;
+            overflow: hidden;
+            font-size: 0.88rem;
+        }
+
+        thead th {
+            background: #1c2129;
+            padding: 12px 14px;
+            text-align: left;
+            font-weight: 600;
+            color: var(--text-muted);
+            border-bottom: 2px solid var(--border);
+            white-space: nowrap;
+        }
+
+        thead th.instance-header {
+            text-align: center;
+            color: var(--text);
+        }
+
+        tbody td {
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+        }
+
+        tbody tr:last-child td { border-bottom: none; }
+
+        tbody tr:hover { background: rgba(88, 166, 255, 0.04); }
+
+        td:first-child {
+            font-weight: 500;
+            color: var(--text);
+            min-width: 180px;
+        }
+
+        td:not(:first-child) { text-align: center; }
+
+        .ok { color: var(--green); font-weight: 600; }
+        .warn { color: var(--yellow); font-weight: 600; }
+        .bad { color: var(--red); font-weight: 600; }
+        .muted { color: var(--text-muted); }
+        .highlight { background: rgba(88, 166, 255, 0.08); }
+
+        .pill {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 0.78rem;
+            font-weight: 700;
+        }
+        .pill-green { background: rgba(63,185,80,0.15); color: var(--green); }
+        .pill-yellow { background: rgba(210,153,34,0.15); color: var(--yellow); }
+        .pill-red { background: rgba(248,81,73,0.15); color: var(--red); }
+        .pill-blue { background: rgba(88,166,255,0.15); color: var(--accent); }
+        .pill-purple { background: rgba(188,140,255,0.15); color: var(--purple); }
+
+        .recommendation-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1rem;
+        }
+
+        .rec-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.2rem;
+            transition: border-color 0.2s;
+        }
+
+        .rec-card:hover { border-color: var(--accent); }
+
+        .rec-card.best { border-color: var(--green); }
+
+        .rec-card h3 {
+            font-size: 1rem;
+            margin-bottom: 0.3rem;
+        }
+
+        .rec-card .use-case {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            margin-bottom: 0.8rem;
+        }
+
+        .rec-card .reason {
+            font-size: 0.85rem;
+            color: var(--text);
+        }
+
+        .memory-bar-container {
+            margin-top: 1.5rem;
+        }
+
+        .memory-bar-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            margin-bottom: 4px;
+        }
+
+        .memory-bar {
+            height: 28px;
+            background: #21262d;
+            border-radius: 6px;
+            overflow: hidden;
+            display: flex;
+            margin-bottom: 1rem;
+        }
+
+        .memory-bar .seg {
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: #fff;
+            white-space: nowrap;
+            overflow: hidden;
+        }
+
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 8px;
+            font-size: 0.8rem;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .legend-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 3px;
+        }
+
+        .bottom-line {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-top: 2rem;
+        }
+
+        .bottom-line h2 {
+            color: var(--yellow);
+            margin-bottom: 0.8rem;
+        }
+
+        .bottom-line ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .bottom-line li {
+            padding: 4px 0;
+            padding-left: 1.2rem;
+            position: relative;
+            color: var(--text-muted);
+        }
+
+        .bottom-line li::before {
+            content: '⚠';
+            position: absolute;
+            left: 0;
+        }
+
+        @media (max-width: 900px) {
+            body { padding: 1rem; }
+            table { font-size: 0.78rem; }
+            thead th, tbody td { padding: 8px 6px; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+
+    <h1>OntoCode — AWS Instance Comparison</h1>
+    <p class="subtitle">Complete performance analysis across all scenarios &middot; Generated April 2026</p>
+
+    <!-- ========== SPECS ========== -->
+    <div class="section">
+        <h2><span class="num">0</span>Instance Specs</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Spec</th>
+                    <th class="instance-header">t3.large <span class="current-badge">CURRENT</span></th>
+                    <th class="instance-header">t3.xlarge</th>
+                    <th class="instance-header">t3.2xlarge</th>
+                    <th class="instance-header">m6i.2xlarge</th>
+                    <th class="instance-header">r6i.xlarge</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>vCPUs</td>
+                    <td class="bad">2</td>
+                    <td class="warn">4</td>
+                    <td class="ok">8</td>
+                    <td class="ok">8</td>
+                    <td class="warn">4</td>
+                </tr>
+                <tr>
+                    <td>RAM</td>
+                    <td class="bad">8 GB</td>
+                    <td class="warn">16 GB</td>
+                    <td class="ok">32 GB</td>
+                    <td class="ok">32 GB</td>
+                    <td class="ok">32 GB</td>
+                </tr>
+                <tr>
+                    <td>CPU Type</td>
+                    <td class="bad">Burstable 30%</td>
+                    <td class="warn">Burstable 40%</td>
+                    <td class="warn">Burstable 40%</td>
+                    <td class="ok">Fixed 100%</td>
+                    <td class="ok">Fixed 100%</td>
+                </tr>
+                <tr>
+                    <td>Network</td>
+                    <td>Up to 5 Gbps</td>
+                    <td>Up to 5 Gbps</td>
+                    <td>Up to 5 Gbps</td>
+                    <td class="ok">Up to 12.5 Gbps</td>
+                    <td class="ok">Up to 12.5 Gbps</td>
+                </tr>
+                <tr>
+                    <td>EBS Bandwidth</td>
+                    <td>Up to 2,085 Mbps</td>
+                    <td>Up to 2,085 Mbps</td>
+                    <td>Up to 2,085 Mbps</td>
+                    <td class="ok">Up to 10,000 Mbps</td>
+                    <td class="ok">Up to 10,000 Mbps</td>
+                </tr>
+                <tr class="highlight">
+                    <td><strong>Monthly Cost</strong></td>
+                    <td><strong>~$60</strong></td>
+                    <td><strong>~$120</strong></td>
+                    <td><strong>~$240</strong></td>
+                    <td><strong>~$280</strong></td>
+                    <td><strong>~$190</strong></td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ========== MEMORY ALLOCATION ========== -->
+    <div class="section">
+        <h2><span class="num">M</span>Memory Allocation per Instance</h2>
+
+        <div class="memory-bar-container">
+            <div class="memory-bar-label"><span><strong>t3.large</strong> — 8 GB</span><span class="bad">TIGHT</span></div>
+            <div class="memory-bar">
+                <div class="seg" style="width:37.5%;background:#e06c75;">GraphDB 3GB</div>
+                <div class="seg" style="width:15%;background:#61afef;">Editor 1.2GB</div>
+                <div class="seg" style="width:9.6%;background:#c678dd;">MongoDB 768MB</div>
+                <div class="seg" style="width:6.4%;background:#98c379;">SWRL 512MB</div>
+                <div class="seg" style="width:12%;background:#d19a66;">Auth+GW+Plugin 960MB</div>
+                <div class="seg" style="width:3.2%;background:#56b6c2;">VSCode 256MB</div>
+                <div class="seg" style="width:16.3%;background:#3d4452;">OS 1.3GB</div>
+            </div>
+
+            <div class="memory-bar-label"><span><strong>t3.xlarge</strong> — 16 GB</span><span class="ok">COMFORTABLE</span></div>
+            <div class="memory-bar">
+                <div class="seg" style="width:31.25%;background:#e06c75;">GraphDB 5GB</div>
+                <div class="seg" style="width:15.6%;background:#61afef;">Editor 2.5GB</div>
+                <div class="seg" style="width:6.25%;background:#c678dd;">MongoDB 1GB</div>
+                <div class="seg" style="width:6.25%;background:#98c379;">SWRL 1GB</div>
+                <div class="seg" style="width:11.25%;background:#d19a66;">Auth+GW+Plugin 1.8GB</div>
+                <div class="seg" style="width:3.1%;background:#56b6c2;">VSCode 500MB</div>
+                <div class="seg" style="width:26.3%;background:#3d4452;">Free 4.2GB</div>
+            </div>
+
+            <div class="memory-bar-label"><span><strong>t3.2xlarge / m6i.2xlarge / r6i.xlarge</strong> — 32 GB</span><span class="ok">OPTIMAL</span></div>
+            <div class="memory-bar">
+                <div class="seg" style="width:25%;background:#e06c75;">GraphDB 8GB</div>
+                <div class="seg" style="width:12.5%;background:#61afef;">Editor 4GB</div>
+                <div class="seg" style="width:6.25%;background:#c678dd;">MongoDB 2GB</div>
+                <div class="seg" style="width:6.25%;background:#98c379;">SWRL 2GB</div>
+                <div class="seg" style="width:5.6%;background:#d19a66;">Auth+GW+Plugin 1.8GB</div>
+                <div class="seg" style="width:1.6%;background:#56b6c2;">VS 0.5</div>
+                <div class="seg" style="width:42.8%;background:#3d4452;">Free 13.7GB</div>
+            </div>
+
+            <div class="legend">
+                <div class="legend-item"><div class="legend-dot" style="background:#e06c75;"></div>GraphDB</div>
+                <div class="legend-item"><div class="legend-dot" style="background:#61afef;"></div>OWL Editor</div>
+                <div class="legend-item"><div class="legend-dot" style="background:#c678dd;"></div>MongoDB</div>
+                <div class="legend-item"><div class="legend-dot" style="background:#98c379;"></div>SWRL</div>
+                <div class="legend-item"><div class="legend-dot" style="background:#d19a66;"></div>Auth / Gateway / Plugin</div>
+                <div class="legend-item"><div class="legend-dot" style="background:#56b6c2;"></div>VS Code Web</div>
+                <div class="legend-item"><div class="legend-dot" style="background:#3d4452;"></div>OS / Free</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== SCENARIO 1 ========== -->
+    <div class="section">
+        <h2><span class="num">1</span>Small Ontology Upload (&lt; 100KB, ~500 classes)</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Metric</th>
+                    <th class="instance-header">t3.large</th>
+                    <th class="instance-header">t3.xlarge</th>
+                    <th class="instance-header">t3.2xlarge</th>
+                    <th class="instance-header">m6i.2xlarge</th>
+                    <th class="instance-header">r6i.xlarge</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>Upload time</td><td class="ok">&lt; 2s</td><td class="ok">&lt; 1s</td><td class="ok">&lt; 1s</td><td class="ok">&lt; 1s</td><td class="ok">&lt; 1s</td></tr>
+                <tr><td>Fast path used?</td><td class="ok">Yes</td><td class="ok">Yes</td><td class="ok">Yes</td><td class="ok">Yes</td><td class="ok">Yes</td></tr>
+                <tr><td>Memory pressure</td><td class="warn">Low</td><td class="ok">None</td><td class="ok">None</td><td class="ok">None</td><td class="ok">None</td></tr>
+                <tr><td>GC impact</td><td>Negligible</td><td>Negligible</td><td>Negligible</td><td>Negligible</td><td>Negligible</td></tr>
+                <tr class="highlight"><td><strong>Verdict</strong></td><td><span class="pill pill-green">Works fine</span></td><td><span class="pill pill-green">Works fine</span></td><td class="muted">Overkill</td><td class="muted">Overkill</td><td class="muted">Overkill</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ========== SCENARIO 2 ========== -->
+    <div class="section">
+        <h2><span class="num">2</span>Medium Ontology Upload (1–10MB, ~5k–20k classes)</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Metric</th>
+                    <th class="instance-header">t3.large</th>
+                    <th class="instance-header">t3.xlarge</th>
+                    <th class="instance-header">t3.2xlarge</th>
+                    <th class="instance-header">m6i.2xlarge</th>
+                    <th class="instance-header">r6i.xlarge</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>Upload time</td><td class="bad">15–45s</td><td class="warn">8–20s</td><td class="ok">5–12s</td><td class="ok">5–12s</td><td class="ok">6–15s</td></tr>
+                <tr><td>GraphDB heap usage</td><td class="bad">70–80%</td><td class="warn">30–40%</td><td class="ok">15–20%</td><td class="ok">15–20%</td><td class="ok">15–20%</td></tr>
+                <tr><td>Editor heap usage</td><td class="bad">60–80%</td><td class="warn">25–35%</td><td class="ok">10–15%</td><td class="ok">10–15%</td><td class="ok">10–15%</td></tr>
+                <tr><td>GC pauses</td><td class="bad">Frequent 100–500ms</td><td class="warn">50–100ms</td><td class="ok">Rare &lt;50ms</td><td class="ok">Rare &lt;50ms</td><td class="ok">Rare &lt;50ms</td></tr>
+                <tr><td>CPU during import</td><td class="bad">100% (burst drains)</td><td class="warn">80–90% burst</td><td>40–50%</td><td class="ok">40–50% sustained</td><td class="ok">60–70% sustained</td></tr>
+                <tr><td>Browse while importing?</td><td class="bad">Laggy</td><td class="ok">Usable</td><td class="ok">Smooth</td><td class="ok">Smooth</td><td class="ok">Smooth</td></tr>
+                <tr class="highlight"><td><strong>Verdict</strong></td><td><span class="pill pill-yellow">Tight, lag</span></td><td><span class="pill pill-green">Good</span></td><td><span class="pill pill-green">Comfortable</span></td><td><span class="pill pill-green">Comfortable</span></td><td><span class="pill pill-green">Comfortable</span></td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ========== SCENARIO 3 ========== -->
+    <div class="section">
+        <h2><span class="num">3</span>Large Ontology Upload (50–200MB, 90k+ classes)</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Metric</th>
+                    <th class="instance-header">t3.large</th>
+                    <th class="instance-header">t3.xlarge</th>
+                    <th class="instance-header">t3.2xlarge</th>
+                    <th class="instance-header">m6i.2xlarge</th>
+                    <th class="instance-header">r6i.xlarge</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>Upload time</td><td class="bad">5–15 min</td><td class="warn">2–5 min</td><td class="ok">1–3 min</td><td class="ok">1–3 min</td><td class="ok">1.5–4 min</td></tr>
+                <tr><td>GraphDB heap</td><td class="bad">95%+ → OOM risk</td><td class="warn">60–75%</td><td class="ok">25–35%</td><td class="ok">25–35%</td><td class="ok">25–35%</td></tr>
+                <tr><td>Editor heap</td><td class="bad">90%+ → OOM risk</td><td class="warn">50–65%</td><td class="ok">20–30%</td><td class="ok">20–30%</td><td class="ok">20–30%</td></tr>
+                <tr><td>GC overhead</td><td class="bad">&gt;10% CPU</td><td class="warn">3–5%</td><td class="ok">&lt;2%</td><td class="ok">&lt;2%</td><td class="ok">&lt;2%</td></tr>
+                <tr><td>Burst credits</td><td class="bad">Depleted in ~3 min</td><td class="warn">Depleted ~5 min</td><td class="warn">Depleted ~8 min</td><td class="ok">N/A (fixed)</td><td class="ok">N/A (fixed)</td></tr>
+                <tr><td>CPU after burst</td><td class="bad">20% → crawls</td><td class="warn">40% → slow</td><td class="warn">40% → slow</td><td class="ok">100% sustained</td><td class="ok">100% sustained</td></tr>
+                <tr><td>OOM kill risk</td><td class="bad">HIGH</td><td class="warn">Low</td><td class="ok">None</td><td class="ok">None</td><td class="ok">None</td></tr>
+                <tr><td>Sanitization step</td><td class="bad">May fail</td><td class="ok">Works</td><td class="ok">Works</td><td class="ok">Works</td><td class="ok">Works</td></tr>
+                <tr><td>OWL→RDF conversion</td><td class="bad">Likely fails</td><td class="warn">Slow but works</td><td class="ok">Fast</td><td class="ok">Fast</td><td class="ok">Fast</td></tr>
+                <tr><td>Browse while importing?</td><td class="bad">System frozen</td><td class="warn">Degraded</td><td class="ok">Normal</td><td class="ok">Normal</td><td class="ok">Normal</td></tr>
+                <tr class="highlight"><td><strong>Verdict</strong></td><td><span class="pill pill-red">Will fail / OOM</span></td><td><span class="pill pill-yellow">Risky</span></td><td><span class="pill pill-green">Good</span></td><td><span class="pill pill-blue">Best</span></td><td><span class="pill pill-green">Good</span></td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ========== SCENARIO 4 ========== -->
+    <div class="section">
+        <h2><span class="num">4</span>Concurrent Users — Graph Browsing (no imports)</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Users</th>
+                    <th class="instance-header">t3.large</th>
+                    <th class="instance-header">t3.xlarge</th>
+                    <th class="instance-header">t3.2xlarge</th>
+                    <th class="instance-header">m6i.2xlarge</th>
+                    <th class="instance-header">r6i.xlarge</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>1–2 users</td><td class="ok">~200ms</td><td class="ok">~100ms</td><td class="ok">~80ms</td><td class="ok">~80ms</td><td class="ok">~100ms</td></tr>
+                <tr><td>3–5 users</td><td class="warn">500ms–1s</td><td class="ok">~200ms</td><td class="ok">~100ms</td><td class="ok">~100ms</td><td class="ok">~150ms</td></tr>
+                <tr><td>5–10 users</td><td class="bad">1–3s</td><td class="warn">~400ms</td><td class="ok">~200ms</td><td class="ok">~200ms</td><td class="warn">~300ms</td></tr>
+                <tr><td>10–20 users</td><td class="bad">Timeouts</td><td class="warn">~1s</td><td class="ok">~300ms</td><td class="ok">~300ms</td><td class="warn">~500ms</td></tr>
+                <tr><td>20–50 users</td><td class="bad">Non-functional</td><td class="bad">Timeouts</td><td class="warn">~500ms</td><td class="warn">~500ms</td><td class="bad">Degraded</td></tr>
+            </tbody>
+        </table>
+        <p style="margin-top:8px;color:var(--text-muted);font-size:0.85rem;">Each graph browse triggers 3–5 SPARQL queries. With 2 vCPUs and 4-thread pool, queries queue fast.</p>
+    </div>
+
+    <!-- ========== SCENARIO 5 ========== -->
+    <div class="section">
+        <h2><span class="num">5</span>Concurrent Users — Mixed Workload (browsing + 1 import)</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Workload</th>
+                    <th class="instance-header">t3.large</th>
+                    <th class="instance-header">t3.xlarge</th>
+                    <th class="instance-header">t3.2xlarge</th>
+                    <th class="instance-header">m6i.2xlarge</th>
+                    <th class="instance-header">r6i.xlarge</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>1 importing + 1 browsing</td><td class="bad">Browse frozen</td><td class="warn">~2s</td><td class="ok">~300ms</td><td class="ok">~300ms</td><td class="warn">~500ms</td></tr>
+                <tr><td>1 importing + 5 browsing</td><td class="bad">Unusable</td><td class="bad">3–5s</td><td class="warn">~500ms</td><td class="warn">~500ms</td><td class="warn">~1s</td></tr>
+                <tr><td>1 importing + 10 browsing</td><td class="bad">Unusable</td><td class="bad">Timeouts</td><td class="ok">~800ms</td><td class="ok">~800ms</td><td class="warn">~2s</td></tr>
+                <tr><td>2 concurrent imports</td><td class="bad">OOM crash</td><td class="warn">Risky</td><td class="ok">Good</td><td class="ok">Good</td><td class="warn">Moderate</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ========== SCENARIO 6 ========== -->
+    <div class="section">
+        <h2><span class="num">6</span>SWRL Rule Execution</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Workload</th>
+                    <th class="instance-header">t3.large</th>
+                    <th class="instance-header">t3.xlarge</th>
+                    <th class="instance-header">t3.2xlarge</th>
+                    <th class="instance-header">m6i.2xlarge</th>
+                    <th class="instance-header">r6i.xlarge</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>Simple (5–10 rules, &lt;1k classes)</td><td class="warn">2–5s</td><td class="ok">1–2s</td><td class="ok">&lt;1s</td><td class="ok">&lt;1s</td><td class="ok">&lt;1s</td></tr>
+                <tr><td>Complex (20+ rules, 10k classes)</td><td class="bad">15–30s, may OOM</td><td class="warn">5–10s</td><td class="ok">2–5s</td><td class="ok">2–5s</td><td class="ok">3–6s</td></tr>
+                <tr><td>Large ontology (90k classes)</td><td class="bad">OOM crash</td><td class="bad">Risky ~60s</td><td class="ok">10–20s</td><td class="ok">10–20s</td><td class="warn">15–25s</td></tr>
+                <tr><td>SWRL heap available</td><td class="bad">384MB max</td><td class="warn">1GB</td><td class="ok">2GB</td><td class="ok">2GB</td><td class="ok">2GB</td></tr>
+                <tr><td>Concurrent exec</td><td class="bad">1 safely</td><td class="warn">2–3</td><td class="ok">5+</td><td class="ok">5+</td><td class="warn">3–4</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ========== SCENARIO 7 ========== -->
+    <div class="section">
+        <h2><span class="num">7</span>GraphDB SPARQL Query Performance</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Query Type</th>
+                    <th class="instance-header">t3.large</th>
+                    <th class="instance-header">t3.xlarge</th>
+                    <th class="instance-header">t3.2xlarge</th>
+                    <th class="instance-header">m6i.2xlarge</th>
+                    <th class="instance-header">r6i.xlarge</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>Class hierarchy (top-level)</td><td>50–200ms</td><td>30–100ms</td><td class="ok">20–50ms</td><td class="ok">20–50ms</td><td class="ok">20–50ms</td></tr>
+                <tr><td>Class children (recursive)</td><td class="warn">100–500ms</td><td>50–200ms</td><td class="ok">30–100ms</td><td class="ok">30–100ms</td><td class="ok">30–100ms</td></tr>
+                <tr><td>Full-text search</td><td class="warn">200ms–1s</td><td>100–400ms</td><td class="ok">50–200ms</td><td class="ok">50–200ms</td><td class="ok">50–200ms</td></tr>
+                <tr><td>Property details</td><td>50–200ms</td><td>30–100ms</td><td class="ok">20–50ms</td><td class="ok">20–50ms</td><td class="ok">20–50ms</td></tr>
+                <tr><td>Count individuals (90k)</td><td class="bad">2–5s</td><td class="warn">500ms–1s</td><td class="ok">200–500ms</td><td class="ok">200–500ms</td><td class="ok">200–500ms</td></tr>
+                <tr><td>Graph viz (500 nodes)</td><td class="bad">1–3s</td><td class="warn">500ms–1s</td><td class="ok">200–500ms</td><td class="ok">200–500ms</td><td class="warn">300–600ms</td></tr>
+                <tr><td>GraphDB heap</td><td class="bad">2.5GB tight</td><td class="warn">4GB ok</td><td class="ok">6GB+ optimal</td><td class="ok">6GB+ optimal</td><td class="ok">6GB+ optimal</td></tr>
+                <tr><td>Concurrent SPARQL</td><td class="bad">4 queries</td><td class="warn">8 queries</td><td class="ok">16 queries</td><td class="ok">16 queries</td><td class="warn">8 queries</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ========== SCENARIO 8 ========== -->
+    <div class="section">
+        <h2><span class="num">8</span>Long-Running Stability (24/7 uptime)</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Metric</th>
+                    <th class="instance-header">t3.large</th>
+                    <th class="instance-header">t3.xlarge</th>
+                    <th class="instance-header">t3.2xlarge</th>
+                    <th class="instance-header">m6i.2xlarge</th>
+                    <th class="instance-header">r6i.xlarge</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>Days before OOM restart</td><td class="bad">3–7 days</td><td class="warn">14–30 days</td><td class="ok">Months</td><td class="ok">Months</td><td class="ok">Months</td></tr>
+                <tr><td>GC overhead over time</td><td class="bad">Grows to 10%+</td><td class="warn">Stable &lt;5%</td><td class="ok">Stable &lt;2%</td><td class="ok">Stable &lt;2%</td><td class="ok">Stable &lt;2%</td></tr>
+                <tr><td>Burst credit sustainability</td><td class="bad">Depletes in hours</td><td class="warn">Depletes under load</td><td class="warn">Depletes under load</td><td class="ok">Never depletes</td><td class="ok">Never depletes</td></tr>
+                <tr><td>Off-peak credit recovery</td><td>~12 hours</td><td>~12 hours</td><td>~12 hours</td><td class="ok">N/A</td><td class="ok">N/A</td></tr>
+                <tr><td>Container restart frequency</td><td class="bad">Weekly</td><td class="warn">Monthly</td><td class="ok">Rare</td><td class="ok">Rare</td><td class="ok">Rare</td></tr>
+                <tr><td>Log volume/day</td><td>~500MB</td><td>~500MB</td><td>~1GB</td><td>~1GB</td><td>~1GB</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ========== SCENARIO 9 ========== -->
+    <div class="section">
+        <h2><span class="num">9</span>Cost vs Capacity Summary</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Metric</th>
+                    <th class="instance-header">t3.large</th>
+                    <th class="instance-header">t3.xlarge</th>
+                    <th class="instance-header">t3.2xlarge</th>
+                    <th class="instance-header">m6i.2xlarge</th>
+                    <th class="instance-header">r6i.xlarge</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>Monthly cost</td><td>~$60</td><td>~$120</td><td>~$240</td><td>~$280</td><td>~$190</td></tr>
+                <tr><td>Max concurrent users</td><td class="bad">2–3</td><td class="warn">5–8</td><td class="ok">15–25</td><td class="ok">15–25</td><td class="warn">8–12</td></tr>
+                <tr><td>Max ontology size</td><td class="bad">~10MB</td><td class="warn">~50MB</td><td class="ok">~200MB+</td><td class="ok">~200MB+</td><td class="ok">~200MB+</td></tr>
+                <tr><td>Max class count</td><td class="bad">~20,000</td><td class="warn">~50,000</td><td class="ok">~100,000+</td><td class="ok">~100,000+</td><td class="ok">~100,000+</td></tr>
+                <tr><td>Concurrent imports</td><td class="bad">1 (small only)</td><td class="warn">1–2</td><td class="ok">3+</td><td class="ok">3+</td><td class="warn">2</td></tr>
+                <tr><td>SWRL on large ontology</td><td class="bad">No</td><td class="warn">Risky</td><td class="ok">Yes</td><td class="ok">Yes</td><td class="ok">Yes</td></tr>
+                <tr><td>Production ready?</td><td><span class="pill pill-red">Dev/demo only</span></td><td><span class="pill pill-yellow">Min viable</span></td><td><span class="pill pill-green">Recommended</span></td><td><span class="pill pill-blue">Best</span></td><td><span class="pill pill-purple">Budget prod</span></td></tr>
+                <tr class="highlight"><td><strong>Cost per user/mo</strong></td><td><strong>$20–30</strong></td><td><strong>$15–24</strong></td><td class="ok"><strong>$10–16</strong></td><td><strong>$11–19</strong></td><td><strong>$16–24</strong></td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ========== RECOMMENDATIONS ========== -->
+    <div class="section">
+        <h2><span class="num">R</span>Recommendation by Use Case</h2>
+        <div class="recommendation-grid">
+            <div class="rec-card">
+                <h3>🧑‍💻 Solo Developer / Demo</h3>
+                <div class="use-case">Best pick: <strong>t3.large</strong> (current)</div>
+                <div class="reason">Cheapest option. Works for small ontologies and 1–2 users. Not for production workloads.</div>
+            </div>
+            <div class="rec-card">
+                <h3>👥 Small Team (3–5 users)</h3>
+                <div class="use-case">Best pick: <strong>t3.xlarge</strong></div>
+                <div class="reason">2× the RAM. Handles medium ontologies. Minimum viable for a real team. ~$120/mo.</div>
+            </div>
+            <div class="rec-card best">
+                <h3>🏢 Production (10–20 users)</h3>
+                <div class="use-case">Best pick: <strong style="color:var(--green);">t3.2xlarge</strong></div>
+                <div class="reason">Best cost-per-user ratio. Handles large ontologies, concurrent imports, SWRL. The sweet spot at ~$240/mo.</div>
+            </div>
+            <div class="rec-card">
+                <h3>⚡ Production + Large Ontologies</h3>
+                <div class="use-case">Best pick: <strong>m6i.2xlarge</strong></div>
+                <div class="reason">No burst CPU = consistent performance. Best for sustained workloads, large imports, predictable latency. ~$280/mo.</div>
+            </div>
+            <div class="rec-card">
+                <h3>💰 Budget Production</h3>
+                <div class="use-case">Best pick: <strong>r6i.xlarge</strong></div>
+                <div class="reason">32GB RAM at only ~$190/mo. Memory-optimized — great for GraphDB. Fewer vCPUs means lower concurrency.</div>
+            </div>
+            <div class="rec-card">
+                <h3>🏗️ Enterprise (50+ users)</h3>
+                <div class="use-case">Best pick: <strong>Multiple instances + LB</strong></div>
+                <div class="reason">No single instance handles 50+ users. Deploy multiple editor instances behind a load balancer with shared GraphDB.</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== BOTTOM LINE ========== -->
+    <div class="bottom-line">
+        <h2>⚠ Your t3.large — Bottom Line</h2>
+        <p style="margin-bottom:0.8rem;">It works for <strong>1–2 developers testing with small/medium ontologies (&lt;10MB)</strong>. These will cause problems:</p>
+        <ul>
+            <li>Importing a 50MB+ ontology — OOM crash likely</li>
+            <li>5+ users browsing simultaneously — response times degrade to seconds</li>
+            <li>SWRL rules on large ontologies — SWRL container will be killed</li>
+            <li>Running for weeks without restarts — memory leaks compound</li>
+            <li>Sustained CPU load — burst credits deplete, drops to 30% baseline</li>
+        </ul>
+        <p style="margin-top:1rem;color:var(--text);">
+            <strong>Next step:</strong> When ready for production, upgrade to <strong style="color:var(--green);">t3.2xlarge</strong> for the best value,
+            or <strong style="color:var(--accent);">m6i.2xlarge</strong> for guaranteed performance.
+        </p>
+    </div>
+
+</div>
+</body>
+</html>

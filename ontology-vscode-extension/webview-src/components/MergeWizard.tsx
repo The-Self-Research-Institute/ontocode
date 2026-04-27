@@ -257,11 +257,15 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
         }
 
         const blob = await downloadRes.blob();
-        const uploadName = outputFileName || "merged-output.owl";
+        // Ensure filename has a valid OWL extension
+        let uploadName = outputFileName || "merged-output.owl";
+        if (!/\.(owl|rdf|ttl|n3)$/i.test(uploadName)) {
+          uploadName += ".owl";
+        }
         const uploadFormData = new FormData();
         uploadFormData.append("file", blob, uploadName);
         uploadFormData.append("fileName", uploadName);
-        uploadFormData.append("fileType", "owl");
+        uploadFormData.append("fileType", "application/rdf+xml");
 
         console.log("[MergeWizard] Uploading merged file to project:", initialProjectId, "as:", uploadName);
         await apiClient.post(`/api/projects/${initialProjectId}/files`, uploadFormData);

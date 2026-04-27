@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fuzzy Ontology Plugin - Testing Document</title>
+  <style>
+    :root { --primary: #2563eb; --primary-light: #dbeafe; --gray-50: #f9fafb; --gray-100: #f3f4f6; --gray-200: #e5e7eb; --gray-500: #6b7280; --gray-700: #374151; --gray-900: #111827; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; color: var(--gray-900); background: var(--gray-50); line-height: 1.6; }
+    .container { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
+    header { background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%); color: #fff; padding: 2.5rem 0; margin-bottom: 2rem; }
+    header h1 { font-size: 2rem; font-weight: 700; margin-bottom: 0.75rem; }
+    header .meta { display: flex; gap: 1.5rem; flex-wrap: wrap; font-size: 0.9rem; opacity: 0.9; }
+    header .meta span { background: rgba(255,255,255,0.15); padding: 0.2rem 0.65rem; border-radius: 4px; }
+    nav.toc { background: #fff; border: 1px solid var(--gray-200); border-radius: 8px; padding: 1.25rem 1.5rem; margin-bottom: 2rem; }
+    nav.toc h2 { font-size: 1.1rem; margin-bottom: 0.75rem; color: var(--gray-700); }
+    nav.toc ol { columns: 2; column-gap: 2rem; padding-left: 1.25rem; }
+    nav.toc li { margin-bottom: 0.35rem; }
+    nav.toc a { color: var(--primary); text-decoration: none; }
+    nav.toc a:hover { text-decoration: underline; }
+    section { background: #fff; border: 1px solid var(--gray-200); border-radius: 8px; padding: 1.75rem; margin-bottom: 1.5rem; }
+    h2 { font-size: 1.4rem; color: var(--primary); border-bottom: 2px solid var(--primary-light); padding-bottom: 0.5rem; margin-bottom: 1.25rem; }
+    h3 { font-size: 1.1rem; color: var(--gray-700); margin: 1.5rem 0 0.5rem; }
+    h3:first-of-type { margin-top: 0; }
+    .test-case { border: 1px solid var(--gray-200); border-radius: 6px; padding: 1.25rem; margin-bottom: 1rem; background: var(--gray-50); }
+    .test-case h3 { margin: 0 0 0.25rem; font-size: 1.05rem; color: var(--gray-900); }
+    .test-case .objective { font-style: italic; color: var(--gray-500); margin-bottom: 0.75rem; font-size: 0.92rem; }
+    .test-case h4 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--gray-500); margin: 0.75rem 0 0.35rem; }
+    .test-case ol, .test-case ul { padding-left: 1.25rem; margin-bottom: 0.5rem; }
+    .test-case li { margin-bottom: 0.25rem; font-size: 0.95rem; }
+    table { width: 100%; border-collapse: collapse; margin: 0.75rem 0; font-size: 0.92rem; }
+    th { background: var(--primary-light); color: var(--gray-700); font-weight: 600; text-align: left; padding: 0.6rem 0.75rem; border: 1px solid var(--gray-200); }
+    td { padding: 0.5rem 0.75rem; border: 1px solid var(--gray-200); }
+    tr:nth-child(even) td { background: var(--gray-50); }
+    code { background: #eef2ff; color: #4338ca; padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.88em; font-family: 'Fira Code', 'Cascadia Code', Consolas, monospace; }
+    pre { background: #1e293b; color: #e2e8f0; padding: 1rem; border-radius: 6px; overflow-x: auto; font-size: 0.88rem; margin: 0.5rem 0; }
+    pre code { background: none; color: inherit; padding: 0; }
+    .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 3px; font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+    .badge-p0 { background: #fee2e2; color: #991b1b; }
+    .badge-p1 { background: #fef3c7; color: #92400e; }
+    .badge-p2 { background: #e0e7ff; color: #3730a3; }
+    .badge-category { background: var(--gray-100); color: var(--gray-700); font-weight: 500; font-size: 0.78rem; padding: 0.15rem 0.5rem; border-radius: 3px; }
+    .summary-table td:nth-child(3), .summary-table td:nth-child(4) { text-align: center; }
+    .checkbox { width: 18px; height: 18px; cursor: pointer; }
+    @media (max-width: 640px) { nav.toc ol { columns: 1; } header .meta { flex-direction: column; gap: 0.5rem; } }
+    @media print { body { background: #fff; } .container { padding: 0; } section { border: 1px solid #ccc; break-inside: avoid; } }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="container">
+    <h1>Fuzzy Ontology Plugin &mdash; Testing Document</h1>
+    <div class="meta">
+      <span><strong>Plugin:</strong> fuzzy-ontology-plugin v1.0.0</span>
+      <span><strong>Categories:</strong> Ontology, Reasoning, Visualization</span>
+      <span><strong>Last Updated:</strong> April 2026</span>
+    </div>
+  </div>
+</header>
+
+<div class="container">
+
+  <nav class="toc">
+    <h2>Table of Contents</h2>
+    <ol>
+      <li><a href="#overview">Overview</a></li>
+      <li><a href="#test-environment-setup">Test Environment Setup</a></li>
+      <li><a href="#membership-function-tests">Membership Function Tests</a></li>
+      <li><a href="#fuzzy-reasoning-tests">Fuzzy Reasoning Tests</a></li>
+      <li><a href="#fuzzy-query-dsl-tests">Fuzzy Query DSL Tests</a></li>
+      <li><a href="#visualization-tests">Visualization Tests</a></li>
+      <li><a href="#integration-tests">Integration Tests</a></li>
+      <li><a href="#edge-case-tests">Edge Case Tests</a></li>
+    </ol>
+  </nav>
+
+  <!-- Overview -->
+  <section id="overview">
+    <h2>1. Overview</h2>
+    <p>The Fuzzy Ontology Plugin provides advanced fuzzy ontology support with membership degrees, fuzzy reasoning (T-norms, T-conorms), interactive visualization, and a custom query DSL &mdash; capabilities beyond standard Prot&eacute;g&eacute;.</p>
+    <h3>Key Components Under Test</h3>
+    <ul>
+      <li><code>FuzzyEditor.tsx</code> &mdash; Main editor with tabs for memberships, rules, queries</li>
+      <li><code>FuzzyEditorEnhanced.tsx</code> &mdash; Advanced features</li>
+      <li><code>MembershipFunctionCanvas.tsx</code> &mdash; Visual membership function rendering</li>
+    </ul>
+    <h3>Key Services Under Test</h3>
+    <ul>
+      <li><code>FuzzyLogic.ts</code> &mdash; Core fuzzy engine (T-norms, T-conorms, negation)</li>
+      <li><code>FuzzyOntology.ts</code> &mdash; Fuzzy concept management</li>
+      <li><code>FuzzyReasoner.ts</code> &mdash; Inference engine (subsumption, equivalence)</li>
+      <li>Fuzzy Query DSL &mdash; SQL-like fuzzy queries</li>
+      <li>Visualization modules &mdash; Heatmaps, hierarchy trees, radar charts</li>
+    </ul>
+    <h3>API Endpoints</h3>
+    <table>
+      <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>POST</td><td><code>/api/sparql/query/{projectId}</code></td><td>Execute fuzzy queries</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Test Environment Setup -->
+  <section id="test-environment-setup">
+    <h2>2. Test Environment Setup</h2>
+    <h3>Prerequisites</h3>
+    <ul>
+      <li>OntoCode platform running</li>
+      <li>GraphDB with ontology containing individuals with data properties</li>
+      <li>Sample fuzzy membership definitions</li>
+    </ul>
+    <h3>Test Domain: Healthcare Ontology</h3>
+    <p><strong>Classes:</strong> Patient, Diabetic, Hypertensive, HighRisk, Obese<br>
+    <strong>Data Properties:</strong> bloodPressure, glucoseLevel, bmi, age<br>
+    <strong>Individuals:</strong> Patient001&ndash;Patient010 with various health metrics</p>
+  </section>
+
+  <!-- Membership Function Tests -->
+  <section id="membership-function-tests">
+    <h2>3. Membership Function Tests</h2>
+
+    <div class="test-case">
+      <h3>TC-FZ-001: Triangular Membership Function</h3>
+      <p class="objective">Verify triangular membership function computes correct degrees</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Open Fuzzy Editor</li>
+        <li>Create a fuzzy class "Moderate" with triangular function (a=20, b=50, c=80)</li>
+        <li>Test with values: 20, 35, 50, 65, 80, 90</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <table>
+        <thead><tr><th>Input</th><th>Membership Degree</th></tr></thead>
+        <tbody>
+          <tr><td>20</td><td>0.0</td></tr>
+          <tr><td>35</td><td>0.5</td></tr>
+          <tr><td>50</td><td>1.0</td></tr>
+          <tr><td>65</td><td>0.5</td></tr>
+          <tr><td>80</td><td>0.0</td></tr>
+          <tr><td>90</td><td>0.0</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-002: Trapezoidal Membership Function</h3>
+      <p class="objective">Verify trapezoidal function with flat top</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Create fuzzy class "Normal" with trapezoidal function (a=60, b=80, c=120, d=140)</li>
+        <li>Test with values: 50, 70, 100, 130, 150</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <table>
+        <thead><tr><th>Input</th><th>Membership Degree</th></tr></thead>
+        <tbody>
+          <tr><td>50</td><td>0.0</td></tr>
+          <tr><td>70</td><td>0.5</td></tr>
+          <tr><td>100</td><td>1.0</td></tr>
+          <tr><td>130</td><td>0.5</td></tr>
+          <tr><td>150</td><td>0.0</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-003: Gaussian Membership Function</h3>
+      <p class="objective">Verify Gaussian bell curve membership</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Create fuzzy class with Gaussian function (mean=100, sigma=20)</li>
+        <li>Test with values: 60, 80, 100, 120, 140</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Value 100: degree = 1.0 (peak)</li>
+        <li>Values at &plusmn;1&sigma; (80, 120): degree &asymp; 0.607</li>
+        <li>Values at &plusmn;2&sigma; (60, 140): degree &asymp; 0.135</li>
+        <li>Symmetric distribution</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-004: Sigmoid Membership Function</h3>
+      <p class="objective">Verify sigmoid (S-shaped) transition</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Create fuzzy class "High" with sigmoid function (center=120, slope=0.1)</li>
+        <li>Test with values: 80, 100, 120, 140, 160</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Values well below center: degree &asymp; 0.0</li>
+        <li>Value at center (120): degree = 0.5</li>
+        <li>Values well above center: degree &asymp; 1.0</li>
+        <li>Smooth S-shaped transition</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-005: Bell-Shaped Membership Function</h3>
+      <p class="objective">Verify generalized bell function</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Create fuzzy class with bell function (a=20, b=4, c=100)</li>
+        <li>Verify bell shape centered at c=100</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Peak at c=100 with degree = 1.0</li>
+        <li>Width controlled by parameter a</li>
+        <li>Slope controlled by parameter b</li>
+        <li>Symmetric around center</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-006: Add Membership to Entity</h3>
+      <p class="objective">Verify assigning membership degree to an individual</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Select Membership tab in Fuzzy Editor</li>
+        <li>Enter entity: <code>Patient001</code></li>
+        <li>Select fuzzy class: <code>Diabetic</code></li>
+        <li>Set degree: <code>0.85</code></li>
+        <li>Save</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Membership saved successfully</li>
+        <li>Entity listed in membership table</li>
+        <li>Degree displayed correctly</li>
+        <li>Can edit/delete membership</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- Fuzzy Reasoning Tests -->
+  <section id="fuzzy-reasoning-tests">
+    <h2>4. Fuzzy Reasoning Tests</h2>
+
+    <div class="test-case">
+      <h3>TC-FZ-007: T-Norm &mdash; Product (Fuzzy AND)</h3>
+      <p class="objective">Verify Product T-norm computation</p>
+      <p><strong>Test Data:</strong> Patient with Diabetic(0.8) AND Hypertensive(0.6)</p>
+      <p><strong>Expected Result:</strong> 0.8 &times; 0.6 = <strong>0.48</strong></p>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-008: T-Norm &mdash; G&ouml;del/Min (Fuzzy AND)</h3>
+      <p class="objective">Verify G&ouml;del (minimum) T-norm</p>
+      <p><strong>Test Data:</strong> Patient with Diabetic(0.8) AND Hypertensive(0.6)</p>
+      <p><strong>Expected Result:</strong> min(0.8, 0.6) = <strong>0.6</strong></p>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-009: T-Norm &mdash; &#321;ukasiewicz (Fuzzy AND)</h3>
+      <p class="objective">Verify &#321;ukasiewicz T-norm</p>
+      <p><strong>Test Data:</strong> Patient with Diabetic(0.8) AND Hypertensive(0.6)</p>
+      <p><strong>Expected Result:</strong> max(0.8 + 0.6 - 1, 0) = <strong>0.4</strong></p>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-010: T-CoNorm &mdash; Probabilistic (Fuzzy OR)</h3>
+      <p class="objective">Verify probabilistic T-conorm</p>
+      <p><strong>Test Data:</strong> Patient with Diabetic(0.8) OR Hypertensive(0.6)</p>
+      <p><strong>Expected Result:</strong> 0.8 + 0.6 - (0.8 &times; 0.6) = <strong>0.92</strong></p>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-011: T-CoNorm &mdash; G&ouml;del/Max (Fuzzy OR)</h3>
+      <p class="objective">Verify G&ouml;del (maximum) T-conorm</p>
+      <p><strong>Test Data:</strong> Patient with Diabetic(0.8) OR Hypertensive(0.6)</p>
+      <p><strong>Expected Result:</strong> max(0.8, 0.6) = <strong>0.8</strong></p>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-012: T-CoNorm &mdash; &#321;ukasiewicz (Fuzzy OR)</h3>
+      <p class="objective">Verify &#321;ukasiewicz T-conorm</p>
+      <p><strong>Test Data:</strong> Patient with Diabetic(0.8) OR Hypertensive(0.6)</p>
+      <p><strong>Expected Result:</strong> min(0.8 + 0.6, 1) = <strong>1.0</strong></p>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-013: Fuzzy Negation &mdash; Standard</h3>
+      <p class="objective">Verify standard fuzzy negation (1 - x)</p>
+      <p><strong>Test Data:</strong> Diabetic(0.8)</p>
+      <p><strong>Expected Result:</strong> NOT Diabetic = 1 - 0.8 = <strong>0.2</strong></p>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-014: Fuzzy Negation &mdash; Sugeno</h3>
+      <p class="objective">Verify Sugeno negation</p>
+      <p><strong>Test Data:</strong> Degree 0.8, parameter &lambda;=2</p>
+      <p><strong>Expected Result:</strong> (1 - 0.8) / (1 + 2 &times; 0.8) = 0.2 / 2.6 &asymp; <strong>0.077</strong></p>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-015: Subsumption Checking</h3>
+      <p class="objective">Verify fuzzy subsumption with degrees</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Define fuzzy concepts: Diabetic &#8849;<sub>d</sub> Chronic (with degree d)</li>
+        <li>Call <code>checkSubsumption("Diabetic", "Chronic")</code></li>
+        <li>Verify subsumption degree returned</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Subsumption relation detected</li>
+        <li>Degree value between 0 and 1</li>
+        <li>Reasoning trace available</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-016: Equivalence Checking</h3>
+      <p class="objective">Verify fuzzy concept equivalence</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Define two concepts with overlapping membership</li>
+        <li>Call <code>checkEquivalence("ConceptA", "ConceptB")</code></li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Returns equivalence degree</li>
+        <li>Degree = 1.0 for truly equivalent concepts</li>
+        <li>Degree &lt; 1.0 for partially overlapping concepts</li>
+        <li>Reasoning trace shows steps</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-017: Alpha-Cut Reasoning</h3>
+      <p class="objective">Verify alpha-cut based filtering</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Set alpha threshold to 0.7</li>
+        <li>Query fuzzy class "Diabetic"</li>
+        <li>Only individuals with membership &ge; 0.7 returned</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Individuals below alpha threshold excluded</li>
+        <li>Those at or above threshold included</li>
+        <li>Different alpha values produce different result sets</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-018: Fuzzy Rule Inference</h3>
+      <p class="objective">Verify fuzzy rule creates new memberships</p>
+      <p><strong>Rule:</strong> IF Diabetic(x) &ge; 0.7 AND BMI(x) &gt; 30 THEN HighRisk(x) = min(Diabetic(x), Obese(x))</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Create rule in Fuzzy Editor rules tab</li>
+        <li>Define condition and action</li>
+        <li>Execute rule</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Matching individuals get HighRisk membership</li>
+        <li>Degree computed from rule formula</li>
+        <li>New memberships visible in membership table</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- Fuzzy Query DSL Tests -->
+  <section id="fuzzy-query-dsl-tests">
+    <h2>5. Fuzzy Query DSL Tests</h2>
+
+    <div class="test-case">
+      <h3>TC-FZ-019: Basic Membership Query</h3>
+      <h4>Query</h4>
+      <pre><code>FIND individuals WHERE memberOf(Diabetic) >= 0.8</code></pre>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Only individuals with Diabetic membership &ge; 0.8 returned</li>
+        <li>Results show entity IRI and membership degree</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-020: Compound Condition Query (AND)</h3>
+      <h4>Query</h4>
+      <pre><code>FIND individuals WHERE memberOf(Diabetic AND Hypertensive) > 0.6</code></pre>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Fuzzy AND (T-norm) applied between memberships</li>
+        <li>Only combined degree &gt; 0.6 returned</li>
+        <li>T-norm type respects current configuration</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-021: Top-N Query with Ordering</h3>
+      <h4>Query</h4>
+      <pre><code>SELECT TOP 10 FROM Patient ORDER BY memberOf(HighRisk) DESC</code></pre>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Returns maximum 10 patients</li>
+        <li>Ordered by HighRisk membership degree descending</li>
+        <li>Highest risk patients listed first</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-022: Existential Query</h3>
+      <h4>Query</h4>
+      <pre><code>FIND individuals WHERE exists(hasDiagnosis, DiabetesMellitus) > 0.7</code></pre>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Checks existence of relationship with fuzzy degree</li>
+        <li>Returns individuals matching threshold</li>
+        <li>Correct handling of object property relationships</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-023: Query Error Handling</h3>
+      <p class="objective">Verify graceful handling of malformed queries</p>
+      <h4>Test Queries</h4>
+      <pre><code>FIND WHERE memberOf()
+FIND individuals WHERE memberOf(NonExistentClass) > 0.5
+SELECT TOP -5 FROM Patient</code></pre>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Syntax error message for malformed queries</li>
+        <li>"Class not found" for unknown classes</li>
+        <li>Validation error for invalid parameters</li>
+        <li>No crashes or unhandled exceptions</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-024: Query Output Formats</h3>
+      <p class="objective">Verify query results in all supported formats</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Run a valid fuzzy query</li>
+        <li>Switch output format: Table &rarr; JSON &rarr; CSV &rarr; HTML</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li><strong>Table:</strong> Sortable columns with entity, class, degree</li>
+        <li><strong>JSON:</strong> Well-formed JSON with all result fields</li>
+        <li><strong>CSV:</strong> Downloadable CSV with headers</li>
+        <li><strong>HTML:</strong> Rendered HTML table</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- Visualization Tests -->
+  <section id="visualization-tests">
+    <h2>6. Visualization Tests</h2>
+
+    <div class="test-case">
+      <h3>TC-FZ-025: Membership Function Canvas</h3>
+      <p class="objective">Verify visual rendering of membership functions</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Open MembershipFunctionCanvas</li>
+        <li>Plot triangular, trapezoidal, Gaussian functions</li>
+        <li>Overlay multiple functions</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>X-axis: input domain range</li>
+        <li>Y-axis: membership degree (0 to 1)</li>
+        <li>Lines/curves match mathematical definitions</li>
+        <li>Multiple functions distinguishable by color</li>
+        <li>Interactive tooltips showing exact values</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-026: Heatmap Visualization</h3>
+      <p class="objective">Verify membership heatmap display</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Select Heatmap view</li>
+        <li>Rows: individuals, Columns: fuzzy classes</li>
+        <li>Cell color intensity = membership degree</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Color gradient from white (0.0) to dark (1.0)</li>
+        <li>Hover shows exact degree value</li>
+        <li>Rows/columns sortable</li>
+        <li>Legend displayed</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-027: Hierarchy Tree Visualization</h3>
+      <p class="objective">Verify fuzzy class hierarchy tree</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Select Hierarchy Tree view</li>
+        <li>Verify parent-child relationships displayed</li>
+        <li>Verify subsumption degrees on edges</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Tree structure matches fuzzy concept hierarchy</li>
+        <li>Edge labels show subsumption degrees</li>
+        <li>Expandable/collapsible nodes</li>
+        <li>Node color encodes membership strength</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-028: Radar Chart Visualization</h3>
+      <p class="objective">Verify radar chart for individual's membership profile</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Select an individual</li>
+        <li>Open Radar Chart view</li>
+        <li>Each axis = fuzzy class membership</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Axes labeled with fuzzy class names</li>
+        <li>Polygon shape shows membership profile</li>
+        <li>Values range 0.0 to 1.0</li>
+        <li>Multiple individuals can overlay for comparison</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- Integration Tests -->
+  <section id="integration-tests">
+    <h2>7. Integration Tests</h2>
+
+    <div class="test-case">
+      <h3>TC-FZ-029: Fuzzy &harr; Ontology Editor Sync</h3>
+      <p class="objective">Verify fuzzy memberships persist across sessions</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Create fuzzy memberships for several individuals</li>
+        <li>Save and close the editor</li>
+        <li>Reopen the ontology</li>
+        <li>Open Fuzzy Editor</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>All memberships restored</li>
+        <li>Degrees unchanged</li>
+        <li>Rules preserved</li>
+      </ul>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-030: Fuzzy &harr; Reasoner Integration</h3>
+      <p class="objective">Verify standard reasoner can coexist with fuzzy reasoning</p>
+      <h4>Steps</h4>
+      <ol>
+        <li>Run fuzzy reasoning</li>
+        <li>Run standard OWL reasoner (HermiT)</li>
+        <li>Verify no conflicts</li>
+      </ol>
+      <h4>Expected Results</h4>
+      <ul>
+        <li>Fuzzy results preserved after standard reasoning</li>
+        <li>Standard inferences don't override fuzzy membership</li>
+        <li>Both result sets accessible</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- Edge Case Tests -->
+  <section id="edge-case-tests">
+    <h2>8. Edge Case Tests</h2>
+
+    <div class="test-case">
+      <h3>TC-FZ-031: Boundary Membership Values</h3>
+      <p class="objective">Test degrees of exactly 0.0, 0.5, 1.0</p>
+      <p><strong>Expected:</strong> All stored and displayed correctly without rounding errors</p>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-032: Empty Fuzzy Class</h3>
+      <p class="objective">Query a fuzzy class with no members</p>
+      <p><strong>Expected:</strong> Empty result set, no errors</p>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-033: Conflicting Memberships</h3>
+      <p class="objective">Assign same individual to contradictory classes (Hot=0.9, Cold=0.8)</p>
+      <p><strong>Expected:</strong> Both memberships stored; flagged as potential inconsistency</p>
+    </div>
+
+    <div class="test-case">
+      <h3>TC-FZ-034: Very Small Degrees</h3>
+      <p class="objective">Membership degree of 0.001</p>
+      <p><strong>Expected:</strong> Stored accurately, displayed in scientific notation if needed</p>
+    </div>
+  </section>
+
+  <!-- Test Summary Matrix -->
+  <section id="test-summary">
+    <h2>Test Summary Matrix</h2>
+    <table class="summary-table">
+      <thead><tr><th>Test ID</th><th>Category</th><th>Priority</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>TC-FZ-001</td><td><span class="badge-category">Membership Functions</span></td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-002</td><td><span class="badge-category">Membership Functions</span></td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-003</td><td><span class="badge-category">Membership Functions</span></td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-004</td><td><span class="badge-category">Membership Functions</span></td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-005</td><td><span class="badge-category">Membership Functions</span></td><td><span class="badge badge-p2">P2</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-006</td><td><span class="badge-category">Membership CRUD</span></td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-007</td><td><span class="badge-category">T-Norm</span></td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-008</td><td><span class="badge-category">T-Norm</span></td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-009</td><td><span class="badge-category">T-Norm</span></td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-010</td><td><span class="badge-category">T-CoNorm</span></td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-011</td><td><span class="badge-category">T-CoNorm</span></td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-012</td><td><span class="badge-category">T-CoNorm</span></td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-013</td><td><span class="badge-category">Negation</span></td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-014</td><td><span class="badge-category">Negation</span></td><td><span class="badge badge-p2">P2</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-015</td><td><span class="badge-category">Reasoning</span></td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-016</td><td><span class="badge-category">Reasoning</span></td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-017</td><td><span class="badge-category">Reasoning</span></td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-018</td><td><span class="badge-category">Reasoning</span></td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-019</td><td><span class="badge-category">Query DSL</span></td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-020</td><td><span class="badge-category">Query DSL</span></td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-021</td><td><span class="badge-category">Query DSL</span></td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-022</td><td><span class="badge-category">Query DSL</span></td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-023</td><td><span class="badge-category">Query Errors</span></td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-024</td><td><span class="badge-category">Query Output</span></td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-025</td><td><span class="badge-category">Visualization</span></td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-026</td><td><span class="badge-category">Visualization</span></td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-027</td><td><span class="badge-category">Visualization</span></td><td><span class="badge badge-p2">P2</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-028</td><td><span class="badge-category">Visualization</span></td><td><span class="badge badge-p2">P2</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-029</td><td><span class="badge-category">Integration</span></td><td><span class="badge badge-p0">P0</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-030</td><td><span class="badge-category">Integration</span></td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-031</td><td><span class="badge-category">Edge Cases</span></td><td><span class="badge badge-p1">P1</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-032</td><td><span class="badge-category">Edge Cases</span></td><td><span class="badge badge-p2">P2</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-033</td><td><span class="badge-category">Edge Cases</span></td><td><span class="badge badge-p2">P2</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+        <tr><td>TC-FZ-034</td><td><span class="badge-category">Edge Cases</span></td><td><span class="badge badge-p2">P2</span></td><td><input type="checkbox" class="checkbox"></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+</div>
+</body>
+</html>

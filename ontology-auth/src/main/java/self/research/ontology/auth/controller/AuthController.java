@@ -585,4 +585,58 @@ public class AuthController {
         }
         return xfHeader.split(",")[0];
     }
+
+    /**
+     * Get last opened project/file context for the authenticated user
+     */
+    @GetMapping("/last-opened")
+    public ResponseEntity<?> getLastOpened(HttpServletRequest request) {
+        try {
+            String authHeader = request.getHeader("Authorization");
+            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+            }
+            String token = authHeader.substring(7);
+            String username = jwtUtil.extractUsername(token);
+            Optional<User> userOpt = userRepository.findByUsername(username);
+            if (userOpt.isEmpty()) return ResponseEntity.notFound().build();
+            User user = userOpt.get();
+            Map<String, Object> result = new HashMap<>();
+            result.put("projectId", user.getLastOpenedProjectId());
+            result.put("projectName", user.getLastOpenedProjectName());
+            result.put("fileId", user.getLastOpenedFileId());
+            result.put("fileName", user.getLastOpenedFileName());
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            log.error("Failed to get last-opened context", e);
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * Save last opened project/file context for the authenticated user
+     */
+    @PutMapping("/last-opened")
+    public ResponseEntity<?> saveLastOpened(@RequestBody Map<String, String> body, HttpServletRequest request) {
+        try {
+            String authHeader = request.getHeader("Authorization");
+            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+            }
+            String token = authHeader.substring(7);
+            String username = jwtUtil.extractUsername(token);
+            Optional<User> userOpt = userRepository.findByUsername(username);
+            if (userOpt.isEmpty()) return ResponseEntity.notFound().build();
+            User user = userOpt.get();
+            user.setLastOpenedProjectId(body.get("projectId"));
+            user.setLastOpenedProjectName(body.get("projectName"));
+            user.setLastOpenedFileId(body.get("fileId"));
+            user.setLastOpenedFileName(body.get("fileName"));
+            userRepository.save(user);
+            return ResponseEntity.ok(Map.of("status", "saved"));
+        } catch (Exception e) {
+            log.error("Failed to save last-opened context", e);
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
 }

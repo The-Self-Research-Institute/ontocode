@@ -43,6 +43,18 @@ public class OntologyQueryController {
         }
     }
 
+    @GetMapping("/classes/all/{projectId:.+}")
+    public ResponseEntity<?> allClasses(@PathVariable String projectId,
+                                        @RequestParam(defaultValue = "10000") int limit) {
+        try {
+            return ResponseEntity.ok(Map.of("success", true, "classes",
+                    queryService.allClasses(projectId, limit)));
+        } catch (Exception e) {
+            return ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("success", false, "error", "Query timed out or failed: " + e.getMessage()));
+        }
+    }
+
     @GetMapping("/classes/children/{projectId:.+}")
     public ResponseEntity<?> children(@PathVariable String projectId,
                                       @RequestParam String parentIri,
@@ -159,6 +171,18 @@ public class OntologyQueryController {
                                          @RequestParam String classIri) {
         return ResponseEntity.ok(Map.of("success", true, "data",
                 queryService.classDetails(projectId, classIri)));
+    }
+
+    /**
+     * Fast-path: annotations-only class details. Runs a single SPARQL query
+     * (typically <100ms). UI calls this first to render the Annotations panel
+     * immediately, then fires the full /classes/details call in the background.
+     */
+    @GetMapping("/classes/annotations/{projectId}")
+    public ResponseEntity<?> classAnnotations(@PathVariable String projectId,
+                                              @RequestParam String classIri) {
+        return ResponseEntity.ok(Map.of("success", true, "data",
+                queryService.classAnnotations(projectId, classIri)));
     }
 
     @GetMapping("/classes/instances/{projectId}")

@@ -18,8 +18,12 @@ import self.research.ontology.owlEditor.service.GraphGeneratingService.Graph;
 import self.research.ontology.owlEditor.service.GraphDBDatasetService;
 
 import java.io.InputStream;
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.stream.Collectors;
+
+import org.eclipse.rdf4j.rio.RDFFormat;
 
 /**
  * REST controller for ontology visualization operations.
@@ -43,13 +47,30 @@ public class VisualizationController {
     private final Map<String, OWLOntology> ontologyCache = new HashMap<>();
 
     /**
-     * Load ontology from GridFS
+     * Load ontology from GraphDB (current/live data).
+     * Falls back to GridFS if GraphDB export fails.
      */
     private OWLOntology loadOntology(String projectId) throws Exception {
         if (ontologyCache.containsKey(projectId)) {
             return ontologyCache.get(projectId);
         }
 
+        // Primary: load from GraphDB (has the latest mutations)
+        try {
+            String rdfData = graphDBService.exportDataset(projectId, RDFFormat.RDFXML);
+            if (rdfData != null && !rdfData.isBlank()) {
+                OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+                OWLOntology ontology = manager.loadOntologyFromOntologyDocument(
+                        new ByteArrayInputStream(rdfData.getBytes(StandardCharsets.UTF_8)));
+                ontologyCache.put(projectId, ontology);
+                log.info("Loaded ontology from GraphDB for project: {} ({} axioms)", projectId, ontology.getAxiomCount());
+                return ontology;
+            }
+        } catch (Exception e) {
+            log.warn("Failed to load ontology from GraphDB for project {}, falling back to GridFS: {}", projectId, e.getMessage());
+        }
+
+        // Fallback: load from GridFS (original upload)
         GridFSFile file = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(projectId)));
         if (file == null) {
             throw new RuntimeException("Ontology file not found for project: " + projectId);
@@ -60,8 +81,26 @@ public class VisualizationController {
             OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
             OWLOntology ontology = manager.loadOntologyFromOntologyDocument(inputStream);
             ontologyCache.put(projectId, ontology);
+            log.info("Loaded ontology from GridFS for project: {}", projectId);
             return ontology;
         }
+    }
+
+    /**
+     * Clear the in-memory ontology cache for a project.
+     * Called after mutations to ensure fresh data on next graph load.
+     */
+    public void clearCache(String projectId) {
+        ontologyCache.remove(projectId);
+        log.info("Cleared visualization cache for project: {}", projectId);
+    }
+
+    /**
+     * Clear all visualization caches.
+     */
+    public void clearAllCaches() {
+        ontologyCache.clear();
+        log.info("Cleared all visualization caches");
     }
 
     /**
@@ -72,10 +111,15 @@ public class VisualizationController {
     @GetMapping({"/{projectId}/visualization/graph", "/{projectId}/graph"})
     public ResponseEntity<Map<String, Object>> getGraph(
             @PathVariable String projectId,
-            @RequestParam(defaultValue = "false") boolean includeIndividuals
+            @RequestParam(defaultValue = "false") boolean includeIndividuals,
+            @RequestParam(defaultValue = "false") boolean forceReload
     ) {
         try {
-            log.info("Generating graph for project: {}", projectId);
+            log.info("Generating graph for project: {} (forceReload={})", projectId, forceReload);
+            
+            if (forceReload) {
+                ontologyCache.remove(projectId);
+            }
             
             OWLOntology ontology = loadOntology(projectId);
             Graph graph = graphService.generateGraph(ontology, includeIndividuals);

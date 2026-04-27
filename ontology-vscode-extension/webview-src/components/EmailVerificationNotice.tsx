@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useAuth } from "../custom-hook/useAuth";
-import { Loader2, Mail, ArrowLeft, RefreshCw } from "lucide-react";
+import { Loader2, Mail, ArrowLeft, RefreshCw, Bug } from "lucide-react";
+import ReportIssueModal from "./ReportIssueModal";
 
 interface EmailVerificationNoticeProps {
   email: string;
@@ -11,6 +12,7 @@ const EmailVerificationNotice = ({ email, onBackToLogin }: EmailVerificationNoti
   const [isResending, setIsResending] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
   const { resendVerification } = useAuth();
 
   const handleResend = async () => {
@@ -85,6 +87,20 @@ const EmailVerificationNotice = ({ email, onBackToLogin }: EmailVerificationNoti
           Back to Sign In
         </button>
       </div>
+
+      {/* Report Issue floating button */}
+      <button
+        onClick={() => setIsReportIssueModalOpen(true)}
+        className="fixed bottom-4 right-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm z-50"
+        title="Report an issue"
+      >
+        <Bug size={14} />
+        Report Issue
+      </button>
+
+      {isReportIssueModalOpen && (
+        <ReportIssueModal onClose={() => setIsReportIssueModalOpen(false)} />
+      )}
     </div>
   );
 };

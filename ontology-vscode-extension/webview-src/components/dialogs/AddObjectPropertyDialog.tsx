@@ -59,7 +59,7 @@ const AddObjectPropertyDialog: React.FC<AddObjectPropertyDialogProps> = ({
             <p className="text-xs uppercase tracking-wide text-blue-700 font-semibold mb-1">Parent property</p>
             <p className="text-sm font-mono text-blue-900">{parentLabel}</p>
             <p className="text-[11px] text-blue-700 mt-1">
-              New properties inherit placement from their parent, matching the Protege workflow.
+              New properties inherit placement from their parent in the hierarchy.
             </p>
           </div>
           <div>
@@ -84,7 +84,7 @@ const AddObjectPropertyDialog: React.FC<AddObjectPropertyDialogProps> = ({
             />
           </div>
           <p className="text-[11px] text-gray-500">
-            Tip: Keep names short and descriptive. You can edit domain/range and characteristics after creation just like in Protege.
+            Tip: Keep names short and descriptive. You can edit domain/range and characteristics after creation.
           </p>
         </div>
         <div className="mt-6 flex justify-end gap-3">

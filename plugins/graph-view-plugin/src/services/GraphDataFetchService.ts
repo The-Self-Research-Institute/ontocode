@@ -80,6 +80,31 @@ export class GraphDataFetchService {
         this.processClassNode(cls, nodes, edges, processedClasses);
       }
 
+      // CRITICAL FIX: Re-parent orphan classes under owl:Thing so the sidebar
+      // hierarchy tree renders properly even when the backend bulk endpoint
+      // omits subClassOf for top-level classes. Without this, every class
+      // appears as a root and the sidebar shows a flat list.
+      const classNodeIds = nodes.filter(n => n.type === 'class' && n.id !== owlThingIri).map(n => n.id);
+      const childIds = new Set(
+        edges.filter(e => e.type === 'subClassOf').map(e => e.from)
+      );
+      let orphansAdopted = 0;
+      for (const classId of classNodeIds) {
+        if (!childIds.has(classId)) {
+          edges.push({
+            id: `${classId}-subClassOf-${owlThingIri}`,
+            from: classId,
+            to: owlThingIri,
+            type: 'subClassOf',
+            label: 'subClassOf'
+          });
+          orphansAdopted++;
+        }
+      }
+      if (orphansAdopted > 0) {
+        console.log(`[GraphDataFetchService] 🌳 Adopted ${orphansAdopted} orphan classes under owl:Thing`);
+      }
+
       // Process individuals
       this.processIndividuals(individualsData, nodes, edges);
 
@@ -175,9 +200,9 @@ export class GraphDataFetchService {
       console.warn('[GraphDataFetchService] ⚠️ Bulk fetch error, falling back:', error);
     }
     
-    // Fallback: fetch only top-level classes
+    // Fallback: fetch top-level classes and then recursively fetch their children
     const topLevelUrl = `${this.apiBaseUrl}/api/ontology/classes/top-level/${this.ontologyId}?limit=10000`;
-    console.log('[GraphDataFetchService] 📦 Falling back to top-level fetch from:', topLevelUrl);
+    console.log('[GraphDataFetchService] 📦 Falling back to top-level + recursive children fetch');
     
     try {
       const response = await fetch(topLevelUrl, { headers: this.headers });
@@ -189,10 +214,39 @@ export class GraphDataFetchService {
       
       const data = await response.json();
       const topLevelClasses = data.success && data.classes ? data.classes : [];
-      console.log('[GraphDataFetchService] ✅ Top-level classes extracted:', topLevelClasses.length);
-      console.log('[GraphDataFetchService] ⚠️ NOTE: Showing top-level classes only (bulk endpoint unavailable)');
+      console.log('[GraphDataFetchService] ✅ Top-level classes:', topLevelClasses.length);
       
-      return topLevelClasses;
+      // Recursively fetch children for each top-level class (unlimited depth with cycle protection)
+      const allClasses = [...topLevelClasses];
+      const visited = new Set<string>();
+      const fetchChildren = async (parentIri: string): Promise<any[]> => {
+        if (visited.has(parentIri)) return [];
+        visited.add(parentIri);
+        try {
+          const childUrl = `${this.apiBaseUrl}/api/ontology/classes/children/${this.ontologyId}?parentIri=${encodeURIComponent(parentIri)}&limit=1000`;
+          const childResp = await fetch(childUrl, { headers: this.headers });
+          if (!childResp.ok) return [];
+          const childData = await childResp.json();
+          const children = Array.isArray(childData) ? childData : (childData.children || childData.classes || []);
+          for (const child of children) {
+            child.parent = parentIri;
+          }
+          const grandChildren = await Promise.all(
+            children.map((c: any) => fetchChildren(c.id || c.iri))
+          );
+          return [...children, ...grandChildren.flat()];
+        } catch {
+          return [];
+        }
+      };
+
+      const childResults = await Promise.all(
+        topLevelClasses.map((cls: any) => fetchChildren(cls.id || cls.iri))
+      );
+      allClasses.push(...childResults.flat());
+      
+      console.log('[GraphDataFetchService] ✅ Total classes (with children):', allClasses.length);
+      return allClasses;
     } catch (error) {
       console.error('[GraphDataFetchService] Error fetching classes:', error);
       return [];
@@ -407,7 +461,13 @@ export class GraphDataFetchService {
 
     // Add subClassOf edges
     const superClasses = classData.subClassOf || classData.superClasses || classData.parents || [];
-    for (const parent of superClasses) {
+    // Also accept singular parent / parentIri (used by recursive fallback fetcher)
+    const singleParent = classData.parent || classData.parentIri || classData.parentIRI;
+    const allParents: string[] = Array.isArray(superClasses) ? [...superClasses] : [];
+    if (singleParent && !allParents.includes(singleParent)) {
+      allParents.push(singleParent);
+    }
+    for (const parent of allParents) {
       edges.push({
         id: `${classIri}-subClassOf-${parent}`,
         from: classIri,
@@ -585,12 +645,32 @@ export class GraphDataFetchService {
       const propIri = prop.iri || prop.propertyIRI || prop.id || prop.uri;
       if (!propIri) continue;
       const propLabel = prop.label || propIri?.split('#').pop()?.split('/').pop() || 'ObjectProperty';
-      
+
+      // Capture all OWL property characteristics on the node for the details panel
+      const propCharacteristics = prop.characteristics || [];
+      const hasNodeChar = (...names: string[]) => names.some((n: string) => propCharacteristics.includes(n));
+      const nodeMetadata = {
+        propertyType: 'objectProperty',
+        characteristics: propCharacteristics,
+        functional: hasNodeChar('Functional', 'FUNCTIONAL'),
+        inverseFunctional: hasNodeChar('InverseFunctional', 'INVERSE_FUNCTIONAL', 'InverseFunctionalProperty'),
+        symmetric: hasNodeChar('Symmetric', 'SYMMETRIC', 'SymmetricProperty'),
+        asymmetric: hasNodeChar('Asymmetric', 'ASYMMETRIC', 'AsymmetricProperty'),
+        transitive: hasNodeChar('Transitive', 'TRANSITIVE', 'TransitiveProperty'),
+        reflexive: hasNodeChar('Reflexive', 'REFLEXIVE', 'ReflexiveProperty'),
+        irreflexive: hasNodeChar('Irreflexive', 'IRREFLEXIVE', 'IrreflexiveProperty'),
+        domains: prop.domains || [],
+        ranges: prop.ranges || [],
+        inverseOf: prop.inverseOf || null,
+        subPropertyOf: prop.subPropertyOf || []
+      };
+
       nodes.push({
         id: propIri,
         label: propLabel,
         type: 'objectProperty',
-        uri: propIri
+        uri: propIri,
+        metadata: nodeMetadata
       });
 
       const domains = prop.domains && Array.isArray(prop.domains) ? prop.domains : [];
@@ -631,20 +711,32 @@ export class GraphDataFetchService {
             
             // Extract characteristics for WebVOWL notation
             const characteristics = prop.characteristics || [];
-            const isFunctional = characteristics.includes('Functional') || characteristics.includes('FUNCTIONAL');
-            const isInverseFunctional = characteristics.includes('InverseFunctional') || characteristics.includes('INVERSE_FUNCTIONAL');
-            
+            const hasChar = (...names: string[]) => names.some(n => characteristics.includes(n));
+            const isFunctional = hasChar('Functional', 'FUNCTIONAL');
+            const isInverseFunctional = hasChar('InverseFunctional', 'INVERSE_FUNCTIONAL', 'InverseFunctionalProperty');
+            const isSymmetric = hasChar('Symmetric', 'SYMMETRIC', 'SymmetricProperty');
+            const isAsymmetric = hasChar('Asymmetric', 'ASYMMETRIC', 'AsymmetricProperty');
+            const isTransitive = hasChar('Transitive', 'TRANSITIVE', 'TransitiveProperty');
+            const isReflexive = hasChar('Reflexive', 'REFLEXIVE', 'ReflexiveProperty');
+            const isIrreflexive = hasChar('Irreflexive', 'IRREFLEXIVE', 'IrreflexiveProperty');
+
             edges.push({
               id: edgeId,
               from: domain,
               to: range,
               type: 'propertyRelation',
               label: propLabel, // Use the property label directly
+              bidirectional: isSymmetric, // symmetric properties are visually bidirectional
               metadata: {
                 propertyIri: propIri,
                 propertyType: 'objectProperty',
                 functional: isFunctional,
                 inverseFunctional: isInverseFunctional,
+                symmetric: isSymmetric,
+                asymmetric: isAsymmetric,
+                transitive: isTransitive,
+                reflexive: isReflexive,
+                irreflexive: isIrreflexive,
                 characteristics: characteristics
               }
             });
@@ -694,12 +786,24 @@ export class GraphDataFetchService {
       const propIri = prop.iri || prop.propertyIRI || prop.id || prop.uri;
       if (!propIri) continue;
       const propLabel = prop.label || propIri?.split('#').pop()?.split('/').pop() || 'DataProperty';
-      
+
+      // Capture data-property characteristics on the node for the details panel
+      const dpCharacteristics = prop.characteristics || [];
+      const dpHasChar = (...names: string[]) => names.some((n: string) => dpCharacteristics.includes(n));
+
       nodes.push({
         id: propIri,
         label: propLabel,
         type: 'dataProperty',
-        uri: propIri
+        uri: propIri,
+        metadata: {
+          propertyType: 'dataProperty',
+          characteristics: dpCharacteristics,
+          functional: dpHasChar('Functional', 'FUNCTIONAL'),
+          domains: prop.domains || [],
+          ranges: prop.ranges || [],
+          subPropertyOf: prop.subPropertyOf || []
+        }
       });
 
       const domains = prop.domains && Array.isArray(prop.domains) ? prop.domains : [];

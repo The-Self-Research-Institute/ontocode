@@ -14,6 +14,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import jakarta.servlet.http.HttpServletResponse;
 import self.research.ontology.auth.model.FileMetadata;
 import self.research.ontology.auth.model.Project;
 import self.research.ontology.auth.model.User;
@@ -24,7 +25,11 @@ import self.research.ontology.auth.service.ProjectService;
 import self.research.ontology.auth.util.JwtUtil;
 import jakarta.servlet.http.HttpServletRequest;
 
+import java.io.FilterOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -229,7 +234,8 @@ public class ProjectController {
             }
             
             if ("all".equals(request.shareWith)) {
-                // Add all active workspace members as editors (except owner and workspace owner, skip pending)
+                // Add all active workspace members as viewers (matching UI: "All members will have view access")
+                // Workspace owner is already added as ADMIN above; skip project creator and ws owner
                 if (workspaceOpt.isPresent()) {
                     self.research.ontology.auth.model.Workspace workspace = workspaceOpt.get();
                     for (self.research.ontology.auth.model.Workspace.WorkspaceMember member : workspace.getMembers()) {
@@ -237,18 +243,21 @@ public class ProjectController {
                                 && !member.getUserId().equals(user.getId())
                                 && !member.getUserId().equals(workspace.getOwnerId())
                                 && member.getStatus() == self.research.ontology.auth.model.Workspace.MemberStatus.ACTIVE) {
-                            project.addMember(member.getUserId(), member.getUsername(), member.getEmail(), "EDITOR");
+                            // Use the role from request if provided, otherwise default to VIEWER
+                            String memberRole = request.memberRole != null ? request.memberRole : "VIEWER";
+                            project.addMember(member.getUserId(), member.getUsername(), member.getEmail(), memberRole);
                             membersAdded = true;
                         }
                     }
                 }
             } else if ("specific".equals(request.shareWith) && request.memberUsernames != null) {
-                // Add specific members as editors
+                // Add specific members with the role specified in the request (default: VIEWER)
+                String memberRole = request.memberRole != null ? request.memberRole : "VIEWER";
                 for (String memberUsername : request.memberUsernames) {
                     Optional<User> memberOpt = userRepository.findByUsername(memberUsername);
                     if (memberOpt.isPresent() && !memberOpt.get().getId().equals(user.getId())) {
                         User member = memberOpt.get();
-                        project.addMember(member.getId(), member.getUsername(), member.getEmail(), "EDITOR");
+                        project.addMember(member.getId(), member.getUsername(), member.getEmail(), memberRole);
                         membersAdded = true;
                     }
                 }
@@ -287,8 +296,9 @@ public class ProjectController {
             User user = userOpt.get();
             List<Project> projects = projectService.getWorkspaceProjects(workspaceId);
             
-            // Filter projects based on workspace role:
-            // Workspace owners and admins see all projects; others only see projects they're members of
+            // Filter projects based on workspace role and project privacy:
+            // Workspace owners and admins see all projects EXCEPT private projects they don't own.
+            // A private project is one where the only member is the project owner.
             Optional<Workspace> wsOpt = workspaceService.getWorkspace(workspaceId);
             boolean isOwnerOrAdmin = false;
             if (wsOpt.isPresent()) {
@@ -298,7 +308,12 @@ public class ProjectController {
                     isOwnerOrAdmin = wsRole == Workspace.WorkspaceRole.OWNER || wsRole == Workspace.WorkspaceRole.ADMIN;
                 }
             }
-            if (!isOwnerOrAdmin) {
+            if (isOwnerOrAdmin) {
+                // Admins/Owners see all projects except other users' private projects
+                projects = projects.stream()
+                        .filter(p -> p.hasMember(user.getId()) || p.getMembers().size() > 1)
+                        .collect(Collectors.toList());
+            } else {
                 projects = projects.stream()
                         .filter(p -> p.hasMember(user.getId()))
                         .collect(Collectors.toList());
@@ -430,8 +445,8 @@ public class ProjectController {
                         p.getProjectId(), p.getName(), p.getOwnerId(), p.getMembers().size(), p.getActiveFiles().size());
                 }
                 
-                // Filter projects based on workspace role:
-                // Workspace owners and admins see all projects; others only see projects they're members of
+                // Filter projects based on workspace role and project privacy:
+                // Workspace owners and admins see all projects EXCEPT other users' private projects.
                 Optional<Workspace> wsOpt = workspaceService.getWorkspace(effectiveWorkspaceId);
                 boolean isOwnerOrAdmin = false;
                 if (wsOpt.isPresent()) {
@@ -441,7 +456,13 @@ public class ProjectController {
                         isOwnerOrAdmin = wsRole == Workspace.WorkspaceRole.OWNER || wsRole == Workspace.WorkspaceRole.ADMIN;
                     }
                 }
-                if (!isOwnerOrAdmin) {
+                if (isOwnerOrAdmin) {
+                    // Admins/Owners see all projects except other users' private projects
+                    projects = projects.stream()
+                            .filter(p -> p.hasMember(user.getId()) || p.getMembers().size() > 1)
+                            .collect(Collectors.toList());
+                    log.info("[getMyProjects] Filtered to {} projects for owner/admin user {} (excluding others' private projects)", projects.size(), username);
+                } else {
                     projects = projects.stream()
                             .filter(p -> p.hasMember(user.getId()))
                             .collect(Collectors.toList());
@@ -951,12 +972,14 @@ public class ProjectController {
     }
 
     /**
-     * Get file content by file ID
+     * Get file content by file ID.
+     * Uses streaming for GridFS files to avoid loading entire file into memory (OOM for large files).
      */
     @GetMapping("/{projectId}/files/{fileId}/content")
     public ResponseEntity<?> getFileContent(
             @PathVariable String projectId,
-            @PathVariable String fileId) {
+            @PathVariable String fileId,
+            HttpServletResponse httpResponse) {
         try {
             String username = getCurrentUsername();
             Optional<User> userOpt = userRepository.findByUsername(username);
@@ -985,38 +1008,90 @@ public class ProjectController {
                 return ResponseEntity.status(403).body(Map.of("error", "File does not belong to this project"));
             }
 
-            // Retrieve content from GridFS (new storage) or fall back to legacy inline base64
-            String base64Content;
+            // Retrieve content from GridFS using streaming to avoid OOM on large files
             if (fileMeta.getGridfsId() != null && !fileMeta.getGridfsId().isEmpty()) {
                 try {
                     GridFsResource resource = gridFsTemplate.getResource(
                             gridFsTemplate.findOne(Query.query(Criteria.where("_id").is(new ObjectId(fileMeta.getGridfsId())))));
-                    byte[] bytes = resource.getInputStream().readAllBytes();
-                    base64Content = "data:" + fileMeta.getFileType() + ";base64,"
-                            + java.util.Base64.getEncoder().encodeToString(bytes);
+
+                    String fileType = fileMeta.getFileType() != null ? fileMeta.getFileType() : "application/rdf+xml";
+                    long fileSize = fileMeta.getFileSize() != null ? fileMeta.getFileSize() : 0;
+
+                    // Write directly to HttpServletResponse to stream base64 in constant memory.
+                    // NOTE: ResponseEntity<StreamingResponseBody> doesn't work when the method
+                    // return type is ResponseEntity<?> — Spring MVC serialises the lambda as {}
+                    // instead of executing the stream.
+                    httpResponse.setContentType("application/json");
+                    httpResponse.setCharacterEncoding("UTF-8");
+                    httpResponse.setStatus(HttpServletResponse.SC_OK);
+
+                    try (InputStream inputStream = resource.getInputStream();
+                         OutputStream outputStream = httpResponse.getOutputStream()) {
+                        // Write JSON opening with metadata
+                        String prefix = "{\"id\":\"" + escapeJson(fileMeta.getFileId())
+                                + "\",\"name\":\"" + escapeJson(fileMeta.getFileName())
+                                + "\",\"content\":\"data:" + escapeJson(fileType) + ";base64,";
+                        outputStream.write(prefix.getBytes(StandardCharsets.UTF_8));
+
+                        // Stream base64-encoded file content using a non-closing wrapper
+                        // so closing base64Out writes final padding without closing the response stream
+                        OutputStream nonClosing = new FilterOutputStream(outputStream) {
+                            @Override
+                            public void close() throws IOException {
+                                flush();
+                            }
+                        };
+                        try (OutputStream base64Out = Base64.getEncoder().wrap(nonClosing)) {
+                            byte[] buffer = new byte[8192];
+                            int bytesRead;
+                            while ((bytesRead = inputStream.read(buffer)) != -1) {
+                                base64Out.write(buffer, 0, bytesRead);
+                            }
+                        }
+
+                        // Write JSON closing with remaining metadata
+                        String suffix = "\",\"type\":\"" + escapeJson(fileType)
+                                + "\",\"size\":" + fileSize + "}";
+                        outputStream.write(suffix.getBytes(StandardCharsets.UTF_8));
+                        outputStream.flush();
+                    }
+
+                    return null; // Response already written directly
                 } catch (Exception gridfsEx) {
                     log.error("Error reading file from GridFS (id={}): {}", fileMeta.getGridfsId(), gridfsEx.getMessage());
-                    return ResponseEntity.internalServerError().body(Map.of("error", "Could not read file content from storage"));
+                    if (!httpResponse.isCommitted()) {
+                        return ResponseEntity.internalServerError().body(Map.of("error", "Could not read file content from storage"));
+                    }
+                    return null;
                 }
             } else {
                 // Legacy: file content stored inline (will be null for purged documents)
-                base64Content = fileMeta.getBase64Data();
+                String base64Content = fileMeta.getBase64Data();
                 if (base64Content == null) {
                     return ResponseEntity.status(404).body(Map.of("error", "File content not available"));
                 }
-            }
 
-            return ResponseEntity.ok(Map.of(
-                "id", fileMeta.getFileId(),
-                "name", fileMeta.getFileName(),
-                "content", base64Content,
-                "type", fileMeta.getFileType() != null ? fileMeta.getFileType() : "application/rdf+xml",
-                "size", fileMeta.getFileSize() != null ? fileMeta.getFileSize() : 0
-            ));
+                return ResponseEntity.ok(Map.of(
+                    "id", fileMeta.getFileId(),
+                    "name", fileMeta.getFileName(),
+                    "content", base64Content,
+                    "type", fileMeta.getFileType() != null ? fileMeta.getFileType() : "application/rdf+xml",
+                    "size", fileMeta.getFileSize() != null ? fileMeta.getFileSize() : 0
+                ));
+            }
         } catch (Exception e) {
             log.error("Error getting file content", e);
             return ResponseEntity.internalServerError().body(Map.of("error", "Failed to get file content"));
         }
+    }
+
+    private static String escapeJson(String value) {
+        if (value == null) return "";
+        return value.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
     }
 
     /**
@@ -1555,6 +1630,7 @@ public class ProjectController {
         public String description;
         public String shareWith; // "all" or "specific"
         public List<String> memberUsernames; // List of usernames when shareWith="specific"
+        public String memberRole; // Role for shared members: VIEWER (default), EDITOR, ADMIN
     }
 
     public static class UpdateProjectRequest {

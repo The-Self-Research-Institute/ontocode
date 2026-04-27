@@ -60,6 +60,17 @@ interface GraphViewSidebarProps {
   isLayoutPaused?: boolean;
   showFilterSidebar?: boolean;
   showSettings?: boolean;
+  // Hierarchy tree callbacks — expand/collapse nodes in the graph from the sidebar tree
+  onGraphNodeExpand?: (nodeId: string) => void;
+  onGraphNodeCollapse?: (nodeId: string) => void;
+  graphExpandedNodeIds?: Set<string>;
+  graphVisibleNodeIds?: Set<string>;
+  // Focus mode (Protégé OntoGraf-style neighborhood isolation)
+  focusedNodeId?: string | null;
+  onFocusNode?: (nodeId: string) => void;
+  onClearFocus?: () => void;
+  // Ontology header metadata (IRI, version, annotations) — optional, read-only display
+  ontologyMetadata?: any;
 }
 
 export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
@@ -87,8 +98,17 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
   onVowlFilterChange,
   hierarchySelectedClass,
   onHierarchyClassSelect,
-  showClassHierarchy
+  showClassHierarchy,
+  onGraphNodeExpand,
+  onGraphNodeCollapse,
+  graphExpandedNodeIds,
+  graphVisibleNodeIds,
+  focusedNodeId,
+  onFocusNode,
+  onClearFocus,
+  ontologyMetadata
 }) => {
+  const [sidebarMode, setSidebarMode] = useState<'entities' | 'hierarchy'>('hierarchy');
   const [entityTab, setEntityTab] = useState<'classes' | 'objectProperties' | 'datatypeProperties' | 'individuals' | 'annotations' | 'datatypes'>('classes');
   const [searchTerm, setSearchTerm] = useState('');
   const [sidebarWidth, setSidebarWidth] = useState(340);
@@ -284,6 +304,36 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
 
   // Track expanded nodes in the class hierarchy tree
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
+
+  // Auto-expand tree nodes when search term changes (at component level, not inside render function)
+  React.useEffect(() => {
+    if (!searchTerm) return;
+    const { childrenMap } = classHierarchyTree;
+    const matchesSearch = (node: OntologyNode): boolean => {
+      const term = searchTerm.toLowerCase();
+      if ((node.label || node.id).toLowerCase().includes(term)) return true;
+      const ch = childrenMap.get(node.id) || [];
+      return ch.some(c => matchesSearch(c));
+    };
+    // Find all nodes with matching descendants and auto-expand them
+    const toExpand = new Set<string>();
+    const checkNode = (nodeId: string) => {
+      const children = childrenMap.get(nodeId) || [];
+      const matchingChildren = children.filter(c => matchesSearch(c));
+      if (matchingChildren.length > 0) {
+        toExpand.add(nodeId);
+      }
+      children.forEach(c => checkNode(c.id));
+    };
+    classHierarchyTree.rootClasses.forEach(r => checkNode(r.id));
+    if (toExpand.size > 0) {
+      setExpandedNodes(prev => {
+        const next = new Set(prev);
+        toExpand.forEach(id => next.add(id));
+        return next;
+      });
+    }
+  }, [searchTerm, classHierarchyTree]);
 
   // Render hierarchy tree with navigator style
   const renderHierarchyNode = (node: OntologyNode, level: number = 0): JSX.Element => {
@@ -505,6 +555,185 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
     onFilterChange({ ...filters, edgeTypes: newTypes });
   };
 
+  // Render a tree node for the hierarchy view (Protégé-style)
+  const renderHierarchyTreeNode = (
+    node: OntologyNode,
+    level: number,
+    childrenMap: Map<string, OntologyNode[]>,
+    search: string
+  ): JSX.Element => {
+    const children = (childrenMap.get(node.id) || []).sort((a, b) => (a.label || a.id).localeCompare(b.label || b.id));
+    const hasTreeChildren = children.length > 0;
+    const isTreeExpanded = expandedNodes.has(node.id);
+    const isSelected = selectedNode?.id === node.id;
+    const isVisibleInGraph = graphVisibleNodeIds ? graphVisibleNodeIds.has(node.id) : true;
+    const isExpandedInGraph = graphExpandedNodeIds ? graphExpandedNodeIds.has(node.id) : false;
+
+    // Filter children by search
+    const matchesSearch = (n: OntologyNode): boolean => {
+      if (!search) return true;
+      const term = search.toLowerCase();
+      if ((n.label || n.id).toLowerCase().includes(term)) return true;
+      const ch = childrenMap.get(n.id) || [];
+      return ch.some(c => matchesSearch(c));
+    };
+    const visibleChildren = children.filter(c => matchesSearch(c));
+    const selfMatches = !search || (node.label || node.id).toLowerCase().includes(search.toLowerCase());
+
+    return (
+      <div key={node.id}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            padding: '3px 6px 3px ' + (8 + level * 16) + 'px',
+            cursor: 'pointer',
+            backgroundColor: isSelected ? '#ede9fe' : 'transparent',
+            borderLeft: isSelected ? '3px solid #7c3aed' : '3px solid transparent',
+            minHeight: '26px',
+            transition: 'background-color 0.1s'
+          }}
+          onMouseEnter={(e) => {
+            if (!isSelected) e.currentTarget.style.backgroundColor = '#f5f3ff';
+            onNodeHighlight(node.id);
+          }}
+          onMouseLeave={(e) => {
+            if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
+            onNodeHighlight(null);
+          }}
+          onClick={() => {
+            onNodeSelect(node);
+          }}
+        >
+          {/* Tree expand/collapse toggle */}
+          {hasTreeChildren ? (
+            <span
+              onClick={(e) => {
+                e.stopPropagation();
+                setExpandedNodes(prev => {
+                  const next = new Set(prev);
+                  if (next.has(node.id)) next.delete(node.id);
+                  else next.add(node.id);
+                  return next;
+                });
+              }}
+              style={{
+                width: '16px',
+                height: '16px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+                color: '#6b7280',
+                fontSize: '10px',
+                marginRight: '2px'
+              }}
+            >
+              {isTreeExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            </span>
+          ) : (
+            <span style={{ width: '16px', marginRight: '2px', flexShrink: 0 }} />
+          )}
+
+          {/* Class icon - small colored dot */}
+          <span style={{
+            width: '8px',
+            height: '8px',
+            borderRadius: '50%',
+            backgroundColor: isVisibleInGraph ? '#7c3aed' : '#d1d5db',
+            flexShrink: 0,
+            marginRight: '6px'
+          }} />
+
+          {/* Label */}
+          <span style={{
+            fontSize: '12px',
+            color: selfMatches && search ? '#1e1b4b' : (isVisibleInGraph ? '#374151' : '#9ca3af'),
+            fontWeight: selfMatches && search ? 600 : 400,
+            flex: 1,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap' as const
+          }}>
+            {node.label || node.id}
+          </span>
+
+          {/* Child count badge */}
+          {hasTreeChildren && (
+            <span style={{
+              fontSize: '10px',
+              color: '#9ca3af',
+              backgroundColor: '#f3f4f6',
+              padding: '0 4px',
+              borderRadius: '4px',
+              marginLeft: '4px',
+              flexShrink: 0
+            }}>
+              {children.length}
+            </span>
+          )}
+
+          {/* Graph visibility toggle */}
+          <span
+            onClick={(e) => {
+              e.stopPropagation();
+              if (isExpandedInGraph) {
+                onGraphNodeCollapse?.(node.id);
+              } else {
+                onGraphNodeExpand?.(node.id);
+              }
+            }}
+            title={isExpandedInGraph ? 'Collapse in graph' : 'Expand in graph'}
+            style={{
+              marginLeft: '4px',
+              color: isExpandedInGraph ? '#7c3aed' : '#d1d5db',
+              cursor: 'pointer',
+              flexShrink: 0,
+              display: 'inline-flex',
+              alignItems: 'center'
+            }}
+          >
+            {isExpandedInGraph ? <Eye size={12} /> : <EyeOff size={12} />}
+          </span>
+
+          {/* Focus mode trigger — isolates this class + its parents/children */}
+          {onFocusNode && (
+            <span
+              onClick={(e) => {
+                e.stopPropagation();
+                if (focusedNodeId === node.id && onClearFocus) {
+                  onClearFocus();
+                } else {
+                  onFocusNode(node.id);
+                }
+              }}
+              title={focusedNodeId === node.id ? 'Exit focus mode' : 'Focus on this class (parents + children only)'}
+              style={{
+                marginLeft: '4px',
+                color: focusedNodeId === node.id ? '#7c3aed' : '#9ca3af',
+                cursor: 'pointer',
+                flexShrink: 0,
+                display: 'inline-flex',
+                alignItems: 'center',
+                fontSize: '11px',
+                fontWeight: focusedNodeId === node.id ? 700 : 400
+              }}
+            >
+              🎯
+            </span>
+          )}
+        </div>
+
+        {/* Render children */}
+        {isTreeExpanded && visibleChildren.length > 0 && (
+          <div>
+            {visibleChildren.map(child => renderHierarchyTreeNode(child, level + 1, childrenMap, search))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div style={{...styles.sidebar, width: `${sidebarWidth}px`}}>
       {/* Resize Handle */}
@@ -516,6 +745,154 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
       
       {/* Scrollable Content */}
       <div style={styles.scrollableContent}>
+
+      {/* Mode Toggle: Hierarchy vs Entities */}
+      <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb', backgroundColor: '#f9fafb' }}>
+        <button
+          onClick={() => setSidebarMode('hierarchy')}
+          style={{
+            flex: 1,
+            padding: '8px 4px',
+            fontSize: '12px',
+            fontWeight: sidebarMode === 'hierarchy' ? 600 : 400,
+            color: sidebarMode === 'hierarchy' ? '#4f46e5' : '#6b7280',
+            backgroundColor: sidebarMode === 'hierarchy' ? '#fff' : 'transparent',
+            border: 'none',
+            borderBottom: sidebarMode === 'hierarchy' ? '2px solid #4f46e5' : '2px solid transparent',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '4px'
+          }}
+        >
+          <GitBranch size={13} /> Class Tree
+        </button>
+        <button
+          onClick={() => setSidebarMode('entities')}
+          style={{
+            flex: 1,
+            padding: '8px 4px',
+            fontSize: '12px',
+            fontWeight: sidebarMode === 'entities' ? 600 : 400,
+            color: sidebarMode === 'entities' ? '#4f46e5' : '#6b7280',
+            backgroundColor: sidebarMode === 'entities' ? '#fff' : 'transparent',
+            border: 'none',
+            borderBottom: sidebarMode === 'entities' ? '2px solid #4f46e5' : '2px solid transparent',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '4px'
+          }}
+        >
+          <Layers size={13} /> Entities
+        </button>
+      </div>
+
+      {/* === HIERARCHY MODE === */}
+      {sidebarMode === 'hierarchy' && (
+        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          {/* Focus mode banner */}
+          {focusedNodeId && (() => {
+            const focusNode = nodes.find(n => n.id === focusedNodeId);
+            return (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '6px 10px',
+                background: '#ede9fe',
+                borderBottom: '1px solid #c4b5fd',
+                fontSize: 11,
+                color: '#4c1d95'
+              }}>
+                <span title="Focus mode">🎯</span>
+                <span style={{ fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {focusNode?.label || focusedNodeId.split(/[#/]/).pop()}
+                </span>
+                <button
+                  onClick={() => onClearFocus?.()}
+                  style={{
+                    padding: '2px 8px',
+                    background: '#7c3aed',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 4,
+                    cursor: 'pointer',
+                    fontSize: 10,
+                    fontWeight: 600
+                  }}
+                  title="Exit focus mode"
+                >
+                  Clear
+                </button>
+              </div>
+            );
+          })()}
+          {/* Search */}
+          <div style={{ padding: '8px 10px', borderBottom: '1px solid #f0f0f0' }}>
+            <div style={{ position: 'relative' }}>
+              <Search size={14} style={{ position: 'absolute', left: '8px', top: '7px', color: '#9ca3af' }} />
+              <input
+                type="text"
+                placeholder="Search classes..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '6px 28px 6px 28px',
+                  fontSize: '12px',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '6px',
+                  outline: 'none',
+                  boxSizing: 'border-box' as const
+                }}
+              />
+              {searchTerm && (
+                <X size={14} style={{ position: 'absolute', right: '8px', top: '7px', color: '#9ca3af', cursor: 'pointer' }}
+                  onClick={() => setSearchTerm('')} />
+              )}
+            </div>
+          </div>
+          {/* Tree */}
+          <div style={{ flex: 1, overflow: 'auto', padding: '4px 0' }}>
+            {(() => {
+              const { rootClasses, childrenMap } = classHierarchyTree;
+              const matchesSearch = (node: OntologyNode): boolean => {
+                if (!searchTerm) return true;
+                const term = searchTerm.toLowerCase();
+                if ((node.label || node.id).toLowerCase().includes(term)) return true;
+                // Check if any descendant matches
+                const children = childrenMap.get(node.id) || [];
+                return children.some(c => matchesSearch(c));
+              };
+              const filteredRoots = rootClasses.filter(r => matchesSearch(r));
+              if (filteredRoots.length === 0) {
+                return <div style={{ padding: '16px', textAlign: 'center' as const, color: '#9ca3af', fontSize: '12px' }}>No classes found</div>;
+              }
+              return filteredRoots.map(root => renderHierarchyTreeNode(root, 0, childrenMap, searchTerm));
+            })()}
+          </div>
+          {/* Stats */}
+          <div style={{
+            padding: '6px 10px',
+            borderTop: '1px solid #e5e7eb',
+            fontSize: '11px',
+            color: '#9ca3af',
+            backgroundColor: '#f9fafb',
+            display: 'flex',
+            justifyContent: 'space-between'
+          }}>
+            <span>{nodes.filter(n => n.type === 'class').length} classes</span>
+            <span>{graphVisibleNodeIds ? graphVisibleNodeIds.size : nodes.length} visible</span>
+          </div>
+        </div>
+      )}
+
+      {/* === ENTITIES MODE === */}
+      {sidebarMode === 'entities' && (
+      <>
       {/* Top Filters (like webVOWL) - Only show when filter button is clicked */}
       {showFilterSidebar && (
       <div style={styles.accordionSection}>
@@ -908,6 +1285,79 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
         )}
       </div>
 
+      {/* Ontology Info Section — read-only header metadata */}
+      {ontologyMetadata && (() => {
+        const m = ontologyMetadata as any;
+        const ontoIRI = m.ontologyIRI || m.ontologyIri || m.iri || m.baseIRI || m.baseIri || m.defaultNamespace;
+        const versionIRI = m.versionIRI || m.versionIri || m.version;
+        const importsRaw = m.imports || m.importedOntologies || [];
+        const imports: string[] = Array.isArray(importsRaw) ? importsRaw : [];
+        const annotations = m.annotations || m.ontologyAnnotations || {};
+        const annotationKeys = annotations && typeof annotations === 'object' ? Object.keys(annotations) : [];
+        const hasAny = ontoIRI || versionIRI || imports.length > 0 || annotationKeys.length > 0;
+        if (!hasAny) return null;
+        return (
+          <div style={styles.accordionSection}>
+            <div style={styles.entityTitleHeader}>
+              <h3 style={styles.entityTitle}>Ontology Info</h3>
+            </div>
+            <div style={styles.entityDetailsTable}>
+              {ontoIRI && (
+                <div style={styles.entityDetailRow}>
+                  <div style={styles.entityDetailLabel}>Ontology IRI</div>
+                  <div style={styles.entityDetailValue}>
+                    <a href={ontoIRI} target="_blank" rel="noopener noreferrer" style={styles.iriLink}>
+                      {String(ontoIRI).length > 50 ? `...${String(ontoIRI).slice(-47)}` : String(ontoIRI)}
+                    </a>
+                  </div>
+                </div>
+              )}
+              {versionIRI && (
+                <div style={styles.entityDetailRow}>
+                  <div style={styles.entityDetailLabel}>Version IRI</div>
+                  <div style={styles.entityDetailValue}>{String(versionIRI)}</div>
+                </div>
+              )}
+              {imports.length > 0 && (
+                <div style={styles.entityDetailRow}>
+                  <div style={styles.entityDetailLabel}>Imports ({imports.length})</div>
+                  <div style={styles.entityDetailValue}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {imports.slice(0, 10).map((imp, idx) => (
+                        <a key={idx} href={imp} target="_blank" rel="noopener noreferrer" style={{ ...styles.iriLink, fontSize: 11 }}>
+                          {String(imp).length > 60 ? `...${String(imp).slice(-57)}` : String(imp)}
+                        </a>
+                      ))}
+                      {imports.length > 10 && (
+                        <span style={{ fontSize: 11, color: '#6b7280', fontStyle: 'italic' }}>… and {imports.length - 10} more</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+              {annotationKeys.length > 0 && (
+                <div style={styles.entityDetailRow}>
+                  <div style={styles.entityDetailLabel}>Annotations</div>
+                  <div style={styles.entityDetailValue}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {annotationKeys.slice(0, 8).map((k) => (
+                        <div key={k} style={{ fontSize: 12 }}>
+                          <span style={{ fontWeight: 600, color: '#374151' }}>{k}:</span>{' '}
+                          <span style={{ color: '#6b7280' }}>{String((annotations as any)[k]).slice(0, 120)}</span>
+                        </div>
+                      ))}
+                      {annotationKeys.length > 8 && (
+                        <span style={{ fontSize: 11, color: '#6b7280', fontStyle: 'italic' }}>… and {annotationKeys.length - 8} more</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Entity Details Section (like webVOWL) */}
       {selectedNode && (
         <div style={styles.accordionSection}>
@@ -964,6 +1414,40 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                 </div>
               </div>
             )}
+
+            {/* Property Characteristics (OWL: Functional, Symmetric, Transitive, etc.) */}
+            {(selectedNode.type === 'objectProperty' || selectedNode.type === 'dataProperty') && (() => {
+              const m: any = (selectedNode as any).metadata || {};
+              const chars: string[] = [];
+              if (m.functional) chars.push('Functional');
+              if (m.inverseFunctional) chars.push('Inverse Functional');
+              if (m.symmetric) chars.push('Symmetric');
+              if (m.asymmetric) chars.push('Asymmetric');
+              if (m.transitive) chars.push('Transitive');
+              if (m.reflexive) chars.push('Reflexive');
+              if (m.irreflexive) chars.push('Irreflexive');
+              if (chars.length === 0) return null;
+              return (
+                <div style={styles.entityDetailRow}>
+                  <div style={styles.entityDetailLabel}>Characteristics</div>
+                  <div style={styles.entityDetailValue}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {chars.map(c => (
+                        <span key={c} style={{
+                          background: '#eef2ff',
+                          color: '#3730a3',
+                          padding: '2px 8px',
+                          borderRadius: 12,
+                          fontSize: 11,
+                          fontWeight: 600,
+                          border: '1px solid #c7d2fe'
+                        }}>{c}</span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Connections */}
             <div style={styles.entityDetailRow}>
@@ -1486,6 +1970,8 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
             </div>
           )}
         </div>
+      )}
+      </>
       )}
       </div>
 

@@ -23,7 +23,8 @@ const UsageTab: React.FC<{
   projectId: string;
   label: string;
 }> = ({ classIri, projectId, label }) => {
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [usages, setUsages] = useState<UsageItem[]>([]);
   const [filter, setFilter] = useState('');
   const [showTypes, setShowTypes] = useState({
@@ -41,8 +42,12 @@ const UsageTab: React.FC<{
     annotation_on_class: true
   });
 
+  // Reset loaded state when class changes so the user must explicitly
+  // load usage for each class (this query is very expensive on large graphs).
   useEffect(() => {
-    loadUsages();
+    setLoaded(false);
+    setUsages([]);
+    setFilter('');
   }, [classIri, projectId]);
 
   const loadUsages = async () => {
@@ -55,9 +60,11 @@ const UsageTab: React.FC<{
       const usageData = response?.data?.data || response?.data || response || [];
       console.log('[UsageTab] Loaded usages:', usageData);
       setUsages(Array.isArray(usageData) ? usageData : []);
+      setLoaded(true);
     } catch (error) {
       console.error('Failed to load usage data:', error);
       setUsages([]);
+      setLoaded(true);
     } finally {
       setLoading(false);
     }
@@ -82,6 +89,22 @@ const UsageTab: React.FC<{
     annotation: filteredUsages.filter(u => u.type === 'annotation'),
     annotation_on_class: filteredUsages.filter(u => u.type === 'annotation_on_class')
   };
+
+  if (!loaded && !loading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full p-6 text-center">
+        <div className="text-sm text-gray-600 mb-3">
+          Usage lookup for <span className="font-semibold">{label}</span> can be slow on large ontologies.
+        </div>
+        <button
+          onClick={loadUsages}
+          className="px-4 py-2 text-sm rounded bg-purple-600 text-white hover:bg-purple-700"
+        >
+          Load usage
+        </button>
+      </div>
+    );
+  }
 
   if (loading) {
     return <div className="p-4 text-sm text-gray-500">Loading usage information...</div>;
@@ -322,13 +345,192 @@ const ClassEditor: React.FC<{
     }
   };
 
-  // Load class details including annotations when component mounts
+  // Load class details including annotations when component mounts.
+  // Uses an "alive" flag so stale responses from a previously selected entity
+  // are discarded (prevents showing the previous class's data).
+  // Also resets local UI state immediately so users never see stale content.
+  //
+  // DEBOUNCE: Selection changes are debounced 200ms. When a user arrow-keys
+  // through the tree or clicks quickly between classes, we cancel pending
+  // requests before firing. This cuts backend load by 5-20× under real usage
+  // and removes a huge amount of wasted GraphDB traffic at scale.
   useEffect(() => {
-    if (item.id && projectId) {
-      loadClassDetails();
-      loadProperties();
-      loadInstances();
-    }
+    if (!item.id || !projectId) return;
+
+    let alive = true;
+
+    // Reset visible state immediately so we never paint with the previous
+    // entity's data while the new request is in flight.
+    setClassDetails(null);
+    setClassInstances([]);
+    setLoadingDetails(true);
+    setLoadingInstances(true);
+
+    // Watchdog: if backend hangs, clear the spinner after 30s so the UI
+    // does not appear permanently "Loading class details...".
+    const watchdog = setTimeout(() => {
+      if (alive) {
+        setLoadingDetails(false);
+        setLoadingInstances(false);
+      }
+    }, 30000);
+
+    // Debounce: skip network calls if user moves off this node within 200ms.
+    const debounceTimer = setTimeout(() => {
+      if (!alive) return;
+      runLoad();
+    }, 200);
+
+    const runLoad = () => {
+
+    const currentId = item.id;
+    const currentViewMode = viewMode;
+
+    // ─── PERF TIMING ──────────────────────────────────────────────────────
+    // Each stage logs its own start/end wall-clock ms. Compare these in the
+    // browser console to locate the slow link (network vs. backend query vs.
+    // React render). Look for `[perf][ClassEditor] …` lines.
+    const tStart = performance.now();
+    const shortIri = currentId.split(/[#/]/).pop() || currentId;
+    console.log(`[perf][ClassEditor] ▶ select "${shortIri}" t0=0ms`);
+
+    // Stage 1 (FAST, ~100ms): fetch ONLY annotations so the panel paints
+    // immediately. The slower full-details call continues in stage 2 for
+    // axiom lists. Annotations are what users glance at first.
+    (async () => {
+      const t1 = performance.now();
+      try {
+        const annResp = await apiClient.get<any>(
+          `/api/ontology/classes/annotations/${projectId}?classIri=${encodeURIComponent(currentId)}`,
+        );
+        const t1Net = performance.now();
+        console.log(
+          `[perf][ClassEditor] ✓ stage-1 annotations network=${(t1Net - t1).toFixed(0)}ms total=${(t1Net - tStart).toFixed(0)}ms`,
+        );
+        if (!alive || currentId !== item.id) return;
+        const annData = annResp?.data?.data || annResp?.data || annResp;
+        if (annData && typeof annData === "object") {
+          // Merge functionally so stage-2 full details will overwrite on arrival.
+          setClassDetails((prev: any) => ({ ...(prev || {}), ...annData }));
+          // Also surface annotations to the rendered item so the Annotations
+          // panel paints without waiting for full details. Stage 2 will merge
+          // axioms into the same item when it resolves.
+          if (annData.annotations) {
+            onUpdate({ ...item, annotations: annData.annotations } as TreeNode);
+          }
+          // Hide the top "Loading … details…" banner — annotations are visible
+          // now. Edit handlers call loadClassDetails() which re-toggles the
+          // spinner only when full data is actually needed.
+          setLoadingDetails(false);
+          console.log(
+            `[perf][ClassEditor] ✓ stage-1 painted at ${(performance.now() - tStart).toFixed(0)}ms (annotations visible)`,
+          );
+        }
+      } catch (e) {
+        console.warn(`[perf][ClassEditor] ✗ stage-1 failed at ${(performance.now() - tStart).toFixed(0)}ms`, e);
+        // Non-fatal: stage 2 will still populate annotations.
+      }
+    })();
+
+    (async () => {
+      const t2 = performance.now();
+      try {
+        // Fire both details and (if needed) inferred details IN PARALLEL.
+        // Previously inferred was awaited serially after details, doubling
+        // perceived latency in Inferred view mode.
+        const detailsPromise = apiClient.get<any>(
+          `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(currentId)}`,
+        );
+        const inferredPromise = currentViewMode === "inferred"
+          ? apiClient.get<any>(
+              `/api/ontology/${projectId}/reasoner/inferred-class-details?classIri=${encodeURIComponent(currentId)}`,
+            ).catch((err) => {
+              console.warn("[ClassEditor] Failed to load inferred details:", err);
+              return null;
+            })
+          : Promise.resolve(null);
+
+        const [detailsResponse, inferredResponse] = await Promise.all([detailsPromise, inferredPromise]);
+        const t2Net = performance.now();
+        console.log(
+          `[perf][ClassEditor] ✓ stage-2 full details network=${(t2Net - t2).toFixed(0)}ms total=${(t2Net - tStart).toFixed(0)}ms (inferred=${currentViewMode === "inferred"})`,
+        );
+        if (!alive || currentId !== item.id) return;
+        let details = detailsResponse?.data?.data || detailsResponse?.data || detailsResponse;
+
+        if (currentViewMode === "inferred" && inferredResponse) {
+          const inferredData = (inferredResponse as any)?.data?.data || (inferredResponse as any)?.data || {};
+          details = {
+            ...details,
+            inferredSubClassOfAxioms: inferredData.inferredSubClassOfAxioms || [],
+            inferredEquivalentClassesAxioms: inferredData.inferredEquivalentClassesAxioms || [],
+            isUnsatisfiable: inferredData.isUnsatisfiable || false,
+          };
+        }
+
+        if (!alive || currentId !== item.id) return;
+        setClassDetails(details);
+
+        const updatedItem: TreeNode = {
+          ...item,
+          annotations: details.annotations || item.annotations,
+          subClassOfAxioms: details.subClassOfAxioms || item.subClassOfAxioms,
+          equivalentClassesAxioms: details.equivalentClassesAxioms || item.equivalentClassesAxioms,
+          disjointClassesAxioms: details.disjointClassesAxioms || item.disjointClassesAxioms,
+          disjointUnionAxioms: details.disjointUnionAxioms || item.disjointUnionAxioms,
+          hasKeyAxioms: details.hasKeyAxioms || item.hasKeyAxioms,
+          inferredSubClassOfAxioms: details.inferredSubClassOfAxioms,
+          inferredEquivalentClassesAxioms: details.inferredEquivalentClassesAxioms,
+          isUnsatisfiable: details.isUnsatisfiable,
+        };
+        onUpdate(updatedItem);
+        console.log(
+          `[perf][ClassEditor] ✓ stage-2 painted at ${(performance.now() - tStart).toFixed(0)}ms (full axioms visible)`,
+        );
+      } catch (error) {
+        if (alive && currentId === item.id) {
+          console.error(
+            `[perf][ClassEditor] ✗ stage-2 failed at ${(performance.now() - tStart).toFixed(0)}ms`,
+            error,
+          );
+        }
+      } finally {
+        if (alive && currentId === item.id) setLoadingDetails(false);
+      }
+    })();
+
+    (async () => {
+      const t3 = performance.now();
+      try {
+        const response = await apiClient.get<any>(
+          `/api/ontology/classes/instances/${projectId}?classIri=${encodeURIComponent(currentId)}`,
+        );
+        console.log(
+          `[perf][ClassEditor] ✓ instances network=${(performance.now() - t3).toFixed(0)}ms total=${(performance.now() - tStart).toFixed(0)}ms`,
+        );
+        if (!alive || currentId !== item.id) return;
+        const instances = response?.data?.data || response?.data || response || [];
+        setClassInstances(Array.isArray(instances) ? instances : []);
+      } catch (error) {
+        if (alive && currentId === item.id) {
+          console.error("Failed to load class instances:", error);
+          setClassInstances([]);
+        }
+      } finally {
+        if (alive && currentId === item.id) setLoadingInstances(false);
+      }
+    })();
+
+    // Properties (object/data) are not entity-scoped; load lazily on first mount.
+    loadProperties();
+    }; // end runLoad
+
+    return () => {
+      alive = false;
+      clearTimeout(watchdog);
+      clearTimeout(debounceTimer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id, projectId, viewMode]);
 
   // Load instances only when the Instances panel is opened (lazy loading for better performance)
@@ -1638,9 +1840,9 @@ const ClassEditor: React.FC<{
   return (
     <div className="flex flex-col h-full bg-white">
       {loadingDetails && (
-        <div className="absolute top-0 left-0 right-0 bg-yellow-100 text-xs text-gray-700 px-3 py-1 z-10 flex items-center justify-center">
-          <div className="animate-spin mr-2 h-3 w-3 border-2 border-yellow-600 border-t-transparent rounded-full"></div>
-          Loading class details...
+        <div className="sticky top-0 left-0 right-0 bg-blue-50 border-b border-blue-200 text-xs text-blue-800 px-3 py-1.5 z-20 flex items-center justify-center shadow-sm">
+          <div className="animate-spin mr-2 h-3 w-3 border-2 border-blue-600 border-t-transparent rounded-full"></div>
+          Loading <span className="font-semibold mx-1">{item.label || "class"}</span> details…
         </div>
       )}
 

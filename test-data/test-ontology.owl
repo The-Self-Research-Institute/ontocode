@@ -1,0 +1,290 @@
+<?xml version="1.0"?>
+<rdf:RDF xmlns="http://www.example.org/test-ontology#"
+     xml:base="http://www.example.org/test-ontology"
+     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:owl="http://www.w3.org/2002/07/owl#"
+     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+     xmlns:xsd="http://www.w3.org/2001/XMLSchema#">
+    
+    <owl:Ontology rdf:about="http://www.example.org/test-ontology">
+        <rdfs:label>Comprehensive Graph View Test Ontology</rdfs:label>
+        <rdfs:comment>Test ontology for Graph View Plugin testing. Contains diverse entity types: classes, properties, individuals, datatypes, annotations, and various relationship patterns.</rdfs:comment>
+        <owl:versionInfo>1.0.0</owl:versionInfo>
+    </owl:Ontology>
+
+    <!-- ============================== -->
+    <!-- CLASS HIERARCHY (3 levels)     -->
+    <!-- ============================== -->
+
+    <!-- Level 0: Root -->
+    <owl:Class rdf:about="http://www.example.org/test-ontology#LivingThing">
+        <rdfs:label>Living Thing</rdfs:label>
+        <rdfs:comment>Top-level class for all living entities</rdfs:comment>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/test-ontology#NonLivingThing">
+        <rdfs:label>Non-Living Thing</rdfs:label>
+    </owl:Class>
+
+    <!-- Level 1 -->
+    <owl:Class rdf:about="http://www.example.org/test-ontology#Animal">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/test-ontology#LivingThing"/>
+        <rdfs:label>Animal</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/test-ontology#Plant">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/test-ontology#LivingThing"/>
+        <rdfs:label>Plant</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/test-ontology#Vehicle">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/test-ontology#NonLivingThing"/>
+        <rdfs:label>Vehicle</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/test-ontology#Building">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/test-ontology#NonLivingThing"/>
+        <rdfs:label>Building</rdfs:label>
+    </owl:Class>
+
+    <!-- Level 2 -->
+    <owl:Class rdf:about="http://www.example.org/test-ontology#Mammal">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/test-ontology#Animal"/>
+        <rdfs:label>Mammal</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/test-ontology#Bird">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/test-ontology#Animal"/>
+        <rdfs:label>Bird</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/test-ontology#Fish">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/test-ontology#Animal"/>
+        <rdfs:label>Fish</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/test-ontology#Tree">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/test-ontology#Plant"/>
+        <rdfs:label>Tree</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/test-ontology#Flower">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/test-ontology#Plant"/>
+        <rdfs:label>Flower</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/test-ontology#Car">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/test-ontology#Vehicle"/>
+        <rdfs:label>Car</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/test-ontology#Truck">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/test-ontology#Vehicle"/>
+        <rdfs:label>Truck</rdfs:label>
+    </owl:Class>
+
+    <!-- Level 3 -->
+    <owl:Class rdf:about="http://www.example.org/test-ontology#Dog">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/test-ontology#Mammal"/>
+        <rdfs:label>Dog</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/test-ontology#Cat">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/test-ontology#Mammal"/>
+        <rdfs:label>Cat</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/test-ontology#Eagle">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/test-ontology#Bird"/>
+        <rdfs:label>Eagle</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/test-ontology#Salmon">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/test-ontology#Fish"/>
+        <rdfs:label>Salmon</rdfs:label>
+    </owl:Class>
+
+    <!-- Habitat / Location -->
+    <owl:Class rdf:about="http://www.example.org/test-ontology#Habitat">
+        <rdfs:label>Habitat</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/test-ontology#Forest">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/test-ontology#Habitat"/>
+        <rdfs:label>Forest</rdfs:label>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://www.example.org/test-ontology#Ocean">
+        <rdfs:subClassOf rdf:resource="http://www.example.org/test-ontology#Habitat"/>
+        <rdfs:label>Ocean</rdfs:label>
+    </owl:Class>
+
+    <!-- Disjoint classes for testing -->
+    <owl:AllDisjointClasses>
+        <owl:members rdf:parseType="Collection">
+            <owl:Class rdf:about="http://www.example.org/test-ontology#Animal"/>
+            <owl:Class rdf:about="http://www.example.org/test-ontology#Plant"/>
+        </owl:members>
+    </owl:AllDisjointClasses>
+
+    <!-- ============================== -->
+    <!-- OBJECT PROPERTIES              -->
+    <!-- ============================== -->
+
+    <owl:ObjectProperty rdf:about="http://www.example.org/test-ontology#livesIn">
+        <rdfs:domain rdf:resource="http://www.example.org/test-ontology#Animal"/>
+        <rdfs:range rdf:resource="http://www.example.org/test-ontology#Habitat"/>
+        <rdfs:label>lives in</rdfs:label>
+    </owl:ObjectProperty>
+
+    <owl:ObjectProperty rdf:about="http://www.example.org/test-ontology#eats">
+        <rdfs:domain rdf:resource="http://www.example.org/test-ontology#Animal"/>
+        <rdfs:range rdf:resource="http://www.example.org/test-ontology#LivingThing"/>
+        <rdfs:label>eats</rdfs:label>
+    </owl:ObjectProperty>
+
+    <owl:ObjectProperty rdf:about="http://www.example.org/test-ontology#hasParent">
+        <rdfs:domain rdf:resource="http://www.example.org/test-ontology#Animal"/>
+        <rdfs:range rdf:resource="http://www.example.org/test-ontology#Animal"/>
+        <rdfs:label>has parent</rdfs:label>
+    </owl:ObjectProperty>
+
+    <owl:ObjectProperty rdf:about="http://www.example.org/test-ontology#ownedBy">
+        <rdfs:domain rdf:resource="http://www.example.org/test-ontology#Vehicle"/>
+        <rdfs:label>owned by</rdfs:label>
+    </owl:ObjectProperty>
+
+    <owl:ObjectProperty rdf:about="http://www.example.org/test-ontology#growsIn">
+        <rdfs:domain rdf:resource="http://www.example.org/test-ontology#Plant"/>
+        <rdfs:range rdf:resource="http://www.example.org/test-ontology#Habitat"/>
+        <rdfs:label>grows in</rdfs:label>
+    </owl:ObjectProperty>
+
+    <!-- ============================== -->
+    <!-- DATA PROPERTIES                -->
+    <!-- ============================== -->
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/test-ontology#hasName">
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+        <rdfs:label>has name</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/test-ontology#hasWeight">
+        <rdfs:domain rdf:resource="http://www.example.org/test-ontology#Animal"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+        <rdfs:label>has weight (kg)</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/test-ontology#hasAge">
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#integer"/>
+        <rdfs:label>has age</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/test-ontology#hasHeight">
+        <rdfs:domain rdf:resource="http://www.example.org/test-ontology#Plant"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+        <rdfs:label>has height (m)</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://www.example.org/test-ontology#isEndangered">
+        <rdfs:domain rdf:resource="http://www.example.org/test-ontology#Animal"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#boolean"/>
+        <rdfs:label>is endangered</rdfs:label>
+    </owl:DatatypeProperty>
+
+    <!-- ============================== -->
+    <!-- ANNOTATION PROPERTIES          -->
+    <!-- ============================== -->
+
+    <owl:AnnotationProperty rdf:about="http://www.example.org/test-ontology#scientificName">
+        <rdfs:label>scientific name</rdfs:label>
+    </owl:AnnotationProperty>
+
+    <owl:AnnotationProperty rdf:about="http://www.example.org/test-ontology#conservationStatus">
+        <rdfs:label>conservation status</rdfs:label>
+    </owl:AnnotationProperty>
+
+    <!-- ============================== -->
+    <!-- INDIVIDUALS                    -->
+    <!-- ============================== -->
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/test-ontology#Rex">
+        <rdf:type rdf:resource="http://www.example.org/test-ontology#Dog"/>
+        <hasName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Rex</hasName>
+        <hasWeight rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">30.5</hasWeight>
+        <hasAge rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">5</hasAge>
+        <livesIn rdf:resource="http://www.example.org/test-ontology#CityPark"/>
+        <rdfs:label>Rex the Dog</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/test-ontology#Whiskers">
+        <rdf:type rdf:resource="http://www.example.org/test-ontology#Cat"/>
+        <hasName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Whiskers</hasName>
+        <hasWeight rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">4.2</hasWeight>
+        <hasAge rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">3</hasAge>
+        <rdfs:label>Whiskers the Cat</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/test-ontology#Goldie">
+        <rdf:type rdf:resource="http://www.example.org/test-ontology#Eagle"/>
+        <hasName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Goldie</hasName>
+        <hasWeight rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">6.3</hasWeight>
+        <isEndangered rdf:datatype="http://www.w3.org/2001/XMLSchema#boolean">false</isEndangered>
+        <livesIn rdf:resource="http://www.example.org/test-ontology#Yellowstone"/>
+        <eats rdf:resource="http://www.example.org/test-ontology#Nemo"/>
+        <scientificName>Aquila chrysaetos</scientificName>
+        <rdfs:label>Goldie the Eagle</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/test-ontology#Nemo">
+        <rdf:type rdf:resource="http://www.example.org/test-ontology#Salmon"/>
+        <hasName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Nemo</hasName>
+        <hasWeight rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">3.1</hasWeight>
+        <livesIn rdf:resource="http://www.example.org/test-ontology#PacificOcean"/>
+        <rdfs:label>Nemo the Salmon</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/test-ontology#OldOak">
+        <rdf:type rdf:resource="http://www.example.org/test-ontology#Tree"/>
+        <hasName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Old Oak</hasName>
+        <hasHeight rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">25.0</hasHeight>
+        <hasAge rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">200</hasAge>
+        <growsIn rdf:resource="http://www.example.org/test-ontology#Yellowstone"/>
+        <rdfs:label>Old Oak Tree</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/test-ontology#Rose1">
+        <rdf:type rdf:resource="http://www.example.org/test-ontology#Flower"/>
+        <hasName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Red Rose</hasName>
+        <hasHeight rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">0.6</hasHeight>
+        <growsIn rdf:resource="http://www.example.org/test-ontology#CityPark"/>
+        <rdfs:label>Red Rose</rdfs:label>
+    </owl:NamedIndividual>
+
+    <!-- Habitat Individuals -->
+    <owl:NamedIndividual rdf:about="http://www.example.org/test-ontology#Yellowstone">
+        <rdf:type rdf:resource="http://www.example.org/test-ontology#Forest"/>
+        <hasName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Yellowstone National Forest</hasName>
+        <rdfs:label>Yellowstone</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/test-ontology#PacificOcean">
+        <rdf:type rdf:resource="http://www.example.org/test-ontology#Ocean"/>
+        <hasName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Pacific Ocean</hasName>
+        <rdfs:label>Pacific Ocean</rdfs:label>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://www.example.org/test-ontology#CityPark">
+        <rdf:type rdf:resource="http://www.example.org/test-ontology#Habitat"/>
+        <hasName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">City Park</hasName>
+        <rdfs:label>City Park</rdfs:label>
+    </owl:NamedIndividual>
+
+    <!-- Vehicle Individuals -->
+    <owl:NamedIndividual rdf:about="http://www.example.org/test-ontology#MyCar">
+        <rdf:type rdf:resource="http://www.example.org/test-ontology#Car"/>
+        <hasName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">My Tesla</hasName>
+        <rdfs:label>My Car</rdfs:label>
+    </owl:NamedIndividual>
+
+</rdf:RDF>
