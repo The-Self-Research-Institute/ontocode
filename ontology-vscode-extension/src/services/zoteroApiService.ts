@@ -65,7 +65,7 @@ class ZoteroApiService {
     /**
      * Fetch items from Zotero library
      */
-    async fetchLibrary(limit: number = 10000): Promise<ZoteroItem[]> {
+    async fetchLibrary(limit: number = 10000, start: number = 0, throwOnError: boolean = false): Promise<ZoteroItem[]> {
         const config = this.getConfig();
         
         if (!config) {
@@ -73,18 +73,18 @@ class ZoteroApiService {
             return [];
         }
 
-        try {
-            const libraryPath = config.libraryType === 'group' 
-                ? `groups/${config.groupId}`
-                : `users/${config.userId}`;
+        const libraryPath = config.libraryType === 'group'
+            ? `groups/${config.groupId}`
+            : `users/${config.userId}`;
 
+        const fetchPage = async (pageStart: number, pageLimit: number): Promise<ZoteroItem[]> => {
             const url = `${this.baseUrl}/${libraryPath}/items`;
-            
-            console.log('[ZoteroAPI] Fetching from:', url);
+            console.log('[ZoteroAPI] Fetching from:', url, 'start:', pageStart, 'limit:', pageLimit);
 
             const response = await axios.get<ZoteroItem[]>(url, {
                 params: {
-                    limit,
+                    limit: pageLimit,
+                    start: pageStart,
                     format: 'json',
                     include: 'data'
                 },
@@ -97,46 +97,84 @@ class ZoteroApiService {
 
             console.log(`[ZoteroAPI] Fetched ${response.data.length} items`);
             return response.data;
-        } catch (error) {
-            if (axios.isAxiosError(error)) {
-                if (error.response?.status === 403) {
-                    console.error('[ZoteroAPI] Invalid API key or permissions');
-                    const action = await vscode.window.showErrorMessage(
-                        'Zotero API key lacks library access permissions. When creating your API key at zotero.org/settings/keys, ensure "Allow library access" is checked.',
-                        'Get New Key',
-                        'Reconfigure',
-                        'Open Settings'
-                    );
-                    
-                    if (action === 'Get New Key') {
-                        vscode.env.openExternal(vscode.Uri.parse('https://www.zotero.org/settings/keys'));
-                    } else if (action === 'Reconfigure') {
-                        await this.promptForCredentials();
-                    } else if (action === 'Open Settings') {
-                        await vscode.commands.executeCommand('workbench.action.openSettings', 'ontocode.zotero');
-                    }
-                } else if (error.response?.status === 404) {
-                    console.error('[ZoteroAPI] User/Group not found');
-                    const action = await vscode.window.showErrorMessage(
-                        'Zotero user/group not found. Please check your user ID or group ID.',
-                        'Reconfigure',
-                        'Open Settings'
-                    );
-                    
-                    if (action === 'Reconfigure') {
-                        await this.promptForCredentials();
-                    } else if (action === 'Open Settings') {
-                        await vscode.commands.executeCommand('workbench.action.openSettings', 'ontocode.zotero');
-                    }
-                } else {
-                    console.error('[ZoteroAPI] Request failed:', error.message);
-                    vscode.window.showErrorMessage(`Failed to fetch Zotero library: ${error.message}`);
+        };
+
+        const maxPageSize = 100;
+        const fetchLimit = Math.min(limit, maxPageSize);
+
+        if (start > 0 || limit <= maxPageSize) {
+            try {
+                return await fetchPage(start, fetchLimit);
+            } catch (error) {
+                if (throwOnError) throw error;
+                return this.handleFetchError(error);
+            }
+        }
+
+        const allItems: ZoteroItem[] = [];
+        let currentStart = 0;
+
+        while (allItems.length < limit) {
+            try {
+                const batch = await fetchPage(currentStart, fetchLimit);
+                if (!batch || batch.length === 0) {
+                    break;
+                }
+
+                allItems.push(...batch);
+                currentStart += batch.length;
+
+                if (batch.length < fetchLimit) {
+                    break;
+                }
+            } catch (error) {
+                if (throwOnError) throw error;
+                return this.handleFetchError(error);
+            }
+        }
+
+        return allItems;
+    }
+
+    private async handleFetchError(error: unknown): Promise<ZoteroItem[]> {
+        if (axios.isAxiosError(error)) {
+            if (error.response?.status === 403) {
+                console.error('[ZoteroAPI] Invalid API key or permissions');
+                const action = await vscode.window.showErrorMessage(
+                    'Zotero API key lacks library access permissions. When creating your API key at zotero.org/settings/keys, ensure "Allow library access" is checked.',
+                    'Get New Key',
+                    'Reconfigure',
+                    'Open Settings'
+                );
+
+                if (action === 'Get New Key') {
+                    vscode.env.openExternal(vscode.Uri.parse('https://www.zotero.org/settings/keys'));
+                } else if (action === 'Reconfigure') {
+                    await this.promptForCredentials();
+                } else if (action === 'Open Settings') {
+                    await vscode.commands.executeCommand('workbench.action.openSettings', 'ontocode.zotero');
+                }
+            } else if (error.response?.status === 404) {
+                console.error('[ZoteroAPI] User/Group not found');
+                const action = await vscode.window.showErrorMessage(
+                    'Zotero user/group not found. Please check your user ID or group ID.',
+                    'Reconfigure',
+                    'Open Settings'
+                );
+
+                if (action === 'Reconfigure') {
+                    await this.promptForCredentials();
+                } else if (action === 'Open Settings') {
+                    await vscode.commands.executeCommand('workbench.action.openSettings', 'ontocode.zotero');
                 }
             } else {
-                console.error('[ZoteroAPI] Unexpected error:', error);
+                console.error('[ZoteroAPI] Request failed:', error.message);
+                vscode.window.showErrorMessage(`Failed to fetch Zotero library: ${error.message}`);
             }
-            return [];
+        } else {
+            console.error('[ZoteroAPI] Unexpected error:', error);
         }
+        return [];
     }
 
     /**
