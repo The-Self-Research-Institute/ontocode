@@ -11,7 +11,7 @@
   },
   "keywords": ["ontology", "owl", "editor"],
   "author": "OntoCode",
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "devDependencies": {
     "electron": "^29.0.0",
     "electron-builder": "^24.0.0"
