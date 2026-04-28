@@ -159,4 +159,4 @@ npm run lint
 
 ## 📄 License
 
-[MIT License](../LICENSE)
+[GPL v3 License](../LICENSE)
