@@ -1257,6 +1257,20 @@ public class OntologyMergeService {
         if (ontology.containsAnnotationPropertyInSignature(entityIRI)) {
             OWLAnnotationProperty prop = ontology.getOWLOntologyManager().getOWLDataFactory().getOWLAnnotationProperty(entityIRI);
             defining.addAll(ontology.getAxioms(prop));
+
+            // Explicitly include sub-annotation-property hierarchy axioms.
+            for (OWLSubAnnotationPropertyOfAxiom ax : ontology.getAxioms(AxiomType.SUB_ANNOTATION_PROPERTY_OF)) {
+                if (ax.getSubProperty().getIRI().equals(entityIRI) || ax.getSuperProperty().getIRI().equals(entityIRI)) {
+                    defining.add(ax);
+                }
+            }
+
+            // Also include annotation assertions where this annotation property is the predicate.
+            for (OWLAnnotationAssertionAxiom ax : ontology.getAxioms(AxiomType.ANNOTATION_ASSERTION)) {
+                if (ax.getProperty().equals(prop)) {
+                    defining.add(ax);
+                }
+            }
         }
 
         return defining;

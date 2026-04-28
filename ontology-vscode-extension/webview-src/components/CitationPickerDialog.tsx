@@ -1,8 +1,21 @@
 // CitationPickerDialog.tsx
 import React, { useState, useEffect } from 'react';
-import { X, Search, BookOpen, User, Calendar, ExternalLink, Plus, ChevronDown, ChevronRight, AlertCircle, Settings } from 'lucide-react';
-import { TreeNode } from '@/types';
-import ZoteroSettingsDialog from './ZoteroSettingsDialog';
+import { normalizeDoi as normalizeDoiUtil, isValidDoiFormat } from "../utils/doi";
+import {
+  X,
+  Search,
+  BookOpen,
+  User,
+  Calendar,
+  ExternalLink,
+  Plus,
+  ChevronDown,
+  ChevronRight,
+  AlertCircle,
+  Settings,
+} from "lucide-react";
+import { TreeNode } from "@/types";
+import ZoteroSettingsDialog from "./ZoteroSettingsDialog";
 
 interface CitationItem {
   key: string;
@@ -26,24 +39,20 @@ interface CitationItem {
 interface CitationPickerDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onSelectCitation: (citation: CitationItem | 'manual') => void;
-  format: 'turtle' | 'rdfxml';
+  onSelectCitation: (citation: CitationItem | "manual") => void;
+  format: "turtle" | "rdfxml";
 }
 
-const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ 
-  isOpen, 
-  onClose, 
-  onSelectCitation,
-  format
-}) => {
+const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onClose, onSelectCitation, format }) => {
   const [citations, setCitations] = useState<CitationItem[]>([]);
   const [filteredCitations, setFilteredCitations] = useState<CitationItem[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showDoiPrompt, setShowDoiPrompt] = useState(false);
   const [selectedCitation, setSelectedCitation] = useState<CitationItem | null>(null);
-  const [manualDoi, setManualDoi] = useState('');
+  const [manualDoi, setManualDoi] = useState("");
+  const [manualDoiError, setManualDoiError] = useState<string | null>(null);
   const [showZoteroSettings, setShowZoteroSettings] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadedCount, setLoadedCount] = useState(0);
@@ -51,22 +60,49 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
 
   useEffect(() => {
     if (isOpen) {
+      // Restore previous search query from this session so closing the modal
+      // and reopening preserves the user's last search.
+      try {
+        const stored = sessionStorage.getItem("citationPicker.searchQuery") || "";
+        if (stored) setSearchQuery(stored);
+      } catch (e) {
+        // ignore storage errors
+      }
       loadCitations();
     }
   }, [isOpen]);
 
+  // Persist the user's search between modal opens within this browser session.
   useEffect(() => {
-    if (searchQuery.trim() === '') {
+    try {
+      if (searchQuery !== undefined) sessionStorage.setItem("citationPicker.searchQuery", searchQuery);
+    } catch (e) {
+      // ignore storage errors
+    }
+  }, [searchQuery]);
+
+  // Persist current search query when dialog is closed so reopening restores it.
+  useEffect(() => {
+    return () => {
+      try {
+        sessionStorage.setItem("citationPicker.searchQuery", searchQuery || "");
+      } catch (e) {
+        // ignore storage errors
+      }
+    };
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (searchQuery.trim() === "") {
       setFilteredCitations(citations);
     } else {
       const query = searchQuery.toLowerCase();
-      const filtered = citations.filter(citation => {
-        const title = citation.data?.title?.toLowerCase() || '';
-        const authors = citation.data?.creators?.map(c => 
-          `${c.firstName} ${c.lastName}`.toLowerCase()
-        ).join(' ') || '';
-        const year = citation.data?.date || '';
-        
+      const filtered = citations.filter((citation) => {
+        const title = citation.data?.title?.toLowerCase() || "";
+        const authors =
+          citation.data?.creators?.map((c) => `${c.firstName} ${c.lastName}`.toLowerCase()).join(" ") || "";
+        const year = citation.data?.date || "";
+
         return title.includes(query) || authors.includes(query) || year.includes(query);
       });
       setFilteredCitations(filtered);
@@ -83,81 +119,118 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
     const messageHandler = (event: MessageEvent) => {
       const message = event.data;
 
-      if (message.type === 'zoteroLibraryData') {
+      if (message.type === "zoteroLibraryData") {
         const items = message.items || [];
         setCitations(items);
         setFilteredCitations(items);
         setLoadedCount(items.length);
         setLoading(false);
         setLoadingMore(!!message.hasMore);
-      } else if (message.type === 'zoteroLibraryDataAppend') {
+      } else if (message.type === "zoteroLibraryDataAppend") {
         const items = message.items || [];
-        setCitations(prev => [...prev, ...items]);
-        setLoadedCount(prev => prev + items.length);
+        setCitations((prev) => [...prev, ...items]);
+        setLoadedCount((prev) => prev + items.length);
         setLoadingMore(!!message.hasMore);
-      } else if (message.type === 'zoteroLibraryDataComplete') {
+      } else if (message.type === "zoteroLibraryDataComplete") {
         setLoadingMore(false);
-      } else if (message.type === 'zoteroLibraryError') {
-        setError(message.error || 'Failed to load Zotero library');
+      } else if (message.type === "zoteroLibraryError") {
+        setError(message.error || "Failed to load Zotero library");
         setLoading(false);
         setLoadingMore(false);
       }
     };
 
-    window.addEventListener('message', messageHandler);
+    window.addEventListener("message", messageHandler);
 
     // Request citations from extension via postMessage
     if (window.vscode) {
       window.vscode.postMessage({
-        type: 'requestZoteroLibrary'
+        type: "requestZoteroLibrary",
       });
     }
-    
+
     // Cleanup listener after 10 seconds or when component unmounts
     const timeout = setTimeout(() => {
-      window.removeEventListener('message', messageHandler);
+      window.removeEventListener("message", messageHandler);
       if (loading) {
-        setError('Request timed out. Please try again.');
+        setError("Request timed out. Please try again.");
         setLoading(false);
       }
     }, 10000);
 
     return () => {
       clearTimeout(timeout);
-      window.removeEventListener('message', messageHandler);
+      window.removeEventListener("message", messageHandler);
     };
   };
 
   const extractYear = (dateStr: string): string => {
-    if (!dateStr) return '';
+    if (!dateStr) return "";
     const match = dateStr.match(/\d{4}/);
-    return match ? match[0] : '';
+    return match ? match[0] : "";
   };
 
   const normalizeDoiUrl = (doi: string): string => {
-    if (!doi) return '';
+    if (!doi) return "";
     // If DOI already has http:// or https://, use it as-is
-    if (doi.startsWith('http://') || doi.startsWith('https://')) {
+    if (doi.startsWith("http://") || doi.startsWith("https://")) {
       return doi;
     }
     // Otherwise, prepend https://doi.org/
     return `https://doi.org/${doi}`;
   };
 
+  // Try to extract a normalized DOI from several citation fields (doi, url, extra),
+  // with a regex fallback for values embedded in longer strings.
+  const extractDoiFromCitation = (citation: CitationItem): string => {
+    const candidates = [
+      citation.data?.doi,
+      citation.data?.url,
+      // Zotero sometimes stores metadata in the `extra` field like 'DOI: 10.1234/xyz'
+      // so include it as a candidate.
+      // @ts-ignore
+      citation.data?.extra,
+    ].filter(Boolean) as string[];
+
+    const DOI_EXTRACT_RE = /10\.\d{4,9}\/[\w.\-;()\/:@,]+/i;
+
+    for (const cand of candidates) {
+      const norm = normalizeDoiUtil(cand);
+      if (norm && isValidDoiFormat(norm)) return norm;
+
+      const m = String(cand).match(DOI_EXTRACT_RE);
+      if (m && m[0]) {
+        const norm2 = normalizeDoiUtil(m[0]);
+        if (isValidDoiFormat(norm2)) return norm2;
+      }
+    }
+
+    return "";
+  };
+
   const handleSelectCitation = (citation: CitationItem) => {
-    // Check if DOI is missing
-    if (!citation.data.doi) {
+    // Check if DOI is present and looks valid after normalization
+    const norm = extractDoiFromCitation(citation);
+    if (!norm || !isValidDoiFormat(norm)) {
+      // Show prompt to add DOI when missing or malformed
       setSelectedCitation(citation);
       setShowDoiWarning(true);
       setShowDoiPrompt(true);
       return;
     }
-    
-    // DOI exists, proceed with selection
-    onSelectCitation(citation);
+
+    // DOI exists and appears valid — normalize stored value and proceed
+    const updatedCitation = {
+      ...citation,
+      data: {
+        ...citation.data,
+        doi: norm,
+      },
+    };
+    onSelectCitation(updatedCitation);
     onClose();
   };
-  
+
   const handleConfirmWithoutDoi = () => {
     if (selectedCitation) {
       onSelectCitation(selectedCitation);
@@ -167,28 +240,32 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
       onClose();
     }
   };
-  
+
   const handleAddDoiAndConfirm = () => {
     if (selectedCitation && manualDoi.trim()) {
-      // Add DOI to citation data
+      const norm = normalizeDoiUtil(manualDoi.trim());
+      // If malformed, keep showing error (should be prevented by UI check)
+      if (!isValidDoiFormat(norm)) return;
+      // Add normalized DOI to citation data
       const updatedCitation = {
         ...selectedCitation,
         data: {
           ...selectedCitation.data,
-          doi: manualDoi.trim()
-        }
+          doi: norm,
+        },
       };
       onSelectCitation(updatedCitation);
       setShowDoiPrompt(false);
       setShowDoiWarning(false);
       setSelectedCitation(null);
-      setManualDoi('');
+      setManualDoi("");
+      setManualDoiError(null);
       onClose();
     }
   };
 
   const handleManualEntry = () => {
-    onSelectCitation('manual');
+    onSelectCitation("manual");
   };
 
   if (!isOpen) return null;
@@ -211,7 +288,10 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
               <Settings size={20} className="text-gray-500" />
             </button>
             <button
-              onClick={onClose}
+              onClick={() => {
+                onClose();
+                setSearchQuery("");
+              }}
               className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
             >
               <X size={20} className="text-gray-500" />
@@ -248,7 +328,8 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
           </div>
           {searchQuery && (
             <p className="text-xs text-gray-600 mt-2">
-              Found {filteredCitations.length} {filteredCitations.length === 1 ? 'result' : 'results'} for "{searchQuery}"
+              Found {filteredCitations.length} {filteredCitations.length === 1 ? "result" : "results"} for "
+              {searchQuery}"
             </p>
           )}
         </div>
@@ -268,8 +349,10 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
             <div className="flex items-center justify-center py-12">
               <div className="text-center">
                 <div className="text-red-500 mb-2">⚠️</div>
-                <p className="text-red-600">{error === 'ZOTERO_NOT_CONFIGURED' ? 'Zotero is not configured yet.' : error}</p>
-                {error === 'ZOTERO_NOT_CONFIGURED' ? (
+                <p className="text-red-600">
+                  {error === "ZOTERO_NOT_CONFIGURED" ? "Zotero is not configured yet." : error}
+                </p>
+                {error === "ZOTERO_NOT_CONFIGURED" ? (
                   <button
                     onClick={() => setShowZoteroSettings(true)}
                     className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 inline-flex items-center gap-2"
@@ -290,9 +373,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
 
           {loadingMore && !loading && !error && (
             <div className="flex items-center justify-center py-4">
-              <div className="text-sm text-gray-600">
-                Loading more citations in the background...
-              </div>
+              <div className="text-sm text-gray-600">Loading more citations in the background...</div>
             </div>
           )}
 
@@ -301,13 +382,9 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
               <div className="text-center">
                 <BookOpen className="mx-auto text-gray-400 mb-3" size={48} />
                 <p className="text-gray-600 font-medium">
-                  {searchQuery ? 'No citations found matching your search' : 'No citations available'}
+                  {searchQuery ? "No citations found matching your search" : "No citations available"}
                 </p>
-                {searchQuery && (
-                  <p className="text-sm text-gray-500 mt-2">
-                    Try searching with different keywords
-                  </p>
-                )}
+                {searchQuery && <p className="text-sm text-gray-500 mt-2">Try searching with different keywords</p>}
                 {!searchQuery && (
                   <p className="text-sm text-gray-500 mt-2">
                     Make sure Zotero is running and the extension is connected
@@ -320,9 +397,9 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
           {!loading && !error && filteredCitations.length > 0 && (
             <div className="space-y-3">
               {filteredCitations.map((citation) => {
-                const authors = citation?.data?.creators?.map(c => 
-                  `${c.firstName} ${c.lastName}`.trim()
-                ).join(', ') || 'Unknown author';
+                const authors =
+                  citation?.data?.creators?.map((c) => `${c.firstName} ${c.lastName}`.trim()).join(", ") ||
+                  "Unknown author";
                 const year = extractYear(citation.data.date);
                 return (
                   <div
@@ -332,9 +409,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold text-gray-800 mb-2 line-clamp-2">
-                          {citation.data.title}
-                        </h3>
+                        <h3 className="font-semibold text-gray-800 mb-2 line-clamp-2">{citation.data.title}</h3>
                         <div className="flex flex-wrap gap-4 text-sm text-gray-600 mb-2">
                           <div className="flex items-center gap-1 min-w-0">
                             <User size={14} className="flex-shrink-0" />
@@ -353,27 +428,32 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
                           )}
                         </div>
                         {citation.data.publicationTitle && (
-                          <p className="text-xs text-gray-500 italic line-clamp-1">
-                            {citation.data.publicationTitle}
-                          </p>
+                          <p className="text-xs text-gray-500 italic line-clamp-1">{citation.data.publicationTitle}</p>
                         )}
-                        {citation.data.doi ? (
-                          <a
-                            href={normalizeDoiUrl(citation.data.doi)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 mt-1 hover:underline"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <ExternalLink size={12} />
-                            <span className="truncate">DOI: {citation.data.doi.replace(/^https?:\/\/(dx\.)?doi\.org\//, '')}</span>
-                          </a>
-                        ) : (
-                          <div className="flex items-center gap-1 text-xs text-yellow-600 mt-1">
-                            <AlertCircle size={12} />
-                            <span>No DOI - will prompt to add</span>
-                          </div>
-                        )}
+                        {(() => {
+                          const normDoi = extractDoiFromCitation(citation);
+                          const doiValid = !!normDoi && isValidDoiFormat(normDoi);
+                          if (doiValid) {
+                            return (
+                              <a
+                                href={normalizeDoiUrl(normDoi)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 mt-1 hover:underline"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <ExternalLink size={12} />
+                                <span className="truncate">DOI: {normDoi}</span>
+                              </a>
+                            );
+                          }
+                          return (
+                            <div className="flex items-center gap-1 text-xs text-yellow-600 mt-1">
+                              <AlertCircle size={12} />
+                              <span>No DOI - will prompt to add</span>
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   </div>
@@ -387,7 +467,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
         <div className="p-4 border-t border-gray-200 bg-gray-50">
           <div className="flex items-center justify-between text-xs text-gray-600 mb-2">
             <span className="font-medium">
-              {filteredCitations.length} {filteredCitations.length === 1 ? 'citation' : 'citations'}
+              {filteredCitations.length} {filteredCitations.length === 1 ? "citation" : "citations"}
               {!searchQuery && citations.length > 0 && ` of ${citations.length}`}
               {loadingMore && ` · ${loadedCount} loaded so far`}
             </span>
@@ -400,10 +480,13 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
           )}
         </div>
       </div>
-      
+
       {/* DOI Prompt Dialog */}
       {showDoiPrompt && selectedCitation && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70" onClick={() => setShowDoiPrompt(false)}>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70"
+          onClick={() => setShowDoiPrompt(false)}
+        >
           <div className="bg-white rounded-lg shadow-2xl p-6 max-w-lg w-full mx-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start gap-3 mb-4">
               <div className="flex-shrink-0 w-10 h-10 bg-yellow-100 rounded-full flex items-center justify-center">
@@ -414,33 +497,39 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
                 <p className="text-sm text-gray-700 mb-2">
                   The selected citation <strong>"{selectedCitation.data.title}"</strong> does not have a DOI.
                 </p>
-                <p className="text-sm text-gray-600">
-                  Would you like to add a DOI manually or proceed without it?
-                </p>
+                <p className="text-sm text-gray-600">Would you like to add a DOI manually or proceed without it?</p>
               </div>
             </div>
-            
+
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Add DOI (optional):
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Add DOI (optional):</label>
               <input
                 type="text"
                 value={manualDoi}
-                onChange={(e) => setManualDoi(e.target.value)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setManualDoi(v);
+                  const norm = normalizeDoiUtil(v);
+                  if (v.trim() && !isValidDoiFormat(norm)) {
+                    setManualDoiError("DOI looks malformed");
+                  } else {
+                    setManualDoiError(null);
+                  }
+                }}
                 onKeyPress={(e) => {
-                  if (e.key === 'Enter' && manualDoi.trim()) {
+                  if (e.key === "Enter" && manualDoi.trim() && !manualDoiError) {
                     handleAddDoiAndConfirm();
                   }
                 }}
                 placeholder="10.1234/example"
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
+              {manualDoiError && <div className="text-sm text-red-600 mt-1">{manualDoiError}</div>}
               <p className="text-xs text-gray-500 mt-1">
                 Enter the DOI (e.g., "10.1234/example") or leave blank to skip
               </p>
             </div>
-            
+
             <div className="flex gap-2 justify-end">
               <button
                 onClick={handleConfirmWithoutDoi}
@@ -452,6 +541,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({
                 <button
                   onClick={handleAddDoiAndConfirm}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
+                  disabled={!!manualDoiError}
                 >
                   Add DOI & Insert
                 </button>
