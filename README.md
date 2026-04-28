@@ -396,4 +396,4 @@ See also [CITATION.cff](CITATION.cff), [CITATIONS.md](CITATIONS.md), and [refere
 
 ## License
 
-[MIT License](LICENSE)
+[GPL v3 License](LICENSE)
