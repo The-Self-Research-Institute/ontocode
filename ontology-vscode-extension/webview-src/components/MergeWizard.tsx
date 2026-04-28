@@ -22,6 +22,7 @@ interface MergeConflict {
   sourceDefinition: string;
   targetDefinition: string;
   severity: string;
+  description?: string;
 }
 
 interface MergeAnalysisResult {
@@ -102,7 +103,6 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
   const [mergeComplete, setMergeComplete] = useState(false);
   const [mergeResult, setMergeResult] = useState<any>(null);
   const [targetMode, setTargetMode] = useState<"current" | "existingFile" | "newFile">("current");
-  const [selectedTargetProjectId, setSelectedTargetProjectId] = useState("");
   const [selectedTargetFileName, setSelectedTargetFileName] = useState("");
   const [newOutputFileName, setNewOutputFileName] = useState("merged-output.owl");
 
@@ -130,7 +130,6 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
       setMergeResult(null);
       setConflictResolutions(new Map());
       setTargetMode("current");
-      setSelectedTargetProjectId("");
       setSelectedTargetFileName("");
       setNewOutputFileName("merged-output.owl");
     }
@@ -138,7 +137,8 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
 
   const resolveTargetProjectId = () => {
     if (targetMode === "existingFile") {
-      return selectedTargetProjectId || null;
+      // For "merge into existing file in this project", target project is current project
+      return projectId;
     }
     return null;
   };
@@ -529,17 +529,16 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
                 {targetMode === "existingFile" && (
                   <select
                     className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-                    value={selectedTargetProjectId}
+                    value={selectedTargetFileName}
                     onChange={(e) => {
-                      const selectedId = e.target.value;
-                      const selected = targetOptions.find((opt) => opt.id === selectedId);
-                      setSelectedTargetProjectId(selectedId);
-                      setSelectedTargetFileName(selected?.name || "");
+                      const selectedValue = e.target.value;
+                      const selected = targetOptions.find((opt) => opt.name === selectedValue);
+                      setSelectedTargetFileName(selectedValue);
                     }}
                   >
                     <option value="">Select existing file</option>
                     {targetOptions.map((file) => (
-                      <option key={file.id} value={file.id}>
+                      <option key={file.name} value={file.name}>
                         {file.name}
                       </option>
                     ))}
@@ -578,7 +577,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
                   disabled={
                     !selectedFile ||
                     analyzing ||
-                    (targetMode === "existingFile" && !selectedTargetProjectId) ||
+                    (targetMode === "existingFile" && !selectedTargetFileName) ||
                     (targetMode === "newFile" && !newOutputFileName.trim())
                   }
                   className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center gap-2"
@@ -680,6 +679,28 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* Special Warning: Duplicate File Upload */}
+              {analysisResult.conflicts.some(
+                (c) => c.conflictType === "IDENTICAL_FILE_UPLOAD" || c.conflictType === "DUPLICATE_FILE_CONTENT",
+              ) && (
+                <div className="border-l-4 border-red-500 bg-red-50 p-4 rounded">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="font-semibold text-red-900">Duplicate File Detected</p>
+                      <p className="text-sm text-red-800 mt-1">
+                        {analysisResult.conflicts.some((c) => c.conflictType === "IDENTICAL_FILE_UPLOAD")
+                          ? "The uploaded ontology is identical to the existing one. This appears to be a re-upload of the same file. Proceeding with the merge will not add any new content."
+                          : "The uploaded ontology is nearly identical to the existing one (less than 1% difference). This may be a duplicate with only minor changes."}
+                      </p>
+                      <p className="text-sm text-red-700 mt-2 font-medium">
+                        ✓ You can still proceed if you intended to re-merge, but consider if this action is necessary.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Conflict List */}
               {analysisResult.conflicts.length > 0 && (
