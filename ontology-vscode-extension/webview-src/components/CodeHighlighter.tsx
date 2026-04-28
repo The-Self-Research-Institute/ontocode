@@ -1,4 +1,5 @@
 import React, { useMemo, useState, useEffect, useRef, useCallback } from "react";
+import { normalizeDoi as normalizeDoiUtil, isValidDoiFormat } from '../utils/doi';
 import {
   Search,
   X,
@@ -74,6 +75,7 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [showAddDoiDialog, setShowAddDoiDialog] = useState(false);
   const [doiInputValue, setDoiInputValue] = useState("");
+  const [doiInputError, setDoiInputError] = useState<string | null>(null);
   const [currentContent, setCurrentContent] = useState(content);
   const [isEditMode, setIsEditMode] = useState(false);
   const [cursorPosition, setCursorPosition] = useState({ line: 1, column: 1 });
@@ -187,6 +189,19 @@ export const CodeHighlighter: React.FC<CodeHighlighterProps> = ({
       console.warn("[CodeHighlighter] DOI input is empty");
       return;
     }
+
+    // Validate DOI format before inserting
+    const norm = normalizeDoiUtil(doiInputValue);
+    if (!isValidDoiFormat(norm)) {
+      console.warn("[CodeHighlighter] DOI appears malformed:", doiInputValue);
+      setDoiInputError('DOI looks malformed');
+      // Provide feedback to the user in the webview
+      try {
+        alert('The DOI you entered looks malformed. Please check the value and try again.');
+      } catch (_) {}
+      return;
+    }
+    setDoiInputError(null);
 
     if (!onContentChange) {
       console.warn("[CodeHighlighter] Cannot add DOI - onContentChange callback not provided");
