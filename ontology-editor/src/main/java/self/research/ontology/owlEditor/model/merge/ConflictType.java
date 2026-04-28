@@ -32,5 +32,17 @@ public enum ConflictType {
     /**
      * Ontology IRI conflict
      */
-    ONTOLOGY_IRI_CONFLICT
+    ONTOLOGY_IRI_CONFLICT,
+    
+    /**
+     * Source ontology is identical or nearly identical to target (duplicate upload)
+     * This indicates the same file was uploaded again - no new content to merge
+     */
+    DUPLICATE_FILE_CONTENT,
+    
+    /**
+     * Source ontology is identical to target, suggesting a re-upload of the same file
+     * User should be alerted that this operation won't add new content
+     */
+    IDENTICAL_FILE_UPLOAD
 }

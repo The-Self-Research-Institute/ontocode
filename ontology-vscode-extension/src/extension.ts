@@ -208,7 +208,9 @@ type WebviewMessage =
     | { type: 'uploadProgress'; projectId: string; percent: number; loaded: number; total: number; message: string }
     | { type: 'showSubscriptionPlans' }
     // Citation messages
-    | { type: 'zoteroLibraryData'; items: any[] }
+    | { type: 'zoteroLibraryData'; items: any[]; hasMore?: boolean }
+    | { type: 'zoteroLibraryDataAppend'; items: any[]; hasMore?: boolean }
+    | { type: 'zoteroLibraryDataComplete' }
     | { type: 'zoteroLibraryError'; error: string }
     | { type: 'citationFormatted'; citation: string; metadata: any; projectId: string }
     | { type: 'uploadOntologyContentDone'; success: boolean; projectId: string }; // Navigate to subscription plans page
@@ -564,7 +566,7 @@ export async function activate(context: vscode.ExtensionContext) {
             // Try to fetch from Zotero API first
             if (zoteroApiService.isConfigured()) {
                 console.log('[OntoCode] Fetching from Zotero API...');
-                const items = await zoteroApiService.fetchLibrary(100);
+                const items = await zoteroApiService.fetchLibrary(10000);
                 if (items && items.length > 0) {
                     console.log(`[OntoCode] Returning ${items.length} items from Zotero API`);
                     return items;
@@ -3859,13 +3861,37 @@ class OntoCodePanel {
                 }
             }
 
-            await sci2CodeService.initialize();
-            const items = await sci2CodeService.getZoteroLibrary();
+            const batchSize = 100;
+            let start = 0;
+            let batch: any[] = [];
 
-            // Send library data back to webview
+            // Load an initial page quickly so the UI can render immediately.
+            batch = await zoteroApiService.fetchLibrary(batchSize, start, true);
             this.postMessage({
                 type: 'zoteroLibraryData',
-                items: items
+                items: batch,
+                hasMore: batch.length === batchSize
+            });
+
+            start += batch.length;
+
+            while (batch.length === batchSize) {
+                batch = await zoteroApiService.fetchLibrary(batchSize, start, true);
+                if (!batch || batch.length === 0) {
+                    break;
+                }
+
+                this.postMessage({
+                    type: 'zoteroLibraryDataAppend',
+                    items: batch,
+                    hasMore: batch.length === batchSize
+                });
+
+                start += batch.length;
+            }
+
+            this.postMessage({
+                type: 'zoteroLibraryDataComplete'
             });
         } catch (error) {
             console.error('[OntoCode] Failed to load Zotero library:', error);
