@@ -1980,18 +1980,15 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const applyInstanceCountsToTree = useCallback(
     (nodes: TreeNode[], counts: Record<string, { direct?: number; inferred?: number; total?: number }>): TreeNode[] => {
-      if (!Array.isArray(nodes)) {
-        console.warn("[Dashboard] applyInstanceCountsToTree received non-array:", nodes);
-        return [];
-      }
+      if (!Array.isArray(nodes)) return [];
+      // Skip tree walk entirely when no counts are loaded yet
+      if (!counts || Object.keys(counts).length === 0) return nodes;
 
       return nodes.map((node) => {
         const countEntry = counts[node.id];
         const direct = countEntry?.direct;
         const inferred = countEntry?.inferred;
         const total = countEntry ? (countEntry.total ?? (direct ?? 0) + (inferred ?? 0)) : undefined;
-
-        // Ensure children is always an array
         const children = Array.isArray(node.children) ? node.children : [];
 
         return {
@@ -2000,7 +1997,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           inferredInstanceCount: inferred,
           totalInstanceCount: total,
           children: children.length > 0 ? applyInstanceCountsToTree(children, counts) : [],
-          // Preserve hasChildren from backend (for lazy loading) or fallback to children.length > 0
           hasChildren: node.hasChildren !== undefined ? node.hasChildren : children.length > 0,
         };
       });
@@ -2151,10 +2147,10 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [selectedItem, setSelectedItem] = useState<SelectableItem | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<string[]>(["http://www.w3.org/2002/07/owl#Thing"]); // Pre-expand owl:Thing
   const expandedNodesRef = useRef<string[]>(["http://www.w3.org/2002/07/owl#Thing"]);
-  useEffect(() => {
-    expandedNodesRef.current = expandedNodes;
-    console.log("[Dashboard] 🔍 expandedNodes updated:", expandedNodes.length, "nodes", expandedNodes.slice(0, 5));
-  }, [expandedNodes]);
+  useEffect(() => { expandedNodesRef.current = expandedNodes; }, [expandedNodes]);
+
+  // Tracks which tree nodes are currently fetching children (shows per-node spinner)
+  const [loadingNodes, setLoadingNodes] = useState<Set<string>>(new Set());
 
   // Fetch files for the currently selected project
   const fetchProjectFiles = useCallback(async (currentProjectId: string): Promise<FileInfo[]> => {
@@ -2870,48 +2866,47 @@ const Dashboard: React.FC<DashboardProps> = ({
     [projectId],
   );
 
+  const normalizeHierarchyNode = useCallback((node: any): any => {
+    const children = Array.isArray(node.children) ? node.children.map(normalizeHierarchyNode) : [];
+    const hasChildren = node.hasChildren !== undefined ? node.hasChildren : children.length > 0;
+    return { ...node, children, hasChildren };
+  }, []);
+
   const loadInferredHierarchy = useCallback(async () => {
     if (!projectId) return;
-    console.log("[Dashboard] Loading full inferred class hierarchy...");
-    try {
+
+    const fetchWithReasoner = async (reasoner: string) => {
       const response = await apiClient.get<any>(
-        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-class-hierarchy?reasonerType=${selectedReasoner}`,
+        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-class-hierarchy?reasonerType=${reasoner}`,
       );
-      const payload = response?.data || response;
-      const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
+      return response?.data || response;
+    };
 
-      if (!Array.isArray(hierarchy) || hierarchy.length === 0) {
-        console.warn("[Dashboard] No inferred classes found. Reasoner may not have been run yet.");
+    const applyPayload = (payload: any, timedOut = false) => {
+      const hierarchy = payload?.hierarchy || [];
+      if (timedOut || !Array.isArray(hierarchy) || hierarchy.length === 0) {
         setInferredClassHierarchy([]);
-        return;
+        return false;
       }
+      setInferredClassHierarchy(applyInstanceCountsToTree(hierarchy.map(normalizeHierarchyNode), classInstanceCounts));
+      return true;
+    };
 
-      // Ensure each node has a children array
-      const normalizedHierarchy = hierarchy.map((node: any) => ({
-        ...node,
-        children: Array.isArray(node.children) ? node.children : [],
-        hasChildren: Array.isArray(node.children) && node.children.length > 0,
-      }));
+    try {
+      const payload = await fetchWithReasoner(selectedReasoner);
 
-      console.log("[Dashboard] Full inferred hierarchy loaded with", normalizedHierarchy.length, "root nodes");
-      console.log("[Dashboard] First root node:", normalizedHierarchy[0]);
-      console.log("[Dashboard] First root node children count:", normalizedHierarchy[0]?.children?.length || 0);
-      if (normalizedHierarchy[0]?.children?.length > 0) {
-        console.log("[Dashboard] First few children:", normalizedHierarchy[0].children.slice(0, 3));
+      // Backend signals timeout — auto-retry with STRUCTURAL (no reasoning, always fast)
+      if (payload?.timeout && selectedReasoner !== 'STRUCTURAL') {
+        const fallbackPayload = await fetchWithReasoner('STRUCTURAL');
+        applyPayload(fallbackPayload);
+      } else {
+        applyPayload(payload);
       }
-
-      const hierarchyWithCounts = applyInstanceCountsToTree(normalizedHierarchy, classInstanceCounts);
-      console.log(
-        "[Dashboard] After applying counts, hierarchy structure preserved:",
-        hierarchyWithCounts[0]?.children?.length || 0,
-        "children",
-      );
-      setInferredClassHierarchy(hierarchyWithCounts);
     } catch (error) {
-      console.error("[Dashboard] Failed to load full inferred class hierarchy:", error);
+      console.error("[Dashboard] Failed to load inferred class hierarchy:", error);
       setInferredClassHierarchy([]);
     }
-  }, [projectId, applyInstanceCountsToTree, classInstanceCounts, selectedReasoner]);
+  }, [projectId, applyInstanceCountsToTree, classInstanceCounts, selectedReasoner, normalizeHierarchyNode]);
 
   const loadInferredObjectPropertyHierarchy = useCallback(async () => {
     if (!projectId) return;
@@ -6004,9 +5999,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           ? `/api/ontology/classes/top-level/${projectId}?limit=100`
           : `/api/ontology/classes/children/${projectId}?parentIri=${encodeURIComponent(nodeId)}`;
 
-        console.log(`[loadChildren] Using endpoint: ${endpoint}`);
         const response = await apiClient.get<any>(endpoint);
-        console.log("[loadChildren] Children response:", response);
 
         // Extract array from response - handle both direct array and wrapped responses
         const children = Array.isArray(response)
@@ -6016,26 +6009,21 @@ const Dashboard: React.FC<DashboardProps> = ({
             : Array.isArray(response?.classes)
               ? response.classes
               : [];
-        console.log("[loadChildren] Extracted children:", children);
 
         const updateTree = (nodes: TreeNode[]): TreeNode[] =>
           nodes.map((n: TreeNode) => {
             if (n.id === nodeId) {
-              console.log(`[loadChildren] Found target node:`, n);
               const mappedChildren = children.map((c: TopLevelClass) => ({
                 ...c,
                 children: c.hasChildren ? [] : undefined,
                 hasChildren: c.hasChildren,
                 subClassOfAxioms: [{ id: nodeId, type: "SubClassOf", definition: n.label }],
               }));
-              console.log("[loadChildren] Mapped children:", mappedChildren);
-              const updatedNode = {
+              return {
                 ...n,
                 children: applyInstanceCountsToTree(mappedChildren, classInstanceCounts),
                 hasChildren: mappedChildren.length > 0,
               };
-              console.log("[loadChildren] Updated node:", updatedNode);
-              return updatedNode;
             }
             if (n.children) {
               return { ...n, children: updateTree(n.children) };
@@ -6043,13 +6031,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             return n;
           });
 
-        console.log("[loadChildren] Updating class hierarchy...");
-        setClassHierarchy((prevHierarchy) => {
-          const updated = updateTree(prevHierarchy);
-          console.log("[loadChildren] New hierarchy:", updated);
-          return updated;
-        });
-        console.log(`[loadChildren] ✅ Loaded ${children.length} children for node: ${nodeId}`);
+        setClassHierarchy((prevHierarchy) => updateTree(prevHierarchy));
       } catch (error) {
         console.error(`Failed to load children for ${nodeId}`, error);
       }
@@ -6089,7 +6071,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           id: item.iri,
           label: item.label || getLocalName(item.iri),
           children: [],
-          hasChildren: true,
+          hasChildren: item.hasChildren !== undefined ? item.hasChildren : true,
           subClassOfAxioms: [{ id: nodeId, type: "SubClassOf", definition: getLocalName(nodeId) || "Thing" }],
         }));
 
@@ -6942,16 +6924,9 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const toggleNode = useCallback(
     async (nodeId: string) => {
-      console.log("[toggleNode] 🔄 Called for nodeId:", nodeId);
-      console.log("[toggleNode] Current expandedNodes:", expandedNodes);
-      console.log("[toggleNode] entitiesTab:", entitiesTab);
-      console.log("[toggleNode] currentHierarchyViewMode:", currentHierarchyViewMode);
-
       if (expandedNodes.includes(nodeId)) {
-        console.log("[toggleNode] ⬇️ Collapsing node:", nodeId);
         setExpandedNodes((prev) => prev.filter((id) => id !== nodeId));
       } else {
-        console.log("[toggleNode] ➡️ Expanding node:", nodeId);
         const findNode = (nodes: TreeNode[], id: string): TreeNode | null => {
           for (const node of nodes) {
             if (node.id === id) return node;
@@ -6983,19 +6958,26 @@ const Dashboard: React.FC<DashboardProps> = ({
         });
 
         if (node && node.hasChildren && (!node.children || node.children.length === 0)) {
-          console.log(`Node ${nodeId} needs children loaded`);
           if (entitiesTab === "Classes") {
-            if (currentHierarchyViewMode === "inferred") {
-              await loadInferredChildren(nodeId);
-            } else {
-              await loadChildren(nodeId);
+            setLoadingNodes((prev) => new Set([...prev, nodeId]));
+            const timeout = new Promise<void>((_, reject) =>
+              setTimeout(() => reject(new Error("NODE_TIMEOUT")), 5000)
+            );
+            try {
+              if (currentHierarchyViewMode === "inferred") {
+                await Promise.race([loadInferredChildren(nodeId), timeout]);
+              } else {
+                await Promise.race([loadChildren(nodeId), timeout]);
+              }
+            } catch (err: any) {
+              if (err?.message === "NODE_TIMEOUT") {
+                // Collapse the node so user isn't stuck on an empty expand
+                setExpandedNodes((prev) => prev.filter((id) => id !== nodeId));
+              }
+            } finally {
+              setLoadingNodes((prev) => { const n = new Set(prev); n.delete(nodeId); return n; });
             }
-          } else if (entitiesTab === "ObjectProperties" || entitiesTab === "DataProperties") {
-            // Properties usually don't have on-demand loading in this UI yet,
-            // but we could add it here if needed.
           }
-        } else {
-          console.log("[toggleNode] ℹ️ Node already has children or hasChildren is false");
         }
       }
     },
@@ -14251,6 +14233,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 viewMode={currentHierarchyViewMode}
                 onViewModeChange={setCurrentHierarchyViewMode}
                 isReasonerRunning={isReasonerRunning}
+                loadingNodes={loadingNodes}
               />
 
               <section className="flex-1 overflow-hidden p-2 bg-slate-200 flex flex-col">

@@ -5,13 +5,16 @@ import org.semanticweb.owlapi.reasoner.*;
 import org.semanticweb.owlapi.reasoner.structural.StructuralReasonerFactory;
 import openllet.owlapi.OpenlletReasonerFactory;
 import org.semanticweb.HermiT.ReasonerFactory;
-// import org.semanticweb.elk.owlapi.ElkReasonerFactory; // Temporarily disabled
+import org.semanticweb.elk.owlapi.ElkReasonerFactory;
 import uk.ac.manchester.cs.jfact.JFactFactory;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Service for ontology reasoning operations.
@@ -22,51 +25,54 @@ public class ReasonerService {
 
     private static final Logger log = LoggerFactory.getLogger(ReasonerService.class);
 
-    private final Map<String, OWLReasoner> reasonerCache = new HashMap<>();
+    // Caffeine cache: max 5 reasoners, evict after 30 min idle, dispose on removal
+    // (each reasoner holds the full ontology + inference state in heap)
+    private final Cache<String, OWLReasoner> reasonerCache = Caffeine.newBuilder()
+        .maximumSize(5)
+        .expireAfterAccess(30, TimeUnit.MINUTES)
+        .removalListener((key, value, cause) -> {
+            if (value instanceof OWLReasoner reasoner) {
+                log.info("[ReasonerCache] Disposing reasoner: {} (cause={})", key, cause);
+                try { reasoner.dispose(); } catch (Exception ignored) {}
+            }
+        })
+        .build();
     
     /**
      * Create or get cached reasoner for an ontology
      */
     public OWLReasoner getReasoner(OWLOntology ontology, ReasonerType type) {
-        // Use identity hash code to ensure we get a new reasoner if the ontology object changes
         String cacheKey = System.identityHashCode(ontology) + "-" + type.name();
-        
-        if (reasonerCache.containsKey(cacheKey)) {
-            OWLReasoner cached = reasonerCache.get(cacheKey);
-            if (cached != null) {
-                try {
-                    cached.flush();
-                } catch (Exception e) {
-                    log.warn("Failed to flush reasoner: {}", e.getMessage());
-                }
-                return cached;
+
+        OWLReasoner cached = reasonerCache.getIfPresent(cacheKey);
+        if (cached != null) {
+            try { cached.flush(); } catch (Exception e) {
+                log.warn("Failed to flush reasoner: {}", e.getMessage());
             }
+            return cached;
         }
 
         OWLReasoner reasoner = createReasoner(ontology, type);
-        
-        // Precompute inferences for new reasoner to ensure full hierarchy is available
         log.info("Precomputing inferences for new {} reasoner", type.getDisplayName());
         try {
-            // ELK temporarily disabled
-            // if (type == ReasonerType.ELK) {
-            //     // ELK only supports CLASS_HIERARCHY and CLASS_ASSERTIONS
-            //     reasoner.precomputeInferences(
-            //         InferenceType.CLASS_HIERARCHY,
-            //         InferenceType.CLASS_ASSERTIONS
-            //     );
-            // } else {
+            if (type == ReasonerType.ELK) {
+                // ELK only supports EL profile inferences
+                reasoner.precomputeInferences(
+                    InferenceType.CLASS_HIERARCHY,
+                    InferenceType.CLASS_ASSERTIONS
+                );
+            } else {
                 reasoner.precomputeInferences(
                     InferenceType.CLASS_HIERARCHY,
                     InferenceType.OBJECT_PROPERTY_HIERARCHY,
                     InferenceType.DATA_PROPERTY_HIERARCHY,
                     InferenceType.CLASS_ASSERTIONS
                 );
-            // }
+            }
         } catch (Exception e) {
-            log.warn("Failed to precompute inferences, some results might be incomplete", e);
+            log.warn("Failed to precompute inferences, some results might be incomplete: {}", e.getMessage());
         }
-        
+
         reasonerCache.put(cacheKey, reasoner);
         return reasoner;
     }
@@ -103,16 +109,21 @@ public class ReasonerService {
                     return OpenlletReasonerFactory.getInstance().createReasoner(ontology, config);
                     
                 case FACTPLUSPLUS:
-                    // FaCT++ (via JFact - Java port)
                     log.info("Using FaCT++ (JFact) reasoner");
                     return new JFactFactory().createReasoner(ontology, config);
-                    
-                // Temporarily disabled ELK reasoner due to compatibility issues
-                // case ELK:
-                //     // ELK - Fast and scalable EL reasoner
-                //     log.info("Using ELK (Consequence-based) reasoner");
-                //     return new ElkReasonerFactory().createReasoner(ontology, config);
-                    
+
+                case ELK:
+                    // ELK: consequence-based OWL EL reasoner — 10-100x faster than HermiT,
+                    // fraction of memory usage. Falls back to Structural if ontology uses
+                    // non-EL constructs (cardinality, negation, universal restrictions).
+                    log.info("Using ELK reasoner (OWL EL profile)");
+                    try {
+                        return new ElkReasonerFactory().createReasoner(ontology, config);
+                    } catch (Exception e) {
+                        log.warn("ELK failed (ontology may use non-EL constructs): {}. Falling back to Structural.", e.getMessage());
+                        return new StructuralReasonerFactory().createReasoner(ontology, config);
+                    }
+
                 case STRUCTURAL:
                 default:
                     log.info("Using Structural reasoner (basic)");
@@ -172,17 +183,15 @@ public class ReasonerService {
             log.info("Starting classification with {}", type.getDisplayName());
             long startTime = System.currentTimeMillis();
             
-            // ELK temporarily disabled
-            // if (type == ReasonerType.ELK) {
-            //     // ELK only supports CLASS_HIERARCHY (EL profile)
-            //     reasoner.precomputeInferences(InferenceType.CLASS_HIERARCHY);
-            // } else {
+            if (type == ReasonerType.ELK) {
+                reasoner.precomputeInferences(InferenceType.CLASS_HIERARCHY);
+            } else {
                 reasoner.precomputeInferences(
                     InferenceType.CLASS_HIERARCHY,
                     InferenceType.OBJECT_PROPERTY_HIERARCHY,
                     InferenceType.DATA_PROPERTY_HIERARCHY
                 );
-            // }
+            }
             
             long duration = System.currentTimeMillis() - startTime;
             log.info("Classification completed in {} ms", duration);
@@ -381,22 +390,11 @@ public class ReasonerService {
     }
 
     /**
-     * Clear reasoner cache
+     * Clear reasoner cache — invalidateAll triggers the removalListener which disposes each reasoner.
      */
     public void clearCache() {
-        log.info("Clearing reasoner cache ({} entries)", reasonerCache.size());
-        
-        reasonerCache.values().forEach(reasoner -> {
-            try {
-                if (reasoner != null) {
-                    reasoner.dispose();
-                }
-            } catch (Exception e) {
-                log.warn("Error disposing reasoner", e);
-            }
-        });
-        
-        reasonerCache.clear();
+        log.info("Clearing reasoner cache ({} entries)", reasonerCache.estimatedSize());
+        reasonerCache.invalidateAll();
     }
 
     /**
@@ -404,16 +402,9 @@ public class ReasonerService {
      */
     public void disposeReasoner(OWLOntology ontology, ReasonerType type) {
         String cacheKey = System.identityHashCode(ontology) + "-" + type.name();
-        OWLReasoner reasoner = reasonerCache.remove(cacheKey);
-        
-        if (reasoner != null) {
-            try {
-                reasoner.dispose();
-                log.info("Disposed {} reasoner for ontology object {}", type.getDisplayName(), System.identityHashCode(ontology));
-            } catch (Exception e) {
-                log.warn("Error disposing reasoner", e);
-            }
-        }
+        // invalidate triggers removalListener which calls dispose()
+        reasonerCache.invalidate(cacheKey);
+        log.info("Disposed {} reasoner for ontology object {}", type.getDisplayName(), System.identityHashCode(ontology));
     }
 
     /**
@@ -421,16 +412,8 @@ public class ReasonerService {
      */
     public void disposeReasoner(String ontologyId, ReasonerType type) {
         String cacheKey = ontologyId + "-" + type.name();
-        OWLReasoner reasoner = reasonerCache.remove(cacheKey);
-        
-        if (reasoner != null) {
-            try {
-                reasoner.dispose();
-                log.info("Disposed {} reasoner for ontology {}", type.getDisplayName(), ontologyId);
-            } catch (Exception e) {
-                log.warn("Error disposing reasoner", e);
-            }
-        }
+        reasonerCache.invalidate(cacheKey);
+        log.info("Disposed {} reasoner for ontology {}", type.getDisplayName(), ontologyId);
     }
 
     /**

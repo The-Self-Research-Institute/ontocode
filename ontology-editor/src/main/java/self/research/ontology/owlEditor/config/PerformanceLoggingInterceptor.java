@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
@@ -53,40 +54,22 @@ public class PerformanceLoggingInterceptor implements HandlerInterceptor {
             speedTag = "OK";
         }
 
-        // Performance log line: easily grep-able format
-        perfLog.info("[PERF] {} {} {} status={} duration={}ms size={} tag={}",
-                method, fullPath, buildProjectId(uri), status, durationMs,
+        // projectId and userId already in MDC from MdcLoggingFilter — log pattern includes them
+        String projectId = MDC.get("projectId");
+        perfLog.info("[PERF] {} {} project={} status={} duration={}ms size={} tag={}",
+                method, fullPath, projectId != null ? projectId : "-", status, durationMs,
                 contentLength > 0 ? contentLength + "B" : "-", speedTag);
 
-        // Also log slow requests as warnings in error log
         if (durationMs >= SLOW_THRESHOLD_MS) {
             errorLog.warn("[SLOW_REQUEST] {} {} took {}ms (status={})", method, fullPath, durationMs, status);
         }
-
-        // Log exceptions
         if (ex != null) {
             errorLog.error("[REQUEST_EXCEPTION] {} {} failed after {}ms", method, fullPath, durationMs, ex);
         }
-
-        // Log error status codes
         if (status >= 500) {
             errorLog.error("[SERVER_ERROR] {} {} returned {} after {}ms", method, fullPath, status, durationMs);
         } else if (status >= 400) {
             errorLog.warn("[CLIENT_ERROR] {} {} returned {} after {}ms", method, fullPath, status, durationMs);
         }
-    }
-
-    /**
-     * Extract projectId from URI for easier log filtering.
-     * URIs look like: /api/ontology/classes/top-level/{projectId}
-     */
-    private String buildProjectId(String uri) {
-        if (uri == null) return "";
-        // Find the last path segment which is typically the projectId
-        String[] parts = uri.split("/");
-        if (parts.length >= 5 && uri.startsWith("/api/")) {
-            return "project=" + parts[parts.length - 1];
-        }
-        return "";
     }
 }
