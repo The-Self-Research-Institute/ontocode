@@ -1040,8 +1040,35 @@ function handleBrowserMessage(message: any) {
                         });
                         return;
                     }
-                    const items = await sci2CodeBrowserService.fetchLibrary(10000);
-                    postToSelf({ type: 'zoteroLibraryData', items: items || [] });
+
+                    const batchSize = 100;
+                    let start = 0;
+                    let batch = await sci2CodeBrowserService.fetchLibrary(batchSize, start);
+
+                    postToSelf({
+                        type: 'zoteroLibraryData',
+                        items: batch || [],
+                        hasMore: batch.length === batchSize
+                    });
+
+                    start += batch.length;
+
+                    while (batch.length === batchSize) {
+                        batch = await sci2CodeBrowserService.fetchLibrary(batchSize, start);
+                        if (!batch || batch.length === 0) {
+                            break;
+                        }
+
+                        postToSelf({
+                            type: 'zoteroLibraryDataAppend',
+                            items: batch,
+                            hasMore: batch.length === batchSize
+                        });
+
+                        start += batch.length;
+                    }
+
+                    postToSelf({ type: 'zoteroLibraryDataComplete' });
                 } catch (err: any) {
                     postToSelf({ type: 'zoteroLibraryError', error: err?.message || 'Zotero unavailable' });
                 }
