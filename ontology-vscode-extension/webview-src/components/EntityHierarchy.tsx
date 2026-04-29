@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronRight, ChevronDown, PlusCircle, Trash2, Search, Package, GitBranch, Database, Tag, User, Type, Binary, MousePointer2, Eye, Settings, Edit3, Check } from "lucide-react";
+import { ChevronRight, ChevronDown, PlusCircle, Trash2, Search, Package, GitBranch, Database, Tag, User, Type, Binary, MousePointer2, Eye, Settings, Edit3, Check, Loader2 } from "lucide-react";
 import type { SelectableItem, TreeNode } from '../types';
 import { useCollaboration } from '../contexts/CollaborationContext';
 import InlineRenameInput from './InlineRenameInput';
@@ -35,10 +35,11 @@ interface EntityHierarchyProps {
   onQuickAddNote?: (item: SelectableItem) => void;
   viewMode?: 'asserted' | 'inferred';
   onViewModeChange?: (mode: 'asserted' | 'inferred') => void;
-  isReasonerRunning?: boolean; // Indicates if reasoner is currently running
-  hideToolbarActions?: boolean; // Hide add/delete buttons
-  selectedProperties?: string[]; // For multi-select mode (HasKey dialog)
-  multiSelectMode?: boolean; // Enable checkbox multi-select
+  isReasonerRunning?: boolean;
+  hideToolbarActions?: boolean;
+  selectedProperties?: string[];
+  multiSelectMode?: boolean;
+  loadingNodes?: Set<string>; // Nodes currently fetching children
 }
 
 const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
@@ -66,6 +67,7 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
   hideToolbarActions = false,
   selectedProperties = [],
   multiSelectMode = false,
+  loadingNodes = new Set(),
 }) => {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: SelectableItem } | null>(null);
   const [draggedItem, setDraggedItem] = useState<SelectableItem | null>(null);
@@ -246,18 +248,21 @@ const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
         >
           {/* Expander Arrow */}
           {isTreeNode ? (
-            <button 
-              className="p-0.5 mr-1" 
-              onClick={(e) => { 
-                e.stopPropagation(); 
-                if (hasChildren) onToggleNode(item.id); //
+            <button
+              className="p-0.5 mr-1"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (hasChildren && !loadingNodes.has(item.id)) onToggleNode(item.id);
               }}
-              // Disable button if it has no children
-              disabled={!hasChildren} 
+              disabled={!hasChildren || loadingNodes.has(item.id)}
             >
-              {!hasChildren ? 
-                <span className="w-5" /> : 
-                (isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />)}
+              {loadingNodes.has(item.id) ? (
+                <Loader2 size={14} className="animate-spin text-blue-500" />
+              ) : !hasChildren ? (
+                <span className="w-5" />
+              ) : (
+                isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />
+              )}
             </button>
           ) : (
             // Non-tree items get a spacer to align text

@@ -4,10 +4,14 @@
     <property name="LOG_DIR" value="${LOG_DIR:-logs}" />
     <property name="APP_NAME" value="owl-editor" />
 
+    <!-- MDC context pattern — userId and projectId injected by MdcLoggingFilter.
+         Shows "-" when not present (unauthenticated or non-project endpoints). -->
+    <property name="MDC_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%logger{36}] [uid=%X{userId:--} usr=%X{userName:--} prj=%X{projectId:--}] - %msg%n" />
+
     <!-- ==================== CONSOLE APPENDER ==================== -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%logger{36}] - %msg%n</pattern>
+            <pattern>${MDC_PATTERN}</pattern>
         </encoder>
     </appender>
 
@@ -22,12 +26,12 @@
             <totalSizeCap>1GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%logger{50}] - %msg%n</pattern>
+            <pattern>${MDC_PATTERN}</pattern>
         </encoder>
     </appender>
 
     <!-- ==================== PERFORMANCE LOG ==================== -->
-    <!-- Dedicated file for performance/timing metrics -->
+    <!-- Dedicated file for performance/timing metrics — includes userId and projectId for filtering -->
     <appender name="PERF_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${LOG_DIR}/${APP_NAME}-performance.log</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
@@ -37,7 +41,7 @@
             <totalSizeCap>2GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %msg%n</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [uid=%X{userId:--} prj=%X{projectId:--}] %msg%n</pattern>
         </encoder>
     </appender>
 
@@ -55,7 +59,7 @@
             <totalSizeCap>2GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%logger{50}] - %msg%n%xException</pattern>
+            <pattern>${MDC_PATTERN}%xException</pattern>
         </encoder>
     </appender>
 

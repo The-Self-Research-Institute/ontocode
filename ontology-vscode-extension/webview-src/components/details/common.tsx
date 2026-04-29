@@ -615,11 +615,11 @@ export const AxiomSubsection: React.FC<{
         <button 
           onClick={handleAddButtonClick}
           onKeyDown={handleHeaderKeyDown}
-          className={`w-full flex justify-between items-center px-3 py-2 transition-colors ${isFocused ? 'ring-2 ring-amber-300' : ''} font-medium shadow-sm`}
+          className={`w-full flex justify-between items-center px-3 py-2 transition-colors ${isFocused ? 'ring-2 ring-amber-300' : ''} font-medium shadow-sm text-gray-900`}
           style={{
             backgroundColor: isFocused ? 'var(--selected-bg)' : '#FEF3C7',
             borderLeft: `3px solid ${themeBorder}`,
-          
+            color: '#111827',
           }}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}

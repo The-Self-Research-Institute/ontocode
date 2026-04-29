@@ -106,6 +106,25 @@
             <artifactId>openllet-owlapi</artifactId>
             <version>2.6.5</version>
         </dependency>
+
+        <!-- ELK: incremental OWL EL reasoner — 10-100x faster than HermiT on large ontologies,
+             fraction of the memory. Supports OWL EL profile (SubClassOf, EquivalentClasses,
+             ObjectSomeValuesFrom, ObjectIntersectionOf). Excludes OWLAPI 4 to avoid conflict. -->
+        <dependency>
+            <groupId>org.semanticweb.elk</groupId>
+            <artifactId>elk-owlapi</artifactId>
+            <version>0.4.3</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>net.sourceforge.owlapi</groupId>
+                    <artifactId>owlapi-api</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>net.sourceforge.owlapi</groupId>
+                    <artifactId>owlapi-apibinding</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
         
         <!-- ========== ECLIPSE RDF4J (GraphDB) ========== -->
         <!-- RDF4J Repository API -->
