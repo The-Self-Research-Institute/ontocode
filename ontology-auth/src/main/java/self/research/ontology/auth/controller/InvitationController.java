@@ -90,19 +90,17 @@ public class InvitationController {
             }
 
             // ── Plan enforcement: collaboration gate ─────────────────────────
+            // FREE plan allows up to 3 members — seat limit enforced below.
+            // Paid plans require collaborationEnabled=true (set on subscription activation).
             if (!Boolean.TRUE.equals(workspace.getCollaborationEnabled())) {
                 String plan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
-                if ("FREE".equalsIgnoreCase(plan)) {
+                if (!"FREE".equalsIgnoreCase(plan)) {
                     return ResponseEntity.status(402).body(Map.of(
-                        "error", "Team collaboration is not available on the Free plan. Upgrade to Pro to invite members.",
-                        "requiresUpgrade", true,
-                        "currentPlan", "FREE"
+                        "error", "Collaboration is not yet activated for this workspace. Please complete your subscription payment first.",
+                        "requiresPayment", true
                     ));
                 }
-                return ResponseEntity.status(402).body(Map.of(
-                    "error", "Collaboration is not yet activated for this workspace. Please complete your subscription payment first.",
-                    "requiresPayment", true
-                ));
+                // FREE plan: fall through to seat-limit check (3-member cap)
             }
 
             // ── Plan enforcement: member seat limit ───────────────────────────
