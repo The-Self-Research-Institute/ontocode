@@ -3,6 +3,7 @@ import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-
 import { loadStripe, StripeElementsOptions } from '@stripe/stripe-js';
 import { X, Loader2, CreditCard, XCircle, CheckCircle, Shield, AlertTriangle } from 'lucide-react';
 import { getGatewayUrl } from '../config/deploymentConfig';
+import { usePlanPricing } from '../hooks/usePlanPricing';
 
 function safeGetStorage(key: string): string | null { try { return localStorage.getItem(key); } catch { return null; } }
 
@@ -34,13 +35,6 @@ interface ManageSubscriptionModalProps {
     onCompletePayment?: () => void;
 }
 
-function planPrice(plan: string, interval: string): string {
-    const map: Record<string, Record<string, string>> = {
-        PRO:        { monthly: '$29/month', yearly: '$290/year', annual: '$290/year' },
-        ENTERPRISE: { monthly: '$99/month', yearly: '$990/year', annual: '$990/year' },
-    };
-    return map[plan.toUpperCase()]?.[interval?.toLowerCase()] ?? '';
-}
 
 function statusLabel(status?: string) {
     const s = (status ?? '').toUpperCase();
@@ -155,6 +149,7 @@ const ManageSubscriptionModal: React.FC<ManageSubscriptionModalProps> = ({ works
     const [setupClientSecret, setSetupClientSecret] = useState<string | null>(null);
     const [setupPublishableKey, setSetupPublishableKey] = useState<string>('');
     const [cardUpdated, setCardUpdated] = useState(false);
+    const { getDisplayPrice } = usePlanPricing();
 
     const handleClose = () => {
         setView('info');
@@ -249,7 +244,7 @@ const ManageSubscriptionModal: React.FC<ManageSubscriptionModalProps> = ({ works
 
     const plan = workspace.subscriptionPlan?.toUpperCase() ?? '';
     const interval = workspace.billingInterval ?? 'monthly';
-    const price = planPrice(plan, interval);
+    const price = getDisplayPrice(plan, interval);
     const { label: statusText, color: statusColor } = statusLabel(workspace.billingStatus);
 
     return (
