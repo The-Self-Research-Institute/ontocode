@@ -13,9 +13,12 @@ import org.springframework.web.util.UrlPathHelper;
 public class WebMvcConfig implements WebMvcConfigurer {
 
     private final PerformanceLoggingInterceptor performanceLoggingInterceptor;
+    private final FreeViewOnlyInterceptor freeViewOnlyInterceptor;
 
-    public WebMvcConfig(PerformanceLoggingInterceptor performanceLoggingInterceptor) {
+    public WebMvcConfig(PerformanceLoggingInterceptor performanceLoggingInterceptor,
+                        FreeViewOnlyInterceptor freeViewOnlyInterceptor) {
         this.performanceLoggingInterceptor = performanceLoggingInterceptor;
+        this.freeViewOnlyInterceptor = freeViewOnlyInterceptor;
     }
 
     @Override
@@ -28,6 +31,8 @@ public class WebMvcConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(performanceLoggingInterceptor)
+                .addPathPatterns("/api/**");
+        registry.addInterceptor(freeViewOnlyInterceptor)
                 .addPathPatterns("/api/**");
     }
 }
