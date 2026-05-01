@@ -2,6 +2,7 @@ package self.research.ontology.auth.service;
 
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import self.research.ontology.auth.model.PlanFeatureConfig;
 import self.research.ontology.auth.repository.PlanFeatureConfigRepository;
@@ -14,6 +15,20 @@ import java.util.stream.Collectors;
 @Service
 public class PlanFeatureConfigService {
 
+    // Seed defaults — only used on first startup if the collection is empty.
+    // After that, all values are read from MongoDB and can be changed there.
+    @Value("${plan.pro.monthly.price:29}")
+    private int defaultProMonthlyPrice;
+
+    @Value("${plan.pro.annual.discount.percent:17}")
+    private int defaultProAnnualDiscountPercent;
+
+    @Value("${plan.enterprise.monthly.price:99}")
+    private int defaultEnterpriseMonthlyPrice;
+
+    @Value("${plan.enterprise.annual.discount.percent:20}")
+    private int defaultEnterpriseAnnualDiscountPercent;
+
     private final PlanFeatureConfigRepository repo;
 
     public PlanFeatureConfigService(PlanFeatureConfigRepository repo) {
@@ -22,7 +37,7 @@ public class PlanFeatureConfigService {
 
     @PostConstruct
     public void seedDefaults() {
-        seedIfAbsent("FREE",
+        seedIfAbsent("FREE", 0, 0,
             List.of(
                 "Up to 3 workspaces",
                 "Up to 3 workspace members",
@@ -41,7 +56,7 @@ public class PlanFeatureConfigService {
                 "No shared editing"
             )
         );
-        seedIfAbsent("PRO",
+        seedIfAbsent("PRO", defaultProMonthlyPrice, defaultProAnnualDiscountPercent,
             List.of(
                 "Up to 10 workspaces",
                 "Up to 10 team members",
@@ -54,7 +69,7 @@ public class PlanFeatureConfigService {
             ),
             List.of()
         );
-        seedIfAbsent("ENTERPRISE",
+        seedIfAbsent("ENTERPRISE", defaultEnterpriseMonthlyPrice, defaultEnterpriseAnnualDiscountPercent,
             List.of(
                 "Unlimited team members",
                 "Unlimited workspaces",
@@ -67,10 +82,11 @@ public class PlanFeatureConfigService {
         );
     }
 
-    private void seedIfAbsent(String planId, List<String> features, List<String> limitations) {
+    private void seedIfAbsent(String planId, int monthlyPrice, int annualDiscountPercent,
+                               List<String> features, List<String> limitations) {
         if (repo.findByPlanId(planId).isEmpty()) {
-            repo.save(new PlanFeatureConfig(planId, features, limitations));
-            log.info("Seeded plan feature config for plan: {}", planId);
+            repo.save(new PlanFeatureConfig(planId, monthlyPrice, annualDiscountPercent, features, limitations));
+            log.info("Seeded plan config for: {} (${}/mo, {}% annual discount)", planId, monthlyPrice, annualDiscountPercent);
         }
     }
 

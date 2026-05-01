@@ -29,18 +29,6 @@ public class SubscriptionController {
 
     private static final Logger log = LoggerFactory.getLogger(SubscriptionController.class);
 
-    @Value("${plan.pro.monthly.price:29}")
-    private int planProMonthlyPrice;
-
-    @Value("${plan.pro.annual.price:24}")
-    private int planProAnnualPrice;
-
-    @Value("${plan.enterprise.monthly.price:99}")
-    private int planEnterpriseMonthlyPrice;
-
-    @Value("${plan.enterprise.annual.price:79}")
-    private int planEnterpriseAnnualPrice;
-
     private final StripeService stripeService;
     private final UserRepository userRepository;
     private final WorkspaceService workspaceService;
@@ -61,23 +49,21 @@ public class SubscriptionController {
     @GetMapping("/plans")
     public ResponseEntity<?> getPlans() {
         var configs = planFeatureConfigService.getAllByPlanId();
-        var plans = List.of(
-            buildPlanResponse("FREE",       0,                       0,                    configs.get("FREE")),
-            buildPlanResponse("PRO",        planProMonthlyPrice,     planProAnnualPrice,   configs.get("PRO")),
-            buildPlanResponse("ENTERPRISE", planEnterpriseMonthlyPrice, planEnterpriseAnnualPrice, configs.get("ENTERPRISE"))
-        );
+        var plans = List.of("FREE", "PRO", "ENTERPRISE").stream()
+            .map(id -> buildPlanResponse(configs.get(id)))
+            .toList();
         return ResponseEntity.ok(Map.of("plans", plans));
     }
 
-    private Map<String, Object> buildPlanResponse(String id, int monthlyPrice, int annualPrice, PlanFeatureConfig config) {
-        List<String> features   = config != null ? config.getFeatures()    : List.of();
-        List<String> limitations = config != null ? config.getLimitations() : List.of();
+    private Map<String, Object> buildPlanResponse(PlanFeatureConfig config) {
+        if (config == null) return Map.of();
         return Map.of(
-            "id", id,
-            "monthlyPrice", monthlyPrice,
-            "annualPrice", annualPrice,
-            "features", features,
-            "limitations", limitations
+            "id",                   config.getPlanId(),
+            "monthlyPrice",         config.getMonthlyPrice(),
+            "annualDiscountPercent", config.getAnnualDiscountPercent(),
+            "annualPrice",          config.computedAnnualPrice(),
+            "features",             config.getFeatures(),
+            "limitations",          config.getLimitations()
         );
     }
 
